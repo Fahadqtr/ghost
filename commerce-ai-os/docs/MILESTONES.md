@@ -8,7 +8,7 @@ no agent AI logic, no paid services.
 | Milestone | Description | Status |
 |-----------|-------------|--------|
 | M0 | Setup — toolchain, subfolder, env template | ✅ Done |
-| M1 | Scaffold & clean architecture (Next.js + Tailwind) | ⬜ Pending |
+| M1 | Scaffold & clean architecture (Next.js + Tailwind) | ✅ Done |
 | M2 | Schema (15 tables, seeds) | ⏭️ **Skipped — already created & seeded in Supabase** |
 | M3 | Auth + CEO Dashboard | ⬜ Pending |
 | M4 | Core pages (Product Hub, Inventory, Channels, Agents) | ⬜ Pending |
@@ -31,3 +31,42 @@ The app needs the existing Supabase project's credentials to connect:
 
 Paste them into `commerce-ai-os/.env.local` (never committed). Until then the app
 scaffolds and runs with empty-state UI but cannot read/write real data.
+
+> Keys received and wired into `.env.local` on 2026-06-05.
+
+---
+
+## M1 — Scaffold & clean architecture (Done)
+
+- [x] Next.js 14 (App Router) + TypeScript + Tailwind v3
+- [x] Folder structure: `/app`, `/components`, `/lib` (constants, types, supabase client+server), `/agents` (stubs), `/docs`
+- [x] Base layout: persistent sidebar + topbar shell via `app/(app)/layout.tsx`
+- [x] Supabase helpers: `lib/supabase/client.ts` (browser) + `lib/supabase/server.ts` (server, cookie-bound)
+- [x] Locked constants: 11 categories, channel statuses, 13 agents, nav items
+- [x] Hand-written DB types mirroring the existing 15-table schema (`lib/types.ts`)
+- [x] Placeholder pages for every nav route (replaced in later milestones)
+- [x] **Verify:** `pnpm install` + `pnpm build` succeed; server runs; `/` → `/dashboard` (307); sidebar renders
+
+### Folder structure
+```
+commerce-ai-os/
+├─ app/
+│  ├─ layout.tsx              # root (html/body)
+│  ├─ page.tsx                # redirect → /dashboard
+│  ├─ globals.css             # Tailwind + UI primitives
+│  └─ (app)/                  # authenticated shell (sidebar+topbar)
+│     ├─ layout.tsx
+│     ├─ dashboard/page.tsx
+│     ├─ products/page.tsx
+│     ├─ inventory/page.tsx
+│     ├─ channels/page.tsx
+│     ├─ agents/page.tsx
+│     └─ import-export/page.tsx
+├─ components/                # Sidebar, Topbar, MilestonePlaceholder
+├─ lib/
+│  ├─ constants.ts            # categories, channels, agents, nav
+│  ├─ types.ts                # DB row types (mirror schema)
+│  └─ supabase/               # client.ts, server.ts
+├─ agents/                    # Phase-2 stubs (no logic)
+└─ docs/                      # MILESTONES.md, README (M6)
+```
