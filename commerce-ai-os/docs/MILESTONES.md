@@ -12,7 +12,7 @@ no agent AI logic, no paid services.
 | M2 | Schema (15 tables, seeds) | ⏭️ **Skipped — already created & seeded in Supabase** |
 | M3 | Auth + CEO Dashboard | ✅ Done |
 | M4 | Core pages (Product Hub, Inventory, Channels, Agents) | ✅ Done |
-| M5 | Import / Export placeholders | ⬜ Pending |
+| M5 | Import / Export placeholders | ✅ Done |
 | M6 | Seed sample data + final QA + README | ⬜ Pending |
 
 ---
@@ -142,3 +142,33 @@ result, created_at` (types updated to match).
 - [ ] **Live CRUD** (create product w/ variant → appears in Inventory & Channels):
       requires a signed-in user. Build is complete and written against the verified
       schema; owner needs to log in (or share a confirmed test user) to exercise it.
+
+---
+
+## M5 — Import / Export placeholders (Done)
+
+Added one local dependency: `xlsx` (SheetJS) — runs in the browser, no external API.
+
+**Upload Excel** (`ExcelImport.tsx`)
+- [x] Parses `.xlsx`/`.csv` in-browser; maps headers → the 28 master-sheet columns (alias-aware)
+- [x] Preview table + lists ignored/unmapped columns
+- [x] Commit behind a confirm → `importProducts` server action inserts products + seeds inventory
+- [x] Category not in the 11 is **flagged & skipped** (never force-fit); unknown brand left blank
+
+**Upload Images** (`ImageUpload.tsx`)
+- [x] Uploads to Supabase Storage bucket `product-images`; optional link to a product
+- [x] Inserts `product_images` row (sets `is_primary` when it's the product's first image)
+- [x] Clear error if the bucket is missing
+
+**Export** (`ExportButtons.tsx`)
+- [x] Per-channel placeholder CSVs generated client-side and downloaded locally:
+      Shopify CSV, Snoonu masterlist, **Talabat split-CSV** (one row per variant), Rafeeq CSV
+- [x] Every file carries a "PHASE 1 PLACEHOLDER" banner; nothing is sent anywhere
+
+### Verification
+- [x] `pnpm build` passes; `/import-export` protected (307 → /login)
+
+### Owner action for image upload
+Create a **public** Storage bucket named `product-images` in Supabase
+(Storage → New bucket), and allow authenticated uploads. Until then, image upload
+shows a clear "bucket missing" message (import/export of products still works).
