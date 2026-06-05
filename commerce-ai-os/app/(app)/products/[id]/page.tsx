@@ -73,6 +73,7 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
         <h3 className="mb-4 text-sm font-semibold text-ink">All fields</h3>
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="SKU" value={product.sku} />
+          <Field label="Snoonu ID" value={product.snoonu_id} />
           <Field label="Barcode" value={product.barcode} />
           <Field label="Name (EN)" value={product.name_en} />
           <Field label="Name (AR)" value={product.name_ar} rtl />

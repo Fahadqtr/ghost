@@ -37,7 +37,7 @@ async function statusFor(channelKey) {
   return map;
 }
 
-const products = await all("products", "id, sku, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, description_en, description_ar, keywords_en, keywords_ar");
+const products = await all("products", "id, sku, snoonu_id, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, description_en, description_ar, keywords_en, keywords_ar");
 const variants = await all("product_variants", "parent_product_id, variant_name, sku, price");
 
 const outputs = {

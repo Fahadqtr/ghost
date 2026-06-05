@@ -30,6 +30,7 @@ export interface Product {
   keywords_en: string | null;
   keywords_ar: string | null;
   notes: string | null;
+  snoonu_id: string | null;
   created_at: string;
   updated_at: string;
 }

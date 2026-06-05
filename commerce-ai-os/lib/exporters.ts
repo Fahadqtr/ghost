@@ -5,6 +5,7 @@
 export interface ExportProduct {
   id: string;
   sku: string | null;
+  snoonu_id: string | null;
   barcode: string | null;
   name_en: string | null;
   name_ar: string | null;
@@ -59,13 +60,13 @@ export function buildShopifyCsv(products: ExportProduct[], status: StatusMap): s
 
 // --- 2) Snoonu masterlist (one row per product; EN + AR) -------------------
 export const SNOONU_HEADERS = [
-  "SKU", "Barcode", "Name EN", "Name AR", "Category", "Sub Category",
+  "Snoonu ID", "SKU", "Barcode", "Name EN", "Name AR", "Category", "Sub Category",
   "Price", "Discount Price", "Stock", "Snoonu Status", "Image URL",
   "Description EN", "Description AR", "Keywords EN", "Keywords AR",
 ];
 export function buildSnoonuCsv(products: ExportProduct[], status: StatusMap): string {
   const rows = products.map((p) => [
-    p.sku, p.barcode, p.name_en, p.name_ar, p.main_category, p.sub_category,
+    p.snoonu_id, p.sku, p.barcode, p.name_en, p.name_ar, p.main_category, p.sub_category,
     p.price, p.discount_price, "" /*stock later*/, status[p.id] ?? "Not Listed",
     p.image_url ?? "", p.description_en, p.description_ar, p.keywords_en, p.keywords_ar,
   ]);

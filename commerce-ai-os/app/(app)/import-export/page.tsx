@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import ExcelImport from "@/components/ExcelImport";
 import ImageUpload from "@/components/ImageUpload";
@@ -21,6 +22,13 @@ export default async function ImportExportPage() {
       <p className="text-sm text-muted">
         Import and per-channel export. Exports pull the live database; no real marketplace API is called.
       </p>
+      <Link href="/import-export/snoonu-sync" className="card flex items-center justify-between hover:bg-slate-50">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">🔄 Snoonu Sync</h3>
+          <p className="text-xs text-muted">Upload a Snoonu export and reconcile by snoonu_id (diff before apply).</p>
+        </div>
+        <span className="text-brand">→</span>
+      </Link>
       <ExcelImport />
       <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} />
       <ExportButtons />

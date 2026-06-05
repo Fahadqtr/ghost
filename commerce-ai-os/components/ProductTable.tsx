@@ -10,6 +10,7 @@ const CHANNELS = ["Shopify", "Snoonu", "Talabat", "Rafeeq"] as const;
 export interface ProductRow {
   id: string;
   sku: string | null;
+  snoonu_id: string | null;
   barcode: string | null;
   name_en: string | null;
   name_ar: string | null;
@@ -77,12 +78,13 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
       </div>
 
       <div className="card overflow-x-auto p-0">
-        <table className="w-full min-w-[1100px] text-sm">
+        <table className="w-full min-w-[1200px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
               <th className="px-3 py-3 font-medium">Name EN</th>
               <th className="px-3 py-3 font-medium">Name AR</th>
               <th className="px-3 py-3 font-medium">SKU</th>
+              <th className="px-3 py-3 font-medium">Snoonu ID</th>
               <th className="px-3 py-3 font-medium">Barcode</th>
               <th className="px-3 py-3 font-medium">Category</th>
               <th className="px-3 py-3 font-medium">Price</th>
@@ -94,7 +96,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={13} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
+              <tr><td colSpan={14} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
             ) : (
               visible.map((p) => (
                 <tr
@@ -105,6 +107,9 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                   <td className="px-3 py-3 font-medium text-ink">{p.name_en ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600" dir="rtl">{p.name_ar ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.sku ?? "—"}</td>
+                  <td className="px-3 py-3 font-mono text-xs text-slate-500" title={p.snoonu_id ?? ""}>
+                    {p.snoonu_id ? p.snoonu_id.slice(0, 8) + "…" : "—"}
+                  </td>
                   <td className="px-3 py-3 text-slate-600">{p.barcode ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.main_category ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
