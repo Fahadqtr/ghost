@@ -14,11 +14,15 @@
 // Does NOT alter schema structure.
 
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { createClient } from "@supabase/supabase-js";
-import * as XLSX from "xlsx";
+
+const require = createRequire(import.meta.url);
+const XLSX = require("xlsx"); // CJS module — load via require for reliable interop
 
 const FILE = "./Malikas_Universe_CLEAN_28col.xlsx";
-const CHUNK = 500;
+const CHUNK = 500;       // insert batches (POST body) + short-string .in() queries
+const ID_CHUNK = 100;    // UUID .in() queries — keep the URL short enough to send
 
 // ---- env ------------------------------------------------------------------
 function loadEnv() {
@@ -38,7 +42,19 @@ if (!url || !key) {
   console.error("✗ Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local");
   process.exit(1);
 }
-const supabase = createClient(url, key, { auth: { persistSession: false } });
+// Retry transient network failures (the host occasionally drops a fetch).
+async function retryingFetch(u, o, tries = 5) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try { return await fetch(u, o); }
+    catch (e) { last = e; await new Promise((r) => setTimeout(r, 400 * 2 ** i)); }
+  }
+  throw last;
+}
+const supabase = createClient(url, key, {
+  auth: { persistSession: false },
+  global: { fetch: (u, o) => retryingFetch(u, o) },
+});
 
 // ---- helpers --------------------------------------------------------------
 const S = (v) => { const t = String(v ?? "").trim(); return t === "" ? null : t; };
@@ -77,12 +93,24 @@ console.log("\n[1] Deleting test rows (sku = '7673' or sku LIKE 'TEST-%') …");
   console.log(`    removed ${ids.length} test product(s)`);
 }
 
-// ---- 2) replace product_categories with the real list ---------------------
-console.log("\n[2] Replacing product_categories …");
+// ---- 2) ensure product_categories = the file's list (idempotent) ----------
+// There is a FK products.main_category -> product_categories(name), so we
+// insert any missing categories and prune only stale ones nothing references.
+console.log("\n[2] Ensuring product_categories matches the file …");
 {
-  await die("clear categories", (await supabase.from("product_categories").delete().not("id", "is", null)).error);
-  await die("insert categories", (await supabase.from("product_categories").insert(categories.map((name) => ({ name }))).select("id")).error);
-  console.log(`    inserted ${categories.length} categories`);
+  const { data: existingCats, error } = await supabase.from("product_categories").select("name");
+  await die("read categories", error);
+  const have = new Set((existingCats ?? []).map((c) => c.name));
+  const missing = categories.filter((c) => !have.has(c));
+  if (missing.length) {
+    await die("insert categories", (await supabase.from("product_categories").insert(missing.map((name) => ({ name }))).select("id")).error);
+  }
+  let pruned = 0;
+  for (const name of [...have].filter((c) => !categories.includes(c))) {
+    const { count } = await supabase.from("products").select("*", { count: "exact", head: true }).eq("main_category", name);
+    if ((count ?? 0) === 0) { await supabase.from("product_categories").delete().eq("name", name); pruned++; }
+  }
+  console.log(`    have ${categories.length} file categories (inserted ${missing.length} missing, pruned ${pruned} stale unreferenced)`);
 }
 
 // ---- 3) insert products (skip existing SKUs) ------------------------------
@@ -142,7 +170,7 @@ for (const part of chunks(fileSkus, CHUNK)) {
 console.log("\n[4] Seeding inventory …");
 const allIds = [...skuToId.values()];
 const haveInv = new Set();
-for (const part of chunks(allIds, CHUNK)) {
+for (const part of chunks(allIds, ID_CHUNK)) {
   const { data, error } = await supabase.from("inventory").select("product_id").in("product_id", part);
   await die("select inventory", error);
   (data ?? []).forEach((r) => haveInv.add(r.product_id));
@@ -159,7 +187,7 @@ console.log(`    inserted ${invRows.length} inventory row(s)`);
 // ---- 5) split Variant -> product_variants (only where product has none) ---
 console.log("\n[5] Splitting variants …");
 const haveVar = new Set();
-for (const part of chunks(allIds, CHUNK)) {
+for (const part of chunks(allIds, ID_CHUNK)) {
   const { data, error } = await supabase.from("product_variants").select("parent_product_id").in("parent_product_id", part);
   await die("select variants", error);
   (data ?? []).forEach((r) => haveVar.add(r.parent_product_id));
@@ -176,7 +204,7 @@ for (const r of rows) {
     variantRows.push({
       parent_product_id: pid,
       variant_name: opt,
-      sku: `${sku}-${slug(opt) || "v" + (i + 1)}`,
+      sku: `${sku}-${i + 1}-${slug(opt) || "v"}`, // index keeps it unique even if labels slug alike
       color: null, size: null,
       price: N(r.Price),
       stock_quantity: null,

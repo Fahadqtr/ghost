@@ -2,21 +2,28 @@
 // These mirror the seeded Supabase reference data. Do NOT diverge from the DB.
 
 /**
- * The 11 LOCKED product categories. A product's category must be one of these.
- * (Mirrors the seeded `product_categories` table.)
+ * Product categories — must match the `product_categories` table exactly
+ * (FK products.main_category -> product_categories.name). Synced to the 17 real
+ * categories from the imported master sheet on 2026-06-05.
  */
 export const CATEGORIES = [
-  "Korean Skincare",
-  "Makeup",
-  "Hair Care",
+  "Face Care",
   "Body Care",
-  "Perfumes",
-  "Beauty Tools",
-  "Bags & Accessories",
-  "Gifts & Sets",
-  "Kids & Toys",
-  "Thai Products",
-  "Trending Products",
+  "Hair Care",
+  "Makeup",
+  "Lashes & Nails",
+  "Beauty Accessories",
+  "Beauty Bundle",
+  "Masks",
+  "Sun Protection",
+  "Dental Care",
+  "Women’s Essentials",
+  "Rhode Products Section",
+  "Thailand Products",
+  "Summer And Camping Supplies",
+  "Electronics",
+  "✨Toys",
+  "Uncategorized",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
