@@ -113,6 +113,7 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
   };
   if (!rows?.length) return { ...empty, error: "No rows parsed from the export." };
 
+  try {
   const supabase = createClient();
 
   // Feature-detect optional columns.
@@ -171,6 +172,9 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
     newProducts,
     missing,
   };
+  } catch (e) {
+    return { ...empty, error: e instanceof Error ? e.message : "Unexpected error while computing the diff." };
+  }
 }
 
 export interface ApplyResult {
@@ -199,6 +203,7 @@ export async function applySnoonuUpdates(rows: SnoonuExportRow[]): Promise<Apply
   try { admin = createAdminClient(); }
   catch (e) { return { ...base, error: e instanceof Error ? e.message : "Service role unavailable." }; }
 
+  try {
   const { fields } = await detectFields(admin);
 
   // Load products keyed by snoonu_id.
@@ -246,4 +251,7 @@ export async function applySnoonuUpdates(rows: SnoonuExportRow[]): Promise<Apply
     ok: true, productsUpdated, fieldWrites, matched, unchanged, failed,
     columnsWritten: [...colsWritten],
   };
+  } catch (e) {
+    return { ...base, error: e instanceof Error ? e.message : "Unexpected error while applying updates." };
+  }
 }
