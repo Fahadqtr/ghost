@@ -13,7 +13,7 @@ no agent AI logic, no paid services.
 | M3 | Auth + CEO Dashboard | ✅ Done |
 | M4 | Core pages (Product Hub, Inventory, Channels, Agents) | ✅ Done |
 | M5 | Import / Export placeholders | ✅ Done |
-| M6 | Seed sample data + final QA + README | ⬜ Pending |
+| M6 | Seed sample data + final QA + README | ✅ Done |
 
 ---
 
@@ -172,3 +172,45 @@ Added one local dependency: `xlsx` (SheetJS) — runs in the browser, no externa
 Create a **public** Storage bucket named `product-images` in Supabase
 (Storage → New bucket), and allow authenticated uploads. Until then, image upload
 shows a clear "bucket missing" message (import/export of products still works).
+
+---
+
+## M6 — Seed data + final QA + README (Done)
+
+Per owner decision, sample data is delivered as a **SQL file you run yourself**
+(option b) — nothing was written to the DB from this build.
+
+**Sample data** (`supabase/seed_sample_data.sql`)
+- [x] 8 products across both brands (Malika's Universe + Pure Seoul)
+- [x] One product with **3 variants**: Rhode Peptide Lip Tint → Toast / Ribbon / Raspberry Jelly
+- [x] Demo coverage: 1 low-stock row, 2 missing-image rows, varied sold-qty (Top Products)
+- [x] Brand resolved by name pattern (no UUIDs needed); categories all within the 11
+- [x] **All clearly marked test data**: SKU prefix `TEST-` + `notes = 'TEST/SAMPLE — delete before real data'`
+- [x] One-shot cleanup: `supabase/delete_sample_data.sql` (`DELETE FROM products WHERE sku LIKE 'TEST-%'` + children)
+
+**Docs**
+- [x] `docs/README.md` — stack, run steps, env, structure, auth, data model, seed/teardown, scope
+
+### Verification gate (Section 6)
+- [x] App builds clean from a fresh `pnpm install` (`pnpm build` ✓, 12/12 pages)
+- [x] Login required on every app route (all 307 → /login; `/login` is 200)
+- [~] Create / edit / delete a product — code complete & schema-verified; **exercise after login** (owner)
+- [~] Product with variants stores parent–child rows — built; seed file demonstrates it; exercise after login
+- [x] Category cannot be set outside the 11 — dropdown + server-side action check + import skip-and-flag
+- [x] Channels matrix reflects per-channel status independently (per-cell upsert)
+- [x] **No real external API anywhere** — codebase scan: zero `fetch`/axios/marketplace/AI network calls
+- [x] Code commented; folder structure documented (README + this file)
+
+[~] = implemented and verified to build/route; final click-through needs a signed-in user.
+
+### Outstanding owner actions (to exercise live, all optional)
+1. Create a user in Supabase Auth and sign in at `/login`.
+2. (Optional) Run `supabase/seed_sample_data.sql` for demo data.
+3. (Optional) Create a public `product-images` Storage bucket for the image uploader.
+
+---
+
+## Phase 1 status: COMPLETE
+All milestones M0–M6 done (M2 was pre-done in Supabase). Phase 2 (loading the
+cleaned master sheet, real channel exports, agent AI) does not begin until the
+product database is confirmed clean.
