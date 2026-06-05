@@ -114,14 +114,20 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
                   <span className="font-mono text-[10px] text-muted">{u.snoonu_id}</span>
                 </div>
                 <ul className="space-y-0.5 text-xs">
-                  {u.changes.map((ch, i) => (
-                    <li key={i} className="flex flex-wrap gap-1">
-                      <span className="font-medium text-slate-600">{ch.field}:</span>
-                      <span className="text-red-600 line-through">{trunc(ch.old)}</span>
-                      <span className="text-slate-400">→</span>
-                      <span className="text-green-700">{trunc(ch.new)}</span>
-                    </li>
-                  ))}
+                  {u.changes.map((ch, i) => {
+                    const w = diffWindow(ch.old, ch.new);
+                    return (
+                      <li key={i} className="flex flex-wrap gap-1">
+                        <span className="font-medium text-slate-600">{ch.field}:</span>
+                        <span className="text-red-600 line-through">{w.old}</span>
+                        <span className="text-slate-400">→</span>
+                        <span className="text-green-700">{w.new}</span>
+                        {ch.field.startsWith("description") ? (
+                          <span className="text-[10px] text-slate-400">(len {ch.old.length}→{ch.new.length})</span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             ))}
@@ -184,6 +190,23 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
 }
 
 const trunc = (s: string) => (s.length > 60 ? s.slice(0, 60) + "…" : s);
+
+// Show the region around the FIRST real difference so genuine (but deep) text
+// changes aren't hidden behind an identical-looking truncated prefix.
+function firstDiffIndex(a: string, b: string) {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i;
+  return n;
+}
+function diffWindow(oldS: string, newS: string): { old: string; new: string } {
+  const i = firstDiffIndex(oldS, newS);
+  if (i <= 60 && oldS.length <= 80 && newS.length <= 80) return { old: oldS, new: newS };
+  const win = (sv: string) => {
+    const start = Math.max(0, i - 20);
+    return (start > 0 ? "…" : "") + sv.slice(start, i + 30) + (i + 30 < sv.length ? "…" : "");
+  };
+  return { old: win(oldS), new: win(newS) };
+}
 function Stat({ label, value, accent }: { label: string; value: number; accent?: string }) {
   const color = accent === "amber" ? "text-amber-700" : accent === "violet" ? "text-brand-dark" : "text-ink";
   return <div className="card"><p className="text-xs text-muted">{label}</p><p className={`text-xl font-semibold ${color}`}>{value}</p></div>;

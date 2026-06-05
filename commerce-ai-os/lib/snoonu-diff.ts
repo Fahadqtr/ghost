@@ -60,17 +60,30 @@ export function readColumns(fields: Field[]): string {
 
 export const s = (v: unknown) => String(v ?? "").trim();
 
-// Normalize TEXT fields so cosmetic differences (CRLF vs LF, NBSP, trailing
-// spaces, collapsed runs, unicode form) are NOT treated as changes. Used for
-// both comparison AND the value written on Apply (so we never persist a
-// formatting-only "change").
+// Normalize TEXT fields so COSMETIC differences are not treated as changes:
+// escaped newlines, CRLF, unicode form, emoji variation selectors / ZWJ,
+// zero-width chars, NBSP, HTML entities, collapsed space runs, blank lines.
+// Used for both comparison AND the value written on Apply. NOTE: this only
+// removes formatting noise \u2014 genuinely different text (e.g. an extra emoji or
+// extra sentence) still differs, as it should.
+function safeCp(n: number): string { try { return Number.isFinite(n) ? String.fromCodePoint(n) : ""; } catch { return ""; } }
 export function normalizeText(v: unknown): string {
   return String(v ?? "")
-    .replace(/\r\n?/g, "\n")     // CRLF / CR -> LF
-    .normalize("NFC")            // unicode canonical form
-    .replace(/[\u00A0\u200B\uFEFF]/g, " ") // NBSP / zero-width / BOM -> space
-    .replace(/[ \t]+/g, " ")     // collapse runs of spaces/tabs
-    .replace(/ *\n */g, "\n")    // drop spaces around line breaks
+    .replace(/\\r\\n|\\n|\\r/g, "\n")          // literal "\n"/"\r\n" -> real LF
+    .replace(/\\t/g, " ")                       // literal "\t" -> space
+    .replace(/\r\n?/g, "\n")                    // CRLF / CR -> LF
+    .normalize("NFC")                           // unicode canonical form
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"').replace(/&#0?39;|&apos;/gi, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => safeCp(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => safeCp(parseInt(d, 10)))
+    .replace(/[\uFE0E\uFE0F\u200D]/g, "")       // emoji variation selectors + ZWJ
+    .replace(/[\u200B\u200C\uFEFF]/g, "")      // zero-width chars
+    .replace(/\u00A0/g, " ")                    // NBSP -> space
+    .replace(/[ \t]+/g, " ")                    // collapse runs of spaces/tabs
+    .replace(/ *\n */g, "\n")                   // drop spaces around line breaks
+    .replace(/\n{2,}/g, "\n")                   // collapse blank lines
     .trim();
 }
 const numEq = (a: unknown, b: unknown) => {
