@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { NAV_ITEMS } from "@/lib/constants";
+import { signOut } from "@/app/(app)/actions";
 
 export default function Topbar({ userEmail }: { userEmail?: string | null }) {
   const pathname = usePathname();
@@ -20,6 +21,13 @@ export default function Topbar({ userEmail }: { userEmail?: string | null }) {
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-light text-sm font-semibold text-brand-dark">
           {(userEmail?.[0] ?? "U").toUpperCase()}
         </div>
+        {userEmail ? (
+          <form action={signOut}>
+            <button type="submit" className="btn-ghost px-3 py-1.5 text-xs">
+              Sign out
+            </button>
+          </form>
+        ) : null}
       </div>
     </header>
   );

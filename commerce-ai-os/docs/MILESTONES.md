@@ -10,7 +10,7 @@ no agent AI logic, no paid services.
 | M0 | Setup — toolchain, subfolder, env template | ✅ Done |
 | M1 | Scaffold & clean architecture (Next.js + Tailwind) | ✅ Done |
 | M2 | Schema (15 tables, seeds) | ⏭️ **Skipped — already created & seeded in Supabase** |
-| M3 | Auth + CEO Dashboard | ⬜ Pending |
+| M3 | Auth + CEO Dashboard | ✅ Done |
 | M4 | Core pages (Product Hub, Inventory, Channels, Agents) | ⬜ Pending |
 | M5 | Import / Export placeholders | ⬜ Pending |
 | M6 | Seed sample data + final QA + README | ⬜ Pending |
@@ -70,3 +70,37 @@ commerce-ai-os/
 ├─ agents/                    # Phase-2 stubs (no logic)
 └─ docs/                      # MILESTONES.md, README (M6)
 ```
+
+---
+
+## M3 — Auth + CEO Dashboard (Done)
+
+Sign-in only (no public sign-up, per owner decision). Accounts are created in the
+Supabase dashboard.
+
+- [x] Supabase email/password login page at `/login` (route group `(auth)`, no shell)
+- [x] Middleware (`middleware.ts` + `lib/supabase/middleware.ts`): refreshes session and
+      redirects unauthenticated users to `/login`; logged-in users away from `/login`
+- [x] Belt-and-suspenders guard in `app/(app)/layout.tsx` (also feeds user email to Topbar)
+- [x] Working **Sign out** in the Topbar (server action `app/(app)/actions.ts`)
+- [x] CEO Dashboard with 6 KPI cards: Sales Today, Orders Today, Low Stock,
+      Missing Images, Products, Alerts + Top Products and Alerts detail panels
+- [x] Defensive data layer (`lib/dashboard.ts`): every query degrades to a clean
+      "No data yet" empty-state on missing table/column/permission
+
+### Verification (live against Supabase)
+- [x] REST endpoint reachable (HTTP 200); Auth endpoint reachable (400 on bad creds)
+- [x] RLS confirmed: anon reads return empty — data is only visible to an
+      authenticated session (the in-app server client runs as the logged-in user)
+- [x] `/dashboard` and `/products` redirect to `/login` when logged out (307)
+- [x] `/login` renders the sign-in form
+- [x] `pnpm build` passes
+
+### Owner action to fully exercise login
+Create a user in **Supabase → Authentication → Users → Add user** (email + password),
+then sign in at `/login`. The dashboard KPIs will then read live data through RLS.
+
+> Note: a benign build warning ("A Node.js API is used (process.version) … not
+> supported in the Edge Runtime") comes from `@supabase/supabase-js` inside the
+> Edge middleware. It does not affect functionality and is expected with
+> `@supabase/ssr`.
