@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { NAV_ITEMS, APP_NAME, APP_OWNER } from "@/lib/constants";
 
-export default function Sidebar() {
+export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-screen w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
+    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
       <div className="flex items-center gap-2 px-5 py-5">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-lg font-bold text-white">
           M
@@ -27,7 +27,8 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              onClick={onNavigate}
+              className={`flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-colors ${
                 active
                   ? "bg-brand-light text-brand-dark"
                   : "text-slate-600 hover:bg-slate-50"

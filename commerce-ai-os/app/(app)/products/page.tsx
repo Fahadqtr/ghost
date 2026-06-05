@@ -30,9 +30,9 @@ export default async function ProductsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">Manage your product catalog (mirror of the 28-column master sheet).</p>
-        <Link href="/products/new" className="btn-primary">+ New product</Link>
+        <Link href="/products/new" className="btn-primary w-full sm:w-auto">+ New product</Link>
       </div>
 
       {error ? (
