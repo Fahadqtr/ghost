@@ -131,15 +131,17 @@ JOIN (VALUES
 -- ---------------------------------------------------------------------------
 -- CHANNEL LISTINGS (optional, for a populated Channels matrix).
 -- Links every TEST product to any channel whose name matches the pattern.
+-- channel_stock is ALWAYS NULL: all channels share ONE inventory pool, so the
+-- inventory table is the only source of stock truth (no per-channel stock).
 -- Safe to comment out if you'd rather start the matrix empty.
 -- ---------------------------------------------------------------------------
 INSERT INTO channel_products (channel_id, product_id, channel_status, channel_price, channel_stock)
-SELECT c.id, p.id, 'Active', p.price, p.stock_quantity
+SELECT c.id, p.id, 'Active', p.price, NULL
 FROM products p JOIN channels c ON c.name ILIKE '%shopify%'
 WHERE p.sku LIKE 'TEST-%';
 
 INSERT INTO channel_products (channel_id, product_id, channel_status, channel_price, channel_stock)
-SELECT c.id, p.id, 'Draft', p.price, p.stock_quantity
+SELECT c.id, p.id, 'Draft', p.price, NULL
 FROM products p JOIN channels c ON c.name ILIKE '%snoonu%'
 WHERE p.sku LIKE 'TEST-%';
 

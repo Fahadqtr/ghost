@@ -85,14 +85,18 @@ export interface Channel {
   supports_variants: boolean | null;
 }
 
-/** `channel_products` — per-channel publishing rules. */
+/** `channel_products` — per-channel publishing rules (status & optional price).
+ *  SHARED INVENTORY: `channel_stock` is intentionally ALWAYS null. Every channel
+ *  (both Snoonu storefronts, Shopify, Talabat, Rafeeq) draws from the single
+ *  `inventory` pool — there is no per-channel stock. Never write channel_stock. */
 export interface ChannelProduct {
   id: string;
   channel_id: string;
   product_id: string;
   channel_status: ChannelStatus | string | null;
   channel_price: number | null;
-  channel_stock: number | null;
+  /** Always null by design — see note above. Stock lives only in `inventory`. */
+  channel_stock: null;
 }
 
 /** `agent_logs` — Phase 1 command panel writes rows here (no AI).
