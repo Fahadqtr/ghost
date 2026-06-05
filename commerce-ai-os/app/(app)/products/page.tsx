@@ -28,7 +28,7 @@ export default async function ProductsPage() {
         supabase
           .from("products")
           .select(
-            "id, sku, snoonu_id, barcode, name_en, name_ar, main_category, price, discount_price, product_variants(count), inventory(stock_quantity)"
+            "id, sku, snoonu_id, barcode, name_en, name_ar, main_category, price, discount_price, image_url, product_variants(count), inventory(stock_quantity)"
           )
           .order("sku", { ascending: true })
           .range(from, to)
@@ -53,6 +53,7 @@ export default async function ProductsPage() {
 
     products = rows.map((p: any) => ({
       id: p.id,
+      image_url: p.image_url,
       sku: p.sku,
       snoonu_id: p.snoonu_id,
       barcode: p.barcode,

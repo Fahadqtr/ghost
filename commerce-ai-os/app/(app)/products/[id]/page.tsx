@@ -25,7 +25,7 @@ const STATUS_CLS: Record<string, string> = {
 export default async function ProductDetailPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
 
-  const [{ data: product }, { data: variants }, { data: brands }, { data: inv }, { data: channels }, { data: links }] =
+  const [{ data: product }, { data: variants }, { data: brands }, { data: inv }, { data: channels }, { data: links }, { data: images }] =
     await Promise.all([
       supabase.from("products").select("*").eq("id", params.id).single(),
       supabase.from("product_variants").select("*").eq("parent_product_id", params.id),
@@ -33,9 +33,16 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
       supabase.from("inventory").select("stock_quantity, low_stock_threshold, sold_quantity, updated_at").eq("product_id", params.id).maybeSingle(),
       supabase.from("channels").select("id, name").order("name"),
       supabase.from("channel_products").select("channel_id, channel_status, channel_price").eq("product_id", params.id),
+      supabase.from("product_images").select("url, is_primary, sort_order").eq("product_id", params.id).order("is_primary", { ascending: false }).order("sort_order", { ascending: true }),
     ]);
 
   if (!product) notFound();
+
+  // Gallery: primary/sort-ordered product_images, falling back to products.image_url.
+  const galleryUrls: string[] = [];
+  for (const im of images ?? []) if (im.url && !galleryUrls.includes(im.url)) galleryUrls.push(im.url);
+  if (product.image_url && !galleryUrls.includes(product.image_url)) galleryUrls.unshift(product.image_url);
+  const heroUrl = galleryUrls[0] ?? null;
 
   const brandName = (brands ?? []).find((b: any) => b.id === product.brand_id)?.name ?? null;
   const statusByChannel = (channels ?? []).map((c: any) => ({
@@ -52,6 +59,34 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
           <p className="text-sm text-muted" dir="rtl">{product.name_ar ?? ""}</p>
         </div>
         <Link href={`/products/${product.id}/edit`} className="btn-primary w-full sm:w-auto">Edit</Link>
+      </div>
+
+      {/* Image */}
+      <div className="card">
+        {heroUrl ? (
+          <div className="space-y-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={heroUrl}
+              alt={product.name_en ?? product.sku ?? "product"}
+              loading="lazy"
+              className="mx-auto max-h-80 w-full rounded-lg object-contain"
+            />
+            {galleryUrls.length > 1 ? (
+              <div className="flex flex-wrap gap-2">
+                {galleryUrls.map((u, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={i} src={u} alt={`image ${i + 1}`} loading="lazy"
+                    className="h-16 w-16 rounded object-cover ring-1 ring-slate-200" />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex h-40 items-center justify-center rounded-lg bg-slate-50 text-slate-300">
+            <span className="text-sm">📦 No image</span>
+          </div>
+        )}
       </div>
 
       {/* Channel status */}

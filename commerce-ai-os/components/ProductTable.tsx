@@ -9,6 +9,7 @@ const CHANNELS = ["Shopify", "Snoonu", "Talabat", "Rafeeq"] as const;
 
 export interface ProductRow {
   id: string;
+  image_url: string | null;
   sku: string | null;
   snoonu_id: string | null;
   barcode: string | null;
@@ -20,6 +21,25 @@ export interface ProductRow {
   stock: number | null;
   variant_count: number;
   channels: Record<string, string>;
+}
+
+function Thumb({ url, alt }: { url: string | null; alt: string }) {
+  if (!url) {
+    return (
+      <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-100 text-slate-300" title="No image">
+        📦
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={alt}
+      loading="lazy"
+      className="h-10 w-10 rounded object-cover ring-1 ring-slate-200"
+    />
+  );
 }
 
 function StatusBadge({ status }: { status?: string }) {
@@ -81,6 +101,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         <table className="w-full min-w-[1200px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
+              <th className="px-3 py-3 font-medium"></th>
               <th className="px-3 py-3 font-medium">Name EN</th>
               <th className="px-3 py-3 font-medium">Name AR</th>
               <th className="px-3 py-3 font-medium">SKU</th>
@@ -96,7 +117,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={14} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
+              <tr><td colSpan={15} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
             ) : (
               visible.map((p) => (
                 <tr
@@ -104,6 +125,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                   onClick={() => router.push(`/products/${p.id}`)}
                   className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                 >
+                  <td className="px-3 py-2"><Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} /></td>
                   <td className="px-3 py-3 font-medium text-ink">{p.name_en ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600" dir="rtl">{p.name_ar ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.sku ?? "—"}</td>
