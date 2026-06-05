@@ -1,8 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
-import { computeSnoonuDiff, type SnoonuDiff, type SnoonuExportRow } from "@/app/(app)/import-export/snoonu-actions";
+import {
+  computeSnoonuDiff, applySnoonuUpdates,
+  type SnoonuDiff, type SnoonuExportRow, type ApplyResult,
+} from "@/app/(app)/import-export/snoonu-actions";
 
 const SHEET = "NonFoodProducts";
 
@@ -23,6 +27,7 @@ export default function SnoonuSync() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [diff, setDiff] = useState<SnoonuDiff | null>(null);
+  const [rows, setRows] = useState<SnoonuExportRow[]>([]);
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     setError(null); setDiff(null);
@@ -52,6 +57,7 @@ export default function SnoonuSync() {
         return out;
       }).filter((r) => r.id);
 
+      setRows(rows);
       const result = await computeSnoonuDiff(rows);
       if (!result.ok) setError(result.error ?? "Diff failed.");
       setDiff(result);
@@ -77,13 +83,27 @@ export default function SnoonuSync() {
         {error ? <pre className="whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</pre> : null}
       </div>
 
-      {diff?.ok ? <DiffReport diff={diff} /> : null}
+      {diff?.ok ? <DiffReport diff={diff} rows={rows} /> : null}
     </div>
   );
 }
 
-function DiffReport({ diff }: { diff: SnoonuDiff }) {
+function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] }) {
   const c = diff.counts;
+  const router = useRouter();
+  const [applying, startApply] = useTransition();
+  const [result, setResult] = useState<ApplyResult | null>(null);
+
+  function apply() {
+    if (!confirm(`Apply ${c.updated} product update(s)? This writes to the database. NEW and MISSING are left untouched.`)) return;
+    setResult(null);
+    startApply(async () => {
+      const res = await applySnoonuUpdates(rows);
+      setResult(res);
+      if (res.ok) router.refresh();
+    });
+  }
+
   return (
     <div className="space-y-4">
       {/* summary */}
@@ -153,15 +173,31 @@ function DiffReport({ diff }: { diff: SnoonuDiff }) {
         )}
       </Section>
 
-      {/* Apply — wired in the next milestone */}
-      <div className="card flex flex-col gap-2 border-dashed sm:flex-row sm:items-center sm:justify-between">
+      {/* Apply */}
+      <div className="card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">
-          Apply will write the {c.updated} updates (matched rows only). NEW and MISSING are never auto-created/deleted.
+          Apply writes the {c.updated} update(s) — matched rows only. NEW and MISSING are never auto-created/deleted.
         </p>
-        <button disabled title="Wired after review" className="btn-primary cursor-not-allowed opacity-50">
-          Apply updates (pending review)
+        <button
+          onClick={apply}
+          disabled={applying || c.updated === 0}
+          className="btn-primary disabled:opacity-50"
+        >
+          {applying ? "Applying…" : `Apply ${c.updated} update(s)`}
         </button>
       </div>
+
+      {result ? (
+        result.ok ? (
+          <div className="card border-green-200 bg-green-50 text-sm text-green-800">
+            ✓ Applied. Products updated: <strong>{result.productsUpdated}</strong> · field writes: {result.fieldWrites}
+            {result.failed ? ` · failed: ${result.failed}` : ""} · columns: {result.columnsWritten.join(", ") || "—"}.
+            <span className="block text-xs text-green-700">Matched {result.matched}, unchanged {result.unchanged}. Re-upload the export to see a clean diff.</span>
+          </div>
+        ) : (
+          <div className="card border-red-200 bg-red-50 text-sm text-red-700">Apply failed: {result.error}</div>
+        )
+      ) : null}
     </div>
   );
 }
