@@ -34,3 +34,6 @@ yarn-error.log*
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# real product catalog — do not commit to public repo
+Malikas_Universe_CLEAN_28col.xlsx
