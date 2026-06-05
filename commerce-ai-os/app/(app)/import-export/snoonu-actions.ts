@@ -38,6 +38,7 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
   const empty: SnoonuDiff = {
     ok: false, existingOptionalCols: [], missingOptionalCols: [],
     counts: { exportRows: 0, matched: 0, updated: 0, newCount: 0, missing: 0, unchanged: 0 },
+    fieldCounts: {}, changedColsPerProduct: [],
     updated: [], newProducts: [], missing: [],
   };
   if (!rows?.length) return { ...empty, error: "No rows parsed from the export." };
@@ -48,6 +49,16 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
     const products = await readAllProducts(supabase, readColumns(fields));
 
     const d = diffSnoonu(products, rows, fields);
+
+    // Per-field counts + per-product changed columns (computed over the FULL
+    // updated set, before the display cap) so the UI can scope by field exactly.
+    const fieldCounts: Record<string, number> = {};
+    const changedColsPerProduct = d.updated.map((u) => {
+      const cols = u.changes.map((c) => c.field);
+      for (const col of cols) fieldCounts[col] = (fieldCounts[col] || 0) + 1;
+      return cols;
+    });
+
     return {
       ok: true,
       existingOptionalCols,
@@ -60,6 +71,8 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
         missing: d.missing.length,
         unchanged: d.unchanged,
       },
+      fieldCounts,
+      changedColsPerProduct,
       // Cap the lists sent back to the client (counts above stay exact). With
       // the new columns, nearly every row can be "UPDATED" — returning all of
       // them (with full descriptions) would be a multi-MB RSC payload.
@@ -84,10 +97,16 @@ export interface ApplyResult {
 }
 
 // Writes matched rows only (by snoonu_id), via the service-role key. NEW and
-// MISSING are never created/deleted. Re-diffs server-side.
-export async function applySnoonuUpdates(rows: SnoonuExportRow[]): Promise<ApplyResult> {
+// MISSING are never created/deleted. Re-diffs server-side. Only the columns in
+// `selectedCols` are written (and only where the normalized value differs).
+export async function applySnoonuUpdates(
+  rows: SnoonuExportRow[],
+  selectedCols: string[]
+): Promise<ApplyResult> {
   const base: ApplyResult = { ok: false, productsUpdated: 0, fieldWrites: 0, matched: 0, unchanged: 0, failed: 0, columnsWritten: [] };
   if (!rows?.length) return { ...base, error: "No rows to apply." };
+  const selected = new Set((selectedCols ?? []).filter(Boolean));
+  if (selected.size === 0) return { ...base, error: "No fields selected to sync." };
 
   const { data: { user } } = await createClient().auth.getUser();
   if (!user) return { ...base, error: "Not signed in." };
@@ -97,7 +116,10 @@ export async function applySnoonuUpdates(rows: SnoonuExportRow[]): Promise<Apply
   catch (e) { return { ...base, error: e instanceof Error ? e.message : "Service role unavailable." }; }
 
   try {
-    const { fields } = await detectFields(admin);
+    const { fields: allFields } = await detectFields(admin);
+    // Restrict to the user-selected columns.
+    const fields = allFields.filter((f) => selected.has(f.col));
+    if (fields.length === 0) return { ...base, error: "Selected fields are not syncable columns." };
     const products = await readAllProducts(admin, readColumns(fields));
     const bySnoonu = new Map<string, any>();
     for (const p of products) if (p.snoonu_id) bySnoonu.set(String(p.snoonu_id), p);

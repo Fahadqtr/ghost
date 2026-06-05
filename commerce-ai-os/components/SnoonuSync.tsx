@@ -10,6 +10,15 @@ import {
   SNOONU_SHEET, mapExportRows, type SnoonuDiff, type SnoonuExportRow,
 } from "@/lib/snoonu-diff";
 
+// Syncable columns shown as checkboxes. Descriptions are UNCHECKED by default
+// (our DB descriptions are cleaner than Snoonu's keyword-appended ones).
+const SYNC_FIELDS = [
+  { col: "approval" }, { col: "is_promoted" }, { col: "is_featured" }, { col: "has_buy1get1" },
+  { col: "price" }, { col: "discount_price" }, { col: "name_en" }, { col: "name_ar" },
+  { col: "description_en" }, { col: "description_ar" },
+];
+const DEFAULT_SELECTED = SYNC_FIELDS.map((f) => f.col).filter((c) => !c.startsWith("description"));
+
 export default function SnoonuSync() {
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -74,12 +83,30 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
   const router = useRouter();
   const [applying, startApply] = useTransition();
   const [result, setResult] = useState<ApplyResult | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set(DEFAULT_SELECTED));
+
+  const toggle = (col: string) =>
+    setSelected((s) => { const n = new Set(s); n.has(col) ? n.delete(col) : n.add(col); return n; });
+
+  // Exact # of rows that have a change in at least one SELECTED field.
+  const selectedRowCount = diff.changedColsPerProduct.filter(
+    (cols) => cols.some((col) => selected.has(col))
+  ).length;
 
   function apply() {
-    if (!confirm(`Apply ${c.updated} product update(s)? This writes to the database. NEW and MISSING are left untouched.`)) return;
+    const cols = [...selected];
+    if (cols.length === 0) { alert("Select at least one field to sync."); return; }
+    const desc = selected.has("description_en") || selected.has("description_ar");
+    if (!confirm(
+      `Apply Snoonu sync?\n\n` +
+      `Rows affected: ${selectedRowCount}\n` +
+      `Fields: ${cols.join(", ")}\n` +
+      `Descriptions: ${desc ? "INCLUDED (will overwrite DB descriptions)" : "excluded"}\n\n` +
+      `Writes matched rows only, only where the value genuinely differs. NEW/MISSING untouched.`
+    )) return;
     setResult(null);
     startApply(async () => {
-      const res = await applySnoonuUpdates(rows);
+      const res = await applySnoonuUpdates(rows, cols);
       setResult(res);
       if (res.ok) router.refresh();
     });
@@ -160,18 +187,49 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
         )}
       </Section>
 
-      {/* Apply */}
-      <div className="card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted">
-          Apply writes the {c.updated} update(s) — matched rows only. NEW and MISSING are never auto-created/deleted.
-        </p>
-        <button
-          onClick={apply}
-          disabled={applying || c.updated === 0}
-          className="btn-primary disabled:opacity-50"
-        >
-          {applying ? "Applying…" : `Apply ${c.updated} update(s)`}
-        </button>
+      {/* Apply — choose which fields to sync */}
+      <div className="card space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">Apply — choose fields to sync</h3>
+          <p className="text-xs text-muted">
+            Writes matched rows only, only where the normalized value genuinely differs. NEW/MISSING are never created or deleted.
+            Numbers show how many rows would change per field.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+          {SYNC_FIELDS.map((f) => {
+            const count = diff.fieldCounts[f.col] ?? 0;
+            return (
+              <label key={f.col} className={`flex items-center gap-2 text-sm ${count === 0 ? "opacity-40" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(f.col)}
+                  onChange={() => toggle(f.col)}
+                  disabled={count === 0}
+                />
+                <span className="font-mono text-xs">{f.col}</span>
+                <span className="text-xs text-muted">({count})</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-slate-600">
+            <strong>{selectedRowCount}</strong> row(s) will be updated across {selected.size} selected field(s).
+            {(selected.has("description_en") || selected.has("description_ar")) ? (
+              <span className="text-amber-700"> Descriptions are included — DB descriptions will be overwritten.</span>
+            ) : null}
+          </p>
+          <button
+            onClick={apply}
+            disabled={applying || selectedRowCount === 0 || selected.size === 0}
+            className="btn-primary disabled:opacity-50"
+          >
+            {applying ? "Applying…" : `Apply to ${selectedRowCount} row(s)`}
+          </button>
+        </div>
       </div>
 
       {result ? (
