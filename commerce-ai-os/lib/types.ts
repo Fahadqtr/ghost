@@ -95,11 +95,12 @@ export interface ChannelProduct {
   channel_stock: number | null;
 }
 
-/** `agent_logs` — Phase 1 command panel writes rows here (no AI). */
+/** `agent_logs` — Phase 1 command panel writes rows here (no AI).
+ *  Columns verified against the live schema: id, agent_name, command, result, created_at. */
 export interface AgentLog {
   id: string;
-  agent: string | null;
-  action: string | null;
-  payload: Record<string, unknown> | null;
+  agent_name: string | null;
+  command: string | null;
+  result: string | null;
   created_at: string;
 }

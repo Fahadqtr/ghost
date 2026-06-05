@@ -11,7 +11,7 @@ no agent AI logic, no paid services.
 | M1 | Scaffold & clean architecture (Next.js + Tailwind) | ✅ Done |
 | M2 | Schema (15 tables, seeds) | ⏭️ **Skipped — already created & seeded in Supabase** |
 | M3 | Auth + CEO Dashboard | ✅ Done |
-| M4 | Core pages (Product Hub, Inventory, Channels, Agents) | ⬜ Pending |
+| M4 | Core pages (Product Hub, Inventory, Channels, Agents) | ✅ Done |
 | M5 | Import / Export placeholders | ⬜ Pending |
 | M6 | Seed sample data + final QA + README | ⬜ Pending |
 
@@ -104,3 +104,41 @@ then sign in at `/login`. The dashboard KPIs will then read live data through RL
 > supported in the Edge Runtime") comes from `@supabase/supabase-js` inside the
 > Edge middleware. It does not affect functionality and is expected with
 > `@supabase/ssr`.
+
+---
+
+## M4 — Core pages (Done)
+
+Schema introspected live before building (PostgREST column probing). 8/9 tables
+matched the plan exactly; `agent_logs` real columns are `id, agent_name, command,
+result, created_at` (types updated to match).
+
+**Product Hub** (`/products`)
+- [x] Searchable/filterable product table (by name/SKU + category), variant count column
+- [x] Add (`/products/new`) and Edit (`/products/[id]`) forms with all 28 master-sheet fields
+- [x] Category dropdown locked to the 11 categories (also enforced server-side in the action)
+- [x] Parent–child variant sub-form (add/remove rows)
+- [x] Create seeds an `inventory` row → product shows up on Inventory immediately
+- [x] Delete cleans up variants, channel_products, inventory
+
+**Inventory** (`/inventory`)
+- [x] Stock table with search, **low-stock filter**, sold-quantity column, Low/OK badge
+- [x] Inline edit of stock_quantity + low_stock_threshold (server action `updateInventory`)
+
+**Channels** (`/channels`)
+- [x] Product × channel matrix; each cell an independent Active/Draft/Not Listed toggle
+- [x] Talabat column flagged "(no variants)" from `channels.supports_variants`
+- [x] Toggle upserts `channel_products` (server action `setChannelStatus`)
+
+**Agents** (`/agents`)
+- [x] 13 agent cards (Product, Image, Inventory, Channel Sync, Variant Splitter,
+      Snoonu, Talabat, Rafeeq, Shopify, Marketing, Customer Service, Finance, CEO)
+- [x] Command panel writes a row to `agent_logs` — **no AI, no external API**
+- [x] Recent commands table
+
+### Verification
+- [x] `pnpm build` passes; all routes dynamic
+- [x] All core routes protected (307 → /login when logged out)
+- [ ] **Live CRUD** (create product w/ variant → appears in Inventory & Channels):
+      requires a signed-in user. Build is complete and written against the verified
+      schema; owner needs to log in (or share a confirmed test user) to exercise it.
