@@ -4,23 +4,11 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import {
-  computeSnoonuDiff, applySnoonuUpdates,
-  type SnoonuDiff, type SnoonuExportRow, type ApplyResult,
+  computeSnoonuDiff, applySnoonuUpdates, type ApplyResult,
 } from "@/app/(app)/import-export/snoonu-actions";
-
-const SHEET = "NonFoodProducts";
-
-// normalized export header -> our field. SKU/Barcode are deliberately ignored
-// (unreliable in Snoonu). Match key is `id` (= products.snoonu_id).
-const HEADER_MAP: Record<string, keyof SnoonuExportRow> = {
-  id: "id",
-  nameen: "name_en", namear: "name_ar",
-  descriptionen: "description_en", descriptionar: "description_ar",
-  price: "price", discount: "discount",
-  approval: "approval",
-  isfeatured: "is_featured", ispromoted: "is_promoted", hasbuy1get1: "has_buy1get1",
-};
-const norm = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
+import {
+  SNOONU_SHEET, mapExportRows, type SnoonuDiff, type SnoonuExportRow,
+} from "@/lib/snoonu-diff";
 
 export default function SnoonuSync() {
   const [fileName, setFileName] = useState("");
@@ -37,25 +25,18 @@ export default function SnoonuSync() {
     setBusy(true);
     try {
       const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-      if (!wb.SheetNames.includes(SHEET)) {
-        setError(`Sheet "${SHEET}" not found. Sheets in file: ${wb.SheetNames.join(", ")}`);
+      if (!wb.SheetNames.includes(SNOONU_SHEET)) {
+        setError(`Sheet "${SNOONU_SHEET}" not found. Sheets in file: ${wb.SheetNames.join(", ")}`);
         setBusy(false); return;
       }
-      const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[SHEET], { defval: "" });
-      if (!raw.length) { setError(`Sheet "${SHEET}" has no rows.`); setBusy(false); return; }
+      const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[SNOONU_SHEET], { defval: "" });
+      if (!raw.length) { setError(`Sheet "${SNOONU_SHEET}" has no rows.`); setBusy(false); return; }
 
-      const headers = Object.keys(raw[0]);
-      const map: Record<string, keyof SnoonuExportRow> = {};
-      for (const h of headers) { const f = HEADER_MAP[norm(h)]; if (f) map[h] = f; }
-      if (!Object.values(map).includes("id")) {
+      const { rows, hasId, headers } = mapExportRows(raw);
+      if (!hasId) {
         setError(`No "id" column found (needed to match by snoonu_id). Headers: ${headers.join(", ")}`);
         setBusy(false); return;
       }
-      const rows: SnoonuExportRow[] = raw.map((r) => {
-        const out: any = {};
-        for (const [h, f] of Object.entries(map)) out[f] = String(r[h] ?? "").trim();
-        return out;
-      }).filter((r) => r.id);
 
       setRows(rows);
       const result = await computeSnoonuDiff(rows);
@@ -74,7 +55,7 @@ export default function SnoonuSync() {
         <div>
           <h3 className="text-sm font-semibold text-ink">Upload Snoonu export</h3>
           <p className="text-xs text-muted">
-            Parses sheet <code>{SHEET}</code> and matches by <code>id</code> → <code>products.snoonu_id</code>.
+            Parses sheet <code>{SNOONU_SHEET}</code> and matches by <code>id</code> → <code>products.snoonu_id</code>.
             SKU/barcode are ignored. This step is read-only — it only previews a diff.
           </p>
         </div>
@@ -144,7 +125,7 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
                 </ul>
               </div>
             ))}
-            {diff.updated.length > 200 ? <p className="text-xs text-muted">…and {diff.updated.length - 200} more.</p> : null}
+            {c.updated > diff.updated.length ? <p className="text-xs text-muted">…and {c.updated - diff.updated.length} more.</p> : null}
           </div>
         )}
       </Section>
@@ -156,7 +137,7 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
             {diff.newProducts.slice(0, 200).map((n, i) => (
               <li key={i} className="flex gap-2"><span className="font-mono text-[10px] text-muted">{n.id}</span><span className="text-slate-700">{n.name_en || "—"}</span></li>
             ))}
-            {diff.newProducts.length > 200 ? <li className="text-muted">…and {diff.newProducts.length - 200} more.</li> : null}
+            {c.newCount > diff.newProducts.length ? <li className="text-muted">…and {c.newCount - diff.newProducts.length} more.</li> : null}
           </ul>
         )}
       </Section>
@@ -168,7 +149,7 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
             {diff.missing.slice(0, 200).map((m, i) => (
               <li key={i} className="flex gap-2"><span className="text-slate-600">{m.sku ?? "—"}</span><span className="text-slate-700">{m.name_en || "—"}</span></li>
             ))}
-            {diff.missing.length > 200 ? <li className="text-muted">…and {diff.missing.length - 200} more.</li> : null}
+            {c.missing > diff.missing.length ? <li className="text-muted">…and {c.missing - diff.missing.length} more.</li> : null}
           </ul>
         )}
       </Section>
