@@ -1,27 +1,40 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { CATEGORIES } from "@/lib/constants";
 
 const PAGE_SIZE = 50;
+const CHANNELS = ["Shopify", "Snoonu", "Talabat", "Rafeeq"] as const;
 
 export interface ProductRow {
   id: string;
   sku: string | null;
+  barcode: string | null;
   name_en: string | null;
-  brand_name: string | null;
+  name_ar: string | null;
   main_category: string | null;
   price: number | null;
-  stock_quantity: number | null;
-  stock_status: string | null;
+  discount_price: number | null;
+  stock: number | null;
   variant_count: number;
+  channels: Record<string, string>;
+}
+
+function StatusBadge({ status }: { status?: string }) {
+  const s = status ?? "—";
+  const cls =
+    s === "Active" ? "bg-green-100 text-green-700"
+    : s === "Draft" ? "bg-amber-100 text-amber-700"
+    : s === "Not Listed" ? "bg-slate-100 text-slate-500"
+    : "bg-transparent text-slate-300";
+  return <span className={`badge ${cls}`}>{s}</span>;
 }
 
 export default function ProductTable({ products }: { products: ProductRow[] }) {
+  const router = useRouter();
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
-
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
@@ -30,13 +43,14 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
       const matchesQ =
         !needle ||
         (p.name_en ?? "").toLowerCase().includes(needle) ||
-        (p.sku ?? "").toLowerCase().includes(needle);
+        (p.name_ar ?? "").toLowerCase().includes(needle) ||
+        (p.sku ?? "").toLowerCase().includes(needle) ||
+        (p.barcode ?? "").toLowerCase().includes(needle);
       const matchesCat = !cat || p.main_category === cat;
       return matchesQ && matchesCat;
     });
   }, [products, q, cat]);
 
-  // Reset to first page whenever the filter result changes.
   useEffect(() => { setPage(1); }, [q, cat]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -49,7 +63,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <input
           className="input sm:max-w-xs"
-          placeholder="Search by name or SKU…"
+          placeholder="Search name (EN/AR), SKU, barcode…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -58,42 +72,48 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
         </select>
         <span className="text-sm text-muted sm:ml-auto">
-          {filtered.length === products.length
-            ? `${products.length} products`
-            : `${filtered.length} of ${products.length}`}
+          {filtered.length === products.length ? `${products.length} products` : `${filtered.length} of ${products.length}`}
         </span>
       </div>
 
       <div className="card overflow-x-auto p-0">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[1100px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">SKU</th>
-              <th className="px-4 py-3 font-medium">Brand</th>
-              <th className="px-4 py-3 font-medium">Category</th>
-              <th className="px-4 py-3 font-medium">Price</th>
-              <th className="px-4 py-3 font-medium">Stock</th>
-              <th className="px-4 py-3 font-medium">Variants</th>
-              <th className="px-4 py-3 font-medium"></th>
+              <th className="px-3 py-3 font-medium">Name EN</th>
+              <th className="px-3 py-3 font-medium">Name AR</th>
+              <th className="px-3 py-3 font-medium">SKU</th>
+              <th className="px-3 py-3 font-medium">Barcode</th>
+              <th className="px-3 py-3 font-medium">Category</th>
+              <th className="px-3 py-3 font-medium">Price</th>
+              <th className="px-3 py-3 font-medium">Disc.</th>
+              <th className="px-3 py-3 font-medium">Stock</th>
+              <th className="px-3 py-3 font-medium">Var.</th>
+              {CHANNELS.map((c) => (<th key={c} className="px-3 py-3 font-medium">{c}</th>))}
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
+              <tr><td colSpan={13} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
             ) : (
               visible.map((p) => (
-                <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-ink">{p.name_en ?? "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{p.sku ?? "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{p.brand_name ?? "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{p.main_category ?? "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{p.price ?? "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{p.stock_quantity ?? "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{p.variant_count > 0 ? p.variant_count : "—"}</td>
-                  <td className="px-4 py-3 text-right">
-                    <Link href={`/products/${p.id}`} className="text-brand hover:underline">Edit</Link>
-                  </td>
+                <tr
+                  key={p.id}
+                  onClick={() => router.push(`/products/${p.id}`)}
+                  className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                >
+                  <td className="px-3 py-3 font-medium text-ink">{p.name_en ?? "—"}</td>
+                  <td className="px-3 py-3 text-slate-600" dir="rtl">{p.name_ar ?? "—"}</td>
+                  <td className="px-3 py-3 text-slate-600">{p.sku ?? "—"}</td>
+                  <td className="px-3 py-3 text-slate-600">{p.barcode ?? "—"}</td>
+                  <td className="px-3 py-3 text-slate-600">{p.main_category ?? "—"}</td>
+                  <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
+                  <td className="px-3 py-3 text-slate-600">{p.discount_price ?? "—"}</td>
+                  <td className="px-3 py-3 text-slate-600">{p.stock ?? "—"}</td>
+                  <td className="px-3 py-3 text-slate-600">{p.variant_count > 0 ? p.variant_count : "—"}</td>
+                  {CHANNELS.map((c) => (
+                    <td key={c} className="px-3 py-3"><StatusBadge status={p.channels[c]} /></td>
+                  ))}
                 </tr>
               ))
             )}
@@ -107,21 +127,9 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
             Showing {start + 1}–{Math.min(start + PAGE_SIZE, filtered.length)} of {filtered.length}
           </span>
           <div className="flex items-center gap-2">
-            <button
-              className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={current <= 1}
-            >
-              ← Prev
-            </button>
+            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={current <= 1}>← Prev</button>
             <span className="text-sm text-slate-600">Page {current} / {totalPages}</span>
-            <button
-              className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={current >= totalPages}
-            >
-              Next →
-            </button>
+            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={current >= totalPages}>Next →</button>
           </div>
         </div>
       ) : null}

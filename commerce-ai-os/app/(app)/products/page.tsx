@@ -1,42 +1,72 @@
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import ProductTable, { type ProductRow } from "@/components/ProductTable";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
-const PAGE = 1000; // PostgREST caps a single response — fetch in ranges and combine.
+const PAGE = 1000;
+async function fetchAll(q: (from: number, to: number) => any): Promise<any[]> {
+  const out: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await q(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if ((data ?? []).length < PAGE) break;
+  }
+  return out;
+}
 
 export default async function ProductsPage() {
   const supabase = createClient();
 
-  // Fetch ALL products (with brand name + variant count) across paged ranges.
-  const data: any[] = [];
-  let error: { message: string } | null = null;
-  for (let from = 0; ; from += PAGE) {
-    const res = await supabase
-      .from("products")
-      .select(
-        "id, sku, name_en, main_category, price, stock_quantity, stock_status, brands(name), product_variants(count)"
-      )
-      .order("created_at", { ascending: false })
-      .range(from, from + PAGE - 1);
-    if (res.error) { error = res.error; break; }
-    const batch = res.data ?? [];
-    data.push(...batch);
-    if (batch.length < PAGE) break; // last page reached
-  }
+  let products: ProductRow[] = [];
+  let errMsg: string | null = null;
 
-  const products: ProductRow[] = (data ?? []).map((p: any) => ({
-    id: p.id,
-    sku: p.sku,
-    name_en: p.name_en,
-    brand_name: p.brands?.name ?? null,
-    main_category: p.main_category,
-    price: p.price,
-    stock_quantity: p.stock_quantity,
-    stock_status: p.stock_status,
-    variant_count: p.product_variants?.[0]?.count ?? 0,
-  }));
+  try {
+    const [rows, channels, links] = await Promise.all([
+      fetchAll((from, to) =>
+        supabase
+          .from("products")
+          .select(
+            "id, sku, barcode, name_en, name_ar, main_category, price, discount_price, product_variants(count), inventory(stock_quantity)"
+          )
+          .order("sku", { ascending: true })
+          .range(from, to)
+      ),
+      supabase.from("channels").select("id, name"),
+      fetchAll((from, to) =>
+        supabase.from("channel_products").select("product_id, channel_id, channel_status").range(from, to)
+      ),
+    ]);
+
+    const chanList = (channels as any).data ?? [];
+    const idToName = new Map<string, string>(chanList.map((c: any) => [c.id, c.name]));
+
+    // product_id -> { channelName: status }
+    const statusByProduct = new Map<string, Record<string, string>>();
+    for (const l of links) {
+      const name = idToName.get(l.channel_id);
+      if (!name) continue;
+      if (!statusByProduct.has(l.product_id)) statusByProduct.set(l.product_id, {});
+      statusByProduct.get(l.product_id)![name] = l.channel_status ?? "Not Listed";
+    }
+
+    products = rows.map((p: any) => ({
+      id: p.id,
+      sku: p.sku,
+      barcode: p.barcode,
+      name_en: p.name_en,
+      name_ar: p.name_ar,
+      main_category: p.main_category,
+      price: p.price,
+      discount_price: p.discount_price,
+      stock: p.inventory?.[0]?.stock_quantity ?? null,
+      variant_count: p.product_variants?.[0]?.count ?? 0,
+      channels: statusByProduct.get(p.id) ?? {},
+    }));
+  } catch (e) {
+    errMsg = e instanceof Error ? e.message : "Failed to load products.";
+  }
 
   return (
     <div className="space-y-4">
@@ -45,9 +75,9 @@ export default async function ProductsPage() {
         <Link href="/products/new" className="btn-primary w-full sm:w-auto">+ New product</Link>
       </div>
 
-      {error ? (
+      {errMsg ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
-          Couldn’t load products: {error.message}. Make sure you’re signed in (RLS).
+          Couldn’t load products: {errMsg}. Make sure you’re signed in (RLS).
         </div>
       ) : (
         <ProductTable products={products} />

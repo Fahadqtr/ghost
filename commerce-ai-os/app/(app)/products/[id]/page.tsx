@@ -1,80 +1,153 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import ProductForm from "@/components/ProductForm";
-import type { Brand } from "@/lib/types";
-import type { ProductInput, VariantInput } from "@/app/(app)/products/actions";
 
 export const dynamic = "force-dynamic";
 
-// Convert nullable DB values into the string-based form shape.
-const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+function Field({ label, value, rtl }: { label: string; value: unknown; rtl?: boolean }) {
+  const empty = value === null || value === undefined || value === "";
+  return (
+    <div>
+      <dt className="text-xs font-medium uppercase text-muted">{label}</dt>
+      <dd className={`mt-0.5 whitespace-pre-wrap text-sm ${empty ? "text-slate-300" : "text-ink"}`} dir={rtl ? "rtl" : undefined}>
+        {empty ? "—" : String(value)}
+      </dd>
+    </div>
+  );
+}
 
-export default async function EditProductPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+const STATUS_CLS: Record<string, string> = {
+  Active: "bg-green-100 text-green-700",
+  Draft: "bg-amber-100 text-amber-700",
+  "Not Listed": "bg-slate-100 text-slate-500",
+};
+
+export default async function ProductDetailPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
 
-  const [{ data: product }, { data: variants }, { data: brands }] =
+  const [{ data: product }, { data: variants }, { data: brands }, { data: inv }, { data: channels }, { data: links }] =
     await Promise.all([
       supabase.from("products").select("*").eq("id", params.id).single(),
-      supabase
-        .from("product_variants")
-        .select("*")
-        .eq("parent_product_id", params.id),
-      supabase.from("brands").select("id, name").order("name"),
+      supabase.from("product_variants").select("*").eq("parent_product_id", params.id),
+      supabase.from("brands").select("id, name"),
+      supabase.from("inventory").select("stock_quantity, low_stock_threshold, sold_quantity, updated_at").eq("product_id", params.id).maybeSingle(),
+      supabase.from("channels").select("id, name").order("name"),
+      supabase.from("channel_products").select("channel_id, channel_status, channel_price").eq("product_id", params.id),
     ]);
 
   if (!product) notFound();
 
-  const initial: Partial<ProductInput> = {
-    sku: s(product.sku),
-    barcode: s(product.barcode),
-    name_en: s(product.name_en),
-    name_ar: s(product.name_ar),
-    brand_id: s(product.brand_id),
-    main_category: s(product.main_category),
-    sub_category: s(product.sub_category),
-    product_type: s(product.product_type),
-    color: s(product.color),
-    size: s(product.size),
-    price: s(product.price),
-    discount_price: s(product.discount_price),
-    cost: s(product.cost),
-    stock_quantity: s(product.stock_quantity),
-    stock_status: s(product.stock_status),
-    platform_status: s(product.platform_status),
-    image_filename: s(product.image_filename),
-    image_url: s(product.image_url),
-    description_en: s(product.description_en),
-    description_ar: s(product.description_ar),
-    keywords_en: s(product.keywords_en),
-    keywords_ar: s(product.keywords_ar),
-    notes: s(product.notes),
-    variants: (variants ?? []).map(
-      (v: any): VariantInput => ({
-        id: v.id,
-        variant_name: s(v.variant_name),
-        sku: s(v.sku),
-        color: s(v.color),
-        size: s(v.size),
-        price: s(v.price),
-        stock_quantity: s(v.stock_quantity),
-      })
-    ),
-  };
+  const brandName = (brands ?? []).find((b: any) => b.id === product.brand_id)?.name ?? null;
+  const statusByChannel = (channels ?? []).map((c: any) => ({
+    name: c.name,
+    status: (links ?? []).find((l: any) => l.channel_id === c.id)?.channel_status ?? "Not Listed",
+  }));
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
-      <h2 className="text-lg font-semibold text-ink">
-        Edit · {product.name_en ?? "product"}
-      </h2>
-      <ProductForm
-        brands={(brands ?? []) as Brand[]}
-        productId={product.id}
-        initial={initial}
-      />
+    <div className="mx-auto max-w-4xl space-y-5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <Link href="/products" className="text-sm text-brand hover:underline">← All products</Link>
+          <h2 className="text-xl font-semibold text-ink">{product.name_en ?? "Product"}</h2>
+          <p className="text-sm text-muted" dir="rtl">{product.name_ar ?? ""}</p>
+        </div>
+        <Link href={`/products/${product.id}/edit`} className="btn-primary w-full sm:w-auto">Edit</Link>
+      </div>
+
+      {/* Channel status */}
+      <div className="card">
+        <h3 className="mb-3 text-sm font-semibold text-ink">Channel status</h3>
+        <div className="flex flex-wrap gap-2">
+          {statusByChannel.map((c, i) => (
+            <span key={i} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm">
+              <span className="text-slate-600">{c.name}</span>
+              <span className={`badge ${STATUS_CLS[c.status] ?? "bg-slate-100 text-slate-500"}`}>{c.status}</span>
+            </span>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-muted">Stock is shared across all channels (single inventory pool).</p>
+      </div>
+
+      {/* All 28 fields */}
+      <div className="card">
+        <h3 className="mb-4 text-sm font-semibold text-ink">All fields</h3>
+        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="SKU" value={product.sku} />
+          <Field label="Barcode" value={product.barcode} />
+          <Field label="Name (EN)" value={product.name_en} />
+          <Field label="Name (AR)" value={product.name_ar} rtl />
+          <Field label="Brand" value={brandName} />
+          <Field label="Main Category" value={product.main_category} />
+          <Field label="Sub Category" value={product.sub_category} />
+          <Field label="Product Type" value={product.product_type} />
+          <Field label="Color" value={product.color} />
+          <Field label="Size" value={product.size} />
+          <Field label="Price" value={product.price} />
+          <Field label="Discount Price" value={product.discount_price} />
+          <Field label="Cost" value={product.cost} />
+          <Field label="Stock Quantity (product)" value={product.stock_quantity} />
+          <Field label="Stock Status" value={product.stock_status} />
+          <Field label="Platform Status" value={product.platform_status} />
+          <Field label="Image Filename" value={product.image_filename} />
+          <Field label="Image URL" value={product.image_url} />
+          <Field label="Description (EN)" value={product.description_en} />
+          <Field label="Description (AR)" value={product.description_ar} rtl />
+          <Field label="Keywords (EN)" value={product.keywords_en} />
+          <Field label="Keywords (AR)" value={product.keywords_ar} rtl />
+          <Field label="Notes" value={product.notes} />
+          <Field label="Created At" value={product.created_at} />
+          <Field label="Updated At" value={product.updated_at} />
+          <Field label="ID" value={product.id} />
+        </dl>
+      </div>
+
+      {/* Inventory (single source of stock truth) */}
+      <div className="card">
+        <h3 className="mb-3 text-sm font-semibold text-ink">Inventory (shared pool)</h3>
+        {inv ? (
+          <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <Field label="Stock" value={inv.stock_quantity} />
+            <Field label="Low Threshold" value={inv.low_stock_threshold} />
+            <Field label="Sold" value={inv.sold_quantity} />
+            <Field label="Updated" value={inv.updated_at} />
+          </dl>
+        ) : (
+          <p className="text-sm text-slate-400">No inventory row.</p>
+        )}
+      </div>
+
+      {/* Variants */}
+      <div className="card">
+        <h3 className="mb-3 text-sm font-semibold text-ink">Variants ({(variants ?? []).length})</h3>
+        {(variants ?? []).length === 0 ? (
+          <p className="text-sm text-slate-400">No variants — sold as a single item.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
+                  <th className="px-3 py-2 font-medium">Variant</th>
+                  <th className="px-3 py-2 font-medium">SKU</th>
+                  <th className="px-3 py-2 font-medium">Color</th>
+                  <th className="px-3 py-2 font-medium">Size</th>
+                  <th className="px-3 py-2 font-medium">Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(variants ?? []).map((v: any) => (
+                  <tr key={v.id} className="border-b border-slate-100">
+                    <td className="px-3 py-2 text-ink">{v.variant_name ?? "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{v.sku ?? "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{v.color ?? "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{v.size ?? "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{v.price ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

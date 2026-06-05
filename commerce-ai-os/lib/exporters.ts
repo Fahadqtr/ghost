@@ -57,24 +57,26 @@ export function buildShopifyCsv(products: ExportProduct[], status: StatusMap): s
   return toCsv(SHOPIFY_HEADERS, rows);
 }
 
-// --- 2) Snoonu masterlist (one row per product) ----------------------------
+// --- 2) Snoonu masterlist (one row per product; EN + AR) -------------------
 export const SNOONU_HEADERS = [
   "SKU", "Barcode", "Name EN", "Name AR", "Category", "Sub Category",
-  "Price", "Discount Price", "Stock", "Snoonu Status", "Image URL", "Description EN",
+  "Price", "Discount Price", "Stock", "Snoonu Status", "Image URL",
+  "Description EN", "Description AR", "Keywords EN", "Keywords AR",
 ];
 export function buildSnoonuCsv(products: ExportProduct[], status: StatusMap): string {
   const rows = products.map((p) => [
     p.sku, p.barcode, p.name_en, p.name_ar, p.main_category, p.sub_category,
     p.price, p.discount_price, "" /*stock later*/, status[p.id] ?? "Not Listed",
-    p.image_url ?? "", p.description_en,
+    p.image_url ?? "", p.description_en, p.description_ar, p.keywords_en, p.keywords_ar,
   ]);
   return toCsv(SNOONU_HEADERS, rows);
 }
 
-// --- 3) Talabat split-CSV (ONE ROW PER VARIANT; Talabat has no variants) ---
+// --- 3) Talabat split-CSV (ONE ROW PER VARIANT; EN + AR) -------------------
 export const TALABAT_HEADERS = [
-  "Parent SKU", "Item Name", "Variant", "Item SKU", "Barcode", "Category",
-  "Price", "Stock", "Talabat Status",
+  "Parent SKU", "Item Name EN", "Item Name AR", "Variant", "Item SKU", "Barcode",
+  "Category", "Price", "Stock", "Talabat Status",
+  "Description EN", "Description AR", "Keywords EN", "Keywords AR",
 ];
 export function buildTalabatCsv(
   products: ExportProduct[],
@@ -86,36 +88,33 @@ export function buildTalabatCsv(
     if (!byParent.has(v.parent_product_id)) byParent.set(v.parent_product_id, []);
     byParent.get(v.parent_product_id)!.push(v);
   }
+  const suffix = (base: string | null, vn: string | null) =>
+    `${base ?? ""}${vn ? " - " + vn : ""}`;
   const rows: unknown[][] = [];
   for (const p of products) {
     const vs = byParent.get(p.id) ?? [];
-    if (vs.length > 0) {
-      for (const v of vs) {
-        rows.push([
-          p.sku, `${p.name_en ?? ""}${v.variant_name ? " - " + v.variant_name : ""}`,
-          v.variant_name ?? "", v.sku ?? p.sku, p.barcode, p.main_category,
-          v.price ?? p.price, "" /*stock later*/, status[p.id] ?? "Not Listed",
-        ]);
-      }
-    } else {
-      rows.push([
-        p.sku, p.name_en, "", p.sku, p.barcode, p.main_category,
-        p.price, "" /*stock later*/, status[p.id] ?? "Not Listed",
-      ]);
-    }
+    const common = (vn: string | null, sku: string | null, price: number | null) => [
+      p.sku, suffix(p.name_en, vn), suffix(p.name_ar, vn), vn ?? "", sku ?? p.sku,
+      p.barcode, p.main_category, price ?? p.price, "" /*stock later*/,
+      status[p.id] ?? "Not Listed", p.description_en, p.description_ar,
+      p.keywords_en, p.keywords_ar,
+    ];
+    if (vs.length > 0) for (const v of vs) rows.push(common(v.variant_name, v.sku, v.price));
+    else rows.push(common(null, p.sku, p.price));
   }
   return toCsv(TALABAT_HEADERS, rows);
 }
 
-// --- 4) Rafeeq (one row per product) ---------------------------------------
+// --- 4) Rafeeq (one row per product; EN + AR) ------------------------------
 export const RAFEEQ_HEADERS = [
-  "SKU", "Barcode", "Name EN", "Name AR", "Category", "Price",
-  "Discount Price", "Stock", "Rafeeq Status", "Description EN",
+  "SKU", "Barcode", "Name EN", "Name AR", "Category", "Price", "Discount Price",
+  "Stock", "Rafeeq Status", "Description EN", "Description AR", "Keywords EN", "Keywords AR",
 ];
 export function buildRafeeqCsv(products: ExportProduct[], status: StatusMap): string {
   const rows = products.map((p) => [
     p.sku, p.barcode, p.name_en, p.name_ar, p.main_category, p.price,
-    p.discount_price, "" /*stock later*/, status[p.id] ?? "Not Listed", p.description_en,
+    p.discount_price, "" /*stock later*/, status[p.id] ?? "Not Listed",
+    p.description_en, p.description_ar, p.keywords_en, p.keywords_ar,
   ]);
   return toCsv(RAFEEQ_HEADERS, rows);
 }
