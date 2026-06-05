@@ -78,4 +78,41 @@ async function runWith(label, key) {
 
 await runWith("ANON key (reproduces production read)", ANON);
 await runWith("SERVICE role (full data)", SERVICE);
+
+// --- FULL-FILE SIMULATION (no real Snoonu export available) ----------------
+// Build one export row per real product FROM ITS OWN current values, but:
+//   - inject heavy whitespace/encoding noise into text fields (CRLF, NBSP,
+//     doubled spaces, trailing tabs) -> must NOT be flagged after normalization
+//   - set approval=Approved, is_featured=TRUE (DB is null) -> SHOULD flag
+//   - leave price/discount equal -> must NOT flag
+//   - first 5 rows get a REAL name change -> must still flag
+const noisy = (t) => (t ? " " + String(t).replace(/\n/g, "\r\n").replace(/ /g, "  ") + "  \t" : "");
+console.log("\n===== FULL-FILE SIMULATION (1146 rows from DB + injected formatting noise) =====");
+console.log("(No real Snoonu export on hand — this proves the normalization + field mechanics.)");
+try {
+  const fields = await detectFields(svc);
+  const products = await readAll(svc, readColumns(fields));
+  const simRows = products.filter((p) => p.snoonu_id).map((p, i) => ({
+    id: String(p.snoonu_id),
+    name_en: noisy(p.name_en) + (i < 5 ? " (REAL EDIT)" : ""),
+    name_ar: noisy(p.name_ar),
+    description_en: noisy(p.description_en),
+    description_ar: noisy(p.description_ar),
+    price: String(p.price ?? ""),
+    discount: String(p.discount_price ?? ""),
+    approval: "Approved",
+    is_featured: "TRUE",
+    is_promoted: "FALSE",
+    has_buy1get1: "",
+  }));
+  const d = diffSnoonu(products, simRows, fields);
+  const byField = {};
+  for (const u of d.updated) for (const ch of u.changes) byField[ch.field] = (byField[ch.field] || 0) + 1;
+  console.log(`rows=${simRows.length} matched=${d.matched} updated(products)=${d.updated.length} unchanged=${d.unchanged}`);
+  console.log("CHANGES BY FIELD:");
+  for (const f of fields) console.log(`  ${f.col.padEnd(18)} ${byField[f.col] || 0}`);
+  console.log("\nExpect ~0 for name_*/description_* (noise normalized away; ~5 name_en from REAL EDIT),");
+  console.log("approval & is_featured ~1146 (genuine null->value), price/discount/is_promoted/has_buy1get1 = 0.");
+} catch (e) { console.error("  ✗ sim error:", e?.message, "\n", e?.stack); }
+
 process.exit(0);

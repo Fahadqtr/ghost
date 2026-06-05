@@ -59,6 +59,20 @@ export function readColumns(fields: Field[]): string {
 }
 
 export const s = (v: unknown) => String(v ?? "").trim();
+
+// Normalize TEXT fields so cosmetic differences (CRLF vs LF, NBSP, trailing
+// spaces, collapsed runs, unicode form) are NOT treated as changes. Used for
+// both comparison AND the value written on Apply (so we never persist a
+// formatting-only "change").
+export function normalizeText(v: unknown): string {
+  return String(v ?? "")
+    .replace(/\r\n?/g, "\n")     // CRLF / CR -> LF
+    .normalize("NFC")            // unicode canonical form
+    .replace(/[\u00A0\u200B\uFEFF]/g, " ") // NBSP / zero-width / BOM -> space
+    .replace(/[ \t]+/g, " ")     // collapse runs of spaces/tabs
+    .replace(/ *\n */g, "\n")    // drop spaces around line breaks
+    .trim();
+}
 const numEq = (a: unknown, b: unknown) => {
   const x = s(a), y = s(b);
   if (x === "" && y === "") return true;
@@ -84,13 +98,21 @@ export function computeChanges(p: Record<string, unknown>, r: SnoonuExportRow, f
   for (const f of fields) {
     const exRaw = r[f.ex];
     if (exRaw === undefined) continue;
+
+    if (f.type === "str") {
+      // Normalize both sides; only a real (non-cosmetic) text change counts,
+      // and the normalized value is what gets written on Apply.
+      const exN = normalizeText(exRaw);
+      if (exN === "") continue;                 // empty export cell -> no update
+      const dbN = normalizeText(p[f.col]);
+      if (dbN !== exN) changes.push({ field: f.col, old: dbN || "—", new: exN, writeValue: exN });
+      continue;
+    }
+
     const exStr = s(exRaw);
     if (exStr === "") continue;
     const dbVal = p[f.col];
-    let differs: boolean;
-    if (f.type === "num") differs = !numEq(dbVal, exStr);
-    else if (f.type === "bool") differs = boolNorm(dbVal) !== boolNorm(exStr);
-    else differs = s(dbVal) !== exStr;
+    const differs = f.type === "num" ? !numEq(dbVal, exStr) : boolNorm(dbVal) !== boolNorm(exStr);
     if (differs) changes.push({ field: f.col, old: s(dbVal) || "—", new: exStr, writeValue: writeVal(f.type, exStr) });
   }
   return changes;
