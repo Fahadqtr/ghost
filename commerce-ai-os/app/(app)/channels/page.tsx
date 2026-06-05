@@ -6,19 +6,42 @@ import ChannelMatrix, {
 
 export const dynamic = "force-dynamic";
 
+const PAGE = 1000; // PostgREST caps a single response — fetch in ranges.
+
+// Fetch every row of a select across paged ranges.
+async function fetchAll(
+  supabase: ReturnType<typeof createClient>,
+  table: string,
+  columns: string,
+  order?: { column: string; ascending: boolean }
+): Promise<{ data: any[]; error: { message: string } | null }> {
+  const data: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    let query = supabase.from(table).select(columns).range(from, from + PAGE - 1);
+    if (order) query = query.order(order.column, { ascending: order.ascending });
+    const res = await query;
+    if (res.error) return { data, error: res.error };
+    const batch = res.data ?? [];
+    data.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  return { data, error: null };
+}
+
 export default async function ChannelsPage() {
   const supabase = createClient();
 
-  const [{ data: products }, { data: channels }, { data: links, error }] =
+  const { data: channels } = await supabase
+    .from("channels")
+    .select("id, name, supports_variants")
+    .order("name");
+
+  const [{ data: products, error: pErr }, { data: links, error: lErr }] =
     await Promise.all([
-      supabase
-        .from("products")
-        .select("id, name_en, sku")
-        .order("created_at", { ascending: false })
-        .limit(200),
-      supabase.from("channels").select("id, name, supports_variants").order("name"),
-      supabase.from("channel_products").select("product_id, channel_id, channel_status"),
+      fetchAll(supabase, "products", "id, name_en, sku", { column: "created_at", ascending: false }),
+      fetchAll(supabase, "channel_products", "product_id, channel_id, channel_status"),
     ]);
+  const error = pErr ?? lErr;
 
   const initialStatuses: Record<string, string> = {};
   for (const l of links ?? []) {
