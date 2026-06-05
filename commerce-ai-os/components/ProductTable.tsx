@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CATEGORIES } from "@/lib/constants";
+
+const PAGE_SIZE = 50;
 
 export interface ProductRow {
   id: string;
@@ -20,6 +22,8 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
 
+  const [page, setPage] = useState(1);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return products.filter((p) => {
@@ -31,6 +35,14 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
       return matchesQ && matchesCat;
     });
   }, [products, q, cat]);
+
+  // Reset to first page whenever the filter result changes.
+  useEffect(() => { setPage(1); }, [q, cat]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const current = Math.min(page, totalPages);
+  const start = (current - 1) * PAGE_SIZE;
+  const visible = filtered.slice(start, start + PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -45,7 +57,11 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           <option value="">All categories</option>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
         </select>
-        <span className="text-sm text-muted sm:ml-auto">{filtered.length} of {products.length}</span>
+        <span className="text-sm text-muted sm:ml-auto">
+          {filtered.length === products.length
+            ? `${products.length} products`
+            : `${filtered.length} of ${products.length}`}
+        </span>
       </div>
 
       <div className="card overflow-x-auto p-0">
@@ -66,7 +82,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
             {filtered.length === 0 ? (
               <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
             ) : (
-              filtered.map((p) => (
+              visible.map((p) => (
                 <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-ink">{p.name_en ?? "—"}</td>
                   <td className="px-4 py-3 text-slate-600">{p.sku ?? "—"}</td>
@@ -84,6 +100,31 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           </tbody>
         </table>
       </div>
+
+      {filtered.length > PAGE_SIZE ? (
+        <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
+          <span className="text-sm text-muted">
+            Showing {start + 1}–{Math.min(start + PAGE_SIZE, filtered.length)} of {filtered.length}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={current <= 1}
+            >
+              ← Prev
+            </button>
+            <span className="text-sm text-slate-600">Page {current} / {totalPages}</span>
+            <button
+              className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={current >= totalPages}
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

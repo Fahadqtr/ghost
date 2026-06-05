@@ -4,17 +4,27 @@ import ProductTable, { type ProductRow } from "@/components/ProductTable";
 
 export const dynamic = "force-dynamic";
 
+const PAGE = 1000; // PostgREST caps a single response — fetch in ranges and combine.
+
 export default async function ProductsPage() {
   const supabase = createClient();
 
-  // Products with brand name and variant count (embedded selects via FKs).
-  const { data, error } = await supabase
-    .from("products")
-    .select(
-      "id, sku, name_en, main_category, price, stock_quantity, stock_status, brands(name), product_variants(count)"
-    )
-    .order("created_at", { ascending: false })
-    .limit(500);
+  // Fetch ALL products (with brand name + variant count) across paged ranges.
+  const data: any[] = [];
+  let error: { message: string } | null = null;
+  for (let from = 0; ; from += PAGE) {
+    const res = await supabase
+      .from("products")
+      .select(
+        "id, sku, name_en, main_category, price, stock_quantity, stock_status, brands(name), product_variants(count)"
+      )
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (res.error) { error = res.error; break; }
+    const batch = res.data ?? [];
+    data.push(...batch);
+    if (batch.length < PAGE) break; // last page reached
+  }
 
   const products: ProductRow[] = (data ?? []).map((p: any) => ({
     id: p.id,
