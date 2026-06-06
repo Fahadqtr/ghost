@@ -8,22 +8,45 @@ export const dynamic = "force-dynamic";
 
 const MODEL_ID = "eleven_multilingual_v2"; // strong Arabic support
 
+// The 9 agent ids the brain can return (matches app/api/malak/route.ts).
+const AGENT_IDS = [
+  "malak", "noor", "bayan", "reem", "siraj", "razan", "rashid", "latifa", "salem",
+];
+
+// Per-agent voice. Each agent can have its OWN ElevenLabs voice via an
+// `ELEVENLABS_VOICE_<AGENT>` env var (e.g. ELEVENLABS_VOICE_NOOR). When an
+// agent-specific voice isn't set, we fall back to the shared ELEVENLABS_VOICE_ID
+// (Malika) so nothing breaks and unconfigured agents still speak.
+function resolveVoiceId(agent: unknown): string | undefined {
+  const a = typeof agent === "string" ? agent.trim().toLowerCase() : "";
+  if (a && AGENT_IDS.includes(a)) {
+    const specific = process.env[`ELEVENLABS_VOICE_${a.toUpperCase()}`];
+    if (specific && specific.trim()) return specific.trim();
+  }
+  return process.env.ELEVENLABS_VOICE_ID;
+}
+
 export async function POST(req: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
-  const voiceId = process.env.ELEVENLABS_VOICE_ID;
   // Not configured → tell the client to use its browser voice instead.
-  if (!apiKey || !voiceId) return new Response(null, { status: 204 });
+  if (!apiKey) return new Response(null, { status: 204 });
 
   let text = "";
+  let agent: unknown;
   try {
     const body = await req.json();
     // Accept either { speak } or { text }.
     text = typeof body?.speak === "string" ? body.speak : typeof body?.text === "string" ? body.text : "";
+    agent = body?.agent;
   } catch {
     return new Response("bad request", { status: 400 });
   }
   text = text.trim();
   if (!text) return new Response("no text", { status: 400 });
+
+  const voiceId = resolveVoiceId(agent);
+  // No voice configured at all → fall back to the browser voice client-side.
+  if (!voiceId) return new Response(null, { status: 204 });
 
   try {
     const r = await fetch(

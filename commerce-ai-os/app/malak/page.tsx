@@ -384,7 +384,7 @@ export default function MalakPage() {
   // Primary: ElevenLabs voice via the server route. Falls back to the browser
   // voice on 204 (not configured), 502 (API error), or playback failure.
   const speak = useCallback(
-    async (text: string) => {
+    async (text: string, agent?: string) => {
       const clean = text.trim();
       if (!clean) return;
       stopAudio();
@@ -392,7 +392,7 @@ export default function MalakPage() {
         const res = await fetch("/api/malak/speak", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ speak: clean }),
+          body: JSON.stringify({ speak: clean, agent }),
         });
         const ct = res.headers.get("content-type") || "";
         if (res.ok && ct.includes("audio")) {
@@ -474,7 +474,7 @@ export default function MalakPage() {
         const speakText = typeof data?.speak === "string" ? data.speak : "تم.";
         if (data?.panel?.type) setPanel(data.panel as PanelData);
         typewriter(speakText);
-        speak(speakText);
+        speak(speakText, ag);
       } catch {
         const err = "ما قدرت أوصل للخادم، جرّب مرة ثانية.";
         typewriter(err);
