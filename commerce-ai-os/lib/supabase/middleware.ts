@@ -7,7 +7,9 @@ import {
 import { NextResponse, type NextRequest } from "next/server";
 
 // Paths that are reachable WITHOUT being logged in.
-const PUBLIC_PATHS = ["/login", "/auth"];
+// NOTE: "/api/malak/voicecheck" is a TEMPORARY diagnostic — remove it (and the
+// route) once the per-agent voice issue is resolved.
+const PUBLIC_PATHS = ["/login", "/auth", "/api/malak/voicecheck"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
