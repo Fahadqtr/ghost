@@ -20,7 +20,7 @@ const AGENT_IDS = [
 // not a secret — it only works together with this account's API key.
 const AGENT_VOICES: Record<string, string> = {
   noor: "UR972wNGq3zluze0LoIp", // الكتالوج — أنثى واضحة محايدة
-  bayan: "R6nda3uM038xEEKi7GFl", // المحتوى — أنثى معبّرة حيوية
+  bayan: "L10lEremDiJfPicq5CPh", // المحتوى — أنثى معبّرة حيوية
   reem: "qi4PkV9c01kb869Vh7Su", // الصور — أنثى ناعمة هادئة
   razan: "a1KZUXKFVFDOb33I1uqr", // التسعير — أنثى حازمة عملية
   latifa: "4wf10lgibMnboGJGCLrP", // العملاء — أنثى ودودة مرحّبة
