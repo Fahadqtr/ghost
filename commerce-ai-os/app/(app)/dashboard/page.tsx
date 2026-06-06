@@ -1,116 +1,129 @@
-import KpiCard from "@/components/KpiCard";
-import { getDashboardKpis } from "@/lib/dashboard";
+import { getCeoKpis, type NameCount, type ChannelBreak } from "@/lib/dashboard";
 
-// Always render fresh data from the DB.
 export const dynamic = "force-dynamic";
 
-function money(n: number | null): string | null {
-  if (n === null) return null;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "QAR",
-    maximumFractionDigits: 0,
-  }).format(n);
-}
+const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 export default async function DashboardPage() {
-  const kpi = await getDashboardKpis();
+  const k = await getCeoKpis();
 
   return (
     <div className="space-y-6">
-      {!kpi.configured ? (
-        <div className="card border-amber-200 bg-amber-50">
-          <p className="text-sm text-amber-800">
-            Supabase isn’t configured yet. Add your project URL and anon key to{" "}
-            <code className="rounded bg-amber-100 px-1">.env.local</code> to see
-            live KPIs.
-          </p>
+      {!k.configured ? (
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          Supabase isn’t configured — add your keys to see live KPIs.
         </div>
       ) : null}
 
-      {/* KPI grid */}
+      {/* KPI cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <KpiCard
-          title="Sales Today"
-          value={kpi.salesToday === null ? null : money(kpi.salesToday)}
-          icon="💰"
-          hint="Sum of today’s orders"
-        />
-        <KpiCard
-          title="Orders Today"
-          value={kpi.ordersToday}
-          icon="🧾"
-          hint="Orders created today"
-        />
-        <KpiCard
-          title="Low Stock"
-          value={kpi.lowStock}
-          icon="⚠️"
-          hint="At or below threshold"
-          emptyLabel="0"
-        />
-        <KpiCard
-          title="Missing Images"
-          value={kpi.missingImages}
-          icon="🖼️"
-          hint="Products without an image"
-          emptyLabel="0"
-        />
-        <KpiCard
-          title="Products"
-          value={kpi.productsTotal}
-          icon="📦"
-          hint="Total in catalog"
-          emptyLabel="0"
-        />
-        <KpiCard
-          title="Alerts"
-          value={kpi.alerts.length === 0 ? "All clear" : kpi.alerts.length}
-          icon="🔔"
-          hint="Items needing attention"
-        />
+        <Kpi title="Total products" value={nf(k.totalProducts)} icon="📦" hint="In the catalog" />
+        <Kpi title="Categories · Brands" value={`${k.categoriesCount} · ${k.brandsCount}`} icon="🗂️"
+          hint={`${nf(k.productsWithBrand)} products have a brand assigned`} />
+        <Kpi title="Live on Snoonu" value={nf(k.approvedCount)} icon="🟢" hint="approval = Approved" accent="green" />
+        <Kpi title="Missing image" value={nf(k.missingImage)} icon="🖼️"
+          hint="image_url is null" accent={k.missingImage > 0 ? "amber" : undefined} />
+        <Kpi title="Featured · Promoted" value={`${nf(k.featuredCount)} · ${nf(k.promotedCount)}`} icon="⭐"
+          hint="is_featured · is_promoted" />
+        <Kpi title="Inventory units" value={nf(k.inventoryUnits)} icon="🏷️"
+          hint={`across ${nf(k.inventoryRows)} products — placeholder, pending stocktake`} accent="muted" />
       </div>
 
-      {/* Top products + alerts detail */}
+      {/* Breakdowns */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="card">
-          <h2 className="mb-3 text-sm font-semibold text-ink">Top Products</h2>
-          {kpi.topProducts.length === 0 ? (
-            <p className="text-sm text-slate-400">No sales data yet</p>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {kpi.topProducts.map((p, i) => (
-                <li
-                  key={`${p.name}-${i}`}
-                  className="flex items-center justify-between py-2 text-sm"
-                >
-                  <span className="text-slate-700">{p.name}</span>
-                  <span className="font-medium text-ink">{p.sold} sold</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <Section title={`Products per category (${k.categoryBreakdown.length})`}>
+          <Bars items={k.categoryBreakdown} color="bg-brand" />
+        </Section>
 
-        <div className="card">
-          <h2 className="mb-3 text-sm font-semibold text-ink">Alerts</h2>
-          {kpi.alerts.length === 0 ? (
-            <p className="text-sm text-slate-400">Nothing needs attention 🎉</p>
+        <Section title="Brands by product count (top 10)">
+          {k.brandBreakdown.length === 0 ? (
+            <Empty text="No products have a brand assigned yet." />
           ) : (
-            <ul className="space-y-2">
-              {kpi.alerts.map((a, i) => (
-                <li
-                  key={i}
-                  className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800"
-                >
-                  <span>⚠️</span>
-                  {a}
-                </li>
-              ))}
-            </ul>
+            <Bars items={k.brandBreakdown} color="bg-indigo-500" />
           )}
-        </div>
+        </Section>
       </div>
+
+      <Section title="Channel listing status (per channel)">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
+                <th className="px-3 py-2 font-medium">Channel</th>
+                <th className="px-3 py-2 font-medium">Active</th>
+                <th className="px-3 py-2 font-medium">Draft</th>
+                <th className="px-3 py-2 font-medium">Not Listed</th>
+                <th className="px-3 py-2 font-medium">Total</th>
+                <th className="px-3 py-2 font-medium">Active share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {k.channelBreakdown.map((c: ChannelBreak) => {
+                const pct = c.total ? Math.round((c.active / c.total) * 100) : 0;
+                return (
+                  <tr key={c.channel} className="border-b border-slate-100">
+                    <td className="px-3 py-2 font-medium text-ink">{c.channel}</td>
+                    <td className="px-3 py-2 text-green-700">{nf(c.active)}</td>
+                    <td className="px-3 py-2 text-amber-700">{nf(c.draft)}</td>
+                    <td className="px-3 py-2 text-slate-500">{nf(c.notListed)}</td>
+                    <td className="px-3 py-2 text-slate-600">{nf(c.total)}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
+                          <div className="h-full bg-green-500" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="text-xs text-muted">{pct}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Section>
     </div>
   );
 }
+
+function Kpi({ title, value, hint, icon, accent }: { title: string; value: string | number; hint?: string; icon?: string; accent?: "green" | "amber" | "muted" }) {
+  const color = accent === "green" ? "text-green-700" : accent === "amber" ? "text-amber-700" : accent === "muted" ? "text-slate-500" : "text-ink";
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-muted">{title}</p>
+        {icon ? <span className="text-lg">{icon}</span> : null}
+      </div>
+      <p className={`mt-2 text-2xl font-semibold ${color}`}>{value}</p>
+      {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="card">
+      <h3 className="mb-3 text-sm font-semibold text-ink">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function Bars({ items, color }: { items: NameCount[]; color: string }) {
+  const max = Math.max(1, ...items.map((i) => i.count));
+  return (
+    <div className="space-y-2">
+      {items.map((it) => (
+        <div key={it.name} className="flex items-center gap-2 text-sm">
+          <span className="w-40 shrink-0 truncate text-slate-600" title={it.name}>{it.name}</span>
+          <div className="h-4 flex-1 overflow-hidden rounded bg-slate-100">
+            <div className={`h-full ${color}`} style={{ width: `${(it.count / max) * 100}%` }} />
+          </div>
+          <span className="w-10 shrink-0 text-right font-medium text-ink">{it.count}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Empty({ text }: { text: string }) { return <p className="text-sm text-slate-400">{text}</p>; }

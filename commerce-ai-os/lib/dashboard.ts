@@ -1,159 +1,125 @@
-// Dashboard KPI data layer (server-only).
-// Every query is defensive: any failure (missing table/column, empty data,
-// unconfigured Supabase) resolves to null/empty so the UI shows a clean
-// "No data yet" state instead of crashing.
+// CEO Dashboard data layer (server-only, read-only). Uses the anon/cookie
+// client — every value is COMPUTED from the DB, nothing invented. Each query is
+// defensive: failures degrade to safe zeros so the page never crashes.
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 
-export interface TopProduct {
-  name: string;
-  sold: number | null;
-}
+export interface NameCount { name: string; count: number }
+export interface ChannelBreak { channel: string; active: number; draft: number; notListed: number; total: number }
 
-export interface DashboardKpis {
+export interface CeoKpis {
   configured: boolean;
-  productsTotal: number | null;
-  ordersToday: number | null;
-  salesToday: number | null;
-  lowStock: number | null;
-  missingImages: number | null;
-  topProducts: TopProduct[];
-  alerts: string[];
+  totalProducts: number;
+  categoriesCount: number;
+  brandsCount: number;
+  productsWithBrand: number;
+  approvedCount: number;
+  missingImage: number;
+  featuredCount: number;
+  promotedCount: number;
+  inventoryUnits: number;
+  inventoryRows: number;
+  categoryBreakdown: NameCount[];
+  brandBreakdown: NameCount[];
+  channelBreakdown: ChannelBreak[];
 }
 
-function startOfTodayIso(): string {
-  return new Date().toISOString().slice(0, 10) + "T00:00:00.000Z";
-}
+const PAGE = 1000;
 
-// Pick the first plausible numeric "total" field present on an order row.
-const TOTAL_FIELDS = ["total", "total_amount", "amount", "grand_total", "price"];
-function orderTotal(row: Record<string, unknown>): number {
-  for (const f of TOTAL_FIELDS) {
-    const v = row[f];
-    if (typeof v === "number") return v;
-    if (typeof v === "string" && v.trim() !== "" && !isNaN(Number(v)))
-      return Number(v);
+async function countOf(builder: () => PromiseLike<{ count: number | null; error: unknown }>): Promise<number> {
+  try { const { count, error } = await builder(); return error ? 0 : (count ?? 0); } catch { return 0; }
+}
+async function fetchAll(client: any, table: string, cols: string): Promise<any[]> {
+  const out: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await client.from(table).select(cols).range(from, from + PAGE - 1);
+    if (error) break;
+    out.push(...(data ?? []));
+    if ((data ?? []).length < PAGE) break;
   }
-  return 0;
+  return out;
 }
 
-export async function getDashboardKpis(): Promise<DashboardKpis> {
-  const result: DashboardKpis = {
+export async function getCeoKpis(): Promise<CeoKpis> {
+  const empty: CeoKpis = {
     configured: isSupabaseConfigured(),
-    productsTotal: null,
-    ordersToday: null,
-    salesToday: null,
-    lowStock: null,
-    missingImages: null,
-    topProducts: [],
-    alerts: [],
+    totalProducts: 0, categoriesCount: 0, brandsCount: 0, productsWithBrand: 0,
+    approvedCount: 0, missingImage: 0, featuredCount: 0, promotedCount: 0,
+    inventoryUnits: 0, inventoryRows: 0,
+    categoryBreakdown: [], brandBreakdown: [], channelBreakdown: [],
   };
+  if (!empty.configured) return empty;
 
-  if (!result.configured) return result;
+  const sb = createClient();
+  const c = (q: string, apply?: (b: any) => any) => countOf(() => {
+    let b = sb.from(q).select("*", { count: "exact", head: true });
+    return apply ? apply(b) : b;
+  });
 
-  const supabase = createClient();
-
-  // Run independently so one failure never blocks the others.
+  // Cheap head-count queries in parallel.
   const [
-    productsTotal,
-    missingImages,
-    inventoryRows,
-    ordersToday,
-    topProducts,
+    totalProducts, categoriesCount, brandsCount, productsWithBrand,
+    approvedCount, missingImage, featuredCount, promotedCount,
   ] = await Promise.all([
-    safeCount(() =>
-      supabase.from("products").select("*", { count: "exact", head: true })
-    ),
-    safeCount(() =>
-      supabase
-        .from("products")
-        .select("*", { count: "exact", head: true })
-        .is("image_url", null)
-    ),
-    safe(async () =>
-      supabase
-        .from("inventory")
-        .select("stock_quantity, low_stock_threshold")
-        .limit(2000)
-    ),
-    safe(async () =>
-      supabase
-        .from("orders")
-        .select("*")
-        .gte("created_at", startOfTodayIso())
-        .limit(2000)
-    ),
-    safe(async () =>
-      supabase
-        .from("inventory")
-        .select("sold_quantity, products(name_en)")
-        .order("sold_quantity", { ascending: false })
-        .limit(5)
-    ),
+    c("products"),
+    c("product_categories"),
+    c("brands"),
+    c("products", (b) => b.not("brand_id", "is", null)),
+    c("products", (b) => b.eq("approval", "Approved")),
+    c("products", (b) => b.is("image_url", null)),
+    c("products", (b) => b.eq("is_featured", true)),
+    c("products", (b) => b.eq("is_promoted", true)),
   ]);
 
-  result.productsTotal = productsTotal;
-  result.missingImages = missingImages;
+  // Row-level fetches for breakdowns + inventory sum.
+  const [prodRows, invRows, channels, links, brands] = await Promise.all([
+    fetchAll(sb, "products", "main_category, brand_id"),
+    fetchAll(sb, "inventory", "stock_quantity"),
+    fetchAll(sb, "channels", "id, name"),
+    fetchAll(sb, "channel_products", "channel_id, channel_status"),
+    fetchAll(sb, "brands", "id, name"),
+  ]);
 
-  // Low stock computed in JS (REST can't compare two columns directly).
-  if (inventoryRows) {
-    result.lowStock = inventoryRows.filter(
-      (r: any) =>
-        r.stock_quantity != null &&
-        r.low_stock_threshold != null &&
-        Number(r.stock_quantity) <= Number(r.low_stock_threshold)
-    ).length;
+  // Inventory units (placeholder 50 each until stocktake).
+  const inventoryUnits = invRows.reduce((s, r) => s + (Number(r.stock_quantity) || 0), 0);
+
+  // Category breakdown.
+  const catMap = new Map<string, number>();
+  for (const r of prodRows) { const k = r.main_category || "Uncategorized"; catMap.set(k, (catMap.get(k) || 0) + 1); }
+  const categoryBreakdown = [...catMap.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+
+  // Brand breakdown (top 10).
+  const brandName = new Map<string, string>(brands.map((b: any) => [b.id, b.name]));
+  const brandMap = new Map<string, number>();
+  for (const r of prodRows) { if (!r.brand_id) continue; const k = brandName.get(r.brand_id) || "(unknown)"; brandMap.set(k, (brandMap.get(k) || 0) + 1); }
+  const brandBreakdown = [...brandMap.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 10);
+
+  // Channel status breakdown (disambiguate duplicate channel names).
+  const counts: Record<string, number> = {};
+  const idToName = new Map<string, string>(channels.map((ch: any) => [ch.id, ch.name]));
+  const seen: Record<string, number> = {};
+  const labelFor = new Map<string, string>();
+  for (const ch of channels) {
+    const dupes = channels.filter((x: any) => x.name === ch.name).length;
+    if (dupes > 1) { seen[ch.name] = (seen[ch.name] || 0) + 1; labelFor.set(ch.id, `${ch.name} #${seen[ch.name]}`); }
+    else labelFor.set(ch.id, ch.name);
   }
-
-  // Orders + sales today.
-  if (ordersToday) {
-    result.ordersToday = ordersToday.length;
-    result.salesToday = ordersToday.reduce(
-      (sum: number, row: any) => sum + orderTotal(row),
-      0
-    );
+  const chMap = new Map<string, ChannelBreak>();
+  for (const ch of channels) chMap.set(ch.id, { channel: labelFor.get(ch.id) || ch.name, active: 0, draft: 0, notListed: 0, total: 0 });
+  for (const l of links) {
+    const cb = chMap.get(l.channel_id); if (!cb) continue;
+    cb.total++;
+    if (l.channel_status === "Active") cb.active++;
+    else if (l.channel_status === "Draft") cb.draft++;
+    else cb.notListed++;
   }
+  void counts; void idToName;
+  const channelBreakdown = [...chMap.values()];
 
-  // Top products by units sold.
-  if (topProducts) {
-    result.topProducts = topProducts
-      .map((r: any) => ({
-        name: r.products?.name_en ?? "Unnamed product",
-        sold: r.sold_quantity ?? null,
-      }))
-      .filter((p: TopProduct) => p.sold != null && Number(p.sold) > 0);
-  }
-
-  // Derived alerts.
-  if (result.lowStock && result.lowStock > 0)
-    result.alerts.push(`${result.lowStock} product(s) low on stock`);
-  if (result.missingImages && result.missingImages > 0)
-    result.alerts.push(`${result.missingImages} product(s) missing images`);
-
-  return result;
-}
-
-// --- helpers --------------------------------------------------------------
-
-async function safe<T>(
-  fn: () => PromiseLike<{ data: T | null; error: unknown }>
-) {
-  try {
-    const { data, error } = await fn();
-    if (error) return null;
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-async function safeCount(
-  fn: () => PromiseLike<{ count: number | null; error: unknown }>
-): Promise<number | null> {
-  try {
-    const { count, error } = await fn();
-    if (error) return null;
-    return count ?? null;
-  } catch {
-    return null;
-  }
+  return {
+    configured: true,
+    totalProducts, categoriesCount, brandsCount, productsWithBrand,
+    approvedCount, missingImage, featuredCount, promotedCount,
+    inventoryUnits, inventoryRows: invRows.length,
+    categoryBreakdown, brandBreakdown, channelBreakdown,
+  };
 }
