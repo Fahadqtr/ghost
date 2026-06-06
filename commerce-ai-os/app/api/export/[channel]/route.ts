@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import {
   buildShopifyCsv, buildSnoonuCsv, buildTalabatCsv, buildRafeeqCsv,
-  CHANNEL_NAME, CHANNEL_KEYS, type ChannelKey, type ExportProduct,
+  CHANNEL_KEYS, type ChannelKey, type ExportProduct,
   type ExportVariant, type StatusMap,
 } from "@/lib/exporters";
 
@@ -45,8 +45,10 @@ export async function GET(
     )) as ExportProduct[];
 
     // Channel status map for this channel (Snoonu has 2 ids → same status).
+    // Match channels by name pattern (the two Snoonu storefronts are now named
+    // "Malika's Universe (Snoonu)" / "Pure Seoul (Snoonu)" — both contain "snoonu").
     const { data: chans } = await supabase
-      .from("channels").select("id, name").eq("name", CHANNEL_NAME[channel]);
+      .from("channels").select("id, name").ilike("name", `%${channel}%`);
     const chanIds = (chans ?? []).map((c: any) => c.id);
     const status: StatusMap = {};
     if (chanIds.length) {

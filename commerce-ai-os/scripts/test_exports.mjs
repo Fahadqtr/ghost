@@ -24,7 +24,7 @@ async function all(table, cols) {
   return out;
 }
 async function statusFor(channelKey) {
-  const { data: chans } = await sb.from("channels").select("id").eq("name", CHANNEL_NAME[channelKey]);
+  const { data: chans } = await sb.from("channels").select("id").ilike("name", "%"+channelKey+"%");
   const ids = (chans ?? []).map((c) => c.id);
   const map = {};
   if (ids.length) {
