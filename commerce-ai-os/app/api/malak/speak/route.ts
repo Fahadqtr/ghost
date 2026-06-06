@@ -65,33 +65,47 @@ export async function POST(req: Request) {
   // No voice configured at all → fall back to the browser voice client-side.
   if (!voiceId) return new Response(null, { status: 204 });
 
-  try {
-    const r = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`,
-      {
-        method: "POST",
-        headers: {
-          "xi-api-key": apiKey,
-          "Content-Type": "application/json",
-          Accept: "audio/mpeg",
+  // The shared Malika voice is our known-good Arabic fallback: if an agent's
+  // own voice fails (e.g. a library voice that isn't added to this account),
+  // we'd rather speak Arabic with Malika than drop to the browser's voice,
+  // which on a PC with no Arabic system voice reads Arabic in English.
+  const fallbackId = process.env.ELEVENLABS_VOICE_ID;
+
+  const synthesize = (id: string) =>
+    fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        "Content-Type": "application/json",
+        Accept: "audio/mpeg",
+      },
+      body: JSON.stringify({
+        text: text.slice(0, 1500),
+        model_id: process.env.ELEVENLABS_MODEL_ID || MODEL_ID,
+        voice_settings: {
+          // Lower stability + a touch more style => livelier, less robotic /
+          // monotone delivery (still steady enough to avoid stuttering).
+          stability: 0.55,
+          similarity_boost: 0.85,
+          style: 0.3,
+          use_speaker_boost: true,
+          // Just under default (1.0): natural, unhurried, but not so slow it
+          // sounds dragged. ElevenLabs reads `speed` from voice_settings.
+          speed: 0.95,
         },
-        body: JSON.stringify({
-          text: text.slice(0, 1500),
-          model_id: process.env.ELEVENLABS_MODEL_ID || MODEL_ID,
-          voice_settings: {
-            // Lower stability + a touch more style => livelier, less robotic /
-            // monotone delivery (still steady enough to avoid stuttering).
-            stability: 0.55,
-            similarity_boost: 0.85,
-            style: 0.3,
-            use_speaker_boost: true,
-            // Just under default (1.0): natural, unhurried, but not so slow it
-            // sounds dragged. ElevenLabs reads `speed` from voice_settings.
-            speed: 0.95,
-          },
-        }),
-      }
-    );
+      }),
+    });
+
+  try {
+    let r = await synthesize(voiceId);
+
+    // Agent voice failed → retry once with the Malika fallback (Arabic) before
+    // giving up and letting the client use the browser voice.
+    if (!r.ok && fallbackId && fallbackId !== voiceId) {
+      const err = await r.text();
+      console.error("[malak-speak] agent voice failed", r.status, err.slice(0, 200), "→ retrying with fallback");
+      r = await synthesize(fallbackId);
+    }
 
     if (!r.ok) {
       const err = await r.text();

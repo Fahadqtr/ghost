@@ -616,7 +616,7 @@ export default function MalakPage() {
       </div>
 
       {/* Transcript + panel (scrollable) */}
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 sm:px-6">
+      <div ref={scrollRef} className="mx-auto min-h-0 w-full max-w-3xl flex-1 space-y-3 overflow-y-auto px-4 py-3 sm:px-6">
         {turns.length === 0 && !typed ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-white/50">
             أهلًا فهد 👋 أنا ملاك وفريقي جاهزين. اسألني عن الكتالوج، الأسعار، أو خلّني أكتب لك محتوى.
@@ -655,6 +655,7 @@ export default function MalakPage() {
 
       {/* Composer */}
       <div className="shrink-0 border-t border-white/10 bg-black/20 px-4 py-3 backdrop-blur sm:px-6">
+       <div className="mx-auto w-full max-w-3xl">
         {/* Quick prompts */}
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
           {QUICK_PROMPTS.map((q) => (
@@ -701,6 +702,7 @@ export default function MalakPage() {
             ↑
           </button>
         </form>
+       </div>
       </div>
     </div>
   );
