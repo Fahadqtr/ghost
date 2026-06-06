@@ -40,9 +40,12 @@ export async function POST(req: Request) {
           model_id: process.env.ELEVENLABS_MODEL_ID || MODEL_ID,
           voice_settings: {
             stability: 0.5,
-            similarity_boost: 0.8,
-            style: 0.0,
+            similarity_boost: 0.85,
+            style: 0.35,
             use_speaker_boost: true,
+            // Slightly slower than default (1.0) for a more natural, less
+            // rushed delivery. ElevenLabs reads `speed` from voice_settings.
+            speed: 0.9,
           },
         }),
       }
