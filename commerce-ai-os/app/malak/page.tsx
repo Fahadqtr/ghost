@@ -588,6 +588,9 @@ export default function MalakPage() {
                 {a.name.slice(0, 1)}
               </span>
               <span className="text-[10px] font-medium leading-none text-white/75">{a.name}</span>
+              <span className="max-w-[60px] truncate text-center text-[8px] leading-tight text-white/40">
+                {a.role}
+              </span>
             </div>
           );
         })}
