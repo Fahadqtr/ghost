@@ -58,6 +58,7 @@ export const AGENTS = [
 
 /** Primary sidebar navigation. */
 export const NAV_ITEMS = [
+  { href: "/malak", label: "ملاك · Malak AI", icon: "✨" },
   { href: "/dashboard", label: "CEO Dashboard", icon: "📊" },
   { href: "/products", label: "Product Hub", icon: "📦" },
   { href: "/inventory", label: "Inventory", icon: "🏷️" },
