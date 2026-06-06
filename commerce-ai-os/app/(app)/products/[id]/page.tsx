@@ -70,14 +70,15 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
               src={heroUrl}
               alt={product.name_en ?? product.sku ?? "product"}
               loading="lazy"
-              className="mx-auto max-h-80 w-full rounded-lg object-contain"
+              className="mx-auto block h-auto max-h-96 w-full rounded-lg object-contain"
             />
             {galleryUrls.length > 1 ? (
               <div className="flex flex-wrap gap-2">
                 {galleryUrls.map((u, i) => (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img key={i} src={u} alt={`image ${i + 1}`} loading="lazy"
-                    className="h-16 w-16 rounded object-cover ring-1 ring-slate-200" />
+                    width={64} height={64}
+                    className="block h-16 w-16 max-w-none shrink-0 rounded object-cover ring-1 ring-slate-200" />
                 ))}
               </div>
             ) : null}

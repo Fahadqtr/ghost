@@ -26,7 +26,7 @@ export interface ProductRow {
 function Thumb({ url, alt }: { url: string | null; alt: string }) {
   if (!url) {
     return (
-      <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-100 text-slate-300" title="No image">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-slate-100 text-slate-300" title="No image">
         📦
       </div>
     );
@@ -37,7 +37,9 @@ function Thumb({ url, alt }: { url: string | null; alt: string }) {
       src={url}
       alt={alt}
       loading="lazy"
-      className="h-10 w-10 rounded object-cover ring-1 ring-slate-200"
+      width={48}
+      height={48}
+      className="block h-12 w-12 max-w-none shrink-0 rounded object-cover ring-1 ring-slate-200"
     />
   );
 }
