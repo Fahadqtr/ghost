@@ -315,11 +315,23 @@ export default function MalakPage() {
   const recognitionRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
-  // ONE persistent audio element, "primed" on a user gesture (see unlockAudio).
-  // Chrome blocks audio.play() that happens after async work (our TTS arrives
-  // after a fetch), so we reuse a gesture-blessed element instead of new Audio().
+  // Audio playback. Chrome blocks HTMLAudio.play() that runs after async work
+  // (our TTS arrives after a fetch). The robust fix is the Web Audio API: an
+  // AudioContext resumed inside a user gesture can play buffers at any later
+  // time without per-play activation. HTMLAudio is kept only as a fallback.
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const srcNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const primedRef = useRef(false);
+
+  const getCtx = (): AudioContext | null => {
+    if (typeof window === "undefined") return null;
+    if (!audioCtxRef.current) {
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!Ctx) return null;
+      audioCtxRef.current = new Ctx();
+    }
+    return audioCtxRef.current;
+  };
 
   const getPlayer = () => {
     if (!audioRef.current) {
@@ -330,22 +342,25 @@ export default function MalakPage() {
     return audioRef.current;
   };
 
-  // Must be called from inside a user gesture (click/tap/submit). Plays a tiny
-  // silent clip so the element is "activated" and later programmatic play() is
-  // allowed by the browser's autoplay policy.
+  // Must be called from inside a user gesture (click/tap/submit): resume the
+  // AudioContext so later programmatic playback is allowed by the autoplay
+  // policy. Also primes the HTMLAudio fallback element.
   const unlockAudio = useCallback(() => {
-    if (primedRef.current) return;
+    try {
+      const ctx = getCtx();
+      if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
+    } catch {
+      /* ignore */
+    }
     try {
       const el = getPlayer();
       el.muted = true;
       el.src =
         "data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAAABmYWN0BAAAAAAAAABkYXRhAAAAAA==";
-      const p = el.play();
-      Promise.resolve(p)
+      Promise.resolve(el.play())
         .then(() => {
           el.pause();
           el.muted = false;
-          primedRef.current = true;
         })
         .catch(() => {
           el.muted = false;
@@ -379,6 +394,15 @@ export default function MalakPage() {
   // ---- TTS ----
   // Stop any in-flight audio / browser speech before starting something new.
   const stopAudio = useCallback(() => {
+    try {
+      if (srcNodeRef.current) {
+        srcNodeRef.current.onended = null;
+        srcNodeRef.current.stop();
+        srcNodeRef.current = null;
+      }
+    } catch {
+      /* ignore */
+    }
     try {
       // Pause but KEEP the element (it's primed) so we can reuse it.
       audioRef.current?.pause();
@@ -438,9 +462,36 @@ export default function MalakPage() {
         });
         const ct = res.headers.get("content-type") || "";
         if (res.ok && ct.includes("audio")) {
-          const blob = await res.blob();
-          const url = URL.createObjectURL(blob);
-          // Reuse the gesture-primed element so Chrome allows playback.
+          const buf = await res.arrayBuffer();
+
+          // Primary path: Web Audio API. A gesture-resumed AudioContext plays
+          // buffers reliably even though we're now well past the user gesture.
+          const ctx = getCtx();
+          if (ctx) {
+            try {
+              if (ctx.state === "suspended") await ctx.resume();
+              // decodeAudioData detaches its input, so hand it a copy.
+              const audioBuf = await ctx.decodeAudioData(buf.slice(0));
+              const node = ctx.createBufferSource();
+              node.buffer = audioBuf;
+              node.connect(ctx.destination);
+              node.onended = () => {
+                if (srcNodeRef.current === node) {
+                  srcNodeRef.current = null;
+                  setState("idle");
+                }
+              };
+              srcNodeRef.current = node;
+              setState("speaking");
+              node.start(0);
+              return;
+            } catch {
+              /* fall through to the HTMLAudio element */
+            }
+          }
+
+          // Fallback path: HTMLAudio element (primed in unlockAudio).
+          const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
           const audio = getPlayer();
           audio.onplay = () => setState("speaking");
           audio.onended = () => {
@@ -455,7 +506,7 @@ export default function MalakPage() {
           try {
             await audio.play();
           } catch {
-            // Autoplay still blocked → at least don't read Arabic in English.
+            // Still blocked → at least don't read Arabic in an English voice.
             URL.revokeObjectURL(url);
             browserSpeak(clean);
           }
