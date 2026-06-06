@@ -59,6 +59,29 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
 
+  // Mode 0: return the raw MP3 for an agent so it can be listened to directly,
+  // bypassing the app entirely. ?audio=1&agent=malak
+  if (url.searchParams.get("audio")) {
+    const agent = (url.searchParams.get("agent") || "malak").toLowerCase();
+    const v = voiceFor(agent);
+    if (!v) return Response.json({ agent, error: "no voice resolved" });
+    const r = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(v)}`,
+      {
+        method: "POST",
+        headers: { "xi-api-key": apiKey, "Content-Type": "application/json", Accept: "audio/mpeg" },
+        body: JSON.stringify({
+          text: "السلام عليكم، أنا من فريق ملاك، كيف أقدر أساعدك اليوم؟",
+          model_id: MODEL_ID,
+          voice_settings: { stability: 0.55, similarity_boost: 0.85, style: 0.3, use_speaker_boost: true },
+        }),
+      }
+    );
+    if (!r.ok) return Response.json({ agent, voiceId: v, status: r.status, body: (await r.text()).slice(0, 300) });
+    const audio = await r.arrayBuffer();
+    return new Response(audio, { status: 200, headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" } });
+  }
+
   // Mode 1: list the account's voices.
   if (url.searchParams.get("list")) {
     const r = await fetch("https://api.elevenlabs.io/v1/voices", {
