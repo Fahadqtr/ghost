@@ -24,23 +24,18 @@ export interface ProductRow {
 }
 
 function Thumb({ url, alt }: { url: string | null; alt: string }) {
-  if (!url) {
-    return (
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-slate-100 text-slate-300" title="No image">
-        📦
-      </div>
-    );
-  }
+  // Fixed-size BOX owns the dimensions; the img fills it at 100% (never relies
+  // on intrinsic size or height:auto, so a 1:1 image fills the 48x48 square).
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      alt={alt}
-      loading="lazy"
-      width={48}
-      height={48}
-      className="block h-12 w-12 max-w-none shrink-0 rounded object-cover ring-1 ring-slate-200"
-    />
+    <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-slate-100 ring-1 ring-slate-200">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt={alt} width={48} height={48} loading="lazy"
+          className="block h-full w-full object-cover" />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center text-slate-300" title="No image">📦</div>
+      )}
+    </div>
   );
 }
 

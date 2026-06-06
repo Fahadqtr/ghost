@@ -65,13 +65,16 @@ export default async function ProductDetailPage({ params }: { params: { id: stri
       <div className="card">
         {heroUrl ? (
           <div className="space-y-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={heroUrl}
-              alt={product.name_en ?? product.sku ?? "product"}
-              loading="lazy"
-              className="mx-auto block h-auto max-h-96 w-full rounded-lg object-contain"
-            />
+            {/* Fixed-height box owns the size; img fills it with object-contain. */}
+            <div className="flex h-80 w-full items-center justify-center overflow-hidden rounded-lg bg-slate-50 sm:h-96">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={heroUrl}
+                alt={product.name_en ?? product.sku ?? "product"}
+                loading="lazy"
+                className="block h-full w-full object-contain"
+              />
+            </div>
             {galleryUrls.length > 1 ? (
               <div className="flex flex-wrap gap-2">
                 {galleryUrls.map((u, i) => (
