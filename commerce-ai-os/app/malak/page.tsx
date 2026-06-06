@@ -315,6 +315,7 @@ export default function MalakPage() {
   const recognitionRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const accent = agentById(activeAgent).color;
 
@@ -338,8 +339,31 @@ export default function MalakPage() {
   }, [turns, typed, panel]);
 
   // ---- TTS ----
-  const speak = useCallback((text: string) => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  // Stop any in-flight audio / browser speech before starting something new.
+  const stopAudio = useCallback(() => {
+    try {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+        audioRef.current = null;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      window.speechSynthesis?.cancel();
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Fallback: the browser's built-in Arabic voice (used if ElevenLabs is
+  // unavailable, not configured, or playback is blocked).
+  const browserSpeak = useCallback((text: string) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      setState("idle");
+      return;
+    }
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
@@ -356,6 +380,46 @@ export default function MalakPage() {
       setState("idle");
     }
   }, []);
+
+  // Primary: ElevenLabs voice via the server route. Falls back to the browser
+  // voice on 204 (not configured), 502 (API error), or playback failure.
+  const speak = useCallback(
+    async (text: string) => {
+      const clean = text.trim();
+      if (!clean) return;
+      stopAudio();
+      try {
+        const res = await fetch("/api/malak/speak", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ speak: clean }),
+        });
+        const ct = res.headers.get("content-type") || "";
+        if (res.ok && ct.includes("audio")) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          audio.onplay = () => setState("speaking");
+          audio.onended = () => {
+            setState("idle");
+            URL.revokeObjectURL(url);
+            if (audioRef.current === audio) audioRef.current = null;
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            browserSpeak(clean);
+          };
+          await audio.play();
+          return;
+        }
+      } catch {
+        /* fall through to browser voice */
+      }
+      browserSpeak(clean);
+    },
+    [stopAudio, browserSpeak]
+  );
 
   // ---- Typewriter for Malak's reply ----
   const typewriter = useCallback(
@@ -384,6 +448,7 @@ export default function MalakPage() {
       const clean = text.trim();
       if (!clean || busyRef.current) return;
       busyRef.current = true;
+      stopAudio();
 
       const nextTurns: Turn[] = [...turns, { role: "user", text: clean }];
       setTurns(nextTurns);
@@ -418,7 +483,7 @@ export default function MalakPage() {
         busyRef.current = false;
       }
     },
-    [turns, typewriter, speak]
+    [turns, typewriter, speak, stopAudio]
   );
 
   // ---- Mic (Web Speech) ----
@@ -466,7 +531,7 @@ export default function MalakPage() {
       setState("idle");
     } else {
       try {
-        window.speechSynthesis?.cancel();
+        stopAudio();
         rec.start();
         setListening(true);
         setState("listening");
