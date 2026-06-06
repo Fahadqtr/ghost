@@ -51,7 +51,7 @@ const QUICK_PROMPTS = [
 ];
 
 // ---- Energy orb (canvas) ---------------------------------------------------
-function Orb({ state, color }: { state: OrbState; color: string }) {
+function Orb({ state, color, size = 200 }: { state: OrbState; color: string; size?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef(state);
   const colorRef = useRef(color);
@@ -65,12 +65,12 @@ function Orb({ state, color }: { state: OrbState; color: string }) {
     if (!ctx) return;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const size = 280;
     canvas.width = size * dpr;
     canvas.height = size * dpr;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const cx = size / 2;
     const cy = size / 2;
+    const scale = size / 280; // internals were tuned for a 280px orb
 
     let raf = 0;
     let t = 0;
@@ -87,12 +87,12 @@ function Orb({ state, color }: { state: OrbState; color: string }) {
 
       ctx.clearRect(0, 0, size, size);
 
-      const baseR = 70;
+      const baseR = size * 0.25;
       const pulse =
-        s === "speaking" ? 12 * Math.sin(t * 3) + 6 * Math.sin(t * 7)
+        (s === "speaking" ? 12 * Math.sin(t * 3) + 6 * Math.sin(t * 7)
         : s === "listening" ? 10 * Math.sin(t * 2.2)
         : s === "thinking" ? 6 * Math.sin(t * 1.5)
-        : 5 * Math.sin(t);
+        : 5 * Math.sin(t)) * scale;
       const radius = baseR + pulse;
 
       // Outer glow
@@ -117,25 +117,25 @@ function Orb({ state, color }: { state: OrbState; color: string }) {
       const rings = s === "thinking" ? 3 : s === "speaking" ? 5 : 2;
       for (let i = 0; i < rings; i++) {
         const a = t * (1 + i * 0.4) + (i * Math.PI * 2) / rings;
-        const rr = radius + 18 + i * 10 + Math.sin(t * 2 + i) * 5;
+        const rr = radius + (18 + i * 10 + Math.sin(t * 2 + i) * 5) * scale;
         const px = cx + Math.cos(a) * rr;
         const py = cy + Math.sin(a) * rr;
         ctx.beginPath();
-        ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+        ctx.arc(px, py, 3.5 * scale, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(${r},${g},${b},0.8)`;
         ctx.shadowColor = `rgba(${r},${g},${b},0.9)`;
-        ctx.shadowBlur = 12;
+        ctx.shadowBlur = 12 * scale;
         ctx.fill();
         ctx.shadowBlur = 0;
       }
 
       // Listening ripple ring
       if (s === "listening") {
-        const ripple = (t * 30) % 60;
+        const ripple = (t * 30 * scale) % (60 * scale);
         ctx.beginPath();
         ctx.arc(cx, cy, radius + ripple, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${r},${g},${b},${0.5 * (1 - ripple / 60)})`;
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = `rgba(${r},${g},${b},${0.5 * (1 - ripple / (60 * scale))})`;
+        ctx.lineWidth = 2 * scale;
         ctx.stroke();
       }
 
@@ -143,12 +143,12 @@ function Orb({ state, color }: { state: OrbState; color: string }) {
     };
     render();
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [size]);
 
   return (
     <canvas
       ref={canvasRef}
-      style={{ width: 280, height: 280 }}
+      style={{ width: size, height: size }}
       className="select-none"
       aria-hidden
     />
@@ -310,12 +310,27 @@ export default function MalakPage() {
   const [listening, setListening] = useState(false);
   const [typed, setTyped] = useState(""); // typewriter buffer for latest malak turn
   const [micSupported, setMicSupported] = useState(true);
+  const [orbSize, setOrbSize] = useState(160); // responsive; set on mount
 
   const recognitionRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
 
   const accent = agentById(activeAgent).color;
+
+  // Responsive orb: small on phones, larger on wide screens. Caps by viewport
+  // height too so it never crowds out the transcript on short screens.
+  useEffect(() => {
+    const calc = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const byW = w < 380 ? 120 : w < 640 ? 140 : 200;
+      setOrbSize(Math.round(Math.min(byW, h * 0.22)));
+    };
+    calc();
+    window.addEventListener("resize", calc);
+    return () => window.removeEventListener("resize", calc);
+  }, []);
 
   // Auto-scroll transcript.
   useEffect(() => {
@@ -487,19 +502,19 @@ export default function MalakPage() {
       </header>
 
       {/* Agent rail */}
-      <div className="flex shrink-0 gap-2 overflow-x-auto px-4 pb-2 pt-1 sm:justify-center sm:px-6">
+      <div className="flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-1.5 pt-0.5 [scrollbar-width:none] sm:justify-center sm:px-6">
         {RAIL.map((a) => {
           const on = a.id === activeAgent;
           return (
             <div
               key={a.id}
-              className={`flex shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 transition ${
-                on ? "bg-white/10" : "opacity-60"
+              className={`flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-1.5 py-1 transition ${
+                on ? "bg-white/10" : "opacity-55"
               }`}
-              style={on ? { boxShadow: `0 0 0 1px ${a.color}66, 0 0 18px ${a.color}44` } : undefined}
+              style={on ? { boxShadow: `0 0 0 1px ${a.color}66, 0 0 14px ${a.color}44` } : undefined}
             >
               <span
-                className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold transition"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold transition"
                 style={{
                   background: on ? a.color : `${a.color}33`,
                   color: on ? "#0b1020" : a.color,
@@ -507,16 +522,16 @@ export default function MalakPage() {
               >
                 {a.name.slice(0, 1)}
               </span>
-              <span className="text-[11px] font-medium text-white/80">{a.name}</span>
+              <span className="text-[10px] font-medium leading-none text-white/75">{a.name}</span>
             </div>
           );
         })}
       </div>
 
       {/* Orb */}
-      <div className="relative flex shrink-0 flex-col items-center justify-center pt-1">
-        <Orb state={state} color={accent} />
-        <div className="-mt-4 text-center">
+      <div className="relative flex shrink-0 flex-col items-center justify-center">
+        <Orb state={state} color={accent} size={orbSize} />
+        <div className="-mt-3 text-center">
           <p className="text-sm font-semibold" style={{ color: accent }}>
             {activeDef.name}
           </p>

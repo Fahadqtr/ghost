@@ -9,7 +9,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MODEL = "claude-sonnet-4-6"; // current Sonnet (plan asked for Sonnet)
-const MAX_TOKENS = 1500;
+// 1500 (the plan's value) was too low: a products panel of 8 items easily
+// exceeds it, so the final `respond` tool call gets truncated → stop_reason
+// "max_tokens" → empty answer ("تم."). 4096 gives ample headroom.
+const MAX_TOKENS = 4096;
 const MAX_TOOL_ROUNDS = 4;
 
 // The 8 named specialists + Malak herself. The `agent` field returned must be
@@ -32,12 +35,13 @@ const SYSTEM_PROMPT =
   'راشد=التقارير، لطيفة=العملاء، سالم=العمليات. لهجة خليجية واثقة ومختصرة كشريكة أعمال لفهد. ' +
   'استخدمي الأدوات لجلب البيانات الحقيقية — لا تخترعي أرقامًا. ' +
   'ردّك النهائي JSON فقط: {"agent":"<id>","speak":"<رد قصير للنطق يذكر اسم الوكيل>","panel":<اختياري>}. ' +
-  'أنواع panel: products{items:[{name,brand,price,status,sku,image_url}]}, ' +
+  'أنواع panel: products{items:[{name,brand,price,status,sku}]}, ' +
   'stats{items:[{label,value,sub}]}, ' +
   'post{item:{caption_ar,caption_en,hashtags,platforms,schedule,product}}, ' +
   'tiktok{item:{hook,scenes:[{shot,text}],audio,hashtags,cta}}. ' +
   'النشر الفعلي يحتاج Meta/TikTok API — وضّحي ذلك في speak. ' +
-  'مهم: عند عرض المنتجات انسخي image_url و sku كما وردا من الأداة بالضبط حتى تظهر صور المنتجات الحقيقية. ' +
+  'مهم: في لوحة products أدرجي sku دائمًا لكل منتج، ولا تُدرجي image_url إطلاقًا — ' +
+  'الخادم يضيف صورة كل منتج تلقائيًا حسب الـsku (هذا يوفّر المساحة ويضمن ظهور الصور الحقيقية). ' +
   'قدّمي ردّكِ النهائي دائمًا عبر استدعاء أداة respond (وليس كنص عادي). id الوكلاء: ' +
   AGENT_IDS.join("، ") + ".";
 
@@ -46,7 +50,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_products",
     description:
-      "ابحثي في كتالوج المنتجات. مرّري query (كلمة بحث في الاسم/الـSKU/العلامة) و/أو brand و/أو category و/أو status (Approved/Rejected/SentAI). ترجع صفوفًا فيها name و brand و price و status و sku و image_url.",
+      "ابحثي في كتالوج المنتجات. مرّري query (كلمة بحث في الاسم/الـSKU/العلامة) و/أو brand و/أو category و/أو status (Approved/Rejected/SentAI). ترجع صفوفًا فيها name و brand و price و status و sku (الصور يضيفها الخادم حسب sku).",
     input_schema: {
       type: "object",
       properties: {
@@ -280,6 +284,20 @@ function extractText(content: Anthropic.ContentBlock[]): string {
     .trim();
 }
 
+function findRespond(content: Anthropic.ContentBlock[]): Anthropic.ToolUseBlock | undefined {
+  return content.find(
+    (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "respond"
+  );
+}
+
+// Shape a respond/JSON payload into the client contract { agent, speak, panel }.
+function buildResponse(out: any, skuImages: Map<string, string>) {
+  const agent = AGENT_IDS.includes(out?.agent) ? out.agent : "malak";
+  const speak = typeof out?.speak === "string" && out.speak.trim() ? out.speak : "تم.";
+  const panel = out?.panel ? enrichPanel(out.panel, skuImages) : undefined;
+  return { agent, speak, panel };
+}
+
 export async function POST(req: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -311,38 +329,43 @@ export async function POST(req: Request) {
   const sb = createAdminClient();
   const skuImages = new Map<string, string>();
 
-  try {
-    let resp = await client.messages.create({
+  const create = (extra: Partial<Anthropic.MessageCreateParamsNonStreaming> = {}) =>
+    client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
       temperature: 0,
       system: SYSTEM_PROMPT,
       tools: TOOLS,
       messages,
+      ...extra,
     });
 
+  try {
+    let resp = await create();
+    let toolRounds = 0;
+
+    // Tool loop. We check for a `respond` block after EVERY model response —
+    // regardless of stop_reason — so a truncated/`max_tokens` or final-round
+    // respond call is never silently dropped (the old bug that returned "تم.").
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      if (resp.stop_reason !== "tool_use") break;
+      console.log(`[malak] round=${round} stop_reason=${resp.stop_reason}`);
 
-      const toolUses = resp.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
-      );
-
-      // Did Claude give its final answer this turn?
-      const respondCall = toolUses.find((t) => t.name === "respond");
-      if (respondCall) {
-        const out: any = respondCall.input ?? {};
-        const agent = AGENT_IDS.includes(out.agent) ? out.agent : "malak";
-        return Response.json({
-          agent,
-          speak: typeof out.speak === "string" ? out.speak : "تم.",
-          panel: out.panel ? enrichPanel(out.panel, skuImages) : undefined,
-        });
+      const respondBlock = findRespond(resp.content);
+      if (respondBlock) {
+        console.log("[malak] respond via tool call");
+        return Response.json(buildResponse(respondBlock.input, skuImages));
       }
 
+      // No respond yet. If the model isn't asking for a data tool, stop looping.
+      if (resp.stop_reason !== "tool_use") break;
+
+      // Execute the data tools it asked for, feed results back.
+      const dataUses = resp.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+      );
       messages.push({ role: "assistant", content: resp.content });
       const results: Anthropic.ToolResultBlockParam[] = [];
-      for (const tu of toolUses) {
+      for (const tu of dataUses) {
         const data = await runTool(sb, tu.name, tu.input, skuImages);
         results.push({
           type: "tool_result",
@@ -351,36 +374,52 @@ export async function POST(req: Request) {
         });
       }
       messages.push({ role: "user", content: results });
-
-      resp = await client.messages.create({
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        temperature: 0,
-        system: SYSTEM_PROMPT,
-        tools: TOOLS,
-        messages,
-      });
+      toolRounds++;
+      resp = await create();
     }
 
-    // Fell out of the loop without a `respond` call — parse final text defensively.
+    // Loop ended without a respond tool call. Try to parse final prose as JSON.
     const text = extractText(resp.content);
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       try {
         const parsed = JSON.parse(jsonMatch[0]);
-        const agent = AGENT_IDS.includes(parsed.agent) ? parsed.agent : "malak";
-        return Response.json({
-          agent,
-          speak: typeof parsed.speak === "string" ? parsed.speak : text,
-          panel: parsed.panel ? enrichPanel(parsed.panel, skuImages) : undefined,
-        });
+        console.log("[malak] respond via parsed JSON text");
+        return Response.json(buildResponse(parsed, skuImages));
       } catch {
-        /* fall through */
+        console.log("[malak] JSON parse of final text failed");
       }
     }
-    return Response.json({ agent: "malak", speak: text || "تم." });
+
+    // Forced-respond fallback: the conversation in `messages` is well-formed
+    // (every tool_use already has its tool_result), and any data the model
+    // gathered is in those tool_results. Force a structured respond so we ALWAYS
+    // return { agent, speak, panel } instead of falling through to "تم.".
+    // We do NOT push the broken final `resp` (it may be a partial tool_use).
+    console.log(`[malak] forcing respond (toolRounds=${toolRounds}, finalStop=${resp.stop_reason}, textLen=${text.length})`);
+    if (resp.stop_reason !== "tool_use") {
+      // Safe to include the model's prose turn for context.
+      messages.push({ role: "assistant", content: text || "(no text)" });
+    }
+    messages.push({
+      role: "user",
+      content: "صيغي ردّكِ النهائي الآن عبر استدعاء أداة respond فقط، مع panel مناسب إذا توفّرت بيانات منتجات/إحصائيات.",
+    });
+    const forced = await create({ tool_choice: { type: "tool", name: "respond" } });
+    const forcedBlock = findRespond(forced.content);
+    if (forcedBlock) {
+      console.log("[malak] respond via forced tool_choice");
+      return Response.json(buildResponse(forcedBlock.input, skuImages));
+    }
+
+    console.log("[malak] no structured answer produced");
+    return Response.json({
+      agent: "malak",
+      speak: text || "ما قدرت أجهّز الرد، جرّب تعيد صياغة طلبك.",
+    });
   } catch (e: any) {
     const msg = e?.message || "خطأ غير متوقع";
+    console.error("[malak] error:", msg);
     return Response.json(
       { agent: "malak", speak: `صار خطأ تقني عندي: ${msg.slice(0, 200)}` },
       { status: 200 }
