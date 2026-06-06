@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import ProductForm from "@/components/ProductForm";
+import ProductImages, { type ProductImageRow } from "@/components/ProductImages";
 import type { Brand } from "@/lib/types";
 import type { ProductInput, VariantInput } from "@/app/(app)/products/actions";
 
@@ -17,11 +18,12 @@ export default async function EditProductPage({
 }) {
   const supabase = createClient();
 
-  const [{ data: product }, { data: variants }, { data: brands }] =
+  const [{ data: product }, { data: variants }, { data: brands }, { data: imageRows }] =
     await Promise.all([
       supabase.from("products").select("*").eq("id", params.id).single(),
       supabase.from("product_variants").select("*").eq("parent_product_id", params.id),
       supabase.from("brands").select("id, name").order("name"),
+      supabase.from("product_images").select("url, is_primary").eq("product_id", params.id).order("is_primary", { ascending: false }).order("sort_order", { ascending: true }),
     ]);
 
   if (!product) notFound();
@@ -69,6 +71,11 @@ export default async function EditProductPage({
         <h2 className="text-lg font-semibold text-ink">Edit · {product.name_en ?? "product"}</h2>
         <Link href={`/products/${product.id}`} className="text-sm text-brand hover:underline">← Back to detail</Link>
       </div>
+      <ProductImages
+        productId={product.id}
+        imageUrl={product.image_url ?? null}
+        images={(imageRows ?? []) as ProductImageRow[]}
+      />
       <ProductForm brands={(brands ?? []) as Brand[]} productId={product.id} initial={initial} />
     </div>
   );
