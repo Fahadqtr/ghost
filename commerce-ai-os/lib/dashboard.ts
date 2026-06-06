@@ -5,6 +5,7 @@ import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 
 export interface NameCount { name: string; count: number }
 export interface ChannelBreak { channel: string; active: number; draft: number; notListed: number; total: number }
+export interface RejectedItem { id: string; sku: string | null; name_en: string | null }
 
 export interface CeoKpis {
   configured: boolean;
@@ -13,6 +14,10 @@ export interface CeoKpis {
   brandsCount: number;
   productsWithBrand: number;
   approvedCount: number;
+  rejectedCount: number;
+  sentAiCount: number;
+  noApprovalCount: number;
+  rejectedList: RejectedItem[];
   missingImage: number;
   featuredCount: number;
   promotedCount: number;
@@ -43,7 +48,8 @@ export async function getCeoKpis(): Promise<CeoKpis> {
   const empty: CeoKpis = {
     configured: isSupabaseConfigured(),
     totalProducts: 0, categoriesCount: 0, brandsCount: 0, productsWithBrand: 0,
-    approvedCount: 0, missingImage: 0, featuredCount: 0, promotedCount: 0,
+    approvedCount: 0, rejectedCount: 0, sentAiCount: 0, noApprovalCount: 0, rejectedList: [],
+    missingImage: 0, featuredCount: 0, promotedCount: 0,
     inventoryUnits: 0, inventoryRows: 0,
     categoryBreakdown: [], brandBreakdown: [], channelBreakdown: [],
   };
@@ -58,17 +64,32 @@ export async function getCeoKpis(): Promise<CeoKpis> {
   // Cheap head-count queries in parallel.
   const [
     totalProducts, categoriesCount, brandsCount, productsWithBrand,
-    approvedCount, missingImage, featuredCount, promotedCount,
+    approvedCount, rejectedCount, sentAiCount, noApprovalCount,
+    missingImage, featuredCount, promotedCount,
   ] = await Promise.all([
     c("products"),
     c("product_categories"),
     c("brands"),
     c("products", (b) => b.not("brand_id", "is", null)),
     c("products", (b) => b.eq("approval", "Approved")),
+    c("products", (b) => b.eq("approval", "Rejected")),
+    c("products", (b) => b.eq("approval", "SentAI")),
+    c("products", (b) => b.is("approval", null)),
     c("products", (b) => b.is("image_url", null)),
     c("products", (b) => b.eq("is_featured", true)),
     c("products", (b) => b.eq("is_promoted", true)),
   ]);
+
+  // The actual rejected products (small list — for the "View rejected" panel).
+  let rejectedList: RejectedItem[] = [];
+  try {
+    const { data } = await sb
+      .from("products").select("id, sku, name_en")
+      .eq("approval", "Rejected")
+      .order("sku", { ascending: true })
+      .limit(200);
+    rejectedList = (data ?? []) as RejectedItem[];
+  } catch { /* leave empty */ }
 
   // Row-level fetches for breakdowns + inventory sum.
   const [prodRows, invRows, channels, links, brands] = await Promise.all([
@@ -118,7 +139,8 @@ export async function getCeoKpis(): Promise<CeoKpis> {
   return {
     configured: true,
     totalProducts, categoriesCount, brandsCount, productsWithBrand,
-    approvedCount, missingImage, featuredCount, promotedCount,
+    approvedCount, rejectedCount, sentAiCount, noApprovalCount, rejectedList,
+    missingImage, featuredCount, promotedCount,
     inventoryUnits, inventoryRows: invRows.length,
     categoryBreakdown, brandBreakdown, channelBreakdown,
   };

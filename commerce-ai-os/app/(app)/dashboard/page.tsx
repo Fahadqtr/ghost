@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCeoKpis, type NameCount, type ChannelBreak } from "@/lib/dashboard";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +29,39 @@ export default async function DashboardPage() {
         <Kpi title="Inventory units" value={nf(k.inventoryUnits)} icon="🏷️"
           hint={`across ${nf(k.inventoryRows)} products — placeholder, pending stocktake`} accent="muted" />
       </div>
+
+      {/* Approval breakdown */}
+      <Section title="Approval status (Snoonu)">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <ApprovalChip label="Approved" value={k.approvedCount} tone="green" />
+          <ApprovalChip label="Rejected" value={k.rejectedCount} tone="red" />
+          <ApprovalChip label="SentAI" value={k.sentAiCount} tone="amber" />
+          <ApprovalChip label="No status" value={k.noApprovalCount} tone="slate" />
+        </div>
+
+        {k.rejectedCount > 0 ? (
+          <details className="mt-3 rounded-lg border border-red-100 bg-red-50/50">
+            <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-red-700">
+              View rejected ({k.rejectedCount})
+            </summary>
+            <ul className="divide-y divide-red-100 px-3 pb-2">
+              {k.rejectedList.map((r) => (
+                <li key={r.id} className="py-2">
+                  <Link href={`/products/${r.id}`} className="flex items-center justify-between gap-2 text-sm hover:underline">
+                    <span className="truncate text-ink">{r.name_en ?? "—"}</span>
+                    <span className="shrink-0 font-mono text-xs text-muted">{r.sku ?? "—"}</span>
+                  </Link>
+                </li>
+              ))}
+              {k.rejectedCount > k.rejectedList.length ? (
+                <li className="py-2 text-xs text-muted">…and {k.rejectedCount - k.rejectedList.length} more</li>
+              ) : null}
+            </ul>
+          </details>
+        ) : (
+          <p className="mt-3 text-sm text-slate-400">No rejected products 🎉</p>
+        )}
+      </Section>
 
       {/* Breakdowns */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -96,6 +130,20 @@ function Kpi({ title, value, hint, icon, accent }: { title: string; value: strin
       </div>
       <p className={`mt-2 text-2xl font-semibold ${color}`}>{value}</p>
       {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
+    </div>
+  );
+}
+
+function ApprovalChip({ label, value, tone }: { label: string; value: number; tone: "green" | "red" | "amber" | "slate" }) {
+  const cls =
+    tone === "green" ? "bg-green-50 text-green-700"
+    : tone === "red" ? "bg-red-50 text-red-700"
+    : tone === "amber" ? "bg-amber-50 text-amber-700"
+    : "bg-slate-50 text-slate-500";
+  return (
+    <div className={`rounded-lg px-3 py-2 ${cls}`}>
+      <p className="text-xs font-medium">{label}</p>
+      <p className="text-xl font-semibold">{nf(value)}</p>
     </div>
   );
 }
