@@ -39,13 +39,16 @@ export async function POST(req: Request) {
           text: text.slice(0, 1500),
           model_id: process.env.ELEVENLABS_MODEL_ID || MODEL_ID,
           voice_settings: {
-            stability: 0.5,
+            // Higher stability => steadier delivery with fewer artifacts /
+            // stutters. Lower `style` for the same reason (high style is the
+            // main cause of wobble/stammering on multilingual_v2).
+            stability: 0.62,
             similarity_boost: 0.85,
-            style: 0.35,
+            style: 0.2,
             use_speaker_boost: true,
-            // Slightly slower than default (1.0) for a more natural, less
-            // rushed delivery. ElevenLabs reads `speed` from voice_settings.
-            speed: 0.9,
+            // Just under default (1.0): natural, unhurried, but not so slow it
+            // sounds dragged. ElevenLabs reads `speed` from voice_settings.
+            speed: 0.95,
           },
         }),
       }
