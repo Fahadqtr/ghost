@@ -315,7 +315,45 @@ export default function MalakPage() {
   const recognitionRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
+  // ONE persistent audio element, "primed" on a user gesture (see unlockAudio).
+  // Chrome blocks audio.play() that happens after async work (our TTS arrives
+  // after a fetch), so we reuse a gesture-blessed element instead of new Audio().
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const primedRef = useRef(false);
+
+  const getPlayer = () => {
+    if (!audioRef.current) {
+      const el = new Audio();
+      el.preload = "auto";
+      audioRef.current = el;
+    }
+    return audioRef.current;
+  };
+
+  // Must be called from inside a user gesture (click/tap/submit). Plays a tiny
+  // silent clip so the element is "activated" and later programmatic play() is
+  // allowed by the browser's autoplay policy.
+  const unlockAudio = useCallback(() => {
+    if (primedRef.current) return;
+    try {
+      const el = getPlayer();
+      el.muted = true;
+      el.src =
+        "data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAAABmYWN0BAAAAAAAAABkYXRhAAAAAA==";
+      const p = el.play();
+      Promise.resolve(p)
+        .then(() => {
+          el.pause();
+          el.muted = false;
+          primedRef.current = true;
+        })
+        .catch(() => {
+          el.muted = false;
+        });
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const accent = agentById(activeAgent).color;
 
@@ -342,11 +380,8 @@ export default function MalakPage() {
   // Stop any in-flight audio / browser speech before starting something new.
   const stopAudio = useCallback(() => {
     try {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = "";
-        audioRef.current = null;
-      }
+      // Pause but KEEP the element (it's primed) so we can reuse it.
+      audioRef.current?.pause();
     } catch {
       /* ignore */
     }
@@ -358,19 +393,26 @@ export default function MalakPage() {
   }, []);
 
   // Fallback: the browser's built-in Arabic voice (used if ElevenLabs is
-  // unavailable, not configured, or playback is blocked).
+  // unavailable, not configured, or playback is blocked). IMPORTANT: only speak
+  // if the system actually has an Arabic voice — otherwise the browser would
+  // read Arabic text with an English voice (the "ملاك تتكلم إنجليزي" bug on a
+  // PC with no Arabic TTS). In that case we stay silent; the reply is shown.
   const browserSpeak = useCallback((text: string) => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) {
       setState("idle");
       return;
     }
     try {
+      const voices = window.speechSynthesis.getVoices();
+      const ar = voices.find((v) => v.lang?.toLowerCase().startsWith("ar"));
+      if (!ar) {
+        setState("idle");
+        return;
+      }
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "ar-SA";
-      const voices = window.speechSynthesis.getVoices();
-      const ar = voices.find((v) => v.lang?.toLowerCase().startsWith("ar"));
-      if (ar) u.voice = ar;
+      u.voice = ar;
       u.rate = 1;
       u.pitch = 1;
       u.onstart = () => setState("speaking");
@@ -398,19 +440,25 @@ export default function MalakPage() {
         if (res.ok && ct.includes("audio")) {
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          audioRef.current = audio;
+          // Reuse the gesture-primed element so Chrome allows playback.
+          const audio = getPlayer();
           audio.onplay = () => setState("speaking");
           audio.onended = () => {
             setState("idle");
             URL.revokeObjectURL(url);
-            if (audioRef.current === audio) audioRef.current = null;
           };
           audio.onerror = () => {
             URL.revokeObjectURL(url);
             browserSpeak(clean);
           };
-          await audio.play();
+          audio.src = url;
+          try {
+            await audio.play();
+          } catch {
+            // Autoplay still blocked → at least don't read Arabic in English.
+            URL.revokeObjectURL(url);
+            browserSpeak(clean);
+          }
           return;
         }
       } catch {
@@ -447,6 +495,9 @@ export default function MalakPage() {
     async (text: string) => {
       const clean = text.trim();
       if (!clean || busyRef.current) return;
+      // Runs inside the click/submit gesture → bless the audio element now so
+      // the TTS (which arrives after async work) is allowed to play.
+      unlockAudio();
       busyRef.current = true;
       stopAudio();
 
@@ -483,7 +534,7 @@ export default function MalakPage() {
         busyRef.current = false;
       }
     },
-    [turns, typewriter, speak, stopAudio]
+    [turns, typewriter, speak, stopAudio, unlockAudio]
   );
 
   // ---- Mic (Web Speech) ----
@@ -525,6 +576,8 @@ export default function MalakPage() {
   const toggleMic = () => {
     const rec = recognitionRef.current;
     if (!rec) return;
+    // Mic tap is a user gesture → prime audio so the spoken reply can play.
+    unlockAudio();
     if (listening) {
       rec.stop();
       setListening(false);
