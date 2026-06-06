@@ -59,6 +59,30 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
 
+  // Mode -1: browse the public shared Voice Library filtered by language, to
+  // find genuinely Arabic voices. ?shared=ar
+  if (url.searchParams.get("shared")) {
+    const lang = url.searchParams.get("shared") || "ar";
+    const r = await fetch(
+      `https://api.elevenlabs.io/v1/shared-voices?page_size=30&language=${encodeURIComponent(lang)}`,
+      { headers: { "xi-api-key": apiKey } }
+    );
+    if (!r.ok) return Response.json({ error: `shared ${r.status}`, body: (await r.text()).slice(0, 400) });
+    const data: any = await r.json();
+    const voices = (data?.voices ?? []).map((v: any) => ({
+      voice_id: v.voice_id,
+      public_owner_id: v.public_owner_id,
+      name: v.name,
+      accent: v.accent,
+      language: v.language,
+      gender: v.gender,
+      age: v.age,
+      descriptive: v.descriptive,
+      use_case: v.use_case,
+    }));
+    return Response.json({ count: voices.length, voices });
+  }
+
   // Mode 0: return the raw MP3 for an agent so it can be listened to directly,
   // bypassing the app entirely. ?audio=1&agent=malak
   if (url.searchParams.get("audio")) {
