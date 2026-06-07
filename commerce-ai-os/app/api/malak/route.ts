@@ -62,6 +62,16 @@ const SYSTEM_PROMPT =
   'stats{items:[{label,value,sub}]}, ' +
   'post{item:{caption_ar,caption_en,hashtags,platforms,schedule,product}}, ' +
   'tiktok{item:{hook,scenes:[{shot,text}],audio,hashtags,cta}}. ' +
+  'كتابة البوستات الإعلانية (لوحة post — الوكيلة بيان): عند طلب بوست إعلاني لمنتج، اجلبي بياناته الحقيقية أولًا عبر search_products ' +
+  '(الاسم، العلامة، الفئة، السعر، discount_price إن وُجد، الحجم، الوصف، الكلمات المفتاحية). ثم اكتبي caption_ar كبوست احترافي بهذا الترتيب بالضبط: ' +
+  '1) عنوان جذّاب قصير. 2) Hook قوي من أول سطر يلامس مشكلة يحلّها المنتج. 3) أهم 3 إلى 5 فوائد كنقاط قصيرة. ' +
+  '4) المكوّنات أو التقنية المميزة إن وُجدت (من الوصف/الكلمات). 5) طريقة استخدام مختصرة. 6) النتيجة المتوقّعة للعميل. ' +
+  '7) دعوة واضحة لاتخاذ إجراء (CTA) مع ذكر السعر/العرض الحالي إن وُجد. ' +
+  'الأسلوب: تسويقي أنيق وغير مبالغ فيه، بالعربية الخليجية المناسبة لعملاء قطر والخليج. ' +
+  'caption_en: نسخة إنجليزية مختصرة (هوك + أبرز فائدة + CTA). ' +
+  'hashtags: 10 هاشتاقات مناسبة (مزيج عربي/إنجليزي للجمال والعناية الكورية وقطر والخليج). ' +
+  'platforms: ["Instagram","TikTok","Snapchat","Snoonu","Talabat","Rafeeq"]. ' +
+  'لا تخترعي مكوّنات أو أرقامًا غير موجودة — استندي لوصف المنتج الحقيقي؛ ولو الوصف ناقص استخدمي فوائد عامة معقولة للفئة بدون مبالغة ولا ادّعاءات طبية. ' +
   'النشر الفعلي يحتاج Meta/TikTok API — وضّحي ذلك في speak. ' +
   'مهم: في لوحة products أدرجي sku دائمًا لكل منتج، ولا تُدرجي image_url إطلاقًا — ' +
   'الخادم يضيف صورة كل منتج تلقائيًا حسب الـsku (هذا يوفّر المساحة ويضمن ظهور الصور الحقيقية). ' +
@@ -87,7 +97,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_products",
     description:
-      "ابحثي في كتالوج المنتجات. مرّري query (كلمة بحث في الاسم/الـSKU/العلامة) و/أو brand و/أو category و/أو status (Approved/Rejected/SentAI). ترجع صفوفًا فيها name و brand و price و status و sku (الصور يضيفها الخادم حسب sku).",
+      "ابحثي في كتالوج المنتجات. مرّري query (كلمة بحث في الاسم/الـSKU/العلامة) و/أو brand و/أو category و/أو status (Approved/Rejected/SentAI). ترجع صفوفًا فيها name و name_ar و brand و price و discount_price و size و status و sku و الوصف (description_ar/en) والكلمات المفتاحية (keywords_ar/en) — استخدمي الوصف والكلمات لكتابة المحتوى التسويقي.",
     input_schema: {
       type: "object",
       properties: {
@@ -246,7 +256,7 @@ async function searchProducts(sb: Sb, input: any) {
   const limit = Math.min(Math.max(Number(input?.limit) || 8, 1), 24);
   let q = sb
     .from("products")
-    .select("id, name_en, brand_id, main_category, price, approval, sku, image_url");
+    .select("id, name_en, name_ar, brand_id, main_category, sub_category, price, discount_price, approval, sku, image_url, description_en, description_ar, keywords_en, keywords_ar, size");
 
   const query = (input?.query ?? "").toString().trim();
   if (query) {
@@ -274,12 +284,21 @@ async function searchProducts(sb: Sb, input: any) {
   const brands = await brandMap(sb);
   const items = (data ?? []).map((r: any) => ({
     name: r.name_en,
+    name_ar: r.name_ar,
     brand: r.brand_id ? brands.get(r.brand_id) ?? null : null,
     price: r.price,
+    discount_price: r.discount_price,
     status: r.approval,
     sku: r.sku,
     category: r.main_category,
+    sub_category: r.sub_category,
+    size: r.size,
     image_url: r.image_url,
+    // Content fields (used by Bayan for marketing posts).
+    description_ar: r.description_ar,
+    description_en: r.description_en,
+    keywords_ar: r.keywords_ar,
+    keywords_en: r.keywords_en,
   }));
   return { count: items.length, items };
 }
