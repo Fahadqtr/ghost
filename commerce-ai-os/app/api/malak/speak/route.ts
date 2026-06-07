@@ -43,6 +43,54 @@ function resolveVoiceId(agent: unknown): string | undefined {
   return process.env.ELEVENLABS_VOICE_ID;
 }
 
+// ---- Spell digits as Arabic words so TTS pronounces numbers correctly ------
+// ElevenLabs mispronounces bare digits (e.g. "1147", "95") in Arabic, so we
+// convert standalone numbers (0..999999) to proper Arabic words before TTS.
+// Numbers attached to letters/codes (e.g. mk1215, MU-FAC-GEN-4653) are left.
+const AR_ONES = ["صفر", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة", "عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"];
+const AR_TENS = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
+const AR_HUNDREDS = ["", "مئة", "مئتان", "ثلاثمئة", "أربعمئة", "خمسمئة", "ستمئة", "سبعمئة", "ثمانمئة", "تسعمئة"];
+
+function arBelow1000(n: number): string {
+  const p: string[] = [];
+  const h = Math.floor(n / 100);
+  const rem = n % 100;
+  if (h) p.push(AR_HUNDREDS[h]);
+  if (rem) {
+    if (rem < 20) p.push(AR_ONES[rem]);
+    else {
+      const t = Math.floor(rem / 10);
+      const o = rem % 10;
+      p.push(o ? `${AR_ONES[o]} و${AR_TENS[t]}` : AR_TENS[t]);
+    }
+  }
+  return p.join(" و");
+}
+
+function numToArabic(n: number): string {
+  if (n === 0) return "صفر";
+  const p: string[] = [];
+  const th = Math.floor(n / 1000);
+  const rem = n % 1000;
+  if (th) {
+    if (th === 1) p.push("ألف");
+    else if (th === 2) p.push("ألفان");
+    else if (th <= 10) p.push(arBelow1000(th) + " آلاف");
+    else p.push(arBelow1000(th) + " ألف");
+  }
+  if (rem) p.push(arBelow1000(rem));
+  return p.join(" و");
+}
+
+function spellNumbers(text: string): string {
+  const norm = text.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+  // Only whole-number tokens not glued to letters/digits/code separators.
+  return norm.replace(/(?<![\p{L}\d_/-])\d+(?![\p{L}\d_/-])/gu, (m) => {
+    const n = parseInt(m, 10);
+    return !Number.isFinite(n) || n > 999999 ? m : numToArabic(n);
+  });
+}
+
 export async function POST(req: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   // Not configured → tell the client to use its browser voice instead.
@@ -60,6 +108,8 @@ export async function POST(req: Request) {
   }
   text = text.trim();
   if (!text) return new Response("no text", { status: 400 });
+  // Pronounce numbers correctly in Arabic.
+  text = spellNumbers(text);
 
   const voiceId = resolveVoiceId(agent);
   // No voice configured at all → fall back to the browser voice client-side.
