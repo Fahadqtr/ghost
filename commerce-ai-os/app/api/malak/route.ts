@@ -401,6 +401,18 @@ function enrichPanel(panel: any, skuImages: Map<string, string>) {
 const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image"];
 const APPROVAL_VALUES = ["Approved", "Rejected", "SentAI"];
 
+// Which agent "owns" each write tool (for direct error responses).
+function agentForTool(name: string): string {
+  switch (name) {
+    case "update_stock": return "salem";
+    case "set_price": return "razan";
+    case "set_approval": return "noor";
+    case "add_product": return "noor";
+    case "set_image": return "reem";
+    default: return "malak";
+  }
+}
+
 type PrepResult =
   | { ok: true; agent: string; speak: string; panel: any }
   | { ok: false; error: string };
@@ -699,29 +711,12 @@ export async function POST(req: Request) {
           console.log("[malak] write confirm prepared:", writeUse.name);
           return Response.json({ agent: prep.agent, speak: prep.speak, panel: prep.panel });
         }
-        // Validation failed → return a tool_result for EVERY tool_use in this
-        // turn (Anthropic requires one each) and loop so the model can fix its
-        // inputs. We never honor a co-occurring `respond` for a write request.
+        // Validation failed → return the error DIRECTLY as the answer. Do NOT
+        // loop back to the model: when left free after a failed write it tends
+        // to hallucinate that "the tool isn't available, do it manually". A
+        // clear actionable message (e.g. "السعر غير صالح") is far better.
         console.log("[malak] write validation failed:", writeUse.name, prep.error);
-        messages.push({ role: "assistant", content: resp.content });
-        const wResults: Anthropic.ToolResultBlockParam[] = [];
-        for (const b of resp.content) {
-          if (b.type !== "tool_use") continue;
-          if (b.id === writeUse.id) {
-            wResults.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify({ error: prep.error }) });
-          } else if (WRITE_TOOLS.includes(b.name)) {
-            wResults.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify({ error: "عالجي عملية كتابة واحدة في كل مرة." }) });
-          } else if (b.name === "respond") {
-            wResults.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify({ error: "لا تستخدمي respond لطلب تعديل؛ صحّحي مدخلات أداة الكتابة وأعيدي استدعاءها." }) });
-          } else {
-            const data = await runTool(sb, b.name, b.input, skuImages);
-            wResults.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify(data).slice(0, 12000) });
-          }
-        }
-        messages.push({ role: "user", content: wResults });
-        toolRounds++;
-        resp = await create();
-        continue;
+        return Response.json({ agent: agentForTool(writeUse.name), speak: prep.error });
       }
 
       const respondBlock = findRespond(resp.content);
