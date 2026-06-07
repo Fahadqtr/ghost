@@ -56,10 +56,13 @@ const SYSTEM_PROMPT =
   'مهم: في لوحة products أدرجي sku دائمًا لكل منتج، ولا تُدرجي image_url إطلاقًا — ' +
   'الخادم يضيف صورة كل منتج تلقائيًا حسب الـsku (هذا يوفّر المساحة ويضمن ظهور الصور الحقيقية). ' +
   'قدّمي ردّكِ النهائي دائمًا عبر استدعاء أداة respond (وليس كنص عادي). ' +
-  'للكتابة (تعديل مخزون/سعر/اعتماد/إضافة منتج) استخدمي أدوات الكتابة المخصّصة. ' +
-  'مهم جدًا: كل كتابة تتطلّب تأكيد المستخدم — النظام يعرض كرت تأكيد ولا ينفّذ شيئًا قبل ضغطة [أكّد]. ' +
-  'فلا تقولي إن العملية "تمّت"؛ بل قولي إنكِ جهّزتِ التغيير وتنتظرين تأكيده. id الوكلاء: ' +
-  AGENT_IDS.join("، ") + ".";
+  'قواعد الكتابة (إلزامية وحرجة): أي طلب لتعديل سعر أو مخزون أو حالة اعتماد أو إضافة منتج ' +
+  'يجب أن تستدعي فيه الأداة المطابقة فورًا: set_price أو update_stock أو set_approval أو add_product. ' +
+  'ممنوع منعًا باتًا أن تدّعي في speak أنكِ عدّلتِ أو حدّثتِ أو أضفتِ أو أن العملية "تمّت/تم/خلصت" ' +
+  'بدون استدعاء أداة الكتابة المناسبة. وممنوع استخدام respond للردّ على طلب تعديل قبل استدعاء أداة الكتابة. ' +
+  'هذه الأدوات لا تنفّذ التعديل أبدًا — هي فقط تجهّز كرت تأكيد يظهر للمستخدم، والتنفيذ الفعلي يحدث ' +
+  'بعد ضغط المستخدم [أكّد]. فلا تقولي "تم" إطلاقًا؛ بعد استدعاء الأداة سيتولّى النظام عرض كرت التأكيد. ' +
+  'id الوكلاء: ' + AGENT_IDS.join("، ") + ".";
 
 // ---- Tool schemas exposed to Claude (read-only in Phase 1) -----------------
 const TOOLS: Anthropic.Tool[] = [
@@ -587,6 +590,45 @@ export async function POST(req: Request) {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       console.log(`[malak] round=${round} stop_reason=${resp.stop_reason}`);
 
+      // WRITE tools take ABSOLUTE priority over `respond`. If the model asked to
+      // modify data, return the confirmation card — even if it ALSO emitted a
+      // `respond` (claiming success) in the same turn. This guarantees no write
+      // request is ever silently turned into a textual "done" with no card.
+      // (No write happens here regardless — prepareWrite only reads + signs.)
+      const writeUse = resp.content.find(
+        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && WRITE_TOOLS.includes(b.name)
+      );
+      if (writeUse) {
+        const prep = await prepareWrite(sb, writeUse.name, writeUse.input);
+        if (prep.ok) {
+          console.log("[malak] write confirm prepared:", writeUse.name);
+          return Response.json({ agent: prep.agent, speak: prep.speak, panel: prep.panel });
+        }
+        // Validation failed → return a tool_result for EVERY tool_use in this
+        // turn (Anthropic requires one each) and loop so the model can fix its
+        // inputs. We never honor a co-occurring `respond` for a write request.
+        console.log("[malak] write validation failed:", writeUse.name, prep.error);
+        messages.push({ role: "assistant", content: resp.content });
+        const wResults: Anthropic.ToolResultBlockParam[] = [];
+        for (const b of resp.content) {
+          if (b.type !== "tool_use") continue;
+          if (b.id === writeUse.id) {
+            wResults.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify({ error: prep.error }) });
+          } else if (WRITE_TOOLS.includes(b.name)) {
+            wResults.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify({ error: "عالجي عملية كتابة واحدة في كل مرة." }) });
+          } else if (b.name === "respond") {
+            wResults.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify({ error: "لا تستخدمي respond لطلب تعديل؛ صحّحي مدخلات أداة الكتابة وأعيدي استدعاءها." }) });
+          } else {
+            const data = await runTool(sb, b.name, b.input, skuImages);
+            wResults.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify(data).slice(0, 12000) });
+          }
+        }
+        messages.push({ role: "user", content: wResults });
+        toolRounds++;
+        resp = await create();
+        continue;
+      }
+
       const respondBlock = findRespond(resp.content);
       if (respondBlock) {
         console.log("[malak] respond via tool call");
@@ -596,29 +638,13 @@ export async function POST(req: Request) {
       // No respond yet. If the model isn't asking for a data tool, stop looping.
       if (resp.stop_reason !== "tool_use") break;
 
-      // Execute the data tools it asked for, feed results back.
+      // Execute the (read-only) data tools it asked for, feed results back.
       const dataUses = resp.content.filter(
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
       );
       messages.push({ role: "assistant", content: resp.content });
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const tu of dataUses) {
-        // WRITE tools: prepare-only. On success, short-circuit and return the
-        // CONFIRM panel straight to the client (no write happens here). On
-        // validation failure, feed the error back so Claude can explain it.
-        if (WRITE_TOOLS.includes(tu.name)) {
-          const prep = await prepareWrite(sb, tu.name, tu.input);
-          if (prep.ok) {
-            console.log("[malak] write confirm prepared:", tu.name);
-            return Response.json({ agent: prep.agent, speak: prep.speak, panel: prep.panel });
-          }
-          results.push({
-            type: "tool_result",
-            tool_use_id: tu.id,
-            content: JSON.stringify({ error: prep.error }),
-          });
-          continue;
-        }
         const data = await runTool(sb, tu.name, tu.input, skuImages);
         results.push({
           type: "tool_result",
