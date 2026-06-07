@@ -66,7 +66,7 @@ const agentById = (id: string): AgentDef => AGENTS.find((a) => a.id === id) ?? A
 type OrbState = "idle" | "listening" | "thinking" | "speaking";
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing";
   items?: any[];
   item?: any;
 }
@@ -561,21 +561,88 @@ function ImageRequestPanel({
   );
 }
 
+// Morning briefing card (Rashid) — auto store status when /malak opens.
+function BriefingPanel({ item, onQuick }: { item: any; onQuick: (q: string) => void }) {
+  const hr = new Date().getHours();
+  const greet = hr < 12 ? "صباح الخير" : "مساء الخير";
+  const rows: { icon: string; label: string; value: number; tone?: string }[] = [
+    { icon: "📦", label: "منتج إجمالي", value: item.total ?? 0 },
+    { icon: "🖼️", label: "بدون صور", value: item.missingImages ?? 0, tone: "text-sky-300" },
+    { icon: "📉", label: "ستوك منخفض", value: item.lowStock ?? 0, tone: "text-amber-300" },
+    { icon: "⛔", label: "مرفوض", value: item.rejected ?? 0, tone: "text-rose-300" },
+  ];
+  if ((item.suspiciousPrice ?? 0) > 0)
+    rows.push({ icon: "💸", label: "سعر ناقص/صفر", value: item.suspiciousPrice, tone: "text-orange-300" });
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/10 to-purple-500/10 p-3 text-right backdrop-blur sm:p-4">
+      <div className="flex items-center justify-between">
+        <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
+          ☀️ بريفينج راشد
+        </span>
+        <p className="text-base font-extrabold text-white">{greet} فهد</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {rows.map((r, i) => (
+          <div key={i} className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
+            <span className={`text-lg font-extrabold ${r.tone ?? "text-white"}`}>{r.value}</span>
+            <span className="text-[12px] text-white/70">
+              {r.icon} {r.label}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {item.priority ? (
+        <p className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[13px] font-medium text-amber-100">
+          ← الأولوية اليوم: {item.priority}
+        </p>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onQuick("اعرض المنتجات المرفوضة")}
+          className="rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-1.5 text-[12px] text-rose-200 transition hover:bg-rose-500/20"
+        >
+          اعرض المرفوضين
+        </button>
+        <button
+          onClick={() => onQuick("اعرض المنتجات بدون صورة")}
+          className="rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1.5 text-[12px] text-sky-200 transition hover:bg-sky-500/20"
+        >
+          اعرض بدون صور
+        </button>
+        <button
+          onClick={() => onQuick("اعرض المنتجات منخفضة المخزون")}
+          className="rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-200 transition hover:bg-amber-500/20"
+        >
+          اعرض ستوك منخفض
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Panel({
   data,
   onConfirmDone,
   onConfirmCancel,
   onGenerated,
+  onQuick,
 }: {
   data: PanelData;
   onConfirmDone?: (message: string) => void;
   onConfirmCancel?: () => void;
   onGenerated?: (panel: PanelData) => void;
+  onQuick?: (q: string) => void;
 }) {
   if (data.type === "products" && Array.isArray(data.items)) return <ProductsPanel items={data.items} />;
   if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} />;
   if (data.type === "post" && data.item) return <PostPanel item={data.item} />;
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
+  if (data.type === "briefing" && data.item)
+    return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} />;
   if (data.type === "image_request" && data.item)
     return (
       <ImageRequestPanel
@@ -914,6 +981,33 @@ function MalakInner() {
     [turns, typewriter, speak, stopAudio, unlockAudio, pendingImage]
   );
 
+  // ---- Morning briefing: auto store status ONCE per session on open --------
+  const briefedRef = useRef(false);
+  useEffect(() => {
+    if (briefedRef.current) return;
+    if (typeof window === "undefined") return;
+    if (sessionStorage.getItem("malak_briefed")) return;
+    briefedRef.current = true;
+    sessionStorage.setItem("malak_briefed", "1");
+    (async () => {
+      try {
+        const res = await fetch("/api/malak/briefing");
+        const d = await res.json();
+        if (!d || d.error) return;
+        setActiveAgent("rashid");
+        setPanel({ type: "briefing", item: d });
+        const greet = new Date().getHours() < 12 ? "صباح الخير" : "مساء الخير";
+        const summary =
+          `راشد: ${greet} فهد. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
+          `الأولوية اليوم ${d.priority}.`;
+        // Best-effort voice (may be blocked by autoplay until first interaction).
+        speak(summary, "rashid");
+      } catch {
+        /* briefing is best-effort */
+      }
+    })();
+  }, [speak]);
+
   // ---- Mic (Web Speech) ----
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -991,7 +1085,7 @@ function MalakInner() {
         </Link>
         <div className="text-center">
           <h1 className="text-base font-extrabold tracking-tight sm:text-lg">ملاك</h1>
-          <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2K</p>
+          <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2L</p>
         </div>
         <div className="w-[70px] sm:w-[92px]" />
       </header>
@@ -1047,7 +1141,7 @@ function MalakInner() {
 
       {/* Transcript + panel (scrollable — gets priority for vertical space) */}
       <div ref={scrollRef} className="mx-auto min-h-0 w-full max-w-3xl flex-1 space-y-2.5 overflow-y-auto px-3 py-2.5 sm:space-y-3 sm:px-6 sm:py-3">
-        {turns.length === 0 && !typed ? (
+        {turns.length === 0 && !typed && panel?.type !== "briefing" ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-white/50">
             أهلًا فهد 👋 أنا ملاك وفريقي جاهزين. اسألني عن الكتالوج، الأسعار، أو خلّني أكتب لك محتوى.
           </div>
@@ -1094,6 +1188,7 @@ function MalakInner() {
                 // Image generated → swap the request card for the preview card.
                 setPanel(p);
               }}
+              onQuick={(q) => send(q)}
             />
           </div>
         ) : null}
