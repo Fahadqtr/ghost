@@ -57,7 +57,8 @@ const SYSTEM_PROMPT =
   'الخادم يضيف صورة كل منتج تلقائيًا حسب الـsku (هذا يوفّر المساحة ويضمن ظهور الصور الحقيقية). ' +
   'قدّمي ردّكِ النهائي دائمًا عبر استدعاء أداة respond (وليس كنص عادي). ' +
   'قواعد الكتابة (إلزامية وحرجة): أي طلب لتعديل سعر أو مخزون أو حالة اعتماد أو إضافة منتج ' +
-  'يجب أن تستدعي فيه الأداة المطابقة فورًا: set_price أو update_stock أو set_approval أو add_product. ' +
+  'يجب أن تستدعي فيه الأداة المطابقة فورًا: set_price أو update_stock أو set_approval أو add_product أو set_image. '
+  + 'إذا أرفق المستخدم صورة (يخبرك النظام بذلك)، فهو يريد ربطها بمنتج: استدعي set_image مع الـSKU المذكور. ' +
   'ممنوع منعًا باتًا أن تدّعي في speak أنكِ عدّلتِ أو حدّثتِ أو أضفتِ أو أن العملية "تمّت/تم/خلصت" ' +
   'بدون استدعاء أداة الكتابة المناسبة. وممنوع استخدام respond للردّ على طلب تعديل قبل استدعاء أداة الكتابة. ' +
   'هذه الأدوات لا تنفّذ التعديل أبدًا — هي فقط تجهّز كرت تأكيد يظهر للمستخدم، والتنفيذ الفعلي يحدث ' +
@@ -166,6 +167,18 @@ const TOOLS: Anthropic.Tool[] = [
         brand: { type: "string", description: "اسم العلامة التجارية (اختياري)" },
       },
       required: ["name", "price", "category"],
+    },
+  },
+  {
+    name: "set_image",
+    description:
+      "اربطي صورة منتج (تكون قد رُفعت من المستخدم) عبر الـSKU. تُستخدم فقط عندما يرفق المستخدم صورة. لا تكتب فورًا — كرت تأكيد بمعاينة الصورة. الوكيل: ريم (الصور).",
+    input_schema: {
+      type: "object",
+      properties: {
+        sku: { type: "string", description: "SKU المنتج الذي تُربط به الصورة" },
+      },
+      required: ["sku"],
     },
   },
   {
@@ -385,7 +398,7 @@ function enrichPanel(panel: any, skuImages: Map<string, string>) {
 // These NEVER mutate data. Each validates inputs, reads the current value, and
 // returns a signed CONFIRM panel. The write happens in /api/malak/commit only
 // after the user confirms.
-const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product"];
+const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image"];
 const APPROVAL_VALUES = ["Approved", "Rejected", "SentAI"];
 
 type PrepResult =
@@ -427,7 +440,38 @@ async function generateSku(sb: Sb, category: string | null, sub: string | null):
   return `MU-${cat}-${sc}-${Date.now().toString().slice(-4)}`;
 }
 
-async function prepareWrite(sb: Sb, name: string, input: any): Promise<PrepResult> {
+async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: string | null } = {}): Promise<PrepResult> {
+  if (name === "set_image") {
+    const sku = String(input?.sku ?? "").trim();
+    const imageUrl = ctx.imageUrl ?? null;
+    if (!imageUrl) return { ok: false, error: "ما فيه صورة مرفقة. أرفقي صورة أول." };
+    if (!sku) return { ok: false, error: "SKU مطلوب لربط الصورة." };
+    const p = await firstRow(sb.from("products").select("id, name_en, sku, image_url").ilike("sku", sku));
+    if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
+    const token = signAction({
+      v: 1, type: "set_image", agent: "reem", sku: p.sku, productId: p.id,
+      field: "image_url", oldValue: p.image_url ?? null, newValue: imageUrl, ts: Date.now(),
+    });
+    const panel = {
+      type: "confirm",
+      item: {
+        title: "ربط صورة المنتج",
+        agent: "reem",
+        operation: p.image_url ? "استبدال صورة المنتج" : "إضافة صورة للمنتج",
+        name: p.name_en,
+        sku: p.sku,
+        imageUrl,
+        changes: [{ label: "الصورة", old: p.image_url ? "صورة حالية" : "بدون صورة", new: "الصورة الجديدة" }],
+        token,
+      },
+    };
+    return {
+      ok: true, agent: "reem",
+      speak: `ريم: جهّزت صورة ${p.name_en}. راجع المعاينة وأكّد لو تبي أربطها بالمنتج.`,
+      panel,
+    };
+  }
+
   if (name === "update_stock") {
     const sku = String(input?.sku ?? "").trim();
     const value = Number(input?.value);
@@ -621,10 +665,14 @@ export async function POST(req: Request) {
       ...extra,
     });
 
+  // An attached image (uploaded by the composer) arrives as body.imageUrl. Its
+  // presence means the user wants to set a product image → force set_image.
+  const imageUrl = typeof body?.imageUrl === "string" && body.imageUrl.trim() ? body.imageUrl.trim() : null;
+
   // If the latest user turn is clearly a write request, force the matching
   // write tool on the first call so the model can't dodge it with prose.
   const lastUserText = [...messages].reverse().find((m) => m.role === "user")?.content;
-  const forcedTool = detectForcedTool(typeof lastUserText === "string" ? lastUserText : "");
+  const forcedTool = imageUrl ? "set_image" : detectForcedTool(typeof lastUserText === "string" ? lastUserText : "");
   if (forcedTool) console.log("[malak] forcing write tool:", forcedTool);
 
   try {
@@ -646,7 +694,7 @@ export async function POST(req: Request) {
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && WRITE_TOOLS.includes(b.name)
       );
       if (writeUse) {
-        const prep = await prepareWrite(sb, writeUse.name, writeUse.input);
+        const prep = await prepareWrite(sb, writeUse.name, writeUse.input, { imageUrl });
         if (prep.ok) {
           console.log("[malak] write confirm prepared:", writeUse.name);
           return Response.json({ agent: prep.agent, speak: prep.speak, panel: prep.panel });

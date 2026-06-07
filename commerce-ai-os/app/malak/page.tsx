@@ -348,6 +348,13 @@ function ConfirmPanel({
         {item.sku ? <p className="font-mono text-[11px] text-white/40">{item.sku}</p> : null}
       </div>
 
+      {item.imageUrl ? (
+        <div className="overflow-hidden rounded-xl border border-white/10 bg-black/30">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={item.imageUrl} alt="معاينة" className="mx-auto max-h-48 w-auto object-contain" />
+        </div>
+      ) : null}
+
       <div className="divide-y divide-white/10 overflow-hidden rounded-xl border border-white/10">
         {changes.map((c, i) => (
           <div key={i} className="flex items-center justify-between gap-3 bg-white/5 px-3 py-2 text-sm">
@@ -434,6 +441,8 @@ export default function MalakPage() {
   const [typed, setTyped] = useState(""); // typewriter buffer for latest malak turn
   const [micSupported, setMicSupported] = useState(true);
   const [orbSize, setOrbSize] = useState(160); // responsive; set on mount
+  const [pendingImage, setPendingImage] = useState<File | null>(null); // Phase 2C attachment
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const recognitionRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -668,16 +677,19 @@ export default function MalakPage() {
   const send = useCallback(
     async (text: string) => {
       const clean = text.trim();
-      if (!clean || busyRef.current) return;
+      const img = pendingImage;
+      if ((!clean && !img) || busyRef.current) return;
       // Runs inside the click/submit gesture → bless the audio element now so
       // the TTS (which arrives after async work) is allowed to play.
       unlockAudio();
       busyRef.current = true;
       stopAudio();
 
-      const nextTurns: Turn[] = [...turns, { role: "user", text: clean }];
+      const userText = clean || "أرفقت صورة لمنتج.";
+      const nextTurns: Turn[] = [...turns, { role: "user", text: img ? `📎 ${userText}` : userText }];
       setTurns(nextTurns);
       setInput("");
+      setPendingImage(null);
       setPanel(null);
       setState("thinking");
 
@@ -688,10 +700,27 @@ export default function MalakPage() {
       }));
 
       try {
+        // If an image is attached, upload it first (Storage) → get its URL, then
+        // pass it to the brain which forces set_image (a confirm card).
+        let imageUrl: string | null = null;
+        if (img) {
+          const fd = new FormData();
+          fd.append("file", img);
+          const up = await fetch("/api/malak/upload", { method: "POST", body: fd });
+          const upData = await up.json();
+          if (upData?.ok && upData.url) {
+            imageUrl = upData.url;
+          } else {
+            typewriter(upData?.error || "فشل رفع الصورة.");
+            setState("idle");
+            busyRef.current = false;
+            return;
+          }
+        }
         const res = await fetch("/api/malak", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: apiMessages }),
+          body: JSON.stringify({ messages: apiMessages, imageUrl }),
         });
         const data = await res.json();
         const ag: AgentId = (AGENTS.some((a) => a.id === data?.agent) ? data.agent : "malak") as AgentId;
@@ -708,7 +737,7 @@ export default function MalakPage() {
         busyRef.current = false;
       }
     },
-    [turns, typewriter, speak, stopAudio, unlockAudio]
+    [turns, typewriter, speak, stopAudio, unlockAudio, pendingImage]
   );
 
   // ---- Mic (Web Speech) ----
@@ -788,7 +817,7 @@ export default function MalakPage() {
         </Link>
         <div className="text-center">
           <h1 className="text-lg font-extrabold tracking-tight">ملاك</h1>
-          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2B</p>
+          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2C</p>
         </div>
         <div className="w-[92px]" />
       </header>
@@ -908,6 +937,40 @@ export default function MalakPage() {
           ))}
         </div>
 
+        {/* Attached image preview (Phase 2C) */}
+        {pendingImage ? (
+          <div className="mb-2 flex items-center gap-2 rounded-xl border border-pink-400/30 bg-pink-500/10 px-2.5 py-1.5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={URL.createObjectURL(pendingImage)}
+              alt="مرفق"
+              className="h-9 w-9 rounded-md object-cover"
+            />
+            <span className="flex-1 truncate text-[12px] text-white/70">📎 {pendingImage.name}</span>
+            <span className="text-[11px] text-white/40">اكتب الـSKU وأرسل</span>
+            <button
+              type="button"
+              onClick={() => setPendingImage(null)}
+              aria-label="إزالة الصورة"
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20"
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0] ?? null;
+            if (f) setPendingImage(f);
+            e.target.value = ""; // allow re-selecting the same file
+          }}
+        />
+
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -915,6 +978,16 @@ export default function MalakPage() {
           }}
           className="flex items-center gap-2"
         >
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="إرفاق صورة"
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg transition ${
+              pendingImage ? "bg-pink-500 text-white" : "bg-white/10 text-white/80 hover:bg-white/20"
+            }`}
+          >
+            📎
+          </button>
           <button
             type="button"
             onClick={toggleMic}

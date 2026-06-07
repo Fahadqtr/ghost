@@ -108,6 +108,26 @@ async function commitAddProduct(sb: Sb, a: MalakAction): Promise<CommitOutcome |
   return { message: `تمت إضافة المنتج "${pr.name_en}" (SKU ${sku}) بحالة Draft.`, productId: ins.id, field: "add_product", newValue: sku };
 }
 
+async function commitSetImage(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
+  const p = await findTarget(sb, a, "id, name_en, image_url");
+  if (!p) return { error: `المنتج غير موجود (${a.sku}).` };
+  const url = String(a.newValue ?? "");
+  if (!url) return { error: "رابط الصورة مفقود." };
+
+  // Mirror the product editor: record the image row + point products.image_url.
+  await sb.from("product_images").update({ is_primary: false }).eq("product_id", p.id);
+  await sb.from("product_images").insert({
+    product_id: p.id,
+    url,
+    filename: url.split("/").pop() ?? null,
+    is_primary: true,
+    sort_order: 0,
+  });
+  const { error } = await sb.from("products").update({ image_url: url }).eq("id", p.id);
+  if (error) return { error: error.message };
+  return { message: `تم ربط صورة ${p.name_en}.`, productId: p.id, field: "image_url", oldValue: p.image_url ?? null, newValue: url };
+}
+
 // Best-effort audit. Never blocks a successful write; reports its own status.
 async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<string> {
   try {
@@ -149,6 +169,7 @@ export async function POST(req: Request) {
       case "set_price": out = await commitPrice(sb, action); break;
       case "set_approval": out = await commitApproval(sb, action); break;
       case "add_product": out = await commitAddProduct(sb, action); break;
+      case "set_image": out = await commitSetImage(sb, action); break;
       default: return Response.json({ error: "نوع عملية غير معروف." }, { status: 400 });
     }
     if ("error" in out) return Response.json({ error: out.error }, { status: 200 });

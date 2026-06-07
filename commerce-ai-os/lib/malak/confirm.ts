@@ -10,7 +10,8 @@ export type MalakActionType =
   | "update_stock"
   | "set_price"
   | "set_approval"
-  | "add_product";
+  | "add_product"
+  | "set_image";
 
 export interface MalakProductDraft {
   name_en: string;
