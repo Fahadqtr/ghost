@@ -23,8 +23,19 @@ interface CommitOutcome {
   newValue?: unknown;
 }
 
+// Resolve the target product by the signed productId first (robust to SKU
+// casing), falling back to a case-insensitive SKU match.
+async function findTarget(sb: Sb, a: MalakAction, cols: string): Promise<any | null> {
+  if (a.productId) {
+    const byId = await firstRow(sb.from("products").select(cols).eq("id", a.productId));
+    if (byId) return byId;
+  }
+  if (a.sku) return await firstRow(sb.from("products").select(cols).ilike("sku", a.sku));
+  return null;
+}
+
 async function commitStock(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
-  const p = await firstRow(sb.from("products").select("id, name_en, stock_quantity").eq("sku", a.sku));
+  const p = await findTarget(sb, a, "id, name_en, stock_quantity");
   if (!p) return { error: `المنتج غير موجود (${a.sku}).` };
   const value = Number(a.newValue);
   if (!Number.isFinite(value) || value < 0) return { error: "قيمة مخزون غير صالحة." };
@@ -46,7 +57,7 @@ async function commitStock(sb: Sb, a: MalakAction): Promise<CommitOutcome | { er
 }
 
 async function commitPrice(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
-  const p = await firstRow(sb.from("products").select("id, name_en, price").eq("sku", a.sku));
+  const p = await findTarget(sb, a, "id, name_en, price");
   if (!p) return { error: `المنتج غير موجود (${a.sku}).` };
   const price = Number(a.newValue);
   if (!Number.isFinite(price) || price < 0) return { error: "سعر غير صالح." };
@@ -56,7 +67,7 @@ async function commitPrice(sb: Sb, a: MalakAction): Promise<CommitOutcome | { er
 }
 
 async function commitApproval(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
-  const p = await firstRow(sb.from("products").select("id, name_en, approval").eq("sku", a.sku));
+  const p = await findTarget(sb, a, "id, name_en, approval");
   if (!p) return { error: `المنتج غير موجود (${a.sku}).` };
   const status = String(a.newValue ?? "");
   const { error } = await sb.from("products").update({ approval: status }).eq("id", p.id);

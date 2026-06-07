@@ -411,18 +411,18 @@ async function prepareWrite(sb: Sb, name: string, input: any): Promise<PrepResul
     const value = Number(input?.value);
     if (!sku) return { ok: false, error: "SKU مطلوب." };
     if (!Number.isFinite(value) || value < 0) return { ok: false, error: "قيمة المخزون غير صالحة." };
-    const p = await firstRow(sb.from("products").select("id, name_en, stock_quantity").eq("sku", sku));
+    const p = await firstRow(sb.from("products").select("id, name_en, sku, stock_quantity").ilike("sku", sku));
     if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
     const inv = await firstRow(sb.from("inventory").select("stock_quantity").eq("product_id", p.id));
     const oldVal = inv?.stock_quantity ?? p.stock_quantity ?? 0;
     const token = signAction({
-      v: 1, type: "update_stock", agent: "salem", sku, productId: p.id,
+      v: 1, type: "update_stock", agent: "salem", sku: p.sku, productId: p.id,
       field: "stock_quantity", oldValue: oldVal, newValue: value, ts: Date.now(),
     });
     return {
       ok: true, agent: "salem",
       speak: `سالم: جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
-      panel: confirmPanel("تحديث المخزون", "salem", "تعديل كمية المخزون", p.name_en, sku, [{ label: "المخزون", old: oldVal, new: value }], token),
+      panel: confirmPanel("تحديث المخزون", "salem", "تعديل كمية المخزون", p.name_en, p.sku, [{ label: "المخزون", old: oldVal, new: value }], token),
     };
   }
 
@@ -431,16 +431,16 @@ async function prepareWrite(sb: Sb, name: string, input: any): Promise<PrepResul
     const price = Number(input?.price);
     if (!sku) return { ok: false, error: "SKU مطلوب." };
     if (!Number.isFinite(price) || price < 0) return { ok: false, error: "السعر غير صالح." };
-    const p = await firstRow(sb.from("products").select("id, name_en, price").eq("sku", sku));
+    const p = await firstRow(sb.from("products").select("id, name_en, sku, price").ilike("sku", sku));
     if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
     const token = signAction({
-      v: 1, type: "set_price", agent: "razan", sku, productId: p.id,
+      v: 1, type: "set_price", agent: "razan", sku: p.sku, productId: p.id,
       field: "price", oldValue: p.price, newValue: price, ts: Date.now(),
     });
     return {
       ok: true, agent: "razan",
       speak: `رزان: جهّزت تعديل سعر ${p.name_en} من ${p.price ?? "—"} إلى ${price} ريال. أكّد للتنفيذ.`,
-      panel: confirmPanel("تعديل السعر", "razan", "تغيير سعر المنتج", p.name_en, sku, [{ label: "السعر (ر.ق)", old: p.price ?? "—", new: price }], token),
+      panel: confirmPanel("تعديل السعر", "razan", "تغيير سعر المنتج", p.name_en, p.sku, [{ label: "السعر (ر.ق)", old: p.price ?? "—", new: price }], token),
     };
   }
 
@@ -449,16 +449,16 @@ async function prepareWrite(sb: Sb, name: string, input: any): Promise<PrepResul
     const status = String(input?.status ?? "").trim();
     if (!sku) return { ok: false, error: "SKU مطلوب." };
     if (!APPROVAL_VALUES.includes(status)) return { ok: false, error: `حالة اعتماد غير صالحة: ${status}` };
-    const p = await firstRow(sb.from("products").select("id, name_en, approval").eq("sku", sku));
+    const p = await firstRow(sb.from("products").select("id, name_en, sku, approval").ilike("sku", sku));
     if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
     const token = signAction({
-      v: 1, type: "set_approval", agent: "noor", sku, productId: p.id,
+      v: 1, type: "set_approval", agent: "noor", sku: p.sku, productId: p.id,
       field: "approval", oldValue: p.approval, newValue: status, ts: Date.now(),
     });
     return {
       ok: true, agent: "noor",
       speak: `نور: جهّزت تغيير اعتماد ${p.name_en} من ${p.approval ?? "—"} إلى ${status}. أكّد للتنفيذ.`,
-      panel: confirmPanel("تغيير الاعتماد", "noor", "تغيير حالة الاعتماد", p.name_en, sku, [{ label: "الاعتماد", old: p.approval ?? "—", new: status }], token),
+      panel: confirmPanel("تغيير الاعتماد", "noor", "تغيير حالة الاعتماد", p.name_en, p.sku, [{ label: "الاعتماد", old: p.approval ?? "—", new: status }], token),
     };
   }
 
@@ -517,6 +517,22 @@ async function prepareWrite(sb: Sb, name: string, input: any): Promise<PrepResul
   }
 
   return { ok: false, error: `أداة كتابة غير معروفة: ${name}` };
+}
+
+// The model has repeatedly REFUSED to call write tools (claiming "the tool is
+// not available, do it manually"). So when the latest user message clearly asks
+// for a modification, we force the matching write tool via tool_choice on the
+// first model call — the model then cannot escape into a prose "not available"
+// answer. If the forced guess is wrong, prepareWrite simply returns a validation
+// error and the loop recovers normally.
+function detectForcedTool(text: string): string | null {
+  const t = (text || "").toLowerCase();
+  const changeVerb = /(غيّر|غير|عدّل|عدل|حدّث|حدث|نزّل|نزل|ارفع|خفّض|خفض|اجعل|خلّي|خل|حط|عيّن|عين|إلى|الى)/;
+  if (/(منتج جديد|أضف\s*منتج|اضف\s*منتج|أضيفي?\s*منتج|اضافة\s*منتج|إضافة\s*منتج|add\s*product)/.test(t)) return "add_product";
+  if (/(اعتمد|ارفض|اعتماد|وافقي?|approve|reject|sentai)/.test(t)) return "set_approval";
+  if (/(مخزون|المخزون|كمية|الكمية|ستوك|stock|inventory)/.test(t) && changeVerb.test(t)) return "update_stock";
+  if (/(سعر|السعر|بسعر|price)/.test(t) && changeVerb.test(t)) return "set_price";
+  return null;
 }
 
 function extractText(content: Anthropic.ContentBlock[]): string {
@@ -583,8 +599,14 @@ export async function POST(req: Request) {
       ...extra,
     });
 
+  // If the latest user turn is clearly a write request, force the matching
+  // write tool on the first call so the model can't dodge it with prose.
+  const lastUserText = [...messages].reverse().find((m) => m.role === "user")?.content;
+  const forcedTool = detectForcedTool(typeof lastUserText === "string" ? lastUserText : "");
+  if (forcedTool) console.log("[malak] forcing write tool:", forcedTool);
+
   try {
-    let resp = await create();
+    let resp = await create(forcedTool ? { tool_choice: { type: "tool", name: forcedTool } } : {});
     let toolRounds = 0;
 
     // Tool loop. We check for a `respond` block after EVERY model response —
