@@ -1,7 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useRef, useState } from "react";
+
+// In-app error boundary: instead of the white "Application error" screen, show
+// the actual error text (visible on mobile, no console needed) + a reload.
+class UIErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
+  state: { err: Error | null } = { err: null };
+  static getDerivedStateFromError(err: Error) {
+    return { err };
+  }
+  componentDidCatch(err: Error, info: unknown) {
+    console.error("[malak-ui] crash:", err, info);
+  }
+  render() {
+    if (this.state.err) {
+      return (
+        <div dir="rtl" className="min-h-screen overflow-auto bg-[#060814] p-5 text-right text-white">
+          <p className="mb-2 text-sm font-bold text-rose-300">خطأ في الواجهة (تشخيص):</p>
+          <pre className="mb-3 whitespace-pre-wrap break-words rounded-lg bg-black/40 p-3 text-[12px] text-amber-200">
+            {String(this.state.err?.message || this.state.err)}
+          </pre>
+          <pre className="mb-4 whitespace-pre-wrap break-words rounded-lg bg-black/40 p-3 text-[10px] text-white/50">
+            {String(this.state.err?.stack || "").slice(0, 1000)}
+          </pre>
+          <button
+            onClick={() => location.reload()}
+            className="rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 px-5 py-2.5 text-sm font-bold"
+          >
+            إعادة التحميل
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ---- Agent team -----------------------------------------------------------
 type AgentId = "malak" | "noor" | "bayan" | "reem" | "siraj" | "razan" | "rashid" | "latifa" | "salem";
@@ -555,6 +589,14 @@ function Panel({
 
 // ---- Main page -------------------------------------------------------------
 export default function MalakPage() {
+  return (
+    <UIErrorBoundary>
+      <MalakInner />
+    </UIErrorBoundary>
+  );
+}
+
+function MalakInner() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [panel, setPanel] = useState<PanelData | null>(null);
   const [input, setInput] = useState("");
@@ -940,7 +982,7 @@ export default function MalakPage() {
         </Link>
         <div className="text-center">
           <h1 className="text-lg font-extrabold tracking-tight">ملاك</h1>
-          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2G</p>
+          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2H</p>
         </div>
         <div className="w-[92px]" />
       </header>
