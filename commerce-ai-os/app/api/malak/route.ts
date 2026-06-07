@@ -193,6 +193,19 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "generate_product_image",
+    description:
+      "ولّدي صورة إعلانية احترافية لمنتج موجود عبر الـSKU. لا تولّدي فورًا — يظهر كرت يطلب تأكيد التوليد. الوكيل: ريم (الصور).",
+    input_schema: {
+      type: "object",
+      properties: {
+        sku: { type: "string", description: "SKU المنتج المراد توليد صورة له" },
+        style: { type: "string", enum: ["hero", "lifestyle"], description: "نمط الصورة: hero (منتج على خلفية نظيفة) أو lifestyle (أجواء استخدام)" },
+      },
+      required: ["sku"],
+    },
+  },
+  {
     name: "respond",
     description:
       "قدّمي ردّكِ النهائي للمستخدم. استدعي هذه الأداة دائمًا في النهاية مرة واحدة فقط بعد جمع البيانات.",
@@ -409,7 +422,7 @@ function enrichPanel(panel: any, skuImages: Map<string, string>) {
 // These NEVER mutate data. Each validates inputs, reads the current value, and
 // returns a signed CONFIRM panel. The write happens in /api/malak/commit only
 // after the user confirms.
-const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image"];
+const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image", "generate_product_image"];
 const APPROVAL_VALUES = ["Approved", "Rejected", "SentAI"];
 
 // Which agent "owns" each write tool (for direct error responses).
@@ -420,6 +433,7 @@ function agentForTool(name: string): string {
     case "set_approval": return "noor";
     case "add_product": return "noor";
     case "set_image": return "reem";
+    case "generate_product_image": return "reem";
     default: return "malak";
   }
 }
@@ -465,6 +479,35 @@ async function generateSku(sb: Sb, category: string | null, sub: string | null):
 }
 
 async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: string | null } = {}): Promise<PrepResult> {
+  if (name === "generate_product_image") {
+    const sku = String(input?.sku ?? "").trim();
+    if (!sku) return { ok: false, error: "SKU مطلوب لتوليد الصورة." };
+    const p = await firstRow(sb.from("products").select("id, name_en, sku, image_url").ilike("sku", sku));
+    if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
+    const style = input?.style === "lifestyle" ? "lifestyle" : "hero";
+    // Token A: authorizes the actual generation (consumed by /generate-image).
+    const token = signAction({
+      v: 1, type: "generate_image", agent: "reem", sku: p.sku, productId: p.id,
+      oldValue: p.image_url ?? null, style, ts: Date.now(),
+    });
+    return {
+      ok: true, agent: "reem",
+      speak: `ريم: جاهزة أولّد صورة إعلانية لـ ${p.name_en} بنمط ${style === "hero" ? "هيرو" : "لايف ستايل"}. اضغط ولّد الصورة.`,
+      panel: {
+        type: "image_request",
+        item: {
+          title: "توليد صورة إعلانية",
+          agent: "reem",
+          name: p.name_en,
+          sku: p.sku,
+          currentImage: p.image_url ?? null,
+          style,
+          token,
+        },
+      },
+    };
+  }
+
   if (name === "set_image") {
     const sku = String(input?.sku ?? "").trim();
     const imageUrl = ctx.imageUrl ?? null;

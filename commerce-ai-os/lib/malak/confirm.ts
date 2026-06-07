@@ -11,7 +11,8 @@ export type MalakActionType =
   | "set_price"
   | "set_approval"
   | "add_product"
-  | "set_image";
+  | "set_image"
+  | "generate_image";
 
 export interface MalakProductDraft {
   name_en: string;
@@ -37,6 +38,7 @@ export interface MalakAction {
   oldValue?: unknown;
   newValue?: unknown;
   product?: MalakProductDraft;
+  style?: string; // image generation style (hero / lifestyle)
   ts: number;
 }
 

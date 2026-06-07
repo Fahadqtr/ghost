@@ -32,7 +32,7 @@ const agentById = (id: string): AgentDef => AGENTS.find((a) => a.id === id) ?? A
 type OrbState = "idle" | "listening" | "thinking" | "speaking";
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request";
   items?: any[];
   item?: any;
 }
@@ -414,17 +414,107 @@ function ConfirmPanel({
             disabled={status === "working"}
             className="flex-1 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
           >
-            {status === "working" ? "جارٍ التنفيذ…" : "أكّد"}
+            {status === "working" ? "جارٍ التنفيذ…" : item.confirmLabel || "أكّد"}
           </button>
           <button
             onClick={onCancel}
             disabled={status === "working"}
             className="flex-1 rounded-xl border border-white/15 bg-white/5 py-2.5 text-sm font-semibold text-white/70 transition hover:bg-white/10 disabled:opacity-50"
           >
-            إلغاء
+            {item.cancelLabel || "إلغاء"}
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// Step 1 of image generation: the "ولّد الصورة" card. Tapping the button calls
+// /api/malak/generate-image (slow), then hands the returned preview confirm
+// panel back to the page via onGenerated. No product write happens here.
+function ImageRequestPanel({
+  item,
+  onGenerated,
+  onCancel,
+}: {
+  item: any;
+  onGenerated: (panel: PanelData) => void;
+  onCancel: () => void;
+}) {
+  const [status, setStatus] = useState<"idle" | "working" | "error">("idle");
+  const [msg, setMsg] = useState("");
+  const busyRef = useRef(false);
+
+  const generate = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setStatus("working");
+    try {
+      const res = await fetch("/api/malak/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: item.token }),
+      });
+      const data = await res.json();
+      if (data?.ok && data?.panel) {
+        onGenerated(data.panel as PanelData);
+      } else {
+        setStatus("error");
+        setMsg(data?.error || "تعذّر توليد الصورة.");
+        busyRef.current = false;
+      }
+    } catch {
+      setStatus("error");
+      setMsg("تعذّر الاتصال بالخادم.");
+      busyRef.current = false;
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-4 text-right backdrop-blur">
+      <div className="flex items-center justify-between">
+        <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
+          ✨ توليد صورة
+        </span>
+        <p className="text-sm font-bold text-white">{item.title}</p>
+      </div>
+
+      <div>
+        {item.name ? <p className="text-sm font-semibold text-cyan-300">{item.name}</p> : null}
+        {item.sku ? <p className="font-mono text-[11px] text-white/40">{item.sku}</p> : null}
+        <p className="mt-1 text-[13px] text-white/70">
+          النمط: {item.style === "lifestyle" ? "لايف ستايل" : "هيرو (خلفية نظيفة)"}
+          {item.currentImage ? " · تحسين الصورة الحالية مع الحفاظ على العلبة" : " · توليد من اسم المنتج"}
+        </p>
+      </div>
+
+      {item.currentImage ? (
+        <div className="overflow-hidden rounded-xl border border-white/10 bg-black/30">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={item.currentImage} alt="الحالية" className="mx-auto max-h-40 w-auto object-contain opacity-80" />
+        </div>
+      ) : null}
+
+      {status === "error" ? (
+        <p className="rounded-xl bg-rose-500/15 px-3 py-2 text-sm text-rose-200">⚠️ {msg}</p>
+      ) : null}
+
+      <div className="flex gap-2">
+        <button
+          onClick={generate}
+          disabled={status === "working"}
+          className="flex-1 rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
+        >
+          {status === "working" ? "جارٍ التوليد… (قد يأخذ نصف دقيقة)" : "✨ ولّد الصورة"}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={status === "working"}
+          className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white/70 transition hover:bg-white/10 disabled:opacity-50"
+        >
+          إلغاء
+        </button>
+      </div>
     </div>
   );
 }
@@ -433,15 +523,25 @@ function Panel({
   data,
   onConfirmDone,
   onConfirmCancel,
+  onGenerated,
 }: {
   data: PanelData;
   onConfirmDone?: (message: string) => void;
   onConfirmCancel?: () => void;
+  onGenerated?: (panel: PanelData) => void;
 }) {
   if (data.type === "products" && Array.isArray(data.items)) return <ProductsPanel items={data.items} />;
   if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} />;
   if (data.type === "post" && data.item) return <PostPanel item={data.item} />;
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
+  if (data.type === "image_request" && data.item)
+    return (
+      <ImageRequestPanel
+        item={data.item}
+        onGenerated={(p) => onGenerated?.(p)}
+        onCancel={() => onConfirmCancel?.()}
+      />
+    );
   if (data.type === "confirm" && data.item)
     return (
       <ConfirmPanel
@@ -840,7 +940,7 @@ export default function MalakPage() {
         </Link>
         <div className="text-center">
           <h1 className="text-lg font-extrabold tracking-tight">ملاك</h1>
-          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2F</p>
+          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2G</p>
         </div>
         <div className="w-[92px]" />
       </header>
@@ -938,6 +1038,10 @@ export default function MalakPage() {
               onConfirmCancel={() => {
                 setPanel(null);
                 setTurns((prev) => [...prev, { role: "malak", text: "تمام، ألغيت العملية." }]);
+              }}
+              onGenerated={(p) => {
+                // Image generated → swap the request card for the preview card.
+                setPanel(p);
               }}
             />
           </div>
