@@ -154,10 +154,13 @@ async function isRecentDuplicate(sb: Sb, a: MalakAction): Promise<boolean> {
 }
 
 // Best-effort audit. Never blocks a successful write; reports its own status.
+// NOTE: malak_audit was renamed from a legacy `audit_log` table, which kept a
+// NOT NULL `action` column in addition to `action_type` — so we populate both.
 async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<string> {
   try {
     const row = {
       action_type: a.type,
+      action: a.type, // legacy NOT NULL column (from audit_log)
       agent: a.agent,
       sku: a.sku ?? a.product?.sku ?? null,
       product_id: out.productId ?? null,
@@ -168,8 +171,17 @@ async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<s
       status: "committed",
     };
     const { error } = await sb.from("malak_audit").insert(row);
-    return error ? `failed: ${error.message}` : "ok";
+    if (error) {
+      // Surface the LITERAL Supabase error for diagnosis (logs + response).
+      console.error(
+        "[malak-commit] audit insert FAILED:",
+        JSON.stringify({ message: error.message, details: (error as any).details, hint: (error as any).hint, code: (error as any).code })
+      );
+      return `failed: ${error.message}${(error as any).details ? " | " + (error as any).details : ""}`;
+    }
+    return "ok";
   } catch (e: any) {
+    console.error("[malak-commit] audit insert threw:", e?.message);
     return `failed: ${e?.message ?? "unknown"}`;
   }
 }

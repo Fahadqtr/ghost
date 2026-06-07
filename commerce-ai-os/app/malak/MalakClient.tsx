@@ -340,7 +340,7 @@ function ConfirmPanel({
 }) {
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [msg, setMsg] = useState("");
-  const [auditWarn, setAuditWarn] = useState(false); // executed but not logged
+  const [auditWarn, setAuditWarn] = useState(""); // literal audit failure text
   // Synchronous guard: blocks a double-tap from firing two commits before the
   // disabled state re-renders (idempotency, client side).
   const busyRef = useRef(false);
@@ -357,8 +357,8 @@ function ConfirmPanel({
       });
       const data = await res.json();
       if (data?.ok) {
-        // audit is best-effort on the server; surface a silent logging failure.
-        setAuditWarn(typeof data.audit === "string" && data.audit.startsWith("failed"));
+        // audit is best-effort on the server; surface the literal failure text.
+        setAuditWarn(typeof data.audit === "string" && data.audit.startsWith("failed") ? data.audit : "");
         setStatus("done");
         setMsg(data.message || "تم التنفيذ.");
         onDone(data.message || "تم التنفيذ.");
@@ -432,8 +432,10 @@ function ConfirmPanel({
         <div className="space-y-1.5">
           <p className="rounded-xl bg-emerald-500/15 px-3 py-2 text-sm text-emerald-200">✅ {msg}</p>
           {auditWarn ? (
-            <p className="rounded-xl bg-amber-500/15 px-3 py-2 text-[13px] text-amber-200">
-              ⚠️ تم التنفيذ لكن لم يُسجَّل في السجل (malak_audit).
+            <p className="rounded-xl bg-amber-500/15 px-3 py-2 text-[12px] text-amber-200">
+              ⚠️ تم التنفيذ لكن لم يُسجَّل في malak_audit.
+              <br />
+              <span className="break-words font-mono text-[11px] text-amber-300/80">{auditWarn}</span>
             </p>
           ) : null}
         </div>
@@ -988,7 +990,7 @@ function MalakInner() {
         </Link>
         <div className="text-center">
           <h1 className="text-lg font-extrabold tracking-tight">ملاك</h1>
-          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2I</p>
+          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2J</p>
         </div>
         <div className="w-[92px]" />
       </header>
