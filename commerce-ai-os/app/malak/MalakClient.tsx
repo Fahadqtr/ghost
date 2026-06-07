@@ -192,7 +192,7 @@ function Orb({ state, color, size = 200 }: { state: OrbState; color: string; siz
 // ---- Panels ----------------------------------------------------------------
 function ProductsPanel({ items }: { items: any[] }) {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
       {items.map((p, i) => (
         <div
           key={p.sku ?? i}
@@ -240,7 +240,7 @@ function ProductsPanel({ items }: { items: any[] }) {
 
 function StatsPanel({ items }: { items: any[] }) {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
       {items.map((s, i) => (
         <div key={i} className="rounded-2xl border border-white/10 bg-white/5 p-4 text-right backdrop-blur">
           <p className="text-2xl font-extrabold text-white">{s.value}</p>
@@ -254,7 +254,7 @@ function StatsPanel({ items }: { items: any[] }) {
 
 function PostPanel({ item }: { item: any }) {
   return (
-    <div className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4 text-right backdrop-blur">
+    <div className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-right backdrop-blur sm:p-4">
       {item.product ? <p className="text-sm font-semibold text-cyan-300">{item.product}</p> : null}
       {item.caption_ar ? (
         <div>
@@ -287,7 +287,7 @@ function PostPanel({ item }: { item: any }) {
 
 function TiktokPanel({ item }: { item: any }) {
   return (
-    <div className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4 text-right backdrop-blur">
+    <div className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-right backdrop-blur sm:p-4">
       {item.hook ? (
         <div className="rounded-xl bg-pink-500/15 p-3">
           <p className="text-[11px] text-pink-300">الخطّاف (Hook)</p>
@@ -378,7 +378,7 @@ function ConfirmPanel({
   const changes: { label: string; old?: any; new: any }[] = Array.isArray(item.changes) ? item.changes : [];
 
   return (
-    <div className="space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-4 text-right backdrop-blur">
+    <div className="space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 text-right backdrop-blur sm:p-4">
       <div className="flex items-center justify-between">
         <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
           ⚠️ تأكيد مطلوب
@@ -513,7 +513,7 @@ function ImageRequestPanel({
   };
 
   return (
-    <div className="space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-4 text-right backdrop-blur">
+    <div className="space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 text-right backdrop-blur sm:p-4">
       <div className="flex items-center justify-between">
         <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
           ✨ توليد صورة
@@ -683,8 +683,9 @@ function MalakInner() {
     const calc = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      const byW = w < 380 ? 120 : w < 640 ? 140 : 200;
-      setOrbSize(Math.round(Math.min(byW, h * 0.22)));
+      // Much smaller on phones so it never crowds the chat/panels.
+      const byW = w < 360 ? 84 : w < 480 ? 100 : w < 640 ? 128 : 200;
+      setOrbSize(Math.round(Math.min(byW, h * 0.18)));
     };
     calc();
     window.addEventListener("resize", calc);
@@ -981,22 +982,22 @@ function MalakInner() {
       }}
     >
       {/* Top bar */}
-      <header className="flex items-center justify-between px-4 py-3 sm:px-6">
+      <header className="flex items-center justify-between px-3 py-2 sm:px-6 sm:py-3">
         <Link
           href="/dashboard"
-          className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/70 backdrop-blur transition hover:bg-white/10"
+          className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[12px] text-white/70 backdrop-blur transition hover:bg-white/10 sm:px-3 sm:py-1.5 sm:text-sm"
         >
           ← لوحة التحكم
         </Link>
         <div className="text-center">
-          <h1 className="text-lg font-extrabold tracking-tight">ملاك</h1>
-          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2J</p>
+          <h1 className="text-base font-extrabold tracking-tight sm:text-lg">ملاك</h1>
+          <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2K</p>
         </div>
-        <div className="w-[92px]" />
+        <div className="w-[70px] sm:w-[92px]" />
       </header>
 
-      {/* Agent rail */}
-      <div className="flex shrink-0 gap-1.5 overflow-x-auto px-3 pb-1.5 pt-0.5 [scrollbar-width:none] sm:justify-center sm:px-6">
+      {/* Agent rail (horizontal scroll, touch-friendly, compact height) */}
+      <div className="flex shrink-0 gap-1 overflow-x-auto px-2 pb-1 pt-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:justify-center sm:gap-1.5 sm:px-6">
         {RAIL.map((a) => {
           const on = a.id === activeAgent;
           return (
@@ -1026,13 +1027,13 @@ function MalakInner() {
       </div>
 
       {/* Orb */}
-      <div className="relative flex shrink-0 flex-col items-center justify-center">
+      <div className="relative flex shrink-0 flex-col items-center justify-center py-0.5 sm:py-1">
         <Orb state={state} color={accent} size={orbSize} />
-        <div className="-mt-3 text-center">
-          <p className="text-sm font-semibold" style={{ color: accent }}>
+        <div className="-mt-2 text-center sm:-mt-3">
+          <p className="text-[13px] font-semibold sm:text-sm" style={{ color: accent }}>
             {activeDef.name}
           </p>
-          <p className="text-[11px] text-white/40">
+          <p className="text-[10px] text-white/40 sm:text-[11px]">
             {state === "listening"
               ? "أستمع…"
               : state === "thinking"
@@ -1044,8 +1045,8 @@ function MalakInner() {
         </div>
       </div>
 
-      {/* Transcript + panel (scrollable) */}
-      <div ref={scrollRef} className="mx-auto min-h-0 w-full max-w-3xl flex-1 space-y-3 overflow-y-auto px-4 py-3 sm:px-6">
+      {/* Transcript + panel (scrollable — gets priority for vertical space) */}
+      <div ref={scrollRef} className="mx-auto min-h-0 w-full max-w-3xl flex-1 space-y-2.5 overflow-y-auto px-3 py-2.5 sm:space-y-3 sm:px-6 sm:py-3">
         {turns.length === 0 && !typed ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-white/50">
             أهلًا فهد 👋 أنا ملاك وفريقي جاهزين. اسألني عن الكتالوج، الأسعار، أو خلّني أكتب لك محتوى.
