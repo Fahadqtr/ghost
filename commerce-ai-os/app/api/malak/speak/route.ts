@@ -83,15 +83,14 @@ export async function POST(req: Request) {
         text: text.slice(0, 1500),
         model_id: process.env.ELEVENLABS_MODEL_ID || MODEL_ID,
         voice_settings: {
-          // Lower stability + a touch more style => livelier, less robotic /
-          // monotone delivery (still steady enough to avoid stuttering).
-          stability: 0.55,
+          // Slower, more natural delivery. style 0.35 keeps it expressive.
+          stability: 0.5,
           similarity_boost: 0.85,
-          style: 0.3,
+          style: 0.35,
           use_speaker_boost: true,
-          // Just under default (1.0): natural, unhurried, but not so slow it
-          // sounds dragged. ElevenLabs reads `speed` from voice_settings.
-          speed: 0.95,
+          // Below default (1.0) → slower, calmer. ElevenLabs reads `speed` from
+          // voice_settings (ignored if the endpoint/model doesn't support it).
+          speed: 0.9,
         },
       }),
     });
