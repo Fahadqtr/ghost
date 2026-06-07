@@ -128,6 +128,31 @@ async function commitSetImage(sb: Sb, a: MalakAction): Promise<CommitOutcome | {
   return { message: `تم ربط صورة ${p.name_en}.`, productId: p.id, field: "image_url", oldValue: p.image_url ?? null, newValue: url };
 }
 
+// Idempotency: was an identical write already logged in the last 30s? Used to
+// drop accidental double-taps. Best-effort — if the audit table is missing or
+// mismatched the query errors and we DON'T block the write (fail open).
+async function isRecentDuplicate(sb: Sb, a: MalakAction): Promise<boolean> {
+  try {
+    const sku = a.sku ?? a.product?.sku ?? null;
+    const field = a.field ?? a.type; // matches what writeAudit stores
+    const newVal = a.newValue != null ? String(a.newValue) : a.product?.sku ?? null;
+    if (!sku || !field || newVal == null) return false;
+    const since = new Date(Date.now() - 30_000).toISOString();
+    const { data, error } = await sb
+      .from("malak_audit")
+      .select("id")
+      .eq("sku", sku)
+      .eq("field", field)
+      .eq("new_value", newVal)
+      .gte("created_at", since)
+      .limit(1);
+    if (error) return false; // audit unavailable → don't block the real write
+    return Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 // Best-effort audit. Never blocks a successful write; reports its own status.
 async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<string> {
   try {
@@ -162,6 +187,13 @@ export async function POST(req: Request) {
   if (!action) return Response.json({ error: "طلب التأكيد غير صالح أو منتهي الصلاحية. أعد العملية." }, { status: 400 });
 
   const sb = createAdminClient();
+
+  // Drop accidental double-submits of the same change within 30s (idempotency).
+  if (await isRecentDuplicate(sb, action)) {
+    console.log("[malak-commit] duplicate within 30s, skipped:", action.type, action.sku);
+    return Response.json({ ok: true, duplicate: true, audit: "skipped", message: "سوّيتها قبل ثواني — تجاهلت التكرار." });
+  }
+
   try {
     let out: CommitOutcome | { error: string };
     switch (action.type) {

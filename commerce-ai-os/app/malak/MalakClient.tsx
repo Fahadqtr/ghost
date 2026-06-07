@@ -306,9 +306,14 @@ function ConfirmPanel({
 }) {
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [msg, setMsg] = useState("");
+  const [auditWarn, setAuditWarn] = useState(false); // executed but not logged
+  // Synchronous guard: blocks a double-tap from firing two commits before the
+  // disabled state re-renders (idempotency, client side).
+  const busyRef = useRef(false);
 
   const confirm = async () => {
-    if (status === "working" || status === "done") return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setStatus("working");
     try {
       const res = await fetch("/api/malak/commit", {
@@ -318,16 +323,21 @@ function ConfirmPanel({
       });
       const data = await res.json();
       if (data?.ok) {
+        // audit is best-effort on the server; surface a silent logging failure.
+        setAuditWarn(typeof data.audit === "string" && data.audit.startsWith("failed"));
         setStatus("done");
         setMsg(data.message || "تم التنفيذ.");
         onDone(data.message || "تم التنفيذ.");
+        // leave busyRef true on success → no further submits for this card.
       } else {
         setStatus("error");
         setMsg(data?.error || "تعذّر التنفيذ.");
+        busyRef.current = false; // allow retry
       }
     } catch {
       setStatus("error");
       setMsg("تعذّر الاتصال بالخادم.");
+      busyRef.current = false; // allow retry
     }
   };
 
@@ -379,7 +389,14 @@ function ConfirmPanel({
       </div>
 
       {status === "done" ? (
-        <p className="rounded-xl bg-emerald-500/15 px-3 py-2 text-sm text-emerald-200">✅ {msg}</p>
+        <div className="space-y-1.5">
+          <p className="rounded-xl bg-emerald-500/15 px-3 py-2 text-sm text-emerald-200">✅ {msg}</p>
+          {auditWarn ? (
+            <p className="rounded-xl bg-amber-500/15 px-3 py-2 text-[13px] text-amber-200">
+              ⚠️ تم التنفيذ لكن لم يُسجَّل في السجل (malak_audit).
+            </p>
+          ) : null}
+        </div>
       ) : status === "error" ? (
         <div className="space-y-2">
           <p className="rounded-xl bg-rose-500/15 px-3 py-2 text-sm text-rose-200">⚠️ {msg}</p>
@@ -823,7 +840,7 @@ export default function MalakPage() {
         </Link>
         <div className="text-center">
           <h1 className="text-lg font-extrabold tracking-tight">ملاك</h1>
-          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2E</p>
+          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2F</p>
         </div>
         <div className="w-[92px]" />
       </header>
