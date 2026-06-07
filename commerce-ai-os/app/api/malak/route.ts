@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { signAction } from "@/lib/malak/confirm";
+import { CATEGORIES } from "@/lib/constants";
 
 // Malak AI — Phase 1 server brain. Holds all secrets (ANTHROPIC_API_KEY +
 // Supabase service role). The browser only ever sees the final structured JSON.
@@ -53,7 +55,10 @@ const SYSTEM_PROMPT =
   'النشر الفعلي يحتاج Meta/TikTok API — وضّحي ذلك في speak. ' +
   'مهم: في لوحة products أدرجي sku دائمًا لكل منتج، ولا تُدرجي image_url إطلاقًا — ' +
   'الخادم يضيف صورة كل منتج تلقائيًا حسب الـsku (هذا يوفّر المساحة ويضمن ظهور الصور الحقيقية). ' +
-  'قدّمي ردّكِ النهائي دائمًا عبر استدعاء أداة respond (وليس كنص عادي). id الوكلاء: ' +
+  'قدّمي ردّكِ النهائي دائمًا عبر استدعاء أداة respond (وليس كنص عادي). ' +
+  'للكتابة (تعديل مخزون/سعر/اعتماد/إضافة منتج) استخدمي أدوات الكتابة المخصّصة. ' +
+  'مهم جدًا: كل كتابة تتطلّب تأكيد المستخدم — النظام يعرض كرت تأكيد ولا ينفّذ شيئًا قبل ضغطة [أكّد]. ' +
+  'فلا تقولي إن العملية "تمّت"؛ بل قولي إنكِ جهّزتِ التغيير وتنتظرين تأكيده. id الوكلاء: ' +
   AGENT_IDS.join("، ") + ".";
 
 // ---- Tool schemas exposed to Claude (read-only in Phase 1) -----------------
@@ -89,6 +94,67 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object",
       properties: { threshold: { type: "integer", description: "حد المخزون المنخفض (افتراضي 10)" } },
+    },
+  },
+  // ---- WRITE tools (Phase 2B). None of these writes immediately: each returns
+  // a CONFIRM panel + signed token; the actual write happens in /api/malak/commit
+  // only after the user taps [أكّد]. ------------------------------------------
+  {
+    name: "update_stock",
+    description:
+      "حدّثي كمية مخزون منتج عبر الـSKU. لا تكتب فورًا — يظهر للمستخدم كرت تأكيد. الوكيل: سالم (العمليات).",
+    input_schema: {
+      type: "object",
+      properties: {
+        sku: { type: "string", description: "SKU المنتج" },
+        value: { type: "integer", description: "الكمية الجديدة للمخزون" },
+      },
+      required: ["sku", "value"],
+    },
+  },
+  {
+    name: "set_price",
+    description:
+      "عدّلي سعر منتج عبر الـSKU. لا تكتب فورًا — كرت تأكيد. الوكيل: رزان (التسعير).",
+    input_schema: {
+      type: "object",
+      properties: {
+        sku: { type: "string", description: "SKU المنتج" },
+        price: { type: "number", description: "السعر الجديد بالريال القطري" },
+      },
+      required: ["sku", "price"],
+    },
+  },
+  {
+    name: "set_approval",
+    description:
+      "غيّري حالة اعتماد منتج عبر الـSKU. القيم: Approved أو Rejected أو SentAI. لا تكتب فورًا — كرت تأكيد. الوكيل: نور (الكتالوج).",
+    input_schema: {
+      type: "object",
+      properties: {
+        sku: { type: "string", description: "SKU المنتج" },
+        status: { type: "string", enum: ["Approved", "Rejected", "SentAI"], description: "حالة الاعتماد الجديدة" },
+      },
+      required: ["sku", "status"],
+    },
+  },
+  {
+    name: "add_product",
+    description:
+      "أضيفي منتجًا جديدًا بحالة Draft. بيان تكتب الوصف عربي/إنجليزي، ونور تولّد الـSKU بصيغة MU-[CAT]-[SUB]-[####]. الصورة تُرفع لاحقًا من صفحة التعديل. لا تكتب فورًا — كرت تأكيد. الوكيل: نور+بيان.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "اسم المنتج بالإنجليزية (name_en)" },
+        name_ar: { type: "string", description: "اسم المنتج بالعربية" },
+        description_en: { type: "string", description: "وصف إنجليزي مختصر (بيان)" },
+        description_ar: { type: "string", description: "وصف عربي مختصر (بيان)" },
+        price: { type: "number", description: "السعر بالريال القطري" },
+        category: { type: "string", description: "الفئة الرئيسية — يجب أن تكون من قائمة الفئات المقفلة" },
+        sub_category: { type: "string", description: "تصنيف فرعي اختياري (يُستخدم في توليد الـSKU)" },
+        brand: { type: "string", description: "اسم العلامة التجارية (اختياري)" },
+      },
+      required: ["name", "price", "category"],
     },
   },
   {
@@ -287,6 +353,166 @@ function enrichPanel(panel: any, skuImages: Map<string, string>) {
   return panel;
 }
 
+// ---- WRITE tools: prepare-only (Phase 2B) ----------------------------------
+// These NEVER mutate data. Each validates inputs, reads the current value, and
+// returns a signed CONFIRM panel. The write happens in /api/malak/commit only
+// after the user confirms.
+const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product"];
+const APPROVAL_VALUES = ["Approved", "Rejected", "SentAI"];
+
+type PrepResult =
+  | { ok: true; agent: string; speak: string; panel: any }
+  | { ok: false; error: string };
+
+async function firstRow(builder: any): Promise<any | null> {
+  const { data } = await builder.limit(1);
+  return Array.isArray(data) && data.length ? data[0] : null;
+}
+
+function confirmPanel(
+  title: string,
+  agent: string,
+  operation: string,
+  name: string | null,
+  sku: string | null,
+  changes: { label: string; old?: any; new: any }[],
+  token: string
+) {
+  return { type: "confirm", item: { title, agent, operation, name, sku, changes, token } };
+}
+
+// Short alpha-numeric code from a category/sub-category name for the SKU.
+function code(s: string | null | undefined, fallback = "GEN"): string {
+  const c = (s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return c.slice(0, 3) || fallback;
+}
+
+async function generateSku(sb: Sb, category: string | null, sub: string | null): Promise<string> {
+  const cat = code(category);
+  const sc = code(sub, "GEN");
+  for (let i = 0; i < 6; i++) {
+    const n = String(Math.floor(1000 + Math.random() * 9000));
+    const sku = `MU-${cat}-${sc}-${n}`;
+    const hit = await firstRow(sb.from("products").select("id").eq("sku", sku));
+    if (!hit) return sku;
+  }
+  return `MU-${cat}-${sc}-${Date.now().toString().slice(-4)}`;
+}
+
+async function prepareWrite(sb: Sb, name: string, input: any): Promise<PrepResult> {
+  if (name === "update_stock") {
+    const sku = String(input?.sku ?? "").trim();
+    const value = Number(input?.value);
+    if (!sku) return { ok: false, error: "SKU مطلوب." };
+    if (!Number.isFinite(value) || value < 0) return { ok: false, error: "قيمة المخزون غير صالحة." };
+    const p = await firstRow(sb.from("products").select("id, name_en, stock_quantity").eq("sku", sku));
+    if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
+    const inv = await firstRow(sb.from("inventory").select("stock_quantity").eq("product_id", p.id));
+    const oldVal = inv?.stock_quantity ?? p.stock_quantity ?? 0;
+    const token = signAction({
+      v: 1, type: "update_stock", agent: "salem", sku, productId: p.id,
+      field: "stock_quantity", oldValue: oldVal, newValue: value, ts: Date.now(),
+    });
+    return {
+      ok: true, agent: "salem",
+      speak: `سالم: جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
+      panel: confirmPanel("تحديث المخزون", "salem", "تعديل كمية المخزون", p.name_en, sku, [{ label: "المخزون", old: oldVal, new: value }], token),
+    };
+  }
+
+  if (name === "set_price") {
+    const sku = String(input?.sku ?? "").trim();
+    const price = Number(input?.price);
+    if (!sku) return { ok: false, error: "SKU مطلوب." };
+    if (!Number.isFinite(price) || price < 0) return { ok: false, error: "السعر غير صالح." };
+    const p = await firstRow(sb.from("products").select("id, name_en, price").eq("sku", sku));
+    if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
+    const token = signAction({
+      v: 1, type: "set_price", agent: "razan", sku, productId: p.id,
+      field: "price", oldValue: p.price, newValue: price, ts: Date.now(),
+    });
+    return {
+      ok: true, agent: "razan",
+      speak: `رزان: جهّزت تعديل سعر ${p.name_en} من ${p.price ?? "—"} إلى ${price} ريال. أكّد للتنفيذ.`,
+      panel: confirmPanel("تعديل السعر", "razan", "تغيير سعر المنتج", p.name_en, sku, [{ label: "السعر (ر.ق)", old: p.price ?? "—", new: price }], token),
+    };
+  }
+
+  if (name === "set_approval") {
+    const sku = String(input?.sku ?? "").trim();
+    const status = String(input?.status ?? "").trim();
+    if (!sku) return { ok: false, error: "SKU مطلوب." };
+    if (!APPROVAL_VALUES.includes(status)) return { ok: false, error: `حالة اعتماد غير صالحة: ${status}` };
+    const p = await firstRow(sb.from("products").select("id, name_en, approval").eq("sku", sku));
+    if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
+    const token = signAction({
+      v: 1, type: "set_approval", agent: "noor", sku, productId: p.id,
+      field: "approval", oldValue: p.approval, newValue: status, ts: Date.now(),
+    });
+    return {
+      ok: true, agent: "noor",
+      speak: `نور: جهّزت تغيير اعتماد ${p.name_en} من ${p.approval ?? "—"} إلى ${status}. أكّد للتنفيذ.`,
+      panel: confirmPanel("تغيير الاعتماد", "noor", "تغيير حالة الاعتماد", p.name_en, sku, [{ label: "الاعتماد", old: p.approval ?? "—", new: status }], token),
+    };
+  }
+
+  if (name === "add_product") {
+    const name_en = String(input?.name ?? "").trim();
+    const price = Number(input?.price);
+    const rawCat = String(input?.category ?? "").trim();
+    if (!name_en) return { ok: false, error: "اسم المنتج مطلوب." };
+    if (!Number.isFinite(price) || price < 0) return { ok: false, error: "السعر غير صالح." };
+    // Map to a canonical locked category (case-insensitive).
+    const category = CATEGORIES.find((c) => c.toLowerCase() === rawCat.toLowerCase()) ?? null;
+    if (!category) {
+      return { ok: false, error: `الفئة "${rawCat}" غير معتمدة. اختاري من: ${CATEGORIES.join("، ")}` };
+    }
+    const sub = String(input?.sub_category ?? "").trim() || null;
+
+    // Resolve brand (optional) by name.
+    let brand_id: string | null = null;
+    let brand_name: string | null = null;
+    const brand = String(input?.brand ?? "").trim();
+    if (brand) {
+      const b = await firstRow(sb.from("brands").select("id, name").ilike("name", `%${brand}%`));
+      if (b) { brand_id = b.id; brand_name = b.name; }
+      else brand_name = brand; // keep for display even if not matched
+    }
+
+    const sku = await generateSku(sb, category, sub);
+    const draft = {
+      name_en,
+      name_ar: String(input?.name_ar ?? "").trim() || null,
+      description_en: String(input?.description_en ?? "").trim() || null,
+      description_ar: String(input?.description_ar ?? "").trim() || null,
+      price,
+      main_category: category,
+      sub_category: sub,
+      brand_id,
+      brand_name,
+      sku,
+      platform_status: "Draft",
+    };
+    const token = signAction({ v: 1, type: "add_product", agent: "noor", sku, product: draft, ts: Date.now() });
+    return {
+      ok: true, agent: "noor",
+      speak: `نور وبيان: جهّزنا منتج جديد "${name_en}" بسعر ${price} ريال، فئة ${category}، الكود ${sku}، حالة Draft. أكّد لإضافته.`,
+      panel: confirmPanel("إضافة منتج", "noor", "إضافة منتج جديد (Draft)", name_en, sku, [
+        { label: "الاسم", new: name_en },
+        ...(draft.name_ar ? [{ label: "الاسم (عربي)", new: draft.name_ar }] : []),
+        { label: "السعر (ر.ق)", new: price },
+        { label: "الفئة", new: category },
+        ...(sub ? [{ label: "تصنيف فرعي", new: sub }] : []),
+        ...(brand_name ? [{ label: "العلامة", new: brand_name }] : []),
+        { label: "SKU", new: sku },
+        { label: "الحالة", new: "Draft" },
+      ], token),
+    };
+  }
+
+  return { ok: false, error: `أداة كتابة غير معروفة: ${name}` };
+}
+
 function extractText(content: Anthropic.ContentBlock[]): string {
   return content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -377,6 +603,22 @@ export async function POST(req: Request) {
       messages.push({ role: "assistant", content: resp.content });
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const tu of dataUses) {
+        // WRITE tools: prepare-only. On success, short-circuit and return the
+        // CONFIRM panel straight to the client (no write happens here). On
+        // validation failure, feed the error back so Claude can explain it.
+        if (WRITE_TOOLS.includes(tu.name)) {
+          const prep = await prepareWrite(sb, tu.name, tu.input);
+          if (prep.ok) {
+            console.log("[malak] write confirm prepared:", tu.name);
+            return Response.json({ agent: prep.agent, speak: prep.speak, panel: prep.panel });
+          }
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: JSON.stringify({ error: prep.error }),
+          });
+          continue;
+        }
         const data = await runTool(sb, tu.name, tu.input, skuImages);
         results.push({
           type: "tool_result",

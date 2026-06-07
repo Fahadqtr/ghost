@@ -32,7 +32,7 @@ const agentById = (id: string): AgentDef => AGENTS.find((a) => a.id === id) ?? A
 type OrbState = "idle" | "listening" | "thinking" | "speaking";
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm";
   items?: any[];
   item?: any;
 }
@@ -292,11 +292,134 @@ function TiktokPanel({ item }: { item: any }) {
   );
 }
 
-function Panel({ data }: { data: PanelData }) {
+// Phase 2B — mandatory confirmation card for any WRITE. The actual write only
+// happens when the user taps [أكّد], which posts the signed token to
+// /api/malak/commit. Nothing is written before that.
+function ConfirmPanel({
+  item,
+  onDone,
+  onCancel,
+}: {
+  item: any;
+  onDone: (message: string) => void;
+  onCancel: () => void;
+}) {
+  const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
+  const [msg, setMsg] = useState("");
+
+  const confirm = async () => {
+    if (status === "working" || status === "done") return;
+    setStatus("working");
+    try {
+      const res = await fetch("/api/malak/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: item.token }),
+      });
+      const data = await res.json();
+      if (data?.ok) {
+        setStatus("done");
+        setMsg(data.message || "تم التنفيذ.");
+        onDone(data.message || "تم التنفيذ.");
+      } else {
+        setStatus("error");
+        setMsg(data?.error || "تعذّر التنفيذ.");
+      }
+    } catch {
+      setStatus("error");
+      setMsg("تعذّر الاتصال بالخادم.");
+    }
+  };
+
+  const changes: { label: string; old?: any; new: any }[] = Array.isArray(item.changes) ? item.changes : [];
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-4 text-right backdrop-blur">
+      <div className="flex items-center justify-between">
+        <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
+          ⚠️ تأكيد مطلوب
+        </span>
+        <p className="text-sm font-bold text-white">{item.title}</p>
+      </div>
+
+      <div>
+        <p className="text-[13px] text-white/80">{item.operation}</p>
+        {item.name ? <p className="mt-0.5 text-sm font-semibold text-cyan-300">{item.name}</p> : null}
+        {item.sku ? <p className="font-mono text-[11px] text-white/40">{item.sku}</p> : null}
+      </div>
+
+      <div className="divide-y divide-white/10 overflow-hidden rounded-xl border border-white/10">
+        {changes.map((c, i) => (
+          <div key={i} className="flex items-center justify-between gap-3 bg-white/5 px-3 py-2 text-sm">
+            <span className="flex items-center gap-2">
+              {c.old !== undefined ? (
+                <>
+                  <span className="text-rose-300/80 line-through">{String(c.old)}</span>
+                  <span className="text-white/40">←</span>
+                </>
+              ) : null}
+              <span className="font-semibold text-emerald-300">{String(c.new)}</span>
+            </span>
+            <span className="text-[12px] text-white/50">{c.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {status === "done" ? (
+        <p className="rounded-xl bg-emerald-500/15 px-3 py-2 text-sm text-emerald-200">✅ {msg}</p>
+      ) : status === "error" ? (
+        <div className="space-y-2">
+          <p className="rounded-xl bg-rose-500/15 px-3 py-2 text-sm text-rose-200">⚠️ {msg}</p>
+          <button
+            onClick={confirm}
+            className="w-full rounded-xl bg-white/10 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/20"
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <button
+            onClick={confirm}
+            disabled={status === "working"}
+            className="flex-1 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
+          >
+            {status === "working" ? "جارٍ التنفيذ…" : "أكّد"}
+          </button>
+          <button
+            onClick={onCancel}
+            disabled={status === "working"}
+            className="flex-1 rounded-xl border border-white/15 bg-white/5 py-2.5 text-sm font-semibold text-white/70 transition hover:bg-white/10 disabled:opacity-50"
+          >
+            إلغاء
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Panel({
+  data,
+  onConfirmDone,
+  onConfirmCancel,
+}: {
+  data: PanelData;
+  onConfirmDone?: (message: string) => void;
+  onConfirmCancel?: () => void;
+}) {
   if (data.type === "products" && Array.isArray(data.items)) return <ProductsPanel items={data.items} />;
   if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} />;
   if (data.type === "post" && data.item) return <PostPanel item={data.item} />;
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
+  if (data.type === "confirm" && data.item)
+    return (
+      <ConfirmPanel
+        item={data.item}
+        onDone={(m) => onConfirmDone?.(m)}
+        onCancel={() => onConfirmCancel?.()}
+      />
+    );
   return null;
 }
 
@@ -752,7 +875,19 @@ export default function MalakPage() {
 
         {panel ? (
           <div className="pt-1">
-            <Panel data={panel} />
+            <Panel
+              data={panel}
+              onConfirmDone={(m) => {
+                // Record the result in the transcript and speak it; leave the
+                // card showing its success state.
+                setTurns((prev) => [...prev, { role: "malak", text: m }]);
+                speak(m, activeAgent);
+              }}
+              onConfirmCancel={() => {
+                setPanel(null);
+                setTurns((prev) => [...prev, { role: "malak", text: "تمام، ألغيت العملية." }]);
+              }}
+            />
           </div>
         ) : null}
       </div>
