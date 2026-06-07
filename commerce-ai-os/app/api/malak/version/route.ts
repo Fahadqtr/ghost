@@ -1,10 +1,17 @@
 // Lightweight public probe: which commit is actually live on Vercel + which
 // Malak write features are compiled in. Helps tell a stale browser cache apart
 // from a stalled/old deployment.
+import { detectForcedTool } from "@/lib/malak/intent";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
+  // ?detect=<text> → run the ACTUAL deployed write-intent detector on it.
+  const probe = new URL(req.url).searchParams.get("detect");
+  if (probe !== null) {
+    return Response.json({ input: probe, detected: detectForcedTool(probe) });
+  }
   return Response.json({
     marker: "phase2c-forcedtool-fetchimage",
     features: ["forced_tool", "set_image", "list_missing_images", "no_store_malak"],

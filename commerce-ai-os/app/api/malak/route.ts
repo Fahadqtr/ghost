@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { signAction } from "@/lib/malak/confirm";
+import { detectForcedTool } from "@/lib/malak/intent";
 import { CATEGORIES } from "@/lib/constants";
 
 // Malak AI — Phase 1 server brain. Holds all secrets (ANTHROPIC_API_KEY +
@@ -595,22 +596,6 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
   }
 
   return { ok: false, error: `أداة كتابة غير معروفة: ${name}` };
-}
-
-// The model has repeatedly REFUSED to call write tools (claiming "the tool is
-// not available, do it manually"). So when the latest user message clearly asks
-// for a modification, we force the matching write tool via tool_choice on the
-// first model call — the model then cannot escape into a prose "not available"
-// answer. If the forced guess is wrong, prepareWrite simply returns a validation
-// error and the loop recovers normally.
-function detectForcedTool(text: string): string | null {
-  const t = (text || "").toLowerCase();
-  const changeVerb = /(غيّر|غير|عدّل|عدل|حدّث|حدث|نزّل|نزل|ارفع|خفّض|خفض|اجعل|خلّي|خل|حط|عيّن|عين|إلى|الى)/;
-  if (/(منتج جديد|أضف\s*منتج|اضف\s*منتج|أضيفي?\s*منتج|اضافة\s*منتج|إضافة\s*منتج|add\s*product)/.test(t)) return "add_product";
-  if (/(اعتمد|ارفض|اعتماد|وافقي?|approve|reject|sentai)/.test(t)) return "set_approval";
-  if (/(مخزون|المخزون|كمية|الكمية|ستوك|stock|inventory)/.test(t) && changeVerb.test(t)) return "update_stock";
-  if (/(سعر|السعر|بسعر|price)/.test(t) && changeVerb.test(t)) return "set_price";
-  return null;
 }
 
 function extractText(content: Anthropic.ContentBlock[]): string {
