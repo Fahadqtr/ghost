@@ -788,7 +788,7 @@ export default function MalakPage() {
         </Link>
         <div className="text-center">
           <h1 className="text-lg font-extrabold tracking-tight">ملاك</h1>
-          <p className="text-[11px] text-white/40">المديرة العامة الذكية</p>
+          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2B</p>
         </div>
         <div className="w-[92px]" />
       </header>
