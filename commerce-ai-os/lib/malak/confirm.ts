@@ -39,6 +39,7 @@ export interface MalakAction {
   newValue?: unknown;
   product?: MalakProductDraft;
   style?: string; // image generation style (hero / lifestyle)
+  size?: string; // image generation size, e.g. 1024x1024 / 1024x1536
   ts: number;
 }
 

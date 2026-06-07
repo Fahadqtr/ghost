@@ -18,8 +18,12 @@ async function firstRow(builder: any): Promise<any | null> {
   return Array.isArray(data) && data.length ? data[0] : null;
 }
 
-function buildPrompt(name: string, style: string, hasRef: boolean): string {
+function buildPrompt(name: string, style: string, hasRef: boolean, portrait = false): string {
+  const frame = portrait
+    ? `Vertical portrait composition optimized for Instagram/social feed and stories, product placed off-center with generous clean space at the top or bottom for a headline and call-to-action. `
+    : `Square 1:1 composition for an Instagram feed post. `;
   const base =
+    frame +
     `Professional luxury Korean K-beauty (K-beauty) skincare advertising campaign photo of "${name}". ` +
     `Scroll-stopping, social-media and Instagram ad quality, photorealistic, ultra sharp product in crisp focus, ` +
     `premium soft studio lighting with elegant highlights, gentle reflections and soft shadows, dewy glowy aesthetic, ` +
@@ -63,9 +67,11 @@ export async function POST(req: Request) {
   if (!p) return Response.json({ error: `المنتج غير موجود (${action.sku}).` }, { status: 200 });
 
   const style = action.style === "lifestyle" ? "lifestyle" : "hero";
+  const size = action.size === "1024x1536" ? "1024x1536" : "1024x1024";
+  const portrait = size === "1024x1536";
   const currentImage = p.image_url ?? null;
   const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1-mini";
-  const prompt = buildPrompt(p.name_en || p.sku, style, !!currentImage);
+  const prompt = buildPrompt(p.name_en || p.sku, style, !!currentImage, portrait);
 
   // ---- Call OpenAI Images: edit the current photo (keeps the bottle accurate)
   // when one exists, otherwise generate from the name. -----------------------
@@ -81,7 +87,7 @@ export async function POST(req: Request) {
       const form = new FormData();
       form.append("model", model);
       form.append("prompt", prompt);
-      form.append("size", "1024x1024");
+      form.append("size", size);
       form.append("n", "1");
       form.append("image", new Blob([buf], { type }), `ref.${type.includes("png") ? "png" : "jpg"}`);
       r = await fetch("https://api.openai.com/v1/images/edits", {
@@ -93,7 +99,7 @@ export async function POST(req: Request) {
       r = await fetch("https://api.openai.com/v1/images/generations", {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, size: "1024x1024", n: 1 }),
+        body: JSON.stringify({ model, prompt, size, n: 1 }),
       });
     }
     if (!r.ok) {

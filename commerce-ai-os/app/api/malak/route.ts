@@ -214,6 +214,7 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {
         sku: { type: "string", description: "SKU المنتج المراد توليد صورة له" },
         style: { type: "string", enum: ["hero", "lifestyle"], description: "نمط الصورة: hero (منتج على خلفية نظيفة) أو lifestyle (أجواء استخدام)" },
+        format: { type: "string", enum: ["square", "portrait"], description: "المقاس: square مربّع 1:1 (للكتالوج/فيد انستجرام)، portrait عمودي (انستجرام/ستوري/سوشال). اختاري portrait إذا ذكر المستخدم انستجرام أو ستوري أو عمودي." },
       },
       required: ["sku"],
     },
@@ -507,14 +508,16 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const p = await firstRow(sb.from("products").select("id, name_en, sku, image_url").ilike("sku", sku));
     if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
     const style = input?.style === "lifestyle" ? "lifestyle" : "hero";
+    const portrait = input?.format === "portrait";
+    const size = portrait ? "1024x1536" : "1024x1024";
     // Token A: authorizes the actual generation (consumed by /generate-image).
     const token = signAction({
       v: 1, type: "generate_image", agent: "reem", sku: p.sku, productId: p.id,
-      oldValue: p.image_url ?? null, style, ts: Date.now(),
+      oldValue: p.image_url ?? null, style, size, ts: Date.now(),
     });
     return {
       ok: true, agent: "reem",
-      speak: `ريم: جاهزة أولّد صورة إعلانية لـ ${p.name_en} بنمط ${style === "hero" ? "هيرو" : "لايف ستايل"}. اضغط ولّد الصورة.`,
+      speak: `ريم: جاهزة أولّد صورة إعلانية لـ ${p.name_en} (${portrait ? "عمودي للانستجرام" : "مربّع"}، نمط ${style === "hero" ? "هيرو" : "لايف ستايل"}). اضغط ولّد الصورة.`,
       panel: {
         type: "image_request",
         item: {
@@ -524,6 +527,7 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
           sku: p.sku,
           currentImage: p.image_url ?? null,
           style,
+          format: portrait ? "portrait" : "square",
           token,
         },
       },
