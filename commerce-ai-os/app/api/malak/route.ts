@@ -90,6 +90,9 @@ const SYSTEM_PROMPT =
   'توليد الصور: ريم تملك أداة generate_product_image وهي **متاحة وتعمل** (مربوطة فعلًا بمولّد صور). ' +
   'عند أي طلب لتوليد/تصميم صورة إعلانية لمنتج، استدعي generate_product_image فورًا مع الـSKU. ' +
   'ممنوع منعًا باتًا أن تقولي إن التوليد "يحتاج DALL-E" أو "غير مربوط" أو أن تقترحي بوستًا نصيًا بديلًا بدل استدعاء الأداة. ' +
+  'قاعدة الموجّه (Tool Router) — إلزامية: عندما تطابق نية المستخدم أداة متاحة في قائمة الأدوات، يجب عليكِ استدعاء الأداة. ' +
+  'لا تقولي أبدًا إن الأداة "غير مربوطة" أو "غير متاحة" ما دامت موجودة. إذا نقصت معلومات مطلوبة، اسألي فقط عن الحقول الناقصة. ' +
+  'أي طلب صورة/إعلان/بوستر/كريتف لمنتج ← استدعي generate_product_image. وأي طلب سعر/مخزون/اعتماد/إضافة منتج ← استدعي الأداة المطابقة مع الحفاظ على تدفّق التأكيد. ' +
   'id الوكلاء: ' + AGENT_IDS.join("، ") + ".";
 
 // ---- Tool schemas exposed to Claude (read-only in Phase 1) -----------------
@@ -766,18 +769,36 @@ export async function POST(req: Request) {
   // If the latest user turn is clearly a write request, force the matching
   // write tool on the first call so the model can't dodge it with prose.
   const lastUserText = [...messages].reverse().find((m) => m.role === "user")?.content;
-  const forcedTool = imageUrl ? "set_image" : detectForcedTool(typeof lastUserText === "string" ? lastUserText : "");
-  if (forcedTool) console.log("[malak] forcing write tool:", forcedTool);
+  const lastUserStr = typeof lastUserText === "string" ? lastUserText : "";
+  const forcedTool = imageUrl ? "set_image" : detectForcedTool(lastUserStr);
+  // Tool-router logging: user message + the deterministically detected tool.
+  console.log(`[malak][router] msg="${lastUserStr.slice(0, 160)}" | forcedTool=${forcedTool ?? "none"}${imageUrl ? " (image attached)" : ""}`);
 
   try {
     let resp = await create(forcedTool ? { tool_choice: { type: "tool", name: forcedTool } } : {});
     let toolRounds = 0;
 
+    // Safety net: if we forced a specific tool but the model somehow didn't call
+    // it, return a controlled error instead of letting it hallucinate.
+    if (forcedTool) {
+      const forcedCalled = resp.content.some((b) => b.type === "tool_use" && b.name === forcedTool);
+      const calledTools = resp.content.filter((b) => b.type === "tool_use").map((b: any) => b.name);
+      console.log(`[malak][router] forcedTool=${forcedTool} called=${forcedCalled} tool_use=[${calledTools.join(",")}]`);
+      if (!forcedCalled) {
+        console.warn(`[malak][router] FALLBACK: forced tool '${forcedTool}' was NOT called (stop_reason=${resp.stop_reason})`);
+        return Response.json({
+          agent: agentForTool(forcedTool),
+          speak: "الأداة موجودة لكن لم يتم استدعاؤها. يرجى المحاولة بصيغة أوضح أو راجع Tool Router.",
+        });
+      }
+    }
+
     // Tool loop. We check for a `respond` block after EVERY model response —
     // regardless of stop_reason — so a truncated/`max_tokens` or final-round
     // respond call is never silently dropped (the old bug that returned "تم.").
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      console.log(`[malak] round=${round} stop_reason=${resp.stop_reason}`);
+      const roundTools = resp.content.filter((b) => b.type === "tool_use").map((b: any) => b.name);
+      console.log(`[malak] round=${round} stop_reason=${resp.stop_reason} tool_use=[${roundTools.join(",")}]`);
 
       // WRITE tools take ABSOLUTE priority over `respond`. If the model asked to
       // modify data, return the confirmation card — even if it ALSO emitted a
