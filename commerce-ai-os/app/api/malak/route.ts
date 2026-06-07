@@ -95,6 +95,11 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "list_missing_images",
+    description: "قائمة المنتجات التي بدون صورة (image_url فارغ): الاسم والـSKU والفئة. الوكيل: ريم (الصور).",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "low_stock",
     description: "المنتجات التي مخزونها أقل من threshold (افتراضي 10).",
     input_schema: {
@@ -300,6 +305,20 @@ async function listRejected(sb: Sb) {
   return { count: (data ?? []).length, items: (data ?? []).map((r: any) => ({ name: r.name_en, sku: r.sku })) };
 }
 
+async function listMissingImages(sb: Sb) {
+  const { data, error } = await sb
+    .from("products")
+    .select("name_en, sku, main_category")
+    .is("image_url", null)
+    .order("sku", { ascending: true })
+    .limit(50);
+  if (error) return { error: error.message, items: [] };
+  return {
+    count: (data ?? []).length,
+    items: (data ?? []).map((r: any) => ({ name: r.name_en, sku: r.sku, category: r.main_category })),
+  };
+}
+
 async function lowStock(sb: Sb, input: any) {
   const threshold = Number(input?.threshold) || 10;
   const { data, error } = await sb
@@ -332,6 +351,9 @@ async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, 
       break;
     case "list_rejected":
       result = await listRejected(sb);
+      break;
+    case "list_missing_images":
+      result = await listMissingImages(sb);
       break;
     case "low_stock":
       result = await lowStock(sb, input);
