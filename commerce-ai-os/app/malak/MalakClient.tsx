@@ -561,8 +561,25 @@ function ImageRequestPanel({
   );
 }
 
+// Spoken summary text for the briefing (shared by auto-speak + the listen button).
+function briefSummary(d: any): string {
+  const greet = new Date().getHours() < 12 ? "صباح الخير" : "مساء الخير";
+  return (
+    `راشد: ${greet} فهد. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
+    `الأولوية اليوم ${d.priority}.`
+  );
+}
+
 // Morning briefing card (Rashid) — auto store status when /malak opens.
-function BriefingPanel({ item, onQuick }: { item: any; onQuick: (q: string) => void }) {
+function BriefingPanel({
+  item,
+  onQuick,
+  onListen,
+}: {
+  item: any;
+  onQuick: (q: string) => void;
+  onListen: (text: string) => void;
+}) {
   const hr = new Date().getHours();
   const greet = hr < 12 ? "صباح الخير" : "مساء الخير";
   const rows: { icon: string; label: string; value: number; tone?: string }[] = [
@@ -576,10 +593,13 @@ function BriefingPanel({ item, onQuick }: { item: any; onQuick: (q: string) => v
 
   return (
     <div className="space-y-3 rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/10 to-purple-500/10 p-3 text-right backdrop-blur sm:p-4">
-      <div className="flex items-center justify-between">
-        <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
-          ☀️ بريفينج راشد
-        </span>
+      <div className="flex items-center justify-between gap-2">
+        <button
+          onClick={() => onListen(briefSummary(item))}
+          className="shrink-0 rounded-full border border-amber-400/40 bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200 transition hover:bg-amber-500/25"
+        >
+          ▶ استمع
+        </button>
         <p className="text-base font-extrabold text-white">{greet} فهد</p>
       </div>
 
@@ -630,19 +650,21 @@ function Panel({
   onConfirmCancel,
   onGenerated,
   onQuick,
+  onListen,
 }: {
   data: PanelData;
   onConfirmDone?: (message: string) => void;
   onConfirmCancel?: () => void;
   onGenerated?: (panel: PanelData) => void;
   onQuick?: (q: string) => void;
+  onListen?: (text: string) => void;
 }) {
   if (data.type === "products" && Array.isArray(data.items)) return <ProductsPanel items={data.items} />;
   if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} />;
   if (data.type === "post" && data.item) return <PostPanel item={data.item} />;
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
   if (data.type === "briefing" && data.item)
-    return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} />;
+    return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
   if (data.type === "image_request" && data.item)
     return (
       <ImageRequestPanel
@@ -996,12 +1018,9 @@ function MalakInner() {
         if (!d || d.error) return;
         setActiveAgent("rashid");
         setPanel({ type: "briefing", item: d });
-        const greet = new Date().getHours() < 12 ? "صباح الخير" : "مساء الخير";
-        const summary =
-          `راشد: ${greet} فهد. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
-          `الأولوية اليوم ${d.priority}.`;
-        // Best-effort voice (may be blocked by autoplay until first interaction).
-        speak(summary, "rashid");
+        // Best-effort voice (may be blocked by autoplay until first interaction;
+        // the [▶ استمع] button on the card always works).
+        speak(briefSummary(d), "rashid");
       } catch {
         /* briefing is best-effort */
       }
@@ -1085,7 +1104,7 @@ function MalakInner() {
         </Link>
         <div className="text-center">
           <h1 className="text-base font-extrabold tracking-tight sm:text-lg">ملاك</h1>
-          <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2L</p>
+          <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2M</p>
         </div>
         <div className="w-[70px] sm:w-[92px]" />
       </header>
@@ -1189,6 +1208,11 @@ function MalakInner() {
                 setPanel(p);
               }}
               onQuick={(q) => send(q)}
+              onListen={(text) => {
+                // Button click is a user gesture → unlock + play (no autoplay block).
+                unlockAudio();
+                speak(text, "rashid");
+              }}
             />
           </div>
         ) : null}
