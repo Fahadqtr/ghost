@@ -48,6 +48,15 @@ const SYSTEM_PROMPT =
   '"تمام، خلّها عليّ، أراجع الكتالوج الحين وأرجع لك." / ' +
   '"وش رايك نركّز على المعتمدة أول؟ زين كذا." / ' +
   '"يا طويل العمر، عندنا كم منتج ناقص صورة، أصلّحها لك." ' +
+  '— شخصية ملاك ومبادرتها (مهم جدًا): أنتِ شريكة أعمال صريحة وذكية لفهد، لستِ مجرّد منفّذة تقول "تم". أعطي رأيكِ الحقيقي. ' +
+  'بعد أي طلب، إن لاحظتِ في البيانات ما يستحق الانتباه، نبّهي فهد بإيجاز ومبادرة: ' +
+  'في عرض المنتجات نوّهي عن أي سعر يبدو شاذًّا أو منتج بدون صورة أو حالة مرفوضة؛ ' +
+  'في التقارير أبرزي أهم رقم واحد يحتاج تصرّفًا بدل تعداد كل الأرقام؛ ' +
+  'كوني صريحة بأدب: لو طلب فهد شيئًا قد يضرّ بالأعمال (مثل سعر أقل بكثير من المعقول) قولي رأيكِ بوضوح مع بديل، ' +
+  'لا تنفّذي بصمت — مثال: "هالسعر أقل من المنافس بكثير، متأكد؟ أنصح بـ كذا". ' +
+  'لا تجاملي بإفراط ولا تكرري المدح؛ ركّزي على القيمة والتصرّف. ' +
+  'ابقي مختصرة جدًا في speak (جملة أو جملتين)، والتفاصيل في panel. ' +
+  'لا تخترعي أرقامًا أبدًا — استخدمي الأدوات للبيانات الحقيقية. ' +
   'ردّك النهائي JSON فقط: {"agent":"<id>","speak":"<رد قصير للنطق يذكر اسم الوكيل>","panel":<اختياري>}. ' +
   'أنواع panel: products{items:[{name,brand,price,status,sku}]}, ' +
   'stats{items:[{label,value,sub}]}, ' +
@@ -430,9 +439,10 @@ function confirmPanel(
   name: string | null,
   sku: string | null,
   changes: { label: string; old?: any; new: any }[],
-  token: string
+  token: string,
+  warning?: string
 ) {
-  return { type: "confirm", item: { title, agent, operation, name, sku, changes, token } };
+  return { type: "confirm", item: { title, agent, operation, name, sku, changes, token, warning: warning || null } };
 }
 
 // Short alpha-numeric code from a category/sub-category name for the SKU.
@@ -498,10 +508,16 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
       v: 1, type: "update_stock", agent: "salem", sku: p.sku, productId: p.id,
       field: "stock_quantity", oldValue: oldVal, newValue: value, ts: Date.now(),
     });
+    // Frank sanity check on the number.
+    let warning = "";
+    if (value === 0) warning = "هذا يصفّر المخزون تمامًا.";
+    else if (value > 9999) warning = "كمية كبيرة جدًا، متأكد من الرقم؟";
     return {
       ok: true, agent: "salem",
-      speak: `سالم: جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
-      panel: confirmPanel("تحديث المخزون", "salem", "تعديل كمية المخزون", p.name_en, p.sku, [{ label: "المخزون", old: oldVal, new: value }], token),
+      speak: warning
+        ? `سالم: ${warning} حطّيته ${value} لـ ${p.name_en}. راجع وأكّد لو متأكد.`
+        : `سالم: جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
+      panel: confirmPanel("تحديث المخزون", "salem", "تعديل كمية المخزون", p.name_en, p.sku, [{ label: "المخزون", old: oldVal, new: value }], token, warning),
     };
   }
 
@@ -516,10 +532,21 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
       v: 1, type: "set_price", agent: "razan", sku: p.sku, productId: p.id,
       field: "price", oldValue: p.price, newValue: price, ts: Date.now(),
     });
+    // Frank sanity check: flag a drastic move vs the current price, or a very
+    // low price — Razan should question it, not execute silently.
+    let warning = "";
+    const old = Number(p.price);
+    if (Number.isFinite(old) && old > 0) {
+      if (price <= old * 0.3) warning = `هالسعر أقل بكثير من الحالي (${old} ر.ق). متأكد؟`;
+      else if (price >= old * 3) warning = `هالسعر أعلى بكثير من الحالي (${old} ر.ق). متأكد؟`;
+    }
+    if (!warning && price > 0 && price < 5) warning = "السعر منخفض جدًا، متأكد؟";
     return {
       ok: true, agent: "razan",
-      speak: `رزان: جهّزت تعديل سعر ${p.name_en} من ${p.price ?? "—"} إلى ${price} ريال. أكّد للتنفيذ.`,
-      panel: confirmPanel("تعديل السعر", "razan", "تغيير سعر المنتج", p.name_en, p.sku, [{ label: "السعر (ر.ق)", old: p.price ?? "—", new: price }], token),
+      speak: warning
+        ? `رزان: ${warning} راجع الكرت وأكّد لو متأكد.`
+        : `رزان: جهّزت تعديل سعر ${p.name_en} من ${p.price ?? "—"} إلى ${price} ريال. أكّد للتنفيذ.`,
+      panel: confirmPanel("تعديل السعر", "razan", "تغيير سعر المنتج", p.name_en, p.sku, [{ label: "السعر (ر.ق)", old: p.price ?? "—", new: price }], token, warning),
     };
   }
 

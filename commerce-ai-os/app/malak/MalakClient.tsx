@@ -348,6 +348,12 @@ function ConfirmPanel({
         {item.sku ? <p className="font-mono text-[11px] text-white/40">{item.sku}</p> : null}
       </div>
 
+      {item.warning ? (
+        <p className="rounded-xl border border-orange-400/40 bg-orange-500/15 px-3 py-2 text-sm font-medium text-orange-200">
+          🤔 {item.warning}
+        </p>
+      ) : null}
+
       {item.imageUrl ? (
         <div className="overflow-hidden rounded-xl border border-white/10 bg-black/30">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -817,7 +823,7 @@ export default function MalakPage() {
         </Link>
         <div className="text-center">
           <h1 className="text-lg font-extrabold tracking-tight">ملاك</h1>
-          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2D</p>
+          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2E</p>
         </div>
         <div className="w-[92px]" />
       </header>
