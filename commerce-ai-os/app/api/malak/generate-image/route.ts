@@ -20,25 +20,32 @@ async function firstRow(builder: any): Promise<any | null> {
 
 function buildPrompt(name: string, style: string, hasRef: boolean, portrait = false): string {
   const frame = portrait
-    ? `Vertical portrait composition optimized for Instagram/social feed and stories, product placed off-center with generous clean space at the top or bottom for a headline and call-to-action. `
-    : `Square 1:1 composition for an Instagram feed post. `;
+    ? `Vertical portrait composition optimized for Instagram/social feed and stories, product placed off-center with generous clean empty space at the top or bottom. `
+    : `Square 1:1 composition for an Instagram feed post, product centered or slightly off-center. `;
   const base =
     frame +
-    `Professional luxury Korean K-beauty (K-beauty) skincare advertising campaign photo of "${name}". ` +
-    `Scroll-stopping, social-media and Instagram ad quality, photorealistic, ultra sharp product in crisp focus, ` +
-    `premium soft studio lighting with elegant highlights, gentle reflections and soft shadows, dewy glowy aesthetic, ` +
-    `refined color grading, high resolution, magazine-grade e-commerce hero look. ` +
-    `Balanced, modern composition with clean negative space suitable for adding ad text or a logo later. `;
+    `Professional luxury Korean K-beauty (K-beauty) skincare advertising product photo of "${name}". ` +
+    `Photorealistic, ultra sharp product in crisp focus, premium soft studio lighting with elegant highlights, ` +
+    `gentle reflections and soft shadows, dewy glowy aesthetic, refined color grading, high resolution, ` +
+    `magazine-grade e-commerce hero look. `;
   const styleBit =
     style === "lifestyle"
       ? `Elegant aspirational lifestyle setting: soft natural light, tasteful minimal props (fresh flowers, water droplets, silk or marble, soft pastel tones), bright and clean. `
-      : `Clean minimal studio background (soft white or delicate pastel gradient), the product as the clear hero, no clutter. `;
+      : `Clean minimal luxury background (soft white or delicate pastel gradient), the product as the clear hero, no clutter. `;
+  // Generous EMPTY space so a designer adds the (Arabic) text manually later.
+  const negSpace =
+    `Leave generous clean EMPTY negative space (no objects in it) so a designer can add a headline and call-to-action TEXT later by hand. `;
+  // Hard rule: NO generated text/typography of any kind (AI garbles Arabic).
+  const noText =
+    `ABSOLUTELY CRITICAL: do NOT add or render ANY text, typography, captions, headlines, slogans, letters, words, numbers, ` +
+    `paragraphs, badges, stickers, price tags, watermarks, or extra logos anywhere on the image. ` +
+    `The image must be a clean product shot ONLY — zero graphic text overlays. `;
   const fidelity = hasRef
-    ? `CRITICAL — preserve the product EXACTLY as in the provided reference image: identical bottle/box shape, proportions, material, colors, logo, and the EXACT label text. ` +
-      `Do NOT rewrite, translate, restyle, blur, misspell, or invent any text on the label — keep every letter and the brand name identical to the reference. ` +
-      `Only enhance the background, lighting, composition and mood. `
-    : `Keep the product design realistic and the label clean and legible; do NOT invent fake or misspelled brand text — if unsure, keep the label minimal and clean. `;
-  return `${base}${styleBit}${fidelity}No people (subtle hands only if needed). No watermarks, no extra logos, no busy or cluttered text.`;
+    ? `Keep the product packaging EXACTLY as in the provided reference image: identical bottle/box shape, proportions, material and colors, ` +
+      `and keep its own existing printed label as-is — do NOT rewrite, restyle, distort, blur or change the product's own label. ` +
+      `Only improve the background, lighting, composition and mood. `
+    : `Keep the product realistic; do not invent any brand name or label text. `;
+  return `${base}${styleBit}${negSpace}${noText}${fidelity}No people.`;
 }
 
 export async function POST(req: Request) {
@@ -154,6 +161,7 @@ export async function POST(req: Request) {
         sku: p.sku,
         imageUrl: url,
         changes: [{ label: "الصورة", old: currentImage ? "صورة حالية" : "بدون صورة", new: "الصورة المولّدة" }],
+        note: "الصورة بدون نص — أضف النص العربي بمحرر خارجي قبل النشر.",
         confirmLabel: "✓ اعتمدها صورة المنتج",
         cancelLabel: "✗ تجاهل",
         token: setToken,

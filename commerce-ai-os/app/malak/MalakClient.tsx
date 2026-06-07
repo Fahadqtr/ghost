@@ -398,6 +398,12 @@ function ConfirmPanel({
         </p>
       ) : null}
 
+      {item.note ? (
+        <p className="rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[13px] text-sky-200">
+          ℹ️ {item.note}
+        </p>
+      ) : null}
+
       {item.imageUrl ? (
         <div className="overflow-hidden rounded-xl border border-white/10 bg-black/30">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -982,7 +988,7 @@ function MalakInner() {
         </Link>
         <div className="text-center">
           <h1 className="text-lg font-extrabold tracking-tight">ملاك</h1>
-          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2H</p>
+          <p className="text-[11px] text-white/40">المديرة العامة الذكية · v2I</p>
         </div>
         <div className="w-[92px]" />
       </header>
