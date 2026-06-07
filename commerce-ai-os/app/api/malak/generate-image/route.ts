@@ -20,16 +20,21 @@ async function firstRow(builder: any): Promise<any | null> {
 
 function buildPrompt(name: string, style: string, hasRef: boolean): string {
   const base =
-    `High-end luxury K-beauty advertising product photo of "${name}". ` +
-    `Photorealistic, premium studio lighting with soft reflections and gentle shadows, ` +
-    `the product perfectly centered, sharp and in focus, e-commerce quality. ` +
-    (style === "lifestyle"
-      ? `Elegant lifestyle scene with tasteful minimal props (soft flowers, water droplets, marble or silk), bright and clean. `
-      : `Clean seamless studio background in soft white or very light pastel, no clutter. `);
+    `Professional luxury Korean K-beauty (K-beauty) skincare advertising campaign photo of "${name}". ` +
+    `Scroll-stopping, social-media and Instagram ad quality, photorealistic, ultra sharp product in crisp focus, ` +
+    `premium soft studio lighting with elegant highlights, gentle reflections and soft shadows, dewy glowy aesthetic, ` +
+    `refined color grading, high resolution, magazine-grade e-commerce hero look. ` +
+    `Balanced, modern composition with clean negative space suitable for adding ad text or a logo later. `;
+  const styleBit =
+    style === "lifestyle"
+      ? `Elegant aspirational lifestyle setting: soft natural light, tasteful minimal props (fresh flowers, water droplets, silk or marble, soft pastel tones), bright and clean. `
+      : `Clean minimal studio background (soft white or delicate pastel gradient), the product as the clear hero, no clutter. `;
   const fidelity = hasRef
-    ? `IMPORTANT: keep the product packaging EXACTLY as in the provided reference image — same bottle/box shape, colors, and label text. Only improve the background, lighting and composition. Do not redesign the product or invent text.`
-    : `Keep the product design realistic and the label clean; do not invent fake brand text.`;
-  return `${base}${fidelity}`;
+    ? `CRITICAL — preserve the product EXACTLY as in the provided reference image: identical bottle/box shape, proportions, material, colors, logo, and the EXACT label text. ` +
+      `Do NOT rewrite, translate, restyle, blur, misspell, or invent any text on the label — keep every letter and the brand name identical to the reference. ` +
+      `Only enhance the background, lighting, composition and mood. `
+    : `Keep the product design realistic and the label clean and legible; do NOT invent fake or misspelled brand text — if unsure, keep the label minimal and clean. `;
+  return `${base}${styleBit}${fidelity}No people (subtle hands only if needed). No watermarks, no extra logos, no busy or cluttered text.`;
 }
 
 export async function POST(req: Request) {
