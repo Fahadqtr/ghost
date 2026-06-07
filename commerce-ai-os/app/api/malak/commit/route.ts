@@ -163,11 +163,13 @@ async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<s
       action: a.type, // legacy NOT NULL column (from audit_log)
       agent: a.agent,
       sku: a.sku ?? a.product?.sku ?? null,
-      product_id: out.productId ?? null,
+      // NOTE: malak_audit.product_id is legacy bigint while products.id is uuid,
+      // so we do NOT write the uuid into that column (it would error). The id is
+      // preserved inside `details` instead.
       field: out.field ?? a.field ?? null,
       old_value: out.oldValue != null ? String(out.oldValue) : a.oldValue != null ? String(a.oldValue) : null,
       new_value: out.newValue != null ? String(out.newValue) : null,
-      details: a,
+      details: { ...a, productId: out.productId ?? a.productId ?? null },
       status: "committed",
     };
     const { error } = await sb.from("malak_audit").insert(row);
