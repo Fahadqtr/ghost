@@ -13,18 +13,18 @@ const AGENT_IDS = [
   "malak", "noor", "bayan", "reem", "siraj", "razan", "rashid", "latifa", "salem",
 ];
 
-// Per-agent voice (gender-matched). Overridable per agent via
-// ELEVENLABS_VOICE_<AGENT>. Malak herself falls back to ELEVENLABS_VOICE_ID
-// (Malika). A voice_id is not a secret — it only works with this account's key.
+// Per-agent voice — authentic GULF (Khaleeji) voices, gender-matched, chosen
+// from the ElevenLabs Arabic library and approved by the user. Malak falls back
+// to ELEVENLABS_VOICE_ID (Lama, gulf female). Overridable via ELEVENLABS_VOICE_<AGENT>.
 const AGENT_VOICES: Record<string, string> = {
-  noor: "UR972wNGq3zluze0LoIp", // الكتالوج — أنثى
-  bayan: "L10lEremDiJfPicq5CPh", // المحتوى — أنثى
-  reem: "qi4PkV9c01kb869Vh7Su", // الصور — أنثى
-  razan: "a1KZUXKFVFDOb33I1uqr", // التسعير — أنثى
-  latifa: "4wf10lgibMnboGJGCLrP", // العملاء — أنثى
-  siraj: "mRdG9GYEjJmIzqbYTidv", // النشر — ذكر
-  rashid: "DANw8bnAVbjDEHwZIoYa", // التقارير — ذكر (الصوت الجديد)
-  salem: "LCDnCIYLTaVg7otERNkl", // العمليات — ذكر
+  noor: "KxMRrXEjbJ6kZ93yT3fq", // الكتالوج — Salma (خليجي، أنثى)
+  bayan: "isQLuoVuANx6FjDxyasX", // المحتوى — Noura (خليجي، أنثى)
+  reem: "cdxrkuYK4nZwDSkjw5sa", // الصور — Amira (خليجي، أنثى)
+  razan: "ZBf5V86GjdTx6Sdsex5C", // التسعير — Samira (خليجي، أنثى)
+  latifa: "LEqoCOGNjyExRiRUZhkv", // العملاء — Latifa (خليجي، أنثى)
+  siraj: "taIPgcOka6lQyJOPdNGp", // النشر — Ali (سعودي، ذكر)
+  rashid: "3GnbqfjaW8xI6hRTVx4Y", // التقارير — Nasser (سعودي، ذكر)
+  salem: "OoE8swS3hImZANNOodf6", // العمليات — Ali Ahmed (سعودي، ذكر)
 };
 
 function resolveVoiceId(agent: unknown): string | undefined {
