@@ -4,17 +4,19 @@ import { signAction } from "@/lib/malak/confirm";
 import { detectForcedTool } from "@/lib/malak/intent";
 import { CATEGORIES } from "@/lib/constants";
 
-// Malak AI — Phase 1 server brain. Holds all secrets (ANTHROPIC_API_KEY +
-// Supabase service role). The browser only ever sees the final structured JSON.
-// Read-only tool loop: Claude asks for catalog data, we run it against Supabase,
-// Claude returns a final { agent, speak, panel } via the `respond` tool.
+// Malak AI — server brain. Holds all secrets (ANTHROPIC_API_KEY +
+// Supabase service role); the browser only ever sees the final structured JSON.
+// Tool loop: Claude asks for catalog data (read tools) or proposes a change
+// (write tools — these only PREPARE a signed confirm panel and never write
+// here; the actual write happens in /api/malak/commit after the user confirms),
+// then returns a final { agent, speak, panel } via the `respond` tool.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-sonnet-4-6"; // current Sonnet (plan asked for Sonnet)
-// 1500 (the plan's value) was too low: a products panel of 8 items easily
-// exceeds it, so the final `respond` tool call gets truncated → stop_reason
-// "max_tokens" → empty answer ("تم."). 4096 gives ample headroom.
+const MODEL = "claude-sonnet-4-6"; // current Sonnet
+// 1500 was too low: a products panel of 8 items easily exceeds it, so the final
+// `respond` tool call gets truncated → stop_reason "max_tokens" → empty answer
+// ("تم."). 4096 gives ample headroom.
 const MAX_TOKENS = 4096;
 const MAX_TOOL_ROUNDS = 4;
 
@@ -99,7 +101,7 @@ const SYSTEM_PROMPT =
   'أي طلب صورة/إعلان/بوستر/كريتف لمنتج ← استدعي generate_product_image. وأي طلب سعر/مخزون/اعتماد/إضافة منتج ← استدعي الأداة المطابقة مع الحفاظ على تدفّق التأكيد. ' +
   'id الوكلاء: ' + AGENT_IDS.join("، ") + ".";
 
-// ---- Tool schemas exposed to Claude (read-only in Phase 1) -----------------
+// ---- Tool schemas exposed to Claude: read tools first, then write tools ----
 const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_products",
@@ -835,7 +837,8 @@ export async function POST(req: Request) {
       // No respond yet. If the model isn't asking for a data tool, stop looping.
       if (resp.stop_reason !== "tool_use") break;
 
-      // Execute the (read-only) data tools it asked for, feed results back.
+      // Execute the tools it asked for (reads return data; writes return a
+      // confirm panel — never an actual write here), feed results back.
       const dataUses = resp.content.filter(
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
       );
