@@ -6,7 +6,7 @@
 // fetches its own products/variants and (optionally) a SKU→Description-EN map
 // from the master sheet, then calls buildTalabatRows() + rowsToCsv().
 
-// Exact column order (9 columns).
+// Exact column order (10 columns).
 export const TALABAT_HEADERS = [
   "SKU",
   "Barcode",
@@ -14,6 +14,7 @@ export const TALABAT_HEADERS = [
   "Discount",
   "Product Name EN",
   "Product Name AR",
+  "Category",
   "Description EN",
   "Description AR",
   "New Image Filename",
@@ -43,7 +44,7 @@ export function seqOf(parentSku, variantSku) {
 /**
  * Build the Talabat rows.
  *  - products: [{ id, sku, barcode, price, discount_price, name_en, name_ar,
- *                 description_en, description_ar, image_filename }]
+ *                 main_category, description_en, description_ar, image_filename }]
  *  - variants: [{ parent_product_id, variant_name, sku }]
  *  - masterDescEn: Map(sku -> Description EN) used ONLY to fill an empty DB
  *                  description (Supabase stays primary). Pass an empty Map to skip.
@@ -91,6 +92,7 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
       Barcode: S(p.barcode),
       "Price (QAR)": S(p.price),
       Discount: S(p.discount_price),
+      Category: S(p.main_category), // variants inherit the parent's category
       "Description EN": descEn,
       "Description AR": S(p.description_ar),
       "New Image Filename": imgFile,

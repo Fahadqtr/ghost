@@ -62,7 +62,7 @@ async function fetchAll(table, columns) {
 // ---- load -----------------------------------------------------------------
 const products = await fetchAll(
   "products",
-  "id, sku, barcode, price, discount_price, name_en, name_ar, description_en, description_ar, image_filename"
+  "id, sku, barcode, price, discount_price, name_en, name_ar, main_category, description_en, description_ar, image_filename"
 );
 const variants = await fetchAll("product_variants", "parent_product_id, variant_name, sku");
 console.log(`Loaded ${products.length} products, ${variants.length} variants.`);
