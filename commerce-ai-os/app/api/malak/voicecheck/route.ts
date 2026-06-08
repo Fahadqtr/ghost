@@ -43,7 +43,31 @@ function voiceFor(agent: string): string | undefined {
 export async function GET(req: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) return Response.json({ error: "ELEVENLABS_API_KEY missing" });
-  const agent = (new URL(req.url).searchParams.get("agent") || "rashid").toLowerCase();
+  const url = new URL(req.url);
+
+  // Browse mode: list Arabic shared-library voices (needs voices_read scope).
+  if (url.searchParams.get("browse")) {
+    const gender = url.searchParams.get("gender") || "";
+    const q = new URLSearchParams({ page_size: "60", language: "ar" });
+    if (gender) q.set("gender", gender);
+    const r = await fetch(`https://api.elevenlabs.io/v1/shared-voices?${q.toString()}`, {
+      headers: { "xi-api-key": apiKey },
+    });
+    if (!r.ok) return Response.json({ error: `shared ${r.status}`, body: (await r.text()).slice(0, 400) });
+    const data: any = await r.json();
+    const voices = (data?.voices ?? []).map((v: any) => ({
+      voice_id: v.voice_id,
+      name: v.name,
+      gender: v.gender,
+      accent: v.accent,
+      age: v.age,
+      descriptive: v.descriptive,
+      use_case: v.use_case,
+    }));
+    return Response.json({ count: voices.length, voices });
+  }
+
+  const agent = (url.searchParams.get("agent") || "rashid").toLowerCase();
   const voiceId = voiceFor(agent);
   if (!voiceId) return Response.json({ agent, error: "no voice" });
   const text = `مرحبا، معاك ${NAME[agent] ?? agent} من قسم ${ROLE[agent] ?? ""}. حياك الله يا فهد، كيف أقدر أساعدك اليوم؟`;
