@@ -68,7 +68,7 @@ export async function GET(req: Request) {
   }
 
   const agent = (url.searchParams.get("agent") || "rashid").toLowerCase();
-  const voiceId = voiceFor(agent);
+  const voiceId = url.searchParams.get("voice") || voiceFor(agent);
   if (!voiceId) return Response.json({ agent, error: "no voice" });
   const text = `مرحبا، معاك ${NAME[agent] ?? agent} من قسم ${ROLE[agent] ?? ""}. حياك الله يا فهد، كيف أقدر أساعدك اليوم؟`;
   const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
