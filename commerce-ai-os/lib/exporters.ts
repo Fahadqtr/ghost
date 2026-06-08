@@ -73,38 +73,10 @@ export function buildSnoonuCsv(products: ExportProduct[], status: StatusMap): st
   return toCsv(SNOONU_HEADERS, rows);
 }
 
-// --- 3) Talabat split-CSV (ONE ROW PER VARIANT; EN + AR) -------------------
-export const TALABAT_HEADERS = [
-  "Parent SKU", "Item Name EN", "Item Name AR", "Variant", "Item SKU", "Barcode",
-  "Category", "Price", "Stock", "Talabat Status",
-  "Description EN", "Description AR", "Keywords EN", "Keywords AR",
-];
-export function buildTalabatCsv(
-  products: ExportProduct[],
-  variants: ExportVariant[],
-  status: StatusMap
-): string {
-  const byParent = new Map<string, ExportVariant[]>();
-  for (const v of variants) {
-    if (!byParent.has(v.parent_product_id)) byParent.set(v.parent_product_id, []);
-    byParent.get(v.parent_product_id)!.push(v);
-  }
-  const suffix = (base: string | null, vn: string | null) =>
-    `${base ?? ""}${vn ? " - " + vn : ""}`;
-  const rows: unknown[][] = [];
-  for (const p of products) {
-    const vs = byParent.get(p.id) ?? [];
-    const common = (vn: string | null, sku: string | null, price: number | null) => [
-      p.sku, suffix(p.name_en, vn), suffix(p.name_ar, vn), vn ?? "", sku ?? p.sku,
-      p.barcode, p.main_category, price ?? p.price, "" /*stock later*/,
-      status[p.id] ?? "Not Listed", p.description_en, p.description_ar,
-      p.keywords_en, p.keywords_ar,
-    ];
-    if (vs.length > 0) for (const v of vs) rows.push(common(v.variant_name, v.sku, v.price));
-    else rows.push(common(null, p.sku, p.price));
-  }
-  return toCsv(TALABAT_HEADERS, rows);
-}
+// --- 3) Talabat split-CSV ---------------------------------------------------
+// The Talabat format now lives in lib/malak/talabat-export.mjs (the SINGLE
+// source shared by the in-app export button and scripts/export_talabat.mjs).
+// See buildTalabatRows()/rowsToCsv() there.
 
 // --- 4) Rafeeq (one row per product; EN + AR) ------------------------------
 export const RAFEEQ_HEADERS = [

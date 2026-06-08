@@ -1,45 +1,30 @@
 // Talabat final catalog export → talabat_catalog_final.csv (project root).
 //
 // READ-ONLY: reads products + product_variants from Supabase and writes a CSV.
-// It NEVER writes to the database.
+// It NEVER writes to the database. The row/column FORMAT lives in the shared
+// module lib/malak/talabat-export.mjs — the SAME module the in-app export
+// button uses — so the CLI and the button can never drift.
 //
 // Usage:  node scripts/export_talabat.mjs
 // Requires NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in .env.local
 // (service-role bypasses RLS for this admin read; key is read from the
 // gitignored .env.local and never printed).
-//
-// Row logic:
-//   • Products with NO variants  → one row, as-is.
-//   • Products WITH variants     → one row per variant:
-//       - SKU            = {parentSku}-{seq}        (e.g. mk870-1, mk870-2)
-//       - Product Name EN = name_en + " - " + variant_name
-//       - Product Name AR = name_ar + " - " + variant_name
-//       - Barcode/Price/Discount/Descriptions = inherited from the parent
-//       - New Image Filename = "" (filled in later)
-//   • Ambiguous variant labels (e.g. "#03") are kept verbatim in the name.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createClient } from "@supabase/supabase-js";
+import {
+  TALABAT_HEADERS,
+  buildTalabatRows,
+  rowsToCsv,
+  masterDescEnFromRows,
+} from "../lib/malak/talabat-export.mjs";
 
 const require = createRequire(import.meta.url);
 const XLSX = require("xlsx"); // CJS — load via require for reliable interop
 
 const OUT = "./talabat_catalog_final.csv";
 const MASTER = "./Malikas_Universe_CLEAN_28col.xlsx"; // fallback for empty fields
-
-// Exact column order requested.
-const HEADERS = [
-  "SKU",
-  "Barcode",
-  "Price (QAR)",
-  "Discount",
-  "Product Name EN",
-  "Product Name AR",
-  "Description EN",
-  "Description AR",
-  "New Image Filename",
-];
 
 // ---- env ------------------------------------------------------------------
 function loadEnv() {
@@ -61,16 +46,7 @@ if (!url || !key) {
 }
 const supabase = createClient(url, key, { auth: { persistSession: false } });
 
-// ---- helpers --------------------------------------------------------------
-const chunks = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
-const S = (v) => (v == null ? "" : String(v).trim());
-// RFC-4180 CSV cell: quote when it contains comma/quote/newline; escape quotes.
-const cell = (v) => {
-  const s = S(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-
-// Pull every row of a table via keyset-free pagination (Supabase caps at 1000).
+// Pull every row of a table via pagination (Supabase caps at 1000).
 async function fetchAll(table, columns) {
   const all = [];
   const PAGE = 1000;
@@ -91,124 +67,38 @@ const products = await fetchAll(
 const variants = await fetchAll("product_variants", "parent_product_id, variant_name, sku");
 console.log(`Loaded ${products.length} products, ${variants.length} variants.`);
 
-// ---- master sheet: SKU -> Description EN (fallback for Supabase empties) ---
-// Supabase is the primary source; the master xlsx only fills gaps where the
-// product's English description is empty in the DB. We never write to the DB.
-const masterDescEn = new Map();
+// Master sheet → SKU → Description EN (fills only DB gaps; never written back).
+let masterDescEn = new Map();
 try {
   const wb = XLSX.readFile(MASTER);
   const mrows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
-  for (const r of mrows) {
-    const sku = S(r.SKU);
-    const desc = S(r["Description EN"]);
-    if (sku && desc) masterDescEn.set(sku, desc);
-  }
+  masterDescEn = masterDescEnFromRows(mrows);
   console.log(`Loaded master sheet: ${masterDescEn.size} SKUs with Description EN.`);
 } catch (e) {
   console.warn(`⚠ Could not read master sheet (${MASTER}): ${e.message} — proceeding without fallback.`);
 }
-// Count how many gaps the fallback actually fills, for the report.
-let descEnFromMaster = 0;
 
-const productById = new Map(products.map((p) => [p.id, p]));
-
-// Group variants by parent, ordered by the numeric index baked into their sku
-// ({parentSku}-{N}-{slug}). That index becomes the export seq, so the order
-// matches the original pipe-delimited Variant column (mk870-1=Blue, -2=Pink…).
-const variantsByParent = new Map();
-for (const v of variants) {
-  const arr = variantsByParent.get(v.parent_product_id) ?? [];
-  arr.push(v);
-  variantsByParent.set(v.parent_product_id, arr);
-}
-function seqOf(parentSku, variantSku) {
-  // strip "{parentSku}-" then read the leading integer; fallback handled by caller
-  const rest = S(variantSku).startsWith(parentSku + "-") ? S(variantSku).slice(parentSku.length + 1) : "";
-  const n = parseInt(rest, 10);
-  return Number.isFinite(n) ? n : null;
-}
-
-// ---- build rows -----------------------------------------------------------
-const rows = [];
-let withVariants = 0;
-let withoutVariants = 0;
-
-for (const p of products) {
-  // Description EN: Supabase first, master sheet (by SKU) as fallback for gaps.
-  let descEn = S(p.description_en);
-  if (descEn === "") {
-    const fromMaster = masterDescEn.get(S(p.sku));
-    if (fromMaster) { descEn = fromMaster; descEnFromMaster++; }
-  }
-
-  const vs = variantsByParent.get(p.id);
-  if (!vs || vs.length === 0) {
-    // Plain product — one row as-is.
-    withoutVariants++;
-    rows.push({
-      SKU: S(p.sku),
-      Barcode: S(p.barcode),
-      "Price (QAR)": S(p.price),
-      Discount: S(p.discount_price),
-      "Product Name EN": S(p.name_en),
-      "Product Name AR": S(p.name_ar),
-      "Description EN": descEn,
-      "Description AR": S(p.description_ar),
-      "New Image Filename": "",
-    });
-    continue;
-  }
-  // Product with variants — one row each, ordered by the embedded index.
-  withVariants++;
-  const ordered = vs
-    .map((v, i) => ({ v, seq: seqOf(p.sku, v.sku) ?? i + 1 }))
-    .sort((a, b) => a.seq - b.seq);
-  for (const { v, seq } of ordered) {
-    const name = S(v.variant_name);
-    rows.push({
-      SKU: `${S(p.sku)}-${seq}`,
-      Barcode: S(p.barcode),
-      "Price (QAR)": S(p.price),
-      Discount: S(p.discount_price),
-      "Product Name EN": name ? `${S(p.name_en)} - ${name}` : S(p.name_en),
-      "Product Name AR": name ? `${S(p.name_ar)} - ${name}` : S(p.name_ar),
-      "Description EN": descEn,
-      "Description AR": S(p.description_ar),
-      "New Image Filename": "",
-    });
-  }
-}
-
-// ---- write CSV ------------------------------------------------------------
-const lines = [HEADERS.join(",")];
-for (const r of rows) lines.push(HEADERS.map((h) => cell(r[h])).join(","));
+// ---- build + write (shared format) ----------------------------------------
+const { rows, stats } = buildTalabatRows(products, variants, masterDescEn);
 // Prepend UTF-8 BOM so Excel renders the Arabic columns correctly.
-writeFileSync(OUT, "﻿" + lines.join("\r\n") + "\r\n", "utf8");
+writeFileSync(OUT, "﻿" + rowsToCsv(rows), "utf8");
 
 // ---- completeness report --------------------------------------------------
-// "Missing" = empty cell. New Image Filename is intentionally empty (excluded).
-const checkCols = HEADERS.filter((h) => h !== "New Image Filename");
-const missing = {};
-for (const h of checkCols) missing[h] = 0;
-for (const r of rows) for (const h of checkCols) if (S(r[h]) === "") missing[h]++;
+const checkCols = TALABAT_HEADERS.filter((h) => h !== "New Image Filename");
+const missing = Object.fromEntries(checkCols.map((h) => [h, 0]));
+for (const r of rows) for (const h of checkCols) if (String(r[h] ?? "").trim() === "") missing[h]++;
 
 console.log("\n========== EXPORT SUMMARY ==========");
-console.log(`Products total ............ ${products.length}`);
-console.log(`  • without variants ...... ${withoutVariants} (one row each)`);
-console.log(`  • with variants ......... ${withVariants} → ${variants.length} variant rows`);
+console.log(`Products total ............ ${stats.productsTotal}`);
+console.log(`  • without variants ...... ${stats.withoutVariants} (one row each)`);
+console.log(`  • with variants ......... ${stats.withVariants} → ${stats.variantRows} variant rows`);
 console.log(`TOTAL ROWS WRITTEN ........ ${rows.length}`);
 console.log(`File ...................... ${OUT}`);
-console.log(`\nDescription EN filled from master sheet: ${descEnFromMaster} product(s).`);
-
-// Products whose English description is STILL empty (not in DB nor master).
-const stillEmpty = products.filter((p) => {
-  if (S(p.description_en) !== "") return false;
-  return !masterDescEn.get(S(p.sku));
-});
-console.log(`Products STILL missing Description EN (DB + master): ${stillEmpty.length}`);
-if (stillEmpty.length) {
+console.log(`\nDescription EN filled from master sheet: ${stats.descEnFromMaster} product(s).`);
+console.log(`Products STILL missing Description EN (DB + master): ${stats.stillEmpty.length}`);
+if (stats.stillEmpty.length) {
   console.log("  SKU | Product Name EN");
-  for (const p of stillEmpty) console.log(`  ${S(p.sku)} | ${S(p.name_en)}`);
+  for (const p of stats.stillEmpty) console.log(`  ${p.sku} | ${p.name_en}`);
 }
 console.log("\nMissing (empty) cells per column [New Image Filename excluded by design]:");
 let anyMissing = false;

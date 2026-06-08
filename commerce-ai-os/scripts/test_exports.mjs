@@ -3,8 +3,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import {
-  buildShopifyCsv, buildSnoonuCsv, buildTalabatCsv, buildRafeeqCsv, CHANNEL_NAME,
+  buildShopifyCsv, buildSnoonuCsv, buildRafeeqCsv, CHANNEL_NAME,
 } from "../lib/exporters.ts";
+import { buildTalabatRows, rowsToCsv } from "../lib/malak/talabat-export.mjs";
 
 const env = Object.fromEntries(
   readFileSync(".env.local", "utf8").split("\n")
@@ -43,7 +44,7 @@ const variants = await all("product_variants", "parent_product_id, variant_name,
 const outputs = {
   shopify: buildShopifyCsv(products, await statusFor("shopify")),
   snoonu: buildSnoonuCsv(products, await statusFor("snoonu")),
-  talabat: buildTalabatCsv(products, variants, await statusFor("talabat")),
+  talabat: rowsToCsv(buildTalabatRows(products, variants).rows),
   rafeeq: buildRafeeqCsv(products, await statusFor("rafeeq")),
 };
 

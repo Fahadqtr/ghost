@@ -1,11 +1,32 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { createClient } from "@/lib/supabase/server";
 import {
-  buildShopifyCsv, buildSnoonuCsv, buildTalabatCsv, buildRafeeqCsv,
+  buildShopifyCsv, buildSnoonuCsv, buildRafeeqCsv,
   CHANNEL_KEYS, type ChannelKey, type ExportProduct,
   type ExportVariant, type StatusMap,
 } from "@/lib/exporters";
+import {
+  buildTalabatRows, rowsToCsv, masterDescEnFromRows,
+} from "@/lib/malak/talabat-export.mjs";
 
+export const runtime = "nodejs"; // needs fs to read the master sheet fallback
 export const dynamic = "force-dynamic";
+
+// Master sheet (gitignored, present locally / not on Vercel) → SKU→Description-EN
+// map. Used ONLY to fill an empty DB description; absent file → empty map.
+function loadMasterDescEn(): Map<string, string> {
+  try {
+    const require = createRequire(import.meta.url);
+    const XLSX = require("xlsx");
+    const buf = readFileSync("./Malikas_Universe_CLEAN_28col.xlsx");
+    const wb = XLSX.read(buf, { type: "buffer" });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+    return masterDescEnFromRows(rows);
+  } catch {
+    return new Map(); // not deployed → DB stays the only source
+  }
+}
 
 const PAGE = 1000;
 async function fetchAll(q: (from: number, to: number) => any): Promise<any[]> {
@@ -63,12 +84,15 @@ export async function GET(
 
     let csv: string;
     if (channel === "talabat") {
+      // Same format as scripts/export_talabat.mjs (shared module): 9 columns,
+      // one row per variant ({sku}-{seq}), Description EN gap-filled from master.
       const variants = (await fetchAll((from, to) =>
         supabase.from("product_variants")
           .select("parent_product_id, variant_name, sku, price")
           .range(from, to)
       )) as ExportVariant[];
-      csv = buildTalabatCsv(products, variants, status);
+      const { rows } = buildTalabatRows(products, variants, loadMasterDescEn());
+      csv = rowsToCsv(rows);
     } else if (channel === "shopify") {
       csv = buildShopifyCsv(products, status);
     } else if (channel === "snoonu") {
