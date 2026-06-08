@@ -37,3 +37,6 @@ yarn-error.log*
 
 # real product catalog — do not commit to public repo
 Malikas_Universe_CLEAN_28col.xlsx
+
+# generated export artifacts (regenerate via scripts/export_talabat.mjs)
+talabat_catalog_final.csv
