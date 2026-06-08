@@ -7,7 +7,7 @@ import {
 import { NextResponse, type NextRequest } from "next/server";
 
 // Paths that are reachable WITHOUT being logged in.
-const PUBLIC_PATHS = ["/login", "/auth", "/api/malak/version"];
+const PUBLIC_PATHS = ["/login", "/auth"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
