@@ -19,9 +19,14 @@
 //   • Ambiguous variant labels (e.g. "#03") are kept verbatim in the name.
 
 import { readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { createClient } from "@supabase/supabase-js";
 
+const require = createRequire(import.meta.url);
+const XLSX = require("xlsx"); // CJS — load via require for reliable interop
+
 const OUT = "./talabat_catalog_final.csv";
+const MASTER = "./Malikas_Universe_CLEAN_28col.xlsx"; // fallback for empty fields
 
 // Exact column order requested.
 const HEADERS = [
@@ -86,6 +91,25 @@ const products = await fetchAll(
 const variants = await fetchAll("product_variants", "parent_product_id, variant_name, sku");
 console.log(`Loaded ${products.length} products, ${variants.length} variants.`);
 
+// ---- master sheet: SKU -> Description EN (fallback for Supabase empties) ---
+// Supabase is the primary source; the master xlsx only fills gaps where the
+// product's English description is empty in the DB. We never write to the DB.
+const masterDescEn = new Map();
+try {
+  const wb = XLSX.readFile(MASTER);
+  const mrows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+  for (const r of mrows) {
+    const sku = S(r.SKU);
+    const desc = S(r["Description EN"]);
+    if (sku && desc) masterDescEn.set(sku, desc);
+  }
+  console.log(`Loaded master sheet: ${masterDescEn.size} SKUs with Description EN.`);
+} catch (e) {
+  console.warn(`⚠ Could not read master sheet (${MASTER}): ${e.message} — proceeding without fallback.`);
+}
+// Count how many gaps the fallback actually fills, for the report.
+let descEnFromMaster = 0;
+
 const productById = new Map(products.map((p) => [p.id, p]));
 
 // Group variants by parent, ordered by the numeric index baked into their sku
@@ -110,6 +134,13 @@ let withVariants = 0;
 let withoutVariants = 0;
 
 for (const p of products) {
+  // Description EN: Supabase first, master sheet (by SKU) as fallback for gaps.
+  let descEn = S(p.description_en);
+  if (descEn === "") {
+    const fromMaster = masterDescEn.get(S(p.sku));
+    if (fromMaster) { descEn = fromMaster; descEnFromMaster++; }
+  }
+
   const vs = variantsByParent.get(p.id);
   if (!vs || vs.length === 0) {
     // Plain product — one row as-is.
@@ -121,7 +152,7 @@ for (const p of products) {
       Discount: S(p.discount_price),
       "Product Name EN": S(p.name_en),
       "Product Name AR": S(p.name_ar),
-      "Description EN": S(p.description_en),
+      "Description EN": descEn,
       "Description AR": S(p.description_ar),
       "New Image Filename": "",
     });
@@ -141,7 +172,7 @@ for (const p of products) {
       Discount: S(p.discount_price),
       "Product Name EN": name ? `${S(p.name_en)} - ${name}` : S(p.name_en),
       "Product Name AR": name ? `${S(p.name_ar)} - ${name}` : S(p.name_ar),
-      "Description EN": S(p.description_en),
+      "Description EN": descEn,
       "Description AR": S(p.description_ar),
       "New Image Filename": "",
     });
@@ -167,6 +198,18 @@ console.log(`  • without variants ...... ${withoutVariants} (one row each)`);
 console.log(`  • with variants ......... ${withVariants} → ${variants.length} variant rows`);
 console.log(`TOTAL ROWS WRITTEN ........ ${rows.length}`);
 console.log(`File ...................... ${OUT}`);
+console.log(`\nDescription EN filled from master sheet: ${descEnFromMaster} product(s).`);
+
+// Products whose English description is STILL empty (not in DB nor master).
+const stillEmpty = products.filter((p) => {
+  if (S(p.description_en) !== "") return false;
+  return !masterDescEn.get(S(p.sku));
+});
+console.log(`Products STILL missing Description EN (DB + master): ${stillEmpty.length}`);
+if (stillEmpty.length) {
+  console.log("  SKU | Product Name EN");
+  for (const p of stillEmpty) console.log(`  ${S(p.sku)} | ${S(p.name_en)}`);
+}
 console.log("\nMissing (empty) cells per column [New Image Filename excluded by design]:");
 let anyMissing = false;
 for (const h of checkCols) {
