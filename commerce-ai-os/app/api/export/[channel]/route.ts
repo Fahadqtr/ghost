@@ -60,7 +60,7 @@ export async function GET(
     const products = (await fetchAll((from, to) =>
       supabase
         .from("products")
-        .select("id, sku, snoonu_id, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, description_en, description_ar, keywords_en, keywords_ar")
+        .select("id, sku, snoonu_id, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, image_filename, description_en, description_ar, keywords_en, keywords_ar")
         .order("sku", { ascending: true })
         .range(from, to)
     )) as ExportProduct[];

@@ -62,7 +62,7 @@ async function fetchAll(table, columns) {
 // ---- load -----------------------------------------------------------------
 const products = await fetchAll(
   "products",
-  "id, sku, barcode, price, discount_price, name_en, name_ar, description_en, description_ar"
+  "id, sku, barcode, price, discount_price, name_en, name_ar, description_en, description_ar, image_filename"
 );
 const variants = await fetchAll("product_variants", "parent_product_id, variant_name, sku");
 console.log(`Loaded ${products.length} products, ${variants.length} variants.`);
@@ -99,6 +99,12 @@ console.log(`Products STILL missing Description EN (DB + master): ${stats.stillE
 if (stats.stillEmpty.length) {
   console.log("  SKU | Product Name EN");
   for (const p of stats.stillEmpty) console.log(`  ${p.sku} | ${p.name_en}`);
+}
+const withImage = stats.productsTotal - stats.noImage.length;
+console.log(`\nNew Image Filename → ${withImage} product(s) have an image name, ${stats.noImage.length} empty.`);
+if (stats.noImage.length) {
+  console.log("  (empty image_filename) SKU | Product Name EN");
+  for (const p of stats.noImage) console.log(`  ${p.sku} | ${p.name_en}`);
 }
 console.log("\nMissing (empty) cells per column [New Image Filename excluded by design]:");
 let anyMissing = false;

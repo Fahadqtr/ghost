@@ -21,6 +21,9 @@ export const TALABAT_HEADERS = [
 
 const S = (v) => (v == null ? "" : String(v).trim());
 
+// Keep just the file name (strip any folder/URL prefix) → e.g. "mk1215.jpg".
+const fileName = (v) => { const s = S(v); const i = s.lastIndexOf("/"); return i >= 0 ? s.slice(i + 1) : s; };
+
 // RFC-4180 CSV cell: quote when it contains comma/quote/newline; escape quotes.
 const cell = (v) => {
   const s = S(v);
@@ -40,7 +43,7 @@ export function seqOf(parentSku, variantSku) {
 /**
  * Build the Talabat rows.
  *  - products: [{ id, sku, barcode, price, discount_price, name_en, name_ar,
- *                 description_en, description_ar }]
+ *                 description_en, description_ar, image_filename }]
  *  - variants: [{ parent_product_id, variant_name, sku }]
  *  - masterDescEn: Map(sku -> Description EN) used ONLY to fill an empty DB
  *                  description (Supabase stays primary). Pass an empty Map to skip.
@@ -68,6 +71,7 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
   let withoutVariants = 0;
   let descEnFromMaster = 0;
   const stillEmpty = [];
+  const noImage = [];
 
   for (const p of products) {
     // Description EN: Supabase first, master sheet (by SKU) as fallback.
@@ -78,13 +82,18 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
       else stillEmpty.push({ sku: S(p.sku), name_en: S(p.name_en) });
     }
 
+    // New Image Filename: the product's own image file name (variants inherit
+    // the parent's image for now — no per-colour images yet).
+    const imgFile = fileName(p.image_filename);
+    if (imgFile === "") noImage.push({ sku: S(p.sku), name_en: S(p.name_en) });
+
     const base = {
       Barcode: S(p.barcode),
       "Price (QAR)": S(p.price),
       Discount: S(p.discount_price),
       "Description EN": descEn,
       "Description AR": S(p.description_ar),
-      "New Image Filename": "",
+      "New Image Filename": imgFile,
     };
 
     const vs = variantsByParent.get(p.id);
@@ -123,6 +132,7 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
       variantRows: rows.length - withoutVariants,
       descEnFromMaster,
       stillEmpty,
+      noImage,
     },
   };
 }

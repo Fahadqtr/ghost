@@ -15,6 +15,7 @@ export interface ExportProduct {
   price: number | null;
   discount_price: number | null;
   image_url: string | null;
+  image_filename: string | null;
   description_en: string | null;
   description_ar: string | null;
   keywords_en: string | null;
