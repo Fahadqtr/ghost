@@ -13,34 +13,18 @@ const AGENT_IDS = [
   "malak", "noor", "bayan", "reem", "siraj", "razan", "rashid", "latifa", "salem",
 ];
 
-// Per-agent voice. Each of the 8 specialists has its own ElevenLabs voice
-// (Arabic, chosen to fit the agent's role); Malak keeps the shared Malika
-// voice (ELEVENLABS_VOICE_ID). Any agent can be overridden at runtime with an
-// `ELEVENLABS_VOICE_<AGENT>` env var (e.g. ELEVENLABS_VOICE_NOOR). A voice_id is
-// not a secret — it only works together with this account's API key.
-const AGENT_VOICES: Record<string, string> = {
-  noor: "UR972wNGq3zluze0LoIp", // الكتالوج — أنثى واضحة محايدة
-  bayan: "L10lEremDiJfPicq5CPh", // المحتوى — أنثى معبّرة حيوية
-  reem: "qi4PkV9c01kb869Vh7Su", // الصور — أنثى ناعمة هادئة
-  razan: "a1KZUXKFVFDOb33I1uqr", // التسعير — أنثى حازمة عملية
-  latifa: "4wf10lgibMnboGJGCLrP", // العملاء — أنثى ودودة مرحّبة
-  siraj: "mRdG9GYEjJmIzqbYTidv", // النشر — ذكر شاب نشيط
-  rashid: "xvhpbk8otnNHtT3fjCpr", // التقارير — ذكر رصين عميق
-  salem: "LCDnCIYLTaVg7otERNkl", // العمليات — ذكر ثابت ناضج
-};
+// Single shared voice for ALL agents (user-chosen, natural). Agents identify
+// themselves by name when they speak, so one good voice is used for everyone.
+// Any agent can still be overridden at runtime via ELEVENLABS_VOICE_<AGENT>.
+const DEFAULT_VOICE = "DANw8bnAVbjDEHwZIoYa";
 
-// Resolution order per agent: ELEVENLABS_VOICE_<AGENT> env override →
-// the built-in AGENT_VOICES entry → the shared ELEVENLABS_VOICE_ID (Malika).
-// The shared id is always the final fallback so nothing breaks if a voice is
-// unset/unavailable.
 function resolveVoiceId(agent: unknown): string | undefined {
   const a = typeof agent === "string" ? agent.trim().toLowerCase() : "";
   if (a && AGENT_IDS.includes(a)) {
     const specific = process.env[`ELEVENLABS_VOICE_${a.toUpperCase()}`];
     if (specific && specific.trim()) return specific.trim();
-    if (AGENT_VOICES[a]) return AGENT_VOICES[a];
   }
-  return process.env.ELEVENLABS_VOICE_ID;
+  return DEFAULT_VOICE;
 }
 
 // ---- Spell digits as Arabic words so TTS pronounces numbers correctly ------

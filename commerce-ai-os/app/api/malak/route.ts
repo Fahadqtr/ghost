@@ -43,6 +43,10 @@ const SYSTEM_PROMPT =
   'صياغة حقل speak للنطق: جملة أو جملتين قصيرتين بلهجة خليجية واضحة وكاملة، بدون نقاط متتالية (...) ' +
   'ولا حروف مكرّرة للتطويل (مثل: زييين) ولا رموز ولا إيموجي ولا تشكيل، عشان النطق يطلع سلس بدون تأتأة. ' +
   'اكتبي الأرقام بشكل بسيط وواضح. ' +
+  'مهم جدًا — التعريف بالنفس: ابدئي حقل speak دائمًا بتعريف الوكيل المتكلّم عن نفسه باختصار بهذه الصيغة: ' +
+  '"مرحبا، معاك [اسم الوكيل] من قسم [وظيفته]، ..." ثم أكملي الرد. ' +
+  'الأسماء ووظائفها: ملاك=الإدارة العامة، نور=الكتالوج، بيان=المحتوى، ريم=الصور، سراج=التواصل والنشر، رزان=التسعير، راشد=التقارير، لطيفة=العملاء، سالم=العمليات. ' +
+  'مثال: "مرحبا، معاك راشد من قسم التقارير، عندك كذا منتج..." — اجعلي التعريف قصيرًا ثم ادخلي في الموضوع. ' +
   'أمثلة على نبرتكِ المطلوبة — قلّدي هذا الأسلوب: ' +
   '"هلا فهد، أبشر، جهّزت لك أهم منتجات Medicube." / ' +
   '"تمام، خلّها عليّ، أراجع الكتالوج الحين وأرجع لك." / ' +
@@ -520,7 +524,7 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     });
     return {
       ok: true, agent: "reem",
-      speak: `ريم: جاهزة أولّد صورة إعلانية لـ ${p.name_en} (${portrait ? "عمودي للانستجرام" : "مربّع"}، نمط ${style === "hero" ? "هيرو" : "لايف ستايل"}). اضغط ولّد الصورة.`,
+      speak: `معاك ريم من الصور، جاهزة أولّد صورة إعلانية لـ ${p.name_en} (${portrait ? "عمودي للانستجرام" : "مربّع"}، نمط ${style === "hero" ? "هيرو" : "لايف ستايل"}). اضغط ولّد الصورة.`,
       panel: {
         type: "image_request",
         item: {
@@ -563,7 +567,7 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     };
     return {
       ok: true, agent: "reem",
-      speak: `ريم: جهّزت صورة ${p.name_en}. راجع المعاينة وأكّد لو تبي أربطها بالمنتج.`,
+      speak: `معاك ريم من الصور، جهّزت صورة ${p.name_en}. راجع المعاينة وأكّد لو تبي أربطها بالمنتج.`,
       panel,
     };
   }
@@ -588,8 +592,8 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     return {
       ok: true, agent: "salem",
       speak: warning
-        ? `سالم: ${warning} حطّيته ${value} لـ ${p.name_en}. راجع وأكّد لو متأكد.`
-        : `سالم: جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
+        ? `معاك سالم من العمليات، ${warning} حطّيته ${value} لـ ${p.name_en}. راجع وأكّد لو متأكد.`
+        : `معاك سالم من العمليات، جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
       panel: confirmPanel("تحديث المخزون", "salem", "تعديل كمية المخزون", p.name_en, p.sku, [{ label: "المخزون", old: oldVal, new: value }], token, warning),
     };
   }
@@ -617,8 +621,8 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     return {
       ok: true, agent: "razan",
       speak: warning
-        ? `رزان: ${warning} راجع الكرت وأكّد لو متأكد.`
-        : `رزان: جهّزت تعديل سعر ${p.name_en} من ${p.price ?? "—"} إلى ${price} ريال. أكّد للتنفيذ.`,
+        ? `معاك رزان من التسعير، ${warning} راجع الكرت وأكّد لو متأكد.`
+        : `معاك رزان من التسعير، جهّزت تعديل سعر ${p.name_en} من ${p.price ?? "—"} إلى ${price} ريال. أكّد للتنفيذ.`,
       panel: confirmPanel("تعديل السعر", "razan", "تغيير سعر المنتج", p.name_en, p.sku, [{ label: "السعر (ر.ق)", old: p.price ?? "—", new: price }], token, warning),
     };
   }
@@ -636,7 +640,7 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     });
     return {
       ok: true, agent: "noor",
-      speak: `نور: جهّزت تغيير اعتماد ${p.name_en} من ${p.approval ?? "—"} إلى ${status}. أكّد للتنفيذ.`,
+      speak: `معاك نور من الكتالوج، جهّزت تغيير اعتماد ${p.name_en} من ${p.approval ?? "—"} إلى ${status}. أكّد للتنفيذ.`,
       panel: confirmPanel("تغيير الاعتماد", "noor", "تغيير حالة الاعتماد", p.name_en, p.sku, [{ label: "الاعتماد", old: p.approval ?? "—", new: status }], token),
     };
   }
@@ -681,7 +685,7 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const token = signAction({ v: 1, type: "add_product", agent: "noor", sku, product: draft, ts: Date.now() });
     return {
       ok: true, agent: "noor",
-      speak: `نور وبيان: جهّزنا منتج جديد "${name_en}" بسعر ${price} ريال، فئة ${category}، الكود ${sku}، حالة Draft. أكّد لإضافته.`,
+      speak: `معاك نور وبيان، جهّزنا منتج جديد "${name_en}" بسعر ${price} ريال، فئة ${category}، الكود ${sku}، حالة Draft. أكّد لإضافته.`,
       panel: confirmPanel("إضافة منتج", "noor", "إضافة منتج جديد (Draft)", name_en, sku, [
         { label: "الاسم", new: name_en },
         ...(draft.name_ar ? [{ label: "الاسم (عربي)", new: draft.name_ar }] : []),

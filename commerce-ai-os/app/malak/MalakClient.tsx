@@ -565,7 +565,7 @@ function ImageRequestPanel({
 function briefSummary(d: any): string {
   const greet = new Date().getHours() < 12 ? "صباح الخير" : "مساء الخير";
   return (
-    `راشد: ${greet} فهد. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
+    `مرحبا، معاك راشد من قسم التقارير. ${greet} فهد. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
     `الأولوية اليوم ${d.priority}.`
   );
 }
@@ -1104,7 +1104,7 @@ function MalakInner() {
         </Link>
         <div className="text-center">
           <h1 className="text-base font-extrabold tracking-tight sm:text-lg">ملاك</h1>
-          <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2M</p>
+          <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2N</p>
         </div>
         <div className="w-[70px] sm:w-[92px]" />
       </header>
