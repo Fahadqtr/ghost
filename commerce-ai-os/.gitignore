@@ -40,3 +40,6 @@ Malikas_Universe_CLEAN_28col.xlsx
 
 # generated export artifacts (regenerate via scripts/export_talabat.mjs)
 talabat_catalog_final.csv
+
+# downloaded image artifacts (regenerate via scripts/download_images.mjs)
+exports/
