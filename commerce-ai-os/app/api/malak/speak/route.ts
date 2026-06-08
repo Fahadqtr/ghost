@@ -13,18 +13,28 @@ const AGENT_IDS = [
   "malak", "noor", "bayan", "reem", "siraj", "razan", "rashid", "latifa", "salem",
 ];
 
-// Single shared voice for ALL agents (user-chosen, natural). Agents identify
-// themselves by name when they speak, so one good voice is used for everyone.
-// Any agent can still be overridden at runtime via ELEVENLABS_VOICE_<AGENT>.
-const DEFAULT_VOICE = "DANw8bnAVbjDEHwZIoYa";
+// Per-agent voice (gender-matched). Overridable per agent via
+// ELEVENLABS_VOICE_<AGENT>. Malak herself falls back to ELEVENLABS_VOICE_ID
+// (Malika). A voice_id is not a secret — it only works with this account's key.
+const AGENT_VOICES: Record<string, string> = {
+  noor: "UR972wNGq3zluze0LoIp", // الكتالوج — أنثى
+  bayan: "L10lEremDiJfPicq5CPh", // المحتوى — أنثى
+  reem: "qi4PkV9c01kb869Vh7Su", // الصور — أنثى
+  razan: "a1KZUXKFVFDOb33I1uqr", // التسعير — أنثى
+  latifa: "4wf10lgibMnboGJGCLrP", // العملاء — أنثى
+  siraj: "mRdG9GYEjJmIzqbYTidv", // النشر — ذكر
+  rashid: "DANw8bnAVbjDEHwZIoYa", // التقارير — ذكر (الصوت الجديد)
+  salem: "LCDnCIYLTaVg7otERNkl", // العمليات — ذكر
+};
 
 function resolveVoiceId(agent: unknown): string | undefined {
   const a = typeof agent === "string" ? agent.trim().toLowerCase() : "";
   if (a && AGENT_IDS.includes(a)) {
     const specific = process.env[`ELEVENLABS_VOICE_${a.toUpperCase()}`];
     if (specific && specific.trim()) return specific.trim();
+    if (AGENT_VOICES[a]) return AGENT_VOICES[a];
   }
-  return DEFAULT_VOICE;
+  return process.env.ELEVENLABS_VOICE_ID; // malak → Malika (أنثى)
 }
 
 // ---- Spell digits as Arabic words so TTS pronounces numbers correctly ------
