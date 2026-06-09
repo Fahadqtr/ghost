@@ -149,6 +149,39 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
         <Stat label="Missing (review)" value={c.missing} accent="slate" />
       </div>
 
+      {/* PRICE DIFFERENCES — highlighted on upload (our price → Snoonu price) */}
+      <Section title={`💰 اختلاف الأسعار — ${diff.fieldCounts.price ?? 0} منتج (سعرنا ← سعر سنونو)`}>
+        {(() => {
+          const priceRows = diff.updated
+            .filter((u) => u.changes.some((ch) => ch.field === "price"))
+            .map((u) => {
+              const ch = u.changes.find((c) => c.field === "price")!;
+              const oldN = Number(ch.old), newN = Number(ch.new);
+              const dir = !isNaN(oldN) && !isNaN(newN) ? (newN > oldN ? "up" : newN < oldN ? "down" : "same") : "same";
+              return { key: u.product_id, name: u.name_en, old: ch.old, new: ch.new, dir };
+            });
+          if (priceRows.length === 0) return <Empty text="ما في فرق بالأسعار بين سنونو والكتالوج. ✅" />;
+          return (
+            <div className="space-y-1">
+              {priceRows.slice(0, 200).map((r) => (
+                <div key={r.key} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm">
+                  <span className="flex-1 text-ink">{r.name || "—"}</span>
+                  <span className="text-slate-500">{r.old}</span>
+                  <span className="text-slate-400">←</span>
+                  <span className={r.dir === "up" ? "font-semibold text-red-600" : r.dir === "down" ? "font-semibold text-green-700" : "text-slate-700"}>
+                    {r.new}{r.dir === "up" ? " ↑" : r.dir === "down" ? " ↓" : ""}
+                  </span>
+                </div>
+              ))}
+              {(diff.fieldCounts.price ?? 0) > priceRows.length ? (
+                <p className="text-xs text-muted">…و {(diff.fieldCounts.price ?? 0) - priceRows.length} منتج آخر بفرق سعر.</p>
+              ) : null}
+              <p className="pt-1 text-xs text-muted">لتطبيق أسعار سنونو: فعّل <code>price</code> في «اختيار الحقول» بالأسفل واضغط Apply. (الأحمر = سنونو أغلى، الأخضر = أرخص.)</p>
+            </div>
+          );
+        })()}
+      </Section>
+
       {diff.missingOptionalCols.length ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           <strong>Note:</strong> these export fields have no matching DB column yet, so they’re excluded from the diff/sync:{" "}
