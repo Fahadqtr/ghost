@@ -189,14 +189,41 @@ export async function addSnoonuNewProducts(
   catch (e) { return { ...base, error: e instanceof Error ? e.message : "Service role unavailable." }; }
 
   try {
-    // Existing snoonu_ids (so we never duplicate) — read all products.
+    // Existing snoonu_ids (avoid duplicates) + max mk#### number + barcodes
+    // (so generated SKUs/barcodes never clash with the catalog).
     const existing = new Set<string>();
+    let maxMk = 0;
+    const usedBarcodes = new Set<string>();
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await admin.from("products").select("snoonu_id").range(from, from + 999);
+      const { data, error } = await admin.from("products").select("snoonu_id, sku, barcode").range(from, from + 999);
       if (error) return { ...base, error: `Read products failed: ${error.message}` };
-      for (const p of data ?? []) if (p.snoonu_id) existing.add(String(p.snoonu_id).trim());
+      for (const p of data ?? []) {
+        if (p.snoonu_id) existing.add(String(p.snoonu_id).trim());
+        const m = /^mk(\d+)$/i.exec(String(p.sku ?? "").trim());
+        if (m) maxMk = Math.max(maxMk, parseInt(m[1], 10));
+        const bc = String(p.barcode ?? "").trim();
+        if (bc) usedBarcodes.add(bc);
+      }
       if ((data ?? []).length < 1000) break;
     }
+
+    // Next SKU in the catalog's mk#### scheme.
+    const nextSku = () => `mk${++maxMk}`;
+    // Unique 13-digit EAN-13 (internal "29" prefix + counter + check digit),
+    // guaranteed not to collide with any existing or in-batch barcode.
+    const ean13Check = (d12: string) => {
+      let sum = 0;
+      for (let i = 0; i < 12; i++) sum += (+d12[i]) * (i % 2 === 0 ? 1 : 3);
+      return String((10 - (sum % 10)) % 10);
+    };
+    let bcSeq = 1;
+    const nextBarcode = () => {
+      for (;;) {
+        const base = "29" + String(bcSeq++).padStart(10, "0");
+        const bc = base + ean13Check(base);
+        if (!usedBarcodes.has(bc)) { usedBarcodes.add(bc); return bc; }
+      }
+    };
 
     const num = (v: unknown) => { const t = s(v); if (t === "") return null; const n = Number(t); return isNaN(n) ? null : n; };
     const seen = new Set<string>();
@@ -208,7 +235,8 @@ export async function addSnoonuNewProducts(
       seen.add(id);
       if (existing.has(id)) { skipped++; continue; } // already in catalog — never duplicate
       toInsert.push({
-        sku: `SN-${id}`,
+        sku: nextSku(),               // mk#### like the rest of the catalog
+        barcode: nextBarcode(),       // auto, unique, no clash with old barcodes
         snoonu_id: id,
         name_en: clean(r.name_en),
         name_ar: clean(r.name_ar),
@@ -217,7 +245,7 @@ export async function addSnoonuNewProducts(
         price: num(r.price),
         main_category: "Uncategorized",
         platform_status: "Snoonu",
-        notes: "Imported from Snoonu sync — set SKU / category / image.",
+        notes: "Imported from Snoonu sync — set category / image.",
       });
     }
 

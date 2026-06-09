@@ -100,8 +100,8 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
     if (ids.length === 0) { alert("اختر منتجًا واحدًا على الأقل."); return; }
     if (!confirm(
       `إضافة ${ids.length} منتج جديد للكتالوج؟\n\n` +
-      `بينضافون باسم/سعر/وصف من سنونو، فئة "Uncategorized"، و SKU مؤقت (SN-…).\n` +
-      `تقدر تكمّل SKU/الفئة/الصورة لاحقًا. الموجود أصلاً ما يتكرر.`
+      `بينضافون باسم/سعر/وصف من سنونو، فئة "Uncategorized"، SKU تلقائي بصيغة mk####، وباركود تلقائي فريد.\n` +
+      `تقدر تكمّل الفئة/الصورة لاحقًا. الموجود أصلاً ما يتكرر.`
     )) return;
     setAddResult(null);
     startAddNew(async () => {
@@ -211,7 +211,7 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
             </ul>
             <div className="flex flex-col gap-2 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted">
-                بينضافون بفئة <code>Uncategorized</code> و SKU مؤقت — تشوفهم ملاك والكتالوج فورًا، وتكمّل تفاصيلهم بعدين.
+                بينضافون بـ SKU تلقائي <code>mk####</code> + باركود فريد، وفئة <code>Uncategorized</code> — تشوفهم ملاك والكتالوج فورًا، وتكمّل تفاصيلهم بعدين.
               </p>
               <button onClick={addNew} disabled={addingNew || selectedNew.size === 0} className="btn-primary disabled:opacity-50">
                 {addingNew ? "جاري الإضافة…" : `➕ أضف ${selectedNew.size} منتج جديد`}
