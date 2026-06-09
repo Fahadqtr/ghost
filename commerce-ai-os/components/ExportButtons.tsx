@@ -9,7 +9,19 @@ const EXPORTS = [
   { key: "rafeeq", label: "Rafeeq CSV" },
 ] as const;
 
-export default function ExportButtons() {
+// Images are downloaded in batches so each ZIP finishes well under the
+// serverless time limit (a single ~900 MB stream times out).
+const BATCH = 100;
+
+export default function ExportButtons({ imageCount = 0 }: { imageCount?: number }) {
+  const batches = imageCount > 0
+    ? Array.from({ length: Math.ceil(imageCount / BATCH) }, (_, i) => {
+        const from = i * BATCH;
+        const to = Math.min(from + BATCH, imageCount);
+        return { from, label: `${from + 1}–${to}` };
+      })
+    : [];
+
   return (
     <div className="card space-y-3">
       <div>
@@ -28,14 +40,32 @@ export default function ExportButtons() {
       </div>
 
       <div className="border-t border-slate-100 pt-3">
-        <h3 className="text-sm font-semibold text-ink">Product images</h3>
+        <h3 className="text-sm font-semibold text-ink">
+          Product images {imageCount > 0 ? `(${imageCount})` : ""}
+        </h3>
         <p className="text-xs text-muted">
-          Downloads every product image as one ZIP (named by image filename, matching the
-          Talabat “New Image Filename” column). Large file — keep the tab open until it finishes.
+          صور المنتجات كـ ZIP، كل صورة باسم image filename (يطابق عمود New Image Filename).
+          تنزّل على دفعات (كل دفعة {BATCH} صورة) عشان كل ملف يخلص بسرعة وما ينقطع. اضغط كل زر بالترتيب،
+          وخلّي التبويب مفتوح لين يخلص.
         </p>
-        <a href="/api/export/images" className="btn-primary mt-2 inline-flex" download>
-          ⬇ تحميل كل الصور (ZIP)
-        </a>
+        {batches.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {batches.map((b, i) => (
+              <a
+                key={b.from}
+                href={`/api/export/images?from=${b.from}&count=${BATCH}`}
+                className="btn-primary"
+                download
+              >
+                ⬇ دفعة {i + 1} ({b.label})
+              </a>
+            ))}
+          </div>
+        ) : (
+          <a href="/api/export/images" className="btn-primary mt-2 inline-flex" download>
+            ⬇ تحميل كل الصور (ZIP)
+          </a>
+        )}
       </div>
     </div>
   );

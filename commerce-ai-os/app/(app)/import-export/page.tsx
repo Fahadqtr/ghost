@@ -17,6 +17,12 @@ export default async function ImportExportPage() {
     .order("name_en")
     .limit(1000);
 
+  // How many products have a downloadable image (drives the batch buttons).
+  const { count: imageCount } = await supabase
+    .from("products")
+    .select("*", { count: "exact", head: true })
+    .not("image_filename", "is", null);
+
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted">
@@ -31,7 +37,7 @@ export default async function ImportExportPage() {
       </Link>
       <ExcelImport />
       <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} />
-      <ExportButtons />
+      <ExportButtons imageCount={imageCount ?? 0} />
     </div>
   );
 }
