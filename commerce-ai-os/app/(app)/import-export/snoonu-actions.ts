@@ -244,7 +244,6 @@ export async function addSnoonuNewProducts(
         description_ar: clean(r.description_ar),
         price: num(r.price),
         main_category: "Uncategorized",
-        platform_status: "Snoonu",
         notes: "Imported from Snoonu sync — set category / image.",
       });
     }

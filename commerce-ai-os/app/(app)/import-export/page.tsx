@@ -41,12 +41,12 @@ export default async function ImportExportPage() {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
-  // Count of products added via Snoonu Sync (platform_status "Snoonu") — for the
+  // Count of products added via Snoonu Sync (notes marker) — for the
   // "export new products only" button.
   const { count: newCount } = await supabase
     .from("products")
     .select("*", { count: "exact", head: true })
-    .eq("platform_status", "Snoonu");
+    .like("notes", "Imported from Snoonu sync%");
 
   return (
     <div className="space-y-6">

@@ -60,7 +60,7 @@ export async function GET(
     const products = (await fetchAll((from, to) =>
       supabase
         .from("products")
-        .select("id, sku, snoonu_id, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, image_filename, platform_status, description_en, description_ar, keywords_en, keywords_ar")
+        .select("id, sku, snoonu_id, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, image_filename, notes, description_en, description_ar, keywords_en, keywords_ar")
         .order("sku", { ascending: true })
         .range(from, to)
     )) as ExportProduct[];
@@ -87,12 +87,12 @@ export async function GET(
       // Same format as scripts/export_talabat.mjs (shared module): 10 columns,
       // one row per variant ({sku}-{seq}), Description EN gap-filled from master.
       // Optional ?cats=A|B|C → include only those categories (default: all).
-      // Optional ?source=new → only products added via Snoonu Sync (platform_status "Snoonu").
+      // Optional ?source=new → only products added via Snoonu Sync (notes marker).
       const url2 = new URL(req.url);
       const catsParam = url2.searchParams.get("cats");
       let prods = products;
       if (url2.searchParams.get("source") === "new") {
-        prods = prods.filter((p: any) => String(p.platform_status ?? "").trim() === "Snoonu");
+        prods = prods.filter((p: any) => String(p.notes ?? "").startsWith("Imported from Snoonu sync"));
       }
       if (catsParam) {
         const want = new Set(catsParam.split("|").map((s) => s.trim()).filter(Boolean));
