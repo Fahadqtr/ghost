@@ -146,6 +146,11 @@ const TOOLS: Anthropic.Tool[] = [
     description: "المنتجات الجديدة أو غير المصنّفة (فئتها Uncategorized) — تشمل المنتجات المضافة من مزامنة سنونو. استخدميها لما يسأل فهد عن المنتجات الجديدة أو اللي تحتاج تصنيف. ترجع الاسم والـSKU والسعر والمصدر. الوكيل: نور (الكتالوج).",
     input_schema: { type: "object", properties: {} },
   },
+  {
+    name: "price_issues",
+    description: "كشف مشاكل الأسعار في الكتالوج: منتجات بدون سعر، أو خصم أكبر من أو يساوي السعر، أو سعر أقل من التكلفة. استخدميها لما يطلب فهد فحص/مراجعة/كشف الأسعار أو يسأل إذا في خطأ بالأسعار. ترجع الاسم والـSKU والسعر والخصم وسبب المشكلة. الوكيل: رزان (التسعير).",
+    input_schema: { type: "object", properties: {} },
+  },
   // ---- WRITE tools (Phase 2B). None of these writes immediately: each returns
   // a CONFIRM panel + signed token; the actual write happens in /api/malak/commit
   // only after the user taps [أكّد]. ------------------------------------------
@@ -411,6 +416,27 @@ async function listUncategorized(sb: Sb) {
   };
 }
 
+async function priceIssues(sb: Sb) {
+  // Flag products with price problems: no price, a "discount" that is >= the
+  // price, or a price below cost. Agent: رزان (pricing).
+  const { data, error } = await sb
+    .from("products")
+    .select("sku, name_en, price, discount_price, cost")
+    .order("sku", { ascending: true });
+  if (error) return { error: error.message, items: [] };
+  const N = (v: any) => { const n = Number(v); return isNaN(n) ? null : n; };
+  const items: any[] = [];
+  for (const p of data ?? []) {
+    const pr = N(p.price), dc = N(p.discount_price), co = N(p.cost);
+    const reasons: string[] = [];
+    if (pr == null || pr <= 0) reasons.push("بدون سعر");
+    if (dc != null && dc > 0 && pr != null && dc >= pr) reasons.push("الخصم أكبر من أو يساوي السعر");
+    if (co != null && co > 0 && pr != null && pr > 0 && pr < co) reasons.push("السعر أقل من التكلفة");
+    if (reasons.length) items.push({ name: p.name_en, sku: p.sku, price: p.price, discount: p.discount_price, issue: reasons.join("، ") });
+  }
+  return { count: items.length, items: items.slice(0, 100) };
+}
+
 async function lowStock(sb: Sb, input: any) {
   const threshold = Number(input?.threshold) || 10;
   const { data, error } = await sb
@@ -452,6 +478,9 @@ async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, 
       break;
     case "list_uncategorized":
       result = await listUncategorized(sb);
+      break;
+    case "price_issues":
+      result = await priceIssues(sb);
       break;
     default:
       result = { error: `Unknown tool: ${name}` };

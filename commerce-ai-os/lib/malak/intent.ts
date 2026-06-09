@@ -47,6 +47,12 @@ export function detectForcedTool(text: string): string | null {
     return "add_product";
   if (/(اعتمد|ارفض|اعتماد|وافقي?|approve|reject|approval|sentai)/.test(t)) return "set_approval";
   if (/(مخزون|المخزون|كمية|الكمية|ستوك|stock|inventory)/.test(t) && changeVerb.test(t)) return "update_stock";
+
+  // READ: detect/check price problems (no change verb → not a set_price).
+  const priceCheck = /(مشكلة|مشاكل|خطأ|أخطاء|غلط|غلطان|شاذ|شاذّ?ة|خلل|راجع|راجعي|شيك|تأكد|افحص|فحص|اكشف|كشف|check|issue|wrong)/;
+  if (/(سعر|السعر|أسعار|الأسعار|التسعير|price|pricing)/.test(t) && priceCheck.test(t) && !changeVerb.test(t))
+    return "price_issues";
+
   if (/(سعر|السعر|بسعر|price)/.test(t) && changeVerb.test(t)) return "set_price";
   return null;
 }
