@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import ExcelImport from "@/components/ExcelImport";
 import ImageUpload from "@/components/ImageUpload";
 import ExportButtons from "@/components/ExportButtons";
+import TalabatExport, { type CatCount } from "@/components/TalabatExport";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,23 @@ export default async function ImportExportPage() {
     .select("*", { count: "exact", head: true })
     .not("image_filename", "is", null);
 
+  // Category counts for the Talabat category picker.
+  const catRows: { main_category: string | null }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data } = await supabase.from("products").select("main_category").range(from, from + 999);
+    if (!data || data.length === 0) break;
+    catRows.push(...data);
+    if (data.length < 1000) break;
+  }
+  const tally = new Map<string, number>();
+  for (const r of catRows) {
+    const c = (r.main_category ?? "").trim();
+    if (c) tally.set(c, (tally.get(c) ?? 0) + 1);
+  }
+  const categories: CatCount[] = [...tally.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted">
@@ -37,6 +55,7 @@ export default async function ImportExportPage() {
       </Link>
       <ExcelImport />
       <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} />
+      <TalabatExport categories={categories} />
       <ExportButtons imageCount={imageCount ?? 0} />
     </div>
   );

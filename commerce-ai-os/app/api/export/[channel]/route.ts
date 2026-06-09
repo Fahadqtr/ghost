@@ -41,7 +41,7 @@ async function fetchAll(q: (from: number, to: number) => any): Promise<any[]> {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: { channel: string } }
 ) {
   const channel = params.channel as ChannelKey;
@@ -84,14 +84,21 @@ export async function GET(
 
     let csv: string;
     if (channel === "talabat") {
-      // Same format as scripts/export_talabat.mjs (shared module): 9 columns,
+      // Same format as scripts/export_talabat.mjs (shared module): 10 columns,
       // one row per variant ({sku}-{seq}), Description EN gap-filled from master.
+      // Optional ?cats=A|B|C → include only those categories (default: all).
+      const catsParam = new URL(req.url).searchParams.get("cats");
+      let prods = products;
+      if (catsParam) {
+        const want = new Set(catsParam.split("|").map((s) => s.trim()).filter(Boolean));
+        prods = products.filter((p) => want.has(String(p.main_category ?? "").trim()));
+      }
       const variants = (await fetchAll((from, to) =>
         supabase.from("product_variants")
           .select("parent_product_id, variant_name, sku, price")
           .range(from, to)
       )) as ExportVariant[];
-      const { rows } = buildTalabatRows(products, variants, loadMasterDescEn());
+      const { rows } = buildTalabatRows(prods, variants, loadMasterDescEn());
       csv = rowsToCsv(rows);
     } else if (channel === "shopify") {
       csv = buildShopifyCsv(products, status);
