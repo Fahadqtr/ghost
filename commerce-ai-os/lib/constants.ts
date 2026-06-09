@@ -3,8 +3,8 @@
 
 /**
  * Product categories — must match the `product_categories` table exactly
- * (FK products.main_category -> product_categories.name). Synced to the 17 real
- * categories from the imported master sheet on 2026-06-05.
+ * (FK products.main_category -> product_categories.name). Synced to the real
+ * categories from the imported master sheet (✨Toys cleaned to Toys 2026-06-09).
  */
 export const CATEGORIES = [
   "Face Care",
@@ -22,7 +22,7 @@ export const CATEGORIES = [
   "Thailand Products",
   "Summer And Camping Supplies",
   "Electronics",
-  "✨Toys",
+  "Toys",
   "Uncategorized",
 ] as const;
 

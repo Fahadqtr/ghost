@@ -61,7 +61,7 @@ function toProductRow(input: ProductInput) {
   // Enforce the locked category list (defence in depth; UI also restricts it).
   const category = str(input.main_category);
   if (category && !CATEGORIES.includes(category as (typeof CATEGORIES)[number])) {
-    throw new Error(`Invalid category "${category}". Must be one of the 11 locked categories.`);
+    throw new Error(`Invalid category "${category}". Must be one of the known categories.`);
   }
   return {
     sku: str(input.sku),

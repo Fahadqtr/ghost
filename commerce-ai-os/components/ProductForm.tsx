@@ -132,10 +132,15 @@ export default function ProductForm({
             ))}
           </select>
         </Field>
-        <Field label="Category (locked to 11)">
+        <Field label="Category">
           <select className="input" value={form.main_category} onChange={(e) => set("main_category", e.target.value)}>
             <option value="">— Select category —</option>
-            {CATEGORIES.map((c) => (
+            {/* Always include the product's current category, even if it's not
+                in the known list, so editing never silently drops it. */}
+            {(form.main_category && !CATEGORIES.includes(form.main_category as (typeof CATEGORIES)[number])
+              ? [form.main_category, ...CATEGORIES]
+              : CATEGORIES
+            ).map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
