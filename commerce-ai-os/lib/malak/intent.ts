@@ -30,6 +30,18 @@ export function detectForcedTool(text: string): string | null {
     return "generate_product_image";
   }
 
+  // ---- READ: new / uncategorized products (incl. Snoonu imports) -----------
+  // "اعرض المنتجات الجديدة" / "غير المصنّفة" → list_uncategorized. Guarded so it
+  // doesn't steal "أضف منتج جديد" (that's a write → add_product, handled below).
+  const addVerb = /(أضف|اضف|أضيفي?|اضافة|إضافة|\badd\b)/;
+  if (
+    !addVerb.test(t) &&
+    (/(uncategorized|بدون\s*تصنيف|غير\s*مصنّ?فة|غير\s*المصنّ?فة|بلا\s*تصنيف)/.test(t) ||
+      /(المنتجات\s*الجديدة|منتجات\s*جديدة|المنتجات\s*الجدد|new\s*products)/.test(t))
+  ) {
+    return "list_uncategorized";
+  }
+
   // ---- Catalog write intents ----------------------------------------------
   if (/(منتج جديد|أضف\s*منتج|اضف\s*منتج|أضيفي?\s*منتج|اضافة\s*منتج|إضافة\s*منتج|add\s*product|new\s*product)/.test(t))
     return "add_product";

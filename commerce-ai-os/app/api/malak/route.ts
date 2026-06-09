@@ -141,6 +141,11 @@ const TOOLS: Anthropic.Tool[] = [
       properties: { threshold: { type: "integer", description: "حد المخزون المنخفض (افتراضي 10)" } },
     },
   },
+  {
+    name: "list_uncategorized",
+    description: "المنتجات الجديدة أو غير المصنّفة (فئتها Uncategorized) — تشمل المنتجات المضافة من مزامنة سنونو. استخدميها لما يسأل فهد عن المنتجات الجديدة أو اللي تحتاج تصنيف. ترجع الاسم والـSKU والسعر والمصدر. الوكيل: نور (الكتالوج).",
+    input_schema: { type: "object", properties: {} },
+  },
   // ---- WRITE tools (Phase 2B). None of these writes immediately: each returns
   // a CONFIRM panel + signed token; the actual write happens in /api/malak/commit
   // only after the user taps [أكّد]. ------------------------------------------
@@ -388,6 +393,24 @@ async function listMissingImages(sb: Sb) {
   };
 }
 
+async function listUncategorized(sb: Sb) {
+  // New / unsorted products — includes the items imported from Snoonu Sync
+  // (main_category "Uncategorized"). Helps Malak surface what needs sorting.
+  const { data, error } = await sb
+    .from("products")
+    .select("name_en, sku, price, platform_status, image_url")
+    .or("main_category.eq.Uncategorized,main_category.is.null")
+    .order("sku", { ascending: true })
+    .limit(100);
+  if (error) return { error: error.message, items: [] };
+  return {
+    count: (data ?? []).length,
+    items: (data ?? []).map((r: any) => ({
+      name: r.name_en, sku: r.sku, price: r.price, source: r.platform_status, image_url: r.image_url,
+    })),
+  };
+}
+
 async function lowStock(sb: Sb, input: any) {
   const threshold = Number(input?.threshold) || 10;
   const { data, error } = await sb
@@ -426,6 +449,9 @@ async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, 
       break;
     case "low_stock":
       result = await lowStock(sb, input);
+      break;
+    case "list_uncategorized":
+      result = await listUncategorized(sb);
       break;
     default:
       result = { error: `Unknown tool: ${name}` };
