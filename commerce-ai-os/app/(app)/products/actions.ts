@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { CATEGORIES } from "@/lib/constants";
+import { clean } from "@/lib/malak/talabat-export.mjs";
 
 // --- input shapes (sent from the client form) -----------------------------
 
@@ -50,6 +51,12 @@ const str = (v: string) => {
   const t = (v ?? "").trim();
   return t === "" ? null : t;
 };
+// Like str(), but also strips emojis/decorative symbols (names & descriptions),
+// so anything typed/pasted in the editor lands clean — matches the export.
+const cleanStr = (v: string) => {
+  const t = clean(v);
+  return t === "" ? null : t;
+};
 const num = (v: string) => {
   const t = (v ?? "").trim();
   if (t === "") return null;
@@ -66,8 +73,8 @@ function toProductRow(input: ProductInput) {
   return {
     sku: str(input.sku),
     barcode: str(input.barcode),
-    name_en: str(input.name_en),
-    name_ar: str(input.name_ar),
+    name_en: cleanStr(input.name_en),
+    name_ar: cleanStr(input.name_ar),
     brand_id: str(input.brand_id),
     main_category: category,
     sub_category: str(input.sub_category),
@@ -82,8 +89,8 @@ function toProductRow(input: ProductInput) {
     platform_status: str(input.platform_status),
     image_filename: str(input.image_filename),
     image_url: str(input.image_url),
-    description_en: str(input.description_en),
-    description_ar: str(input.description_ar),
+    description_en: cleanStr(input.description_en),
+    description_ar: cleanStr(input.description_ar),
     keywords_en: str(input.keywords_en),
     keywords_ar: str(input.keywords_ar),
     notes: str(input.notes),
