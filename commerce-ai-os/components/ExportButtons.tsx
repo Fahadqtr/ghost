@@ -26,6 +26,17 @@ export default function ExportButtons() {
           </a>
         ))}
       </div>
+
+      <div className="border-t border-slate-100 pt-3">
+        <h3 className="text-sm font-semibold text-ink">Product images</h3>
+        <p className="text-xs text-muted">
+          Downloads every product image as one ZIP (named by image filename, matching the
+          Talabat “New Image Filename” column). Large file — keep the tab open until it finishes.
+        </p>
+        <a href="/api/export/images" className="btn-primary mt-2 inline-flex" download>
+          ⬇ تحميل كل الصور (ZIP)
+        </a>
+      </div>
     </div>
   );
 }
