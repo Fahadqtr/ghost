@@ -7,6 +7,7 @@ import {
   ALWAYS, OPTIONAL, readColumns, computeChanges, diffSnoonu, s,
   type Field, type SnoonuExportRow, type SnoonuDiff,
 } from "@/lib/snoonu-diff";
+import { clean } from "@/lib/malak/talabat-export.mjs";
 
 export type { SnoonuExportRow, SnoonuDiff } from "@/lib/snoonu-diff";
 
@@ -154,5 +155,95 @@ export async function applySnoonuUpdates(
     return { ok: true, productsUpdated, fieldWrites, matched, unchanged, failed, columnsWritten: [...colsWritten] };
   } catch (e) {
     return { ...base, error: e instanceof Error ? e.message : "Unexpected error while applying updates." };
+  }
+}
+
+export interface AddNewResult {
+  ok: boolean;
+  error?: string;
+  added: number;
+  skipped: number; // already existed (matched a snoonu_id) — never duplicated
+  failed: number;
+}
+
+// Create the user-approved NEW products (those in the export with a SPI that is
+// not yet a products.snoonu_id). Re-checks server-side so it never duplicates an
+// existing product. Writes via the service-role key. Each product gets a
+// placeholder SKU (SN-<spi>), category "Uncategorized", emoji-cleaned name/desc,
+// price, and a seeded inventory row. Other fields are left blank for the user to
+// fill (SKU/category/image) — so Malak shows them as uncategorized new items.
+export async function addSnoonuNewProducts(
+  rows: SnoonuExportRow[],
+  selectedIds: string[]
+): Promise<AddNewResult> {
+  const base: AddNewResult = { ok: false, added: 0, skipped: 0, failed: 0 };
+  if (!rows?.length) return { ...base, error: "No rows uploaded." };
+  const want = new Set((selectedIds ?? []).map((x) => String(x).trim()).filter(Boolean));
+  if (want.size === 0) return { ...base, error: "No products selected to add." };
+
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { ...base, error: "Not signed in." };
+
+  let admin: ReturnType<typeof createAdminClient>;
+  try { admin = createAdminClient(); }
+  catch (e) { return { ...base, error: e instanceof Error ? e.message : "Service role unavailable." }; }
+
+  try {
+    // Existing snoonu_ids (so we never duplicate) — read all products.
+    const existing = new Set<string>();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await admin.from("products").select("snoonu_id").range(from, from + 999);
+      if (error) return { ...base, error: `Read products failed: ${error.message}` };
+      for (const p of data ?? []) if (p.snoonu_id) existing.add(String(p.snoonu_id).trim());
+      if ((data ?? []).length < 1000) break;
+    }
+
+    const num = (v: unknown) => { const t = s(v); if (t === "") return null; const n = Number(t); return isNaN(n) ? null : n; };
+    const seen = new Set<string>();
+    const toInsert: Record<string, unknown>[] = [];
+    let skipped = 0;
+    for (const r of rows) {
+      const id = s(r.id);
+      if (!id || !want.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      if (existing.has(id)) { skipped++; continue; } // already in catalog — never duplicate
+      toInsert.push({
+        sku: `SN-${id}`,
+        snoonu_id: id,
+        name_en: clean(r.name_en),
+        name_ar: clean(r.name_ar),
+        description_en: clean(r.description_en),
+        description_ar: clean(r.description_ar),
+        price: num(r.price),
+        main_category: "Uncategorized",
+        platform_status: "Snoonu",
+        notes: "Imported from Snoonu sync — set SKU / category / image.",
+      });
+    }
+
+    if (toInsert.length === 0) return { ok: true, added: 0, skipped, failed: 0 };
+
+    // Insert in chunks; collect ids to seed inventory.
+    const chunk = (a: any[], n: number) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+    let added = 0, failed = 0;
+    const newIds: string[] = [];
+    for (const part of chunk(toInsert, 200)) {
+      const { data, error } = await admin.from("products").insert(part).select("id");
+      if (error) { failed += part.length; continue; }
+      added += data?.length ?? 0;
+      for (const p of data ?? []) newIds.push(p.id);
+    }
+
+    // Seed inventory rows so they show on the Inventory page (stock 0 to start).
+    if (newIds.length) {
+      const invRows = newIds.map((product_id) => ({ product_id, stock_quantity: 0, low_stock_threshold: 5, sold_quantity: 0 }));
+      for (const part of chunk(invRows, 200)) await admin.from("inventory").insert(part);
+    }
+
+    revalidatePath("/products");
+    revalidatePath("/import-export/snoonu-sync");
+    return { ok: true, added, skipped, failed };
+  } catch (e) {
+    return { ...base, error: e instanceof Error ? e.message : "Unexpected error while adding products." };
   }
 }

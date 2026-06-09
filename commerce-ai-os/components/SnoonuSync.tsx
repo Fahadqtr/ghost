@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import {
-  computeSnoonuDiff, applySnoonuUpdates, type ApplyResult,
+  computeSnoonuDiff, applySnoonuUpdates, addSnoonuNewProducts,
+  type ApplyResult, type AddNewResult,
 } from "@/app/(app)/import-export/snoonu-actions";
 import {
   SNOONU_SHEET, mapExportRows, type SnoonuDiff, type SnoonuExportRow,
@@ -85,6 +86,31 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set(DEFAULT_SELECTED));
 
+  // NEW-product import: review + select + confirm before creating them.
+  const [selectedNew, setSelectedNew] = useState<Set<string>>(
+    () => new Set(diff.newProducts.map((n) => n.id))
+  );
+  const [addingNew, startAddNew] = useTransition();
+  const [addResult, setAddResult] = useState<AddNewResult | null>(null);
+  const toggleNew = (id: string) =>
+    setSelectedNew((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  function addNew() {
+    const ids = [...selectedNew];
+    if (ids.length === 0) { alert("اختر منتجًا واحدًا على الأقل."); return; }
+    if (!confirm(
+      `إضافة ${ids.length} منتج جديد للكتالوج؟\n\n` +
+      `بينضافون باسم/سعر/وصف من سنونو، فئة "Uncategorized"، و SKU مؤقت (SN-…).\n` +
+      `تقدر تكمّل SKU/الفئة/الصورة لاحقًا. الموجود أصلاً ما يتكرر.`
+    )) return;
+    setAddResult(null);
+    startAddNew(async () => {
+      const res = await addSnoonuNewProducts(rows, ids);
+      setAddResult(res);
+      if (res.ok) router.refresh();
+    });
+  }
+
   const toggle = (col: string) =>
     setSelected((s) => { const n = new Set(s); n.has(col) ? n.delete(col) : n.add(col); return n; });
 
@@ -163,15 +189,44 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
         )}
       </Section>
 
-      {/* NEW */}
-      <Section title={`NEW on Snoonu — ${c.newCount} (not in our DB; review, not auto-created)`}>
+      {/* NEW — review, select, then confirm to add into the catalog */}
+      <Section title={`NEW on Snoonu — ${c.newCount} (راجعها واختر، ثم أضفها بموافقتك)`}>
         {diff.newProducts.length === 0 ? <Empty text="No new products." /> : (
-          <ul className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
-            {diff.newProducts.slice(0, 200).map((n, i) => (
-              <li key={i} className="flex gap-2"><span className="font-mono text-[10px] text-muted">{n.id}</span><span className="text-slate-700">{n.name_en || "—"}</span></li>
-            ))}
-            {c.newCount > diff.newProducts.length ? <li className="text-muted">…and {c.newCount - diff.newProducts.length} more.</li> : null}
-          </ul>
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <button type="button" onClick={() => setSelectedNew(new Set(diff.newProducts.map((n) => n.id)))} className="btn-ghost px-2 py-1">تحديد الكل</button>
+              <button type="button" onClick={() => setSelectedNew(new Set())} className="btn-ghost px-2 py-1">إلغاء الكل</button>
+              <span className="text-muted">محدد: {selectedNew.size} من {diff.newProducts.length}</span>
+            </div>
+            <ul className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
+              {diff.newProducts.slice(0, 200).map((n) => (
+                <li key={n.id}>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 hover:bg-slate-50">
+                    <input type="checkbox" checked={selectedNew.has(n.id)} onChange={() => toggleNew(n.id)} className="h-4 w-4" />
+                    <span className="flex-1 text-slate-700">{n.name_en || "—"}</span>
+                    <span className="font-mono text-[10px] text-muted">{n.id.slice(-6)}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <div className="flex flex-col gap-2 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-muted">
+                بينضافون بفئة <code>Uncategorized</code> و SKU مؤقت — تشوفهم ملاك والكتالوج فورًا، وتكمّل تفاصيلهم بعدين.
+              </p>
+              <button onClick={addNew} disabled={addingNew || selectedNew.size === 0} className="btn-primary disabled:opacity-50">
+                {addingNew ? "جاري الإضافة…" : `➕ أضف ${selectedNew.size} منتج جديد`}
+              </button>
+            </div>
+            {addResult ? (
+              addResult.ok ? (
+                <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+                  ✓ أُضيف <strong>{addResult.added}</strong> منتج{addResult.skipped ? ` · تخطّى ${addResult.skipped} موجود` : ""}{addResult.failed ? ` · فشل ${addResult.failed}` : ""}. أعد رفع ملف سنونو لتحديث الفرق.
+                </div>
+              ) : (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">فشل الإضافة: {addResult.error}</div>
+              )
+            ) : null}
+          </div>
         )}
       </Section>
 
