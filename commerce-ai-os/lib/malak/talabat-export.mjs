@@ -30,7 +30,7 @@ const fileName = (v) => { const s = S(v); const i = s.lastIndexOf("/"); return i
 // Covers emoji, flags, dingbats, geometric bullets, variation selectors, ZWJ.
 // Does NOT touch normal punctuation like – & ’ ™.
 const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{25A0}-\u{25FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu;
-function clean(v) {
+export function clean(v) {
   let s = S(v).replace(EMOJI_RE, "");
   s = s.replace(/\(\s*\)/g, "");      // drop parens left empty after removal, e.g. "(◆)"
   s = s.replace(/[ \t]{2,}/g, " ");   // collapse runs of spaces/tabs (keep newlines)
