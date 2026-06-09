@@ -25,6 +25,19 @@ const S = (v) => (v == null ? "" : String(v).trim());
 // Keep just the file name (strip any folder/URL prefix) → e.g. "mk1215.jpg".
 const fileName = (v) => { const s = S(v); const i = s.lastIndexOf("/"); return i >= 0 ? s.slice(i + 1) : s; };
 
+// Strip emojis & decorative symbols so the Talabat sheet stays clean plain text
+// (e.g. "💄 Laneige…" → "Laneige…", "المميزات (◆)" → "المميزات", "✔ ..." → "...").
+// Covers emoji, flags, dingbats, geometric bullets, variation selectors, ZWJ.
+// Does NOT touch normal punctuation like – & ’ ™.
+const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{25A0}-\u{25FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu;
+function clean(v) {
+  let s = S(v).replace(EMOJI_RE, "");
+  s = s.replace(/\(\s*\)/g, "");      // drop parens left empty after removal, e.g. "(◆)"
+  s = s.replace(/[ \t]{2,}/g, " ");   // collapse runs of spaces/tabs (keep newlines)
+  s = s.split("\n").map((l) => l.trim()).join("\n").trim();
+  return s;
+}
+
 // RFC-4180 CSV cell: quote when it contains comma/quote/newline; escape quotes.
 const cell = (v) => {
   const s = S(v);
@@ -92,11 +105,14 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
       Barcode: S(p.barcode),
       "Price (QAR)": S(p.price),
       Discount: S(p.discount_price),
-      Category: S(p.main_category), // variants inherit the parent's category
-      "Description EN": descEn,
-      "Description AR": S(p.description_ar),
+      Category: clean(p.main_category), // variants inherit the parent's category
+      "Description EN": clean(descEn),
+      "Description AR": clean(p.description_ar),
       "New Image Filename": imgFile,
     };
+
+    const nameEn = clean(p.name_en);
+    const nameAr = clean(p.name_ar);
 
     const vs = variantsByParent.get(p.id);
     if (!vs || vs.length === 0) {
@@ -104,8 +120,8 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
       rows.push({
         SKU: S(p.sku),
         ...base,
-        "Product Name EN": S(p.name_en),
-        "Product Name AR": S(p.name_ar),
+        "Product Name EN": nameEn,
+        "Product Name AR": nameAr,
       });
       continue;
     }
@@ -115,12 +131,12 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
       .map((v, i) => ({ v, seq: seqOf(p.sku, v.sku) ?? i + 1 }))
       .sort((a, b) => a.seq - b.seq);
     for (const { v, seq } of ordered) {
-      const name = S(v.variant_name);
+      const name = clean(v.variant_name);
       rows.push({
         SKU: `${S(p.sku)}-${seq}`,
         ...base,
-        "Product Name EN": name ? `${S(p.name_en)} - ${name}` : S(p.name_en),
-        "Product Name AR": name ? `${S(p.name_ar)} - ${name}` : S(p.name_ar),
+        "Product Name EN": name ? `${nameEn} - ${name}` : nameEn,
+        "Product Name AR": name ? `${nameAr} - ${name}` : nameAr,
       });
     }
   }
