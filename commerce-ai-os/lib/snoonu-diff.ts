@@ -63,18 +63,22 @@ export function readColumns(fields: Field[]): string {
 export const s = (v: unknown) => String(v ?? "").trim();
 
 // Normalize TEXT fields so COSMETIC differences are not treated as changes:
-// escaped newlines, CRLF, unicode form, emoji variation selectors / ZWJ,
-// zero-width chars, NBSP, HTML entities, collapsed space runs, blank lines.
-// Used for both comparison AND the value written on Apply. NOTE: this only
-// removes formatting noise \u2014 genuinely different text (e.g. an extra emoji or
-// extra sentence) still differs, as it should.
+// escaped newlines, CRLF, unicode form, emojis & decorative symbols, zero-width
+// chars, NBSP, HTML entities, collapsed space runs, blank lines.
+// Used for both comparison AND the value written on Apply \u2014 so Snoonu's emoji
+// names/descriptions are neither flagged as changes nor written into our (clean)
+// catalog. Genuinely different WORDS still differ, as they should.
 function safeCp(n: number): string { try { return Number.isFinite(n) ? String.fromCodePoint(n) : ""; } catch { return ""; } }
+// Emojis, flags, dingbats, geometric bullets (kept in sync with the export's clean()).
+const NT_EMOJI = /[\u{1F000}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{25A0}-\u{25FF}]/gu;
 export function normalizeText(v: unknown): string {
   return String(v ?? "")
     .replace(/\\r\\n|\\n|\\r/g, "\n")          // literal "\n"/"\r\n" -> real LF
     .replace(/\\t/g, " ")                       // literal "\t" -> space
     .replace(/\r\n?/g, "\n")                    // CRLF / CR -> LF
     .normalize("NFC")                           // unicode canonical form
+    .replace(NT_EMOJI, "")                      // emojis & decorative symbols
+    .replace(/\(\s*\)/g, "")                    // drop parens left empty, e.g. "(\u25c6)"
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"').replace(/&#0?39;|&apos;/gi, "'")
