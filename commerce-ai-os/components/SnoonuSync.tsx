@@ -34,16 +34,16 @@ export default function SnoonuSync() {
     setBusy(true);
     try {
       const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-      if (!wb.SheetNames.includes(SNOONU_SHEET)) {
-        setError(`Sheet "${SNOONU_SHEET}" not found. Sheets in file: ${wb.SheetNames.join(", ")}`);
-        setBusy(false); return;
-      }
-      const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[SNOONU_SHEET], { defval: "" });
-      if (!raw.length) { setError(`Sheet "${SNOONU_SHEET}" has no rows.`); setBusy(false); return; }
+      // Prefer the named sheet; otherwise use the first sheet (real Snoonu
+      // "AllExportData" files name it "Sheet1").
+      const sheetName = wb.SheetNames.includes(SNOONU_SHEET) ? SNOONU_SHEET : wb.SheetNames[0];
+      if (!sheetName) { setError("The workbook has no sheets."); setBusy(false); return; }
+      const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+      if (!raw.length) { setError(`Sheet "${sheetName}" has no rows.`); setBusy(false); return; }
 
       const { rows, hasId, headers } = mapExportRows(raw);
       if (!hasId) {
-        setError(`No "id" column found (needed to match by snoonu_id). Headers: ${headers.join(", ")}`);
+        setError(`No product-ID column found (need "SPI(UniqueIdentifier)" or "id"). Headers: ${headers.join(", ")}`);
         setBusy(false); return;
       }
 
@@ -64,8 +64,8 @@ export default function SnoonuSync() {
         <div>
           <h3 className="text-sm font-semibold text-ink">Upload Snoonu export</h3>
           <p className="text-xs text-muted">
-            Parses sheet <code>{SNOONU_SHEET}</code> and matches by <code>id</code> → <code>products.snoonu_id</code>.
-            SKU/barcode are ignored. This step is read-only — it only previews a diff.
+            Upload the Snoonu “AllExportData” file. Matches by <code>SPI(UniqueIdentifier)</code> → <code>products.snoonu_id</code>
+            and flags NEW products (in Snoonu, not in your catalog). This step is read-only — it only previews a diff.
           </p>
         </div>
         <input type="file" accept=".xlsx,.xls" onChange={onFile} disabled={busy} className="block text-sm" />

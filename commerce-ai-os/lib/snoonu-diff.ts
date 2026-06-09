@@ -167,6 +167,9 @@ export function diffSnoonu(
 }
 
 // --- export header -> field mapping (shared by client + tests) -------------
+// Accepts BOTH the simple test headers and the REAL Snoonu "AllExportData"
+// headers (e.g. "SPI(UniqueIdentifier)", "Product Name (En)(ReadOnly)",
+// "Price Global(Update)") — normHeader strips punctuation/case so they match.
 export const HEADER_MAP: Record<string, keyof SnoonuExportRow> = {
   id: "id",
   nameen: "name_en", namear: "name_ar",
@@ -174,6 +177,11 @@ export const HEADER_MAP: Record<string, keyof SnoonuExportRow> = {
   price: "price", discount: "discount",
   approval: "approval",
   isfeatured: "is_featured", ispromoted: "is_promoted", hasbuy1get1: "has_buy1get1",
+  // Real Snoonu export column names:
+  spiuniqueidentifier: "id",
+  productnameenreadonly: "name_en", productnamearreadonly: "name_ar",
+  productdescriptionenreadonly: "description_en", productdescriptionarreadonly: "description_ar",
+  priceglobalupdate: "price",
 };
 export const normHeader = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
 
