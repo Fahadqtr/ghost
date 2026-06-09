@@ -211,8 +211,9 @@ export default function ProductForm({
         )}
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center justify-between">
+      {/* Actions — sticky so the Save button is always reachable on mobile,
+          where the long form would otherwise push it below the fold. */}
+      <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white/95 px-3 py-3 shadow-[0_-2px_10px_rgba(0,0,0,0.06)] backdrop-blur">
         <div className="flex gap-2">
           <button type="submit" disabled={saving} className="btn-primary disabled:opacity-60">
             {saving ? "Saving…" : productId ? "Save changes" : "Create product"}
