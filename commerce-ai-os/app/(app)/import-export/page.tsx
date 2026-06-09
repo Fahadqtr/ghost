@@ -41,6 +41,13 @@ export default async function ImportExportPage() {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
+  // Count of products added via Snoonu Sync (platform_status "Snoonu") — for the
+  // "export new products only" button.
+  const { count: newCount } = await supabase
+    .from("products")
+    .select("*", { count: "exact", head: true })
+    .eq("platform_status", "Snoonu");
+
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted">
@@ -55,7 +62,7 @@ export default async function ImportExportPage() {
       </Link>
       <ExcelImport />
       <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} />
-      <TalabatExport categories={categories} />
+      <TalabatExport categories={categories} newCount={newCount ?? 0} />
       <ExportButtons imageCount={imageCount ?? 0} />
     </div>
   );

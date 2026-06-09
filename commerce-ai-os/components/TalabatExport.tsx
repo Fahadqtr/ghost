@@ -6,7 +6,7 @@ export interface CatCount { name: string; count: number }
 
 // Talabat CSV export with a category picker: tick the categories to include,
 // then download. No selection params → the route returns all categories.
-export default function TalabatExport({ categories }: { categories: CatCount[] }) {
+export default function TalabatExport({ categories, newCount = 0 }: { categories: CatCount[]; newCount?: number }) {
   const [sel, setSel] = useState<Set<string>>(() => new Set(categories.map((c) => c.name)));
 
   const total = categories.length;
@@ -74,6 +74,22 @@ export default function TalabatExport({ categories }: { categories: CatCount[] }
           <a href={href} download className="btn-primary inline-flex">
             ⬇ تنزيل CSV ({allOn ? "كل الأقسام" : `${sel.size} أقسام`})
           </a>
+        )}
+      </div>
+
+      {/* Dedicated export for products added via Snoonu Sync (cleaned, with the
+          images that were uploaded). */}
+      <div className="border-t border-slate-100 pt-3">
+        <h3 className="text-sm font-semibold text-ink">المنتجات الجديدة (من سنونو)</h3>
+        <p className="text-xs text-muted">
+          إكسل طلبات يحتوي فقط المنتجات اللي أضفتها من Snoonu Sync — منظّفة ومعها الصور اللي رفعتها لها.
+        </p>
+        {newCount > 0 ? (
+          <a href="/api/export/talabat?source=new" download className="btn-primary mt-2 inline-flex">
+            ⬇ تصدير المنتجات الجديدة فقط ({newCount})
+          </a>
+        ) : (
+          <p className="mt-2 text-xs text-muted">لا توجد منتجات جديدة بعد — أضفها من تبويب Snoonu Sync أولًا.</p>
         )}
       </div>
     </div>
