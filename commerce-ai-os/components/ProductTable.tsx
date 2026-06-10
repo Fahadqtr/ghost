@@ -93,6 +93,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
   const [appr, setAppr] = useState("");
+  const [stk, setStk] = useState("");
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
@@ -106,11 +107,16 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         (p.barcode ?? "").toLowerCase().includes(needle);
       const matchesCat = !cat || p.main_category === cat;
       const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
-      return matchesQ && matchesCat && matchesAppr;
+      const n = Number(p.stock);
+      const matchesStk = !stk
+        || (stk === "out" ? !(n > 0)
+          : stk === "low" ? (n > 0 && n < 10)
+          : stk === "in" ? n >= 10 : true);
+      return matchesQ && matchesCat && matchesAppr && matchesStk;
     });
-  }, [products, q, cat, appr]);
+  }, [products, q, cat, appr, stk]);
 
-  useEffect(() => { setPage(1); }, [q, cat, appr]);
+  useEffect(() => { setPage(1); }, [q, cat, appr, stk]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, totalPages);
@@ -136,6 +142,12 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           <option value="Rejected">Rejected · مرفوض</option>
           <option value="SentAI">SentAI</option>
           <option value="none">بدون حالة</option>
+        </select>
+        <select className="input sm:max-w-[12rem]" value={stk} onChange={(e) => setStk(e.target.value)}>
+          <option value="">كل المخزون</option>
+          <option value="out">Out of stock · نافد</option>
+          <option value="low">Low · منخفض (1-9)</option>
+          <option value="in">In stock · متوفّر (10+)</option>
         </select>
         <span className="text-sm text-muted sm:ml-auto">
           {filtered.length === products.length ? `${products.length} products` : `${filtered.length} of ${products.length}`}
@@ -183,7 +195,12 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                   <td className="px-3 py-3"><RowApproval id={p.id} value={p.approval} /></td>
                   <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.discount_price ?? "—"}</td>
-                  <td className="px-3 py-3 text-slate-600">{p.stock ?? "—"}</td>
+                  <td className="px-3 py-3">
+                    {p.stock == null ? <span className="text-slate-400">—</span>
+                      : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">نافد</span>
+                      : Number(p.stock) < 10 ? <span className="text-amber-700">{p.stock}</span>
+                      : <span className="text-slate-600">{p.stock}</span>}
+                  </td>
                   <td className="px-3 py-3 text-slate-600">{p.variant_count > 0 ? p.variant_count : "—"}</td>
                   {CHANNELS.map((c) => (
                     <td key={c} className="px-3 py-3"><StatusBadge status={p.channels[c]} /></td>
