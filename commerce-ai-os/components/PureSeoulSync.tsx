@@ -29,16 +29,41 @@ export default function PureSeoulSync() {
       const sheet = wb.SheetNames.includes("NonFoodProducts") ? "NonFoodProducts" : wb.SheetNames[0];
       const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { defval: "" });
       if (!raw.length) { setError(`الورقة "${sheet}" فاضية.`); setBusy(false); return; }
-      const bsKey = Object.keys(raw[0]).find((k) => k.endsWith("branchStatus"));
-      const rows = raw.map((r: any) => ({
-        id: String(r.id ?? ""),
-        global_id: String(r.global_id ?? ""),
-        name_en: String(r.name_en ?? ""),
-        name_ar: String(r.name_ar ?? ""),
-        price: String(r.price ?? ""),
-        approval: String(r.approval ?? ""),
-        branchStatus: bsKey ? String(r[bsKey] ?? "") : "",
-      }));
+
+      // Detect columns — supports BOTH Pure Seoul export formats:
+      //  • NonFoodProducts: id, global_id, name_en, price, approval, …branchStatus
+      //  • AllExportData:   SPI(UniqueIdentifier), Product Name (En)(…), Price Global(Update), Availability for …
+      const headers = Object.keys(raw[0]);
+      const low = (h: string) => h.toLowerCase();
+      const pick = (exact: string[], test?: (h: string) => boolean) =>
+        headers.find((h) => exact.includes(low(h))) || (test ? headers.find((h) => test(low(h))) : undefined);
+      const idKey = pick(["id"], (h) => h.includes("spi") || h.includes("uniqueidentifier"));
+      const gidKey = pick(["global_id"]);
+      const nameEnKey = pick(["name_en"], (h) => /product name \(en\)/.test(h));
+      const nameArKey = pick(["name_ar"], (h) => /product name \(ar\)/.test(h));
+      const priceKey = pick(["price"], (h) => h.includes("price"));
+      const approvalKey = pick(["approval"]);
+      const bsKey = headers.find((h) => low(h).endsWith("branchstatus")) || headers.find((h) => low(h).startsWith("availability"));
+
+      if (!nameEnKey && !idKey && !gidKey) {
+        setError(`ما عرفت أعمدة الملف. الأعمدة: ${headers.slice(0, 8).join(", ")}…`);
+        setBusy(false); return;
+      }
+
+      const rows = raw.map((r: any) => {
+        const bsRaw = bsKey ? String(r[bsKey] ?? "").trim().toLowerCase() : "";
+        const branchStatus = bsRaw === "false" || bsRaw === "inactive" ? "inactive"
+          : bsRaw === "true" || bsRaw === "active" ? "active" : "";
+        return {
+          id: idKey ? String(r[idKey] ?? "") : "",
+          global_id: gidKey ? String(r[gidKey] ?? "") : "",
+          name_en: nameEnKey ? String(r[nameEnKey] ?? "") : "",
+          name_ar: nameArKey ? String(r[nameArKey] ?? "") : "",
+          price: priceKey ? String(r[priceKey] ?? "") : "",
+          approval: approvalKey ? String(r[approvalKey] ?? "") : "",
+          branchStatus,
+        };
+      });
       const out = await comparePureSeoul(rows);
       if (!out.ok) setError(out.error ?? "فشلت المقارنة.");
       setRes(out);
