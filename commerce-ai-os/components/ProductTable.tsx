@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CATEGORIES } from "@/lib/constants";
+import { setProductApproval } from "@/app/(app)/products/actions";
 
 const PAGE_SIZE = 50;
 const CHANNELS = ["Shopify", "Snoonu", "Talabat", "Rafeeq"] as const;
@@ -50,14 +51,41 @@ function StatusBadge({ status }: { status?: string }) {
   return <span className={`badge ${cls}`}>{s}</span>;
 }
 
-function ApprovalBadge({ approval }: { approval: string | null }) {
-  const s = approval ?? "";
-  const cls =
-    s === "Approved" ? "bg-green-100 text-green-700"
-    : s === "Rejected" ? "bg-red-100 text-red-700"
-    : s === "SentAI" ? "bg-amber-100 text-amber-700"
-    : "bg-slate-100 text-slate-400";
-  return <span className={`badge ${cls}`}>{s || "بدون"}</span>;
+const apprCls = (s: string) =>
+  s === "Approved" ? "bg-green-100 text-green-700"
+  : s === "Rejected" ? "bg-red-100 text-red-700"
+  : s === "SentAI" ? "bg-amber-100 text-amber-700"
+  : "bg-slate-100 text-slate-400";
+
+// Inline approve/reject straight from the list — no need to open the product.
+// stopPropagation keeps the row-click (navigate to detail) from firing.
+function RowApproval({ id, value }: { id: string; value: string | null }) {
+  const [val, setVal] = useState(value ?? "");
+  const [busy, start] = useTransition();
+  return (
+    <select
+      value={val}
+      disabled={busy}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        e.stopPropagation();
+        const v = e.target.value;
+        const prev = val;
+        setVal(v);
+        start(async () => {
+          const res = await setProductApproval(id, v);
+          if (res?.error) { setVal(prev); alert(res.error); }
+        });
+      }}
+      className={`badge cursor-pointer border-0 outline-none ${apprCls(val)} ${busy ? "opacity-50" : ""}`}
+      title="غيّر حالة الاعتماد"
+    >
+      <option value="">بدون</option>
+      <option value="Approved">معتمد</option>
+      <option value="Rejected">مرفوض</option>
+      <option value="SentAI">SentAI</option>
+    </select>
+  );
 }
 
 export default function ProductTable({ products }: { products: ProductRow[] }) {
@@ -152,7 +180,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                   </td>
                   <td className="px-3 py-3 text-slate-600">{p.barcode ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.main_category ?? "—"}</td>
-                  <td className="px-3 py-3"><ApprovalBadge approval={p.approval} /></td>
+                  <td className="px-3 py-3"><RowApproval id={p.id} value={p.approval} /></td>
                   <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.discount_price ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.stock ?? "—"}</td>

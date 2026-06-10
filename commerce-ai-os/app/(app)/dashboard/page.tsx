@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCeoKpis, type NameCount, type ChannelBreak } from "@/lib/dashboard";
+import RejectedApprovalList from "@/components/RejectedApprovalList";
 
 export const dynamic = "force-dynamic";
 
@@ -44,19 +45,7 @@ export default async function DashboardPage() {
             <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-red-700">
               View rejected ({k.rejectedCount})
             </summary>
-            <ul className="divide-y divide-red-100 px-3 pb-2">
-              {k.rejectedList.map((r) => (
-                <li key={r.id} className="py-2">
-                  <Link href={`/products/${r.id}`} className="flex items-center justify-between gap-2 text-sm hover:underline">
-                    <span className="truncate text-ink">{r.name_en ?? "—"}</span>
-                    <span className="shrink-0 font-mono text-xs text-muted">{r.sku ?? "—"}</span>
-                  </Link>
-                </li>
-              ))}
-              {k.rejectedCount > k.rejectedList.length ? (
-                <li className="py-2 text-xs text-muted">…and {k.rejectedCount - k.rejectedList.length} more</li>
-              ) : null}
-            </ul>
+            <RejectedApprovalList items={k.rejectedList} extra={k.rejectedCount - k.rejectedList.length} />
           </details>
         ) : (
           <p className="mt-3 text-sm text-slate-400">No rejected products 🎉</p>

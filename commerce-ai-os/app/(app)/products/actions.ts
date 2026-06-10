@@ -183,6 +183,25 @@ export async function updateProduct(id: string, input: ProductInput) {
   redirect("/products");
 }
 
+// Quick approve/reject from the list or dashboard (no full form). Empty -> null.
+const APPROVAL_OPTS = new Set(["Approved", "Rejected", "SentAI", ""]);
+export async function setProductApproval(id: string, approval: string) {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { error: "Not signed in." };
+  if (!id) return { error: "Missing product id." };
+  if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".` };
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("products")
+    .update({ approval: approval === "" ? null : approval })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/products");
+  revalidatePath("/dashboard");
+  revalidatePath(`/products/${id}`);
+  return { ok: true };
+}
+
 export async function deleteProduct(id: string) {
   const supabase = createClient();
   // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).
