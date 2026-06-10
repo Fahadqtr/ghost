@@ -18,6 +18,7 @@ export interface ProductRow {
   name_ar: string | null;
   main_category: string | null;
   approval: string | null;
+  platform_status: string | null;
   price: number | null;
   discount_price: number | null;
   stock: number | null;
@@ -94,6 +95,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
   const [cat, setCat] = useState("");
   const [appr, setAppr] = useState("");
   const [stk, setStk] = useState("");
+  const [plat, setPlat] = useState("");
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
@@ -112,11 +114,12 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         || (stk === "out" ? !(n > 0)
           : stk === "low" ? (n > 0 && n < 10)
           : stk === "in" ? n >= 10 : true);
-      return matchesQ && matchesCat && matchesAppr && matchesStk;
+      const matchesPlat = !plat || (plat === "active" ? p.platform_status === "Active" : p.platform_status !== "Active");
+      return matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat;
     });
-  }, [products, q, cat, appr, stk]);
+  }, [products, q, cat, appr, stk, plat]);
 
-  useEffect(() => { setPage(1); }, [q, cat, appr, stk]);
+  useEffect(() => { setPage(1); }, [q, cat, appr, stk, plat]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, totalPages);
@@ -148,6 +151,11 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           <option value="out">Out of stock · نافد</option>
           <option value="low">Low · منخفض (1-9)</option>
           <option value="in">In stock · متوفّر (10+)</option>
+        </select>
+        <select className="input sm:max-w-[12rem]" value={plat} onChange={(e) => setPlat(e.target.value)}>
+          <option value="">مفعّل + غير مفعّل</option>
+          <option value="active">مفعّل · Active</option>
+          <option value="inactive">غير مفعّل · Draft</option>
         </select>
         <span className="text-sm text-muted sm:ml-auto">
           {filtered.length === products.length ? `${products.length} products` : `${filtered.length} of ${products.length}`}
