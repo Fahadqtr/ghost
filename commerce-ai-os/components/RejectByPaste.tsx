@@ -33,6 +33,7 @@ export default function RejectByPaste() {
   const [matching, startMatch] = useTransition();
   const [rejecting, startReject] = useTransition();
   const [reading, startRead] = useTransition();
+  const [reason, setReason] = useState("بسبب الصورة");
   const [done, setDone] = useState<string | null>(null);
 
   const onPickImages = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -70,11 +71,11 @@ export default function RejectByPaste() {
   const reject = () => {
     const ids = [...sel];
     if (ids.length === 0) { alert("اختر منتجًا واحدًا على الأقل."); return; }
-    if (!confirm(`رفض ${ids.length} منتج في كتالوجك؟`)) return;
+    if (!confirm(`رفض ${ids.length} منتج في كتالوجك${reason.trim() ? ` (السبب: ${reason.trim()})` : ""}؟`)) return;
     startReject(async () => {
-      const res = await setProductsApproval(ids, "Rejected");
+      const res = await setProductsApproval(ids, "Rejected", reason);
       if (res.error) { alert(res.error); return; }
-      setDone(`✓ تم رفض ${res.updated} منتج${res.failed ? ` · فشل ${res.failed}` : ""}.`);
+      setDone(`✓ تم رفض ${res.updated} منتج${res.failed ? ` · فشل ${res.failed}` : ""}${reason.trim() ? ` — السبب: ${reason.trim()}` : ""}.`);
       setMatched((m) => (m ? m.filter((x) => !sel.has(x.id)) : m));
       setSel(new Set());
       router.refresh();
@@ -142,9 +143,18 @@ export default function RejectByPaste() {
           ) : null}
 
           {matched.length > 0 ? (
-            <button onClick={reject} disabled={rejecting || sel.size === 0} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
-              {rejecting ? "جاري الرفض…" : `⛔ ارفض المحدد (${sel.size})`}
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className="text-xs text-muted">سبب الرفض:</label>
+              <input
+                className="input sm:max-w-[14rem]"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="بسبب الصورة"
+              />
+              <button onClick={reject} disabled={rejecting || sel.size === 0} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                {rejecting ? "جاري الرفض…" : `⛔ ارفض المحدد (${sel.size})`}
+              </button>
+            </div>
           ) : null}
         </div>
       ) : null}

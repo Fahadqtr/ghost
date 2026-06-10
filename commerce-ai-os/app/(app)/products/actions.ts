@@ -204,7 +204,8 @@ export async function setProductApproval(id: string, approval: string) {
 }
 
 // Bulk approve/reject (e.g. reject everything Snoonu marked unavailable).
-export async function setProductsApproval(ids: string[], approval: string) {
+// Optional `reason` records WHY (written to notes), e.g. "بسبب الصورة".
+export async function setProductsApproval(ids: string[], approval: string, reason?: string) {
   const { data: { user } } = await createClient().auth.getUser();
   if (!user) return { error: "Not signed in.", updated: 0 };
   const list = (ids ?? []).filter(Boolean);
@@ -212,11 +213,13 @@ export async function setProductsApproval(ids: string[], approval: string) {
   if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".`, updated: 0 };
   const supabase = createClient();
   const value = approval === "" ? null : approval;
+  const patch: Record<string, unknown> = { approval: value };
+  if (reason && reason.trim()) patch.notes = `مرفوض (سنونو): ${reason.trim()}`;
   let updated = 0, failed = 0;
   for (let i = 0; i < list.length; i += 200) {
     const chunk = list.slice(i, i + 200);
     const { error, count } = await supabase
-      .from("products").update({ approval: value }, { count: "exact" }).in("id", chunk);
+      .from("products").update(patch, { count: "exact" }).in("id", chunk);
     if (error) failed += chunk.length; else updated += count ?? chunk.length;
   }
   revalidatePath("/products");
