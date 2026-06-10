@@ -16,6 +16,7 @@ export interface ProductRow {
   name_en: string | null;
   name_ar: string | null;
   main_category: string | null;
+  approval: string | null;
   price: number | null;
   discount_price: number | null;
   stock: number | null;
@@ -49,10 +50,21 @@ function StatusBadge({ status }: { status?: string }) {
   return <span className={`badge ${cls}`}>{s}</span>;
 }
 
+function ApprovalBadge({ approval }: { approval: string | null }) {
+  const s = approval ?? "";
+  const cls =
+    s === "Approved" ? "bg-green-100 text-green-700"
+    : s === "Rejected" ? "bg-red-100 text-red-700"
+    : s === "SentAI" ? "bg-amber-100 text-amber-700"
+    : "bg-slate-100 text-slate-400";
+  return <span className={`badge ${cls}`}>{s || "بدون"}</span>;
+}
+
 export default function ProductTable({ products }: { products: ProductRow[] }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
+  const [appr, setAppr] = useState("");
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
@@ -65,11 +77,12 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         (p.sku ?? "").toLowerCase().includes(needle) ||
         (p.barcode ?? "").toLowerCase().includes(needle);
       const matchesCat = !cat || p.main_category === cat;
-      return matchesQ && matchesCat;
+      const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
+      return matchesQ && matchesCat && matchesAppr;
     });
-  }, [products, q, cat]);
+  }, [products, q, cat, appr]);
 
-  useEffect(() => { setPage(1); }, [q, cat]);
+  useEffect(() => { setPage(1); }, [q, cat, appr]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, totalPages);
@@ -89,6 +102,13 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           <option value="">All categories</option>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
         </select>
+        <select className="input sm:max-w-[12rem]" value={appr} onChange={(e) => setAppr(e.target.value)}>
+          <option value="">كل الحالات</option>
+          <option value="Approved">Approved · معتمد</option>
+          <option value="Rejected">Rejected · مرفوض</option>
+          <option value="SentAI">SentAI</option>
+          <option value="none">بدون حالة</option>
+        </select>
         <span className="text-sm text-muted sm:ml-auto">
           {filtered.length === products.length ? `${products.length} products` : `${filtered.length} of ${products.length}`}
         </span>
@@ -105,6 +125,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
               <th className="px-3 py-3 font-medium">Snoonu ID</th>
               <th className="px-3 py-3 font-medium">Barcode</th>
               <th className="px-3 py-3 font-medium">Category</th>
+              <th className="px-3 py-3 font-medium">Approval</th>
               <th className="px-3 py-3 font-medium">Price</th>
               <th className="px-3 py-3 font-medium">Disc.</th>
               <th className="px-3 py-3 font-medium">Stock</th>
@@ -114,7 +135,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={15} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
+              <tr><td colSpan={16} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
             ) : (
               visible.map((p) => (
                 <tr
@@ -131,6 +152,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                   </td>
                   <td className="px-3 py-3 text-slate-600">{p.barcode ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.main_category ?? "—"}</td>
+                  <td className="px-3 py-3"><ApprovalBadge approval={p.approval} /></td>
                   <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.discount_price ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.stock ?? "—"}</td>

@@ -35,6 +35,7 @@ export interface ProductInput {
   stock_quantity: string;
   stock_status: string;
   platform_status: string;
+  approval: string;
   image_filename: string;
   image_url: string;
   description_en: string;
@@ -87,6 +88,7 @@ function toProductRow(input: ProductInput) {
     stock_quantity: num(input.stock_quantity),
     stock_status: str(input.stock_status),
     platform_status: str(input.platform_status),
+    approval: str(input.approval),
     image_filename: str(input.image_filename),
     image_url: str(input.image_url),
     description_en: cleanStr(input.description_en),

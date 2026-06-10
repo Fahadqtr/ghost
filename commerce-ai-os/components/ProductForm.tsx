@@ -39,6 +39,7 @@ function emptyInput(): ProductInput {
     stock_quantity: "",
     stock_status: "",
     platform_status: "",
+    approval: "",
     image_filename: "",
     image_url: "",
     description_en: "",
@@ -164,6 +165,14 @@ export default function ProductForm({
           </select>
         </Field>
         <Field label="Platform status"><input className="input" value={form.platform_status} onChange={(e) => set("platform_status", e.target.value)} /></Field>
+        <Field label="حالة الاعتماد · Approval">
+          <select className="input" value={form.approval} onChange={(e) => set("approval", e.target.value)}>
+            <option value="">— بدون / unset —</option>
+            <option value="Approved">Approved · معتمد</option>
+            <option value="Rejected">Rejected · مرفوض</option>
+            <option value="SentAI">SentAI</option>
+          </select>
+        </Field>
       </Section>
 
       {/* Media */}

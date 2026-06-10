@@ -28,7 +28,7 @@ export default async function ProductsPage() {
         supabase
           .from("products")
           .select(
-            "id, sku, snoonu_id, barcode, name_en, name_ar, main_category, price, discount_price, image_url, product_variants(count), inventory(stock_quantity)"
+            "id, sku, snoonu_id, barcode, name_en, name_ar, main_category, approval, price, discount_price, image_url, product_variants(count), inventory(stock_quantity)"
           )
           .order("sku", { ascending: true })
           .range(from, to)
@@ -60,6 +60,7 @@ export default async function ProductsPage() {
       name_en: p.name_en,
       name_ar: p.name_ar,
       main_category: p.main_category,
+      approval: p.approval,
       price: p.price,
       discount_price: p.discount_price,
       stock: p.inventory?.[0]?.stock_quantity ?? null,
