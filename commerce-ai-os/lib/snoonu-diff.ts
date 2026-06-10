@@ -27,12 +27,13 @@ export interface SnoonuDiff {
   error?: string;
   existingOptionalCols: string[];
   missingOptionalCols: string[];
-  counts: { exportRows: number; matched: number; updated: number; newCount: number; missing: number; unchanged: number };
+  counts: { exportRows: number; matched: number; updated: number; newCount: number; missing: number; unchanged: number; rejected: number };
   fieldCounts: Record<string, number>;     // per-column total # of changed rows
   changedColsPerProduct: string[][];        // for each updated product, the changed column names
   updated: UpdatedEntry[];
   newProducts: NewEntry[];
   missing: MissingEntry[];
+  rejected: MissingEntry[];                 // matched products that are Rejected in our catalog
 }
 
 export type Field = { ex: keyof SnoonuExportRow; col: string; type: "str" | "num" | "bool" };

@@ -7,6 +7,7 @@ import {
   computeSnoonuDiff, applySnoonuUpdates, addSnoonuNewProducts,
   type ApplyResult, type AddNewResult,
 } from "@/app/(app)/import-export/snoonu-actions";
+import { setProductApproval } from "@/app/(app)/products/actions";
 import {
   SNOONU_SHEET, mapExportRows, type SnoonuDiff, type SnoonuExportRow,
 } from "@/lib/snoonu-diff";
@@ -92,6 +93,20 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
   );
   const [addingNew, startAddNew] = useTransition();
   const [addResult, setAddResult] = useState<AddNewResult | null>(null);
+
+  // Rejected (in our catalog) products present in the upload — reviewable here.
+  const [rejList, setRejList] = useState(diff.rejected);
+  const [rejBusy, startRej] = useTransition();
+  const [rejPending, setRejPending] = useState<string | null>(null);
+  const approveRej = (productId: string) => {
+    setRejPending(productId);
+    startRej(async () => {
+      const res = await setProductApproval(productId, "Approved");
+      setRejPending(null);
+      if (res?.error) alert(res.error);
+      else setRejList((l) => l.filter((r) => r.product_id !== productId));
+    });
+  };
   const toggleNew = (id: string) =>
     setSelectedNew((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
@@ -180,6 +195,29 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
             </div>
           );
         })()}
+      </Section>
+
+      {/* REJECTED — products live in this Snoonu file but Rejected in our catalog */}
+      <Section title={`🚫 منتجات مرفوضة في كتالوجك (موجودة بملف سنونو) — ${diff.counts.rejected}`}>
+        {rejList.length === 0 ? (
+          <Empty text={diff.counts.rejected === 0 ? "ما في منتجات مرفوضة في هذا الملف. ✅" : "تمت مراجعة كل المرفوضة."} />
+        ) : (
+          <ul className="divide-y divide-red-100">
+            {rejList.map((r) => (
+              <li key={r.product_id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate text-ink">{r.name_en ?? "—"}</span>
+                <span className="shrink-0 font-mono text-xs text-muted">{r.sku ?? "—"}</span>
+                <button
+                  onClick={() => approveRej(r.product_id)}
+                  disabled={rejBusy && rejPending === r.product_id}
+                  className="shrink-0 rounded-lg bg-green-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {rejBusy && rejPending === r.product_id ? "…" : "✓ اعتمد"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </Section>
 
       {diff.missingOptionalCols.length ? (

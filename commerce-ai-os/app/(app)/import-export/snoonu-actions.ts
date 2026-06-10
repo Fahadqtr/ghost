@@ -38,9 +38,9 @@ async function readAllProducts(client: any, cols: string): Promise<Record<string
 export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<SnoonuDiff> {
   const empty: SnoonuDiff = {
     ok: false, existingOptionalCols: [], missingOptionalCols: [],
-    counts: { exportRows: 0, matched: 0, updated: 0, newCount: 0, missing: 0, unchanged: 0 },
+    counts: { exportRows: 0, matched: 0, updated: 0, newCount: 0, missing: 0, unchanged: 0, rejected: 0 },
     fieldCounts: {}, changedColsPerProduct: [],
-    updated: [], newProducts: [], missing: [],
+    updated: [], newProducts: [], missing: [], rejected: [],
   };
   if (!rows?.length) return { ...empty, error: "No rows parsed from the export." };
 
@@ -60,6 +60,12 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
       return cols;
     });
 
+    // Matched products that are REJECTED in our catalog (present in the upload).
+    const exportIds = new Set(rows.map((r) => s(r.id)).filter(Boolean));
+    const rejected = products
+      .filter((p: any) => p.snoonu_id && exportIds.has(String(p.snoonu_id)) && String(p.approval) === "Rejected")
+      .map((p: any) => ({ snoonu_id: String(p.snoonu_id), product_id: p.id, sku: p.sku ?? null, name_en: p.name_en ?? null }));
+
     return {
       ok: true,
       existingOptionalCols,
@@ -71,6 +77,7 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
         newCount: d.newProducts.length,
         missing: d.missing.length,
         unchanged: d.unchanged,
+        rejected: rejected.length,
       },
       fieldCounts,
       changedColsPerProduct,
@@ -80,6 +87,7 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
       updated: d.updated.slice(0, 200),
       newProducts: d.newProducts.slice(0, 200),
       missing: d.missing.slice(0, 200),
+      rejected: rejected.slice(0, 200),
     };
   } catch (e) {
     return { ...empty, error: e instanceof Error ? e.message : "Unexpected error while computing the diff." };
