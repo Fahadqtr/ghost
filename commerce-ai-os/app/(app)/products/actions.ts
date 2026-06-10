@@ -242,7 +242,10 @@ export async function matchProductsByText(text: string): Promise<{ error?: strin
     all.push(...(data ?? []));
     if ((data ?? []).length < 1000) break;
   }
-  const norm = (s: string) => String(s ?? "").toLowerCase().trim();
+  // Normalize for matching: lowercase, drop apostrophes/quotes (straight vs
+  // curly "Men's"), and collapse spaces — so OCR/paste text matches the catalog.
+  const norm = (s: string) =>
+    String(s ?? "").toLowerCase().replace(/[’‘'`´]/g, "").replace(/\s+/g, " ").trim();
   const matched: MatchedProduct[] = [];
   const seen = new Set<string>();
   const unmatched: string[] = [];
