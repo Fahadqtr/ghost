@@ -128,6 +128,26 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
       if (res?.ok || (res?.updated ?? 0) > 0) setUnavList([]);
     });
   };
+
+  // MISSING from the export = removed/delisted on Snoonu → reject in our catalog.
+  const [missList, setMissList] = useState(diff.missing);
+  const [missBusy, startMiss] = useTransition();
+  const rejectMiss = (productId: string) => {
+    startMiss(async () => {
+      const res = await setProductApproval(productId, "Rejected");
+      if (res?.error) alert(res.error);
+      else setMissList((l) => l.filter((r) => r.product_id !== productId));
+    });
+  };
+  const rejectAllMiss = () => {
+    if (!confirm(`رفض ${missList.length} منتج محذوفة من سنونو؟`)) return;
+    const ids = missList.map((r) => r.product_id);
+    startMiss(async () => {
+      const res = await setProductsApproval(ids, "Rejected");
+      if (res?.error) alert(res.error);
+      if (res?.ok || (res?.updated ?? 0) > 0) setMissList([]);
+    });
+  };
   const toggleNew = (id: string) =>
     setSelectedNew((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
@@ -365,14 +385,29 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
       </Section>
 
       {/* MISSING */}
-      <Section title={`MISSING from this export — ${c.missing} (candidate "not listed on Snoonu")`}>
-        {diff.missing.length === 0 ? <Empty text="All our products appear in the export." /> : (
-          <ul className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
-            {diff.missing.slice(0, 200).map((m, i) => (
-              <li key={i} className="flex gap-2"><span className="text-slate-600">{m.sku ?? "—"}</span><span className="text-slate-700">{m.name_en || "—"}</span></li>
-            ))}
-            {c.missing > diff.missing.length ? <li className="text-muted">…and {c.missing - diff.missing.length} more.</li> : null}
-          </ul>
+      <Section title={`🙈 محذوفة من إكسل سنونو — ${c.missing} (موجودة عندك، أزالها سنونو = غير متوفرة)`}>
+        {missList.length === 0 ? (
+          <Empty text={c.missing === 0 ? "كل منتجاتك موجودة في تصدير سنونو. ✅" : "تمت مراجعة كل المحذوفة."} />
+        ) : (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs text-muted">لها snoonu_id (كانت على سنونو) لكنها اختفت من التصدير — يعني سنونو أزالها.</span>
+              <button onClick={rejectAllMiss} disabled={missBusy} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                {missBusy ? "…" : `⛔ ارفض الكل (${missList.length})`}
+              </button>
+            </div>
+            <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+              {missList.map((m) => (
+                <li key={m.product_id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate text-ink">{m.name_en ?? "—"}</span>
+                  <span className="shrink-0 font-mono text-xs text-muted">{m.sku ?? "—"}</span>
+                  <button onClick={() => rejectMiss(m.product_id)} disabled={missBusy} className="shrink-0 rounded-lg border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50">
+                    ارفض عندنا
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </Section>
 
