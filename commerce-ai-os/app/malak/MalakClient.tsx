@@ -65,6 +65,17 @@ const agentById = (id: string): AgentDef => AGENTS.find((a) => a.id === id) ?? A
 
 type OrbState = "idle" | "listening" | "thinking" | "speaking";
 
+// Coerce ANY value to a safe React-renderable string. Guards against React
+// error #31 (rendering an object child) when a server/API value that should be
+// text turns out to be an object (e.g. an OpenAI/Supabase error {code,message,…}).
+const txt = (v: any): string =>
+  v == null ? ""
+  : typeof v === "string" ? v
+  : typeof v === "number" || typeof v === "boolean" ? String(v)
+  : typeof v?.message === "string" ? v.message
+  : typeof v?.error === "string" ? v.error
+  : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
+
 interface PanelData {
   type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing";
   items?: any[];
@@ -212,8 +223,8 @@ function ProductsPanel({ items }: { items: any[] }) {
             )}
           </div>
           <div className="space-y-1 p-2.5 text-right">
-            <p className="line-clamp-2 text-[13px] font-medium leading-snug text-white/90">{p.name}</p>
-            {p.brand ? <p className="text-[11px] text-white/50">{p.brand}</p> : null}
+            <p className="line-clamp-2 text-[13px] font-medium leading-snug text-white/90">{txt(p.name)}</p>
+            {p.brand ? <p className="text-[11px] text-white/50">{txt(p.brand)}</p> : null}
             <div className="flex items-center justify-between pt-1">
               <span className="text-sm font-bold text-cyan-300">{p.price != null ? `${p.price} ر.ق` : "—"}</span>
               {p.status ? (
@@ -226,11 +237,11 @@ function ProductsPanel({ items }: { items: any[] }) {
                       : "bg-amber-500/20 text-amber-300"
                   }`}
                 >
-                  {p.status}
+                  {txt(p.status)}
                 </span>
               ) : null}
             </div>
-            {p.sku ? <p className="font-mono text-[10px] text-white/30">{p.sku}</p> : null}
+            {p.sku ? <p className="font-mono text-[10px] text-white/30">{txt(p.sku)}</p> : null}
           </div>
         </div>
       ))}
@@ -243,9 +254,9 @@ function StatsPanel({ items }: { items: any[] }) {
     <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
       {items.map((s, i) => (
         <div key={i} className="rounded-2xl border border-white/10 bg-white/5 p-4 text-right backdrop-blur">
-          <p className="text-2xl font-extrabold text-white">{s.value}</p>
-          <p className="mt-1 text-sm text-white/70">{s.label}</p>
-          {s.sub ? <p className="mt-0.5 text-[11px] text-white/40">{s.sub}</p> : null}
+          <p className="text-2xl font-extrabold text-white">{txt(s.value)}</p>
+          <p className="mt-1 text-sm text-white/70">{txt(s.label)}</p>
+          {s.sub ? <p className="mt-0.5 text-[11px] text-white/40">{txt(s.sub)}</p> : null}
         </div>
       ))}
     </div>
@@ -360,12 +371,12 @@ function ConfirmPanel({
         // audit is best-effort on the server; surface the literal failure text.
         setAuditWarn(typeof data.audit === "string" && data.audit.startsWith("failed") ? data.audit : "");
         setStatus("done");
-        setMsg(data.message || "تم التنفيذ.");
-        onDone(data.message || "تم التنفيذ.");
+        setMsg(txt(data.message) || "تم التنفيذ.");
+        onDone(txt(data.message) || "تم التنفيذ.");
         // leave busyRef true on success → no further submits for this card.
       } else {
         setStatus("error");
-        setMsg(data?.error || "تعذّر التنفيذ.");
+        setMsg(txt(data?.error) || "تعذّر التنفيذ.");
         busyRef.current = false; // allow retry
       }
     } catch {
@@ -383,24 +394,24 @@ function ConfirmPanel({
         <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
           ⚠️ تأكيد مطلوب
         </span>
-        <p className="text-sm font-bold text-white">{item.title}</p>
+        <p className="text-sm font-bold text-white">{txt(item.title)}</p>
       </div>
 
       <div>
-        <p className="text-[13px] text-white/80">{item.operation}</p>
-        {item.name ? <p className="mt-0.5 text-sm font-semibold text-cyan-300">{item.name}</p> : null}
-        {item.sku ? <p className="font-mono text-[11px] text-white/40">{item.sku}</p> : null}
+        <p className="text-[13px] text-white/80">{txt(item.operation)}</p>
+        {item.name ? <p className="mt-0.5 text-sm font-semibold text-cyan-300">{txt(item.name)}</p> : null}
+        {item.sku ? <p className="font-mono text-[11px] text-white/40">{txt(item.sku)}</p> : null}
       </div>
 
       {item.warning ? (
         <p className="rounded-xl border border-orange-400/40 bg-orange-500/15 px-3 py-2 text-sm font-medium text-orange-200">
-          🤔 {item.warning}
+          🤔 {txt(item.warning)}
         </p>
       ) : null}
 
       {item.note ? (
         <p className="rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[13px] text-sky-200">
-          ℹ️ {item.note}
+          ℹ️ {txt(item.note)}
         </p>
       ) : null}
 
@@ -502,7 +513,7 @@ function ImageRequestPanel({
         onGenerated(data.panel as PanelData);
       } else {
         setStatus("error");
-        setMsg(data?.error || "تعذّر توليد الصورة.");
+        setMsg(txt(data?.error) || "تعذّر توليد الصورة.");
         busyRef.current = false;
       }
     } catch {
@@ -518,12 +529,12 @@ function ImageRequestPanel({
         <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
           ✨ توليد صورة
         </span>
-        <p className="text-sm font-bold text-white">{item.title}</p>
+        <p className="text-sm font-bold text-white">{txt(item.title)}</p>
       </div>
 
       <div>
-        {item.name ? <p className="text-sm font-semibold text-cyan-300">{item.name}</p> : null}
-        {item.sku ? <p className="font-mono text-[11px] text-white/40">{item.sku}</p> : null}
+        {item.name ? <p className="text-sm font-semibold text-cyan-300">{txt(item.name)}</p> : null}
+        {item.sku ? <p className="font-mono text-[11px] text-white/40">{txt(item.sku)}</p> : null}
         <p className="mt-1 text-[13px] text-white/70">
           النمط: {item.style === "lifestyle" ? "لايف ستايل" : "هيرو (خلفية نظيفة)"}
           {item.currentImage ? " · تحسين الصورة الحالية مع الحفاظ على العلبة" : " · توليد من اسم المنتج"}
