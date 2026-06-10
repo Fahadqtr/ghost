@@ -39,7 +39,11 @@ export interface PSCompare {
 }
 
 const S = (v: unknown) => String(v ?? "").trim();
-const norm = (s: unknown) => S(s).toLowerCase().replace(/[’‘'`´]/g, "").replace(/\s+/g, " ");
+// Aggressive normalization for name matching: lowercase + keep only letters/
+// digits (drops spaces, dashes, parens, apostrophes, units punctuation). This
+// matches name variants like "Body Cream" = "BodyCream", "(100g)" = "100g"
+// without hiding genuinely-missing products (it only matches when alnum-identical).
+const norm = (s: unknown) => S(s).toLowerCase().replace(/[^a-z0-9]/g, "");
 const numEq = (a: unknown, b: unknown) => {
   const x = Number(a), y = Number(b);
   if (isNaN(x) || isNaN(y)) return S(a) === S(b);
