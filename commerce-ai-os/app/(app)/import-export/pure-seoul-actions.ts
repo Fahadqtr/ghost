@@ -19,6 +19,8 @@ export interface PSItem {
   price?: string | number | null;   // Malika price (correct)
   psPrice?: string | null;          // Pure Seoul price
   category?: string | null;
+  psName?: string | null;           // closest Pure Seoul name (for review pairs)
+  score?: number;                   // match confidence for review pairs
 }
 
 export interface PSCompare {
@@ -27,13 +29,15 @@ export interface PSCompare {
   counts: {
     psRows: number;
     matched: number;
-    missingOnPS: number;   // in Malika (master), not on Pure Seoul → ADD to PS
-    extraOnPS: number;     // on Pure Seoul, not in Malika → review/remove
-    priceDiffs: number;    // matched, price differs
-    psRejected: number;    // Rejected on Pure Seoul (from file)
-    psInactive: number;    // branchStatus = inactive (hidden) on Pure Seoul
+    missingOnPS: number;   // confident: in Malika, no match nor close name on PS → ADD
+    reviewOnPS: number;    // a close PS name exists (likely same / size-variant) → review
+    extraOnPS: number;
+    priceDiffs: number;
+    psRejected: number;
+    psInactive: number;
   };
-  missingOnPS: PSItem[];
+  missingOnPS: PSItem[];   // confident missing
+  reviewOnPS: PSItem[];    // needs human review (name/size variants)
   extraOnPS: PSItem[];
   priceDiffs: PSItem[];
 }
@@ -44,6 +48,8 @@ const S = (v: unknown) => String(v ?? "").trim();
 // matches name variants like "Body Cream" = "BodyCream", "(100g)" = "100g"
 // without hiding genuinely-missing products (it only matches when alnum-identical).
 const norm = (s: unknown) => S(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+const tokens = (s: unknown) => new Set(S(s).toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+const jaccard = (a: Set<string>, b: Set<string>) => { let i = 0; for (const x of a) if (b.has(x)) i++; return i / (a.size + b.size - i || 1); };
 const numEq = (a: unknown, b: unknown) => {
   const x = Number(a), y = Number(b);
   if (isNaN(x) || isNaN(y)) return S(a) === S(b);
@@ -55,8 +61,8 @@ const numEq = (a: unknown, b: unknown) => {
 export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
   const empty: PSCompare = {
     ok: false,
-    counts: { psRows: 0, matched: 0, missingOnPS: 0, extraOnPS: 0, priceDiffs: 0, psRejected: 0, psInactive: 0 },
-    missingOnPS: [], extraOnPS: [], priceDiffs: [],
+    counts: { psRows: 0, matched: 0, missingOnPS: 0, reviewOnPS: 0, extraOnPS: 0, priceDiffs: 0, psRejected: 0, psInactive: 0 },
+    missingOnPS: [], reviewOnPS: [], extraOnPS: [], priceDiffs: [],
   };
   if (!rows?.length) return { ...empty, error: "ما في صفوف في الملف." };
 
@@ -96,9 +102,23 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
       }
     }
 
-    const missingOnPS: PSItem[] = all
-      .filter((p) => !matchedMalika.has(p))
-      .map((p) => ({ sku: p.sku ?? null, name_en: p.name_en ?? null, price: p.price ?? null, category: p.main_category ?? null }));
+    // Split the unmatched Malika products into "confident missing" (no close PS
+    // name) vs "review" (a similar PS name exists — likely the same item or a
+    // size/shade variant). Names alone can't be 100% (e.g. "6 Color" vs "10
+    // Color"), so the review bucket is surfaced for a human to confirm.
+    const psTok = rows.map((r) => ({ t: tokens(r.name_en), n: S(r.name_en) })).filter((x) => x.t.size);
+    const missingOnPS: PSItem[] = [];
+    const reviewOnPS: PSItem[] = [];
+    for (const p of all) {
+      if (matchedMalika.has(p)) continue;
+      const pt = tokens(p.name_en);
+      let best = 0, bn = "";
+      if (pt.size) for (const x of psTok) { const s = jaccard(pt, x.t); if (s > best) { best = s; bn = x.n; } }
+      const base = { sku: p.sku ?? null, name_en: p.name_en ?? null, price: p.price ?? null, category: p.main_category ?? null };
+      if (best >= 0.55) reviewOnPS.push({ ...base, psName: bn, score: Math.round(best * 100) / 100 });
+      else missingOnPS.push(base);
+    }
+    reviewOnPS.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
     return {
       ok: true,
@@ -106,12 +126,14 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
         psRows: rows.length,
         matched,
         missingOnPS: missingOnPS.length,
+        reviewOnPS: reviewOnPS.length,
         extraOnPS: extraOnPS.length,
         priceDiffs: priceDiffs.length,
         psRejected,
         psInactive,
       },
       missingOnPS: missingOnPS.slice(0, 500),
+      reviewOnPS: reviewOnPS.slice(0, 500),
       extraOnPS: extraOnPS.slice(0, 500),
       priceDiffs: priceDiffs.slice(0, 500),
     };

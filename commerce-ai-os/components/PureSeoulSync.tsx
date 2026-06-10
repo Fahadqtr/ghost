@@ -71,24 +71,44 @@ export default function PureSeoulSync() {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="صفوف Pure Seoul" value={c.psRows} />
             <Stat label="متطابق مع مليكاس" value={c.matched} />
-            <Stat label="ناقص على PS (يضاف)" value={c.missingOnPS} accent="amber" />
+            <Stat label="ناقص مؤكّد (يضاف)" value={c.missingOnPS} accent="amber" />
             <Stat label="أسعار مختلفة" value={c.priceDiffs} accent="violet" />
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="يحتاج مراجعة" value={c.reviewOnPS} accent="slate" />
             <Stat label="زائد على PS" value={c.extraOnPS} accent="slate" />
             <Stat label="مرفوض على PS" value={c.psRejected} accent="slate" />
             <Stat label="مخفي على PS (inactive)" value={c.psInactive} accent="slate" />
           </div>
 
           <Section
-            title={`🆕 ناقصة على Pure Seoul — ${c.missingOnPS} (موجودة بمليكاس، أضفها لـPS)`}
+            title={`🆕 ناقصة مؤكّدة على Pure Seoul — ${c.missingOnPS} (ما لها أي شبيه على PS → أضفها)`}
             onExport={res.missingOnPS.length ? () => downloadCsv(
-              "pure_seoul_missing.csv",
+              "pure_seoul_missing_confident.csv",
               ["SKU", "Name EN", "Price (QAR)", "Category"],
               res.missingOnPS.map((p) => [p.sku, p.name_en, p.price as any, p.category])
             ) : undefined}
           >
             <List items={res.missingOnPS} render={(p) => <Row a={p.name_en} b={p.sku} c={p.price != null ? `${p.price} ر.ق` : ""} />} total={c.missingOnPS} />
+          </Section>
+
+          <Section
+            title={`🔍 يحتاج مراجعة — ${c.reviewOnPS} (شبيه موجود على PS باسم/مقاس مختلف)`}
+            onExport={res.reviewOnPS.length ? () => downloadCsv(
+              "pure_seoul_review.csv",
+              ["SKU", "Malika name", "Closest Pure Seoul name", "Match %"],
+              res.reviewOnPS.map((p) => [p.sku, p.name_en, p.psName, p.score != null ? Math.round(p.score * 100) : ""])
+            ) : undefined}
+          >
+            <List items={res.reviewOnPS} render={(p) => (
+              <div className="space-y-0.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 flex-1 truncate text-ink">{p.name_en ?? "—"}</span>
+                  <span className="shrink-0 font-mono text-[10px] text-muted">{p.sku} · {p.score != null ? Math.round(p.score * 100) + "%" : ""}</span>
+                </div>
+                <p className="truncate text-[11px] text-amber-700">≈ PS: {p.psName}</p>
+              </div>
+            )} total={c.reviewOnPS} />
           </Section>
 
           <Section
