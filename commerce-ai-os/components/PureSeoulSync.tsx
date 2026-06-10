@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { comparePureSeoul, type PSCompare, type PSItem } from "@/app/(app)/import-export/pure-seoul-actions";
 
@@ -17,6 +17,26 @@ export default function PureSeoulSync() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [res, setRes] = useState<PSCompare | null>(null);
+  // SKUs selected to publish to Pure Seoul (the "approve" step).
+  const [pub, setPub] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    // Default: select all confident-missing (most likely to publish).
+    if (res?.ok) setPub(new Set(res.missingOnPS.map((p) => p.sku).filter(Boolean) as string[]));
+    else setPub(new Set());
+  }, [res]);
+  const togglePub = (sku: string | null) => {
+    if (!sku) return;
+    setPub((s) => { const n = new Set(s); n.has(sku) ? n.delete(sku) : n.add(sku); return n; });
+  };
+  const exportPublish = () => {
+    if (!res) return;
+    const chosen = [...res.missingOnPS, ...res.reviewOnPS].filter((p) => p.sku && pub.has(p.sku));
+    downloadCsv(
+      "pure_seoul_PUBLISH_list.csv",
+      ["SKU", "Name EN", "Price (QAR)", "Category"],
+      chosen.map((p) => [p.sku, p.name_en, p.price as any, p.category ?? ""])
+    );
+  };
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     setError(null); setRes(null);
@@ -93,6 +113,17 @@ export default function PureSeoulSync() {
 
       {res?.ok && c ? (
         <>
+          {/* Publish bar: the curated list to push to Pure Seoul on Snoonu. */}
+          <div className="card flex flex-col gap-2 border-emerald-200 bg-emerald-50/60 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">قائمة النشر لـ Pure Seoul</h3>
+              <p className="text-xs text-muted">المحدّد أدناه ({pub.size} منتج) = اللي بتنشره على Pure Seoul. صدّره وارفعه لسنونو.</p>
+            </div>
+            <button onClick={exportPublish} disabled={pub.size === 0} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+              ⬇ تصدير قائمة النشر ({pub.size})
+            </button>
+          </div>
+
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="صفوف Pure Seoul" value={c.psRows} />
             <Stat label="متطابق مع مليكاس" value={c.matched} />
@@ -114,7 +145,7 @@ export default function PureSeoulSync() {
               res.missingOnPS.map((p) => [p.sku, p.name_en, p.price as any, p.category])
             ) : undefined}
           >
-            <List items={res.missingOnPS} render={(p) => <Row a={p.name_en} b={p.sku} c={p.price != null ? `${p.price} ر.ق` : ""} />} total={c.missingOnPS} />
+            <List items={res.missingOnPS} render={(p) => <Row a={p.name_en} b={p.sku} c={p.price != null ? `${p.price} ر.ق` : ""} />} total={c.missingOnPS} sel={pub} onToggle={togglePub} />
           </Section>
 
           <Section
@@ -133,7 +164,7 @@ export default function PureSeoulSync() {
                 </div>
                 <p className="truncate text-[11px] text-amber-700">≈ PS: {p.psName}</p>
               </div>
-            )} total={c.reviewOnPS} />
+            )} total={c.reviewOnPS} sel={pub} onToggle={togglePub} />
           </Section>
 
           <Section
@@ -178,12 +209,43 @@ function Section({ title, children, onExport }: { title: string; children: React
     </div>
   );
 }
-function List({ items, render, total }: { items: PSItem[]; render: (p: PSItem) => React.ReactNode; total: number }) {
+function List({ items, render, total, sel, onToggle }: {
+  items: PSItem[];
+  render: (p: PSItem) => React.ReactNode;
+  total: number;
+  sel?: Set<string>;
+  onToggle?: (sku: string | null) => void;
+}) {
   if (items.length === 0) return <p className="text-sm text-slate-400">لا شيء.</p>;
+  // When selection is enabled, offer a select-all / none toggle scoped to this list.
+  const selectable = !!sel && !!onToggle;
+  const skus = items.map((p) => p.sku).filter(Boolean) as string[];
+  const allOn = selectable && skus.length > 0 && skus.every((s) => sel!.has(s));
+  const toggleAll = () => { if (!onToggle) return; skus.forEach((s) => { if (allOn === sel!.has(s)) onToggle(s); }); };
   return (
     <>
+      {selectable ? (
+        <label className="mb-2 flex items-center gap-2 text-xs text-muted">
+          <input type="checkbox" checked={allOn} onChange={toggleAll} className="h-3.5 w-3.5" />
+          {allOn ? "إلغاء تحديد الكل" : "تحديد الكل للنشر"} ({skus.filter((s) => sel!.has(s)).length}/{skus.length})
+        </label>
+      ) : null}
       <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
-        {items.map((p, i) => <li key={i} className="px-3 py-2 text-sm">{render(p)}</li>)}
+        {items.map((p, i) => (
+          <li key={i} className="flex items-center gap-2 px-3 py-2 text-sm">
+            {selectable ? (
+              <input
+                type="checkbox"
+                checked={!!p.sku && sel!.has(p.sku)}
+                disabled={!p.sku}
+                onChange={() => onToggle!(p.sku)}
+                className="h-3.5 w-3.5 shrink-0"
+                title={p.sku ? "اختر للنشر على Pure Seoul" : "بدون SKU"}
+              />
+            ) : null}
+            <div className="min-w-0 flex-1">{render(p)}</div>
+          </li>
+        ))}
       </ul>
       {total > items.length ? <p className="mt-1 text-xs text-muted">…و {total - items.length} إضافية (نزّل CSV للكل).</p> : null}
     </>
