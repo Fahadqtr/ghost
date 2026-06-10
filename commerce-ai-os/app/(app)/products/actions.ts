@@ -223,6 +223,45 @@ export async function setProductsApproval(ids: string[], approval: string) {
   return { ok: failed === 0, updated, failed };
 }
 
+export interface MatchedProduct { id: string; sku: string | null; name_en: string | null; approval: string | null }
+
+// Match pasted lines (Snoonu names or SKUs) to catalog products, so the user can
+// bulk-reject the products Snoonu rejected (that status isn't in the export).
+export async function matchProductsByText(text: string): Promise<{ error?: string; matched: MatchedProduct[]; unmatched: string[] }> {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { error: "Not signed in.", matched: [], unmatched: [] };
+  const lines = [...new Set((text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean))];
+  if (lines.length === 0) return { matched: [], unmatched: [] };
+
+  const supabase = createClient();
+  const all: any[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await supabase.from("products").select("id, sku, name_en, name_ar, approval").range(f, f + 999);
+    if (error) return { error: error.message, matched: [], unmatched: [] };
+    all.push(...(data ?? []));
+    if ((data ?? []).length < 1000) break;
+  }
+  const norm = (s: string) => String(s ?? "").toLowerCase().trim();
+  const matched: MatchedProduct[] = [];
+  const seen = new Set<string>();
+  const unmatched: string[] = [];
+  for (const line of lines) {
+    // strip trailing ellipsis from truncated names copied out of the Snoonu app
+    const ln = norm(line).replace(/[.…]+$/, "").trim();
+    if (!ln) continue;
+    const hits = all.filter((p) =>
+      norm(p.sku) === ln ||
+      (p.name_en && norm(p.name_en).includes(ln)) ||
+      (p.name_ar && norm(p.name_ar).includes(ln))
+    );
+    if (hits.length === 0) { unmatched.push(line); continue; }
+    for (const h of hits) {
+      if (!seen.has(h.id)) { seen.add(h.id); matched.push({ id: h.id, sku: h.sku, name_en: h.name_en, approval: h.approval }); }
+    }
+  }
+  return { matched, unmatched };
+}
+
 export async function deleteProduct(id: string) {
   const supabase = createClient();
   // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).

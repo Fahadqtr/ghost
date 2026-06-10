@@ -1,5 +1,6 @@
 import Link from "next/link";
 import SnoonuSync from "@/components/SnoonuSync";
+import RejectByPaste from "@/components/RejectByPaste";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export default function SnoonuSyncPage() {
           before applying.
         </p>
       </div>
+      <RejectByPaste />
       <SnoonuSync />
     </div>
   );

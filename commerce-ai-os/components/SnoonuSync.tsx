@@ -246,14 +246,15 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
         const inStock = unavList.filter((r) => (Number(r.stock) || 0) > 0).length;
         const outStock = unavList.length - inStock;
         return (
-          <Section title={`⛔ غير متاحة على سنونو — ${diff.counts.unavailable}`}>
+          <Section title={`⛔ غير متاحة على سنونو · Availability=False — ${diff.counts.unavailable}`}>
             {unavList.length === 0 ? (
               <Empty text={diff.counts.unavailable === 0 ? "كل المنتجات متاحة على سنونو. ✅" : "تمت مراجعة كل غير المتاحة."} />
             ) : (
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs text-muted">
-                    موقوفة على سنونو. <span className="text-slate-700">{inStock} عندها مخزون (موقوفة عمدًا)</span> · <span className="text-amber-700">{outStock} نافدة</span>. الموقوفة عمدًا أعلى القائمة.
+                    عمود Availability=False (مب بالضرورة «مرفوضة» — حالة الرفض مب بالتصدير؛ استخدم أداة اللصق فوق لها).
+                    <span className="text-slate-700"> {inStock} عندها مخزون</span> · <span className="text-amber-700">{outStock} نافدة</span>.
                   </span>
                   <button onClick={rejectAllUnav} disabled={unavBusy} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">
                     {unavBusy ? "…" : `⛔ ارفض الكل عندنا (${unavList.length})`}

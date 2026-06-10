@@ -1,0 +1,112 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import {
+  matchProductsByText, setProductsApproval, type MatchedProduct,
+} from "@/app/(app)/products/actions";
+
+// Paste the products Snoonu rejected (names or SKUs) → match to our catalog →
+// reject the selected ones in one click. Snoonu's rejection status isn't in the
+// export, so this bridges that gap.
+export default function RejectByPaste() {
+  const router = useRouter();
+  const [text, setText] = useState("");
+  const [matched, setMatched] = useState<MatchedProduct[] | null>(null);
+  const [unmatched, setUnmatched] = useState<string[]>([]);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [matching, startMatch] = useTransition();
+  const [rejecting, startReject] = useTransition();
+  const [done, setDone] = useState<string | null>(null);
+
+  const match = () => {
+    setDone(null);
+    startMatch(async () => {
+      const res = await matchProductsByText(text);
+      if (res.error) { alert(res.error); return; }
+      setMatched(res.matched);
+      setUnmatched(res.unmatched);
+      setSel(new Set(res.matched.map((m) => m.id))); // all selected by default
+    });
+  };
+
+  const toggle = (id: string) =>
+    setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const reject = () => {
+    const ids = [...sel];
+    if (ids.length === 0) { alert("اختر منتجًا واحدًا على الأقل."); return; }
+    if (!confirm(`رفض ${ids.length} منتج في كتالوجك؟`)) return;
+    startReject(async () => {
+      const res = await setProductsApproval(ids, "Rejected");
+      if (res.error) { alert(res.error); return; }
+      setDone(`✓ تم رفض ${res.updated} منتج${res.failed ? ` · فشل ${res.failed}` : ""}.`);
+      setMatched((m) => (m ? m.filter((x) => !sel.has(x.id)) : m));
+      setSel(new Set());
+      router.refresh();
+    });
+  };
+
+  return (
+    <div className="card space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold text-ink">رفض المرفوضة من سنونو (لصق القائمة)</h3>
+        <p className="text-xs text-muted">
+          حالة «Rejected» في سنونو مب موجودة بالتصدير. الصق أسماء المنتجات المرفوضة (أو SKU)، سطر لكل منتج —
+          نطابقها بكتالوجك وترفضها دفعة. (تقدر تنسخها من قسم Drafts &amp; Approvals في تطبيق سنونو.)
+        </p>
+      </div>
+
+      <textarea
+        className="input min-h-28 font-mono text-xs"
+        placeholder={"Rolex Submariner Men's Watch\nTvg Face & Body Whitening\nmk935\n…"}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <button onClick={match} disabled={matching || !text.trim()} className="btn-primary disabled:opacity-50">
+        {matching ? "جاري المطابقة…" : "🔎 طابق"}
+      </button>
+
+      {matched ? (
+        <div className="space-y-3 border-t border-slate-100 pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm text-slate-600">طابق <strong>{matched.length}</strong> منتج · محدد {sel.size}</span>
+            <div className="flex gap-2 text-xs">
+              <button type="button" onClick={() => setSel(new Set(matched.map((m) => m.id)))} className="btn-ghost px-2 py-1">تحديد الكل</button>
+              <button type="button" onClick={() => setSel(new Set())} className="btn-ghost px-2 py-1">إلغاء</button>
+            </div>
+          </div>
+
+          {matched.length > 0 ? (
+            <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+              {matched.map((m) => (
+                <li key={m.id}>
+                  <label className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50">
+                    <input type="checkbox" checked={sel.has(m.id)} onChange={() => toggle(m.id)} className="h-4 w-4" />
+                    <span className="min-w-0 flex-1 truncate text-ink">{m.name_en ?? "—"}</span>
+                    {m.approval === "Rejected" ? <span className="badge shrink-0 bg-red-100 text-red-700">مرفوض مسبقًا</span> : null}
+                    <span className="shrink-0 font-mono text-xs text-muted">{m.sku ?? "—"}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-sm text-slate-400">ما في تطابق.</p>}
+
+          {unmatched.length > 0 ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              ⚠ ما لقيت تطابق لـ {unmatched.length} سطر: {unmatched.slice(0, 10).join("، ")}{unmatched.length > 10 ? "…" : ""}
+            </div>
+          ) : null}
+
+          {matched.length > 0 ? (
+            <button onClick={reject} disabled={rejecting || sel.size === 0} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
+              {rejecting ? "جاري الرفض…" : `⛔ ارفض المحدد (${sel.size})`}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {done ? <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{done}</p> : null}
+    </div>
+  );
+}
