@@ -37,6 +37,7 @@ export interface ProductInput {
   stock_status: string;
   platform_status: string;
   approval: string;
+  rejection_reason: string;
   image_filename: string;
   image_url: string;
   description_en: string;
@@ -90,6 +91,7 @@ function toProductRow(input: ProductInput) {
     stock_status: str(input.stock_status),
     platform_status: str(input.platform_status),
     approval: str(input.approval),
+    rejection_reason: str(input.rejection_reason),
     image_filename: str(input.image_filename),
     image_url: str(input.image_url),
     description_en: cleanStr(input.description_en),
@@ -214,7 +216,8 @@ export async function setProductsApproval(ids: string[], approval: string, reaso
   const supabase = createClient();
   const value = approval === "" ? null : approval;
   const patch: Record<string, unknown> = { approval: value };
-  if (reason && reason.trim()) patch.notes = `مرفوض (سنونو): ${reason.trim()}`;
+  // Record/clear the rejection reason on its own column.
+  if (reason !== undefined) patch.rejection_reason = reason.trim() || null;
   let updated = 0, failed = 0;
   for (let i = 0; i < list.length; i += 200) {
     const chunk = list.slice(i, i + 200);

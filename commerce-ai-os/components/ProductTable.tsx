@@ -18,6 +18,7 @@ export interface ProductRow {
   name_ar: string | null;
   main_category: string | null;
   approval: string | null;
+  rejection_reason: string | null;
   platform_status: string | null;
   price: number | null;
   discount_price: number | null;
@@ -108,7 +109,10 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         (p.sku ?? "").toLowerCase().includes(needle) ||
         (p.barcode ?? "").toLowerCase().includes(needle);
       const matchesCat = !cat || p.main_category === cat;
-      const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
+      const matchesAppr = !appr || (
+        appr === "none" ? !p.approval
+        : appr === "image" ? (p.approval === "Rejected" && (p.rejection_reason ?? "").includes("صورة"))
+        : p.approval === appr);
       const n = Number(p.stock);
       const matchesStk = !stk
         || (stk === "out" ? !(n > 0)
@@ -143,6 +147,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           <option value="">كل الحالات</option>
           <option value="Approved">Approved · معتمد</option>
           <option value="Rejected">Rejected · مرفوض</option>
+          <option value="image">مرفوض · بسبب الصورة</option>
           <option value="SentAI">SentAI</option>
           <option value="none">بدون حالة</option>
         </select>

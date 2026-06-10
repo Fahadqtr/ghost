@@ -40,6 +40,7 @@ function emptyInput(): ProductInput {
     stock_status: "",
     platform_status: "",
     approval: "",
+    rejection_reason: "",
     image_filename: "",
     image_url: "",
     description_en: "",
@@ -173,6 +174,11 @@ export default function ProductForm({
             <option value="SentAI">SentAI</option>
           </select>
         </Field>
+        {form.approval === "Rejected" ? (
+          <Field label="سبب الرفض · Rejection reason">
+            <input className="input" value={form.rejection_reason} onChange={(e) => set("rejection_reason", e.target.value)} placeholder="مثال: بسبب الصورة" />
+          </Field>
+        ) : null}
       </Section>
 
       {/* Media */}
