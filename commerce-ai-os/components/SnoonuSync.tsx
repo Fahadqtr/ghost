@@ -114,7 +114,7 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
   const [unavBusy, startUnav] = useTransition();
   const rejectUnav = (productId: string) => {
     startUnav(async () => {
-      const res = await setProductApproval(productId, "Rejected");
+      const res = await setProductApproval(productId, "Rejected", "غير متاح على سنونو");
       if (res?.error) alert(res.error);
       else setUnavList((l) => l.filter((r) => r.product_id !== productId));
     });
@@ -123,7 +123,7 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
     if (!confirm(`رفض ${unavList.length} منتج في كتالوجك (غير متاحة على سنونو)؟`)) return;
     const ids = unavList.map((r) => r.product_id);
     startUnav(async () => {
-      const res = await setProductsApproval(ids, "Rejected");
+      const res = await setProductsApproval(ids, "Rejected", "غير متاح على سنونو");
       if (res?.error) alert(res.error);
       if (res?.ok || (res?.updated ?? 0) > 0) setUnavList([]);
     });

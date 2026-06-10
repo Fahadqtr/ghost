@@ -20,6 +20,7 @@ export interface ProductRow {
   approval: string | null;
   rejection_reason: string | null;
   platform_status: string | null;
+  notes: string | null;
   price: number | null;
   discount_price: number | null;
   stock: number | null;
@@ -97,6 +98,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
   const [appr, setAppr] = useState("");
   const [stk, setStk] = useState("");
   const [plat, setPlat] = useState("");
+  const [grp, setGrp] = useState("");
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
@@ -109,21 +111,24 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         (p.sku ?? "").toLowerCase().includes(needle) ||
         (p.barcode ?? "").toLowerCase().includes(needle);
       const matchesCat = !cat || p.main_category === cat;
-      const matchesAppr = !appr || (
-        appr === "none" ? !p.approval
-        : appr === "image" ? (p.approval === "Rejected" && (p.rejection_reason ?? "").includes("صورة"))
-        : p.approval === appr);
+      const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
       const n = Number(p.stock);
       const matchesStk = !stk
         || (stk === "out" ? !(n > 0)
           : stk === "low" ? (n > 0 && n < 10)
           : stk === "in" ? n >= 10 : true);
       const matchesPlat = !plat || (plat === "active" ? p.platform_status === "Active" : p.platform_status !== "Active");
-      return matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat;
+      const rr = p.rejection_reason ?? "";
+      const matchesGrp = !grp || (
+        grp === "new" ? (p.notes ?? "").startsWith("Imported from Snoonu sync")
+        : grp === "image" ? rr.includes("صورة")
+        : grp === "unavail" ? rr.includes("غير متاح")
+        : true);
+      return matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
     });
-  }, [products, q, cat, appr, stk, plat]);
+  }, [products, q, cat, appr, stk, plat, grp]);
 
-  useEffect(() => { setPage(1); }, [q, cat, appr, stk, plat]);
+  useEffect(() => { setPage(1); }, [q, cat, appr, stk, plat, grp]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, totalPages);
@@ -147,9 +152,14 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           <option value="">كل الحالات</option>
           <option value="Approved">Approved · معتمد</option>
           <option value="Rejected">Rejected · مرفوض</option>
-          <option value="image">مرفوض · بسبب الصورة</option>
           <option value="SentAI">SentAI</option>
           <option value="none">بدون حالة</option>
+        </select>
+        <select className="input sm:max-w-[14rem]" value={grp} onChange={(e) => setGrp(e.target.value)}>
+          <option value="">كل المجموعات</option>
+          <option value="new">🆕 جديد · من سنونو</option>
+          <option value="image">🚫 مرفوض · بسبب الصورة</option>
+          <option value="unavail">⛔ مرفوض · غير متاح على سنونو</option>
         </select>
         <select className="input sm:max-w-[12rem]" value={stk} onChange={(e) => setStk(e.target.value)}>
           <option value="">كل المخزون</option>

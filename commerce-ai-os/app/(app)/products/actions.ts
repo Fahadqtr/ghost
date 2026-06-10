@@ -187,17 +187,17 @@ export async function updateProduct(id: string, input: ProductInput) {
 }
 
 // Quick approve/reject from the list or dashboard (no full form). Empty -> null.
+// Optional reason (written to rejection_reason) records WHY.
 const APPROVAL_OPTS = new Set(["Approved", "Rejected", "SentAI", ""]);
-export async function setProductApproval(id: string, approval: string) {
+export async function setProductApproval(id: string, approval: string, reason?: string) {
   const { data: { user } } = await createClient().auth.getUser();
   if (!user) return { error: "Not signed in." };
   if (!id) return { error: "Missing product id." };
   if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".` };
   const supabase = createClient();
-  const { error } = await supabase
-    .from("products")
-    .update({ approval: approval === "" ? null : approval })
-    .eq("id", id);
+  const patch: Record<string, unknown> = { approval: approval === "" ? null : approval };
+  if (reason !== undefined) patch.rejection_reason = reason.trim() || null;
+  const { error } = await supabase.from("products").update(patch).eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/products");
   revalidatePath("/dashboard");
