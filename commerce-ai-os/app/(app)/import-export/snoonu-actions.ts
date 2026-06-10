@@ -66,13 +66,21 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
       .filter((p: any) => p.snoonu_id && exportIds.has(String(p.snoonu_id)) && String(p.approval) === "Rejected")
       .map((p: any) => ({ snoonu_id: String(p.snoonu_id), product_id: p.id, sku: p.sku ?? null, name_en: p.name_en ?? null }));
 
-    // Matched products marked UNAVAILABLE on Snoonu (Availability=False in the file).
-    const unavailIds = new Set(
-      rows.filter((r) => String(r.availability ?? "").trim().toLowerCase() === "false").map((r) => s(r.id)).filter(Boolean)
-    );
+    // Matched products marked UNAVAILABLE on Snoonu (Availability=False in the
+    // file). Carry the Snoonu stock so the UI can tell "disabled" (has stock)
+    // from "out of stock".
+    const stockBy = new Map<string, string>();
+    const unavailIds = new Set<string>();
+    for (const r of rows) {
+      const id = s(r.id);
+      if (!id) continue;
+      stockBy.set(id, s(r.stock));
+      if (String(r.availability ?? "").trim().toLowerCase() === "false") unavailIds.add(id);
+    }
     const unavailable = products
       .filter((p: any) => p.snoonu_id && unavailIds.has(String(p.snoonu_id)))
-      .map((p: any) => ({ snoonu_id: String(p.snoonu_id), product_id: p.id, sku: p.sku ?? null, name_en: p.name_en ?? null }));
+      .map((p: any) => ({ snoonu_id: String(p.snoonu_id), product_id: p.id, sku: p.sku ?? null, name_en: p.name_en ?? null, stock: stockBy.get(String(p.snoonu_id)) ?? null }))
+      .sort((a: any, b: any) => (Number(b.stock) || 0) - (Number(a.stock) || 0)); // in-stock (deliberately disabled) first
 
     return {
       ok: true,

@@ -242,31 +242,45 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
       </Section>
 
       {/* UNAVAILABLE on Snoonu (Availability=False) — the real "rejected on Snoonu" */}
-      <Section title={`⛔ غير متاحة على سنونو (Availability = False) — ${diff.counts.unavailable}`}>
-        {unavList.length === 0 ? (
-          <Empty text={diff.counts.unavailable === 0 ? "كل المنتجات متاحة على سنونو. ✅" : "تمت مراجعة كل غير المتاحة."} />
-        ) : (
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-muted">منتجات موقوفة على سنونو وموجودة في كتالوجك. تقدر ترفضها عندك لتتطابق.</span>
-              <button onClick={rejectAllUnav} disabled={unavBusy} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">
-                {unavBusy ? "…" : `⛔ ارفض الكل عندنا (${unavList.length})`}
-              </button>
-            </div>
-            <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
-              {unavList.map((r) => (
-                <li key={r.product_id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-                  <span className="min-w-0 flex-1 truncate text-ink">{r.name_en ?? "—"}</span>
-                  <span className="shrink-0 font-mono text-xs text-muted">{r.sku ?? "—"}</span>
-                  <button onClick={() => rejectUnav(r.product_id)} disabled={unavBusy} className="shrink-0 rounded-lg border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50">
-                    ارفض عندنا
+      {(() => {
+        const inStock = unavList.filter((r) => (Number(r.stock) || 0) > 0).length;
+        const outStock = unavList.length - inStock;
+        return (
+          <Section title={`⛔ غير متاحة على سنونو — ${diff.counts.unavailable}`}>
+            {unavList.length === 0 ? (
+              <Empty text={diff.counts.unavailable === 0 ? "كل المنتجات متاحة على سنونو. ✅" : "تمت مراجعة كل غير المتاحة."} />
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs text-muted">
+                    موقوفة على سنونو. <span className="text-slate-700">{inStock} عندها مخزون (موقوفة عمدًا)</span> · <span className="text-amber-700">{outStock} نافدة</span>. الموقوفة عمدًا أعلى القائمة.
+                  </span>
+                  <button onClick={rejectAllUnav} disabled={unavBusy} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                    {unavBusy ? "…" : `⛔ ارفض الكل عندنا (${unavList.length})`}
                   </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </Section>
+                </div>
+                <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+                  {unavList.map((r) => {
+                    const st = Number(r.stock) || 0;
+                    return (
+                      <li key={r.product_id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                        <span className="min-w-0 flex-1 truncate text-ink">{r.name_en ?? "—"}</span>
+                        <span className={`badge shrink-0 ${st > 0 ? "bg-slate-100 text-slate-600" : "bg-amber-100 text-amber-700"}`}>
+                          {st > 0 ? `مخزون ${st}` : "نافد"}
+                        </span>
+                        <span className="shrink-0 font-mono text-xs text-muted">{r.sku ?? "—"}</span>
+                        <button onClick={() => rejectUnav(r.product_id)} disabled={unavBusy} className="shrink-0 rounded-lg border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50">
+                          ارفض عندنا
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </Section>
+        );
+      })()}
 
       {diff.missingOptionalCols.length ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">

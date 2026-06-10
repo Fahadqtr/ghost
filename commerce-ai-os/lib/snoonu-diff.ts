@@ -16,12 +16,13 @@ export interface SnoonuExportRow {
   is_promoted?: string;
   has_buy1get1?: string;
   availability?: string; // Snoonu "Availability" column (True/False) — not synced, used to flag unavailable
+  stock?: string;        // Snoonu "Stock" column — used to tell "disabled" from "out of stock"
 }
 
 export interface FieldChange { field: string; old: string; new: string }
 export interface UpdatedEntry { snoonu_id: string; product_id: string; name_en: string; changes: FieldChange[] }
 export interface NewEntry { id: string; name_en: string }
-export interface MissingEntry { snoonu_id: string; product_id: string; sku: string | null; name_en: string | null }
+export interface MissingEntry { snoonu_id: string; product_id: string; sku: string | null; name_en: string | null; stock?: string | null }
 
 export interface SnoonuDiff {
   ok: boolean;
@@ -201,7 +202,8 @@ export function mapExportRows(raw: Record<string, unknown>[]): {
   for (const h of headers) {
     const n = normHeader(h);
     // The Availability/Stock columns include the store name, so match by prefix.
-    const f = HEADER_MAP[n] ?? (n.startsWith("availability") ? "availability" : undefined);
+    const f = HEADER_MAP[n]
+      ?? (n.startsWith("availability") ? "availability" : n.startsWith("stock") ? "stock" : undefined);
     if (f) map[h] = f;
   }
   const rows = raw.map((r) => {
