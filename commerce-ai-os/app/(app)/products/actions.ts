@@ -202,6 +202,27 @@ export async function setProductApproval(id: string, approval: string) {
   return { ok: true };
 }
 
+// Bulk approve/reject (e.g. reject everything Snoonu marked unavailable).
+export async function setProductsApproval(ids: string[], approval: string) {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { error: "Not signed in.", updated: 0 };
+  const list = (ids ?? []).filter(Boolean);
+  if (list.length === 0) return { error: "No products selected.", updated: 0 };
+  if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".`, updated: 0 };
+  const supabase = createClient();
+  const value = approval === "" ? null : approval;
+  let updated = 0, failed = 0;
+  for (let i = 0; i < list.length; i += 200) {
+    const chunk = list.slice(i, i + 200);
+    const { error, count } = await supabase
+      .from("products").update({ approval: value }, { count: "exact" }).in("id", chunk);
+    if (error) failed += chunk.length; else updated += count ?? chunk.length;
+  }
+  revalidatePath("/products");
+  revalidatePath("/dashboard");
+  return { ok: failed === 0, updated, failed };
+}
+
 export async function deleteProduct(id: string) {
   const supabase = createClient();
   // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).

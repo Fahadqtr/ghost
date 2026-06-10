@@ -15,6 +15,7 @@ export interface SnoonuExportRow {
   is_featured?: string;
   is_promoted?: string;
   has_buy1get1?: string;
+  availability?: string; // Snoonu "Availability" column (True/False) — not synced, used to flag unavailable
 }
 
 export interface FieldChange { field: string; old: string; new: string }
@@ -27,13 +28,14 @@ export interface SnoonuDiff {
   error?: string;
   existingOptionalCols: string[];
   missingOptionalCols: string[];
-  counts: { exportRows: number; matched: number; updated: number; newCount: number; missing: number; unchanged: number; rejected: number };
+  counts: { exportRows: number; matched: number; updated: number; newCount: number; missing: number; unchanged: number; rejected: number; unavailable: number };
   fieldCounts: Record<string, number>;     // per-column total # of changed rows
   changedColsPerProduct: string[][];        // for each updated product, the changed column names
   updated: UpdatedEntry[];
   newProducts: NewEntry[];
   missing: MissingEntry[];
   rejected: MissingEntry[];                 // matched products that are Rejected in our catalog
+  unavailable: MissingEntry[];              // matched products with Availability=False on Snoonu
 }
 
 export type Field = { ex: keyof SnoonuExportRow; col: string; type: "str" | "num" | "bool" };
@@ -196,7 +198,12 @@ export function mapExportRows(raw: Record<string, unknown>[]): {
   if (!raw.length) return { rows: [], hasId: false, headers: [] };
   const headers = Object.keys(raw[0]);
   const map: Record<string, keyof SnoonuExportRow> = {};
-  for (const h of headers) { const f = HEADER_MAP[normHeader(h)]; if (f) map[h] = f; }
+  for (const h of headers) {
+    const n = normHeader(h);
+    // The Availability/Stock columns include the store name, so match by prefix.
+    const f = HEADER_MAP[n] ?? (n.startsWith("availability") ? "availability" : undefined);
+    if (f) map[h] = f;
+  }
   const rows = raw.map((r) => {
     const out: any = {};
     for (const [h, f] of Object.entries(map)) out[f] = String(r[h] ?? "").trim();
