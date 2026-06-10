@@ -60,6 +60,13 @@ export default async function ImportExportPage() {
         </div>
         <span className="text-brand">→</span>
       </Link>
+      <Link href="/import-export/pure-seoul" className="card flex items-center justify-between hover:bg-slate-50">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">🏬 Pure Seoul — مطابقة مليكاس</h3>
+          <p className="text-xs text-muted">ارفع تصدير Pure Seoul → شوف الناقص/الزائد/فروق الأسعار مقابل مليكاس.</p>
+        </div>
+        <span className="text-brand">→</span>
+      </Link>
       <ExcelImport />
       <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} />
       <TalabatExport categories={categories} newCount={newCount ?? 0} />
