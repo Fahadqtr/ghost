@@ -1,5 +1,6 @@
 "use server";
 
+import Anthropic from "@anthropic-ai/sdk";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -260,6 +261,45 @@ export async function matchProductsByText(text: string): Promise<{ error?: strin
     }
   }
   return { matched, unmatched };
+}
+
+// Read Snoonu "Drafts & Approvals" screenshots and extract the REJECTED product
+// names (vision via Claude). Needs ANTHROPIC_API_KEY (set on Vercel).
+export async function extractRejectedFromImages(
+  images: { media_type: string; data: string }[]
+): Promise<{ error?: string; names: string[] }> {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { error: "Not signed in.", names: [] };
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return { error: "ميزة قراءة الصور غير مفعّلة (ANTHROPIC_API_KEY).", names: [] };
+  const imgs = (images ?? []).filter((i) => i?.data && i?.media_type).slice(0, 8);
+  if (imgs.length === 0) return { error: "ما في صورة.", names: [] };
+
+  const PROMPT =
+    "هذي لقطات شاشة من تطبيق سنونو (قسم Drafts & Approvals). كل منتج له اسم وشارة حالة " +
+    "(Rejected / Draft / Awaiting Approval). استخرج فقط أسماء المنتجات الإنجليزية اللي حالتها " +
+    "Rejected. بعض الأسماء مقطوعة بـ '…' — رجّعها كما هي. أجب بمصفوفة JSON من النصوص فقط، بدون أي كلام آخر.";
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const content: any[] = imgs.map((im) => ({
+      type: "image",
+      source: { type: "base64", media_type: im.media_type, data: im.data },
+    }));
+    content.push({ type: "text", text: PROMPT });
+    const resp = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1500,
+      messages: [{ role: "user", content }],
+    });
+    const text = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const m = text.match(/\[[\s\S]*\]/);
+    let names: string[] = [];
+    if (m) { try { names = JSON.parse(m[0]).filter((x: any) => typeof x === "string" && x.trim()); } catch {} }
+    return { names: [...new Set(names.map((n) => n.trim()))] };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "فشل قراءة الصورة.", names: [] };
+  }
 }
 
 export async function deleteProduct(id: string) {

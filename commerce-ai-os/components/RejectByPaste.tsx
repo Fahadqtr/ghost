@@ -3,8 +3,23 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
-  matchProductsByText, setProductsApproval, type MatchedProduct,
+  matchProductsByText, setProductsApproval, extractRejectedFromImages,
+  type MatchedProduct,
 } from "@/app/(app)/products/actions";
+
+// Read a File as { media_type, base64 data } for the vision call.
+function fileToImage(file: File): Promise<{ media_type: string; data: string }> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || "");
+      const data = s.includes(",") ? s.slice(s.indexOf(",") + 1) : s;
+      resolve({ media_type: file.type || "image/jpeg", data });
+    };
+    r.onerror = () => reject(new Error("read failed"));
+    r.readAsDataURL(file);
+  });
+}
 
 // Paste the products Snoonu rejected (names or SKUs) → match to our catalog →
 // reject the selected ones in one click. Snoonu's rejection status isn't in the
@@ -17,7 +32,26 @@ export default function RejectByPaste() {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [matching, startMatch] = useTransition();
   const [rejecting, startReject] = useTransition();
+  const [reading, startRead] = useTransition();
   const [done, setDone] = useState<string | null>(null);
+
+  const onPickImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length === 0) return;
+    setDone(null);
+    startRead(async () => {
+      try {
+        const images = await Promise.all(files.map(fileToImage));
+        const res = await extractRejectedFromImages(images);
+        if (res.error) { alert(res.error); return; }
+        if (res.names.length === 0) { alert("ما لقيت منتجات مرفوضة في الصورة."); return; }
+        setText((prev) => (prev.trim() ? prev.trim() + "\n" : "") + res.names.join("\n"));
+      } catch {
+        alert("تعذّر قراءة الصورة.");
+      }
+    });
+  };
 
   const match = () => {
     setDone(null);
@@ -57,9 +91,18 @@ export default function RejectByPaste() {
         </p>
       </div>
 
+      {/* Screenshot → auto-extract rejected names (vision). */}
+      <div className="flex flex-col gap-2 rounded-lg border border-dashed border-slate-300 p-3 sm:flex-row sm:items-center">
+        <label className={`btn-ghost inline-flex cursor-pointer items-center gap-1 ${reading ? "pointer-events-none opacity-60" : ""}`}>
+          {reading ? "جاري قراءة الصورة…" : "📷 ارفع صورة شاشة من سنونو"}
+          <input type="file" accept="image/*" multiple onChange={onPickImages} disabled={reading} className="hidden" />
+        </label>
+        <span className="text-xs text-muted">يقرأ الأسماء المرفوضة من الصورة ويعبّيها تحت تلقائيًا.</span>
+      </div>
+
       <textarea
         className="input min-h-28 font-mono text-xs"
-        placeholder={"Rolex Submariner Men's Watch\nTvg Face & Body Whitening\nmk935\n…"}
+        placeholder={"الصق الأسماء هنا، أو ارفع صورة فوق…\nRolex Submariner Men's Watch\nmk935"}
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
