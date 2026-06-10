@@ -38,9 +38,9 @@ async function readAllProducts(client: any, cols: string): Promise<Record<string
 export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<SnoonuDiff> {
   const empty: SnoonuDiff = {
     ok: false, existingOptionalCols: [], missingOptionalCols: [],
-    counts: { exportRows: 0, matched: 0, updated: 0, newCount: 0, missing: 0, unchanged: 0, rejected: 0, unavailable: 0 },
+    counts: { exportRows: 0, matched: 0, updated: 0, newCount: 0, missing: 0, unchanged: 0, rejected: 0, unavailable: 0, outOfStock: 0 },
     fieldCounts: {}, changedColsPerProduct: [],
-    updated: [], newProducts: [], missing: [], rejected: [], unavailable: [],
+    updated: [], newProducts: [], missing: [], rejected: [], unavailable: [], outOfStock: [],
   };
   if (!rows?.length) return { ...empty, error: "No rows parsed from the export." };
 
@@ -82,6 +82,11 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
       .map((p: any) => ({ snoonu_id: String(p.snoonu_id), product_id: p.id, sku: p.sku ?? null, name_en: p.name_en ?? null, stock: stockBy.get(String(p.snoonu_id)) ?? null }))
       .sort((a: any, b: any) => (Number(b.stock) || 0) - (Number(a.stock) || 0)); // in-stock (deliberately disabled) first
 
+    // Matched products that are OUT OF STOCK on Snoonu (Stock=0 in the file).
+    const outOfStock = products
+      .filter((p: any) => p.snoonu_id && stockBy.has(String(p.snoonu_id)) && !(Number(stockBy.get(String(p.snoonu_id))) > 0))
+      .map((p: any) => ({ snoonu_id: String(p.snoonu_id), product_id: p.id, sku: p.sku ?? null, name_en: p.name_en ?? null, stock: stockBy.get(String(p.snoonu_id)) ?? null }));
+
     return {
       ok: true,
       existingOptionalCols,
@@ -95,6 +100,7 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
         unchanged: d.unchanged,
         rejected: rejected.length,
         unavailable: unavailable.length,
+        outOfStock: outOfStock.length,
       },
       fieldCounts,
       changedColsPerProduct,
@@ -106,6 +112,7 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
       missing: d.missing.slice(0, 200),
       rejected: rejected.slice(0, 200),
       unavailable: unavailable.slice(0, 300),
+      outOfStock: outOfStock.slice(0, 300),
     };
   } catch (e) {
     return { ...empty, error: e instanceof Error ? e.message : "Unexpected error while computing the diff." };

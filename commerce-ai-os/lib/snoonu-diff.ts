@@ -29,7 +29,7 @@ export interface SnoonuDiff {
   error?: string;
   existingOptionalCols: string[];
   missingOptionalCols: string[];
-  counts: { exportRows: number; matched: number; updated: number; newCount: number; missing: number; unchanged: number; rejected: number; unavailable: number };
+  counts: { exportRows: number; matched: number; updated: number; newCount: number; missing: number; unchanged: number; rejected: number; unavailable: number; outOfStock: number };
   fieldCounts: Record<string, number>;     // per-column total # of changed rows
   changedColsPerProduct: string[][];        // for each updated product, the changed column names
   updated: UpdatedEntry[];
@@ -37,6 +37,7 @@ export interface SnoonuDiff {
   missing: MissingEntry[];
   rejected: MissingEntry[];                 // matched products that are Rejected in our catalog
   unavailable: MissingEntry[];              // matched products with Availability=False on Snoonu
+  outOfStock: MissingEntry[];               // matched products with Stock=0 on Snoonu
 }
 
 export type Field = { ex: keyof SnoonuExportRow; col: string; type: "str" | "num" | "bool" };

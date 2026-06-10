@@ -303,6 +303,26 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
         );
       })()}
 
+      {/* OUT OF STOCK on Snoonu (Stock=0) — informational (Snoonu's stock ≠ ours) */}
+      <Section title={`📦 نافد على سنونو · Stock=0 — ${diff.counts.outOfStock}`}>
+        {diff.outOfStock.length === 0 ? (
+          <Empty text="ما في منتجات نافدة على سنونو. ✅" />
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-muted">مخزونها 0 في سنونو (للعلم — مخزون سنونو منفصل عن مخزونك. راجعها لو تبي تعيد تعبئتها.)</p>
+            <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+              {diff.outOfStock.map((m) => (
+                <li key={m.product_id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                  <a href={`/products/${m.product_id}`} className="min-w-0 flex-1 truncate text-ink hover:underline">{m.name_en ?? "—"}</a>
+                  <span className="badge shrink-0 bg-amber-100 text-amber-700">نافد</span>
+                  <span className="shrink-0 font-mono text-xs text-muted">{m.sku ?? "—"}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Section>
+
       {diff.missingOptionalCols.length ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           <strong>Note:</strong> these export fields have no matching DB column yet, so they’re excluded from the diff/sync:{" "}
