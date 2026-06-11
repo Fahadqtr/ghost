@@ -64,6 +64,9 @@ export default function PureSeoulSync() {
       const priceKey = pick(["price"], (h) => h.includes("price"));
       const approvalKey = pick(["approval"]);
       const bsKey = headers.find((h) => low(h).endsWith("branchstatus")) || headers.find((h) => low(h).startsWith("availability"));
+      // "Stock for [branch]" / "stock" / "quantity" → out-of-stock detection.
+      const stockKey = headers.find((h) => low(h).startsWith("stock"))
+        || headers.find((h) => low(h).includes("stock") || low(h) === "quantity" || low(h) === "qty");
 
       if (!nameEnKey && !idKey && !gidKey) {
         setError(`ما عرفت أعمدة الملف. الأعمدة: ${headers.slice(0, 8).join(", ")}…`);
@@ -82,6 +85,7 @@ export default function PureSeoulSync() {
           price: priceKey ? String(r[priceKey] ?? "") : "",
           approval: approvalKey ? String(r[approvalKey] ?? "") : "",
           branchStatus,
+          stock: stockKey ? String(r[stockKey] ?? "") : "",
         };
       });
       const out = await comparePureSeoul(rows);
@@ -136,6 +140,30 @@ export default function PureSeoulSync() {
             <Stat label="مرفوض على PS" value={c.psRejected} accent="slate" />
             <Stat label="مخفي على PS (inactive)" value={c.psInactive} accent="slate" />
           </div>
+
+          {/* Stock view — موجودة (متوفّرة) vs مخلّصة (نافدة). */}
+          {res.hasStock ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Stat label="موجودة ومتوفّرة على PS" value={c.psInStock} accent="emerald" />
+                <Stat label="مخلّصة (نافدة) على PS" value={c.psOutOfStock} accent="amber" />
+              </div>
+              <Section
+                title={`🚫 مخلّصة (نافدة) على Pure Seoul — ${c.psOutOfStock} (المخزون صفر)`}
+                onExport={res.psOutOfStock.length ? () => downloadCsv(
+                  "pure_seoul_out_of_stock.csv",
+                  ["SKU", "Name EN", "Pure Seoul price", "Stock"],
+                  res.psOutOfStock.map((p) => [p.sku, p.name_en, p.psPrice, p.psStock as any])
+                ) : undefined}
+              >
+                <List items={res.psOutOfStock} render={(p) => <Row a={p.name_en} b={p.sku} c={`مخزون ${p.psStock ?? 0}`} />} total={c.psOutOfStock} />
+              </Section>
+            </>
+          ) : (
+            <div className="card border-amber-200 bg-amber-50 text-xs text-amber-800">
+              ملف Pure Seoul هذا ما فيه عمود مخزون (Stock for…)، فما أقدر أحدّد المخلّصة. ارفع تصدير «AllExportData» اللي فيه عمود المخزون والتوفّر.
+            </div>
+          )}
 
           <Section
             title={`🆕 ناقصة مؤكّدة على Pure Seoul — ${c.missingOnPS} (ما لها أي شبيه على PS → أضفها)`}
@@ -195,7 +223,7 @@ export default function PureSeoulSync() {
 }
 
 function Stat({ label, value, accent }: { label: string; value: number; accent?: string }) {
-  const color = accent === "amber" ? "text-amber-700" : accent === "violet" ? "text-brand-dark" : "text-ink";
+  const color = accent === "amber" ? "text-amber-700" : accent === "violet" ? "text-brand-dark" : accent === "emerald" ? "text-emerald-700" : "text-ink";
   return <div className="card"><p className="text-xs text-muted">{label}</p><p className={`text-xl font-semibold ${color}`}>{value}</p></div>;
 }
 function Section({ title, children, onExport }: { title: string; children: React.ReactNode; onExport?: () => void }) {

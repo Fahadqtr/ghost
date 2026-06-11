@@ -82,6 +82,7 @@ export interface PSRow {
   price?: string;
   approval?: string;
   branchStatus?: string;
+  stock?: string;          // "Stock for …" quantity, when the export has it
 }
 
 export interface PSItem {
@@ -92,6 +93,7 @@ export interface PSItem {
   category?: string | null;
   psName?: string | null;           // closest Pure Seoul name (for review pairs)
   score?: number;                   // match confidence for review pairs
+  psStock?: number | null;          // Pure Seoul stock quantity
 }
 
 export interface PSCompare {
@@ -106,11 +108,16 @@ export interface PSCompare {
     priceDiffs: number;
     psRejected: number;
     psInactive: number;
+    psInStock: number;     // present on PS with stock > 0
+    psOutOfStock: number;  // present on PS but finished (stock <= 0) — مخلّصة
   };
+  hasStock: boolean;       // whether the export carried a Stock column
   missingOnPS: PSItem[];   // confident missing
   reviewOnPS: PSItem[];    // needs human review (name/size variants)
   extraOnPS: PSItem[];
   priceDiffs: PSItem[];
+  psInStock: PSItem[];     // موجودة ومتوفّرة
+  psOutOfStock: PSItem[];  // مخلّصة (نافدة)
 }
 
 const S = (v: unknown) => String(v ?? "").trim();
@@ -145,8 +152,9 @@ const numEq = (a: unknown, b: unknown) => {
 export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
   const empty: PSCompare = {
     ok: false,
-    counts: { psRows: 0, matched: 0, missingOnPS: 0, reviewOnPS: 0, extraOnPS: 0, priceDiffs: 0, psRejected: 0, psInactive: 0 },
-    missingOnPS: [], reviewOnPS: [], extraOnPS: [], priceDiffs: [],
+    counts: { psRows: 0, matched: 0, missingOnPS: 0, reviewOnPS: 0, extraOnPS: 0, priceDiffs: 0, psRejected: 0, psInactive: 0, psInStock: 0, psOutOfStock: 0 },
+    hasStock: false,
+    missingOnPS: [], reviewOnPS: [], extraOnPS: [], priceDiffs: [], psInStock: [], psOutOfStock: [],
   };
   if (!rows?.length) return { ...empty, error: "ما في صفوف في الملف." };
 
@@ -172,17 +180,36 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
     const matchedMalika = new Set<any>();
     const extraOnPS: PSItem[] = [];
     const priceDiffs: PSItem[] = [];
+    const psInStock: PSItem[] = [];
+    const psOutOfStock: PSItem[] = [];
     let matched = 0, psRejected = 0, psInactive = 0;
+    // Did the export carry a usable Stock column? (any row with a numeric stock)
+    const hasStock = rows.some((r) => r.stock !== undefined && r.stock !== "" && !isNaN(Number(r.stock)));
 
     for (const r of rows) {
       if (S(r.approval) === "Rejected") psRejected++;
       if (S(r.branchStatus).toLowerCase() === "inactive") psInactive++;
       const m = byId.get(S(r.global_id)) || byName.get(norm(r.name_en));
-      if (!m) { extraOnPS.push({ sku: null, name_en: S(r.name_en) || null, psPrice: S(r.price) || null }); continue; }
-      matched++;
-      matchedMalika.add(m);
-      if (!numEq(r.price, m.price)) {
-        priceDiffs.push({ sku: m.sku ?? null, name_en: m.name_en ?? null, psPrice: S(r.price) || null, price: m.price ?? null });
+      if (m) {
+        matched++;
+        matchedMalika.add(m);
+        if (!numEq(r.price, m.price)) {
+          priceDiffs.push({ sku: m.sku ?? null, name_en: m.name_en ?? null, psPrice: S(r.price) || null, price: m.price ?? null });
+        }
+      } else {
+        extraOnPS.push({ sku: null, name_en: S(r.name_en) || null, psPrice: S(r.price) || null });
+      }
+      // Stock classification — present (موجودة) vs finished (مخلّصة).
+      if (hasStock) {
+        const qty = Number(r.stock);
+        const item: PSItem = {
+          sku: m?.sku ?? null,
+          name_en: S(r.name_en) || (m?.name_en ?? null),
+          psPrice: S(r.price) || null,
+          psStock: isNaN(qty) ? null : qty,
+        };
+        if (!isNaN(qty) && qty <= 0) psOutOfStock.push(item);
+        else psInStock.push(item);
       }
     }
 
@@ -212,6 +239,7 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
     }
     reviewOnPS.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
+    psOutOfStock.sort((a, b) => (a.psStock ?? 0) - (b.psStock ?? 0));
     return {
       ok: true,
       counts: {
@@ -223,11 +251,16 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
         priceDiffs: priceDiffs.length,
         psRejected,
         psInactive,
+        psInStock: psInStock.length,
+        psOutOfStock: psOutOfStock.length,
       },
+      hasStock,
       missingOnPS: missingOnPS.slice(0, 500),
       reviewOnPS: reviewOnPS.slice(0, 500),
       extraOnPS: extraOnPS.slice(0, 500),
       priceDiffs: priceDiffs.slice(0, 500),
+      psInStock: psInStock.slice(0, 500),
+      psOutOfStock: psOutOfStock.slice(0, 1000),
     };
   } catch (e) {
     return { ...empty, error: e instanceof Error ? e.message : "خطأ غير متوقع." };
