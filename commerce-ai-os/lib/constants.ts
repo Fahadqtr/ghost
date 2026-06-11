@@ -37,10 +37,11 @@ export type Category = (typeof CATEGORIES)[number];
  * keyed by (product_id, platform). Rejecting on one platform never affects
  * another, nor the master data.
  */
+// Note: Malika is itself the Snoonu store, so "Snoonu" is not a separate
+// platform here — it would duplicate the master.
 export const PLATFORMS = [
   { key: "malika", label: "مليكاس", en: "Malika", master: true },
   { key: "pure_seoul", label: "Pure Seoul", en: "Pure Seoul", master: false },
-  { key: "snoonu", label: "Snoonu", en: "Snoonu", master: false },
   { key: "talabat", label: "Talabat", en: "Talabat", master: false },
   { key: "shopify", label: "Shopify", en: "Shopify", master: false },
   { key: "rafeeq", label: "Rafeeq", en: "Rafeeq", master: false },
