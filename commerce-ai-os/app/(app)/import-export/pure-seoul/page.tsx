@@ -1,5 +1,6 @@
 import Link from "next/link";
 import PureSeoulSync from "@/components/PureSeoulSync";
+import RejectByPaste from "@/components/RejectByPaste";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,12 @@ export default function PureSeoulPage() {
         </p>
       </div>
       <PureSeoulSync />
+      <RejectByPaste
+        title="رفض المرفوضة من Pure Seoul (لصق / صورة شاشة)"
+        description="حالة «Rejected» في Pure Seoul مب كاملة بالتصدير. الصق أسماء المنتجات المرفوضة (أو SKU)، سطر لكل منتج — أو ارفع صورة شاشة — نطابقها بكتالوج مليكاس وترفضها دفعة بنفس طريقة سنونو."
+        uploadLabel="📷 ارفع صورة شاشة من Pure Seoul"
+        defaultReason="مرفوض على Pure Seoul"
+      />
     </div>
   );
 }

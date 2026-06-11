@@ -21,10 +21,21 @@ function fileToImage(file: File): Promise<{ media_type: string; data: string }> 
   });
 }
 
-// Paste the products Snoonu rejected (names or SKUs) → match to our catalog →
-// reject the selected ones in one click. Snoonu's rejection status isn't in the
-// export, so this bridges that gap.
-export default function RejectByPaste() {
+// Paste the products a marketplace rejected (names or SKUs) → match to our
+// catalog → reject the selected ones in one click. The rejection status isn't in
+// the export, so this bridges that gap. Reused for Snoonu (Malika) and Pure Seoul
+// via props — same matching + bulk-reject flow, different labels/reason.
+export default function RejectByPaste({
+  title = "رفض المرفوضة من سنونو (لصق القائمة)",
+  description = "حالة «Rejected» في سنونو مب موجودة بالتصدير. الصق أسماء المنتجات المرفوضة (أو SKU)، سطر لكل منتج — نطابقها بكتالوجك وترفضها دفعة. (تقدر تنسخها من قسم Drafts & Approvals في تطبيق سنونو.)",
+  uploadLabel = "📷 ارفع صورة شاشة من سنونو",
+  defaultReason = "بسبب الصورة",
+}: {
+  title?: string;
+  description?: string;
+  uploadLabel?: string;
+  defaultReason?: string;
+} = {}) {
   const router = useRouter();
   const [text, setText] = useState("");
   const [matched, setMatched] = useState<MatchedProduct[] | null>(null);
@@ -33,7 +44,7 @@ export default function RejectByPaste() {
   const [matching, startMatch] = useTransition();
   const [rejecting, startReject] = useTransition();
   const [reading, startRead] = useTransition();
-  const [reason, setReason] = useState("بسبب الصورة");
+  const [reason, setReason] = useState(defaultReason);
   const [done, setDone] = useState<string | null>(null);
 
   const onPickImages = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -85,17 +96,14 @@ export default function RejectByPaste() {
   return (
     <div className="card space-y-3">
       <div>
-        <h3 className="text-sm font-semibold text-ink">رفض المرفوضة من سنونو (لصق القائمة)</h3>
-        <p className="text-xs text-muted">
-          حالة «Rejected» في سنونو مب موجودة بالتصدير. الصق أسماء المنتجات المرفوضة (أو SKU)، سطر لكل منتج —
-          نطابقها بكتالوجك وترفضها دفعة. (تقدر تنسخها من قسم Drafts &amp; Approvals في تطبيق سنونو.)
-        </p>
+        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+        <p className="text-xs text-muted">{description}</p>
       </div>
 
       {/* Screenshot → auto-extract rejected names (vision). */}
       <div className="flex flex-col gap-2 rounded-lg border border-dashed border-slate-300 p-3 sm:flex-row sm:items-center">
         <label className={`btn-ghost inline-flex cursor-pointer items-center gap-1 ${reading ? "pointer-events-none opacity-60" : ""}`}>
-          {reading ? "جاري قراءة الصورة…" : "📷 ارفع صورة شاشة من سنونو"}
+          {reading ? "جاري قراءة الصورة…" : uploadLabel}
           <input type="file" accept="image/*" multiple onChange={onPickImages} disabled={reading} className="hidden" />
         </label>
         <span className="text-xs text-muted">يقرأ الأسماء المرفوضة من الصورة ويعبّيها تحت تلقائيًا.</span>
