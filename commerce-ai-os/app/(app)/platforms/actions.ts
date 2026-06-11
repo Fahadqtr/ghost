@@ -141,3 +141,41 @@ export async function setPlatformApproval(ids: string[], platform: string, appro
 export async function rejectPlatformProducts(ids: string[], platform: string, reason: string) {
   return setPlatformApproval(ids, platform, "Rejected", reason);
 }
+
+export interface PlatformCounts { total: number; approved: number; rejected: number; none: number }
+
+// Approval breakdown per platform for the index cards. Master (Malika) counts
+// from products.approval; the rest from their platform_status rows (products
+// with no overlay row count as "none"). One pass, head-count queries.
+export async function getPlatformCounts(): Promise<Record<string, PlatformCounts>> {
+  const out: Record<string, PlatformCounts> = {};
+  const sb = createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return out;
+
+  const head = async (build: (q: any) => any): Promise<number> => {
+    const { count } = await build(sb.from("products").select("*", { count: "exact", head: true }));
+    return count ?? 0;
+  };
+  const headPS = async (platform: string, approval: string): Promise<number> => {
+    const { count } = await sb.from("platform_status")
+      .select("*", { count: "exact", head: true }).eq("platform", platform).eq("approval", approval);
+    return count ?? 0;
+  };
+
+  const total = await head((q) => q);
+
+  for (const meta of PLATFORM_KEYS.map((k) => platformBy(k)!)) {
+    if (meta.master) {
+      const approved = await head((q) => q.eq("approval", "Approved"));
+      const rejected = await head((q) => q.eq("approval", "Rejected"));
+      out[meta.key] = { total, approved, rejected, none: Math.max(0, total - approved - rejected) };
+    } else {
+      const approved = await headPS(meta.key, "Approved");
+      const rejected = await headPS(meta.key, "Rejected");
+      // Anything without an Approved/Rejected overlay row is "no status yet".
+      out[meta.key] = { total, approved, rejected, none: Math.max(0, total - approved - rejected) };
+    }
+  }
+  return out;
+}
