@@ -40,6 +40,7 @@ export interface PlatformProduct {
   image_url: string | null;
   approval: string | null;
   rejection_reason: string | null;
+  availability: string | null;   // 'InStock' | 'OutOfStock' | null (overlay platforms)
 }
 
 const PAGE = 1000;
@@ -70,24 +71,24 @@ export async function getPlatformProducts(platform: string): Promise<{ error?: s
     const rows = await fetchAllProducts(sb);
     if (meta.master) {
       // Malika = master: approval lives on the products row itself.
-      return { products: rows.map((p) => ({ ...p })) as PlatformProduct[] };
+      return { products: rows.map((p) => ({ ...p, availability: null })) as PlatformProduct[] };
     }
     // Overlay platform: pull its statuses and merge onto the master rows.
-    const ov = new Map<string, { approval: string | null; rejection_reason: string | null }>();
+    const ov = new Map<string, { approval: string | null; rejection_reason: string | null; availability: string | null }>();
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await sb
         .from("platform_status")
-        .select("product_id, approval, rejection_reason")
+        .select("product_id, approval, rejection_reason, availability")
         .eq("platform", platform)
         .range(from, from + PAGE - 1);
       if (error) return { error: error.message, products: [] };
-      for (const r of data ?? []) ov.set(r.product_id, { approval: r.approval, rejection_reason: r.rejection_reason });
+      for (const r of data ?? []) ov.set(r.product_id, { approval: r.approval, rejection_reason: r.rejection_reason, availability: r.availability });
       if ((data ?? []).length < PAGE) break;
     }
     return {
       products: rows.map((p) => {
         const o = ov.get(p.id);
-        return { ...p, approval: o?.approval ?? null, rejection_reason: o?.rejection_reason ?? null } as PlatformProduct;
+        return { ...p, approval: o?.approval ?? null, rejection_reason: o?.rejection_reason ?? null, availability: o?.availability ?? null } as PlatformProduct;
       }),
     };
   } catch (e) {

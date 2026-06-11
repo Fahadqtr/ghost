@@ -41,6 +41,31 @@ export async function rejectPureSeoulProducts(ids: string[], reason: string) {
   return setPureSeoulApproval(ids, "Rejected", reason);
 }
 
+// Auto-fill availability into the system from a Pure Seoul upload. Hidden
+// products = OutOfStock (مخلّصة), visible = InStock. Writes ONLY the
+// `availability` column on platform_status (platform='pure_seoul'); approval/
+// rejection are left untouched. Requires:
+//   alter table platform_status add column if not exists availability text;
+export async function applyPureSeoulAvailability(outIds: string[], inIds: string[]) {
+  const sb = createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { error: "غير مسجّل الدخول.", outOfStock: 0, inStock: 0 };
+  const now = new Date().toISOString();
+  const mk = (ids: string[], availability: string) =>
+    [...new Set((ids ?? []).filter(Boolean))].map((product_id) => ({ product_id, platform: PS, availability, updated_at: now }));
+  const rows = [...mk(outIds, "OutOfStock"), ...mk(inIds, "InStock")];
+  if (rows.length === 0) return { error: "ما في منتجات مطابقة لتطبيقها.", outOfStock: 0, inStock: 0 };
+  let failed = 0;
+  for (let i = 0; i < rows.length; i += 200) {
+    const chunk = rows.slice(i, i + 200);
+    const { error } = await sb.from("platform_status").upsert(chunk, { onConflict: "product_id,platform" });
+    if (error) failed += chunk.length;
+  }
+  revalidatePath("/platforms/pure_seoul");
+  revalidatePath("/import-export/pure-seoul");
+  return { ok: failed === 0, outOfStock: new Set(outIds.filter(Boolean)).size, inStock: new Set(inIds.filter(Boolean)).size, failed };
+}
+
 export interface PSRejected {
   id: string;
   sku: string | null;
@@ -86,6 +111,7 @@ export interface PSRow {
 }
 
 export interface PSItem {
+  id?: string | null;                // matched master product id (for applying status)
   sku: string | null;
   name_en: string | null;
   price?: string | number | null;   // Malika price (correct)
@@ -111,13 +137,16 @@ export interface PSCompare {
     psInStock: number;     // present on PS with stock > 0
     psOutOfStock: number;  // present on PS but finished (stock <= 0) — مخلّصة
   };
-  hasStock: boolean;       // whether the export carried a Stock column
+  hasStock: boolean;       // whether the export carried an availability signal
   missingOnPS: PSItem[];   // confident missing
   reviewOnPS: PSItem[];    // needs human review (name/size variants)
   extraOnPS: PSItem[];
   priceDiffs: PSItem[];
   psInStock: PSItem[];     // موجودة ومتوفّرة
   psOutOfStock: PSItem[];  // مخلّصة (نافدة)
+  // Full (uncapped) matched master ids for one-click "apply to system".
+  applyOutIds: string[];   // matched + hidden → mark OutOfStock
+  applyInIds: string[];    // matched + visible → mark InStock
 }
 
 const S = (v: unknown) => String(v ?? "").trim();
@@ -155,6 +184,7 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
     counts: { psRows: 0, matched: 0, missingOnPS: 0, reviewOnPS: 0, extraOnPS: 0, priceDiffs: 0, psRejected: 0, psInactive: 0, psInStock: 0, psOutOfStock: 0 },
     hasStock: false,
     missingOnPS: [], reviewOnPS: [], extraOnPS: [], priceDiffs: [], psInStock: [], psOutOfStock: [],
+    applyOutIds: [], applyInIds: [],
   };
   if (!rows?.length) return { ...empty, error: "ما في صفوف في الملف." };
 
@@ -166,7 +196,7 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
     const all: any[] = [];
     for (let f = 0; ; f += 1000) {
       const { data, error } = await sb.from("products")
-        .select("snoonu_id, sku, name_en, price, main_category").range(f, f + 999);
+        .select("id, snoonu_id, sku, name_en, price, main_category").range(f, f + 999);
       if (error) return { ...empty, error: error.message };
       all.push(...(data ?? []));
       if ((data ?? []).length < 1000) break;
@@ -182,6 +212,8 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
     const priceDiffs: PSItem[] = [];
     const psInStock: PSItem[] = [];
     const psOutOfStock: PSItem[] = [];
+    const applyOutIds: string[] = [];
+    const applyInIds: string[] = [];
     let matched = 0, psRejected = 0, psInactive = 0;
     // Pure Seoul has NO quantity system: a HIDDEN product (Availability = False /
     // branchStatus inactive) IS the out-of-stock (مخلّصة) signal. So classify by
@@ -205,12 +237,13 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
       // Present (موجودة) vs hidden = out of stock (مخلّصة).
       if (hasStock) {
         const item: PSItem = {
+          id: m?.id ?? null,
           sku: m?.sku ?? null,
           name_en: S(r.name_en) || (m?.name_en ?? null),
           psPrice: S(r.price) || null,
         };
-        if (bs === "inactive") psOutOfStock.push(item);
-        else if (bs === "active") psInStock.push(item);
+        if (bs === "inactive") { psOutOfStock.push(item); if (m?.id) applyOutIds.push(m.id); }
+        else if (bs === "active") { psInStock.push(item); if (m?.id) applyInIds.push(m.id); }
       }
     }
 
@@ -261,6 +294,8 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
       priceDiffs: priceDiffs.slice(0, 500),
       psInStock: psInStock.slice(0, 500),
       psOutOfStock: psOutOfStock.slice(0, 1000),
+      applyOutIds,
+      applyInIds,
     };
   } catch (e) {
     return { ...empty, error: e instanceof Error ? e.message : "خطأ غير متوقع." };

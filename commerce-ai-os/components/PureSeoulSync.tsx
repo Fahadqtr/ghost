@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
-import { comparePureSeoul, type PSCompare, type PSItem } from "@/app/(app)/import-export/pure-seoul-actions";
+import { comparePureSeoul, applyPureSeoulAvailability, type PSCompare, type PSItem } from "@/app/(app)/import-export/pure-seoul-actions";
 
 // CSV download helper (client-side blob).
 function downloadCsv(name: string, headers: string[], rows: (string | number | null | undefined)[][]) {
@@ -17,6 +17,23 @@ export default function PureSeoulSync() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [res, setRes] = useState<PSCompare | null>(null);
+  // "Apply availability to the system" (auto-fill OutOfStock/InStock on PS).
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState<string | null>(null);
+  const apply = async () => {
+    if (!res?.ok) return;
+    if (!confirm(`تطبيق التوفّر في النظام لـ Pure Seoul؟\nنافد: ${res.applyOutIds.length} · متوفّر: ${res.applyInIds.length}`)) return;
+    setApplying(true); setApplied(null);
+    try {
+      const r = await applyPureSeoulAvailability(res.applyOutIds, res.applyInIds);
+      if ((r as any).error) { setApplied(null); alert((r as any).error); return; }
+      setApplied(`✓ تم التطبيق — نافد ${r.outOfStock} · متوفّر ${r.inStock}. شوفها في Pure Seoul Hub.`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "تعذّر التطبيق.");
+    } finally {
+      setApplying(false);
+    }
+  };
   // SKUs selected to publish to Pure Seoul (the "approve" step).
   const [pub, setPub] = useState<Set<string>>(new Set());
   useEffect(() => {
@@ -148,6 +165,22 @@ export default function PureSeoulSync() {
                 <Stat label="موجودة (ظاهرة) على PS" value={c.psInStock} accent="emerald" />
                 <Stat label="مخلّصة (مخفية = نافدة) على PS" value={c.psOutOfStock} accent="amber" />
               </div>
+
+              {/* Auto-fill the availability into the system (like Malika). */}
+              <div className="card flex flex-col gap-2 border-emerald-200 bg-emerald-50/60 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">تعبئة تلقائية في النظام</h3>
+                  <p className="text-xs text-muted">
+                    يحفظ التوفّر على Pure Seoul: نافد {res.applyOutIds.length} · متوفّر {res.applyInIds.length} (المطابقة بالماستر فقط).
+                    يظهر في Pure Seoul Hub. ما يلمس مليكاس.
+                  </p>
+                </div>
+                <button onClick={apply} disabled={applying || (res.applyOutIds.length + res.applyInIds.length === 0)}
+                  className="shrink-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+                  {applying ? "جاري التطبيق…" : "✅ طبّق التوفّر في النظام"}
+                </button>
+              </div>
+              {applied ? <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{applied}</p> : null}
               <Section
                 title={`🚫 مخلّصة على Pure Seoul — ${c.psOutOfStock} (مخفية = نافدة)`}
                 onExport={res.psOutOfStock.length ? () => downloadCsv(

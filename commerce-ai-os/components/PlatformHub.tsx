@@ -59,7 +59,9 @@ export default function PlatformHub({ platform, products }: { platform: string; 
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
   const [appr, setAppr] = useState("");
+  const [avl, setAvl] = useState("");
   const [page, setPage] = useState(1);
+  const showAvail = !meta?.master; // availability is an overlay concept only
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -70,11 +72,12 @@ export default function PlatformHub({ platform, products }: { platform: string; 
         || (p.sku ?? "").toLowerCase().includes(needle);
       const matchesCat = !cat || p.main_category === cat;
       const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
-      return matchesQ && matchesCat && matchesAppr;
+      const matchesAvl = !avl || (avl === "out" ? p.availability === "OutOfStock" : avl === "in" ? p.availability === "InStock" : !p.availability);
+      return matchesQ && matchesCat && matchesAppr && matchesAvl;
     });
-  }, [products, q, cat, appr]);
+  }, [products, q, cat, appr, avl]);
 
-  useEffect(() => { setPage(1); }, [q, cat, appr]);
+  useEffect(() => { setPage(1); }, [q, cat, appr, avl]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, totalPages);
@@ -83,13 +86,15 @@ export default function PlatformHub({ platform, products }: { platform: string; 
 
   // Counts for the quick summary chips.
   const counts = useMemo(() => {
-    let approved = 0, rejected = 0, none = 0;
+    let approved = 0, rejected = 0, none = 0, outStock = 0, inStock = 0;
     for (const p of products) {
       if (p.approval === "Approved") approved++;
       else if (p.approval === "Rejected") rejected++;
       else if (!p.approval) none++;
+      if (p.availability === "OutOfStock") outStock++;
+      else if (p.availability === "InStock") inStock++;
     }
-    return { approved, rejected, none };
+    return { approved, rejected, none, outStock, inStock };
   }, [products]);
 
   // Bind the platform into the shared reject tool's (ids, reason) action.
@@ -101,6 +106,8 @@ export default function PlatformHub({ platform, products }: { platform: string; 
         <span className="badge bg-green-100 text-green-700">معتمد {counts.approved}</span>
         <span className="badge bg-red-100 text-red-700">مرفوض {counts.rejected}</span>
         <span className="badge bg-slate-100 text-slate-500">بدون حالة {counts.none}</span>
+        {showAvail ? <span className="badge bg-amber-100 text-amber-700">نافد {counts.outStock}</span> : null}
+        {showAvail ? <span className="badge bg-emerald-100 text-emerald-700">متوفّر {counts.inStock}</span> : null}
         <span className="text-muted">· {products.length} منتج (نفس الماستر)</span>
       </div>
 
@@ -117,6 +124,14 @@ export default function PlatformHub({ platform, products }: { platform: string; 
           <option value="SentAI">SentAI</option>
           <option value="none">بدون حالة</option>
         </select>
+        {showAvail ? (
+          <select className="input sm:max-w-[12rem]" value={avl} onChange={(e) => setAvl(e.target.value)}>
+            <option value="">كل التوفّر</option>
+            <option value="out">نافد · مخلّص (مخفي)</option>
+            <option value="in">متوفّر · ظاهر</option>
+            <option value="none">بدون تحديد</option>
+          </select>
+        ) : null}
         <span className="text-sm text-muted sm:ml-auto">
           {filtered.length === products.length ? `${products.length} منتج` : `${filtered.length} من ${products.length}`}
         </span>
@@ -132,12 +147,13 @@ export default function PlatformHub({ platform, products }: { platform: string; 
               <th className="px-3 py-3 font-medium">SKU</th>
               <th className="px-3 py-3 font-medium">Category</th>
               <th className="px-3 py-3 font-medium">Price</th>
+              {showAvail ? <th className="px-3 py-3 font-medium">توفّر</th> : null}
               <th className="px-3 py-3 font-medium">حالة {meta?.label ?? platform}</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">ما في منتجات.</td></tr>
+              <tr><td colSpan={showAvail ? 8 : 7} className="px-4 py-8 text-center text-slate-400">ما في منتجات.</td></tr>
             ) : (
               visible.map((p) => (
                 <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -147,6 +163,13 @@ export default function PlatformHub({ platform, products }: { platform: string; 
                   <td className="px-3 py-3 text-slate-600">{p.sku ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.main_category ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
+                  {showAvail ? (
+                    <td className="px-3 py-3">
+                      {p.availability === "OutOfStock" ? <span className="badge bg-amber-100 text-amber-700">نافد</span>
+                        : p.availability === "InStock" ? <span className="badge bg-emerald-100 text-emerald-700">متوفّر</span>
+                        : <span className="text-slate-400">—</span>}
+                    </td>
+                  ) : null}
                   <td className="px-3 py-3">
                     <RowApproval id={p.id} platform={platform} value={p.approval} />
                     {p.approval === "Rejected" && p.rejection_reason
