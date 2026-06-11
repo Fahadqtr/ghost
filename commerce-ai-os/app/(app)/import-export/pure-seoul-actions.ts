@@ -1,6 +1,52 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+
+// Pure Seoul is treated as an INDEPENDENT store that happens to sell the same
+// products as Malika. Its approval/rejection state therefore lives in its own
+// table (pure_seoul_status) — writing here NEVER touches the shared
+// products.approval used by Malika. Run once in Supabase SQL editor:
+//
+//   create table if not exists pure_seoul_status (
+//     product_id uuid primary key references products(id) on delete cascade,
+//     approval text,
+//     rejection_reason text,
+//     updated_at timestamptz not null default now()
+//   );
+//   alter table pure_seoul_status enable row level security;
+//   create policy "ps_status_all" on pure_seoul_status
+//     for all to authenticated using (true) with check (true);
+//
+// Upsert a Pure-Seoul-only approval/rejection for the given product ids. An
+// empty approval clears the row's status; reason is stored as its own field.
+export async function setPureSeoulApproval(ids: string[], approval: string, reason?: string) {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { error: "غير مسجّل الدخول.", updated: 0 };
+  const list = (ids ?? []).filter(Boolean);
+  if (list.length === 0) return { error: "ما في منتجات محدّدة.", updated: 0 };
+  const sb = createClient();
+  const now = new Date().toISOString();
+  const rows = list.map((product_id) => ({
+    product_id,
+    approval: approval === "" ? null : approval,
+    rejection_reason: reason !== undefined ? (reason.trim() || null) : null,
+    updated_at: now,
+  }));
+  let updated = 0, failed = 0;
+  for (let i = 0; i < rows.length; i += 200) {
+    const chunk = rows.slice(i, i + 200);
+    const { error } = await sb.from("pure_seoul_status").upsert(chunk, { onConflict: "product_id" });
+    if (error) failed += chunk.length; else updated += chunk.length;
+  }
+  revalidatePath("/import-export/pure-seoul");
+  return { ok: failed === 0, updated, failed };
+}
+
+// Convenience wrapper for the screenshot/paste reject tool on the Pure Seoul page.
+export async function rejectPureSeoulProducts(ids: string[], reason: string) {
+  return setPureSeoulApproval(ids, "Rejected", reason);
+}
 
 // One parsed row from a Pure Seoul "NonFoodProducts" export.
 export interface PSRow {

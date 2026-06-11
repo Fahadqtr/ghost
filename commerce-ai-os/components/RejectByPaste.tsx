@@ -30,11 +30,20 @@ export default function RejectByPaste({
   description = "حالة «Rejected» في سنونو مب موجودة بالتصدير. الصق أسماء المنتجات المرفوضة (أو SKU)، سطر لكل منتج — نطابقها بكتالوجك وترفضها دفعة. (تقدر تنسخها من قسم Drafts & Approvals في تطبيق سنونو.)",
   uploadLabel = "📷 ارفع صورة شاشة من سنونو",
   defaultReason = "بسبب الصورة",
+  rejectAction,
+  showApprovalBadge = true,
+  confirmLabel = "في كتالوجك",
 }: {
   title?: string;
   description?: string;
   uploadLabel?: string;
   defaultReason?: string;
+  // Where the reject writes. Default = Malika's shared products.approval. Pure
+  // Seoul passes its own action so it writes to pure_seoul_status only.
+  rejectAction?: (ids: string[], reason: string) => Promise<{ error?: string; updated?: number; failed?: number }>;
+  // The "مرفوض مسبقًا" badge reads Malika approval — hide it in other stores.
+  showApprovalBadge?: boolean;
+  confirmLabel?: string;
 } = {}) {
   const router = useRouter();
   const [text, setText] = useState("");
@@ -82,9 +91,11 @@ export default function RejectByPaste({
   const reject = () => {
     const ids = [...sel];
     if (ids.length === 0) { alert("اختر منتجًا واحدًا على الأقل."); return; }
-    if (!confirm(`رفض ${ids.length} منتج في كتالوجك${reason.trim() ? ` (السبب: ${reason.trim()})` : ""}؟`)) return;
+    if (!confirm(`رفض ${ids.length} منتج ${confirmLabel}${reason.trim() ? ` (السبب: ${reason.trim()})` : ""}؟`)) return;
     startReject(async () => {
-      const res = await setProductsApproval(ids, "Rejected", reason);
+      const res = rejectAction
+        ? await rejectAction(ids, reason)
+        : await setProductsApproval(ids, "Rejected", reason);
       if (res.error) { alert(res.error); return; }
       setDone(`✓ تم رفض ${res.updated} منتج${res.failed ? ` · فشل ${res.failed}` : ""}${reason.trim() ? ` — السبب: ${reason.trim()}` : ""}.`);
       setMatched((m) => (m ? m.filter((x) => !sel.has(x.id)) : m));
@@ -136,7 +147,7 @@ export default function RejectByPaste({
                   <label className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50">
                     <input type="checkbox" checked={sel.has(m.id)} onChange={() => toggle(m.id)} className="h-4 w-4" />
                     <span className="min-w-0 flex-1 truncate text-ink">{m.name_en ?? "—"}</span>
-                    {m.approval === "Rejected" ? <span className="badge shrink-0 bg-red-100 text-red-700">مرفوض مسبقًا</span> : null}
+                    {showApprovalBadge && m.approval === "Rejected" ? <span className="badge shrink-0 bg-red-100 text-red-700">مرفوض مسبقًا</span> : null}
                     <span className="shrink-0 font-mono text-xs text-muted">{m.sku ?? "—"}</span>
                   </label>
                 </li>
