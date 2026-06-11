@@ -49,6 +49,19 @@ const S = (v: unknown) => String(v ?? "").trim();
 // without hiding genuinely-missing products (it only matches when alnum-identical).
 const norm = (s: unknown) => S(s).toLowerCase().replace(/[^a-z0-9]/g, "");
 const tokens = (s: unknown) => new Set(S(s).toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+// Token set that KEEPS numeric tokens (sizes/counts) even when short — numbers
+// are the discriminator between "6 Color" and "10 Color". Words must be ≥3 chars.
+const tokset = (s: unknown) => new Set(
+  S(s).toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length >= 3 || /^[0-9]+$/.test(w))
+);
+// True when `a` is fully contained in `b` (same product, b just has extra
+// size/qualifier words). Requires ≥3 shared tokens to avoid generic over-match,
+// and — since tokset keeps numbers — guarantees a's sizes/counts all exist in b.
+const isSubset = (a: Set<string>, b: Set<string>) => {
+  if (a.size < 3) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+};
 const jaccard = (a: Set<string>, b: Set<string>) => { let i = 0; for (const x of a) if (b.has(x)) i++; return i / (a.size + b.size - i || 1); };
 const numEq = (a: unknown, b: unknown) => {
   const x = Number(a), y = Number(b);
@@ -106,14 +119,22 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
     // name) vs "review" (a similar PS name exists — likely the same item or a
     // size/shade variant). Names alone can't be 100% (e.g. "6 Color" vs "10
     // Color"), so the review bucket is surfaced for a human to confirm.
-    const psTok = rows.map((r) => ({ t: tokens(r.name_en), n: S(r.name_en) })).filter((x) => x.t.size);
+    // Pre-compute PS token sets (numbers kept) for subset + similarity passes.
+    const psTok = rows.map((r) => ({ t: tokset(r.name_en), n: S(r.name_en) })).filter((x) => x.t.size);
     const missingOnPS: PSItem[] = [];
     const reviewOnPS: PSItem[] = [];
     for (const p of all) {
       if (matchedMalika.has(p)) continue;
-      const pt = tokens(p.name_en);
+      const pt = tokset(p.name_en);
+      // Subset auto-match: one name fully contains the other (extra size/qualifier
+      // words only) AND all numeric tokens align → same product, count as matched.
+      let sub = false;
       let best = 0, bn = "";
-      if (pt.size) for (const x of psTok) { const s = jaccard(pt, x.t); if (s > best) { best = s; bn = x.n; } }
+      if (pt.size) for (const x of psTok) {
+        if (!sub && (isSubset(pt, x.t) || isSubset(x.t, pt))) { sub = true; bn = x.n; best = 1; break; }
+        const s = jaccard(pt, x.t); if (s > best) { best = s; bn = x.n; }
+      }
+      if (sub) { matched++; matchedMalika.add(p); continue; }
       const base = { sku: p.sku ?? null, name_en: p.name_en ?? null, price: p.price ?? null, category: p.main_category ?? null };
       if (best >= 0.55) reviewOnPS.push({ ...base, psName: bn, score: Math.round(best * 100) / 100 });
       else missingOnPS.push(base);
