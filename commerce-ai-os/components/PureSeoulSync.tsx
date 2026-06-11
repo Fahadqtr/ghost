@@ -141,27 +141,27 @@ export default function PureSeoulSync() {
             <Stat label="مخفي على PS (inactive)" value={c.psInactive} accent="slate" />
           </div>
 
-          {/* Stock view — موجودة (متوفّرة) vs مخلّصة (نافدة). */}
+          {/* Pure Seoul has no quantities: hidden (Availability=False) = out of stock. */}
           {res.hasStock ? (
             <>
               <div className="grid grid-cols-2 gap-3">
-                <Stat label="موجودة ومتوفّرة على PS" value={c.psInStock} accent="emerald" />
-                <Stat label="مخلّصة (نافدة) على PS" value={c.psOutOfStock} accent="amber" />
+                <Stat label="موجودة (ظاهرة) على PS" value={c.psInStock} accent="emerald" />
+                <Stat label="مخلّصة (مخفية = نافدة) على PS" value={c.psOutOfStock} accent="amber" />
               </div>
               <Section
-                title={`🚫 مخلّصة (نافدة) على Pure Seoul — ${c.psOutOfStock} (المخزون صفر)`}
+                title={`🚫 مخلّصة على Pure Seoul — ${c.psOutOfStock} (مخفية = نافدة)`}
                 onExport={res.psOutOfStock.length ? () => downloadCsv(
                   "pure_seoul_out_of_stock.csv",
-                  ["SKU", "Name EN", "Pure Seoul price", "Stock"],
-                  res.psOutOfStock.map((p) => [p.sku, p.name_en, p.psPrice, p.psStock as any])
+                  ["SKU", "Name EN", "Pure Seoul price"],
+                  res.psOutOfStock.map((p) => [p.sku, p.name_en, p.psPrice])
                 ) : undefined}
               >
-                <List items={res.psOutOfStock} render={(p) => <Row a={p.name_en} b={p.sku} c={`مخزون ${p.psStock ?? 0}`} />} total={c.psOutOfStock} />
+                <List items={res.psOutOfStock} render={(p) => <Row a={p.name_en} b={p.sku} c="مخفي · نافد" />} total={c.psOutOfStock} />
               </Section>
             </>
           ) : (
             <div className="card border-amber-200 bg-amber-50 text-xs text-amber-800">
-              ملف Pure Seoul هذا ما فيه عمود مخزون (Stock for…)، فما أقدر أحدّد المخلّصة. ارفع تصدير «AllExportData» اللي فيه عمود المخزون والتوفّر.
+              هذا الملف ما فيه عمود التوفّر/الإخفاء (Availability)، فما أقدر أحدّد المخلّصة. ارفع تصدير «AllExportData» اللي فيه عمود Availability.
             </div>
           )}
 

@@ -183,12 +183,15 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
     const psInStock: PSItem[] = [];
     const psOutOfStock: PSItem[] = [];
     let matched = 0, psRejected = 0, psInactive = 0;
-    // Did the export carry a usable Stock column? (any row with a numeric stock)
-    const hasStock = rows.some((r) => r.stock !== undefined && r.stock !== "" && !isNaN(Number(r.stock)));
+    // Pure Seoul has NO quantity system: a HIDDEN product (Availability = False /
+    // branchStatus inactive) IS the out-of-stock (مخلّصة) signal. So classify by
+    // availability, not by any stock number.
+    const hasStock = rows.some((r) => { const b = S(r.branchStatus).toLowerCase(); return b === "active" || b === "inactive"; });
 
     for (const r of rows) {
       if (S(r.approval) === "Rejected") psRejected++;
-      if (S(r.branchStatus).toLowerCase() === "inactive") psInactive++;
+      const bs = S(r.branchStatus).toLowerCase();
+      if (bs === "inactive") psInactive++;
       const m = byId.get(S(r.global_id)) || byName.get(norm(r.name_en));
       if (m) {
         matched++;
@@ -199,17 +202,15 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
       } else {
         extraOnPS.push({ sku: null, name_en: S(r.name_en) || null, psPrice: S(r.price) || null });
       }
-      // Stock classification — present (موجودة) vs finished (مخلّصة).
+      // Present (موجودة) vs hidden = out of stock (مخلّصة).
       if (hasStock) {
-        const qty = Number(r.stock);
         const item: PSItem = {
           sku: m?.sku ?? null,
           name_en: S(r.name_en) || (m?.name_en ?? null),
           psPrice: S(r.price) || null,
-          psStock: isNaN(qty) ? null : qty,
         };
-        if (!isNaN(qty) && qty <= 0) psOutOfStock.push(item);
-        else psInStock.push(item);
+        if (bs === "inactive") psOutOfStock.push(item);
+        else if (bs === "active") psInStock.push(item);
       }
     }
 
@@ -239,7 +240,6 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
     }
     reviewOnPS.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
-    psOutOfStock.sort((a, b) => (a.psStock ?? 0) - (b.psStock ?? 0));
     return {
       ok: true,
       counts: {
