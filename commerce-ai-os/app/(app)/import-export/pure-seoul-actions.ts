@@ -3,21 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-// Pure Seoul is treated as an INDEPENDENT store that happens to sell the same
-// products as Malika. Its approval/rejection state therefore lives in its own
-// table (pure_seoul_status) — writing here NEVER touches the shared
-// products.approval used by Malika. Run once in Supabase SQL editor:
-//
-//   create table if not exists pure_seoul_status (
-//     product_id uuid primary key references products(id) on delete cascade,
-//     approval text,
-//     rejection_reason text,
-//     updated_at timestamptz not null default now()
-//   );
-//   alter table pure_seoul_status enable row level security;
-//   create policy "ps_status_all" on pure_seoul_status
-//     for all to authenticated using (true) with check (true);
-//
+// Pure Seoul is an INDEPENDENT platform selling the same products as Malika. Its
+// approval/rejection lives in the shared `platform_status` overlay (platform =
+// 'pure_seoul') — writing here NEVER touches products.approval (Malika's master)
+// nor any other platform. See app/(app)/platforms/actions.ts for the table DDL.
+const PS = "pure_seoul";
+
 // Upsert a Pure-Seoul-only approval/rejection for the given product ids. An
 // empty approval clears the row's status; reason is stored as its own field.
 export async function setPureSeoulApproval(ids: string[], approval: string, reason?: string) {
@@ -29,6 +20,7 @@ export async function setPureSeoulApproval(ids: string[], approval: string, reas
   const now = new Date().toISOString();
   const rows = list.map((product_id) => ({
     product_id,
+    platform: PS,
     approval: approval === "" ? null : approval,
     rejection_reason: reason !== undefined ? (reason.trim() || null) : null,
     updated_at: now,
@@ -36,10 +28,11 @@ export async function setPureSeoulApproval(ids: string[], approval: string, reas
   let updated = 0, failed = 0;
   for (let i = 0; i < rows.length; i += 200) {
     const chunk = rows.slice(i, i + 200);
-    const { error } = await sb.from("pure_seoul_status").upsert(chunk, { onConflict: "product_id" });
+    const { error } = await sb.from("platform_status").upsert(chunk, { onConflict: "product_id,platform" });
     if (error) failed += chunk.length; else updated += chunk.length;
   }
   revalidatePath("/import-export/pure-seoul");
+  revalidatePath("/platforms/pure_seoul");
   return { ok: failed === 0, updated, failed };
 }
 
@@ -64,8 +57,9 @@ export async function getPureSeoulRejected(): Promise<PSRejected[]> {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return [];
   const { data, error } = await sb
-    .from("pure_seoul_status")
+    .from("platform_status")
     .select("product_id, rejection_reason, updated_at, products(sku, name_en, main_category)")
+    .eq("platform", PS)
     .eq("approval", "Rejected")
     .order("updated_at", { ascending: false });
   if (error || !data) return [];

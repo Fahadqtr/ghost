@@ -28,6 +28,27 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 
+/**
+ * Sales platforms, each with its own independent Product Hub. The PRODUCT DATA
+ * (name/price/images/description/variants) is shared — it lives on the master
+ * (`products`) and is edited once. Only per-platform APPROVAL/REJECTION is
+ * independent: Malika is the master itself (its products.approval), every other
+ * platform stores its approval/rejection in the `platform_status` overlay table
+ * keyed by (product_id, platform). Rejecting on one platform never affects
+ * another, nor the master data.
+ */
+export const PLATFORMS = [
+  { key: "malika", label: "مليكاس", en: "Malika", master: true },
+  { key: "pure_seoul", label: "Pure Seoul", en: "Pure Seoul", master: false },
+  { key: "snoonu", label: "Snoonu", en: "Snoonu", master: false },
+  { key: "talabat", label: "Talabat", en: "Talabat", master: false },
+  { key: "shopify", label: "Shopify", en: "Shopify", master: false },
+  { key: "rafeeq", label: "Rafeeq", en: "Rafeeq", master: false },
+] as const;
+export type PlatformKey = (typeof PLATFORMS)[number]["key"];
+export const PLATFORM_KEYS = PLATFORMS.map((p) => p.key) as readonly PlatformKey[];
+export const platformBy = (key: string) => PLATFORMS.find((p) => p.key === key);
+
 /** Per-channel publishing status options (mirrors channel_products.channel_status). */
 export const CHANNEL_STATUSES = ["Active", "Draft", "Not Listed"] as const;
 export type ChannelStatus = (typeof CHANNEL_STATUSES)[number];
@@ -61,6 +82,7 @@ export const NAV_ITEMS = [
   { href: "/malak", label: "ملاك · Malak AI", icon: "✨" },
   { href: "/dashboard", label: "CEO Dashboard", icon: "📊" },
   { href: "/products", label: "Product Hub", icon: "📦" },
+  { href: "/platforms", label: "المنصات · Platforms", icon: "🏬" },
   { href: "/inventory", label: "Inventory", icon: "🏷️" },
   { href: "/channels", label: "Channels", icon: "🛒" },
   { href: "/agents", label: "Agents", icon: "🤖" },
