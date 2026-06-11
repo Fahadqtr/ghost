@@ -55,15 +55,21 @@ export async function applyPureSeoulAvailability(outIds: string[], inIds: string
     [...new Set((ids ?? []).filter(Boolean))].map((product_id) => ({ product_id, platform: PS, availability, updated_at: now }));
   const rows = [...mk(outIds, "OutOfStock"), ...mk(inIds, "InStock")];
   if (rows.length === 0) return { error: "ما في منتجات مطابقة لتطبيقها.", outOfStock: 0, inStock: 0 };
-  let failed = 0;
+  let failed = 0, firstErr = "";
   for (let i = 0; i < rows.length; i += 200) {
     const chunk = rows.slice(i, i + 200);
     const { error } = await sb.from("platform_status").upsert(chunk, { onConflict: "product_id,platform" });
-    if (error) failed += chunk.length;
+    if (error) { failed += chunk.length; if (!firstErr) firstErr = error.message; }
+  }
+  if (firstErr) {
+    const hint = /availability/.test(firstErr)
+      ? " — شغّل في Supabase: alter table platform_status add column if not exists availability text;"
+      : "";
+    return { error: firstErr + hint, outOfStock: 0, inStock: 0, failed };
   }
   revalidatePath("/platforms/pure_seoul");
   revalidatePath("/import-export/pure-seoul");
-  return { ok: failed === 0, outOfStock: new Set(outIds.filter(Boolean)).size, inStock: new Set(inIds.filter(Boolean)).size, failed };
+  return { ok: true, outOfStock: new Set(outIds.filter(Boolean)).size, inStock: new Set(inIds.filter(Boolean)).size, failed };
 }
 
 export interface PSRejected {
