@@ -1,11 +1,13 @@
 import Link from "next/link";
 import PureSeoulSync from "@/components/PureSeoulSync";
 import RejectByPaste from "@/components/RejectByPaste";
-import { rejectPureSeoulProducts } from "@/app/(app)/import-export/pure-seoul-actions";
+import PureSeoulRejectedList from "@/components/PureSeoulRejectedList";
+import { rejectPureSeoulProducts, getPureSeoulRejected } from "@/app/(app)/import-export/pure-seoul-actions";
 
 export const dynamic = "force-dynamic";
 
-export default function PureSeoulPage() {
+export default async function PureSeoulPage() {
+  const rejected = await getPureSeoulRejected();
   return (
     <div className="space-y-4">
       <div>
@@ -25,6 +27,7 @@ export default function PureSeoulPage() {
         showApprovalBadge={false}
         confirmLabel="على Pure Seoul (مستقل عن مليكاس)"
       />
+      <PureSeoulRejectedList items={rejected} />
     </div>
   );
 }

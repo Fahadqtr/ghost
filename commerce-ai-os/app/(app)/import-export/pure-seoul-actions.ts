@@ -48,6 +48,37 @@ export async function rejectPureSeoulProducts(ids: string[], reason: string) {
   return setPureSeoulApproval(ids, "Rejected", reason);
 }
 
+export interface PSRejected {
+  id: string;
+  sku: string | null;
+  name_en: string | null;
+  category: string | null;
+  reason: string | null;
+  updated_at: string | null;
+}
+
+// List products currently rejected on Pure Seoul (independent of Malika). Reads
+// the standalone status table and joins the product's display fields.
+export async function getPureSeoulRejected(): Promise<PSRejected[]> {
+  const sb = createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return [];
+  const { data, error } = await sb
+    .from("pure_seoul_status")
+    .select("product_id, rejection_reason, updated_at, products(sku, name_en, main_category)")
+    .eq("approval", "Rejected")
+    .order("updated_at", { ascending: false });
+  if (error || !data) return [];
+  return data.map((r: any) => ({
+    id: r.product_id,
+    sku: r.products?.sku ?? null,
+    name_en: r.products?.name_en ?? null,
+    category: r.products?.main_category ?? null,
+    reason: r.rejection_reason ?? null,
+    updated_at: r.updated_at ?? null,
+  }));
+}
+
 // One parsed row from a Pure Seoul "NonFoodProducts" export.
 export interface PSRow {
   id?: string;
