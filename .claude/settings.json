@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__8f83edb1-2675-4383-8044-6e2d4ee620fb__graphql_mutation",
+      "mcp__8f83edb1-2675-4383-8044-6e2d4ee620fb__graphql_query"
+    ]
+  }
+}
