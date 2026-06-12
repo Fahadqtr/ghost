@@ -13,7 +13,10 @@ import { CATEGORIES } from "@/lib/constants";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-sonnet-4-6"; // current Sonnet
+// Malak's brain. Defaults to the most capable Claude (Opus 4.8) for deeper
+// reasoning; override with MALAK_MODEL env var (e.g. "claude-sonnet-4-6" for a
+// cheaper/faster brain) without changing code.
+const MODEL = process.env.MALAK_MODEL || "claude-opus-4-8";
 // 1500 was too low: a products panel of 8 items easily exceeds it, so the final
 // `respond` tool call gets truncated → stop_reason "max_tokens" → empty answer
 // ("تم."). 4096 gives ample headroom.
