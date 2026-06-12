@@ -1,0 +1,19 @@
+mutation {
+  inventorySetQuantities(input: {name: "available", reason: "correction", ignoreCompareQuantity: true, quantities: [
+      {inventoryItemId: "gid://shopify/InventoryItem/50202977272046", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202977370350", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202977468654", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202977665262", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202977861870", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202977894638", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202978091246", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202978124014", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202978156782", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202978255086", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202978484462", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+      {inventoryItemId: "gid://shopify/InventoryItem/50202978517230", locationId: "gid://shopify/Location/81908531438", quantity: 50}
+  ]}) {
+    inventoryAdjustmentGroup { changes { delta } }
+    userErrors { field message }
+  }
+}
