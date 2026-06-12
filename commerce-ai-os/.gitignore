@@ -37,3 +37,7 @@ yarn-error.log*
 
 # real product catalog — do not commit to public repo
 Malikas_Universe_CLEAN_28col.xlsx
+
+# generated data exports & artifacts — do not commit (includes large image archives)
+exports/
+talabat_catalog_final.csv
