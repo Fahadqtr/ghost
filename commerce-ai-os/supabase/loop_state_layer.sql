@@ -69,3 +69,22 @@ order by
     else 4
   end,
   updated_at desc;
+
+-- Row-Level Security --------------------------------------------------------
+-- Server-side agents use the SERVICE-ROLE key, which BYPASSES RLS. The policies
+-- below govern only the browser anon/authenticated keys:
+--   * signed-in dashboard users may READ the board + history
+--   * NO client-side writes — only the service role writes, which keeps
+--     loop_log effectively append-only from any browser client.
+-- Idempotent: drop-then-create so the migration is safe to re-run.
+alter table loop_state enable row level security;
+alter table loop_log  enable row level security;
+
+drop policy if exists loop_state_read_authenticated on loop_state;
+create policy loop_state_read_authenticated on loop_state
+  for select to authenticated using (true);
+
+drop policy if exists loop_log_read_authenticated on loop_log;
+create policy loop_log_read_authenticated on loop_log
+  for select to authenticated using (true);
+
