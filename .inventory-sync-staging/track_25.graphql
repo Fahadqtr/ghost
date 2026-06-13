@@ -1,0 +1,14 @@
+mutation {
+  t0: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202977272046", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t1: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202977370350", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t2: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202977468654", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t3: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202977665262", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t4: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202977861870", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t5: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202977894638", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t6: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202978091246", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t7: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202978124014", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t8: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202978156782", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t9: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202978255086", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t10: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202978484462", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+  t11: inventoryItemUpdate(id: "gid://shopify/InventoryItem/50202978517230", input: {tracked: true}) { inventoryItem { id } userErrors { field message } }
+}

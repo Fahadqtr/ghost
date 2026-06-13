@@ -101,12 +101,55 @@ async function postWithRetry(query, label, maxAttempts = 6) {
       continue;
     }
 
+    // Calculated query cost over the single-query max -> not retriable as-is.
+    // Signal the caller so it can split the batch and retry the halves.
+    const costErr = json.errors?.find(
+      (e) => e.extensions?.code === "MAX_COST_EXCEEDED" || /exceed.*cost|cost.*exceed/i.test(e.message || "")
+    );
+    if (costErr) {
+      const err = new Error(`${label}: ${costErr.message}`);
+      err.code = "MAX_COST_EXCEEDED";
+      throw err;
+    }
+
     if (json.errors?.length) {
       throw new Error(`${label}: GraphQL errors: ${JSON.stringify(json.errors)}`);
     }
 
     const userErrors = collectUserErrors(json.data);
     return { userErrors, json };
+  }
+}
+
+// track_*.graphql are N independent aliased `tN: inventoryItemUpdate(...)`
+// lines wrapped in one mutation. We can safely split them into smaller
+// requests; set_*.graphql is a single mutation and is not splittable here.
+function aliasedLines(query) {
+  return query.split("\n").map((l) => l.trim()).filter((l) => /^t\d+:\s/.test(l));
+}
+function wrapAliased(lines) {
+  const body = lines.map((l, i) => "  " + l.replace(/^t\d+:/, `t${i}:`)).join("\n");
+  return `mutation {\n${body}\n}`;
+}
+
+// Run one query; if it fails purely on cost, split it in half and recurse.
+async function runOne(query, label) {
+  try {
+    const { userErrors } = await postWithRetry(query, label);
+    return userErrors;
+  } catch (e) {
+    if (e.code === "MAX_COST_EXCEEDED") {
+      const lines = aliasedLines(query);
+      if (lines.length > 1) {
+        const mid = Math.ceil(lines.length / 2);
+        console.log(`  ${label}: cost too high, splitting ${lines.length} -> ${mid}+${lines.length - mid}`);
+        const a = await runOne(wrapAliased(lines.slice(0, mid)), `${label}a`);
+        await sleep(300);
+        const b = await runOne(wrapAliased(lines.slice(mid)), `${label}b`);
+        return [...a, ...b];
+      }
+    }
+    throw e;
   }
 }
 
@@ -127,7 +170,7 @@ async function main() {
       continue;
     }
     try {
-      const { userErrors } = await postWithRetry(query, f);
+      const userErrors = await runOne(query, f);
       if (userErrors.length) {
         withErrors++;
         errorSamples.push({ file: f, errors: userErrors.slice(0, 3) });
