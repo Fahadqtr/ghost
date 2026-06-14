@@ -65,7 +65,14 @@ type ProductRow = {
 
 async function main() {
   console.log(`Compliance audit ${DRY ? "(DRY RUN — no writes)" : "(writing baseline to compliance_log)"}`);
-  const rules = await loadRules();
+  let rules = await loadRules();
+  // Preview a rule change without touching the DB: RULES_OVERRIDE_JSON merges
+  // over the loaded rules (e.g. a proposed forbidden_terms_en). DRY_RUN only.
+  if (process.env.RULES_OVERRIDE_JSON) {
+    const ov = JSON.parse(process.env.RULES_OVERRIDE_JSON) as Partial<RulesConfig>;
+    rules = { ...rules, ...ov };
+    console.log(`(rules override applied: ${Object.keys(ov).join(", ")})`);
+  }
 
   // channel name map + channel_products grouped by product (for platform_prices)
   const channels = await pageAll<{ id: string; name: string }>("channels", "id, name");
