@@ -108,7 +108,7 @@ const text = (content)=>content.filter(b=>b.type==="text").map(b=>b.text).join("
 
 async function ask(client, prompt) {
   const messages = [{ role:"user", content: prompt }];
-  const create = (extra={}) => client.messages.create({ model:MODEL, max_tokens:MAX_TOKENS, temperature:0, system:SYSTEM_PROMPT, tools:TOOLS, messages, ...extra });
+  const create = (extra={}) => client.messages.create({ model:MODEL, max_tokens:MAX_TOKENS, system:SYSTEM_PROMPT, tools:TOOLS, messages, ...extra });
   let resp = await create();
   for (let round=0; round<MAX_TOOL_ROUNDS; round++) {
     console.log(`   round=${round} stop_reason=${resp.stop_reason} blocks=[${resp.content.map(b=>b.type==="tool_use"?`tool:${b.name}`:b.type).join(", ")}]`);

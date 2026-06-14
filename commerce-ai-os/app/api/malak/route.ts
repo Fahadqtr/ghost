@@ -819,7 +819,6 @@ export async function POST(req: Request) {
     client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      temperature: 0,
       system: SYSTEM_PROMPT,
       tools: TOOLS,
       messages,
