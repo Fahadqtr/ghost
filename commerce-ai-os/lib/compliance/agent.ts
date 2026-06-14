@@ -6,10 +6,10 @@
 // fabricated data). It returns ONLY JSON and we parse it FAIL-CLOSED: any
 // malformed/empty/errored response becomes a BLOCK + needs_human.
 //
-// NOTE: the prompt text says "11 locked categories" / "Trending Products" as in
-// the spec. At runtime the real `valid_categories` (the 17, per decision A1) and
-// `category_fallback` are injected via the config object, and checker.ts is
-// authoritative for the gate.
+// NOTE (decision 3A): the category line now reads "17 locked categories" +
+// "Uncategorized" fallback to match decision A1, so no stale text is fed to the
+// model. The real `valid_categories` (17) and `category_fallback` are still
+// injected via the config object, and checker.ts is authoritative for the gate.
 //
 // No @anthropic-ai/sdk import at module top — it is loaded lazily inside
 // runComplianceAgent so this file is importable in tests without the SDK.
@@ -33,8 +33,8 @@ RULES YOU ENFORCE (from the system rulebook):
 3. FORMAT (BLOCK): Validate title_en, title_ar, and sku against \`format_rules\`. Both AR and EN must exist.
 4. PRICE CONSISTENCY (BLOCK): price must be identical across all listed platforms unless a
    \`discount_price\` is explicitly set. Mismatch with no discount field = BLOCK.
-5. CATEGORY (WARN): main_category must be one of the 11 locked categories in \`valid_categories\`.
-   If not, recommend routing to "Trending Products".
+5. CATEGORY (WARN): main_category must be one of the 17 locked categories in \`valid_categories\`.
+   If not, recommend routing to the configured fallback category ("Uncategorized").
 6. REQUIRED FIELDS (WARN): name_en, name_ar, desc_en, desc_ar, keywords_en (5–10), keywords_ar (5–10),
    size, price, image_url must all be non-empty.
 7. FABRICATED DATA (WARN): Flag any ingredient, delivery time, stock figure, or origin claim that is
