@@ -27,19 +27,26 @@ function countKeywords(s?: string | null): number {
     .filter(Boolean).length;
 }
 
-/** Whole-word, case-insensitive match for Latin terms; substring for the rest
- *  (Arabic has no \b word boundary). Returns the first matched term or null. */
+/** Whole-word match. Latin uses non-alphanumeric boundaries; Arabic uses a
+ *  word boundary that (a) forbids trailing Arabic letters — so طبي never matches
+ *  inside طبيعي ("natural") — and (b) allows a leading Arabic proclitic / ال
+ *  prefix — so a prefixed form like العلاج still matches علاج. Returns the first
+ *  matched term or null. */
+const AR = "\\u0600-\\u06FF"; // Arabic block (letters + diacritics + tatweel)
 function firstForbidden(text: string | null | undefined, terms: string[]): string | null {
   if (isEmpty(text)) return null;
-  const hay = (text as string).toLowerCase();
+  const raw = text as string;
+  const lower = raw.toLowerCase();
   for (const term of terms) {
-    const t = term.toLowerCase();
+    const t = term.trim();
+    if (!t) continue;
     const latin = /^[\x00-\x7F]+$/.test(t);
     if (latin) {
-      const re = new RegExp(`(?:^|[^a-z0-9])${escapeRe(t)}(?:$|[^a-z0-9])`, "i");
-      if (re.test(hay)) return term;
-    } else if (hay.includes(t)) {
-      return term;
+      const re = new RegExp(`(?:^|[^a-z0-9])${escapeRe(t.toLowerCase())}(?:$|[^a-z0-9])`, "i");
+      if (re.test(lower)) return term;
+    } else {
+      const re = new RegExp(`(?:^|[^${AR}]|ال|[وفبكل])${escapeRe(t)}(?![${AR}])`, "u");
+      if (re.test(raw)) return term;
     }
   }
   return null;
@@ -124,7 +131,9 @@ function checkCategory(d: Draft, r: RulesConfig): CheckResult {
 // 6. Required fields (WARN) ---------------------------------------------------
 function checkRequired(d: Draft, r: RulesConfig): CheckResult {
   const missing: string[] = [];
-  for (const k of ["name_en", "name_ar", "desc_en", "desc_ar", "size", "image_url"] as const) {
+  // `size` is intentionally NOT required — sizes live in the product titles
+  // (e.g. "...- 50g"); the size column is backfilled as a separate task.
+  for (const k of ["name_en", "name_ar", "desc_en", "desc_ar", "image_url"] as const) {
     if (isEmpty(d[k])) missing.push(k);
   }
   if (d.price === null || d.price === undefined) missing.push("price");
