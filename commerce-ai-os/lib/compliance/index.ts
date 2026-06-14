@@ -20,3 +20,8 @@ export {
   COMPLIANCE_LOOP_KEY,
   COMPLIANCE_AGENT_KEY,
 } from "./complianceClient";
+export {
+  buildPlatformPrices,
+  withPlatformPrices,
+  type ChannelPriceRow,
+} from "./priceContext";
