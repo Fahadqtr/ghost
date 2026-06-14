@@ -315,7 +315,6 @@ export async function POST(req: Request) {
     let resp = await client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      temperature: 0,
       system: SYSTEM_PROMPT,
       tools: TOOLS,
       messages,
@@ -355,7 +354,6 @@ export async function POST(req: Request) {
       resp = await client.messages.create({
         model: MODEL,
         max_tokens: MAX_TOKENS,
-        temperature: 0,
         system: SYSTEM_PROMPT,
         tools: TOOLS,
         messages,
