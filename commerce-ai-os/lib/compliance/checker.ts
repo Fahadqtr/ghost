@@ -33,7 +33,32 @@ function countKeywords(s?: string | null): number {
  *  prefix — so a prefixed form like العلاج still matches علاج. Returns the first
  *  matched term or null. */
 const AR = "\\u0600-\\u06FF"; // Arabic block (letters + diacritics + tatweel)
-function firstForbidden(text: string | null | undefined, terms: string[]): string | null {
+
+type JargonEx = { terms: string[]; context: string[]; window: number };
+/** True when EVERY occurrence of `term` (a single Latin word) sits within
+ *  `window` words of a context word — i.e. it's domain jargon, not a claim. */
+function jargonExempt(lower: string, term: string, ex: JargonEx): boolean {
+  if (!ex || !ex.terms.map((s) => s.toLowerCase()).includes(term)) return false;
+  const words = lower.split(/[^a-z0-9]+/).filter(Boolean);
+  const ctx = new Set(ex.context.map((c) => c.toLowerCase()));
+  const occ: number[] = [];
+  for (let i = 0; i < words.length; i++) if (words[i] === term) occ.push(i);
+  if (occ.length === 0) return false;
+  for (const i of occ) {
+    let near = false;
+    for (let j = Math.max(0, i - ex.window); j <= Math.min(words.length - 1, i + ex.window); j++) {
+      if (ctx.has(words[j])) { near = true; break; }
+    }
+    if (!near) return false; // a real, non-jargon occurrence
+  }
+  return true;
+}
+
+function firstForbidden(
+  text: string | null | undefined,
+  terms: string[],
+  ex?: JargonEx
+): string | null {
   if (isEmpty(text)) return null;
   const raw = text as string;
   const lower = raw.toLowerCase();
@@ -43,7 +68,10 @@ function firstForbidden(text: string | null | undefined, terms: string[]): strin
     const latin = /^[\x00-\x7F]+$/.test(t);
     if (latin) {
       const re = new RegExp(`(?:^|[^a-z0-9])${escapeRe(t.toLowerCase())}(?:$|[^a-z0-9])`, "i");
-      if (re.test(lower)) return term;
+      if (re.test(lower)) {
+        if (ex && jargonExempt(lower, t.toLowerCase(), ex)) continue;
+        return term;
+      }
     } else {
       const re = new RegExp(`(?:^|[^${AR}]|ال|[وفبكل])${escapeRe(t)}(?![${AR}])`, "u");
       if (re.test(raw)) return term;
@@ -63,10 +91,10 @@ function check(name: CheckResult["name"], severity: Severity, detail: string, ev
 // 1. Medical claims (BLOCK) ---------------------------------------------------
 function checkMedical(d: Draft, r: RulesConfig): CheckResult {
   const allowed = new Set(r.on_label_claims.map((s) => s.toLowerCase()));
-  const en = firstForbidden(d.desc_en, r.forbidden_terms_en);
+  const en = firstForbidden(d.desc_en, r.forbidden_terms_en, r.medical_jargon_exceptions);
   if (en && !allowed.has(en.toLowerCase()))
     return check("medical_claims", "BLOCK", "Forbidden medical/claim term in desc_en", en);
-  const ar = firstForbidden(d.desc_ar, r.forbidden_terms_ar);
+  const ar = firstForbidden(d.desc_ar, r.forbidden_terms_ar, r.medical_jargon_exceptions);
   if (ar && !allowed.has(ar.toLowerCase()))
     return check("medical_claims", "BLOCK", "Forbidden medical/claim term in desc_ar", ar);
   return check("medical_claims", "PASS", "No forbidden medical claims");
@@ -226,4 +254,9 @@ export const DEFAULT_RULES: RulesConfig = {
   category_fallback: "Uncategorized",
   on_label_claims: [],
   image_rules: { require_white_bg_check: false },
+  medical_jargon_exceptions: {
+    terms: ["cure", "cures"],
+    context: ["gel", "uv", "led", "nail", "nails", "polish", "lamp", "manicure"],
+    window: 4,
+  },
 };

@@ -41,6 +41,7 @@ async function loadRules(): Promise<RulesConfig> {
     category_fallback: g("category_fallback", DEFAULT_RULES.category_fallback),
     on_label_claims: g("on_label_claims", DEFAULT_RULES.on_label_claims),
     image_rules: g("image_rules", DEFAULT_RULES.image_rules),
+    medical_jargon_exceptions: g("medical_jargon_exceptions", DEFAULT_RULES.medical_jargon_exceptions),
   };
 }
 

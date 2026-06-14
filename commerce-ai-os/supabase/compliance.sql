@@ -37,7 +37,10 @@ insert into compliance_rules (rule_key, rule_value) values
 ('on_label_claims', '[]'),
 -- Image policy. White-bg classifier is not wired, so it is not enforced
 -- (would otherwise WARN-and-queue, per spec §2.2). HTTPS is still required.
-('image_rules', '{"require_white_bg_check":false}')
+('image_rules', '{"require_white_bg_check":false}'),
+-- Context-aware exceptions: skip "cure"/"cures" when within 4 words of nail
+-- jargon (UV-curing gel polish is not a medical cure). Configurable.
+('medical_jargon_exceptions', '{"terms":["cure","cures"],"context":["gel","uv","led","nail","nails","polish","lamp","manicure"],"window":4}')
 on conflict (rule_key) do nothing;
 
 -- 4.2 compliance_log — audit trail of every check run --------------------------

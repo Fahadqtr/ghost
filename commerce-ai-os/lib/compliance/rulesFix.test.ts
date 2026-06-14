@@ -48,3 +48,17 @@ test("keywords are still required (short keywords → WARN even with size null)"
 test("missing name/desc still required", () => {
   assert.equal(req(base({ size: null, desc_ar: "" })), "WARN");
 });
+
+// Nail-jargon exception (medical_jargon_exceptions) ---------------------------
+test("'cure gel polish' (nail jargon) does NOT trigger medical", () => {
+  assert.equal(med(base({ desc_en: "Designed to evenly cure gel polish and gel nails." })), "PASS");
+});
+test("'cures quickly under uv and led lamps' does NOT trigger medical", () => {
+  assert.equal(med(base({ desc_en: "The formula cures quickly under both uv and led lamps." })), "PASS");
+});
+test("'cure your acne' (no jargon nearby) STILL triggers medical", () => {
+  assert.equal(med(base({ desc_en: "This serum will cure your acne overnight." })), "BLOCK");
+});
+test("'miracle cure' (no jargon) STILL triggers medical", () => {
+  assert.equal(med(base({ desc_en: "A miracle cure for eczema and rosacea." })), "BLOCK");
+});

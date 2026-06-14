@@ -28,6 +28,7 @@ export function assembleRules(rows: RuleRow[]): RulesConfig {
     category_fallback: get("category_fallback", DEFAULT_RULES.category_fallback),
     on_label_claims: get("on_label_claims", DEFAULT_RULES.on_label_claims),
     image_rules: get("image_rules", DEFAULT_RULES.image_rules),
+    medical_jargon_exceptions: get("medical_jargon_exceptions", DEFAULT_RULES.medical_jargon_exceptions),
   };
 }
 

@@ -67,6 +67,10 @@ export interface RulesConfig {
   category_fallback: string;
   on_label_claims: string[];
   image_rules: { require_white_bg_check: boolean };
+  /** Context-aware exceptions: a forbidden term in `terms` is NOT flagged when
+   *  every occurrence sits within `window` words of a `context` word (e.g.
+   *  "cure"/"cures" near gel/uv/led/nail = nail-curing jargon, not a claim). */
+  medical_jargon_exceptions: { terms: string[]; context: string[]; window: number };
 }
 
 /** A compliance_log row (subset the app reads back). */
