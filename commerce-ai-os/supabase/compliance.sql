@@ -7,8 +7,9 @@
 --       (ai_drafts / Maker pipeline does not exist yet).
 --
 -- All rules live in compliance_rules (configurable — edit without redeploying
--- the agent). SKU/title format is in format_rules (default BRAND-PRODUCT-VARIANT
--- via sku_pattern). Safe & idempotent. No changes to existing tables.
+-- the agent). SKU/title format is in format_rules.sku_pattern (Option C:
+-- ^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$ — accepts the store's real mk#### SKUs and
+-- hyphenated BRAND-PRODUCT-VARIANT). Safe & idempotent. No changes to existing tables.
 -- ============================================================================
 
 -- 4.1 compliance_rules — config -------------------------------------------------
@@ -25,7 +26,7 @@ insert into compliance_rules (rule_key, rule_value) values
 ('valid_categories', '["Face Care","Body Care","Hair Care","Makeup","Lashes & Nails","Beauty Accessories","Beauty Bundle","Masks","Sun Protection","Dental Care","Women’s Essentials","Rhode Products Section","Thailand Products","Summer And Camping Supplies","Electronics","✨Toys","Uncategorized"]'),
 ('forbidden_terms_en', '["cure","cures","heal","heals","treat","treats","treatment","medical","clinically guaranteed","eliminates acne","removes wrinkles permanently","fda","prescription","diagnose","allergy-free"]'),
 ('forbidden_terms_ar', '["يعالج","علاج","يشفي","يشفى","يداوي","طبي","يقضي على حب الشباب نهائياً","يزيل التجاعيد نهائياً","مضمون طبياً","آمن لجميع أنواع الحساسية","يعالج الإكزيما","تشخيص"]'),
-('format_rules', '{"sku_pattern":"^[A-Z]{2,4}(-[A-Z0-9]+)+$","require_ar":true,"require_en":true,"keywords_min":5,"keywords_max":10}'),
+('format_rules', '{"sku_pattern":"^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$","require_ar":true,"require_en":true,"keywords_min":5,"keywords_max":10}'),
 -- Deterministic "fabricated data" heuristics (delivery time / stock claims a
 -- Maker should never invent). Configurable — extend as needed.
 ('fabrication_patterns', '["\\bships? in \\d","\\bdelivery in \\d","\\bwithin \\d+ ?(hours|hrs|days|day)\\b","\\b\\d+ ?(hours|hrs) delivery\\b","\\bin stock\\b *: *\\d","\\b\\d+ in stock\\b","\\bsame[- ]day delivery\\b"]'),

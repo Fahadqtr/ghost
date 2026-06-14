@@ -201,7 +201,9 @@ export const DEFAULT_RULES: RulesConfig = {
     "آمن لجميع أنواع الحساسية", "يعالج الإكزيما", "تشخيص",
   ],
   format_rules: {
-    sku_pattern: "^[A-Z]{2,4}(-[A-Z0-9]+)+$",
+    // Option C — accepts the store's real mk#### SKUs and hyphenated
+    // BRAND-PRODUCT-VARIANT. Mirrors the compliance_rules seed.
+    sku_pattern: "^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$",
     require_ar: true,
     require_en: true,
     keywords_min: 5,
