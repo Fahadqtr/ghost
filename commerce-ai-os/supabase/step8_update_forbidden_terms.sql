@@ -8,7 +8,7 @@
 -- ============================================================================
 
 update compliance_rules
-set rule_value = '["medical treatment","cure","cures","heal","heals","eliminates acne","removes wrinkles permanently","clinically guaranteed","fda","prescription","diagnose","allergy-free"]'::jsonb,
+set rule_value = '["medical treatment","cure","cures","heal","heals","eliminates acne","removes wrinkles permanently","anti-aging guarantee","clinically guaranteed","fda","prescription","diagnose","allergy-free"]'::jsonb,
     updated_at = now()
 where rule_key = 'forbidden_terms_en';
 
