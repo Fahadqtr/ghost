@@ -31,7 +31,7 @@ export interface MalakProductDraft {
 export interface MalakAction {
   v: 1;
   type: MalakActionType;
-  agent: string; // active agent id (salem / razan / noor)
+  agent: string; // active agent id (razan / noor / reem)
   sku?: string;
   productId?: string;
   field?: string;

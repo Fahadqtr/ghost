@@ -49,7 +49,7 @@ class UIErrorBoundary extends Component<{ children: React.ReactNode }, { err: Er
 }
 
 // ---- Agent team -----------------------------------------------------------
-type AgentId = "malak" | "noor" | "bayan" | "reem" | "siraj" | "razan" | "rashid" | "latifa" | "salem" | "faisal";
+type AgentId = "malak" | "noor" | "reem" | "siraj" | "razan" | "rashid" | "latifa";
 
 interface AgentDef {
   id: AgentId;
@@ -61,14 +61,11 @@ interface AgentDef {
 const AGENTS: AgentDef[] = [
   { id: "malak", name: "ملاك", role: "المديرة العامة", color: "#4f8bff" },
   { id: "noor", name: "نور", role: "الكتالوج", color: "#38bdf8" },
-  { id: "bayan", name: "بيان", role: "المحتوى", color: "#a855f7" },
   { id: "reem", name: "ريم", role: "الصور", color: "#ec4899" },
-  { id: "siraj", name: "سراج", role: "التواصل والنشر", color: "#22d3ee" },
-  { id: "razan", name: "رزان", role: "التسعير", color: "#34d399" },
-  { id: "rashid", name: "راشد", role: "التقارير", color: "#fbbf24" },
+  { id: "siraj", name: "سراج", role: "المزامنة والمنصّات", color: "#22d3ee" },
+  { id: "razan", name: "رزان", role: "الأسعار والمخزون", color: "#34d399" },
+  { id: "rashid", name: "راشد", role: "التسويق والتقارير", color: "#fbbf24" },
   { id: "latifa", name: "لطيفة", role: "العملاء", color: "#fb7185" },
-  { id: "salem", name: "سالم", role: "العمليات", color: "#818cf8" },
-  { id: "faisal", name: "فيصل", role: "التقني والتطوير", color: "#14b8a6" },
 ];
 
 // The 8 specialists shown on the rail (Malak herself is the orb).
@@ -89,7 +86,7 @@ const txt = (v: any): string =>
   : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "tech";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing";
   items?: any[];
   item?: any;
 }
@@ -667,61 +664,6 @@ function BriefingPanel({
   );
 }
 
-// فيصل (التقني) — مقترح تقني للقراءة/المراجعة فقط. لا ينفّذ شيئًا؛ التطبيق يدوي بعد اعتماد فهد.
-function TechPanel({ item }: { item: any }) {
-  const steps: string[] = Array.isArray(item.steps) ? item.steps.map(txt) : [];
-  const files: string[] = Array.isArray(item.files) ? item.files.map(txt) : [];
-  const risk = txt(item.risk);
-  const riskTone = risk.includes("عال")
-    ? "text-rose-300 border-rose-400/40 bg-rose-500/10"
-    : risk.includes("متوسط")
-      ? "text-amber-300 border-amber-400/40 bg-amber-500/10"
-      : "text-emerald-300 border-emerald-400/40 bg-emerald-500/10";
-  return (
-    <div className="space-y-3 rounded-2xl border border-teal-400/25 bg-gradient-to-br from-teal-500/10 to-sky-500/10 p-3 text-right backdrop-blur sm:p-4">
-      <div className="flex items-center justify-between gap-2">
-        {risk ? (
-          <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${riskTone}`}>
-            مخاطرة: {risk}
-          </span>
-        ) : <span />}
-        <p className="text-base font-extrabold text-white">🛠️ {txt(item.title) || "مقترح تقني"}</p>
-      </div>
-
-      {item.summary ? <p className="text-[13px] leading-relaxed text-white/80">{txt(item.summary)}</p> : null}
-
-      {steps.length ? (
-        <div className="rounded-xl bg-white/5 p-3">
-          <p className="mb-1.5 text-[12px] font-semibold text-teal-200">الخطوات</p>
-          <ol className="list-decimal space-y-1 pr-4 text-[13px] text-white/80">
-            {steps.map((s, i) => <li key={i}>{s}</li>)}
-          </ol>
-        </div>
-      ) : null}
-
-      {files.length ? (
-        <p className="text-[12px] text-white/60">📁 الملفات المتأثّرة: {files.join("، ")}</p>
-      ) : null}
-
-      {item.code ? (
-        <pre dir="ltr" className="max-h-72 overflow-auto rounded-xl bg-black/40 p-3 text-left text-[11px] leading-relaxed text-teal-100">
-          <code>{txt(item.code)}</code>
-        </pre>
-      ) : null}
-
-      {item.sql ? (
-        <pre dir="ltr" className="max-h-72 overflow-auto rounded-xl bg-black/40 p-3 text-left text-[11px] leading-relaxed text-sky-100">
-          <code>{txt(item.sql)}</code>
-        </pre>
-      ) : null}
-
-      <p className="rounded-xl border border-teal-400/30 bg-teal-500/10 px-3 py-2 text-[12px] font-medium text-teal-100">
-        ⚠️ اقتراح فقط — يحتاج مراجعتك واعتمادك قبل التنفيذ. فيصل ما ينفّذ ولا ينشر تلقائيًا.
-      </p>
-    </div>
-  );
-}
-
 function Panel({
   data,
   onConfirmDone,
@@ -741,7 +683,6 @@ function Panel({
   if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} />;
   if (data.type === "post" && data.item) return <PostPanel item={data.item} />;
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
-  if (data.type === "tech" && data.item) return <TechPanel item={data.item} />;
   if (data.type === "briefing" && data.item)
     return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
   if (data.type === "image_request" && data.item)

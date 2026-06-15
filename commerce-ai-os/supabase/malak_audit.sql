@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS malak_audit (
   id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at  timestamptz NOT NULL DEFAULT now(),
   action_type text        NOT NULL,            -- update_stock | set_price | set_approval | add_product
-  agent       text,                            -- salem | razan | noor
+  agent       text,                            -- razan | noor | reem
   sku         text,
   product_id  uuid,
   field       text,                            -- stock_quantity | price | approval | add_product
