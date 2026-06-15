@@ -754,61 +754,72 @@ function Panel({
 
 // مشهد "مقر العمل" 2D — كل وكيل عند مكتبه بحركة خفيفة (تمايل)، والوكيل النشط
 // يضيء ويكبر ويظهر حالته (يفكّر/يتكلّم). عرض فقط؛ يبدّله زر "المكتب" في الهيدر.
+// شخصية وكيل متحركة (SVG خالص): رأس + جسم + ذراعان يتأرجحان + رِجلان تمشيان،
+// والجسم ينطّ. النشط يتحرّك أسرع ويلوّح بيده. مرسومة بالكود، بدون مكتبات/أصول خارجية.
+function AgentCharacter({ color, initial, active, idx }: { color: string; initial: string; active: boolean; idx: number }) {
+  const delay = `${(idx % 5) * 0.2}s`;
+  const limb = active ? "0.5s" : "0.95s"; // سرعة الأطراف
+  const bob = active ? "0.9s" : "1.9s"; // نطّ الجسم
+  const skin = "#f1c9a5";
+  const limbCss = (kf: string) => ({
+    transformBox: "fill-box" as const,
+    transformOrigin: "top center",
+    animation: `${kf} ${limb} ease-in-out ${delay} infinite`,
+  });
+  return (
+    <div style={{ animation: `mkBob ${bob} ease-in-out ${delay} infinite` }}>
+      <svg viewBox="0 0 64 80" width="54" height="68" aria-hidden="true">
+        {/* legs (alternating) */}
+        <rect x="25" y="56" width="6" height="18" rx="3" fill={color} style={limbCss("mkSwingA")} />
+        <rect x="33" y="56" width="6" height="18" rx="3" fill={color} style={limbCss("mkSwingB")} />
+        {/* body */}
+        <rect x="20" y="32" width="24" height="28" rx="11" fill={color} />
+        {/* arms (opposite swing; active right arm waves) */}
+        <rect x="15" y="34" width="5" height="20" rx="2.5" fill={color} style={limbCss("mkSwingB")} />
+        <rect x="44" y="34" width="5" height="20" rx="2.5" fill={color} style={limbCss(active ? "mkWave" : "mkSwingA")} />
+        {/* head + hair + eyes */}
+        <circle cx="32" cy="20" r="12" fill={skin} />
+        <path d="M20 20 a12 12 0 0 1 24 0 z" fill={color} />
+        <circle cx="28" cy="22" r="1.6" fill="#0b1020" />
+        <circle cx="36" cy="22" r="1.6" fill="#0b1020" />
+        {/* initial on chest */}
+        <text x="32" y="50" textAnchor="middle" fontSize="11" fontWeight="800" fill="#0b1020">{initial}</text>
+      </svg>
+    </div>
+  );
+}
+
 function OfficeView({ activeAgent, state }: { activeAgent: AgentId; state: OrbState }) {
   const statusLabel =
     state === "thinking" ? "يفكّر…" : state === "speaking" ? "يتكلّم…" : state === "listening" ? "يسمع…" : null;
-  // Distinct character avatar per agent (deterministic by id) via DiceBear —
-  // plain <img>, no extra deps / no next/image config; falls back to the
-  // colored initial if the avatar fails to load.
-  const avatarUrl = (id: string) =>
-    `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(id)}`;
   return (
     <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center px-3 py-2">
       <style>{`
-        @keyframes mkWalk { 0%,100%{transform:translateY(0) rotate(-2.5deg)} 50%{transform:translateY(-6px) rotate(2.5deg)} }
-        @keyframes mkTalk { 0%,100%{transform:translateY(0) scale(1.06)} 25%{transform:translateY(-9px) scale(1.1) rotate(-3deg)} 75%{transform:translateY(-4px) scale(1.08) rotate(3deg)} }
+        @keyframes mkBob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
+        @keyframes mkSwingA { 0%,100%{transform:rotate(-17deg)} 50%{transform:rotate(17deg)} }
+        @keyframes mkSwingB { 0%,100%{transform:rotate(17deg)} 50%{transform:rotate(-17deg)} }
+        @keyframes mkWave { 0%,100%{transform:rotate(10deg)} 50%{transform:rotate(-45deg)} }
       `}</style>
-      <div className="grid w-full max-w-2xl grid-cols-3 gap-2.5 sm:grid-cols-5 sm:gap-3">
+      <div className="grid w-full max-w-2xl grid-cols-3 gap-2 sm:grid-cols-5 sm:gap-3">
         {AGENTS.map((a, i) => {
           const on = a.id === activeAgent;
           return (
-            <div key={a.id} className="flex flex-col items-center gap-1 text-center">
-              <div
-                className="relative h-16 w-16 rounded-full"
-                style={{
-                  background: `${a.color}22`,
-                  boxShadow: on ? `0 0 0 2px ${a.color}, 0 0 22px ${a.color}88` : `0 0 0 1px ${a.color}44`,
-                  animation: `${on ? "mkTalk 1.3s" : "mkWalk 3.2s"} ease-in-out ${(i % 5) * 0.22}s infinite`,
-                }}
-              >
-                <span
-                  className="absolute inset-0 flex items-center justify-center text-lg font-extrabold"
-                  style={{ color: a.color }}
-                >
-                  {a.name.slice(0, 1)}
-                </span>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={avatarUrl(a.id)}
-                  alt={a.name}
-                  loading="lazy"
-                  className="absolute inset-0 h-full w-full rounded-full object-cover"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                  }}
-                />
-                {on && statusLabel ? (
-                  <span
-                    className="absolute -bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-1.5 py-px text-[8px] font-bold text-[#0b1020]"
-                    style={{ background: a.color }}
-                  >
-                    {statusLabel}
-                  </span>
-                ) : null}
-              </div>
+            <div
+              key={a.id}
+              className="flex flex-col items-center gap-0.5 rounded-2xl px-1 py-1 text-center transition"
+              style={on ? { background: `${a.color}1f`, boxShadow: `0 0 18px ${a.color}55` } : undefined}
+            >
+              <AgentCharacter color={a.color} initial={a.name.slice(0, 1)} active={on} idx={i} />
               <span className="text-base leading-none">🖥️</span>
-              <span className="text-[11px] font-semibold leading-none text-white/85">{a.name}</span>
-              <span className="max-w-[68px] truncate text-[8px] leading-tight text-white/45">{a.role}</span>
+              <span
+                className="text-[11px] font-semibold leading-none"
+                style={{ color: on ? a.color : "rgba(255,255,255,0.85)" }}
+              >
+                {a.name}
+              </span>
+              <span className="max-w-[70px] truncate text-[8px] leading-tight text-white/45">
+                {on && statusLabel ? statusLabel : a.role}
+              </span>
             </div>
           );
         })}
