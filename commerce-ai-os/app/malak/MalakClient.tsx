@@ -757,42 +757,64 @@ function Panel({
 function OfficeView({ activeAgent, state }: { activeAgent: AgentId; state: OrbState }) {
   const statusLabel =
     state === "thinking" ? "يفكّر…" : state === "speaking" ? "يتكلّم…" : state === "listening" ? "يسمع…" : null;
+  // Distinct character avatar per agent (deterministic by id) via DiceBear —
+  // plain <img>, no extra deps / no next/image config; falls back to the
+  // colored initial if the avatar fails to load.
+  const avatarUrl = (id: string) =>
+    `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(id)}`;
   return (
     <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center px-3 py-2">
       <style>{`
-        @keyframes mkFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
-        @keyframes mkActive { 0%,100%{transform:translateY(0) scale(1.03)} 50%{transform:translateY(-7px) scale(1.07)} }
+        @keyframes mkWalk { 0%,100%{transform:translateY(0) rotate(-2.5deg)} 50%{transform:translateY(-6px) rotate(2.5deg)} }
+        @keyframes mkTalk { 0%,100%{transform:translateY(0) scale(1.06)} 25%{transform:translateY(-9px) scale(1.1) rotate(-3deg)} 75%{transform:translateY(-4px) scale(1.08) rotate(3deg)} }
       `}</style>
       <div className="grid w-full max-w-2xl grid-cols-3 gap-2.5 sm:grid-cols-5 sm:gap-3">
         {AGENTS.map((a, i) => {
           const on = a.id === activeAgent;
           return (
-            <div
-              key={a.id}
-              className="flex flex-col items-center gap-1 rounded-2xl border p-2 text-center backdrop-blur"
-              style={{
-                borderColor: on ? a.color : "rgba(255,255,255,0.08)",
-                background: on ? `${a.color}22` : "rgba(255,255,255,0.03)",
-                boxShadow: on ? `0 0 20px ${a.color}55` : "none",
-                animation: `${on ? "mkActive 1.6s" : "mkFloat 3.4s"} ease-in-out ${(i % 5) * 0.2}s infinite`,
-              }}
-            >
-              <span
-                className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold"
-                style={{ background: on ? a.color : `${a.color}33`, color: on ? "#0b1020" : a.color }}
+            <div key={a.id} className="flex flex-col items-center gap-1 text-center">
+              <div
+                className="relative h-16 w-16 rounded-full"
+                style={{
+                  background: `${a.color}22`,
+                  boxShadow: on ? `0 0 0 2px ${a.color}, 0 0 22px ${a.color}88` : `0 0 0 1px ${a.color}44`,
+                  animation: `${on ? "mkTalk 1.3s" : "mkWalk 3.2s"} ease-in-out ${(i % 5) * 0.22}s infinite`,
+                }}
               >
-                {a.name.slice(0, 1)}
-              </span>
+                <span
+                  className="absolute inset-0 flex items-center justify-center text-lg font-extrabold"
+                  style={{ color: a.color }}
+                >
+                  {a.name.slice(0, 1)}
+                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={avatarUrl(a.id)}
+                  alt={a.name}
+                  loading="lazy"
+                  className="absolute inset-0 h-full w-full rounded-full object-cover"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+                {on && statusLabel ? (
+                  <span
+                    className="absolute -bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-1.5 py-px text-[8px] font-bold text-[#0b1020]"
+                    style={{ background: a.color }}
+                  >
+                    {statusLabel}
+                  </span>
+                ) : null}
+              </div>
               <span className="text-base leading-none">🖥️</span>
               <span className="text-[11px] font-semibold leading-none text-white/85">{a.name}</span>
-              <span className="max-w-[64px] truncate text-[8px] leading-tight text-white/45">
-                {on && statusLabel ? statusLabel : a.role}
-              </span>
+              <span className="max-w-[68px] truncate text-[8px] leading-tight text-white/45">{a.role}</span>
             </div>
           );
         })}
       </div>
-      <p className="mt-3 text-[11px] text-white/40">🏢 مقر ملاك — {AGENTS.length} وكلاء جاهزين</p>
+      <div className="mt-3 h-px w-full max-w-2xl bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+      <p className="mt-2 text-[11px] text-white/40">🏢 مقر ملاك — {AGENTS.length} وكلاء في مكاتبهم</p>
     </div>
   );
 }
