@@ -752,6 +752,51 @@ function Panel({
   return null;
 }
 
+// مشهد "مقر العمل" 2D — كل وكيل عند مكتبه بحركة خفيفة (تمايل)، والوكيل النشط
+// يضيء ويكبر ويظهر حالته (يفكّر/يتكلّم). عرض فقط؛ يبدّله زر "المكتب" في الهيدر.
+function OfficeView({ activeAgent, state }: { activeAgent: AgentId; state: OrbState }) {
+  const statusLabel =
+    state === "thinking" ? "يفكّر…" : state === "speaking" ? "يتكلّم…" : state === "listening" ? "يسمع…" : null;
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center px-3 py-2">
+      <style>{`
+        @keyframes mkFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+        @keyframes mkActive { 0%,100%{transform:translateY(0) scale(1.03)} 50%{transform:translateY(-7px) scale(1.07)} }
+      `}</style>
+      <div className="grid w-full max-w-2xl grid-cols-3 gap-2.5 sm:grid-cols-5 sm:gap-3">
+        {AGENTS.map((a, i) => {
+          const on = a.id === activeAgent;
+          return (
+            <div
+              key={a.id}
+              className="flex flex-col items-center gap-1 rounded-2xl border p-2 text-center backdrop-blur"
+              style={{
+                borderColor: on ? a.color : "rgba(255,255,255,0.08)",
+                background: on ? `${a.color}22` : "rgba(255,255,255,0.03)",
+                boxShadow: on ? `0 0 20px ${a.color}55` : "none",
+                animation: `${on ? "mkActive 1.6s" : "mkFloat 3.4s"} ease-in-out ${(i % 5) * 0.2}s infinite`,
+              }}
+            >
+              <span
+                className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold"
+                style={{ background: on ? a.color : `${a.color}33`, color: on ? "#0b1020" : a.color }}
+              >
+                {a.name.slice(0, 1)}
+              </span>
+              <span className="text-base leading-none">🖥️</span>
+              <span className="text-[11px] font-semibold leading-none text-white/85">{a.name}</span>
+              <span className="max-w-[64px] truncate text-[8px] leading-tight text-white/45">
+                {on && statusLabel ? statusLabel : a.role}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-[11px] text-white/40">🏢 مقر ملاك — {AGENTS.length} وكلاء جاهزين</p>
+    </div>
+  );
+}
+
 // ---- Main page -------------------------------------------------------------
 export default function MalakPage() {
   return (
@@ -771,6 +816,7 @@ function MalakInner() {
   const [typed, setTyped] = useState(""); // typewriter buffer for latest malak turn
   const [micSupported, setMicSupported] = useState(true);
   const [orbSize, setOrbSize] = useState(160); // responsive; set on mount
+  const [view, setView] = useState<"orb" | "office">("orb"); // الأورب أو مشهد المكتب
   const [pendingImage, setPendingImage] = useState<File | null>(null); // Phase 2C attachment
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1174,7 +1220,12 @@ function MalakInner() {
           <h1 className="text-base font-extrabold tracking-tight sm:text-lg">ملاك</h1>
           <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2N</p>
         </div>
-        <div className="w-[70px] sm:w-[92px]" />
+        <button
+          onClick={() => setView((v) => (v === "orb" ? "office" : "orb"))}
+          className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[12px] text-white/70 backdrop-blur transition hover:bg-white/10 sm:px-3 sm:py-1.5 sm:text-sm"
+        >
+          {view === "orb" ? "🏢 المكتب" : "✨ ملاك"}
+        </button>
       </header>
 
       {/* Agent rail (horizontal scroll, touch-friendly, compact height) */}
@@ -1207,24 +1258,28 @@ function MalakInner() {
         })}
       </div>
 
-      {/* Orb */}
-      <div className="relative flex shrink-0 flex-col items-center justify-center py-0.5 sm:py-1">
-        <Orb state={state} color={accent} size={orbSize} />
-        <div className="-mt-2 text-center sm:-mt-3">
-          <p className="text-[13px] font-semibold sm:text-sm" style={{ color: accent }}>
-            {activeDef.name}
-          </p>
-          <p className="text-[10px] text-white/40 sm:text-[11px]">
-            {state === "listening"
-              ? "أستمع…"
-              : state === "thinking"
-              ? "أفكّر…"
-              : state === "speaking"
-              ? "أتحدّث…"
-              : activeDef.role}
-          </p>
+      {/* Orb / Office view (toggled from the header) */}
+      {view === "orb" ? (
+        <div className="relative flex shrink-0 flex-col items-center justify-center py-0.5 sm:py-1">
+          <Orb state={state} color={accent} size={orbSize} />
+          <div className="-mt-2 text-center sm:-mt-3">
+            <p className="text-[13px] font-semibold sm:text-sm" style={{ color: accent }}>
+              {activeDef.name}
+            </p>
+            <p className="text-[10px] text-white/40 sm:text-[11px]">
+              {state === "listening"
+                ? "أستمع…"
+                : state === "thinking"
+                ? "أفكّر…"
+                : state === "speaking"
+                ? "أتحدّث…"
+                : activeDef.role}
+            </p>
+          </div>
         </div>
-      </div>
+      ) : (
+        <OfficeView activeAgent={activeAgent} state={state} />
+      )}
 
       {/* Transcript + panel (scrollable — gets priority for vertical space) */}
       <div ref={scrollRef} className="mx-auto min-h-0 w-full max-w-3xl flex-1 space-y-2.5 overflow-y-auto px-3 py-2.5 sm:space-y-3 sm:px-6 sm:py-3">
