@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 
@@ -15,6 +16,10 @@ export default function AppShell({
 }) {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
+  const pathname = usePathname();
+  // Malak provides its own dark full-bleed background, so drop the main padding
+  // for it (avoids the negative-margin trick that broke mobile width).
+  const isMalak = pathname === "/malak" || pathname.startsWith("/malak/");
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -48,7 +53,7 @@ export default function AppShell({
       {/* Main column */}
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar userEmail={userEmail} onMenuClick={() => setOpen(true)} />
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
+        <main className={`flex-1 overflow-y-auto ${isMalak ? "" : "p-4 sm:p-6"}`}>{children}</main>
       </div>
     </div>
   );
