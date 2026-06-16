@@ -1197,34 +1197,10 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         </button>
       </div>
 
-      {/* KPI cards (live Supabase data) */}
-      {kpis ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {[
-            { label: "إجمالي المنتجات", value: kpis.totalProducts, icon: "📦", color: "#8B5CF6" },
-            { label: "جاهز للنشر", value: kpis.readyToPublish, icon: "✅", color: "#34d399" },
-            { label: "بحاجة مراجعة", value: kpis.needReview, icon: "🕑", color: "#F4C430" },
-            { label: "صور ناقصة", value: kpis.missingImage, icon: "🖼️", color: "#38bdf8" },
-            { label: "أسعار ناقصة", value: kpis.missingPrice, icon: "💲", color: "#fb7185" },
-            { label: "مرفوض", value: kpis.rejected, icon: "⛔", color: "#94a3b8" },
-          ].map((c) => (
-            <div
-              key={c.label}
-              className="rounded-2xl border border-white/10 bg-white/[0.04] p-3"
-              style={{ boxShadow: `inset 0 0 0 1px ${c.color}22` }}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-lg">{c.icon}</span>
-                <span className="h-2 w-2 rounded-full" style={{ background: c.color }} />
-              </div>
-              <p className="mt-1 text-2xl font-extrabold tabular-nums" style={{ color: c.color }}>
-                {kpis.configured ? c.value.toLocaleString("en-US") : "—"}
-              </p>
-              <p className="text-[11px] text-white/55">{c.label}</p>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {/* JARVIS-style pop-in keyframes (used by the holographic output overlay) */}
+      <style>{`
+        @keyframes hudIn { 0%{opacity:0;transform:translateY(12px) scale(.94);filter:blur(6px)} 100%{opacity:1;transform:none;filter:none} }
+      `}</style>
 
       {/* Agent rail (tap to talk) */}
       <div className="flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -1328,33 +1304,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           </div>
         ) : null}
 
-        {panel ? (
-          <div className="pt-1">
-            <Panel
-              data={panel}
-              onConfirmDone={(m) => {
-                // Record the result in the transcript and speak it; leave the
-                // card showing its success state.
-                setTurns((prev) => [...prev, { role: "malak", text: m }]);
-                speak(m, activeAgent);
-              }}
-              onConfirmCancel={() => {
-                setPanel(null);
-                setTurns((prev) => [...prev, { role: "malak", text: "تمام، ألغيت العملية." }]);
-              }}
-              onGenerated={(p) => {
-                // Image generated → swap the request card for the preview card.
-                setPanel(p);
-              }}
-              onQuick={(q) => send(q)}
-              onListen={(text) => {
-                // Button click is a user gesture → unlock + play (no autoplay block).
-                unlockAudio();
-                speak(text, "rashid");
-              }}
-            />
-          </div>
-        ) : null}
+        {/* (structured results pop up as a holographic overlay — see below) */}
       </div>
 
         {/* Composer */}
@@ -1452,6 +1402,63 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         </form>
        </div>
       </div>
+
+      {/* Holographic output overlay (JARVIS): structured results pop up here */}
+      {panel ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
+          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setPanel(null)} />
+          <div
+            className="relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl"
+            style={{
+              border: "1px solid #22d3ee66",
+              background: "linear-gradient(160deg, rgba(34,211,238,0.10), rgba(11,16,32,0.97))",
+              boxShadow: "0 0 44px rgba(34,211,238,0.35), inset 0 0 30px rgba(34,211,238,0.08)",
+              animation: "hudIn .4s ease-out both",
+            }}
+          >
+            {/* scanlines */}
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 opacity-[0.12]"
+              style={{ backgroundImage: "repeating-linear-gradient(0deg, #22d3ee 0px, #22d3ee 1px, transparent 1px, transparent 4px)" }}
+            />
+            {/* corner brackets */}
+            <span aria-hidden className="absolute left-2 top-2 h-4 w-4 border-l-2 border-t-2 border-cyan-400/70" />
+            <span aria-hidden className="absolute right-2 top-2 h-4 w-4 border-r-2 border-t-2 border-cyan-400/70" />
+            <span aria-hidden className="absolute bottom-2 left-2 h-4 w-4 border-b-2 border-l-2 border-cyan-400/70" />
+            <span aria-hidden className="absolute bottom-2 right-2 h-4 w-4 border-b-2 border-r-2 border-cyan-400/70" />
+            {/* header */}
+            <div className="relative flex items-center justify-between border-b border-cyan-400/30 px-4 py-2.5">
+              <span className="font-mono text-[11px] tracking-[0.25em] text-cyan-300">◢ MALAK · النتيجة</span>
+              <button
+                type="button"
+                onClick={() => setPanel(null)}
+                aria-label="إغلاق"
+                className="flex h-7 w-7 items-center justify-center rounded-full border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/10"
+              >
+                ✕
+              </button>
+            </div>
+            {/* content */}
+            <div className="relative min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+              <Panel
+                data={panel}
+                onConfirmDone={(m) => {
+                  setTurns((prev) => [...prev, { role: "malak", text: m }]);
+                  speak(m, activeAgent);
+                }}
+                onConfirmCancel={() => {
+                  setPanel(null);
+                  setTurns((prev) => [...prev, { role: "malak", text: "تمام، ألغيت العملية." }]);
+                }}
+                onGenerated={(p) => setPanel(p)}
+                onQuick={(q) => { setPanel(null); send(q); }}
+                onListen={(text) => { unlockAudio(); speak(text, "rashid"); }}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
