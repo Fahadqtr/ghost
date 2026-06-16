@@ -1209,7 +1209,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       `}</style>
 
       {/* Agent rail (tap to talk) */}
-      <div className="flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className={`flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${isFs ? "shrink-0" : ""}`}>
         {RAIL.map((a) => {
           const on = a.id === activeAgent;
           return (
@@ -1241,7 +1241,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Agent card (when an agent is selected) */}
       {directAgent ? (
         <div
-          className="flex items-center gap-3 rounded-2xl border p-3"
+          className={`flex items-center gap-3 rounded-2xl border p-3 ${isFs ? "shrink-0" : ""}`}
           style={{ borderColor: `${agentById(directAgent).color}55`, background: `${agentById(directAgent).color}14` }}
         >
           <span
@@ -1277,10 +1277,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         </div>
       ) : null}
 
-      {/* Chat card */}
-      <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-2.5 sm:p-3">
+      {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
+          it never grows and pushes the layout past the screen — the lab keeps
+          the rest of the space and nothing scrolls the page. */}
+      <div className={`rounded-3xl border border-white/10 bg-white/[0.03] p-2.5 sm:p-3 ${isFs ? "shrink-0" : ""}`}>
         {/* Transcript + panel */}
-        <div ref={scrollRef} className="max-h-[44vh] min-h-[140px] space-y-2.5 overflow-y-auto px-1 py-1">
+        <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${isFs ? "h-[22vh]" : "max-h-[44vh] min-h-[140px]"}`}>
         {turns.length === 0 && !typed && panel?.type !== "briefing" ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-white/50">
             أهلًا فهد 👋 أنا ملاك وفريقي جاهزين. اسألني عن الكتالوج، الأسعار، أو خلّني أكتب لك محتوى.
