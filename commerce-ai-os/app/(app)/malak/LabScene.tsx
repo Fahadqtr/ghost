@@ -597,14 +597,16 @@ export default function Office3D({
   return (
     <div className="relative min-h-0 w-full flex-1 overflow-hidden">
       <div ref={mountRef} className="absolute inset-0" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-black/45 to-transparent px-4 pb-6 pt-2 text-center">
-        <p className="text-[13px] font-bold text-[#1e2b45]">{TITLE}</p>
-        <p className="mt-0.5 text-[11px] text-[#5a6b88]">{HINT}</p>
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-4 pt-2.5">
+        <div className="rounded-2xl bg-black/45 px-4 py-1.5 text-center backdrop-blur-sm">
+          <p className="text-[13px] font-bold text-white">{TITLE}</p>
+          <p className="mt-0.5 text-[11px] text-white/70">{HINT}</p>
+        </div>
       </div>
       <button
         type="button"
         onClick={() => setLifeOn((v) => !v)}
-        className="absolute left-1/2 top-12 z-10 -translate-x-1/2 rounded-full border border-[#cdd6e6] bg-white/85 px-3.5 py-1.5 text-[12px] font-bold text-[#42506b] shadow"
+        className="absolute left-1/2 top-[58px] z-10 -translate-x-1/2 rounded-full border border-white/15 bg-black/45 px-3.5 py-1.5 text-[12px] font-bold text-white/90 shadow backdrop-blur-sm"
       >
         {lifeOn ? "● الحياة مفعّلة" : "○ الحياة موقفة"}
       </button>

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import dynamic from "next/dynamic";
 import { Component, useCallback, useEffect, useRef, useState } from "react";
 
@@ -1112,20 +1111,15 @@ function MalakInner() {
 
   return (
     <div
-      className="fixed inset-0 flex flex-col overflow-hidden bg-[#060814] text-white"
+      className="absolute inset-0 flex flex-col overflow-hidden bg-[#060814] text-white"
       style={{
         backgroundImage:
           "radial-gradient(circle at 20% 10%, rgba(79,139,255,0.18), transparent 40%), radial-gradient(circle at 85% 90%, rgba(168,85,247,0.18), transparent 45%)",
       }}
     >
-      {/* Top bar */}
+      {/* Top bar (slim — dashboard sidebar/topbar already wrap this view) */}
       <header className="flex items-center justify-between px-3 py-2 sm:px-6 sm:py-3">
-        <Link
-          href="/dashboard"
-          className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[12px] text-white/70 backdrop-blur transition hover:bg-white/10 sm:px-3 sm:py-1.5 sm:text-sm"
-        >
-          ← لوحة التحكم
-        </Link>
+        <div className="w-[78px] shrink-0" />
         <div className="text-center">
           <h1 className="text-base font-extrabold tracking-tight sm:text-lg">ملاك</h1>
           <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2N</p>
@@ -1188,17 +1182,20 @@ function MalakInner() {
           </div>
         </div>
       ) : (
-        <Office3D
-          agents={AGENTS}
-          activeAgent={activeAgent}
-          state={state}
-          onSelect={(id) => {
-            const ag = id as AgentId;
-            setActiveAgent(ag);
-            setDirectAgent(ag);
-            directAgentRef.current = ag;
-          }}
-        />
+        // Office is the hero on desktop: give it ~2/3 of the flexible height.
+        <div className="flex min-h-0 flex-[2] flex-col">
+          <Office3D
+            agents={AGENTS}
+            activeAgent={activeAgent}
+            state={state}
+            onSelect={(id) => {
+              const ag = id as AgentId;
+              setActiveAgent(ag);
+              setDirectAgent(ag);
+              directAgentRef.current = ag;
+            }}
+          />
+        </div>
       )}
 
       {/* Transcript + panel (scrollable — gets priority for vertical space) */}
