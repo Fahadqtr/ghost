@@ -88,6 +88,12 @@ function detectCalledAgent(text: string): AgentId | null {
   for (const a of AGENT_NAME_PATTERNS) if (a.re.test(text)) return a.id;
   return null;
 }
+// Remove the wake word / agent name (and a leading "يا") to see whether the
+// caller actually said a command, or only the name (e.g. just "يا ملاك").
+const STRIP_NAMES_RE = /\b(يا)\b|ملاك|ملك|نور|ريم|ريما|سراج|سيراج|رزان|روزان|راشد|رشيد|لطيفة|لطيفه/g;
+function commandAfterWake(text: string): string {
+  return text.replace(STRIP_NAMES_RE, " ").replace(/\s+/g, " ").trim();
+}
 
 type OrbState = "idle" | "listening" | "thinking" | "speaking";
 
@@ -771,6 +777,11 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   // cooldown after.
   const speakingRef = useRef(false);
   const lastSpeakEndRef = useRef(0);
+  // Wake-word: while listening, ignore speech until the wake word "ملاك" (or any
+  // agent name) is heard. After waking we stay "awake" for a window so follow-up
+  // commands don't need the name repeated.
+  const awakeUntilRef = useRef(0);
+  const AWAKE_MS = 15000;
   // Audio playback. Chrome blocks HTMLAudio.play() that runs after async work
   // (our TTS arrives after a fetch). The robust fix is the Web Audio API: an
   // AudioContext resumed inside a user gesture can play buffers at any later
@@ -885,6 +896,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     speakingRef.current = false;
     lastSpeakEndRef.current = Date.now();
     setState("idle");
+    // Keep the conversation awake after she answers, so a follow-up doesn't need
+    // the wake word again.
+    if (handsFreeRef.current) awakeUntilRef.current = Date.now() + AWAKE_MS;
     // Resume listening shortly after, past the audio tail / echo.
     if (handsFreeRef.current) {
       setTimeout(() => {
@@ -1146,13 +1160,26 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       // request is in flight, or within a short cooldown after her voice ends
       // (otherwise the always-on mic transcribes her own reply).
       if (speakingRef.current || busyRef.current || Date.now() - lastSpeakEndRef.current < 900) return;
-      // Hands-free: if a called agent's name is heard, route to that agent.
+      // Hands-free: wake-word gated. Sleep until "ملاك" (or any agent name) is
+      // heard; once awake, a short window lets follow-ups skip the name.
       if (handsFreeRef.current) {
         const called = detectCalledAgent(transcript);
+        const awake = Date.now() < awakeUntilRef.current;
+        if (!called && !awake) return; // still asleep — wait for the wake word
         if (called) {
           setActiveAgent(called);
           setDirectAgent(called);
           directAgentRef.current = called;
+        }
+        awakeUntilRef.current = Date.now() + AWAKE_MS;
+        // Bare wake word with no command → acknowledge and keep listening.
+        if (called && commandAfterWake(transcript).length < 2) {
+          const a = agentById(called);
+          const greet = called === "malak" ? "نعم فهد، تأمر؟" : `معاك ${a.name}، تأمر؟`;
+          setTyped("");
+          setTurns((prev) => [...prev, { role: "malak", text: greet }]);
+          speak(greet, called);
+          return;
         }
       }
       setInput("");
@@ -1208,8 +1235,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     }
   };
 
-  // Hands-free wake mode: continuous listening, no button — call any agent by
-  // name and it answers. The mic mutes itself while Malak speaks (no feedback).
+  // Hands-free wake mode: continuous listening, no button. Say the wake word
+  // "ملاك" (or any agent name) and she answers; follow-ups stay awake for a
+  // window. The mic mutes itself while Malak speaks (no feedback).
   const toggleHandsFree = () => {
     const rec = recognitionRef.current;
     if (!rec) return;
@@ -1217,12 +1245,16 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     if (handsFree) {
       setHandsFree(false);
       handsFreeRef.current = false;
+      awakeUntilRef.current = 0;
       try { rec.continuous = false; rec.stop(); } catch { /* ignore */ }
       setListening(false);
       setState("idle");
     } else {
       setHandsFree(true);
       handsFreeRef.current = true;
+      // Pressing the button is a deliberate wake → listen for the first command
+      // immediately (no need to say "ملاك" right after tapping).
+      awakeUntilRef.current = Date.now() + AWAKE_MS;
       stopAudio();
       try {
         rec.continuous = true;
@@ -1464,13 +1496,13 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             style={handsFree ? { boxShadow: "0 0 16px rgba(16,185,129,0.6)" } : undefined}
             aria-pressed={handsFree}
           >
-            <span className={handsFree ? "animate-pulse" : ""}>{handsFree ? "🟢" : "📢"}</span>
-            {handsFree ? "وضع النداء مفعّل · ينصت" : "وضع النداء الصوتي"}
+            <span className={handsFree ? "animate-pulse" : ""}>{handsFree ? "🟢" : "🛎️"}</span>
+            {handsFree ? "ينصت · قل «ملاك»" : "كلمة الإيقاظ الصوتية"}
           </button>
           {handsFree ? (
-            <span className="truncate text-[11px] text-emerald-300/80">نادِ أي وكيل باسمه: «يا نور…» «رزان…»</span>
+            <span className="truncate text-[11px] text-emerald-300/80">قل «ملاك» وترد عليك — أو نادِ أي وكيل باسمه</span>
           ) : (
-            <span className="hidden truncate text-[11px] text-white/40 sm:block">استماع متواصل بدون زر</span>
+            <span className="hidden truncate text-[11px] text-white/40 sm:block">نادِ «ملاك» فتنتبه وترد</span>
           )}
         </div>
         {/* Quick prompts */}
