@@ -145,3 +145,41 @@ export async function getCeoKpis(): Promise<CeoKpis> {
     categoryBreakdown, brandBreakdown, channelBreakdown,
   };
 }
+
+// ---- Malak dashboard KPI cards (separate, lightweight head-counts) ----------
+export interface MalakKpis {
+  configured: boolean;
+  totalProducts: number;
+  readyToPublish: number; // approval = Approved
+  needReview: number;     // approval = SentAI
+  missingImage: number;   // image_url is null
+  missingPrice: number;   // price null or 0
+  rejected: number;       // approval = Rejected
+}
+
+export async function getMalakKpis(): Promise<MalakKpis> {
+  const configured = isSupabaseConfigured();
+  const empty: MalakKpis = {
+    configured,
+    totalProducts: 0, readyToPublish: 0, needReview: 0,
+    missingImage: 0, missingPrice: 0, rejected: 0,
+  };
+  if (!configured) return empty;
+
+  const sb = createClient();
+  const c = (apply?: (b: any) => any) => countOf(() => {
+    const b = sb.from("products").select("*", { count: "exact", head: true });
+    return apply ? apply(b) : b;
+  });
+
+  const [totalProducts, readyToPublish, needReview, missingImage, missingPrice, rejected] = await Promise.all([
+    c(),
+    c((b) => b.eq("approval", "Approved")),
+    c((b) => b.eq("approval", "SentAI")),
+    c((b) => b.is("image_url", null)),
+    c((b) => b.or("price.is.null,price.eq.0")),
+    c((b) => b.eq("approval", "Rejected")),
+  ]);
+
+  return { configured: true, totalProducts, readyToPublish, needReview, missingImage, missingPrice, rejected };
+}

@@ -90,5 +90,28 @@ export const NAV_ITEMS = [
   { href: "/import-export", label: "Import / Export", icon: "📤" },
 ] as const;
 
+// Grouped navigation (Commerce AI OS). Groups only EXISTING routes under
+// Arabic section headers — no invented pages.
+export const NAV_GROUPS = [
+  { title: "الرئيسية", items: [{ href: "/dashboard", label: "لوحة المدير", icon: "📊" }] },
+  {
+    title: "ملاك والفريق",
+    items: [
+      { href: "/malak", label: "ملاك · Malak AI", icon: "✨" },
+      { href: "/agents", label: "الوكلاء", icon: "🤖" },
+    ],
+  },
+  { title: "المنتجات", items: [{ href: "/products", label: "الكتالوج", icon: "📦" }] },
+  {
+    title: "المنصات",
+    items: [
+      { href: "/platforms", label: "المنصات", icon: "🏬" },
+      { href: "/channels", label: "القنوات", icon: "🛒" },
+    ],
+  },
+  { title: "المخزون", items: [{ href: "/inventory", label: "الكميات والتنبيهات", icon: "🏷️" }] },
+  { title: "الاستيراد والتصدير", items: [{ href: "/import-export", label: "Excel استيراد/تصدير", icon: "📤" }] },
+] as const;
+
 export const APP_NAME = "Commerce AI OS";
 export const APP_OWNER = "Malika's Universe Trading";
