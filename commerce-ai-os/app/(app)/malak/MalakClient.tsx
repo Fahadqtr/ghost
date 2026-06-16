@@ -734,7 +734,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const [pendingImage, setPendingImage] = useState<File | null>(null); // Phase 2C attachment
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const heroRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [isFs, setIsFs] = useState(false);
 
   const recognitionRef = useRef<any>(null);
@@ -1130,14 +1130,19 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const activeDef = agentById(activeAgent);
 
   const toggleFullscreen = () => {
-    const el = heroRef.current;
+    const el = rootRef.current;
     if (!el) return;
     if (document.fullscreenElement) document.exitFullscreen?.();
     else el.requestFullscreen?.();
   };
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-4 pb-2">
+    <div
+      ref={rootRef}
+      className={`mx-auto w-full max-w-6xl space-y-4 pb-2 ${
+        isFs ? "h-screen overflow-y-auto bg-[#0B1020] p-4 sm:p-6" : ""
+      }`}
+    >
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
@@ -1168,9 +1173,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
 
       {/* Hero: the interactive 3D lab (click an agent to talk) */}
       <div
-        ref={heroRef}
-        className={`relative flex flex-col overflow-hidden border border-white/10 bg-[#0b1020] shadow-xl ${
-          isFs ? "h-screen rounded-none" : "h-[42vh] rounded-3xl sm:h-[58vh]"
+        className={`relative flex flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#0b1020] shadow-xl ${
+          isFs ? "h-[70vh]" : "h-[42vh] sm:h-[58vh]"
         }`}
       >
         <Office3D
