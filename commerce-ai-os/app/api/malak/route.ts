@@ -811,7 +811,6 @@ export async function POST(req: Request) {
   }
 
   const client = new Anthropic({ apiKey });
-  const sb = createAdminClient();
   const skuImages = new Map<string, string>();
 
   // Direct-talk: the user tapped a specific agent's room in the office and is
@@ -849,6 +848,9 @@ export async function POST(req: Request) {
   console.log(`[malak][router] msg="${lastUserStr.slice(0, 160)}" | forcedTool=${forcedTool ?? "none"}${imageUrl ? " (image attached)" : ""}`);
 
   try {
+    // Created here (inside try) so a missing/invalid Supabase config surfaces as
+    // a clear JSON message instead of an unhandled 500 ("ما قدرت أوصل للخادم").
+    const sb = createAdminClient();
     let resp = await create(forcedTool ? { tool_choice: { type: "tool", name: forcedTool } } : {});
     let toolRounds = 0;
 
