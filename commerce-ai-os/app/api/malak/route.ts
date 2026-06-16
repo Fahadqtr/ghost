@@ -794,6 +794,17 @@ export async function POST(req: Request) {
     );
   }
 
+  // Early Supabase config check — fail fast with a friendly message instead of
+  // an opaque "صار خطأ تقني" from deep inside the tool loop.
+  const sbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+  if (!sbUrl.startsWith("https://") || !sbKey) {
+    return Response.json(
+      { agent: "malak", speak: "أنا جاهزة للمحادثة، لكن الكتالوج مو مربوط بعد — أضف إعدادات Supabase على الخادم لتفعيل البيانات." },
+      { status: 200 }
+    );
+  }
+
   let body: any;
   try {
     body = await req.json();
