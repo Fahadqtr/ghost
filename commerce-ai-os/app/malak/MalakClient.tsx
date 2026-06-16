@@ -1,7 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { Component, useCallback, useEffect, useRef, useState } from "react";
+
+// مشهد المكتب 3D (Three.js) — ثقيل، يُحمَّل فقط على المتصفح وعند الحاجة.
+const Office3D = dynamic(() => import("./Office3D"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex min-h-0 flex-1 items-center justify-center text-white/40">
+      <p className="text-sm">…يُحمّل مقر ملاك 3D</p>
+    </div>
+  ),
+});
 
 // In-app error boundary: instead of the white "Application error" screen, show
 // the actual error text (visible on mobile, no console needed) + a reload.
@@ -38,7 +49,7 @@ class UIErrorBoundary extends Component<{ children: React.ReactNode }, { err: Er
 }
 
 // ---- Agent team -----------------------------------------------------------
-type AgentId = "malak" | "noor" | "bayan" | "reem" | "siraj" | "razan" | "rashid" | "latifa" | "salem" | "faisal";
+type AgentId = "malak" | "noor" | "reem" | "siraj" | "razan" | "rashid" | "latifa";
 
 interface AgentDef {
   id: AgentId;
@@ -50,14 +61,11 @@ interface AgentDef {
 const AGENTS: AgentDef[] = [
   { id: "malak", name: "ملاك", role: "المديرة العامة", color: "#4f8bff" },
   { id: "noor", name: "نور", role: "الكتالوج", color: "#38bdf8" },
-  { id: "bayan", name: "بيان", role: "المحتوى", color: "#a855f7" },
   { id: "reem", name: "ريم", role: "الصور", color: "#ec4899" },
-  { id: "siraj", name: "سراج", role: "التواصل والنشر", color: "#22d3ee" },
-  { id: "razan", name: "رزان", role: "التسعير", color: "#34d399" },
-  { id: "rashid", name: "راشد", role: "التقارير", color: "#fbbf24" },
+  { id: "siraj", name: "سراج", role: "المزامنة والمنصّات", color: "#22d3ee" },
+  { id: "razan", name: "رزان", role: "الأسعار والمخزون", color: "#34d399" },
+  { id: "rashid", name: "راشد", role: "التسويق والتقارير", color: "#fbbf24" },
   { id: "latifa", name: "لطيفة", role: "العملاء", color: "#fb7185" },
-  { id: "salem", name: "سالم", role: "العمليات", color: "#818cf8" },
-  { id: "faisal", name: "فيصل", role: "التقني والتطوير", color: "#14b8a6" },
 ];
 
 // The 8 specialists shown on the rail (Malak herself is the orb).
@@ -78,7 +86,7 @@ const txt = (v: any): string =>
   : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "tech";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing";
   items?: any[];
   item?: any;
 }
@@ -656,61 +664,6 @@ function BriefingPanel({
   );
 }
 
-// فيصل (التقني) — مقترح تقني للقراءة/المراجعة فقط. لا ينفّذ شيئًا؛ التطبيق يدوي بعد اعتماد فهد.
-function TechPanel({ item }: { item: any }) {
-  const steps: string[] = Array.isArray(item.steps) ? item.steps.map(txt) : [];
-  const files: string[] = Array.isArray(item.files) ? item.files.map(txt) : [];
-  const risk = txt(item.risk);
-  const riskTone = risk.includes("عال")
-    ? "text-rose-300 border-rose-400/40 bg-rose-500/10"
-    : risk.includes("متوسط")
-      ? "text-amber-300 border-amber-400/40 bg-amber-500/10"
-      : "text-emerald-300 border-emerald-400/40 bg-emerald-500/10";
-  return (
-    <div className="space-y-3 rounded-2xl border border-teal-400/25 bg-gradient-to-br from-teal-500/10 to-sky-500/10 p-3 text-right backdrop-blur sm:p-4">
-      <div className="flex items-center justify-between gap-2">
-        {risk ? (
-          <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${riskTone}`}>
-            مخاطرة: {risk}
-          </span>
-        ) : <span />}
-        <p className="text-base font-extrabold text-white">🛠️ {txt(item.title) || "مقترح تقني"}</p>
-      </div>
-
-      {item.summary ? <p className="text-[13px] leading-relaxed text-white/80">{txt(item.summary)}</p> : null}
-
-      {steps.length ? (
-        <div className="rounded-xl bg-white/5 p-3">
-          <p className="mb-1.5 text-[12px] font-semibold text-teal-200">الخطوات</p>
-          <ol className="list-decimal space-y-1 pr-4 text-[13px] text-white/80">
-            {steps.map((s, i) => <li key={i}>{s}</li>)}
-          </ol>
-        </div>
-      ) : null}
-
-      {files.length ? (
-        <p className="text-[12px] text-white/60">📁 الملفات المتأثّرة: {files.join("، ")}</p>
-      ) : null}
-
-      {item.code ? (
-        <pre dir="ltr" className="max-h-72 overflow-auto rounded-xl bg-black/40 p-3 text-left text-[11px] leading-relaxed text-teal-100">
-          <code>{txt(item.code)}</code>
-        </pre>
-      ) : null}
-
-      {item.sql ? (
-        <pre dir="ltr" className="max-h-72 overflow-auto rounded-xl bg-black/40 p-3 text-left text-[11px] leading-relaxed text-sky-100">
-          <code>{txt(item.sql)}</code>
-        </pre>
-      ) : null}
-
-      <p className="rounded-xl border border-teal-400/30 bg-teal-500/10 px-3 py-2 text-[12px] font-medium text-teal-100">
-        ⚠️ اقتراح فقط — يحتاج مراجعتك واعتمادك قبل التنفيذ. فيصل ما ينفّذ ولا ينشر تلقائيًا.
-      </p>
-    </div>
-  );
-}
-
 function Panel({
   data,
   onConfirmDone,
@@ -730,7 +683,6 @@ function Panel({
   if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} />;
   if (data.type === "post" && data.item) return <PostPanel item={data.item} />;
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
-  if (data.type === "tech" && data.item) return <TechPanel item={data.item} />;
   if (data.type === "briefing" && data.item)
     return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
   if (data.type === "image_request" && data.item)
@@ -771,10 +723,14 @@ function MalakInner() {
   const [typed, setTyped] = useState(""); // typewriter buffer for latest malak turn
   const [micSupported, setMicSupported] = useState(true);
   const [orbSize, setOrbSize] = useState(160); // responsive; set on mount
+  const [view, setView] = useState<"orb" | "office">("orb"); // الأورب أو مشهد المكتب
+  // الوكيل المُخاطَب مباشرة عند النقر على غرفته في المكتب (يُمرَّر للعقل كـ targetAgent).
+  const [directAgent, setDirectAgent] = useState<AgentId | null>(null);
   const [pendingImage, setPendingImage] = useState<File | null>(null); // Phase 2C attachment
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const recognitionRef = useRef<any>(null);
+  const directAgentRef = useRef<AgentId | null>(null); // mirror of directAgent for the memoized send()
   const scrollRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   // Audio playback. Chrome blocks HTMLAudio.play() that runs after async work
@@ -1051,7 +1007,7 @@ function MalakInner() {
         const res = await fetch("/api/malak", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: apiMessages, imageUrl }),
+          body: JSON.stringify({ messages: apiMessages, imageUrl, targetAgent: directAgentRef.current }),
         });
         const data = await res.json();
         const ag: AgentId = (AGENTS.some((a) => a.id === data?.agent) ? data.agent : "malak") as AgentId;
@@ -1174,7 +1130,12 @@ function MalakInner() {
           <h1 className="text-base font-extrabold tracking-tight sm:text-lg">ملاك</h1>
           <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2N</p>
         </div>
-        <div className="w-[70px] sm:w-[92px]" />
+        <button
+          onClick={() => setView((v) => (v === "orb" ? "office" : "orb"))}
+          className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[12px] text-white/70 backdrop-blur transition hover:bg-white/10 sm:px-3 sm:py-1.5 sm:text-sm"
+        >
+          {view === "orb" ? "🏢 المكتب" : "✨ ملاك"}
+        </button>
       </header>
 
       {/* Agent rail (horizontal scroll, touch-friendly, compact height) */}
@@ -1207,24 +1168,38 @@ function MalakInner() {
         })}
       </div>
 
-      {/* Orb */}
-      <div className="relative flex shrink-0 flex-col items-center justify-center py-0.5 sm:py-1">
-        <Orb state={state} color={accent} size={orbSize} />
-        <div className="-mt-2 text-center sm:-mt-3">
-          <p className="text-[13px] font-semibold sm:text-sm" style={{ color: accent }}>
-            {activeDef.name}
-          </p>
-          <p className="text-[10px] text-white/40 sm:text-[11px]">
-            {state === "listening"
-              ? "أستمع…"
-              : state === "thinking"
-              ? "أفكّر…"
-              : state === "speaking"
-              ? "أتحدّث…"
-              : activeDef.role}
-          </p>
+      {/* Orb / Office view (toggled from the header) */}
+      {view === "orb" ? (
+        <div className="relative flex shrink-0 flex-col items-center justify-center py-0.5 sm:py-1">
+          <Orb state={state} color={accent} size={orbSize} />
+          <div className="-mt-2 text-center sm:-mt-3">
+            <p className="text-[13px] font-semibold sm:text-sm" style={{ color: accent }}>
+              {activeDef.name}
+            </p>
+            <p className="text-[10px] text-white/40 sm:text-[11px]">
+              {state === "listening"
+                ? "أستمع…"
+                : state === "thinking"
+                ? "أفكّر…"
+                : state === "speaking"
+                ? "أتحدّث…"
+                : activeDef.role}
+            </p>
+          </div>
         </div>
-      </div>
+      ) : (
+        <Office3D
+          agents={AGENTS}
+          activeAgent={activeAgent}
+          state={state}
+          onSelect={(id) => {
+            const ag = id as AgentId;
+            setActiveAgent(ag);
+            setDirectAgent(ag);
+            directAgentRef.current = ag;
+          }}
+        />
+      )}
 
       {/* Transcript + panel (scrollable — gets priority for vertical space) */}
       <div ref={scrollRef} className="mx-auto min-h-0 w-full max-w-3xl flex-1 space-y-2.5 overflow-y-auto px-3 py-2.5 sm:space-y-3 sm:px-6 sm:py-3">
@@ -1289,6 +1264,32 @@ function MalakInner() {
       {/* Composer */}
       <div className="shrink-0 border-t border-white/10 bg-black/20 px-4 py-3 backdrop-blur sm:px-6">
        <div className="mx-auto w-full max-w-3xl">
+        {/* Direct-talk banner: shown after tapping an agent's room in the office */}
+        {directAgent ? (
+          <div
+            className="mb-2 flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px]"
+            style={{ background: `${agentById(directAgent).color}22`, border: `1px solid ${agentById(directAgent).color}55` }}
+          >
+            <span
+              className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
+              style={{ background: agentById(directAgent).color, color: "#0b1020" }}
+            >
+              {agentById(directAgent).name.slice(0, 1)}
+            </span>
+            <span className="flex-1 text-white/80">
+              تتحدث مع <b>{agentById(directAgent).name}</b> · {agentById(directAgent).role}
+            </span>
+            <button
+              type="button"
+              onClick={() => { setDirectAgent(null); directAgentRef.current = null; }}
+              aria-label="إنهاء المحادثة المباشرة"
+              className="flex h-5 w-5 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20"
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
+
         {/* Quick prompts */}
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
           {QUICK_PROMPTS.map((q) => (

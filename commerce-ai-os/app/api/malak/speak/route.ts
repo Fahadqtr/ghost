@@ -8,9 +8,9 @@ export const dynamic = "force-dynamic";
 
 const MODEL_ID = "eleven_multilingual_v2"; // strong Arabic support
 
-// The 9 agent ids the brain can return (matches app/api/malak/route.ts).
+// The 7 agent ids the brain can return (matches app/api/malak/route.ts).
 const AGENT_IDS = [
-  "malak", "noor", "bayan", "reem", "siraj", "razan", "rashid", "latifa", "salem",
+  "malak", "noor", "reem", "siraj", "razan", "rashid", "latifa",
 ];
 
 // Per-agent voice — authentic GULF (Khaleeji) voices, gender-matched, chosen
@@ -18,13 +18,11 @@ const AGENT_IDS = [
 // to ELEVENLABS_VOICE_ID (Lama, gulf female). Overridable via ELEVENLABS_VOICE_<AGENT>.
 const AGENT_VOICES: Record<string, string> = {
   noor: "KxMRrXEjbJ6kZ93yT3fq", // الكتالوج — Salma (خليجي، أنثى)
-  bayan: "isQLuoVuANx6FjDxyasX", // المحتوى — Noura (خليجي، أنثى)
   reem: "cdxrkuYK4nZwDSkjw5sa", // الصور — Amira (خليجي، أنثى)
-  razan: "ZBf5V86GjdTx6Sdsex5C", // التسعير — Samira (خليجي، أنثى)
+  razan: "ZBf5V86GjdTx6Sdsex5C", // الأسعار والمخزون — Samira (خليجي، أنثى)
   latifa: "LEqoCOGNjyExRiRUZhkv", // العملاء — Latifa (خليجي، أنثى)
-  siraj: "taIPgcOka6lQyJOPdNGp", // النشر — Ali (سعودي، ذكر)
-  rashid: "3GnbqfjaW8xI6hRTVx4Y", // التقارير — Nasser (سعودي، ذكر)
-  salem: "OoE8swS3hImZANNOodf6", // العمليات — Ali Ahmed (سعودي، ذكر)
+  siraj: "taIPgcOka6lQyJOPdNGp", // المزامنة والمنصّات — Ali (سعودي، ذكر)
+  rashid: "3GnbqfjaW8xI6hRTVx4Y", // التسويق والتقارير — Nasser (سعودي، ذكر)
 };
 
 function resolveVoiceId(agent: unknown): string | undefined {

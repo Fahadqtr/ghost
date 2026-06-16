@@ -23,25 +23,23 @@ const MODEL = process.env.MALAK_MODEL || "claude-opus-4-8";
 const MAX_TOKENS = 4096;
 const MAX_TOOL_ROUNDS = 4;
 
-// The 8 named specialists + Malak herself. The `agent` field returned must be
-// one of these ids so the UI can light up the right rail member.
+// The 6 named specialists + Malak herself (per the Malak Constitution). The
+// `agent` field returned must be one of these ids so the UI can light up the
+// right rail member.
 const AGENT_IDS = [
   "malak",
   "noor",
-  "bayan",
   "reem",
   "siraj",
   "razan",
   "rashid",
   "latifa",
-  "salem",
-  "faisal",
 ] as const;
 
 const SYSTEM_PROMPT =
   'أنتِ ملاك، المديرة العامة الذكية لمتجر Malika\'s Universe Trading (جمال وكورية، قطر). ' +
-  'تديرين فريقًا: نور=الكتالوج، بيان=المحتوى، ريم=الصور، سراج=التواصل والنشر، رزان=التسعير، ' +
-  'راشد=التقارير، لطيفة=العملاء، سالم=العمليات، فيصل=التقني والتطوير. ' +
+  'تديرين فريقًا: نور=الكتالوج، ريم=الصور، سراج=المزامنة والمنصّات، رزان=الأسعار والمخزون والمالية، ' +
+  'راشد=التسويق والتقارير، لطيفة=العملاء. ' +
   'تكلّمي بلهجة خليجية قطرية طبيعية وواقعية، واثقة ومختصرة، كأنكِ شريكة أعمال تتكلمين مع فهد وجهًا لوجه. ' +
   'استخدمي تعابير خليجية دارجة مثل: تمام، أبشر، حيّاك، وش رايك، خلّها عليّ، الحين، زين، يا طويل العمر — ' +
   'وتجنّبي تمامًا الفصحى الرسمية والكلمات المتكلّفة. ' +
@@ -51,7 +49,7 @@ const SYSTEM_PROMPT =
   'اكتبي الأرقام بشكل بسيط وواضح. ' +
   'مهم جدًا — التعريف بالنفس: ابدئي حقل speak دائمًا بتعريف الوكيل المتكلّم عن نفسه باختصار بهذه الصيغة: ' +
   '"مرحبا، معاك [اسم الوكيل] من قسم [وظيفته]، ..." ثم أكملي الرد. ' +
-  'الأسماء ووظائفها: ملاك=الإدارة العامة، نور=الكتالوج، بيان=المحتوى، ريم=الصور، سراج=التواصل والنشر، رزان=التسعير، راشد=التقارير، لطيفة=العملاء، سالم=العمليات، فيصل=التقني والتطوير. ' +
+  'الأسماء ووظائفها: ملاك=الإدارة العامة، نور=الكتالوج، ريم=الصور، سراج=المزامنة والمنصّات، رزان=الأسعار والمخزون والمالية، راشد=التسويق والتقارير، لطيفة=العملاء. ' +
   'مثال: "مرحبا، معاك راشد من قسم التقارير، عندك كذا منتج..." — اجعلي التعريف قصيرًا ثم ادخلي في الموضوع. ' +
   'أمثلة على نبرتكِ المطلوبة — قلّدي هذا الأسلوب: ' +
   '"هلا فهد، أبشر، جهّزت لك أهم منتجات Medicube." / ' +
@@ -71,9 +69,8 @@ const SYSTEM_PROMPT =
   'أنواع panel: products{items:[{name,brand,price,status,sku}]}, ' +
   'stats{items:[{label,value,sub}]}, ' +
   'post{item:{caption_ar,caption_en,hashtags,platforms,schedule,product}}, ' +
-  'tiktok{item:{hook,scenes:[{shot,text}],audio,hashtags,cta}}, ' +
-  'tech{item:{title, summary, steps:[نص], code, sql, files:[نص], risk:"منخفض|متوسط|عالٍ", needs_review:true}} — لوحة فيصل التقنية. ' +
-  'كتابة البوستات الإعلانية (لوحة post — الوكيلة بيان): عند طلب بوست إعلاني لمنتج، اجلبي بياناته الحقيقية أولًا عبر search_products ' +
+  'tiktok{item:{hook,scenes:[{shot,text}],audio,hashtags,cta}}. ' +
+  'كتابة البوستات الإعلانية (لوحة post — الوكيل راشد للتسويق والمحتوى): عند طلب بوست إعلاني لمنتج، اجلبي بياناته الحقيقية أولًا عبر search_products ' +
   '(الاسم، العلامة، الفئة، السعر، discount_price إن وُجد، الحجم، الوصف، الكلمات المفتاحية). ثم اكتبي caption_ar كبوست احترافي بهذا الترتيب بالضبط: ' +
   '1) عنوان جذّاب قصير. 2) Hook قوي من أول سطر يلامس مشكلة يحلّها المنتج. 3) أهم 3 إلى 5 فوائد كنقاط قصيرة. ' +
   '4) المكوّنات أو التقنية المميزة إن وُجدت (من الوصف/الكلمات). 5) طريقة استخدام مختصرة. 6) النتيجة المتوقّعة للعميل. ' +
@@ -104,10 +101,6 @@ const SYSTEM_PROMPT =
   'قاعدة الموجّه (Tool Router) — إلزامية: عندما تطابق نية المستخدم أداة متاحة في قائمة الأدوات، يجب عليكِ استدعاء الأداة. ' +
   'لا تقولي أبدًا إن الأداة "غير مربوطة" أو "غير متاحة" ما دامت موجودة. إذا نقصت معلومات مطلوبة، اسألي فقط عن الحقول الناقصة. ' +
   'أي طلب صورة/إعلان/بوستر/كريتف لمنتج ← استدعي generate_product_image. وأي طلب سعر/مخزون/اعتماد/إضافة منتج ← استدعي الأداة المطابقة مع الحفاظ على تدفّق التأكيد. ' +
-  'الوكيل التقني (فيصل، id=faisal) — مطوّر النظام: عند أي طلب تقني (إضافة ميزة، تعديل أو إصلاح كود، إضافة أداة أو شاشة، كتابة SQL، تحسين أداء، تشخيص خطأ تقني) رُدّي باسم فيصل وأرجعي لوحة tech. ' +
-  'فيصل **يقترح فقط ولا ينفّذ**: يجهّز خطة واضحة + الكود أو الـSQL المقترح + الملفات المتأثّرة + مستوى المخاطرة، ويضع needs_review=true دائمًا. ' +
-  'ممنوع منعًا باتًا أن يدّعي فيصل أنه نفّذ أو نشر أو كتب على الإنتاج أو الريبو — التنفيذ الفعلي يصير بعد مراجعة فهد واعتماده (عبر مطوّره). ' +
-  'في speak: ملخص قصير بنبرة فيصل ("معاك فيصل من قسم التقني والتطوير، جهّزت لك مقترح…") والتفاصيل في لوحة tech. لو الطلب غامض أو ناقص، اسأل عن المطلوب بدل ما تخترع حلًّا قد يكسر النظام. ' +
   'id الوكلاء: ' + AGENT_IDS.join("، ") + ".";
 
 // ---- Tool schemas exposed to Claude: read tools first, then write tools ----
@@ -166,7 +159,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "update_stock",
     description:
-      "حدّثي كمية مخزون منتج عبر الـSKU. لا تكتب فورًا — يظهر للمستخدم كرت تأكيد. الوكيل: سالم (العمليات).",
+      "حدّثي كمية مخزون منتج عبر الـSKU. لا تكتب فورًا — يظهر للمستخدم كرت تأكيد. الوكيل: رزان (الأسعار والمخزون).",
     input_schema: {
       type: "object",
       properties: {
@@ -205,14 +198,14 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "add_product",
     description:
-      "أضيفي منتجًا جديدًا بحالة Draft. بيان تكتب الوصف عربي/إنجليزي، ونور تولّد الـSKU بصيغة MU-[CAT]-[SUB]-[####]. الصورة تُرفع لاحقًا من صفحة التعديل. لا تكتب فورًا — كرت تأكيد. الوكيل: نور+بيان.",
+      "أضيفي منتجًا جديدًا بحالة Draft. راشد يكتب الوصف عربي/إنجليزي، ونور تولّد الـSKU بصيغة MU-[CAT]-[SUB]-[####]. الصورة تُرفع لاحقًا من صفحة التعديل. لا تكتب فورًا — كرت تأكيد. الوكيل: نور+راشد.",
     input_schema: {
       type: "object",
       properties: {
         name: { type: "string", description: "اسم المنتج بالإنجليزية (name_en)" },
         name_ar: { type: "string", description: "اسم المنتج بالعربية" },
-        description_en: { type: "string", description: "وصف إنجليزي مختصر (بيان)" },
-        description_ar: { type: "string", description: "وصف عربي مختصر (بيان)" },
+        description_en: { type: "string", description: "وصف إنجليزي مختصر (راشد)" },
+        description_ar: { type: "string", description: "وصف عربي مختصر (راشد)" },
         price: { type: "number", description: "السعر بالريال القطري" },
         category: { type: "string", description: "الفئة الرئيسية — يجب أن تكون من قائمة الفئات المقفلة" },
         sub_category: { type: "string", description: "تصنيف فرعي اختياري (يُستخدم في توليد الـSKU)" },
@@ -260,7 +253,7 @@ const TOOLS: Anthropic.Tool[] = [
           type: "object",
           description: "لوحة بصرية اختيارية",
           properties: {
-            type: { type: "string", enum: ["products", "stats", "post", "tiktok", "tech"] },
+            type: { type: "string", enum: ["products", "stats", "post", "tiktok"] },
             items: { type: "array", items: { type: "object" } },
             item: { type: "object" },
           },
@@ -323,7 +316,7 @@ async function searchProducts(sb: Sb, input: any) {
     sub_category: r.sub_category,
     size: r.size,
     image_url: r.image_url,
-    // Content fields (used by Bayan for marketing posts).
+    // Content fields (used by Rashid for marketing posts).
     description_ar: r.description_ar,
     description_en: r.description_en,
     keywords_ar: r.keywords_ar,
@@ -524,7 +517,7 @@ const APPROVAL_VALUES = ["Approved", "Rejected", "SentAI"];
 // Which agent "owns" each write tool (for direct error responses).
 function agentForTool(name: string): string {
   switch (name) {
-    case "update_stock": return "salem";
+    case "update_stock": return "razan";
     case "set_price": return "razan";
     case "set_approval": return "noor";
     case "add_product": return "noor";
@@ -648,7 +641,7 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const inv = await firstRow(sb.from("inventory").select("stock_quantity").eq("product_id", p.id));
     const oldVal = inv?.stock_quantity ?? p.stock_quantity ?? 0;
     const token = signAction({
-      v: 1, type: "update_stock", agent: "salem", sku: p.sku, productId: p.id,
+      v: 1, type: "update_stock", agent: "razan", sku: p.sku, productId: p.id,
       field: "stock_quantity", oldValue: oldVal, newValue: value, ts: Date.now(),
     });
     // Frank sanity check on the number.
@@ -656,11 +649,11 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     if (value === 0) warning = "هذا يصفّر المخزون تمامًا.";
     else if (value > 9999) warning = "كمية كبيرة جدًا، متأكد من الرقم؟";
     return {
-      ok: true, agent: "salem",
+      ok: true, agent: "razan",
       speak: warning
-        ? `معاك سالم من العمليات، ${warning} حطّيته ${value} لـ ${p.name_en}. راجع وأكّد لو متأكد.`
-        : `معاك سالم من العمليات، جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
-      panel: confirmPanel("تحديث المخزون", "salem", "تعديل كمية المخزون", p.name_en, p.sku, [{ label: "المخزون", old: oldVal, new: value }], token, warning),
+        ? `معاك رزان من المخزون، ${warning} حطّيته ${value} لـ ${p.name_en}. راجع وأكّد لو متأكد.`
+        : `معاك رزان من المخزون، جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
+      panel: confirmPanel("تحديث المخزون", "razan", "تعديل كمية المخزون", p.name_en, p.sku, [{ label: "المخزون", old: oldVal, new: value }], token, warning),
     };
   }
 
@@ -751,7 +744,7 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const token = signAction({ v: 1, type: "add_product", agent: "noor", sku, product: draft, ts: Date.now() });
     return {
       ok: true, agent: "noor",
-      speak: `معاك نور وبيان، جهّزنا منتج جديد "${name_en}" بسعر ${price} ريال، فئة ${category}، الكود ${sku}، حالة Draft. أكّد لإضافته.`,
+      speak: `معاك نور وراشد، جهّزنا منتج جديد "${name_en}" بسعر ${price} ريال، فئة ${category}، الكود ${sku}، حالة Draft. أكّد لإضافته.`,
       panel: confirmPanel("إضافة منتج", "noor", "إضافة منتج جديد (Draft)", name_en, sku, [
         { label: "الاسم", new: name_en },
         ...(draft.name_ar ? [{ label: "الاسم (عربي)", new: draft.name_ar }] : []),
@@ -783,8 +776,8 @@ function findRespond(content: Anthropic.ContentBlock[]): Anthropic.ToolUseBlock 
 }
 
 // Shape a respond/JSON payload into the client contract { agent, speak, panel }.
-function buildResponse(out: any, skuImages: Map<string, string>) {
-  const agent = AGENT_IDS.includes(out?.agent) ? out.agent : "malak";
+function buildResponse(out: any, skuImages: Map<string, string>, fallbackAgent: string = "malak") {
+  const agent = AGENT_IDS.includes(out?.agent) ? out.agent : fallbackAgent;
   const speak = typeof out?.speak === "string" && out.speak.trim() ? out.speak : "تم.";
   const panel = out?.panel ? enrichPanel(out.panel, skuImages) : undefined;
   return { agent, speak, panel };
@@ -818,14 +811,25 @@ export async function POST(req: Request) {
   }
 
   const client = new Anthropic({ apiKey });
-  const sb = createAdminClient();
   const skuImages = new Map<string, string>();
+
+  // Direct-talk: the user tapped a specific agent's room in the office and is
+  // addressing that agent. Steer the brain to answer in that agent's voice
+  // (unless the task needs a write tool owned by another specialist).
+  const targetAgent =
+    typeof body?.targetAgent === "string" && (AGENT_IDS as readonly string[]).includes(body.targetAgent)
+      ? body.targetAgent
+      : null;
+  const systemPrompt = targetAgent
+    ? SYSTEM_PROMPT +
+      ` [توجيه اللحظة] المستخدم ضغط على غرفة الوكيل (${targetAgent}) في المكتب ويخاطبه مباشرة. اجعلي قيمة agent في respond تساوي ${targetAgent}، وردّي بصوت هذا الوكيل وشخصيته ونطاق تخصصه. إن كان الطلب خارج تخصصه فلتُجب باختصار ثم توجّه فهد للوكيل المناسب. الاستثناء الوحيد: إذا تطلّب الطلب أداة كتابة يملكها وكيل آخر (تعديل سعر/مخزون/اعتماد/صورة) فاتبعي مالك الأداة المعتاد.`
+    : SYSTEM_PROMPT;
 
   const create = (extra: Partial<Anthropic.MessageCreateParamsNonStreaming> = {}) =>
     client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       tools: TOOLS,
       messages,
       ...extra,
@@ -844,6 +848,9 @@ export async function POST(req: Request) {
   console.log(`[malak][router] msg="${lastUserStr.slice(0, 160)}" | forcedTool=${forcedTool ?? "none"}${imageUrl ? " (image attached)" : ""}`);
 
   try {
+    // Created here (inside try) so a missing/invalid Supabase config surfaces as
+    // a clear JSON message instead of an unhandled 500 ("ما قدرت أوصل للخادم").
+    const sb = createAdminClient();
     let resp = await create(forcedTool ? { tool_choice: { type: "tool", name: forcedTool } } : {});
     let toolRounds = 0;
 
@@ -894,7 +901,7 @@ export async function POST(req: Request) {
       const respondBlock = findRespond(resp.content);
       if (respondBlock) {
         console.log("[malak] respond via tool call");
-        return Response.json(buildResponse(respondBlock.input, skuImages));
+        return Response.json(buildResponse(respondBlock.input, skuImages, targetAgent ?? "malak"));
       }
 
       // No respond yet. If the model isn't asking for a data tool, stop looping.
@@ -927,7 +934,7 @@ export async function POST(req: Request) {
       try {
         const parsed = JSON.parse(jsonMatch[0]);
         console.log("[malak] respond via parsed JSON text");
-        return Response.json(buildResponse(parsed, skuImages));
+        return Response.json(buildResponse(parsed, skuImages, targetAgent ?? "malak"));
       } catch {
         console.log("[malak] JSON parse of final text failed");
       }
@@ -951,7 +958,7 @@ export async function POST(req: Request) {
     const forcedBlock = findRespond(forced.content);
     if (forcedBlock) {
       console.log("[malak] respond via forced tool_choice");
-      return Response.json(buildResponse(forcedBlock.input, skuImages));
+      return Response.json(buildResponse(forcedBlock.input, skuImages, targetAgent ?? "malak"));
     }
 
     console.log("[malak] no structured answer produced");

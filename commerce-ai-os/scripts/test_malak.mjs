@@ -32,12 +32,12 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: fa
 const MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 4096;
 const MAX_TOOL_ROUNDS = 4;
-const AGENT_IDS = ["malak","noor","bayan","reem","siraj","razan","rashid","latifa","salem"];
+const AGENT_IDS = ["malak","noor","reem","siraj","razan","rashid","latifa"];
 
 const SYSTEM_PROMPT =
   'أنتِ ملاك، المديرة العامة الذكية لمتجر Malika\'s Universe Trading (جمال وكورية، قطر). ' +
-  'تديرين فريقًا: نور=الكتالوج، بيان=المحتوى، ريم=الصور، سراج=التواصل والنشر، رزان=التسعير، ' +
-  'راشد=التقارير، لطيفة=العملاء، سالم=العمليات. لهجة خليجية واثقة ومختصرة كشريكة أعمال لفهد. ' +
+  'تديرين فريقًا: نور=الكتالوج، ريم=الصور، سراج=المزامنة والمنصّات، رزان=الأسعار والمخزون والمالية، ' +
+  'راشد=التسويق والتقارير، لطيفة=العملاء. لهجة خليجية واثقة ومختصرة كشريكة أعمال لفهد. ' +
   'استخدمي الأدوات لجلب البيانات الحقيقية — لا تخترعي أرقامًا. ' +
   'ردّك النهائي JSON فقط: {"agent":"<id>","speak":"<رد قصير>","panel":<اختياري>}. ' +
   'أنواع panel: products{items:[{name,brand,price,status,sku}]}, stats{items:[{label,value,sub}]}, ' +
