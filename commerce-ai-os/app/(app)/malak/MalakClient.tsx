@@ -781,6 +781,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const [handsFree, setHandsFree] = useState(false);
   const handsFreeRef = useRef(false);
   handsFreeRef.current = handsFree;
+  // "استماع دائم": يُحفظ في localStorage فيشتغل تلقائيًا كل زيارة (من أول لمسة).
+  const [alwaysOn, setAlwaysOn] = useState(false);
 
   const recognitionRef = useRef<any>(null);
   const directAgentRef = useRef<AgentId | null>(null); // mirror of directAgent for the memoized send()
@@ -1273,36 +1275,64 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   };
 
   // Hands-free wake mode: continuous listening, no button. Say the wake word
-  // "ملاك" (or any agent name) and she answers; follow-ups stay awake for a
-  // window. The mic mutes itself while Malak speaks (no feedback).
-  const toggleHandsFree = () => {
+  // "ملاك" (or any agent name) and she answers. Enabling it is remembered in
+  // localStorage so it auto-resumes on every visit (always-listening).
+  const startRec = useCallback(() => {
     const rec = recognitionRef.current;
-    if (!rec) return;
-    unlockAudio(); // user gesture → allow spoken replies to play
-    if (handsFree) {
-      setHandsFree(false);
-      handsFreeRef.current = false;
-      awakeUntilRef.current = 0;
-      try { rec.continuous = false; rec.stop(); } catch { /* ignore */ }
-      setListening(false);
-      setState("idle");
-    } else {
-      setHandsFree(true);
-      handsFreeRef.current = true;
-      // Pressing the button is a deliberate wake → listen for the first command
-      // immediately (no need to say "ملاك" right after tapping).
-      awakeUntilRef.current = Date.now() + AWAKE_MS;
-      stopAudio();
-      try {
-        rec.continuous = true;
-        rec.start();
-        setListening(true);
-        setState("listening");
-      } catch {
-        /* already running */
-      }
-    }
+    if (!rec) return false;
+    try { rec.continuous = true; rec.start(); setListening(true); setState((s) => (s === "idle" ? "listening" : s)); return true; }
+    catch { return false; }
+  }, []);
+
+  const enableHandsFree = useCallback((gesture = false) => {
+    if (!recognitionRef.current) return;
+    setHandsFree(true);
+    handsFreeRef.current = true;
+    awakeUntilRef.current = Date.now() + AWAKE_MS; // engaged → listen immediately
+    try { localStorage.setItem("malak_always_listen", "1"); } catch { /* ignore */ }
+    setAlwaysOn(true);
+    if (gesture) unlockAudio(); // a real user gesture → unlock TTS playback
+    stopAudio();
+    startRec();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startRec, unlockAudio, stopAudio]);
+
+  const disableHandsFree = useCallback(() => {
+    setHandsFree(false);
+    handsFreeRef.current = false;
+    awakeUntilRef.current = 0;
+    try { localStorage.setItem("malak_always_listen", "0"); } catch { /* ignore */ }
+    setAlwaysOn(false);
+    try { const rec = recognitionRef.current; if (rec) { rec.continuous = false; rec.stop(); } } catch { /* ignore */ }
+    setListening(false);
+    setState("idle");
+  }, []);
+
+  const toggleHandsFree = () => {
+    unlockAudio(); // user gesture
+    if (handsFree) disableHandsFree();
+    else enableHandsFree(true);
   };
+
+  // Always-listening: if the user enabled it before, auto-resume. Browsers block
+  // starting the mic with no user interaction, so we try immediately (works when
+  // mic permission is already granted) and otherwise start on the first tap/key.
+  useEffect(() => {
+    if (typeof window === "undefined" || !micSupported) return;
+    let persisted = false;
+    try { persisted = localStorage.getItem("malak_always_listen") === "1"; } catch { /* ignore */ }
+    setAlwaysOn(persisted);
+    if (!persisted) return;
+    const t = setTimeout(() => enableHandsFree(false), 300); // optimistic (permission granted)
+    const onGesture = () => enableHandsFree(true);
+    window.addEventListener("pointerdown", onGesture, { once: true, capture: true });
+    window.addEventListener("keydown", onGesture, { once: true, capture: true });
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("pointerdown", onGesture, true);
+      window.removeEventListener("keydown", onGesture, true);
+    };
+  }, [micSupported, enableHandsFree]);
 
   useEffect(() => {
     const onFs = () => setIsFs(!!document.fullscreenElement);
@@ -1534,12 +1564,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             aria-pressed={handsFree}
           >
             <span className={handsFree ? "animate-pulse" : ""}>{handsFree ? "🟢" : "🛎️"}</span>
-            {handsFree ? "ينصت · قل «ملاك»" : "كلمة الإيقاظ الصوتية"}
+            {handsFree ? "ينصت دائمًا · قل «ملاك»" : "تفعيل الاستماع الدائم"}
           </button>
           {handsFree ? (
-            <span className="truncate text-[11px] text-emerald-300/80">تكلّم معها طبيعي — وتقدر تقاطعها وهي تتكلم</span>
+            <span className="truncate text-[11px] text-emerald-300/80">قل «ملاك» بأي وقت — وتقدر تقاطعها وهي تتكلم</span>
           ) : (
-            <span className="hidden truncate text-[11px] text-white/40 sm:block">نادِ «ملاك» وتناقش معها — وقاطعها متى تبي</span>
+            <span className="hidden truncate text-[11px] text-white/40 sm:block">فعّلها مرّة وتبقى تنصت لـ«ملاك» كل زيارة</span>
           )}
         </div>
         {/* Quick prompts */}
