@@ -1197,33 +1197,58 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         </button>
       </div>
 
-      {/* KPI cards (live Supabase data) */}
+      {/* KPI holographic HUD screens (JARVIS / Iron Man style) */}
       {kpis ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {[
-            { label: "إجمالي المنتجات", value: kpis.totalProducts, icon: "📦", color: "#8B5CF6" },
-            { label: "جاهز للنشر", value: kpis.readyToPublish, icon: "✅", color: "#34d399" },
-            { label: "بحاجة مراجعة", value: kpis.needReview, icon: "🕑", color: "#F4C430" },
-            { label: "صور ناقصة", value: kpis.missingImage, icon: "🖼️", color: "#38bdf8" },
-            { label: "أسعار ناقصة", value: kpis.missingPrice, icon: "💲", color: "#fb7185" },
-            { label: "مرفوض", value: kpis.rejected, icon: "⛔", color: "#94a3b8" },
-          ].map((c) => (
-            <div
-              key={c.label}
-              className="rounded-2xl border border-white/10 bg-white/[0.04] p-3"
-              style={{ boxShadow: `inset 0 0 0 1px ${c.color}22` }}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-lg">{c.icon}</span>
-                <span className="h-2 w-2 rounded-full" style={{ background: c.color }} />
+        <>
+          <style>{`
+            @keyframes hudIn { 0%{opacity:0;transform:translateY(10px) scale(.95);filter:blur(5px)} 100%{opacity:1;transform:none;filter:none} }
+            @keyframes hudFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+          `}</style>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              { label: "إجمالي المنتجات", value: kpis.totalProducts, icon: "📦", color: "#22d3ee" },
+              { label: "جاهز للنشر", value: kpis.readyToPublish, icon: "✅", color: "#34d399" },
+              { label: "بحاجة مراجعة", value: kpis.needReview, icon: "🕑", color: "#F4C430" },
+              { label: "صور ناقصة", value: kpis.missingImage, icon: "🖼️", color: "#38bdf8" },
+              { label: "أسعار ناقصة", value: kpis.missingPrice, icon: "💲", color: "#fb7185" },
+              { label: "مرفوض", value: kpis.rejected, icon: "⛔", color: "#a78bfa" },
+            ].map((c, i) => (
+              <div
+                key={c.label}
+                className="relative overflow-hidden rounded-xl p-3"
+                style={{
+                  border: `1px solid ${c.color}66`,
+                  background: `linear-gradient(160deg, ${c.color}22, transparent 72%)`,
+                  boxShadow: `0 0 18px ${c.color}33, inset 0 0 18px ${c.color}14`,
+                  backdropFilter: "blur(2px)",
+                  animation: `hudIn .5s ease-out ${i * 0.08}s both, hudFloat ${3.2 + (i % 3) * 0.4}s ease-in-out ${0.6 + i * 0.08}s infinite`,
+                }}
+              >
+                {/* scanlines */}
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 opacity-25"
+                  style={{ backgroundImage: `repeating-linear-gradient(0deg, ${c.color}33 0px, ${c.color}33 1px, transparent 1px, transparent 4px)` }}
+                />
+                {/* corner brackets */}
+                <span aria-hidden className="absolute left-1 top-1 h-2.5 w-2.5 border-l border-t" style={{ borderColor: `${c.color}cc` }} />
+                <span aria-hidden className="absolute right-1 top-1 h-2.5 w-2.5 border-r border-t" style={{ borderColor: `${c.color}cc` }} />
+                <span aria-hidden className="absolute bottom-1 left-1 h-2.5 w-2.5 border-b border-l" style={{ borderColor: `${c.color}cc` }} />
+                <span aria-hidden className="absolute bottom-1 right-1 h-2.5 w-2.5 border-b border-r" style={{ borderColor: `${c.color}cc` }} />
+                <div className="relative">
+                  <div className="flex items-center justify-between">
+                    <span className="text-base">{c.icon}</span>
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: c.color, boxShadow: `0 0 8px ${c.color}` }} />
+                  </div>
+                  <p className="mt-1 font-mono text-2xl font-extrabold tabular-nums" style={{ color: c.color, textShadow: `0 0 12px ${c.color}aa` }}>
+                    {kpis.configured ? c.value.toLocaleString("en-US") : "—"}
+                  </p>
+                  <p className="text-[11px] tracking-wide text-white/70">{c.label}</p>
+                </div>
               </div>
-              <p className="mt-1 text-2xl font-extrabold tabular-nums" style={{ color: c.color }}>
-                {kpis.configured ? c.value.toLocaleString("en-US") : "—"}
-              </p>
-              <p className="text-[11px] text-white/55">{c.label}</p>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       ) : null}
 
       {/* Agent rail (tap to talk) */}
