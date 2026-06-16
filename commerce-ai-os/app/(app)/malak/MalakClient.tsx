@@ -95,6 +95,20 @@ function commandAfterWake(text: string): string {
   return text.replace(STRIP_NAMES_RE, " ").replace(/\s+/g, " ").trim();
 }
 
+// Barge-in echo filter: while Malak is speaking, the always-on mic may transcribe
+// HER own voice. We compare what's heard against what she's currently saying — if
+// most words overlap it's an echo (ignore); otherwise it's the user interrupting.
+const normAr = (s: string) =>
+  s.replace(/[ً-ْٰـ]/g, "").replace(/[^؀-ۿ\s]/g, " ").replace(/\s+/g, " ").trim();
+function isLikelyEcho(heard: string, spoken: string): boolean {
+  const sp = new Set(normAr(spoken).split(" ").filter((w) => w.length > 1));
+  if (sp.size === 0) return false;
+  const hw = normAr(heard).split(" ").filter((w) => w.length > 1);
+  if (hw.length === 0) return true;
+  const overlap = hw.filter((w) => sp.has(w)).length;
+  return overlap / hw.length >= 0.5;
+}
+
 type OrbState = "idle" | "listening" | "thinking" | "speaking";
 
 // Coerce ANY value to a safe React-renderable string. Guards against React
@@ -782,6 +796,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   // commands don't need the name repeated.
   const awakeUntilRef = useRef(0);
   const AWAKE_MS = 15000;
+  // What Malak is currently saying — used to filter her own voice out of the
+  // always-on mic so real interruptions (barge-in) can be detected.
+  const currentSpeakTextRef = useRef("");
   // Audio playback. Chrome blocks HTMLAudio.play() that runs after async work
   // (our TTS arrives after a fetch). The robust fix is the Web Audio API: an
   // AudioContext resumed inside a user gesture can play buffers at any later
@@ -884,13 +901,15 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     }
   }, []);
 
-  // Speak lifecycle (centralised) so the always-on mic can mute itself while
-  // Malak talks and resume right after — avoiding a self-listening feedback loop.
+  // Speak lifecycle (centralised). In hands-free we KEEP the mic running while
+  // Malak talks so the user can interrupt (barge-in); her own voice is filtered
+  // out by isLikelyEcho. In push-to-talk we don't need the mic open meanwhile.
   const onSpeakStart = useCallback(() => {
     speakingRef.current = true;
     setState("speaking");
-    // Pause continuous recognition while Malak's voice is playing.
-    if (handsFreeRef.current) { try { recognitionRef.current?.stop(); } catch { /* ignore */ } }
+    if (handsFreeRef.current) {
+      try { recognitionRef.current?.start(); setListening(true); } catch { /* already running */ }
+    }
   }, []);
   const onSpeakEnd = useCallback(() => {
     speakingRef.current = false;
@@ -945,6 +964,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     async (text: string, agent?: string) => {
       const clean = text.trim();
       if (!clean) return;
+      currentSpeakTextRef.current = clean; // for the barge-in echo filter
       stopAudio();
       try {
         const res = await fetch("/api/malak/speak", {
@@ -1156,10 +1176,27 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     rec.onresult = (e: any) => {
       const transcript = String(e.results[e.results.length - 1][0].transcript || "").trim();
       if (!transcript) return;
-      // Feedback-loop guard: drop anything heard while Malak is speaking, while a
-      // request is in flight, or within a short cooldown after her voice ends
-      // (otherwise the always-on mic transcribes her own reply).
-      if (speakingRef.current || busyRef.current || Date.now() - lastSpeakEndRef.current < 900) return;
+
+      // Barge-in: if Malak is mid-speech and the user talks over her, decide
+      // whether it's her own voice (echo → ignore) or a real interruption.
+      if (speakingRef.current) {
+        if (isLikelyEcho(transcript, currentSpeakTextRef.current)) return;
+        // Genuine interruption → cut her off immediately.
+        stopAudio();
+        speakingRef.current = false;
+        lastSpeakEndRef.current = Date.now();
+        setState("listening");
+        // Pure "stop" command → just stop, don't send anything.
+        const n = normAr(transcript);
+        if (n.length < 2 || /^(قف|توقف|بس|كفى|اسكتي|اسكت|ستوب|stop)\b/.test(n)) return;
+        awakeUntilRef.current = Date.now() + AWAKE_MS; // interrupting = clearly engaged
+        // otherwise fall through and process the new request.
+      } else {
+        // Not speaking: ignore while a request is processing, and a brief
+        // cooldown after her voice ends (trailing echo).
+        if (busyRef.current || Date.now() - lastSpeakEndRef.current < 500) return;
+      }
+
       // Hands-free: wake-word gated. Sleep until "ملاك" (or any agent name) is
       // heard; once awake, a short window lets follow-ups skip the name.
       if (handsFreeRef.current) {
@@ -1500,9 +1537,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             {handsFree ? "ينصت · قل «ملاك»" : "كلمة الإيقاظ الصوتية"}
           </button>
           {handsFree ? (
-            <span className="truncate text-[11px] text-emerald-300/80">قل «ملاك» وترد عليك — أو نادِ أي وكيل باسمه</span>
+            <span className="truncate text-[11px] text-emerald-300/80">تكلّم معها طبيعي — وتقدر تقاطعها وهي تتكلم</span>
           ) : (
-            <span className="hidden truncate text-[11px] text-white/40 sm:block">نادِ «ملاك» فتنتبه وترد</span>
+            <span className="hidden truncate text-[11px] text-white/40 sm:block">نادِ «ملاك» وتناقش معها — وقاطعها متى تبي</span>
           )}
         </div>
         {/* Quick prompts */}
