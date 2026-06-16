@@ -1182,8 +1182,8 @@ function MalakInner() {
           </div>
         </div>
       ) : (
-        // Office is the hero on desktop: give it ~2/3 of the flexible height.
-        <div className="flex min-h-0 flex-[2] flex-col">
+        // Office is the hero: give it ~3/4 of the flexible height, chat stays compact.
+        <div className="flex min-h-0 flex-[3] flex-col">
           <Office3D
             agents={AGENTS}
             activeAgent={activeAgent}

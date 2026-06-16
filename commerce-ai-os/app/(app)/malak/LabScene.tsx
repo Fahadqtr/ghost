@@ -16,7 +16,6 @@ export interface OfficeAgent {
   color: string;
 }
 
-const TITLE = "مختبر ملاك · الفريق الذكي";
 const HINT = "اسحب للدوران · قرّب بإصبعين · انقر وكيل";
 const ROOM = { w: 16, d: 13 };
 
@@ -67,10 +66,11 @@ export default function Office3D({
     const H = () => mount.clientHeight || 500;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xeef3fb);
-    scene.fog = new THREE.Fog(0xeef3fb, 20, 42);
+    // Dark backdrop to blend seamlessly with the dark Malak shell (no gray void).
+    scene.background = new THREE.Color(0x0b1020);
+    scene.fog = new THREE.Fog(0x0b1020, 16, 40);
 
-    const camera = new THREE.PerspectiveCamera(42, W() / H(), 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(40, W() / H(), 0.1, 100);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(W(), H());
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -83,8 +83,8 @@ export default function Office3D({
 
     const clock = new THREE.Clock();
     let elapsed = 0;
-    let camTheta = Math.PI * 0.5, camPhi = Math.PI * 0.38, camRadius = 15;
-    const camTarget = new THREE.Vector3(0, 0.6, 0);
+    let camTheta = Math.PI * 0.5, camPhi = Math.PI * 0.42, camRadius = 11.5;
+    const camTarget = new THREE.Vector3(0, 0.85, 0);
     let focusActive = false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const robots: Record<string, any> = {};
@@ -561,7 +561,7 @@ export default function Office3D({
 
       if (focusActive && activeId && robots[activeId]) {
         const p = robots[activeId].group.position; camTarget.lerp(new THREE.Vector3(p.x, 0.7, p.z), 0.06); camRadius += (8 - camRadius) * 0.05;
-      } else camTarget.lerp(new THREE.Vector3(0, 0.6, 0), 0.04);
+      } else camTarget.lerp(new THREE.Vector3(0, 0.85, 0), 0.04);
       updateCamera();
       renderer.render(scene, camera);
     };
@@ -597,16 +597,15 @@ export default function Office3D({
   return (
     <div className="relative min-h-0 w-full flex-1 overflow-hidden">
       <div ref={mountRef} className="absolute inset-0" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-4 pt-2.5">
-        <div className="rounded-2xl bg-black/45 px-4 py-1.5 text-center backdrop-blur-sm">
-          <p className="text-[13px] font-bold text-white">{TITLE}</p>
-          <p className="mt-0.5 text-[11px] text-white/70">{HINT}</p>
-        </div>
+      {/* hint: subtle, bottom-center (title is already in the page header) */}
+      <div className="pointer-events-none absolute bottom-2.5 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/40 px-3 py-1 text-[10px] text-white/65 backdrop-blur-sm">
+        {HINT}
       </div>
+      {/* life toggle: tucked into the top-right corner */}
       <button
         type="button"
         onClick={() => setLifeOn((v) => !v)}
-        className="absolute left-1/2 top-[58px] z-10 -translate-x-1/2 rounded-full border border-white/15 bg-black/45 px-3.5 py-1.5 text-[12px] font-bold text-white/90 shadow backdrop-blur-sm"
+        className="absolute right-3 top-3 z-10 rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-white/90 shadow backdrop-blur-sm"
       >
         {lifeOn ? "● الحياة مفعّلة" : "○ الحياة موقفة"}
       </button>
