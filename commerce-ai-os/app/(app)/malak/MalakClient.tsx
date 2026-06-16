@@ -1281,8 +1281,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           it never grows and pushes the layout past the screen — the lab keeps
           the rest of the space and nothing scrolls the page. */}
       <div className={`rounded-3xl border border-white/10 bg-white/[0.03] p-2.5 sm:p-3 ${isFs ? "shrink-0" : ""}`}>
-        {/* Transcript + panel */}
-        <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${isFs ? "h-[22vh]" : "max-h-[44vh] min-h-[140px]"}`}>
+        {/* Transcript + panel. In fullscreen it gets a taller, comfortably
+            scrollable area (the lab flexes to fill the rest, no page overflow). */}
+        <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${isFs ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
         {turns.length === 0 && !typed && panel?.type !== "briefing" ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-white/50">
             أهلًا فهد 👋 أنا ملاك وفريقي جاهزين. اسألني عن الكتالوج، الأسعار، أو خلّني أكتب لك محتوى.
