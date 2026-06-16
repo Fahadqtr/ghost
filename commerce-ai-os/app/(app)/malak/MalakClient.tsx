@@ -753,6 +753,10 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [isFs, setIsFs] = useState(false);
+  // CSS fallback fullscreen for devices without the Fullscreen API (iOS Safari
+  // doesn't support requestFullscreen on elements). Fills the viewport via fixed
+  // positioning instead.
+  const [pseudoFs, setPseudoFs] = useState(false);
   // وضع النداء: استماع متواصل بدون زر — نادِ أي وكيل باسمه فيرد عليك.
   const [handsFree, setHandsFree] = useState(false);
   const handsFreeRef = useRef(false);
@@ -1242,22 +1246,40 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const toggleFullscreen = () => {
     const el = rootRef.current;
     if (!el) return;
-    if (document.fullscreenElement) document.exitFullscreen?.();
-    else el.requestFullscreen?.();
+    if (isFs || pseudoFs) {
+      // Exit whichever mode is active.
+      if (document.fullscreenElement) document.exitFullscreen?.();
+      setPseudoFs(false);
+      return;
+    }
+    // Prefer the native Fullscreen API; fall back to CSS fill on devices that
+    // don't support it (notably iOS Safari, where it's undefined on elements).
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => setPseudoFs(true));
+    } else {
+      setPseudoFs(true);
+    }
   };
+
+  // Combined flag: native fullscreen OR the CSS fallback.
+  const fsActive = isFs || pseudoFs;
 
   return (
     <div
       ref={rootRef}
       className={
-        isFs
-          ? // Fullscreen: full-width, full-height flex column so the lab fills the screen.
-            "flex h-screen w-full flex-col gap-3 overflow-hidden bg-[#0B1020] p-3 sm:p-4"
+        fsActive
+          ? // Fullscreen: full-width, full-height flex column so the lab fills the
+            // screen. 100dvh accounts for mobile browser chrome; pseudoFs adds
+            // fixed positioning since there's no native FS element (iOS Safari).
+            `flex h-[100dvh] w-full flex-col gap-3 overflow-hidden bg-[#0B1020] p-3 sm:p-4 ${
+              pseudoFs ? "fixed inset-0 z-50" : ""
+            }`
           : "mx-auto w-full max-w-6xl space-y-4 pb-2"
       }
     >
       {/* Header (hidden in fullscreen to give the lab the whole screen) */}
-      {isFs ? null : (
+      {fsActive ? null : (
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
             <h1 className="text-lg font-extrabold tracking-tight sm:text-xl">
@@ -1290,7 +1312,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           In fullscreen it grows (flex-1) to fill the whole screen. */}
       <div
         className={`relative flex flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#0b1020] shadow-xl ${
-          isFs ? "min-h-0 flex-1" : "h-[42vh] sm:h-[58vh]"
+          fsActive ? "min-h-0 flex-1" : "h-[42vh] sm:h-[58vh]"
         }`}
       >
         <Office3D
@@ -1309,7 +1331,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           onClick={toggleFullscreen}
           className="absolute left-3 top-3 z-10 rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-white/90 shadow backdrop-blur-sm hover:bg-black/60"
         >
-          {isFs ? "↙ تصغير" : "⛶ ملء الشاشة"}
+          {fsActive ? "↙ تصغير" : "⛶ ملء الشاشة"}
         </button>
       </div>
 
@@ -1319,7 +1341,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       `}</style>
 
       {/* Agent rail (tap to talk) */}
-      <div className={`flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${isFs ? "shrink-0" : ""}`}>
+      <div className={`flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${fsActive ? "shrink-0" : ""}`}>
         {RAIL.map((a) => {
           const on = a.id === activeAgent;
           return (
@@ -1351,7 +1373,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Agent card (when an agent is selected) */}
       {directAgent ? (
         <div
-          className={`flex items-center gap-3 rounded-2xl border p-3 ${isFs ? "shrink-0" : ""}`}
+          className={`flex items-center gap-3 rounded-2xl border p-3 ${fsActive ? "shrink-0" : ""}`}
           style={{ borderColor: `${agentById(directAgent).color}55`, background: `${agentById(directAgent).color}14` }}
         >
           <span
@@ -1390,10 +1412,10 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
           the rest of the space and nothing scrolls the page. */}
-      <div className={`rounded-3xl border border-white/10 bg-white/[0.03] p-2.5 sm:p-3 ${isFs ? "shrink-0" : ""}`}>
+      <div className={`rounded-3xl border border-white/10 bg-white/[0.03] p-2.5 sm:p-3 ${fsActive ? "shrink-0" : ""}`}>
         {/* Transcript + panel. In fullscreen it gets a taller, comfortably
             scrollable area (the lab flexes to fill the rest, no page overflow). */}
-        <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${isFs ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
+        <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
         {turns.length === 0 && !typed && panel?.type !== "briefing" ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-white/50">
             أهلًا فهد 👋 أنا ملاك وفريقي جاهزين. اسألني عن الكتالوج، الأسعار، أو خلّني أكتب لك محتوى.
