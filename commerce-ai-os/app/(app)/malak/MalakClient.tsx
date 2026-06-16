@@ -72,6 +72,23 @@ const AGENTS: AgentDef[] = [
 const RAIL = AGENTS.filter((a) => a.id !== "malak");
 const agentById = (id: string): AgentDef => AGENTS.find((a) => a.id === id) ?? AGENTS[0];
 
+// Wake-word routing for hands-free mode: detect a called agent's name anywhere
+// in the spoken phrase (tolerant of common spelling variants from the speech
+// recognizer). Returns the matched agent id, or null when no name is heard.
+const AGENT_NAME_PATTERNS: { id: AgentId; re: RegExp }[] = [
+  { id: "malak", re: /ملاك|ملك/ },
+  { id: "noor", re: /نور/ },
+  { id: "reem", re: /ريم|ريما/ },
+  { id: "siraj", re: /سراج|سيراج/ },
+  { id: "razan", re: /رزان|روزان/ },
+  { id: "rashid", re: /راشد|رشيد/ },
+  { id: "latifa", re: /لطيفة|لطيفه/ },
+];
+function detectCalledAgent(text: string): AgentId | null {
+  for (const a of AGENT_NAME_PATTERNS) if (a.re.test(text)) return a.id;
+  return null;
+}
+
 type OrbState = "idle" | "listening" | "thinking" | "speaking";
 
 // Coerce ANY value to a safe React-renderable string. Guards against React
@@ -736,11 +753,20 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [isFs, setIsFs] = useState(false);
+  // وضع النداء: استماع متواصل بدون زر — نادِ أي وكيل باسمه فيرد عليك.
+  const [handsFree, setHandsFree] = useState(false);
+  const handsFreeRef = useRef(false);
+  handsFreeRef.current = handsFree;
 
   const recognitionRef = useRef<any>(null);
   const directAgentRef = useRef<AgentId | null>(null); // mirror of directAgent for the memoized send()
   const scrollRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
+  // TTS-active guard so the always-on mic doesn't transcribe Malak's own voice
+  // (feedback loop). We drop recognition results while speaking and for a short
+  // cooldown after.
+  const speakingRef = useRef(false);
+  const lastSpeakEndRef = useRef(0);
   // Audio playback. Chrome blocks HTMLAudio.play() that runs after async work
   // (our TTS arrives after a fetch). The robust fix is the Web Audio API: an
   // AudioContext resumed inside a user gesture can play buffers at any later
@@ -843,6 +869,27 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     }
   }, []);
 
+  // Speak lifecycle (centralised) so the always-on mic can mute itself while
+  // Malak talks and resume right after — avoiding a self-listening feedback loop.
+  const onSpeakStart = useCallback(() => {
+    speakingRef.current = true;
+    setState("speaking");
+    // Pause continuous recognition while Malak's voice is playing.
+    if (handsFreeRef.current) { try { recognitionRef.current?.stop(); } catch { /* ignore */ } }
+  }, []);
+  const onSpeakEnd = useCallback(() => {
+    speakingRef.current = false;
+    lastSpeakEndRef.current = Date.now();
+    setState("idle");
+    // Resume listening shortly after, past the audio tail / echo.
+    if (handsFreeRef.current) {
+      setTimeout(() => {
+        if (!handsFreeRef.current || speakingRef.current) return;
+        try { recognitionRef.current?.start(); setListening(true); setState("listening"); } catch { /* already running */ }
+      }, 500);
+    }
+  }, []);
+
   // Fallback: the browser's built-in Arabic voice (used if ElevenLabs is
   // unavailable, not configured, or playback is blocked). IMPORTANT: only speak
   // if the system actually has an Arabic voice — otherwise the browser would
@@ -850,14 +897,14 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   // PC with no Arabic TTS). In that case we stay silent; the reply is shown.
   const browserSpeak = useCallback((text: string) => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-      setState("idle");
+      onSpeakEnd();
       return;
     }
     try {
       const voices = window.speechSynthesis.getVoices();
       const ar = voices.find((v) => v.lang?.toLowerCase().startsWith("ar"));
       if (!ar) {
-        setState("idle");
+        onSpeakEnd();
         return;
       }
       window.speechSynthesis.cancel();
@@ -866,13 +913,13 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       u.voice = ar;
       u.rate = 1;
       u.pitch = 1;
-      u.onstart = () => setState("speaking");
-      u.onend = () => setState("idle");
+      u.onstart = () => onSpeakStart();
+      u.onend = () => onSpeakEnd();
       window.speechSynthesis.speak(u);
     } catch {
-      setState("idle");
+      onSpeakEnd();
     }
-  }, []);
+  }, [onSpeakStart, onSpeakEnd]);
 
   // Primary: ElevenLabs voice via the server route. Falls back to the browser
   // voice on 204 (not configured), 502 (API error), or playback failure.
@@ -905,11 +952,11 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               node.onended = () => {
                 if (srcNodeRef.current === node) {
                   srcNodeRef.current = null;
-                  setState("idle");
+                  onSpeakEnd();
                 }
               };
               srcNodeRef.current = node;
-              setState("speaking");
+              onSpeakStart();
               node.start(0);
               return;
             } catch {
@@ -920,9 +967,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           // Fallback path: HTMLAudio element (primed in unlockAudio).
           const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
           const audio = getPlayer();
-          audio.onplay = () => setState("speaking");
+          audio.onplay = () => onSpeakStart();
           audio.onended = () => {
-            setState("idle");
+            onSpeakEnd();
             URL.revokeObjectURL(url);
           };
           audio.onerror = () => {
@@ -944,7 +991,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       }
       browserSpeak(clean);
     },
-    [stopAudio, browserSpeak]
+    [stopAudio, browserSpeak, onSpeakStart, onSpeakEnd]
   );
 
   // ---- Typewriter for Malak's reply ----
@@ -967,6 +1014,16 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     },
     []
   );
+
+  // Resume continuous listening after a turn that produced no spoken reply
+  // (e.g. an error). When Malak does speak, onSpeakEnd handles the resume.
+  const resumeHandsFree = useCallback(() => {
+    if (!handsFreeRef.current || speakingRef.current) return;
+    setTimeout(() => {
+      if (!handsFreeRef.current || speakingRef.current || busyRef.current) return;
+      try { recognitionRef.current?.start(); setListening(true); setState("listening"); } catch { /* already running */ }
+    }, 400);
+  }, []);
 
   // ---- Send a message to the Malak brain ----
   const send = useCallback(
@@ -1009,6 +1066,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             typewriter(upData?.error || "فشل رفع الصورة.");
             setState("idle");
             busyRef.current = false;
+            resumeHandsFree();
             return;
           }
         }
@@ -1024,6 +1082,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         if (/ANTHROPIC_API_KEY|SUPABASE_SERVICE_ROLE_KEY|Service role|صار خطأ تقني|غير مهيأ|not configured/i.test(speakText)) {
           setErrorAlert({ pretty: "تعذّر تنفيذ الطلب — إعدادات قاعدة البيانات غير مكتملة", raw: speakText });
           setState("idle");
+          resumeHandsFree();
         } else {
           setActiveAgent(ag);
           if (data?.panel?.type) setPanel(data.panel as PanelData);
@@ -1033,11 +1092,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       } catch (e) {
         setErrorAlert({ pretty: "تعذّر الاتصال بالخادم — حاول مرة ثانية", raw: String((e as Error)?.message || e) });
         setState("idle");
+        resumeHandsFree();
       } finally {
         busyRef.current = false;
       }
     },
-    [turns, typewriter, speak, stopAudio, unlockAudio, pendingImage]
+    [turns, typewriter, speak, stopAudio, unlockAudio, pendingImage, resumeHandsFree]
   );
 
   // ---- Morning briefing: auto store status ONCE per session on open --------
@@ -1064,7 +1124,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     })();
   }, [speak]);
 
-  // ---- Mic (Web Speech) ----
+  // ---- Mic (Web Speech) — push-to-talk button AND hands-free wake mode ----
   useEffect(() => {
     if (typeof window === "undefined") return;
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -1074,20 +1134,41 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     }
     const rec = new SR();
     rec.lang = "ar-SA";
-    rec.continuous = false;
     rec.interimResults = false;
     rec.onresult = (e: any) => {
-      const transcript = e.results[0][0].transcript;
+      const transcript = String(e.results[e.results.length - 1][0].transcript || "").trim();
+      if (!transcript) return;
+      // Feedback-loop guard: drop anything heard while Malak is speaking, while a
+      // request is in flight, or within a short cooldown after her voice ends
+      // (otherwise the always-on mic transcribes her own reply).
+      if (speakingRef.current || busyRef.current || Date.now() - lastSpeakEndRef.current < 900) return;
+      // Hands-free: if a called agent's name is heard, route to that agent.
+      if (handsFreeRef.current) {
+        const called = detectCalledAgent(transcript);
+        if (called) {
+          setActiveAgent(called);
+          setDirectAgent(called);
+          directAgentRef.current = called;
+        }
+      }
       setInput("");
       send(transcript);
     };
     rec.onend = () => {
       setListening(false);
+      // Hands-free: keep listening — auto-restart unless Malak is mid-speech
+      // (we resume from onSpeakEnd) or a request is being processed.
+      if (handsFreeRef.current && !speakingRef.current && !busyRef.current) {
+        try { rec.start(); setListening(true); setState((s) => (s === "idle" ? "listening" : s)); return; } catch { /* will retry */ }
+      }
       setState((s) => (s === "listening" ? "idle" : s));
     };
-    rec.onerror = () => {
+    rec.onerror = (ev: any) => {
       setListening(false);
-      setState((s) => (s === "listening" ? "idle" : s));
+      // Transient errors (no-speech, network) are expected in continuous mode;
+      // onend fires right after and handles the restart.
+      if (!handsFreeRef.current) setState((s) => (s === "listening" ? "idle" : s));
+      void ev;
     };
     recognitionRef.current = rec;
     return () => {
@@ -1106,17 +1187,46 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     // Mic tap is a user gesture → prime audio so the spoken reply can play.
     unlockAudio();
     if (listening) {
+      rec.continuous = false;
       rec.stop();
       setListening(false);
       setState("idle");
     } else {
       try {
         stopAudio();
+        rec.continuous = false; // single push-to-talk utterance
         rec.start();
         setListening(true);
         setState("listening");
       } catch {
         /* already started */
+      }
+    }
+  };
+
+  // Hands-free wake mode: continuous listening, no button — call any agent by
+  // name and it answers. The mic mutes itself while Malak speaks (no feedback).
+  const toggleHandsFree = () => {
+    const rec = recognitionRef.current;
+    if (!rec) return;
+    unlockAudio(); // user gesture → allow spoken replies to play
+    if (handsFree) {
+      setHandsFree(false);
+      handsFreeRef.current = false;
+      try { rec.continuous = false; rec.stop(); } catch { /* ignore */ }
+      setListening(false);
+      setState("idle");
+    } else {
+      setHandsFree(true);
+      handsFreeRef.current = true;
+      stopAudio();
+      try {
+        rec.continuous = true;
+        rec.start();
+        setListening(true);
+        setState("listening");
+      } catch {
+        /* already running */
       }
     }
   };
@@ -1318,6 +1428,29 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
 
         {/* Composer */}
         <div className="mt-2 border-t border-white/10 pt-2.5">
+        {/* Hands-free wake mode: call any agent by name, no button */}
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={toggleHandsFree}
+            disabled={!micSupported}
+            className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:opacity-30 ${
+              handsFree
+                ? "bg-emerald-500 text-white"
+                : "border border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+            }`}
+            style={handsFree ? { boxShadow: "0 0 16px rgba(16,185,129,0.6)" } : undefined}
+            aria-pressed={handsFree}
+          >
+            <span className={handsFree ? "animate-pulse" : ""}>{handsFree ? "🟢" : "📢"}</span>
+            {handsFree ? "وضع النداء مفعّل · ينصت" : "وضع النداء الصوتي"}
+          </button>
+          {handsFree ? (
+            <span className="truncate text-[11px] text-emerald-300/80">نادِ أي وكيل باسمه: «يا نور…» «رزان…»</span>
+          ) : (
+            <span className="hidden truncate text-[11px] text-white/40 sm:block">استماع متواصل بدون زر</span>
+          )}
+        </div>
         {/* Quick prompts */}
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
           {QUICK_PROMPTS.map((q) => (
