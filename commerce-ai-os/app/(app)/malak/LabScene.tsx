@@ -83,7 +83,16 @@ export default function Office3D({
 
     const clock = new THREE.Clock();
     let elapsed = 0;
-    let camTheta = Math.PI * 0.5, camPhi = Math.PI * 0.42, camRadius = 11.5;
+    // Responsive framing: the approved close look (radius 11.5) is tuned for a
+    // phone-ish aspect (~1.2). Wide desktop screens need the camera pulled back
+    // so the whole lab stays in frame instead of zooming into the robots.
+    const baseRadiusFor = (aspect: number) =>
+      Math.max(11.5, Math.min(11.5 + Math.max(0, aspect - 1.2) * 4.2, 18));
+    // Focus distance (when an agent is selected) scales with the base too, so
+    // it doesn't slam uncomfortably close on a big monitor.
+    const focusRadiusFor = (aspect: number) => Math.max(8, baseRadiusFor(aspect) * 0.7);
+    let camTheta = Math.PI * 0.5, camPhi = Math.PI * 0.42, camRadius = baseRadiusFor(W() / H());
+    let manualZoom = false; // true once the user wheels/pinches → stop auto-fitting on resize
     const camTarget = new THREE.Vector3(0, 0.85, 0);
     let focusActive = false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -471,9 +480,9 @@ export default function Office3D({
     const onMouseDown = (e: MouseEvent) => down(e.clientX, e.clientY);
     const onMouseMove = (e: MouseEvent) => move(e.clientX, e.clientY);
     const onMouseUp = (e: MouseEvent) => up(e.clientX, e.clientY);
-    const onWheel = (e: WheelEvent) => { camRadius = Math.max(6, Math.min(24, camRadius + e.deltaY * 0.01)); focusActive = false; };
+    const onWheel = (e: WheelEvent) => { camRadius = Math.max(6, Math.min(24, camRadius + e.deltaY * 0.01)); focusActive = false; manualZoom = true; };
     const onTouchStart = (e: TouchEvent) => { if (e.touches.length === 1) down(e.touches[0].clientX, e.touches[0].clientY); else if (e.touches.length === 2) { pinchStart = dist(e.touches); pinchRad = camRadius; } };
-    const onTouchMove = (e: TouchEvent) => { if (e.touches.length === 1) move(e.touches[0].clientX, e.touches[0].clientY); else if (e.touches.length === 2) { const d = dist(e.touches); camRadius = Math.max(6, Math.min(24, (pinchRad * pinchStart) / d)); focusActive = false; } };
+    const onTouchMove = (e: TouchEvent) => { if (e.touches.length === 1) move(e.touches[0].clientX, e.touches[0].clientY); else if (e.touches.length === 2) { const d = dist(e.touches); camRadius = Math.max(6, Math.min(24, (pinchRad * pinchStart) / d)); focusActive = false; manualZoom = true; } };
     const onTouchEnd = (e: TouchEvent) => { if (e.changedTouches.length) up(e.changedTouches[0].clientX, e.changedTouches[0].clientY); };
     el.addEventListener("mousedown", onMouseDown);
     window.addEventListener("mousemove", onMouseMove);
@@ -560,7 +569,8 @@ export default function Office3D({
       });
 
       if (focusActive && activeId && robots[activeId]) {
-        const p = robots[activeId].group.position; camTarget.lerp(new THREE.Vector3(p.x, 0.7, p.z), 0.06); camRadius += (8 - camRadius) * 0.05;
+        const p = robots[activeId].group.position; camTarget.lerp(new THREE.Vector3(p.x, 0.7, p.z), 0.06);
+        camRadius += (focusRadiusFor(camera.aspect) - camRadius) * 0.05;
       } else camTarget.lerp(new THREE.Vector3(0, 0.85, 0), 0.04);
       updateCamera();
       renderer.render(scene, camera);
@@ -568,7 +578,12 @@ export default function Office3D({
     updateCamera();
     animate();
 
-    const ro = new ResizeObserver(() => { camera.aspect = W() / H(); camera.updateProjectionMatrix(); renderer.setSize(W(), H()); });
+    const ro = new ResizeObserver(() => {
+      const aspect = W() / H();
+      camera.aspect = aspect; camera.updateProjectionMatrix(); renderer.setSize(W(), H());
+      // Re-fit the framing to the new aspect unless the user took manual control.
+      if (!manualZoom && !focusActive) camRadius = baseRadiusFor(aspect);
+    });
     ro.observe(mount);
 
     return () => {
