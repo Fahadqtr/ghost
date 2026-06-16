@@ -13,8 +13,8 @@ export const metadata: Metadata = { title: "ملاك — Malak AI" };
 export default async function Page() {
   const kpis = await getMalakKpis();
   return (
-    // -m-* يلغي حشو الـmain لتمتدّ الخلفية الغامقة، ثم نعيد الحشو داخليًا.
-    <div dir="rtl" className={`${tajawal.className} -m-4 min-h-full bg-[#0B1020] p-4 text-white sm:-m-6 sm:p-6`}>
+    // الـmain بدون حشو لمسار ملاك، فالخلفية الغامقة ممتدّة edge-to-edge بدون هوامش سالبة.
+    <div dir="rtl" className={`${tajawal.className} min-h-full w-full overflow-x-hidden bg-[#0B1020] p-4 text-white sm:p-6`}>
       <MalakClient kpis={kpis} />
     </div>
   );
