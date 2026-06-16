@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { usePathname } from "next/navigation";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 
@@ -16,10 +15,6 @@ export default function AppShell({
 }) {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
-  const pathname = usePathname();
-  // Malak is an immersive full-bleed experience: drop the main padding/scroll
-  // and give it a relative full-height container to fill (it positions itself).
-  const immersive = pathname === "/malak" || pathname.startsWith("/malak/");
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -53,9 +48,7 @@ export default function AppShell({
       {/* Main column */}
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar userEmail={userEmail} onMenuClick={() => setOpen(true)} />
-        <main className={immersive ? "relative flex-1 overflow-hidden" : "flex-1 overflow-y-auto p-4 sm:p-6"}>
-          {children}
-        </main>
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );

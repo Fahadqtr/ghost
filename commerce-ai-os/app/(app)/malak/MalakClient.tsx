@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { Component, useCallback, useEffect, useRef, useState } from "react";
+import type { MalakKpis } from "@/lib/dashboard";
 
 // مشهد المكتب 3D (Three.js) — ثقيل، يُحمَّل فقط على المتصفح وعند الحاجة.
 const Office3D = dynamic(() => import("./LabScene"), {
@@ -704,15 +705,15 @@ function Panel({
 }
 
 // ---- Main page -------------------------------------------------------------
-export default function MalakPage() {
+export default function MalakPage({ kpis }: { kpis?: MalakKpis }) {
   return (
     <UIErrorBoundary>
-      <MalakInner />
+      <MalakInner kpis={kpis} />
     </UIErrorBoundary>
   );
 }
 
-function MalakInner() {
+function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [panel, setPanel] = useState<PanelData | null>(null);
   const [input, setInput] = useState("");
@@ -725,8 +726,14 @@ function MalakInner() {
   const [view, setView] = useState<"orb" | "office">("orb"); // الأورب أو مشهد المكتب
   // الوكيل المُخاطَب مباشرة عند النقر على غرفته في المكتب (يُمرَّر للعقل كـ targetAgent).
   const [directAgent, setDirectAgent] = useState<AgentId | null>(null);
+  // تنبيه خطأ احترافي (التفاصيل التقنية تظهر فقط في وضع المطوّر ?dev=1).
+  const [errorAlert, setErrorAlert] = useState<{ pretty: string; raw: string } | null>(null);
+  const [devMode] = useState(
+    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("dev") === "1"
+  );
   const [pendingImage, setPendingImage] = useState<File | null>(null); // Phase 2C attachment
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const recognitionRef = useRef<any>(null);
   const directAgentRef = useRef<AgentId | null>(null); // mirror of directAgent for the memoized send()
@@ -1010,14 +1017,19 @@ function MalakInner() {
         });
         const data = await res.json();
         const ag: AgentId = (AGENTS.some((a) => a.id === data?.agent) ? data.agent : "malak") as AgentId;
-        setActiveAgent(ag);
         const speakText = typeof data?.speak === "string" ? data.speak : "تم.";
-        if (data?.panel?.type) setPanel(data.panel as PanelData);
-        typewriter(speakText);
-        speak(speakText, ag);
-      } catch {
-        const err = "ما قدرت أوصل للخادم، جرّب مرة ثانية.";
-        typewriter(err);
+        // Technical/config errors → professional alert (raw hidden unless ?dev=1).
+        if (/ANTHROPIC_API_KEY|SUPABASE_SERVICE_ROLE_KEY|Service role|صار خطأ تقني|غير مهيأ|not configured/i.test(speakText)) {
+          setErrorAlert({ pretty: "تعذّر تنفيذ الطلب — إعدادات قاعدة البيانات غير مكتملة", raw: speakText });
+          setState("idle");
+        } else {
+          setActiveAgent(ag);
+          if (data?.panel?.type) setPanel(data.panel as PanelData);
+          typewriter(speakText);
+          speak(speakText, ag);
+        }
+      } catch (e) {
+        setErrorAlert({ pretty: "تعذّر الاتصال بالخادم — حاول مرة ثانية", raw: String((e as Error)?.message || e) });
         setState("idle");
       } finally {
         busyRef.current = false;
@@ -1110,96 +1122,147 @@ function MalakInner() {
   const activeDef = agentById(activeAgent);
 
   return (
-    <div
-      className="absolute inset-0 flex flex-col overflow-hidden bg-[#060814] text-white"
-      style={{
-        backgroundImage:
-          "radial-gradient(circle at 20% 10%, rgba(79,139,255,0.18), transparent 40%), radial-gradient(circle at 85% 90%, rgba(168,85,247,0.18), transparent 45%)",
-      }}
-    >
-      {/* Top bar (slim — dashboard sidebar/topbar already wrap this view) */}
-      <header className="flex items-center justify-between px-3 py-2 sm:px-6 sm:py-3">
-        <div className="w-[78px] shrink-0" />
-        <div className="text-center">
-          <h1 className="text-base font-extrabold tracking-tight sm:text-lg">ملاك</h1>
-          <p className="text-[10px] text-white/40 sm:text-[11px]">المديرة العامة الذكية · v2N</p>
+    <div className="mx-auto w-full max-w-6xl space-y-4 pb-2">
+      {/* Header */}
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1 className="text-lg font-extrabold tracking-tight sm:text-xl">
+            ملاك · <span className="text-white/60">Malak AI</span>
+          </h1>
+          <p className="text-xs text-white/45">المديرة العامة الذكية · Malika&apos;s Universe Trading</p>
         </div>
-        <button
-          onClick={() => setView((v) => (v === "orb" ? "office" : "orb"))}
-          className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[12px] text-white/70 backdrop-blur transition hover:bg-white/10 sm:px-3 sm:py-1.5 sm:text-sm"
-        >
-          {view === "orb" ? "🏢 المكتب" : "✨ ملاك"}
-        </button>
-      </header>
+      </div>
 
-      {/* Agent rail (horizontal scroll, touch-friendly, compact height) */}
-      <div className="flex shrink-0 gap-1 overflow-x-auto px-2 pb-1 pt-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:justify-center sm:gap-1.5 sm:px-6">
+      {/* Professional error alert (raw technical details only when ?dev=1) */}
+      {errorAlert ? (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-sm">
+          <span className="text-lg leading-none">⚠️</span>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-amber-200">{errorAlert.pretty}</p>
+            {devMode && errorAlert.raw ? (
+              <pre dir="ltr" className="mt-1.5 overflow-x-auto rounded-lg bg-black/40 p-2 text-left text-[11px] text-amber-100/80">
+                {errorAlert.raw}
+              </pre>
+            ) : null}
+          </div>
+          <button onClick={() => setErrorAlert(null)} aria-label="إغلاق" className="shrink-0 text-white/50 hover:text-white">
+            ×
+          </button>
+        </div>
+      ) : null}
+
+      {/* Hero: the interactive 3D lab (click an agent to talk) */}
+      <div className="relative flex h-[42vh] flex-col overflow-hidden rounded-3xl border border-white/10 shadow-xl sm:h-[58vh]">
+        <Office3D
+          agents={AGENTS}
+          activeAgent={activeAgent}
+          state={state}
+          onSelect={(id) => {
+            const ag = id as AgentId;
+            setActiveAgent(ag);
+            setDirectAgent(ag);
+            directAgentRef.current = ag;
+          }}
+        />
+      </div>
+
+      {/* KPI cards (live Supabase data) */}
+      {kpis ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            { label: "إجمالي المنتجات", value: kpis.totalProducts, icon: "📦", color: "#8B5CF6" },
+            { label: "جاهز للنشر", value: kpis.readyToPublish, icon: "✅", color: "#34d399" },
+            { label: "بحاجة مراجعة", value: kpis.needReview, icon: "🕑", color: "#F4C430" },
+            { label: "صور ناقصة", value: kpis.missingImage, icon: "🖼️", color: "#38bdf8" },
+            { label: "أسعار ناقصة", value: kpis.missingPrice, icon: "💲", color: "#fb7185" },
+            { label: "مرفوض", value: kpis.rejected, icon: "⛔", color: "#94a3b8" },
+          ].map((c) => (
+            <div
+              key={c.label}
+              className="rounded-2xl border border-white/10 bg-white/[0.04] p-3"
+              style={{ boxShadow: `inset 0 0 0 1px ${c.color}22` }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-lg">{c.icon}</span>
+                <span className="h-2 w-2 rounded-full" style={{ background: c.color }} />
+              </div>
+              <p className="mt-1 text-2xl font-extrabold tabular-nums" style={{ color: c.color }}>
+                {kpis.configured ? c.value.toLocaleString("en-US") : "—"}
+              </p>
+              <p className="text-[11px] text-white/55">{c.label}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Agent rail (tap to talk) */}
+      <div className="flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {RAIL.map((a) => {
           const on = a.id === activeAgent;
           return (
-            <div
+            <button
               key={a.id}
-              className={`flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-1.5 py-1 transition ${
-                on ? "bg-white/10" : "opacity-55"
+              onClick={() => {
+                const ag = a.id as AgentId;
+                setActiveAgent(ag);
+                setDirectAgent(ag);
+                directAgentRef.current = ag;
+              }}
+              className={`flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-2 py-1.5 transition ${
+                on ? "bg-white/10" : "opacity-60 hover:opacity-100"
               }`}
               style={on ? { boxShadow: `0 0 0 1px ${a.color}66, 0 0 14px ${a.color}44` } : undefined}
             >
               <span
-                className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold transition"
-                style={{
-                  background: on ? a.color : `${a.color}33`,
-                  color: on ? "#0b1020" : a.color,
-                }}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
+                style={{ background: on ? a.color : `${a.color}33`, color: on ? "#0b1020" : a.color }}
               >
                 {a.name.slice(0, 1)}
               </span>
               <span className="text-[10px] font-medium leading-none text-white/75">{a.name}</span>
-              <span className="max-w-[60px] truncate text-center text-[8px] leading-tight text-white/40">
-                {a.role}
-              </span>
-            </div>
+            </button>
           );
         })}
       </div>
 
-      {/* Orb / Office view (toggled from the header) */}
-      {view === "orb" ? (
-        <div className="relative flex shrink-0 flex-col items-center justify-center py-0.5 sm:py-1">
-          <Orb state={state} color={accent} size={orbSize} />
-          <div className="-mt-2 text-center sm:-mt-3">
-            <p className="text-[13px] font-semibold sm:text-sm" style={{ color: accent }}>
-              {activeDef.name}
-            </p>
-            <p className="text-[10px] text-white/40 sm:text-[11px]">
-              {state === "listening"
-                ? "أستمع…"
-                : state === "thinking"
-                ? "أفكّر…"
-                : state === "speaking"
-                ? "أتحدّث…"
-                : activeDef.role}
+      {/* Agent card (when an agent is selected) */}
+      {directAgent ? (
+        <div
+          className="flex items-center gap-3 rounded-2xl border p-3"
+          style={{ borderColor: `${agentById(directAgent).color}55`, background: `${agentById(directAgent).color}14` }}
+        >
+          <span
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-bold"
+            style={{ background: agentById(directAgent).color, color: "#0b1020" }}
+          >
+            {agentById(directAgent).name.slice(0, 1)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold">{agentById(directAgent).name}</p>
+            <p className="truncate text-[11px] text-white/55">
+              {agentById(directAgent).role} · آخر مهمة: لا توجد مهام بعد
             </p>
           </div>
+          <button
+            onClick={() => { unlockAudio(); inputRef.current?.focus(); }}
+            className="shrink-0 rounded-full px-3 py-1.5 text-[12px] font-bold text-[#0b1020]"
+            style={{ background: agentById(directAgent).color }}
+          >
+            تشغيل
+          </button>
+          <button
+            onClick={() => scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
+            className="shrink-0 rounded-full border border-white/15 px-3 py-1.5 text-[12px] text-white/80 hover:bg-white/10"
+          >
+            التفاصيل
+          </button>
         </div>
-      ) : (
-        // Office is the hero: give it ~3/4 of the flexible height, chat stays compact.
-        <div className="flex min-h-0 flex-[3] flex-col">
-          <Office3D
-            agents={AGENTS}
-            activeAgent={activeAgent}
-            state={state}
-            onSelect={(id) => {
-              const ag = id as AgentId;
-              setActiveAgent(ag);
-              setDirectAgent(ag);
-              directAgentRef.current = ag;
-            }}
-          />
-        </div>
-      )}
+      ) : null}
 
-      {/* Transcript + panel (scrollable — gets priority for vertical space) */}
-      <div ref={scrollRef} className="mx-auto min-h-0 w-full max-w-3xl flex-1 space-y-2.5 overflow-y-auto px-3 py-2.5 sm:space-y-3 sm:px-6 sm:py-3">
+      {/* Chat card */}
+      <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-2.5 sm:p-3">
+        {/* Transcript + panel */}
+        <div ref={scrollRef} className="max-h-[44vh] min-h-[140px] space-y-2.5 overflow-y-auto px-1 py-1">
         {turns.length === 0 && !typed && panel?.type !== "briefing" ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-white/50">
             أهلًا فهد 👋 أنا ملاك وفريقي جاهزين. اسألني عن الكتالوج، الأسعار، أو خلّني أكتب لك محتوى.
@@ -1258,35 +1321,8 @@ function MalakInner() {
         ) : null}
       </div>
 
-      {/* Composer */}
-      <div className="shrink-0 border-t border-white/10 bg-black/20 px-4 py-3 backdrop-blur sm:px-6">
-       <div className="mx-auto w-full max-w-3xl">
-        {/* Direct-talk banner: shown after tapping an agent's room in the office */}
-        {directAgent ? (
-          <div
-            className="mb-2 flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px]"
-            style={{ background: `${agentById(directAgent).color}22`, border: `1px solid ${agentById(directAgent).color}55` }}
-          >
-            <span
-              className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
-              style={{ background: agentById(directAgent).color, color: "#0b1020" }}
-            >
-              {agentById(directAgent).name.slice(0, 1)}
-            </span>
-            <span className="flex-1 text-white/80">
-              تتحدث مع <b>{agentById(directAgent).name}</b> · {agentById(directAgent).role}
-            </span>
-            <button
-              type="button"
-              onClick={() => { setDirectAgent(null); directAgentRef.current = null; }}
-              aria-label="إنهاء المحادثة المباشرة"
-              className="flex h-5 w-5 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20"
-            >
-              ×
-            </button>
-          </div>
-        ) : null}
-
+        {/* Composer */}
+        <div className="mt-2 border-t border-white/10 pt-2.5">
         {/* Quick prompts */}
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
           {QUICK_PROMPTS.map((q) => (
@@ -1364,6 +1400,7 @@ function MalakInner() {
             {listening ? "■" : "🎤"}
           </button>
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="اكتب لملاك… (أو استخدم الميكروفون)"
