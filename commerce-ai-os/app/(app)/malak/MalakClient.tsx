@@ -1139,19 +1139,24 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   return (
     <div
       ref={rootRef}
-      className={`mx-auto w-full max-w-6xl space-y-4 pb-2 ${
-        isFs ? "h-screen overflow-y-auto bg-[#0B1020] p-4 sm:p-6" : ""
-      }`}
+      className={
+        isFs
+          ? // Fullscreen: full-width, full-height flex column so the lab fills the screen.
+            "flex h-screen w-full flex-col gap-3 overflow-hidden bg-[#0B1020] p-3 sm:p-4"
+          : "mx-auto w-full max-w-6xl space-y-4 pb-2"
+      }
     >
-      {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h1 className="text-lg font-extrabold tracking-tight sm:text-xl">
-            ملاك · <span className="text-white/60">Malak AI</span>
-          </h1>
-          <p className="text-xs text-white/45">المديرة العامة الذكية · Malika&apos;s Universe Trading</p>
+      {/* Header (hidden in fullscreen to give the lab the whole screen) */}
+      {isFs ? null : (
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h1 className="text-lg font-extrabold tracking-tight sm:text-xl">
+              ملاك · <span className="text-white/60">Malak AI</span>
+            </h1>
+            <p className="text-xs text-white/45">المديرة العامة الذكية · Malika&apos;s Universe Trading</p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Professional error alert (raw technical details only when ?dev=1) */}
       {errorAlert ? (
@@ -1171,10 +1176,11 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         </div>
       ) : null}
 
-      {/* Hero: the interactive 3D lab (click an agent to talk) */}
+      {/* Hero: the interactive 3D lab (click an agent to talk).
+          In fullscreen it grows (flex-1) to fill the whole screen. */}
       <div
         className={`relative flex flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#0b1020] shadow-xl ${
-          isFs ? "h-[70vh]" : "h-[42vh] sm:h-[58vh]"
+          isFs ? "min-h-0 flex-1" : "h-[42vh] sm:h-[58vh]"
         }`}
       >
         <Office3D
