@@ -1244,14 +1244,19 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             </p>
           </div>
           <button
-            onClick={() => { unlockAudio(); inputRef.current?.focus(); }}
+            onClick={() => {
+              unlockAudio();
+              const a = agentById(directAgent);
+              send(`معك ${a.name}؟ عطني ملخص سريع عن وضع ${a.role} وأهم نقطة تحتاج تصرّف.`);
+              scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }}
             className="shrink-0 rounded-full px-3 py-1.5 text-[12px] font-bold text-[#0b1020]"
             style={{ background: agentById(directAgent).color }}
           >
             تشغيل
           </button>
           <button
-            onClick={() => scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
+            onClick={() => { inputRef.current?.focus(); scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }}
             className="shrink-0 rounded-full border border-white/15 px-3 py-1.5 text-[12px] text-white/80 hover:bg-white/10"
           >
             التفاصيل
