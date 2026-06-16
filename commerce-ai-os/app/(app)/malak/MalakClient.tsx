@@ -734,6 +734,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const [pendingImage, setPendingImage] = useState<File | null>(null); // Phase 2C attachment
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const heroRef = useRef<HTMLDivElement>(null);
+  const [isFs, setIsFs] = useState(false);
 
   const recognitionRef = useRef<any>(null);
   const directAgentRef = useRef<AgentId | null>(null); // mirror of directAgent for the memoized send()
@@ -1119,7 +1121,20 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     }
   };
 
+  useEffect(() => {
+    const onFs = () => setIsFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
   const activeDef = agentById(activeAgent);
+
+  const toggleFullscreen = () => {
+    const el = heroRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else el.requestFullscreen?.();
+  };
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-4 pb-2">
@@ -1152,7 +1167,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       ) : null}
 
       {/* Hero: the interactive 3D lab (click an agent to talk) */}
-      <div className="relative flex h-[42vh] flex-col overflow-hidden rounded-3xl border border-white/10 shadow-xl sm:h-[58vh]">
+      <div
+        ref={heroRef}
+        className={`relative flex flex-col overflow-hidden border border-white/10 bg-[#0b1020] shadow-xl ${
+          isFs ? "h-screen rounded-none" : "h-[42vh] rounded-3xl sm:h-[58vh]"
+        }`}
+      >
         <Office3D
           agents={AGENTS}
           activeAgent={activeAgent}
@@ -1164,6 +1184,13 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             directAgentRef.current = ag;
           }}
         />
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className="absolute left-3 top-3 z-10 rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-white/90 shadow backdrop-blur-sm hover:bg-black/60"
+        >
+          {isFs ? "↙ تصغير" : "⛶ ملء الشاشة"}
+        </button>
       </div>
 
       {/* KPI cards (live Supabase data) */}
