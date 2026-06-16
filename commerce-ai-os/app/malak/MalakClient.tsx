@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { Component, useCallback, useEffect, useRef, useState } from "react";
 
 // مشهد المكتب 3D (Three.js) — ثقيل، يُحمَّل فقط على المتصفح وعند الحاجة.
-const Office3D = dynamic(() => import("./Office3D"), {
+const Office3D = dynamic(() => import("./Office3DRobot"), {
   ssr: false,
   loading: () => (
     <div className="flex min-h-0 flex-1 items-center justify-center text-white/40">
