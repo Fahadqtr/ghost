@@ -724,10 +724,13 @@ function MalakInner() {
   const [micSupported, setMicSupported] = useState(true);
   const [orbSize, setOrbSize] = useState(160); // responsive; set on mount
   const [view, setView] = useState<"orb" | "office">("orb"); // الأورب أو مشهد المكتب
+  // الوكيل المُخاطَب مباشرة عند النقر على غرفته في المكتب (يُمرَّر للعقل كـ targetAgent).
+  const [directAgent, setDirectAgent] = useState<AgentId | null>(null);
   const [pendingImage, setPendingImage] = useState<File | null>(null); // Phase 2C attachment
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const recognitionRef = useRef<any>(null);
+  const directAgentRef = useRef<AgentId | null>(null); // mirror of directAgent for the memoized send()
   const scrollRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   // Audio playback. Chrome blocks HTMLAudio.play() that runs after async work
@@ -1004,7 +1007,7 @@ function MalakInner() {
         const res = await fetch("/api/malak", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: apiMessages, imageUrl }),
+          body: JSON.stringify({ messages: apiMessages, imageUrl, targetAgent: directAgentRef.current }),
         });
         const data = await res.json();
         const ag: AgentId = (AGENTS.some((a) => a.id === data?.agent) ? data.agent : "malak") as AgentId;
@@ -1185,7 +1188,17 @@ function MalakInner() {
           </div>
         </div>
       ) : (
-        <Office3D agents={AGENTS} activeAgent={activeAgent} state={state} />
+        <Office3D
+          agents={AGENTS}
+          activeAgent={activeAgent}
+          state={state}
+          onSelect={(id) => {
+            const ag = id as AgentId;
+            setActiveAgent(ag);
+            setDirectAgent(ag);
+            directAgentRef.current = ag;
+          }}
+        />
       )}
 
       {/* Transcript + panel (scrollable — gets priority for vertical space) */}
@@ -1251,6 +1264,32 @@ function MalakInner() {
       {/* Composer */}
       <div className="shrink-0 border-t border-white/10 bg-black/20 px-4 py-3 backdrop-blur sm:px-6">
        <div className="mx-auto w-full max-w-3xl">
+        {/* Direct-talk banner: shown after tapping an agent's room in the office */}
+        {directAgent ? (
+          <div
+            className="mb-2 flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-[12px]"
+            style={{ background: `${agentById(directAgent).color}22`, border: `1px solid ${agentById(directAgent).color}55` }}
+          >
+            <span
+              className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
+              style={{ background: agentById(directAgent).color, color: "#0b1020" }}
+            >
+              {agentById(directAgent).name.slice(0, 1)}
+            </span>
+            <span className="flex-1 text-white/80">
+              تتحدث مع <b>{agentById(directAgent).name}</b> · {agentById(directAgent).role}
+            </span>
+            <button
+              type="button"
+              onClick={() => { setDirectAgent(null); directAgentRef.current = null; }}
+              aria-label="إنهاء المحادثة المباشرة"
+              className="flex h-5 w-5 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20"
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
+
         {/* Quick prompts */}
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
           {QUICK_PROMPTS.map((q) => (

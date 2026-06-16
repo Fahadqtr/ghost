@@ -34,10 +34,12 @@ export default function Office3D({
   agents,
   activeAgent,
   state,
+  onSelect,
 }: {
   agents: OfficeAgent[];
   activeAgent: string;
   state: string;
+  onSelect?: (id: string) => void;
 }) {
   const working = state === "thinking" || state === "speaking" || state === "listening";
   const workLabel =
@@ -62,13 +64,29 @@ export default function Office3D({
           return (
             <div
               key={a.id}
-              className="relative aspect-square overflow-hidden rounded-2xl bg-white"
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelect?.(a.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect?.(a.id);
+                }
+              }}
+              className="group relative aspect-square cursor-pointer overflow-hidden rounded-2xl bg-white transition hover:-translate-y-0.5"
               style={{
                 border: on ? `2px solid ${a.color}` : "1px solid #e6e9f2",
                 boxShadow: on ? `0 10px 30px ${a.color}55` : "0 2px 8px rgba(20,30,60,0.06)",
-                transition: "box-shadow .3s, border-color .3s",
+                transition: "box-shadow .3s, border-color .3s, transform .2s",
               }}
             >
+              {/* تلميح: اضغط للتحدّث */}
+              <div
+                className="absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-bold text-white opacity-0 transition group-hover:opacity-100"
+                style={on ? { opacity: 1 } : undefined}
+              >
+                💬 تحدّث
+              </div>
               {/* خلفية الغرفة */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img

@@ -776,8 +776,8 @@ function findRespond(content: Anthropic.ContentBlock[]): Anthropic.ToolUseBlock 
 }
 
 // Shape a respond/JSON payload into the client contract { agent, speak, panel }.
-function buildResponse(out: any, skuImages: Map<string, string>) {
-  const agent = AGENT_IDS.includes(out?.agent) ? out.agent : "malak";
+function buildResponse(out: any, skuImages: Map<string, string>, fallbackAgent: string = "malak") {
+  const agent = AGENT_IDS.includes(out?.agent) ? out.agent : fallbackAgent;
   const speak = typeof out?.speak === "string" && out.speak.trim() ? out.speak : "تم.";
   const panel = out?.panel ? enrichPanel(out.panel, skuImages) : undefined;
   return { agent, speak, panel };
@@ -814,11 +814,23 @@ export async function POST(req: Request) {
   const sb = createAdminClient();
   const skuImages = new Map<string, string>();
 
+  // Direct-talk: the user tapped a specific agent's room in the office and is
+  // addressing that agent. Steer the brain to answer in that agent's voice
+  // (unless the task needs a write tool owned by another specialist).
+  const targetAgent =
+    typeof body?.targetAgent === "string" && (AGENT_IDS as readonly string[]).includes(body.targetAgent)
+      ? body.targetAgent
+      : null;
+  const systemPrompt = targetAgent
+    ? SYSTEM_PROMPT +
+      ` [توجيه اللحظة] المستخدم ضغط على غرفة الوكيل (${targetAgent}) في المكتب ويخاطبه مباشرة. اجعلي قيمة agent في respond تساوي ${targetAgent}، وردّي بصوت هذا الوكيل وشخصيته ونطاق تخصصه. إن كان الطلب خارج تخصصه فلتُجب باختصار ثم توجّه فهد للوكيل المناسب. الاستثناء الوحيد: إذا تطلّب الطلب أداة كتابة يملكها وكيل آخر (تعديل سعر/مخزون/اعتماد/صورة) فاتبعي مالك الأداة المعتاد.`
+    : SYSTEM_PROMPT;
+
   const create = (extra: Partial<Anthropic.MessageCreateParamsNonStreaming> = {}) =>
     client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       tools: TOOLS,
       messages,
       ...extra,
@@ -887,7 +899,7 @@ export async function POST(req: Request) {
       const respondBlock = findRespond(resp.content);
       if (respondBlock) {
         console.log("[malak] respond via tool call");
-        return Response.json(buildResponse(respondBlock.input, skuImages));
+        return Response.json(buildResponse(respondBlock.input, skuImages, targetAgent ?? "malak"));
       }
 
       // No respond yet. If the model isn't asking for a data tool, stop looping.
@@ -920,7 +932,7 @@ export async function POST(req: Request) {
       try {
         const parsed = JSON.parse(jsonMatch[0]);
         console.log("[malak] respond via parsed JSON text");
-        return Response.json(buildResponse(parsed, skuImages));
+        return Response.json(buildResponse(parsed, skuImages, targetAgent ?? "malak"));
       } catch {
         console.log("[malak] JSON parse of final text failed");
       }
@@ -944,7 +956,7 @@ export async function POST(req: Request) {
     const forcedBlock = findRespond(forced.content);
     if (forcedBlock) {
       console.log("[malak] respond via forced tool_choice");
-      return Response.json(buildResponse(forcedBlock.input, skuImages));
+      return Response.json(buildResponse(forcedBlock.input, skuImages, targetAgent ?? "malak"));
     }
 
     console.log("[malak] no structured answer produced");
