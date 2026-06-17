@@ -5,6 +5,9 @@ import { APP_NAME, APP_OWNER } from "@/lib/constants";
 export const metadata: Metadata = {
   title: `${APP_NAME} — ${APP_OWNER}`,
   description: "Local-first MVP dashboard to manage multiple brands and channels.",
+  manifest: "/manifest.webmanifest",
+  applicationName: "Malak",
+  appleWebApp: { capable: true, title: "Malak", statusBarStyle: "default" },
 };
 
 // Without this, mobile browsers assume a ~980px desktop viewport and render the
@@ -13,6 +16,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
+import BottomNav from "./BottomNav";
 
 // Client shell. The static desktop sidebar vs. mobile drawer decision is made in
 // JS (not CSS media queries) because some in-app browser webviews mis-report the
@@ -92,6 +93,8 @@ export default function AppShell({
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar userEmail={userEmail} onMenuClick={() => setOpen(true)} showMenu={!desktop} />
         <main className={`flex-1 overflow-y-auto ${isMalak ? "" : "p-4 sm:p-6"}`}>{children}</main>
+        {/* Native-app-style bottom tabs (mobile/tablet only) */}
+        {!desktop ? <BottomNav /> : null}
       </div>
     </div>
   );
