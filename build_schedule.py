@@ -150,7 +150,7 @@ rows = [
     ("b", "3) عمود «عدد الأيام» يُحسب تلقائياً، وعمود «فحص التعارض» يتحقق فوراً:"),
     ("b", "     ✓ سليم = لا يوجد تعارض   |   ⚠ تعارض = للموظف إجازة أخرى متداخلة بنفس الفترة."),
     ("b", "4) عمود «تنبيه التغطية» ينبّه إذا تجاوز عدد المُجازين في نفس اليوم الحد المسموح."),
-    ("b", "5) غيّر «الحالة» إلى «معتمد» لتظهر الإجازة ملوّنة في جدول الورديات."),
+    ("b", "5) تظهر الإجازة ملوّنة في جدول الورديات والتقويم فور إدخالها (إلا إذا كانت حالتها «مرفوض»)."),
     ("", ""),
     ("h", "ملاحظات:"),
     ("b", "• الصفوف الحمراء/التنبيهات تعني وجود تعارض — عالجه قبل الاعتماد."),
@@ -487,7 +487,7 @@ for idx, (num, name, jobno) in enumerate(EMPLOYEES):
                  f'IF(MOD({dref}-{cs},{CYCLE_WORK}+{CYCLE_REST})<{CYCLE_WORK},{rot},"راحة")))')
         # هل توجد إجازة معتمدة لهذا الموظف بهذا التاريخ؟
         match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<={dref})*'
-                 f'(({ENDS})>={dref})*({STAT}="معتمد")*ROW({EMPS}))')
+                 f'(({ENDS})>={dref})*({STAT}<>"مرفوض")*ROW({EMPS}))')
         idxf = f'({match})-{L_FIRST}+1'
         formula = (f'=IF({match}=0,{cycle},INDEX({TYPES_COL},{idxf}))')
         cc = ws_r.cell(row=row, column=col, value=formula)
@@ -571,9 +571,9 @@ for i, k in enumerate(legend_items):
 # =================================================================  تقويم الإجازات (عرض واضح للإجازات فقط)
 ws_lc = wb.create_sheet("تقويم الإجازات")
 ws_lc.sheet_view.rightToLeft = True
-ws_lc["A1"] = "تقويم الإجازات — يعرض الإجازات المعتمدة فقط بألوانها"
+ws_lc["A1"] = "تقويم الإجازات — يعرض كل الإجازات (عدا المرفوضة) بألوانها"
 ws_lc["A1"].font = TITLE_FONT
-ws_lc["A2"] = "كل خلية ملوّنة = إجازة معتمدة لذلك اليوم. الخلايا الفارغة = لا توجد إجازة."
+ws_lc["A2"] = "كل خلية ملوّنة = إجازة لذلك اليوم. الخلايا الفارغة = لا توجد إجازة."
 ws_lc["A2"].font = Font(name="Arial", italic=True, color="44546A", size=10)
 
 for col, h in enumerate(["م", "الاسم", "الرقم الوظيفي"], start=1):
@@ -617,7 +617,7 @@ for idx, (num, name, jobno) in enumerate(EMPLOYEES):
         col = DAY_COL0 + i
         dref = f"{get_column_letter(col)}$3"
         match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<={dref})*'
-                 f'(({ENDS})>={dref})*({STAT}="معتمد")*ROW({EMPS}))')
+                 f'(({ENDS})>={dref})*({STAT}<>"مرفوض")*ROW({EMPS}))')
         idxf = f'({match})-{L_FIRST}+1'
         cc = ws_lc.cell(row=row, column=col,
                         value=f'=IF({match}=0,"",INDEX({TYPES_COL},{idxf}))')
@@ -908,7 +908,7 @@ for i, (num, name, job) in enumerate(EMPLOYEES):
     cyc = (f'IF({DT}<{cs},"",IF(ISNUMBER(MATCH({DT},{HOLIDAYS_REF},0)),"عطلة",'
            f'IF(MOD({DT}-{cs},{CYCLE_WORK}+{CYCLE_REST})<{CYCLE_WORK},{rot},"راحة")))')
     match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<={DT})*(({ENDS})>={DT})'
-             f'*({STAT}="معتمد")*ROW({EMPS}))')
+             f'*({STAT}<>"مرفوض")*ROW({EMPS}))')
     sc = ws_day.cell(row=r, column=4,
                      value=f'=IF({match}=0,{cyc},INDEX({TYPES_COL},({match})-{L_FIRST}+1))')
     sc.alignment = CENTER
@@ -970,7 +970,7 @@ for i, (num, name, job) in enumerate(EMPLOYEES):
     cyc = (f'IF(TODAY()<{cs},"",IF(ISNUMBER(MATCH(TODAY(),{HOLIDAYS_REF},0)),"عطلة",'
            f'IF(MOD(TODAY()-{cs},{CYCLE_WORK}+{CYCLE_REST})<{CYCLE_WORK},{rot},"راحة")))')
     match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<=TODAY())*(({ENDS})>=TODAY())'
-             f'*({STAT}="معتمد")*ROW({EMPS}))')
+             f'*({STAT}<>"مرفوض")*ROW({EMPS}))')
     sc = ws_mon.cell(row=r, column=3,
                      value=f'=IF({match}=0,{cyc},INDEX({TYPES_COL},({match})-{L_FIRST}+1))')
     sc.alignment = CENTER
