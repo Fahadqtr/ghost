@@ -180,11 +180,16 @@ for i, (k, v) in enumerate(settings, start=2):
     b.border = BORDER
     if isinstance(v, datetime.date):
         b.number_format = "DD/MM/YYYY"
-# مراجع الإعدادات
-CYCLE_WORK = "'الإعدادات والقوائم'!$B$3"
-CYCLE_REST = "'الإعدادات والقوائم'!$B$4"
-MIN_STAFF = "'الإعدادات والقوائم'!$B$5"
-MAX_LEAVE = "'الإعدادات والقوائم'!$B$6"
+# مراجع الإعدادات — أسماء معرّفة لضمان التحديث في الصيغ والتنسيق الشرطي عبر الأوراق
+from openpyxl.workbook.defined_name import DefinedName
+wb.defined_names["CycleWork"] = DefinedName("CycleWork", attr_text="'الإعدادات والقوائم'!$B$3")
+wb.defined_names["CycleRest"] = DefinedName("CycleRest", attr_text="'الإعدادات والقوائم'!$B$4")
+wb.defined_names["MinStaff"] = DefinedName("MinStaff", attr_text="'الإعدادات والقوائم'!$B$5")
+wb.defined_names["MaxLeave"] = DefinedName("MaxLeave", attr_text="'الإعدادات والقوائم'!$B$6")
+CYCLE_WORK = "CycleWork"
+CYCLE_REST = "CycleRest"
+MIN_STAFF = "MinStaff"
+MAX_LEAVE = "MaxLeave"
 
 # قوائم منسدلة
 ws_set["D1"] = "أنواع الإجازات"
@@ -298,7 +303,8 @@ for row in range(L_FIRST, L_LAST + 1):
     cover = (f'SUMPRODUCT(({STAT}<>"مرفوض")*({STARTS}<=$D{row})*($D{row}<=({ENDS})))')
     ws_lv.cell(row=row, column=9,
                value=f'=IF($D{row}="","",IF({cover}>{MAX_LEAVE},'
-                     f'"⚠ تجاوز الحد ("&{cover}&")","✓ ضمن الحد"))').alignment = CENTER
+                     f'"⚠ مجازين "&{cover}&" / الحد "&{MAX_LEAVE},'
+                     f'"✓ مجازين "&{cover}&" / الحد "&{MAX_LEAVE}))').alignment = CENTER
     for col in range(1, 11):
         cell = ws_lv.cell(row=row, column=col)
         cell.border = BORDER
@@ -597,6 +603,7 @@ for i, t in enumerate(LEAVE_TYPES):
 # إجبار البرنامج على إعادة احتساب جميع الصيغ عند فتح الملف
 try:
     wb.calculation.fullCalcOnLoad = True
+    wb.calculation.calcMode = "auto"
 except Exception:
     pass
 out = "/home/user/ghost/جدول_الورديات_وحجز_الإجازات.xlsx"
