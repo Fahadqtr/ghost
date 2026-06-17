@@ -125,10 +125,10 @@ rows = [
     ("", ""),
     ("h", "نظام الدوام:"),
     ("b", "• 6 أيام عمل متتالية ثم 4 أيام راحة (دورية) — دورة كل 10 أيام."),
-    ("b", "• ثلاث ورديات (زامات):"),
+    ("b", "• ثلاث ورديات (زامات) يتنقّل بينها الفريق بالتدوير: صباح ← عصر ← ليل."),
     ("b", "     صباح: 6:00 ص ← 1:00 م   |   عصر: 1:00 م ← 9:00 م   |   ليل: 9:00 م ← 6:00 ص (اليوم التالي)."),
-    ("b", "• وردية كل موظف تُحدَّد من عمود «الوردية» في ورقة الموظفين (قابلة للتغيير)."),
-    ("b", "• الجدول يعرض اسم وردية الموظف على أيام عمله و«راحة» على أيام راحته — تلقائياً."),
+    ("b", "• الفريق كله على وردية واحدة كل دورة، وتتغيّر الوردية مع كل دورة عمل جديدة."),
+    ("b", "• «وردية بداية الفريق» في ورقة الإعدادات تحدّد الوردية الأولى — غيّرها لضبط التدوير."),
     ("", ""),
     ("h", "أنواع الإجازات:"),
     ("b", "سنوية • عارض • دورية • مرضية • مرافق مريض • أخرى"),
@@ -177,6 +177,7 @@ settings = [
     ("طول الراحة الدورية (أيام)", 4),
     ("الحد الأدنى للعاملين يومياً", 4),
     ("أقصى عدد مُجازين في اليوم", 3),
+    ("وردية بداية الفريق", "صباح"),
 ]
 for i, (k, v) in enumerate(settings, start=2):
     a = ws_set.cell(row=i, column=1, value=k)
@@ -194,10 +195,12 @@ wb.defined_names["CycleWork"] = DefinedName("CycleWork", attr_text="'الإعد�
 wb.defined_names["CycleRest"] = DefinedName("CycleRest", attr_text="'الإعدادات والقوائم'!$B$4")
 wb.defined_names["MinStaff"] = DefinedName("MinStaff", attr_text="'الإعدادات والقوائم'!$B$5")
 wb.defined_names["MaxLeave"] = DefinedName("MaxLeave", attr_text="'الإعدادات والقوائم'!$B$6")
+wb.defined_names["StartShift"] = DefinedName("StartShift", attr_text="'الإعدادات والقوائم'!$B$7")
 CYCLE_WORK = "CycleWork"
 CYCLE_REST = "CycleRest"
 MIN_STAFF = "MinStaff"
 MAX_LEAVE = "MaxLeave"
+START_SHIFT = "StartShift"
 
 # قوائم منسدلة
 ws_set["D1"] = "أنواع الإجازات"
@@ -235,11 +238,19 @@ for i, (nm, tm) in enumerate(SHIFTS, start=2):
     t.border = BORDER
 SHIFTS_RANGE = f"'الإعدادات والقوائم'!$H$2:$H${1+len(SHIFTS)}"
 
+# قائمة منسدلة لاختيار وردية بداية الفريق (B7) + تلوينها
+dv_start = DataValidation(type="list", formula1=f"={SHIFTS_RANGE}", allow_blank=True)
+ws_set.add_data_validation(dv_start)
+dv_start.add("B7")
+for nm in SHIFT_NAMES:
+    ws_set.conditional_formatting.add(
+        "B7", CellIsRule(operator="equal", formula=[f'"{nm}"'], fill=cf_fill(COLORS[nm])))
+
 # =================================================================  الموظفون
 ws_emp = wb.create_sheet("الموظفون")
 ws_emp.sheet_view.rightToLeft = True
-emp_headers = ["م", "الاسم", "الرقم الوظيفي", "الوردية", "بداية الدورة"]
-widths = [6, 32, 16, 14, 16]
+emp_headers = ["م", "الاسم", "الرقم الوظيفي", "بداية الدورة"]
+widths = [6, 32, 16, 16]
 for col, (h, w) in enumerate(zip(emp_headers, widths), start=1):
     c = ws_emp.cell(row=1, column=col, value=h)
     style_header(c)
@@ -248,27 +259,15 @@ for i, (num, name, jobno) in enumerate(EMPLOYEES, start=2):
     ws_emp.cell(row=i, column=1, value=num).alignment = CENTER
     ws_emp.cell(row=i, column=2, value=name).alignment = RIGHT
     ws_emp.cell(row=i, column=3, value=jobno).alignment = CENTER
-    sh = ws_emp.cell(row=i, column=4, value=DEFAULT_SHIFT)
-    sh.alignment = CENTER
-    d = ws_emp.cell(row=i, column=5, value=PERIOD_START)
+    d = ws_emp.cell(row=i, column=4, value=PERIOD_START)
     d.alignment = CENTER
     d.number_format = "DD/MM/YYYY"
-    for col in range(1, 6):
+    for col in range(1, 5):
         ws_emp.cell(row=i, column=col).border = BORDER
         ws_emp.cell(row=i, column=col).font = BASE_FONT
 ws_emp.freeze_panes = "A2"
 EMP_LAST = 1 + len(EMPLOYEES)
 NAMES_RANGE = f"'الموظفون'!$B$2:$B${EMP_LAST}"
-
-# قائمة منسدلة لاختيار الوردية + تلوينها
-dv_shift = DataValidation(type="list", formula1=f"={SHIFTS_RANGE}", allow_blank=True)
-ws_emp.add_data_validation(dv_shift)
-dv_shift.add(f"D2:D{EMP_LAST}")
-for nm in SHIFT_NAMES:
-    ws_emp.conditional_formatting.add(
-        f"D2:D{EMP_LAST}",
-        CellIsRule(operator="equal", formula=[f'"{nm}"'],
-                   fill=cf_fill(COLORS[nm])))
 
 # =================================================================  حجز الإجازات
 ws_lv = wb.create_sheet("حجز الإجازات")
@@ -415,15 +414,17 @@ for idx, (num, name, jobno) in enumerate(EMPLOYEES):
     ws_r.cell(row=row, column=1, value=num).alignment = CENTER
     ws_r.cell(row=row, column=2, value=f"='الموظفون'!B{erow}").alignment = RIGHT
     ws_r.cell(row=row, column=3, value=f"='الموظفون'!C{erow}").alignment = CENTER
-    cs = f"'الموظفون'!$E${erow}"          # بداية الدورة لهذا الموظف
+    cs = f"'الموظفون'!$D${erow}"          # بداية الدورة لهذا الموظف
     nm = f"'الموظفون'!$B${erow}"          # اسم الموظف
-    shift = f"'الموظفون'!$D${erow}"       # وردية هذا الموظف
     for i in range(DAYS):
         col = DAY_COL0 + i
         dref = f"{get_column_letter(col)}$3"
-        # حالة الدورة: اسم الوردية في أيام العمل / راحة في أيام الراحة
+        # تدوير وردية الفريق: صباح ← عصر ← ليل، تتغير كل دورة عمل
+        rot = (f'INDEX({SHIFTS_RANGE},MOD(INT(({dref}-{cs})/'
+               f'({CYCLE_WORK}+{CYCLE_REST}))+MATCH({START_SHIFT},{SHIFTS_RANGE},0)-1,3)+1)')
+        # حالة الدورة: وردية الفريق في أيام العمل / راحة في أيام الراحة
         cycle = (f'IF({dref}<{cs},"",IF(MOD({dref}-{cs},{CYCLE_WORK}+{CYCLE_REST})'
-                 f'<{CYCLE_WORK},{shift},"راحة"))')
+                 f'<{CYCLE_WORK},{rot},"راحة"))')
         # هل توجد إجازة معتمدة لهذا الموظف بهذا التاريخ؟
         match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<={dref})*'
                  f'(({ENDS})>={dref})*({STAT}="معتمد")*ROW({EMPS}))')
@@ -631,7 +632,9 @@ LV_C = "'حجز الإجازات'!$C$5:$C$104"
 LV_F = "'حجز الإجازات'!$F$5:$F$104"
 LV_G = "'حجز الإجازات'!$G$5:$G$104"
 LV_H = "'حجز الإجازات'!$H$5:$H$104"
-EMP_SHIFT = f"'الموظفون'!$D$2:$D${EMP_LAST}"
+# وردية الفريق اليوم (حسب التدوير)
+TEAM_TODAY = (f'INDEX({SHIFTS_RANGE},MOD(INT((TODAY()-\'الإعدادات والقوائم\'!$B$2)/'
+              f'({CYCLE_WORK}+{CYCLE_REST}))+MATCH({START_SHIFT},{SHIFTS_RANGE},0)-1,3)+1)')
 
 
 def db_box(cell, header=False, fill=None):
@@ -659,6 +662,7 @@ kpis = [
     ("الطلبات المرفوضة", f'=COUNTIF({LV_G},"مرفوض")'),
     ("طلبات فيها تعارض", f'=COUNTIF({LV_H},"*تعارض*")'),
     ("إجمالي أيام الإجازات المعتمدة", f'=SUMIFS({LV_F},{LV_G},"معتمد")'),
+    ("وردية الفريق اليوم", f"={TEAM_TODAY}"),
 ]
 for i, (lbl, frm) in enumerate(kpis):
     r = 4 + i
@@ -691,17 +695,18 @@ for i, t in enumerate(LEAVE_TYPES):
     dc = ws_db.cell(row=r, column=7, value=f'=SUMIF({LV_C},"{t}",{LV_F})')
     db_box(dc)
 
-# --- توزيع الموظفين على الورديات ---
-for col, h in zip((5, 6), ("الوردية", "عدد الموظفين")):
+# --- توزيع الطلبات حسب الحالة ---
+status_colors = {"معتمد": "C6EFCE", "قيد الانتظار": "FFEB9C", "مرفوض": "FFC7CE"}
+for col, h in zip((5, 6), ("حالة الطلب", "عدد الطلبات")):
     db_box(ws_db.cell(row=12, column=col, value=h), header=True)
-for i, nm in enumerate(SHIFT_NAMES):
+for i, stt in enumerate(STATUSES):
     r = 13 + i
-    sc = ws_db.cell(row=r, column=5, value=nm)
+    sc = ws_db.cell(row=r, column=5, value=stt)
     sc.alignment = RIGHT
     sc.border = BORDER
     sc.font = BASE_FONT
-    sc.fill = PatternFill("solid", fgColor=COLORS[nm])
-    vc = ws_db.cell(row=r, column=6, value=f'=COUNTIF({EMP_SHIFT},"{nm}")')
+    sc.fill = PatternFill("solid", fgColor=status_colors[stt])
+    vc = ws_db.cell(row=r, column=6, value=f'=COUNTIF({LV_G},"{stt}")')
     db_box(vc)
 
 # --- إجمالي أيام الإجازة لكل موظف ---
@@ -748,13 +753,13 @@ ch2.set_categories(cats2)
 ch2.legend = None
 ws_db.add_chart(ch2, "I18")
 
-# 3) توزيع الموظفين على الورديات (دائري)
+# 3) توزيع الطلبات حسب الحالة (دائري)
 ch3 = PieChart()
-ch3.title = "توزيع الموظفين على الورديات"
+ch3.title = "توزيع الطلبات حسب الحالة"
 ch3.height = 7.5
 ch3.width = 9
-data3 = Reference(ws_db, min_col=6, min_row=12, max_row=12 + len(SHIFT_NAMES))
-cats3 = Reference(ws_db, min_col=5, min_row=13, max_row=12 + len(SHIFT_NAMES))
+data3 = Reference(ws_db, min_col=6, min_row=12, max_row=12 + len(STATUSES))
+cats3 = Reference(ws_db, min_col=5, min_row=13, max_row=12 + len(STATUSES))
 ch3.add_data(data3, titles_from_data=True)
 ch3.set_categories(cats3)
 ws_db.add_chart(ch3, "B18")
