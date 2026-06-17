@@ -18,16 +18,6 @@ export interface OfficeAgent {
 
 const HINT = "اسحب للدوران · قرّب بإصبعين · انقر وكيل";
 
-// زون كل وكيل: العنوان العربي + الاسم الإنجليزي على الشاشة الجدارية.
-const ZONE_META: Record<string, { ar: string; en: string }> = {
-  noor: { ar: "الكتالوج", en: "CATALOG" },
-  reem: { ar: "الصور والمحتوى", en: "CREATIVE" },
-  siraj: { ar: "المنصّات", en: "CHANNELS" },
-  razan: { ar: "الأسعار والمخزون", en: "INVENTORY" },
-  rashid: { ar: "التسويق والتقارير", en: "MARKETING" },
-  latifa: { ar: "العملاء", en: "SUPPORT" },
-};
-
 export default function Office3D({
   agents,
   activeAgent,
@@ -88,17 +78,6 @@ export default function Office3D({
     // ---- specialists (Malak is the centre commander) ----
     const specialists = agents.filter((a) => a.id !== "malak");
     const malak = agents.find((a) => a.id === "malak") ?? agents[0];
-
-    // Station + wall-panel layout: a wide U around the central command desk.
-    // [x, z] for the desk; wall panel sits just behind, angled to face centre.
-    const STATIONS: { x: number; z: number; rot: number }[] = [
-      { x: -6.2, z: -2.6, rot: Math.PI * 0.5 },   // left-back
-      { x: -3.6, z: -5.4, rot: Math.PI * 0.16 },  // back-left
-      { x: 3.6, z: -5.4, rot: -Math.PI * 0.16 },  // back-right
-      { x: 6.2, z: -2.6, rot: -Math.PI * 0.5 },   // right-back
-      { x: -6.2, z: 2.6, rot: Math.PI * 0.5 },    // left-front
-      { x: 6.2, z: 2.6, rot: -Math.PI * 0.5 },    // right-front
-    ];
 
     // ---- shared materials ----
     const metalMat = () => new THREE.MeshStandardMaterial({ color: 0x6b7690, roughness: 0.42, metalness: 0.55 });
@@ -210,20 +189,6 @@ export default function Office3D({
       return g;
     };
 
-    // ---- station desk (per agent) ----
-    const makeDesk = (hex: number) => {
-      const g = new THREE.Group();
-      const top = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.85), darkMetal()); top.position.y = 0.74; top.castShadow = true; top.receiveShadow = true; g.add(top);
-      const front = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.66, 0.12), new THREE.MeshStandardMaterial({ color: 0x121a30, roughness: 0.5, metalness: 0.4 })); front.position.set(0, 0.4, 0.36); g.add(front);
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.04, 0.04), neon(hex, 1.6)); strip.position.set(0, 0.55, 0.43); g.add(strip);
-      // angled holo screen on the desk
-      const scr = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.6, 0.03), new THREE.MeshStandardMaterial({ color: 0x0a1430, emissive: new THREE.Color(hex), emissiveIntensity: 0.8, roughness: 0.3, transparent: true, opacity: 0.92 }));
-      scr.position.set(0, 1.16, -0.18); scr.rotation.x = -0.18; g.add(scr);
-      const stand = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.2, 0.05), metalMat()); stand.position.set(0, 0.9, -0.18); g.add(stand);
-      for (let i = 0; i < 3; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.02), neon(hex, 1.2)); b.position.set(-0.3 + i * 0.3, 1.16 + (i % 2 ? 0.08 : -0.08), -0.16); g.add(b); }
-      return g;
-    };
-
     // ---- central command desk + holographic brain ----
     const centreGroup = new THREE.Group(); scene.add(centreGroup);
     {
@@ -331,29 +296,47 @@ export default function Office3D({
       robots[a.id] = { group, headPivot, leftArm, rightArm, eyeL, eyeR, ring: ringM, glowDisc, body, phase: Math.random() * Math.PI * 2, blinkT: 2 + Math.random() * 3, home: { x, z } };
     };
 
-    // place specialists at stations + their wall panels; map zone meta
-    specialists.forEach((a, i) => {
-      const st = STATIONS[i] || STATIONS[STATIONS.length - 1];
-      const hex = new THREE.Color(a.color).getHex();
-      // desk
-      const desk = makeDesk(hex); desk.position.set(st.x, 0, st.z); desk.rotation.y = st.rot; scene.add(desk);
-      // robot stands just in front of the desk (toward centre)
-      const inward = new THREE.Vector3(-st.x, 0, -st.z).normalize();
-      buildRobot(a, st.x + inward.x * 0.95, st.z + inward.z * 0.95, Math.atan2(-st.x, -st.z));
-      // wall panel behind the desk (pushed outward toward the wall)
-      const meta = ZONE_META[a.id] || { ar: a.role, en: a.id.toUpperCase() };
-      const panel = makeWallPanel(meta.ar, meta.en, hex);
-      const out = new THREE.Vector3(st.x, 0, st.z).normalize();
-      panel.position.set(st.x + out.x * 1.4, 2.5, st.z + out.z * 1.4);
-      panel.rotation.y = st.rot;
-      scene.add(panel);
-      // neon spoke from centre to this station
-      neonPath(st.x, st.z, hex);
+    // ---- wall dashboard panels: the reference business zones (fixed) ----
+    const WALL_PANELS: { ar: string; en: string; hex: number; x: number; y: number; z: number; rot: number }[] = [
+      { ar: "الطلبات", en: "ORDERS", hex: 0x8b5cf6, x: -6.7, y: 2.7, z: -6.4, rot: Math.PI * 0.26 },
+      { ar: "التسويق", en: "MARKETING", hex: 0x4f8bff, x: -2.95, y: 2.85, z: -6.95, rot: Math.PI * 0.09 },
+      { ar: "دعم العملاء", en: "CUSTOMER SUPPORT", hex: 0x34d399, x: 2.95, y: 2.85, z: -6.95, rot: -Math.PI * 0.09 },
+      { ar: "التحليلات", en: "ANALYTICS", hex: 0x9b6bff, x: 6.7, y: 2.7, z: -6.4, rot: -Math.PI * 0.26 },
+      { ar: "المخزون", en: "INVENTORY", hex: 0xec4899, x: -8.05, y: 2.45, z: -1.4, rot: Math.PI * 0.5 },
+      { ar: "الأتمتة", en: "AUTOMATION", hex: 0x38bdf8, x: 8.05, y: 2.45, z: -1.4, rot: -Math.PI * 0.5 },
+    ];
+    WALL_PANELS.forEach((p) => {
+      const panel = makeWallPanel(p.ar, p.en, p.hex);
+      panel.position.set(p.x, p.y, p.z); panel.rotation.y = p.rot; scene.add(panel);
     });
 
-    // Malak at the centre command seat
-    buildRobot(malak, 0, 0.2, Math.PI); // faces front toward the camera/sign
-    if (robots[malak.id]) { robots[malak.id].group.position.y = 0.92; robots[malak.id].group.scale.setScalar(1.12); robots[malak.id].centre = true; }
+    // curved holographic overview panels behind the centre (the "LIVE OVERVIEW")
+    for (let i = 0; i < 3; i++) {
+      const ang = -Math.PI / 2 + (i - 1) * 0.5;
+      const px = Math.cos(ang) * 2.9, pz = Math.sin(ang) * 2.9 - 0.3;
+      const holo = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.5, 1.15),
+        new THREE.MeshBasicMaterial({ color: 0x39d0ff, transparent: true, opacity: 0.16, side: THREE.DoubleSide })
+      );
+      holo.position.set(px, 2.5, pz); holo.lookAt(0, 2.5, 0); scene.add(holo);
+      const holoEdge = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.04), neon(0x6cf0ff, 1.4));
+      holoEdge.position.set(px, 1.95, pz); holoEdge.lookAt(0, 1.95, 0); scene.add(holoEdge);
+    }
+
+    // ---- team clustered AROUND the central command desk (like the reference) ----
+    const N = Math.max(1, specialists.length);
+    specialists.forEach((a, i) => {
+      // spread across a back/side arc so the front stays open toward the camera
+      const ang = Math.PI * 1.18 + (i / (N - 1 || 1)) * Math.PI * 0.64;
+      const rr = 2.8;
+      const rx = Math.cos(ang) * rr, rz = Math.sin(ang) * rr;
+      buildRobot(a, rx, rz, Math.atan2(-rx, -rz)); // face the centre/brain
+      neonPath(rx, rz, new THREE.Color(a.color).getHex()); // short glowing link to the brain
+    });
+
+    // Malak at the centre command seat, elevated under the brain
+    buildRobot(malak, 0, 0.0, Math.PI);
+    if (robots[malak.id]) { robots[malak.id].group.position.y = 0.92; robots[malak.id].group.scale.setScalar(1.14); robots[malak.id].centre = true; }
 
     // ---- controls ----
     const raycaster = new THREE.Raycaster();
@@ -435,11 +418,16 @@ export default function Office3D({
         r.headPivot.rotation.y = anim ? Math.sin(t * 0.6 + r.phase) * 0.18 : 0;
         r.headPivot.rotation.x = anim ? Math.sin(t * 0.9 + r.phase) * 0.05 : 0;
 
-        // idle arm sway
+        // idle: look "busy" — arms forward typing/working on the console
         if (!isActive) {
-          r.rightArm.rotation.z = anim ? Math.sin(t * 1.5 + r.phase) * 0.12 : 0;
-          r.leftArm.rotation.z = anim ? -Math.sin(t * 1.5 + r.phase) * 0.12 : 0;
-          r.rightArm.rotation.x = 0; r.leftArm.rotation.x = 0;
+          if (anim) {
+            const tp = t * 6 + r.phase;
+            r.rightArm.rotation.x = -0.7 + Math.sin(tp) * 0.18;
+            r.leftArm.rotation.x = -0.7 + Math.sin(tp + 1.1) * 0.18;
+            r.rightArm.rotation.z = 0.12; r.leftArm.rotation.z = -0.12;
+          } else {
+            r.rightArm.rotation.set(0, 0, 0); r.leftArm.rotation.set(0, 0, 0);
+          }
         }
 
         // blink
@@ -503,14 +491,25 @@ export default function Office3D({
   return (
     <div className="relative min-h-0 w-full flex-1 overflow-hidden">
       <div ref={mountRef} className="absolute inset-0" />
-      {/* hint */}
-      <div className="pointer-events-none absolute bottom-2.5 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/40 px-3 py-1 text-[10px] text-white/65 backdrop-blur-sm">
+      {/* hint (top-left, subtle) */}
+      <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-full bg-black/40 px-3 py-1 text-[10px] text-white/55 backdrop-blur-sm">
         {HINT}
       </div>
-      {/* online status bar (bottom-left) */}
-      <div className="pointer-events-none absolute bottom-2.5 left-3 z-10 flex items-center gap-2 rounded-full bg-black/45 px-3 py-1 text-[10px] font-bold text-white/80 backdrop-blur-sm">
-        <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-        الوكلاء متصلون · 24/7
+      {/* AI agents online bar (bottom-centre) — like the reference */}
+      <div className="pointer-events-none absolute bottom-2.5 left-1/2 z-10 flex max-w-[94%] -translate-x-1/2 items-center gap-2.5 overflow-hidden rounded-full border border-white/10 bg-black/55 px-3 py-1.5 text-[10px] font-bold text-white/80 backdrop-blur-sm">
+        <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-400" />
+        <span className="shrink-0">الوكلاء متصلون</span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          {agents.map((a) => (
+            <span
+              key={a.id}
+              title={a.name}
+              className={`h-3 w-3 rounded-full transition ${a.id === activeAgent ? "ring-2 ring-white/80" : ""}`}
+              style={{ background: a.color, boxShadow: a.id === activeAgent ? `0 0 8px ${a.color}` : undefined }}
+            />
+          ))}
+        </span>
+        <span className="shrink-0 text-white/45">· 24/7</span>
       </div>
       {/* animation toggle (top-right) */}
       <button

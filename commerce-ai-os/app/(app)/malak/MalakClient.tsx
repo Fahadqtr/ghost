@@ -1432,11 +1432,43 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         >
           {fsActive ? "↙ تصغير" : "⛶ ملء الشاشة"}
         </button>
+
+        {/* "يتكلم الآن" badge: shows the active agent's avatar + name while
+            thinking/speaking, with animated sound bars. */}
+        {state === "speaking" || state === "thinking" ? (
+          <div
+            className="pointer-events-none absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-2.5 rounded-full border bg-black/60 px-3 py-1.5 backdrop-blur-md"
+            style={{ borderColor: `${activeDef.color}66`, boxShadow: `0 0 18px ${activeDef.color}55` }}
+          >
+            <span
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold"
+              style={{ background: activeDef.color, color: "#0b1020" }}
+            >
+              {activeDef.name.slice(0, 1)}
+            </span>
+            <div className="text-right leading-tight">
+              <p className="text-[12px] font-bold text-white">{activeDef.name}</p>
+              <p className="text-[10px] text-white/60">{state === "speaking" ? "يتكلّم الآن…" : "يفكّر…"}</p>
+            </div>
+            {state === "speaking" ? (
+              <span className="flex h-4 items-end gap-0.5">
+                {[0, 1, 2, 3].map((i) => (
+                  <span
+                    key={i}
+                    className="w-0.5 rounded-full"
+                    style={{ background: activeDef.color, height: "100%", animation: `eqbar .9s ${i * 0.12}s ease-in-out infinite` }}
+                  />
+                ))}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {/* JARVIS-style pop-in keyframes (used by the holographic output overlay) */}
       <style>{`
         @keyframes hudIn { 0%{opacity:0;transform:translateY(12px) scale(.94);filter:blur(6px)} 100%{opacity:1;transform:none;filter:none} }
+        @keyframes eqbar { 0%,100%{transform:scaleY(0.35)} 50%{transform:scaleY(1)} }
       `}</style>
 
       {/* Agent rail (tap to talk) */}
