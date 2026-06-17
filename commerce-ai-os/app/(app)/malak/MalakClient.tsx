@@ -1371,7 +1371,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           ? // Fullscreen: full-width, full-height flex column so the lab fills the
             // screen. 100dvh accounts for mobile browser chrome; pseudoFs adds
             // fixed positioning since there's no native FS element (iOS Safari).
-            `flex h-[100dvh] w-full flex-col gap-3 overflow-hidden bg-[#0B1020] p-3 sm:p-4 ${
+            `flex h-[100dvh] w-full flex-col gap-3 overflow-hidden bg-[#eef2f8] p-3 sm:p-4 ${
               pseudoFs ? "fixed inset-0 z-50" : ""
             }`
           : "mx-auto w-full max-w-6xl space-y-4 pb-2"
@@ -1381,27 +1381,27 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {fsActive ? null : (
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
-            <h1 className="text-lg font-extrabold tracking-tight sm:text-xl">
-              ملاك · <span className="text-white/60">Malak AI</span>
+            <h1 className="text-lg font-extrabold tracking-tight text-slate-900 sm:text-xl">
+              ملاك · <span className="text-slate-400">Malak AI</span>
             </h1>
-            <p className="text-xs text-white/45">المديرة العامة الذكية · Malika&apos;s Universe Trading</p>
+            <p className="text-xs text-slate-500">المديرة العامة الذكية · Malika&apos;s Universe Trading</p>
           </div>
         </div>
       )}
 
       {/* Professional error alert (raw technical details only when ?dev=1) */}
       {errorAlert ? (
-        <div className="flex items-start gap-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-sm">
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-3 text-sm">
           <span className="text-lg leading-none">⚠️</span>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold text-amber-200">{errorAlert.pretty}</p>
+            <p className="font-semibold text-amber-800">{errorAlert.pretty}</p>
             {devMode && errorAlert.raw ? (
               <pre dir="ltr" className="mt-1.5 overflow-x-auto rounded-lg bg-black/40 p-2 text-left text-[11px] text-amber-100/80">
                 {errorAlert.raw}
               </pre>
             ) : null}
           </div>
-          <button onClick={() => setErrorAlert(null)} aria-label="إغلاق" className="shrink-0 text-white/50 hover:text-white">
+          <button onClick={() => setErrorAlert(null)} aria-label="إغلاق" className="shrink-0 text-slate-400 hover:text-slate-700">
             ×
           </button>
         </div>
@@ -1410,7 +1410,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Hero: the interactive 3D lab (click an agent to talk).
           In fullscreen it grows (flex-1) to fill the whole screen. */}
       <div
-        className={`relative flex flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#0b1020] shadow-xl ${
+        className={`relative flex flex-col overflow-hidden rounded-3xl border border-slate-200 bg-[#e6ebf3] shadow-sm ${
           fsActive ? "min-h-0 flex-1" : "h-[42vh] sm:h-[58vh]"
         }`}
       >
@@ -1485,7 +1485,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
                 directAgentRef.current = ag;
               }}
               className={`flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-2 py-1.5 transition ${
-                on ? "bg-white/10" : "opacity-60 hover:opacity-100"
+                on ? "bg-white shadow-sm" : "opacity-60 hover:opacity-100"
               }`}
               style={on ? { boxShadow: `0 0 0 1px ${a.color}66, 0 0 14px ${a.color}44` } : undefined}
             >
@@ -1495,7 +1495,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               >
                 {a.name.slice(0, 1)}
               </span>
-              <span className="text-[10px] font-medium leading-none text-white/75">{a.name}</span>
+              <span className="text-[10px] font-medium leading-none text-slate-600">{a.name}</span>
             </button>
           );
         })}
@@ -1514,8 +1514,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             {agentById(directAgent).name.slice(0, 1)}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold">{agentById(directAgent).name}</p>
-            <p className="truncate text-[11px] text-white/55">
+            <p className="text-sm font-bold text-slate-800">{agentById(directAgent).name}</p>
+            <p className="truncate text-[11px] text-slate-500">
               {agentById(directAgent).role} · آخر مهمة: لا توجد مهام بعد
             </p>
           </div>
@@ -1533,7 +1533,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           </button>
           <button
             onClick={() => { inputRef.current?.focus(); scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }}
-            className="shrink-0 rounded-full border border-white/15 px-3 py-1.5 text-[12px] text-white/80 hover:bg-white/10"
+            className="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[12px] text-slate-600 hover:bg-slate-50"
           >
             التفاصيل
           </button>
@@ -1543,12 +1543,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
           the rest of the space and nothing scrolls the page. */}
-      <div className={`rounded-3xl border border-white/10 bg-white/[0.03] p-2.5 sm:p-3 ${fsActive ? "shrink-0" : ""}`}>
+      <div className={`rounded-3xl border border-slate-200 bg-white p-2.5 shadow-sm sm:p-3 ${fsActive ? "shrink-0" : ""}`}>
         {/* Transcript + panel. In fullscreen it gets a taller, comfortably
             scrollable area (the lab flexes to fill the rest, no page overflow). */}
         <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
         {turns.length === 0 && !typed && panel?.type !== "briefing" ? (
-          <div className="mx-auto max-w-md pt-4 text-center text-sm text-white/50">
+          <div className="mx-auto max-w-md pt-4 text-center text-sm text-slate-500">
             أهلًا فهد 👋 أنا ملاك وفريقي جاهزين. اسألني عن الكتالوج، الأسعار، أو خلّني أكتب لك محتوى.
           </div>
         ) : null}
@@ -1558,8 +1558,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             <div
               className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                 t.role === "user"
-                  ? "bg-white/10 text-white/90"
-                  : "bg-gradient-to-br from-blue-500/25 to-purple-500/25 text-white"
+                  ? "bg-slate-100 text-slate-800"
+                  : "bg-gradient-to-br from-blue-500 to-purple-600 text-white shadow-sm"
               }`}
             >
               {t.text}
@@ -1569,7 +1569,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
 
         {typed ? (
           <div className="flex justify-end">
-            <div className="max-w-[85%] rounded-2xl bg-gradient-to-br from-blue-500/25 to-purple-500/25 px-4 py-2.5 text-sm leading-relaxed text-white">
+            <div className="max-w-[85%] rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 px-4 py-2.5 text-sm leading-relaxed text-white shadow-sm">
               {typed}
               <span className="ml-0.5 inline-block h-3 w-1 animate-pulse bg-white/70 align-middle" />
             </div>
@@ -1580,7 +1580,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       </div>
 
         {/* Composer */}
-        <div className="mt-2 border-t border-white/10 pt-2.5">
+        <div className="mt-2 border-t border-slate-200 pt-2.5">
         {/* Hands-free wake mode: call any agent by name, no button */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <button
@@ -1590,7 +1590,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:opacity-30 ${
               handsFree
                 ? "bg-emerald-500 text-white"
-                : "border border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+                : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
             }`}
             style={handsFree ? { boxShadow: "0 0 16px rgba(16,185,129,0.6)" } : undefined}
             aria-pressed={handsFree}
@@ -1599,9 +1599,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             {handsFree ? "ينصت دائمًا · قل «ملاك»" : "تفعيل الاستماع الدائم"}
           </button>
           {handsFree ? (
-            <span className="truncate text-[11px] text-emerald-300/80">قل «ملاك» بأي وقت — وتقدر تقاطعها وهي تتكلم</span>
+            <span className="truncate text-[11px] text-emerald-600">قل «ملاك» بأي وقت — وتقدر تقاطعها وهي تتكلم</span>
           ) : (
-            <span className="hidden truncate text-[11px] text-white/40 sm:block">فعّلها مرّة وتبقى تنصت لـ«ملاك» كل زيارة</span>
+            <span className="hidden truncate text-[11px] text-slate-400 sm:block">فعّلها مرّة وتبقى تنصت لـ«ملاك» كل زيارة</span>
           )}
         </div>
         {/* Quick prompts */}
@@ -1610,7 +1610,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             <button
               key={q}
               onClick={() => send(q)}
-              className="shrink-0 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/10"
+              className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-100"
             >
               {q}
             </button>
@@ -1626,13 +1626,13 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               alt="مرفق"
               className="h-9 w-9 rounded-md object-cover"
             />
-            <span className="flex-1 truncate text-[12px] text-white/70">📎 {pendingImage.name}</span>
-            <span className="text-[11px] text-white/40">اكتب الـSKU وأرسل</span>
+            <span className="flex-1 truncate text-[12px] text-slate-600">📎 {pendingImage.name}</span>
+            <span className="text-[11px] text-slate-400">اكتب الـSKU وأرسل</span>
             <button
               type="button"
               onClick={() => setPendingImage(null)}
               aria-label="إزالة الصورة"
-              className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20"
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300"
             >
               ×
             </button>
@@ -1663,7 +1663,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             onClick={() => fileInputRef.current?.click()}
             aria-label="إرفاق صورة"
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg transition ${
-              pendingImage ? "bg-pink-500 text-white" : "bg-white/10 text-white/80 hover:bg-white/20"
+              pendingImage ? "bg-pink-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
             📎
@@ -1674,7 +1674,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             disabled={!micSupported}
             aria-label="ميكروفون"
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg transition disabled:opacity-30 ${
-              listening ? "bg-rose-500 text-white" : "bg-white/10 text-white/80 hover:bg-white/20"
+              listening ? "bg-rose-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
             style={listening ? { boxShadow: "0 0 18px rgba(244,63,94,0.6)" } : undefined}
           >
@@ -1685,7 +1685,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="اكتب لملاك… (أو استخدم الميكروفون)"
-            className="h-11 flex-1 rounded-full border border-white/10 bg-white/5 px-4 text-sm text-white placeholder:text-white/30 focus:border-white/30 focus:outline-none"
+            className="h-11 flex-1 rounded-full border border-slate-300 bg-slate-50 px-4 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none"
           />
           <button
             type="submit"
