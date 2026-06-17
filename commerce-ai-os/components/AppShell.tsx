@@ -27,22 +27,28 @@ export default function AppShell({
   const [desktop, setDesktop] = useState(false);
   useEffect(() => {
     const compute = () => {
-      const wide = window.matchMedia("(min-width: 1024px)").matches;
-      const finePointer = window.matchMedia("(pointer: fine)").matches;
-      const noHover = window.matchMedia("(hover: none)").matches; // touch devices
-      setDesktop(wide && finePointer && !noHover);
+      // Use HARDWARE signals an in-app webview can't easily fake (touch points,
+      // physical screen size, UA) — not just the CSS viewport width, which some
+      // webviews mis-report. Treat as desktop ONLY when there's no touch, a fine
+      // pointer, a real wide screen, and a non-mobile UA.
+      const ua = navigator.userAgent || "";
+      const uaMobile = /Mobi|Android|iPhone|iPad|iPod|Tablet|BlackBerry|Windows Phone/i.test(ua);
+      const touch = (navigator.maxTouchPoints ?? 0) > 0 || "ontouchstart" in window;
+      const coarse = window.matchMedia("(pointer: coarse)").matches;
+      const screenW = window.screen?.width ?? 9999;
+      const smallScreen = Math.min(screenW, window.innerWidth) < 1024;
+      const mobile = uaMobile || touch || coarse || smallScreen;
+      setDesktop(!mobile);
     };
     compute();
-    const mqs = [
-      window.matchMedia("(min-width: 1024px)"),
-      window.matchMedia("(pointer: fine)"),
-      window.matchMedia("(hover: none)"),
-    ];
-    mqs.forEach((m) => m.addEventListener?.("change", compute));
+    const mq = window.matchMedia("(pointer: coarse)");
+    mq.addEventListener?.("change", compute);
     window.addEventListener("resize", compute);
+    window.addEventListener("orientationchange", compute);
     return () => {
-      mqs.forEach((m) => m.removeEventListener?.("change", compute));
+      mq.removeEventListener?.("change", compute);
       window.removeEventListener("resize", compute);
+      window.removeEventListener("orientationchange", compute);
     };
   }, []);
 
