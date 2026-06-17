@@ -25,7 +25,7 @@ export default function Topbar({
           type="button"
           onClick={onMenuClick}
           aria-label="Open menu"
-          className="-ml-1 inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 md:hidden"
+          className="-ml-1 inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 lg:hidden"
         >
           <span className="text-xl leading-none">☰</span>
         </button>

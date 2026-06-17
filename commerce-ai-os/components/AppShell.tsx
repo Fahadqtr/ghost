@@ -23,14 +23,15 @@ export default function AppShell({
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* Desktop sidebar (static) */}
-      <div className="hidden md:flex">
+      {/* Desktop sidebar (static) — only on wide screens; phones/tablets/in-app
+          webviews use the drawer so the content isn't cramped. */}
+      <div className="hidden lg:flex">
         <Sidebar />
       </div>
 
       {/* Mobile drawer (always mounted for smooth transitions) */}
       <div
-        className={`fixed inset-0 z-40 md:hidden ${open ? "" : "pointer-events-none"}`}
+        className={`fixed inset-0 z-40 lg:hidden ${open ? "" : "pointer-events-none"}`}
         aria-hidden={!open}
       >
         {/* Backdrop */}
