@@ -18,7 +18,7 @@ export default async function DashboardPage() {
       ) : null}
 
       {/* KPI cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
         <Kpi title="Total products" value={nf(k.totalProducts)} icon="📦" hint="In the catalog" />
         <Kpi title="Categories · Brands" value={`${k.categoriesCount} · ${k.brandsCount}`} icon="🗂️"
           hint={`${nf(k.productsWithBrand)} products have a brand assigned`} />
@@ -33,7 +33,7 @@ export default async function DashboardPage() {
 
       {/* Approval breakdown */}
       <Section title="Approval status (Snoonu)">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <ApprovalChip label="Approved" value={k.approvedCount} tone="green" />
           <ApprovalChip label="Rejected" value={k.rejectedCount} tone="red" />
           <ApprovalChip label="SentAI" value={k.sentAiCount} tone="amber" />
