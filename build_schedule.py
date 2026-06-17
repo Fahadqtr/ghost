@@ -1083,30 +1083,7 @@ fair_chart.set_categories(Reference(ws_fair, min_col=3, min_row=FN, max_row=FL))
 fair_chart.legend = None
 ws_fair.add_chart(fair_chart, "B18")
 
-# =================================================================  حماية الأوراق (قفل الصيغ وترك خانات الإدخال)
-UN = Protection(locked=False)
-
-
-def unlock_range(ws, ref):
-    for row_cells in ws[ref]:
-        for cell in row_cells:
-            cell.protection = UN
-
-
-for ref in ("B5:E104", "G5:G104", "J5:J104"):
-    unlock_range(ws_lv, ref)
-for ref in ("B2:B7", "K2:L21"):
-    unlock_range(ws_set, ref)
-unlock_range(ws_emp, "B2:D9")
-unlock_range(ws_day, "C2:C2")
-unlock_range(ws_day, f"E6:F{5+len(EMPLOYEES)}")
-for ws in wb.worksheets:
-    p = ws.protection
-    p.sheet = True
-    for a in ("selectLockedCells", "selectUnlockedCells", "formatCells",
-              "formatColumns", "formatRows", "insertRows", "deleteRows",
-              "sort", "autoFilter"):
-        setattr(p, a, False)
+# =================================================================  (أُلغيت حماية الأوراق بناءً على طلب المستخدم — كل الخلايا قابلة للتعديل)
 
 # ترتيب الداشبورد أولاً
 wb.move_sheet("لوحة المعلومات", -wb.sheetnames.index("لوحة المعلومات"))
