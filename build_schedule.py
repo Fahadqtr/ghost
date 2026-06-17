@@ -27,11 +27,22 @@ EMPLOYEES = [
 LEAVE_TYPES = ["سنوية", "عارض", "دورية", "مرضية", "مرافق مريض", "أخرى"]
 STATUSES = ["معتمد", "قيد الانتظار", "مرفوض"]
 
-# لون لكل نوع إجازة + حالات الجدول
+# الورديات (الزامات) وأوقاتها
+SHIFTS = [
+    ("صباح", "6:00 ص ← 1:00 م"),
+    ("عصر", "1:00 م ← 9:00 م"),
+    ("ليل", "9:00 م ← 6:00 ص (اليوم التالي)"),
+]
+SHIFT_NAMES = [s[0] for s in SHIFTS]
+DEFAULT_SHIFT = "عصر"
+
+# لون لكل وردية / حالة / نوع إجازة
 COLORS = {
-    "عمل":        "C6EFCE",   # أخضر فاتح
+    "صباح":       "FFF2CC",   # أصفر باهت
+    "عصر":        "C6EFCE",   # أخضر فاتح
+    "ليل":        "8EAADB",   # أزرق
     "راحة":       "D9D9D9",   # رمادي
-    "سنوية":      "FFE699",   # أصفر
+    "سنوية":      "FFE699",   # كهرماني
     "عارض":       "F8CBAD",   # برتقالي
     "دورية":      "BDD7EE",   # أزرق فاتح
     "مرضية":      "FFC7CE",   # أحمر فاتح
@@ -88,8 +99,10 @@ rows = [
     ("", ""),
     ("h", "نظام الدوام:"),
     ("b", "• 6 أيام عمل متتالية ثم 4 أيام راحة (دورية) — دورة كل 10 أيام."),
-    ("b", "• بداية الدوام اليومي: 2:00 عصراً."),
-    ("b", "• الجدول يحسب الحالة (عمل/راحة) آلياً حسب «بداية الدورة» في ورقة الموظفين."),
+    ("b", "• ثلاث ورديات (زامات):"),
+    ("b", "     صباح: 6:00 ص ← 1:00 م   |   عصر: 1:00 م ← 9:00 م   |   ليل: 9:00 م ← 6:00 ص (اليوم التالي)."),
+    ("b", "• وردية كل موظف تُحدَّد من عمود «الوردية» في ورقة الموظفين (قابلة للتغيير)."),
+    ("b", "• الجدول يعرض اسم وردية الموظف على أيام عمله و«راحة» على أيام راحته — تلقائياً."),
     ("", ""),
     ("h", "أنواع الإجازات:"),
     ("b", "سنوية • عارض • دورية • مرضية • مرافق مريض • أخرى"),
@@ -174,11 +187,28 @@ for i, s in enumerate(STATUSES, start=2):
 TYPES_RANGE = f"'الإعدادات والقوائم'!$D$2:$D${1+len(LEAVE_TYPES)}"
 STATUS_RANGE = f"'الإعدادات والقوائم'!$F$2:$F${1+len(STATUSES)}"
 
+# جدول الورديات (الزامات) وأوقاتها
+ws_set["H1"] = "الوردية"
+ws_set["I1"] = "التوقيت"
+ws_set.column_dimensions["H"].width = 12
+ws_set.column_dimensions["I"].width = 30
+for cc in (ws_set["H1"], ws_set["I1"]):
+    style_header(cc)
+for i, (nm, tm) in enumerate(SHIFTS, start=2):
+    h = ws_set.cell(row=i, column=8, value=nm)
+    h.alignment = CENTER
+    h.border = BORDER
+    h.fill = PatternFill("solid", fgColor=COLORS[nm])
+    t = ws_set.cell(row=i, column=9, value=tm)
+    t.alignment = RIGHT
+    t.border = BORDER
+SHIFTS_RANGE = f"'الإعدادات والقوائم'!$H$2:$H${1+len(SHIFTS)}"
+
 # =================================================================  الموظفون
 ws_emp = wb.create_sheet("الموظفون")
 ws_emp.sheet_view.rightToLeft = True
-emp_headers = ["م", "الاسم", "الرقم الوظيفي", "بداية الدورة"]
-widths = [6, 32, 16, 16]
+emp_headers = ["م", "الاسم", "الرقم الوظيفي", "الوردية", "بداية الدورة"]
+widths = [6, 32, 16, 14, 16]
 for col, (h, w) in enumerate(zip(emp_headers, widths), start=1):
     c = ws_emp.cell(row=1, column=col, value=h)
     style_header(c)
@@ -187,15 +217,27 @@ for i, (num, name, jobno) in enumerate(EMPLOYEES, start=2):
     ws_emp.cell(row=i, column=1, value=num).alignment = CENTER
     ws_emp.cell(row=i, column=2, value=name).alignment = RIGHT
     ws_emp.cell(row=i, column=3, value=jobno).alignment = CENTER
-    d = ws_emp.cell(row=i, column=4, value=PERIOD_START)
+    sh = ws_emp.cell(row=i, column=4, value=DEFAULT_SHIFT)
+    sh.alignment = CENTER
+    d = ws_emp.cell(row=i, column=5, value=PERIOD_START)
     d.alignment = CENTER
     d.number_format = "DD/MM/YYYY"
-    for col in range(1, 5):
+    for col in range(1, 6):
         ws_emp.cell(row=i, column=col).border = BORDER
         ws_emp.cell(row=i, column=col).font = BASE_FONT
 ws_emp.freeze_panes = "A2"
 EMP_LAST = 1 + len(EMPLOYEES)
 NAMES_RANGE = f"'الموظفون'!$B$2:$B${EMP_LAST}"
+
+# قائمة منسدلة لاختيار الوردية + تلوينها
+dv_shift = DataValidation(type="list", formula1=f"={SHIFTS_RANGE}", allow_blank=True)
+ws_emp.add_data_validation(dv_shift)
+dv_shift.add(f"D2:D{EMP_LAST}")
+for nm in SHIFT_NAMES:
+    ws_emp.conditional_formatting.add(
+        f"D2:D{EMP_LAST}",
+        CellIsRule(operator="equal", formula=[f'"{nm}"'],
+                   fill=PatternFill("solid", fgColor=COLORS[nm])))
 
 # =================================================================  حجز الإجازات
 ws_lv = wb.create_sheet("حجز الإجازات")
@@ -288,7 +330,7 @@ ws_lv.freeze_panes = f"A{L_FIRST}"
 # =================================================================  جدول الورديات
 ws_r = wb.create_sheet("جدول الورديات")
 ws_r.sheet_view.rightToLeft = True
-ws_r["A1"] = "جدول الورديات — 6 عمل / 4 راحة — الدوام 2:00 عصراً"
+ws_r["A1"] = "جدول الورديات — 6 عمل / 4 راحة — صباح (6ص-1م) / عصر (1م-9م) / ليل (9م-6ص)"
 ws_r["A1"].font = TITLE_FONT
 
 # الأعمدة الثابتة
@@ -328,15 +370,15 @@ for idx, (num, name, jobno) in enumerate(EMPLOYEES):
     ws_r.cell(row=row, column=1, value=num).alignment = CENTER
     ws_r.cell(row=row, column=2, value=f"='الموظفون'!B{erow}").alignment = RIGHT
     ws_r.cell(row=row, column=3, value=f"='الموظفون'!C{erow}").alignment = CENTER
-    cs = f"'الموظفون'!$D${erow}"          # بداية الدورة لهذا الموظف
+    cs = f"'الموظفون'!$E${erow}"          # بداية الدورة لهذا الموظف
     nm = f"'الموظفون'!$B${erow}"          # اسم الموظف
-    cyc = int(0)
+    shift = f"'الموظفون'!$D${erow}"       # وردية هذا الموظف
     for i in range(DAYS):
         col = DAY_COL0 + i
         dref = f"{get_column_letter(col)}$3"
-        # حالة الدورة: عمل/راحة
+        # حالة الدورة: اسم الوردية في أيام العمل / راحة في أيام الراحة
         cycle = (f'IF({dref}<{cs},"",IF(MOD({dref}-{cs},{CYCLE_WORK}+{CYCLE_REST})'
-                 f'<{CYCLE_WORK},"عمل","راحة"))')
+                 f'<{CYCLE_WORK},{shift},"راحة"))')
         # هل توجد إجازة معتمدة لهذا الموظف بهذا التاريخ؟
         match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<={dref})*'
                  f'(({ENDS})>={dref})*({STAT}="معتمد")*ROW({EMPS}))')
@@ -350,34 +392,53 @@ for idx, (num, name, jobno) in enumerate(EMPLOYEES):
         ws_r.cell(row=row, column=col).border = BORDER
         ws_r.cell(row=row, column=col).font = BASE_FONT
 
-# صفوف الملخص أسفل الجدول
-sum_row1 = EMP_ROW0 + len(EMPLOYEES)       # عدد العاملين
-sum_row2 = sum_row1 + 1                     # عدد المُجازين
+# صفوف الملخص أسفل الجدول (عدّاد لكل وردية + الإجمالي + المُجازين)
 emp_first_letter = get_column_letter(DAY_COL0)
-ws_r.cell(row=sum_row1, column=2, value="عدد العاملين (عمل)").alignment = RIGHT
-ws_r.cell(row=sum_row2, column=2, value="عدد المُجازين").alignment = RIGHT
-for cell in (ws_r.cell(row=sum_row1, column=2), ws_r.cell(row=sum_row2, column=2)):
-    cell.font = Font(name="Arial", bold=True, size=10)
+emp_last_row = EMP_ROW0 + len(EMPLOYEES) - 1
+summary_labels = SHIFT_NAMES + ["إجمالي العاملين", "عدد المُجازين"]
+summary_rows = {}
+for k, lbl in enumerate(summary_labels):
+    rr = emp_last_row + 1 + k
+    summary_rows[lbl] = rr
+    lc = ws_r.cell(row=rr, column=2, value=lbl)
+    lc.alignment = RIGHT
+    lc.font = Font(name="Arial", bold=True, size=10)
+    lc.border = BORDER
+    if lbl in COLORS:
+        lc.fill = PatternFill("solid", fgColor=COLORS[lbl])
+
+total_row = summary_rows["إجمالي العاملين"]
 for i in range(DAYS):
     col = DAY_COL0 + i
     letter = get_column_letter(col)
-    rng = f"{letter}{EMP_ROW0}:{letter}{EMP_ROW0+len(EMPLOYEES)-1}"
-    c1 = ws_r.cell(row=sum_row1, column=col, value=f'=COUNTIF({rng},"عمل")')
-    c1.alignment = CENTER
-    c1.font = Font(name="Arial", bold=True, size=9)
-    c1.border = BORDER
-    # المُجازين = خلايا ليست عمل/راحة/فارغة
-    c2 = ws_r.cell(row=sum_row2, column=col,
-                   value=f'=SUMPRODUCT(({rng}<>"")*({rng}<>"عمل")*({rng}<>"راحة"))')
-    c2.alignment = CENTER
-    c2.font = Font(name="Arial", bold=True, size=9)
-    c2.border = BORDER
-    # تلوين نقص التغطية
+    rng = f"{letter}{EMP_ROW0}:{letter}{emp_last_row}"
+    # عدّاد كل وردية
+    for nm in SHIFT_NAMES:
+        rr = summary_rows[nm]
+        cc = ws_r.cell(row=rr, column=col, value=f'=COUNTIF({rng},"{nm}")')
+        cc.alignment = CENTER
+        cc.font = Font(name="Arial", bold=True, size=9)
+        cc.border = BORDER
+    # إجمالي العاملين = مجموع الورديات الثلاث
+    parts = "+".join(f'COUNTIF({rng},"{nm}")' for nm in SHIFT_NAMES)
+    ct = ws_r.cell(row=total_row, column=col, value=f"={parts}")
+    ct.alignment = CENTER
+    ct.font = Font(name="Arial", bold=True, size=9)
+    ct.border = BORDER
     ws_r.conditional_formatting.add(
-        c1.coordinate,
+        ct.coordinate,
         CellIsRule(operator="lessThan", formula=[MIN_STAFF],
                    fill=PatternFill("solid", fgColor="FFC7CE"),
                    font=Font(color="9C0006", bold=True)))
+    # المُجازين = خلايا ليست وردية/راحة/فارغة
+    excl = "".join(f'*({rng}<>"{nm}")' for nm in SHIFT_NAMES)
+    cl = ws_r.cell(row=summary_rows["عدد المُجازين"], column=col,
+                   value=f'=SUMPRODUCT(({rng}<>""){excl}*({rng}<>"راحة"))')
+    cl.alignment = CENTER
+    cl.font = Font(name="Arial", bold=True, size=9)
+    cl.border = BORDER
+
+sum_row2 = summary_rows["عدد المُجازين"]
 
 # تنسيق شرطي لخلايا الجدول (ألوان الحالات)
 grid_range = (f"{emp_first_letter}{EMP_ROW0}:"
@@ -393,7 +454,7 @@ ws_r.freeze_panes = "D4"
 # مفتاح الألوان (Legend)
 leg_row = sum_row2 + 2
 ws_r.cell(row=leg_row, column=2, value="مفتاح الألوان:").font = Font(bold=True, size=10)
-legend_items = ["عمل", "راحة"] + LEAVE_TYPES
+legend_items = SHIFT_NAMES + ["راحة"] + LEAVE_TYPES
 for i, k in enumerate(legend_items):
     cell = ws_r.cell(row=leg_row + 1 + i, column=2, value=k)
     cell.fill = PatternFill("solid", fgColor=COLORS[k])
