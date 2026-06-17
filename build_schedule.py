@@ -224,6 +224,11 @@ for i, s in enumerate(STATUSES, start=2):
 
 TYPES_RANGE = f"'الإعدادات والقوائم'!$D$2:$D${1+len(LEAVE_TYPES)}"
 STATUS_RANGE = f"'الإعدادات والقوائم'!$F$2:$F${1+len(STATUSES)}"
+# أسماء معرّفة للقوائم لضمان عمل القوائم المنسدلة في كل إصدارات إكسل
+wb.defined_names["LeaveTypes"] = DefinedName("LeaveTypes", attr_text=TYPES_RANGE)
+wb.defined_names["ReqStatus"] = DefinedName("ReqStatus", attr_text=STATUS_RANGE)
+TYPES_RANGE = "LeaveTypes"
+STATUS_RANGE = "ReqStatus"
 
 # جدول الورديات (الزامات) وأوقاتها
 ws_set["H1"] = "الوردية"
@@ -271,7 +276,8 @@ for i, (num, name, jobno) in enumerate(EMPLOYEES, start=2):
         ws_emp.cell(row=i, column=col).font = BASE_FONT
 ws_emp.freeze_panes = "A2"
 EMP_LAST = 1 + len(EMPLOYEES)
-NAMES_RANGE = f"'الموظفون'!$B$2:$B${EMP_LAST}"
+wb.defined_names["EmpNames"] = DefinedName("EmpNames", attr_text=f"'الموظفون'!$B$2:$B${EMP_LAST}")
+NAMES_RANGE = "EmpNames"
 
 # =================================================================  حجز الإجازات
 ws_lv = wb.create_sheet("حجز الإجازات")
