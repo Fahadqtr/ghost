@@ -427,40 +427,6 @@ back.hyperlink = Hyperlink(ref="H2", location="'لوحة المعلومات'!A1"
 back.font = Font(name="Arial", bold=True, color="2E75B6", underline="single", size=10)
 back.alignment = CENTER
 
-# منطقة الإدخال السريع (تعمل مع زر الماكرو — اختياري) — أعمدة L/M خارج الجدول
-ws_lv.column_dimensions["L"].width = 14
-ws_lv.column_dimensions["M"].width = 20
-qh = ws_lv.cell(row=2, column=12, value="⚡ إدخال سريع (لزر الماكرو)")
-ws_lv.merge_cells("L2:M2")
-qh.font = Font(bold=True, color="FFFFFF", size=10)
-qh.alignment = CENTER
-qh.fill = PatternFill("solid", fgColor="548235")
-quick_fields = [("الاسم", NAMES_RANGE), ("النوع", TYPES_RANGE),
-                ("من تاريخ", None), ("إلى تاريخ", None), ("الحالة", STATUS_RANGE)]
-QUICK_CELLS = {}
-for i, (lbl, lst) in enumerate(quick_fields):
-    r = 3 + i
-    lc = ws_lv.cell(row=r, column=12, value=lbl)
-    lc.font = Font(bold=True, size=10)
-    lc.alignment = RIGHT
-    lc.border = BORDER
-    ic = ws_lv.cell(row=r, column=13)
-    ic.border = BORDER
-    ic.alignment = CENTER
-    ic.fill = PatternFill("solid", fgColor="FFF2CC")
-    ic.protection = Protection(locked=False)
-    QUICK_CELLS[lbl] = ic
-    if lbl in ("من تاريخ", "إلى تاريخ"):
-        ic.number_format = "DD/MM/YYYY"
-    if lst:
-        dv = DataValidation(type="list", formula1=f"={lst}", allow_blank=True)
-        ws_lv.add_data_validation(dv)
-        dv.add(ic.coordinate)
-note = ws_lv.cell(row=8, column=12, value="املأ ثم اضغط زر «حفظ الإجازة»")
-ws_lv.merge_cells("L8:M8")
-note.font = Font(italic=True, size=8, color="44546A")
-note.alignment = CENTER
-
 # =================================================================  جدول الورديات
 ws_r = wb.create_sheet("جدول الورديات")
 ws_r.sheet_view.rightToLeft = True
