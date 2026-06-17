@@ -68,8 +68,10 @@ COLORS = {
 }
 
 PERIOD_START = datetime.date(2026, 6, 16)   # أول يوم في الجدول
-DAYS = 31                                   # عدد الأيام المعروضة
+DAYS = 365                                  # سنة كاملة
 AR_DAYS = ["الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
+AR_MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+             "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
 
 L_FIRST, L_ROWS = 5, 100        # صفوف بيانات حجز الإجازات
 L_LAST = L_FIRST + L_ROWS - 1
@@ -93,6 +95,11 @@ def style_header(cell):
     cell.font = HDR_FONT
     cell.alignment = CENTER
     cell.border = BORDER
+
+
+def cf_fill(color):
+    """تعبئة للتنسيق الشرطي: إكسل يقرأ لون التعبئة من bgColor وليس fgColor."""
+    return PatternFill(start_color=color, end_color=color, fill_type="solid")
 
 
 wb = Workbook()
@@ -260,7 +267,7 @@ for nm in SHIFT_NAMES:
     ws_emp.conditional_formatting.add(
         f"D2:D{EMP_LAST}",
         CellIsRule(operator="equal", formula=[f'"{nm}"'],
-                   fill=PatternFill("solid", fgColor=COLORS[nm])))
+                   fill=cf_fill(COLORS[nm])))
 
 # =================================================================  حجز الإجازات
 ws_lv = wb.create_sheet("حجز الإجازات")
@@ -340,24 +347,24 @@ dv_stat.add(f"G{L_FIRST}:G{L_LAST}")
 ws_lv.conditional_formatting.add(
     f"H{L_FIRST}:H{L_LAST}",
     CellIsRule(operator="equal", formula=['"⚠ تعارض"'],
-               fill=PatternFill("solid", fgColor="FFC7CE"),
+               fill=cf_fill("FFC7CE"),
                font=Font(color="9C0006", bold=True)))
 ws_lv.conditional_formatting.add(
     f"H{L_FIRST}:H{L_LAST}",
     CellIsRule(operator="equal", formula=['"✓ سليم"'],
-               fill=PatternFill("solid", fgColor="C6EFCE"),
+               fill=cf_fill("C6EFCE"),
                font=Font(color="006100")))
 ws_lv.conditional_formatting.add(
     f"I{L_FIRST}:I{L_LAST}",
     FormulaRule(formula=[f'LEFT($I{L_FIRST})="⚠"'],
-                fill=PatternFill("solid", fgColor="FFEB9C"),
+                fill=cf_fill("FFEB9C"),
                 font=Font(color="9C6500", bold=True)))
 # تلوين نوع الإجازة حسب اللون
 for t in LEAVE_TYPES:
     ws_lv.conditional_formatting.add(
         f"C{L_FIRST}:C{L_LAST}",
         CellIsRule(operator="equal", formula=[f'"{t}"'],
-                   fill=PatternFill("solid", fgColor=COLORS[t])))
+                   fill=cf_fill(COLORS[t])))
 ws_lv.freeze_panes = f"A{L_FIRST}"
 
 # =================================================================  جدول الورديات
@@ -393,6 +400,10 @@ for i, d in enumerate(dates):
     style_header(dc)
     if d.weekday() == 4:  # الجمعة
         dc.fill = PatternFill("solid", fgColor="C00000")
+    if d.day == 1 or i == 0:
+        ml = ws_r.cell(row=1, column=col, value=f"{AR_MONTHS[d.month-1]} {d.year}")
+        ml.font = Font(name="Arial", bold=True, color="1F3864", size=10)
+        ml.alignment = Alignment(horizontal="right", vertical="center")
 
 ws_r.cell(row=2, column=2, value="التاريخ ←").alignment = CENTER
 
@@ -461,7 +472,7 @@ for i in range(DAYS):
     ws_r.conditional_formatting.add(
         ct.coordinate,
         CellIsRule(operator="lessThan", formula=[MIN_STAFF],
-                   fill=PatternFill("solid", fgColor="FFC7CE"),
+                   fill=cf_fill("FFC7CE"),
                    font=Font(color="9C0006", bold=True)))
     # المُجازين = خلايا ليست وردية/راحة/فارغة
     excl = "".join(f'*({rng}<>"{nm}")' for nm in SHIFT_NAMES)
@@ -480,7 +491,7 @@ for key, color in COLORS.items():
     ws_r.conditional_formatting.add(
         grid_range,
         CellIsRule(operator="equal", formula=[f'"{key}"'],
-                   fill=PatternFill("solid", fgColor=color)))
+                   fill=cf_fill(color)))
 
 ws_r.freeze_panes = "D4"
 
@@ -523,6 +534,10 @@ for i, d in enumerate(dates):
     style_header(dc)
     if d.weekday() == 4:
         dc.fill = PatternFill("solid", fgColor="C00000")
+    if d.day == 1 or i == 0:
+        ml = ws_lc.cell(row=1, column=col, value=f"{AR_MONTHS[d.month-1]} {d.year}")
+        ml.font = Font(name="Arial", bold=True, color="1F3864", size=10)
+        ml.alignment = Alignment(horizontal="right", vertical="center")
 
 TOTAL_COL = DAY_COL0 + DAYS            # عمود إجمالي أيام الإجازة لكل موظف
 tcl = ws_lc.cell(row=3, column=TOTAL_COL, value="إجمالي الأيام")
@@ -576,7 +591,7 @@ for i in range(DAYS):
     ws_lc.conditional_formatting.add(
         tc.coordinate,
         CellIsRule(operator="greaterThan", formula=[MAX_LEAVE],
-                   fill=PatternFill("solid", fgColor="FFC7CE"),
+                   fill=cf_fill("FFC7CE"),
                    font=Font(color="9C0006", bold=True)))
 
 # تلوين خلايا الإجازات حسب النوع
@@ -586,7 +601,7 @@ for t in LEAVE_TYPES:
     ws_lc.conditional_formatting.add(
         lc_grid,
         CellIsRule(operator="equal", formula=[f'"{t}"'],
-                   fill=PatternFill("solid", fgColor=COLORS[t])))
+                   fill=cf_fill(COLORS[t])))
 ws_lc.freeze_panes = "D4"
 
 # مفتاح ألوان أنواع الإجازات
