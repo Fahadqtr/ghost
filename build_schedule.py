@@ -7,7 +7,7 @@
 """
 import datetime
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, NamedStyle
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, NamedStyle, Protection
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.formatting.rule import FormulaRule, CellIsRule
 from openpyxl.utils import get_column_letter
@@ -70,7 +70,14 @@ COLORS = {
     "مرضية":      "FFC7CE",   # أحمر فاتح
     "مرافق مريض": "E2A9F3",   # بنفسجي
     "أخرى":       "FCE4D6",   # خوخي
+    "عطلة":       "F4B084",   # برتقالي داكن (عطلة رسمية)
 }
+
+# العطل الرسمية الافتراضية (قابلة للتعديل في ورقة الإعدادات) — (التاريخ، المناسبة)
+HOLIDAYS = [
+    (datetime.date(2026, 12, 18), "اليوم الوطني"),
+    (datetime.date(2027, 2, 9), "اليوم الرياضي للدولة"),
+]
 
 PERIOD_START = datetime.date(2026, 6, 14)   # أول يوم في الجدول (أول وردية صباح)
 DAYS = 365                                  # سنة كاملة
@@ -255,6 +262,33 @@ for nm in SHIFT_NAMES:
     ws_set.conditional_formatting.add(
         "B7", CellIsRule(operator="equal", formula=[f'"{nm}"'], fill=cf_fill(COLORS[nm])))
 
+# جدول العطل الرسمية (قابل للتعديل/الإضافة)
+HOL_FIRST, HOL_ROWS = 2, 20
+HOL_LAST = HOL_FIRST + HOL_ROWS - 1
+ws_set["K1"] = "تاريخ العطلة"
+ws_set["L1"] = "المناسبة"
+ws_set.column_dimensions["K"].width = 16
+ws_set.column_dimensions["L"].width = 26
+for cc in (ws_set["K1"], ws_set["L1"]):
+    style_header(cc)
+for i in range(HOL_ROWS):
+    r = HOL_FIRST + i
+    dcell = ws_set.cell(row=r, column=11)
+    dcell.number_format = "DD/MM/YYYY"
+    dcell.alignment = CENTER
+    dcell.border = BORDER
+    lcell = ws_set.cell(row=r, column=12)
+    lcell.alignment = RIGHT
+    lcell.border = BORDER
+    lcell.font = BASE_FONT
+    if i < len(HOLIDAYS):
+        dcell.value = HOLIDAYS[i][0]
+        lcell.value = HOLIDAYS[i][1]
+        dcell.fill = PatternFill("solid", fgColor=COLORS["عطلة"])
+HOLIDAYS_RANGE = f"'الإعدادات والقوائم'!$K${HOL_FIRST}:$K${HOL_LAST}"
+wb.defined_names["Holidays"] = DefinedName("Holidays", attr_text=HOLIDAYS_RANGE)
+HOLIDAYS_REF = "Holidays"
+
 # =================================================================  الموظفون
 ws_emp = wb.create_sheet("الموظفون")
 ws_emp.sheet_view.rightToLeft = True
@@ -306,9 +340,11 @@ STAT = f"'حجز الإجازات'!$G${L_FIRST}:$G${L_LAST}"
 for row in range(L_FIRST, L_LAST + 1):
     # رقم الطلب
     ws_lv.cell(row=row, column=1, value=row - L_FIRST + 1).alignment = CENTER
-    # عدد الأيام = نهاية - بداية + 1
+    # عدد الأيام = (نهاية - بداية + 1) مطروحاً منها العطل الرسمية ضمن الفترة
     ws_lv.cell(row=row, column=6,
-               value=f'=IF(OR($D{row}="",$E{row}=""),"",$E{row}-$D{row}+1)').alignment = CENTER
+               value=(f'=IF(OR($D{row}="",$E{row}=""),"",$E{row}-$D{row}+1'
+                      f'-SUMPRODUCT(({HOLIDAYS_REF}>=$D{row})*({HOLIDAYS_REF}<=$E{row})))')
+               ).alignment = CENTER
     # فحص التعارض: تداخل مع طلب آخر لنفس الموظف غير مرفوض
     overlap = (f'SUMPRODUCT(({EMPS}=$B{row})*({STAT}<>"مرفوض")'
                f'*({STARTS}<=$E{row})*($D{row}<=({ENDS})))')
@@ -446,9 +482,9 @@ for idx, (num, name, jobno) in enumerate(EMPLOYEES):
         # داخل دورة العمل: يومان صباح + يومان عصر + يومان ليل (يتكرر النمط كل دورة)
         rot = (f'INDEX({SHIFTS_RANGE},MOD(INT(MOD({dref}-{cs},{CYCLE_WORK}+{CYCLE_REST})'
                f'*3/{CYCLE_WORK})+MATCH({START_SHIFT},{SHIFTS_RANGE},0)-1,3)+1)')
-        # حالة الدورة: وردية الفريق في أيام العمل / راحة في أيام الراحة
-        cycle = (f'IF({dref}<{cs},"",IF(MOD({dref}-{cs},{CYCLE_WORK}+{CYCLE_REST})'
-                 f'<{CYCLE_WORK},{rot},"راحة"))')
+        # حالة الدورة: عطلة رسمية / وردية الفريق في أيام العمل / راحة في أيام الراحة
+        cycle = (f'IF({dref}<{cs},"",IF(ISNUMBER(MATCH({dref},{HOLIDAYS_REF},0)),"عطلة",'
+                 f'IF(MOD({dref}-{cs},{CYCLE_WORK}+{CYCLE_REST})<{CYCLE_WORK},{rot},"راحة")))')
         # هل توجد إجازة معتمدة لهذا الموظف بهذا التاريخ؟
         match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<={dref})*'
                  f'(({ENDS})>={dref})*({STAT}="معتمد")*ROW({EMPS}))')
@@ -524,7 +560,7 @@ ws_r.freeze_panes = "D4"
 # مفتاح الألوان (Legend)
 leg_row = sum_row2 + 2
 ws_r.cell(row=leg_row, column=2, value="مفتاح الألوان:").font = Font(bold=True, size=10)
-legend_items = SHIFT_NAMES + ["راحة"] + LEAVE_TYPES
+legend_items = SHIFT_NAMES + ["راحة", "عطلة"] + LEAVE_TYPES
 for i, k in enumerate(legend_items):
     cell = ws_r.cell(row=leg_row + 1 + i, column=2, value=k)
     cell.fill = PatternFill("solid", fgColor=COLORS[k])
@@ -821,8 +857,167 @@ ch3.width = 10
 ch3.add_data(Reference(ws_db, min_col=3, min_row=48, max_row=48 + len(STATUSES)), titles_from_data=True)
 ch3.set_categories(Reference(ws_db, min_col=2, min_row=49, max_row=48 + len(STATUSES)))
 ws_db.add_chart(ch3, "F47")
+# =================================================================  كشف يومي للطباعة
+ws_day = wb.create_sheet("كشف يومي")
+ws_day.sheet_view.rightToLeft = True
+ws_day.sheet_view.showGridLines = False
+for c, w in {"A": 5, "B": 28, "C": 14, "D": 16, "E": 18, "F": 18}.items():
+    ws_day.column_dimensions[c].width = w
+ws_day.merge_cells("A1:F1")
+h = ws_day["A1"]
+h.value = "كشف الوردية اليومي — قسم العمليات الجمركية"
+h.font = Font(bold=True, size=16, color="FFFFFF")
+h.alignment = CENTER
+h.fill = PatternFill("solid", fgColor="1F3864")
+ws_day.row_dimensions[1].height = 24
+ws_day["B2"] = "📅 التاريخ:"
+ws_day["B2"].font = Font(bold=True, size=12)
+ws_day["B2"].alignment = RIGHT
+dt = ws_day["C2"]
+dt.value = "=TODAY()"
+dt.number_format = "DD/MM/YYYY"
+dt.font = Font(bold=True, size=12, color="1F3864")
+dt.alignment = CENTER
+dt.fill = PatternFill("solid", fgColor="FFF2CC")
+dt.border = BORDER
+ws_day["B3"] = "اليوم:"
+ws_day["B3"].font = Font(bold=True)
+ws_day["B3"].alignment = RIGHT
+wk = ws_day["C3"]
+wk.value = ('=CHOOSE(WEEKDAY($C$2,2),"الإثنين","الثلاثاء","الأربعاء","الخميس",'
+            '"الجمعة","السبت","الأحد")')
+wk.alignment = CENTER
+wk.font = Font(bold=True)
+ws_day["B4"] = "💡 غيّر التاريخ في الخانة الصفراء ليتحدّث الكشف، ثم اطبع."
+ws_day["B4"].font = Font(italic=True, size=9, color="44546A")
+ws_day["B4"].alignment = RIGHT
+DT = "$C$2"
+hdr = ["م", "الاسم", "الرقم الوظيفي", "الوردية/الحالة", "توقيع الحضور", "توقيع الانصراف"]
+for c, ttl in enumerate(hdr, start=1):
+    style_header(ws_day.cell(row=5, column=c, value=ttl))
+for i, (num, name, job) in enumerate(EMPLOYEES):
+    r = 6 + i
+    erow = 2 + i
+    ws_day.cell(row=r, column=1, value=num).alignment = CENTER
+    ws_day.cell(row=r, column=2, value=f"='الموظفون'!B{erow}").alignment = RIGHT
+    ws_day.cell(row=r, column=3, value=f"='الموظفون'!C{erow}").alignment = CENTER
+    cs = f"'الموظفون'!$D${erow}"
+    nm = f"'الموظفون'!$B${erow}"
+    rot = (f'INDEX({SHIFTS_RANGE},MOD(INT(MOD({DT}-{cs},{CYCLE_WORK}+{CYCLE_REST})'
+           f'*3/{CYCLE_WORK})+MATCH({START_SHIFT},{SHIFTS_RANGE},0)-1,3)+1)')
+    cyc = (f'IF({DT}<{cs},"",IF(ISNUMBER(MATCH({DT},{HOLIDAYS_REF},0)),"عطلة",'
+           f'IF(MOD({DT}-{cs},{CYCLE_WORK}+{CYCLE_REST})<{CYCLE_WORK},{rot},"راحة")))')
+    match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<={DT})*(({ENDS})>={DT})'
+             f'*({STAT}="معتمد")*ROW({EMPS}))')
+    sc = ws_day.cell(row=r, column=4,
+                     value=f'=IF({match}=0,{cyc},INDEX({TYPES_COL},({match})-{L_FIRST}+1))')
+    sc.alignment = CENTER
+    sc.font = Font(bold=True, size=10)
+    for c in range(1, 7):
+        ws_day.cell(row=r, column=c).border = BORDER
+        if ws_day.cell(row=r, column=c).font.size is None:
+            ws_day.cell(row=r, column=c).font = BASE_FONT
+day_grid = f"D6:D{5+len(EMPLOYEES)}"
+for k, clr in COLORS.items():
+    ws_day.conditional_formatting.add(
+        day_grid, CellIsRule(operator="equal", formula=[f'"{k}"'], fill=cf_fill(clr)))
+sig_row = 6 + len(EMPLOYEES) + 1
+ws_day.cell(row=sig_row, column=2, value="توقيع المشرف:").font = Font(bold=True)
+ws_day.cell(row=sig_row, column=2).alignment = RIGHT
+ws_day.print_area = f"A1:F{sig_row+1}"
+ws_day.page_setup.orientation = "portrait"
+ws_day.page_setup.fitToWidth = 1
+ws_day.sheet_properties.pageSetUpPr.fitToPage = True
+
+# =================================================================  متابعة الإجازات
+ws_mon = wb.create_sheet("متابعة الإجازات")
+ws_mon.sheet_view.rightToLeft = True
+ws_mon.sheet_view.showGridLines = False
+for c, w in {"A": 5, "B": 28, "C": 18, "D": 18, "E": 14}.items():
+    ws_mon.column_dimensions[c].width = w
+ws_mon.merge_cells("A1:E1")
+hm = ws_mon["A1"]
+hm.value = "متابعة الإجازات — اليوم والقادمة"
+hm.font = Font(bold=True, size=16, color="FFFFFF")
+hm.alignment = CENTER
+hm.fill = PatternFill("solid", fgColor="1F3864")
+ws_mon.row_dimensions[1].height = 24
+LV_E = "'حجز الإجازات'!$E$5:$E$104"
+ws_mon["B2"] = "مُجازون اليوم:"
+ws_mon["B2"].font = Font(bold=True)
+ws_mon["B2"].alignment = RIGHT
+ws_mon["C2"] = f'=SUMPRODUCT(({LV_G}="معتمد")*({LV_D}<=TODAY())*({LV_E}>=TODAY()))'
+ws_mon["C2"].alignment = CENTER
+ws_mon["C2"].font = Font(bold=True, size=12, color="1F3864")
+ws_mon["B3"] = "إجازات تبدأ خلال 7 أيام:"
+ws_mon["B3"].font = Font(bold=True)
+ws_mon["B3"].alignment = RIGHT
+ws_mon["C3"] = f'=SUMPRODUCT(({LV_G}<>"مرفوض")*({LV_D}>TODAY())*({LV_D}<=TODAY()+7))'
+ws_mon["C3"].alignment = CENTER
+ws_mon["C3"].font = Font(bold=True, size=12, color="1F3864")
+mon_hdr = ["م", "الاسم", "حالة اليوم", "أقرب إجازة قادمة", "بعد (يوم)"]
+for c, ttl in enumerate(mon_hdr, start=1):
+    style_header(ws_mon.cell(row=5, column=c, value=ttl))
+for i, (num, name, job) in enumerate(EMPLOYEES):
+    r = 6 + i
+    erow = 2 + i
+    ws_mon.cell(row=r, column=1, value=num).alignment = CENTER
+    ws_mon.cell(row=r, column=2, value=f"='الموظفون'!B{erow}").alignment = RIGHT
+    cs = f"'الموظفون'!$D${erow}"
+    nm = f"'الموظفون'!$B${erow}"
+    rot = (f'INDEX({SHIFTS_RANGE},MOD(INT(MOD(TODAY()-{cs},{CYCLE_WORK}+{CYCLE_REST})'
+           f'*3/{CYCLE_WORK})+MATCH({START_SHIFT},{SHIFTS_RANGE},0)-1,3)+1)')
+    cyc = (f'IF(TODAY()<{cs},"",IF(ISNUMBER(MATCH(TODAY(),{HOLIDAYS_REF},0)),"عطلة",'
+           f'IF(MOD(TODAY()-{cs},{CYCLE_WORK}+{CYCLE_REST})<{CYCLE_WORK},{rot},"راحة")))')
+    match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<=TODAY())*(({ENDS})>=TODAY())'
+             f'*({STAT}="معتمد")*ROW({EMPS}))')
+    sc = ws_mon.cell(row=r, column=3,
+                     value=f'=IF({match}=0,{cyc},INDEX({TYPES_COL},({match})-{L_FIRST}+1))')
+    sc.alignment = CENTER
+    sc.font = Font(bold=True, size=10)
+    nx = ws_mon.cell(row=r, column=4,
+                     value=(f'=IFERROR(AGGREGATE(15,6,{LV_D}/(({LV_B}={nm})'
+                            f'*({LV_D}>TODAY())*({LV_G}<>"مرفوض")),1),"")'))
+    nx.number_format = "DD/MM/YYYY"
+    nx.alignment = CENTER
+    nx.font = BASE_FONT
+    af = ws_mon.cell(row=r, column=5, value=f'=IF($D{r}="","",$D{r}-TODAY())')
+    af.alignment = CENTER
+    af.font = BASE_FONT
+    for c in range(1, 6):
+        ws_mon.cell(row=r, column=c).border = BORDER
+mon_grid = f"C6:C{5+len(EMPLOYEES)}"
+for k, clr in COLORS.items():
+    ws_mon.conditional_formatting.add(
+        mon_grid, CellIsRule(operator="equal", formula=[f'"{k}"'], fill=cf_fill(clr)))
+
+# =================================================================  حماية الأوراق (قفل الصيغ وترك خانات الإدخال)
+UN = Protection(locked=False)
+
+
+def unlock_range(ws, ref):
+    for row_cells in ws[ref]:
+        for cell in row_cells:
+            cell.protection = UN
+
+
+for ref in ("B5:E104", "G5:G104", "J5:J104"):
+    unlock_range(ws_lv, ref)
+for ref in ("B2:B7", "K2:L21"):
+    unlock_range(ws_set, ref)
+unlock_range(ws_emp, "B2:D9")
+unlock_range(ws_day, "C2:C2")
+unlock_range(ws_day, f"E6:F{5+len(EMPLOYEES)}")
+for ws in wb.worksheets:
+    p = ws.protection
+    p.sheet = True
+    for a in ("selectLockedCells", "selectUnlockedCells", "formatCells",
+              "formatColumns", "formatRows", "insertRows", "deleteRows",
+              "sort", "autoFilter"):
+        setattr(p, a, False)
+
 # ترتيب الداشبورد أولاً
-wb.move_sheet("لوحة المعلومات", -(len(wb.sheetnames) - 1))
+wb.move_sheet("لوحة المعلومات", -wb.sheetnames.index("لوحة المعلومات"))
 
 # ------------------------------------------------------------------ حفظ
 # إجبار البرنامج على إعادة احتساب جميع الصيغ عند فتح الملف
