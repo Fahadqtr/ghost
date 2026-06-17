@@ -12,6 +12,8 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.formatting.rule import FormulaRule, CellIsRule
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, PieChart, Reference
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.worksheet.hyperlink import Hyperlink
 
 # ------------------------------------------------------------------ بيانات
 EMPLOYEES = [
@@ -369,6 +371,20 @@ for t in LEAVE_TYPES:
                    fill=cf_fill(COLORS[t])))
 ws_lv.freeze_panes = f"A{L_FIRST}"
 
+# تحويل منطقة الطلبات إلى جدول إكسل ذكي (تنسيق احترافي + فلترة + امتداد تلقائي للصيغ)
+lv_table = Table(displayName="جدول_الإجازات", ref=f"A4:J{L_LAST}")
+lv_table.tableStyleInfo = TableStyleInfo(
+    name="TableStyleMedium2", showFirstColumn=False, showLastColumn=False,
+    showRowStripes=True, showColumnStripes=False)
+ws_lv.add_table(lv_table)
+
+# رابط رجوع إلى لوحة المعلومات
+back = ws_lv.cell(row=2, column=8, value="↩ الرجوع للوحة المعلومات")
+back.hyperlink = Hyperlink(ref="H2", location="'لوحة المعلومات'!A1",
+                           display="الرجوع للوحة المعلومات")
+back.font = Font(name="Arial", bold=True, color="2E75B6", underline="single", size=10)
+back.alignment = CENTER
+
 # =================================================================  جدول الورديات
 ws_r = wb.create_sheet("جدول الورديات")
 ws_r.sheet_view.rightToLeft = True
@@ -622,151 +638,183 @@ for i, t in enumerate(LEAVE_TYPES):
 ws_db = wb.create_sheet("لوحة المعلومات")
 ws_db.sheet_view.rightToLeft = True
 ws_db.sheet_view.showGridLines = False
-ws_db["A1"] = "لوحة المعلومات — داشبورد الورديات والإجازات"
-ws_db["A1"].font = TITLE_FONT
-for c, w in {"A": 2, "B": 22, "C": 12, "D": 3, "E": 16, "F": 13, "G": 13,
-             "H": 3, "I": 22, "J": 13, "K": 13}.items():
-    ws_db.column_dimensions[c].width = w
+for c in range(1, 18):
+    ws_db.column_dimensions[get_column_letter(c)].width = 9
+ws_db.column_dimensions["A"].width = 2
+for g in ("E", "I", "M"):
+    ws_db.column_dimensions[g].width = 2
 
-# مراجع
+# مراجع ورقة الإجازات
 LV_B = "'حجز الإجازات'!$B$5:$B$104"
 LV_C = "'حجز الإجازات'!$C$5:$C$104"
+LV_D = "'حجز الإجازات'!$D$5:$D$104"
+LV_E = "'حجز الإجازات'!$E$5:$E$104"
 LV_F = "'حجز الإجازات'!$F$5:$F$104"
 LV_G = "'حجز الإجازات'!$G$5:$G$104"
 LV_H = "'حجز الإجازات'!$H$5:$H$104"
-# وردية الفريق اليوم (حسب النمط داخل الدورة، أو راحة)
 _dic = "MOD(TODAY()-'الإعدادات والقوائم'!$B$2," + f"{CYCLE_WORK}+{CYCLE_REST})"
-TEAM_TODAY = (f'IF({_dic}>={CYCLE_WORK},"راحة",INDEX({SHIFTS_RANGE},'
-              f'MOD(INT({_dic}*3/{CYCLE_WORK})+MATCH({START_SHIFT},{SHIFTS_RANGE},0)-1,3)+1))')
+TEAM_TODAY = (f'IF(TODAY()<\'الإعدادات والقوائم\'!$B$2,"-",IF({_dic}>={CYCLE_WORK},"راحة",'
+              f'INDEX({SHIFTS_RANGE},MOD(INT({_dic}*3/{CYCLE_WORK})'
+              f'+MATCH({START_SHIFT},{SHIFTS_RANGE},0)-1,3)+1)))')
+
+# --- العنوان ---
+ws_db.merge_cells("B1:P2")
+t = ws_db["B1"]
+t.value = "لوحة المعلومات — جدول الورديات وحجز الإجازات"
+t.font = Font(name="Arial", bold=True, size=20, color="FFFFFF")
+t.alignment = CENTER
+t.fill = PatternFill("solid", fgColor="1F3864")
+ws_db.merge_cells("B3:P3")
+s = ws_db["B3"]
+s.value = '="قسم العمليات الجمركية     •     آخر تحديث: "&TEXT(TODAY(),"DD/MM/YYYY")'
+s.font = Font(name="Arial", bold=True, size=11, color="44546A")
+s.alignment = CENTER
 
 
-def db_box(cell, header=False, fill=None):
-    cell.border = BORDER
-    cell.alignment = CENTER
-    if header:
-        cell.fill = HDR_FILL
-        cell.font = HDR_FONT
-    else:
-        cell.font = BASE_FONT
-        if fill:
-            cell.fill = PatternFill("solid", fgColor=fill)
-
-
-# --- بطاقات المؤشرات (KPIs) ---
-ws_db["B3"] = "المؤشر"
-ws_db["C3"] = "القيمة"
-db_box(ws_db["B3"], header=True)
-db_box(ws_db["C3"], header=True)
-kpis = [
-    ("عدد الموظفين", f"=COUNTA({NAMES_RANGE})"),
-    ("إجمالي طلبات الإجازة", f"=COUNTA({LV_B})"),
-    ("الطلبات المعتمدة", f'=COUNTIF({LV_G},"معتمد")'),
-    ("قيد الانتظار", f'=COUNTIF({LV_G},"قيد الانتظار")'),
-    ("الطلبات المرفوضة", f'=COUNTIF({LV_G},"مرفوض")'),
-    ("طلبات فيها تعارض", f'=COUNTIF({LV_H},"*تعارض*")'),
-    ("إجمالي أيام الإجازات المعتمدة", f'=SUMIFS({LV_F},{LV_G},"معتمد")'),
-    ("وردية الفريق اليوم", f"={TEAM_TODAY}"),
-]
-for i, (lbl, frm) in enumerate(kpis):
-    r = 4 + i
-    lc = ws_db.cell(row=r, column=2, value=lbl)
-    lc.alignment = RIGHT
-    lc.font = Font(name="Arial", bold=True, size=11)
+def card(col0, row, label, formula, color, valcolor="1F3864"):
+    c0 = get_column_letter(col0)
+    c1 = get_column_letter(col0 + 2)
+    ws_db.merge_cells(f"{c0}{row}:{c1}{row}")
+    lc = ws_db[f"{c0}{row}"]
+    lc.value = label
+    lc.font = Font(name="Arial", bold=True, size=10, color="FFFFFF")
+    lc.alignment = CENTER
+    lc.fill = PatternFill("solid", fgColor="44546A")
     lc.border = BORDER
-    vc = ws_db.cell(row=r, column=3, value=frm)
+    ws_db.merge_cells(f"{c0}{row+1}:{c1}{row+1}")
+    vc = ws_db[f"{c0}{row+1}"]
+    vc.value = formula
+    vc.font = Font(name="Arial", bold=True, size=24, color=valcolor)
     vc.alignment = CENTER
-    vc.font = Font(name="Arial", bold=True, size=13, color="1F3864")
+    vc.fill = PatternFill("solid", fgColor=color)
     vc.border = BORDER
-# تمييز خانة التعارض بالأحمر عند وجود تعارض
+    ws_db.row_dimensions[row + 1].height = 34
+
+
+cards1 = [
+    (2,  "عدد الموظفين", f"=COUNTA({NAMES_RANGE})", "DDEBF7"),
+    (6,  "إجمالي الطلبات", f"=COUNTA({LV_B})", "DDEBF7"),
+    (10, "الطلبات المعتمدة", f'=COUNTIF({LV_G},"معتمد")', "E2EFDA"),
+    (14, "طلبات فيها تعارض", f'=COUNTIF({LV_H},"*تعارض*")', "FCE4D6"),
+]
+for col0, lbl, frm, clr in cards1:
+    card(col0, 5, lbl, frm, clr)
+cards2 = [
+    (2,  "قيد الانتظار", f'=COUNTIF({LV_G},"قيد الانتظار")', "FFF2CC"),
+    (6,  "الطلبات المرفوضة", f'=COUNTIF({LV_G},"مرفوض")', "F2F2F2"),
+    (10, "إجمالي أيام الإجازات", f'=SUMIFS({LV_F},{LV_G},"معتمد")', "E2EFDA"),
+    (14, "مُجازون اليوم",
+     f'=SUMPRODUCT(({LV_G}="معتمد")*({LV_D}<=TODAY())*({LV_E}>=TODAY()))', "DDEBF7"),
+]
+for col0, lbl, frm, clr in cards2:
+    card(col0, 8, lbl, frm, clr)
+# تمييز بطاقة التعارض بالأحمر عند وجود تعارض
 ws_db.conditional_formatting.add(
-    "C9",
-    CellIsRule(operator="greaterThan", formula=["0"],
-               fill=cf_fill("FFC7CE"), font=Font(color="9C0006", bold=True)))
+    "N6:P6",
+    CellIsRule(operator="greaterThan", formula=["0"], fill=cf_fill("FFC7CE"),
+               font=Font(bold=True, size=24, color="9C0006")))
+
+# --- وردية اليوم + زر تسجيل إجازة ---
+ws_db.merge_cells("B11:G11")
+lc = ws_db["B11"]
+lc.value = "وردية الفريق اليوم"
+lc.font = Font(bold=True, size=12, color="FFFFFF")
+lc.alignment = CENTER
+lc.fill = PatternFill("solid", fgColor="2E75B6")
+lc.border = BORDER
+ws_db.merge_cells("B12:G12")
+vc = ws_db["B12"]
+vc.value = f"={TEAM_TODAY}"
+vc.font = Font(bold=True, size=22, color="1F3864")
+vc.alignment = CENTER
+vc.fill = PatternFill("solid", fgColor="DDEBF7")
+vc.border = BORDER
+ws_db.row_dimensions[12].height = 36
+
+ws_db.merge_cells("J11:P12")
+btn = ws_db["J11"]
+btn.value = "➕  تسجيل إجازة جديدة  (اضغط هنا)"
+btn.hyperlink = Hyperlink(ref="J11", location="'حجز الإجازات'!B5",
+                          display="تسجيل إجازة جديدة")
+btn.font = Font(bold=True, size=15, color="FFFFFF", underline="single")
+btn.alignment = CENTER
+btn.fill = PatternFill("solid", fgColor="548235")
+for rr in (11, 12):
+    for cc in range(10, 17):
+        ws_db.cell(row=rr, column=cc).border = BORDER
+
+
+def tbl_header(row, cols_labels):
+    for col, h in cols_labels:
+        cc = ws_db.cell(row=row, column=col, value=h)
+        cc.fill = HDR_FILL
+        cc.font = HDR_FONT
+        cc.alignment = CENTER
+        cc.border = BORDER
+
+
+def data_cell(row, col, val, align=CENTER, fill=None):
+    cc = ws_db.cell(row=row, column=col, value=val)
+    cc.alignment = align
+    cc.border = BORDER
+    cc.font = BASE_FONT
+    if fill:
+        cc.fill = PatternFill("solid", fgColor=fill)
+    return cc
+
 
 # --- الإجازات حسب النوع ---
-for col, h in zip((5, 6, 7), ("نوع الإجازة", "عدد الطلبات", "إجمالي الأيام")):
-    db_box(ws_db.cell(row=3, column=col, value=h), header=True)
-for i, t in enumerate(LEAVE_TYPES):
-    r = 4 + i
-    nc = ws_db.cell(row=r, column=5, value=t)
-    nc.alignment = RIGHT
-    nc.border = BORDER
-    nc.font = BASE_FONT
-    nc.fill = PatternFill("solid", fgColor=COLORS[t])
-    cc = ws_db.cell(row=r, column=6, value=f'=COUNTIF({LV_C},"{t}")')
-    db_box(cc)
-    dc = ws_db.cell(row=r, column=7, value=f'=SUMIF({LV_C},"{t}",{LV_F})')
-    db_box(dc)
-
-# --- توزيع الطلبات حسب الحالة ---
-status_colors = {"معتمد": "C6EFCE", "قيد الانتظار": "FFEB9C", "مرفوض": "FFC7CE"}
-for col, h in zip((5, 6), ("حالة الطلب", "عدد الطلبات")):
-    db_box(ws_db.cell(row=12, column=col, value=h), header=True)
-for i, stt in enumerate(STATUSES):
-    r = 13 + i
-    sc = ws_db.cell(row=r, column=5, value=stt)
-    sc.alignment = RIGHT
-    sc.border = BORDER
-    sc.font = BASE_FONT
-    sc.fill = PatternFill("solid", fgColor=status_colors[stt])
-    vc = ws_db.cell(row=r, column=6, value=f'=COUNTIF({LV_G},"{stt}")')
-    db_box(vc)
-
-# --- إجمالي أيام الإجازة لكل موظف ---
-for col, h in zip((9, 10, 11), ("الموظف", "عدد الطلبات", "إجمالي الأيام")):
-    db_box(ws_db.cell(row=3, column=col, value=h), header=True)
-for i in range(len(EMPLOYEES)):
-    r = 4 + i
-    erow = 2 + i
-    nc = ws_db.cell(row=r, column=9, value=f"='الموظفون'!B{erow}")
-    nc.alignment = RIGHT
-    nc.border = BORDER
-    nc.font = BASE_FONT
-    cc = ws_db.cell(row=r, column=10,
-                    value=f'=COUNTIFS({LV_B},\'الموظفون\'!B{erow},{LV_G},"<>مرفوض")')
-    db_box(cc)
-    dc = ws_db.cell(row=r, column=11,
-                    value=f'=SUMIFS({LV_F},{LV_B},\'الموظفون\'!B{erow},{LV_G},"<>مرفوض")')
-    db_box(dc)
-
-# --- الرسوم البيانية ---
-# 1) أيام الإجازة حسب النوع (أعمدة)
+ws_db.cell(row=14, column=2, value="📊 الإجازات حسب النوع").font = Font(bold=True, size=12, color="1F3864")
+tbl_header(15, [(2, "النوع"), (3, "عدد الطلبات"), (4, "إجمالي الأيام")])
+for i, ty in enumerate(LEAVE_TYPES):
+    r = 16 + i
+    data_cell(r, 2, ty, align=RIGHT, fill=COLORS[ty])
+    data_cell(r, 3, f'=COUNTIF({LV_C},"{ty}")')
+    data_cell(r, 4, f'=SUMIF({LV_C},"{ty}",{LV_F})')
 ch1 = BarChart()
 ch1.type = "col"
 ch1.title = "أيام الإجازة حسب النوع"
-ch1.height = 7.5
-ch1.width = 13
-data = Reference(ws_db, min_col=7, min_row=3, max_row=3 + len(LEAVE_TYPES))
-cats = Reference(ws_db, min_col=5, min_row=4, max_row=3 + len(LEAVE_TYPES))
-ch1.add_data(data, titles_from_data=True)
-ch1.set_categories(cats)
+ch1.height = 7
+ch1.width = 12
+ch1.add_data(Reference(ws_db, min_col=4, min_row=15, max_row=15 + len(LEAVE_TYPES)), titles_from_data=True)
+ch1.set_categories(Reference(ws_db, min_col=2, min_row=16, max_row=15 + len(LEAVE_TYPES)))
 ch1.legend = None
-ws_db.add_chart(ch1, "E18")
+ws_db.add_chart(ch1, "F15")
 
-# 2) إجمالي أيام الإجازة لكل موظف (أعمدة)
+# --- إجمالي أيام الإجازة لكل موظف ---
+ws_db.cell(row=31, column=2, value="📊 إجمالي أيام الإجازة لكل موظف").font = Font(bold=True, size=12, color="1F3864")
+tbl_header(32, [(2, "الموظف"), (3, "عدد الطلبات"), (4, "إجمالي الأيام")])
+for i in range(len(EMPLOYEES)):
+    r = 33 + i
+    erow = 2 + i
+    data_cell(r, 2, f"='الموظفون'!B{erow}", align=RIGHT)
+    data_cell(r, 3, f'=COUNTIFS({LV_B},\'الموظفون\'!B{erow},{LV_G},"<>مرفوض")')
+    data_cell(r, 4, f'=SUMIFS({LV_F},{LV_B},\'الموظفون\'!B{erow},{LV_G},"<>مرفوض")')
 ch2 = BarChart()
 ch2.type = "bar"
 ch2.title = "إجمالي أيام الإجازة لكل موظف"
 ch2.height = 7.5
-ch2.width = 13
-data2 = Reference(ws_db, min_col=11, min_row=3, max_row=3 + len(EMPLOYEES))
-cats2 = Reference(ws_db, min_col=9, min_row=4, max_row=3 + len(EMPLOYEES))
-ch2.add_data(data2, titles_from_data=True)
-ch2.set_categories(cats2)
+ch2.width = 12
+ch2.add_data(Reference(ws_db, min_col=4, min_row=32, max_row=32 + len(EMPLOYEES)), titles_from_data=True)
+ch2.set_categories(Reference(ws_db, min_col=2, min_row=33, max_row=32 + len(EMPLOYEES)))
 ch2.legend = None
-ws_db.add_chart(ch2, "I18")
+ws_db.add_chart(ch2, "F31")
 
-# 3) توزيع الطلبات حسب الحالة (دائري)
+# --- توزيع الطلبات حسب الحالة ---
+ws_db.cell(row=47, column=2, value="🥧 توزيع الطلبات حسب الحالة").font = Font(bold=True, size=12, color="1F3864")
+status_colors = {"معتمد": "C6EFCE", "قيد الانتظار": "FFEB9C", "مرفوض": "FFC7CE"}
+tbl_header(48, [(2, "الحالة"), (3, "عدد الطلبات")])
+for i, stt in enumerate(STATUSES):
+    r = 49 + i
+    data_cell(r, 2, stt, align=RIGHT, fill=status_colors[stt])
+    data_cell(r, 3, f'=COUNTIF({LV_G},"{stt}")')
 ch3 = PieChart()
 ch3.title = "توزيع الطلبات حسب الحالة"
-ch3.height = 7.5
-ch3.width = 9
-data3 = Reference(ws_db, min_col=6, min_row=12, max_row=12 + len(STATUSES))
-cats3 = Reference(ws_db, min_col=5, min_row=13, max_row=12 + len(STATUSES))
-ch3.add_data(data3, titles_from_data=True)
-ch3.set_categories(cats3)
-ws_db.add_chart(ch3, "B18")
-
+ch3.height = 7
+ch3.width = 10
+ch3.add_data(Reference(ws_db, min_col=3, min_row=48, max_row=48 + len(STATUSES)), titles_from_data=True)
+ch3.set_categories(Reference(ws_db, min_col=2, min_row=49, max_row=48 + len(STATUSES)))
+ws_db.add_chart(ch3, "F47")
 # ترتيب الداشبورد أولاً
 wb.move_sheet("لوحة المعلومات", -(len(wb.sheetnames) - 1))
 
