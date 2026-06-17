@@ -27,6 +27,23 @@ EMPLOYEES = [
 LEAVE_TYPES = ["سنوية", "عارض", "دورية", "مرضية", "مرافق مريض", "أخرى"]
 STATUSES = ["معتمد", "قيد الانتظار", "مرفوض"]
 
+# بيانات الإجازات المسجّلة مسبقاً (مأخوذة من ورقة المستخدم) — (الاسم، النوع، من، إلى، الحالة)
+import datetime as _dt
+LEAVE_DATA = [
+    ("سالم شليويح المري", "دورية", _dt.date(2026, 6, 17), _dt.date(2026, 6, 19), "معتمد"),
+    ("فهد عبدالعزيز عبدالله", "سنوية", _dt.date(2026, 6, 18), _dt.date(2026, 6, 19), "معتمد"),
+    ("محمد ناصر الغانم", "دورية", _dt.date(2026, 6, 28), _dt.date(2026, 7, 2), "معتمد"),
+    ("محمد ناصر الغانم", "دورية", _dt.date(2026, 7, 5), _dt.date(2026, 7, 9), "معتمد"),
+    ("منصور مبارك الجابري", "سنوية", _dt.date(2026, 7, 4), _dt.date(2026, 7, 9), "معتمد"),
+    ("منصور مبارك الجابري", "سنوية", _dt.date(2026, 6, 18), _dt.date(2026, 6, 19), "معتمد"),
+    ("محمد حمد الجابر", "سنوية", _dt.date(2026, 6, 17), _dt.date(2026, 6, 19), "معتمد"),
+    ("عبدالله سعد المهندي", "مرافق مريض", _dt.date(2026, 6, 17), _dt.date(2026, 7, 30), "معتمد"),
+    ("راشد عيسى التميمي", "سنوية", _dt.date(2026, 7, 4), _dt.date(2026, 7, 9), "معتمد"),
+    ("راشد عيسى التميمي", "عارض", _dt.date(2026, 7, 14), _dt.date(2026, 7, 14), "معتمد"),
+    ("راشد عيسى التميمي", "سنوية", _dt.date(2026, 7, 15), _dt.date(2026, 7, 19), "معتمد"),
+    ("راشد عيسى التميمي", "أخرى", _dt.date(2026, 6, 17), _dt.date(2026, 6, 17), "معتمد"),
+]
+
 # الورديات (الزامات) وأوقاتها
 SHIFTS = [
     ("صباح", "6:00 ص ← 1:00 م"),
@@ -94,8 +111,9 @@ rows = [
     ("h", "محتويات الملف (الأوراق بالأسفل):"),
     ("b", "1) الموظفون: قائمة أفراد الفريق وأرقامهم الوظيفية وبداية دورة العمل لكل فرد."),
     ("b", "2) جدول الورديات: تقويم يومي يحسب تلقائياً (عمل / راحة) ويُظهر الإجازات المعتمدة بالألوان."),
-    ("b", "3) حجز الإجازات: تُسجَّل فيه طلبات الإجازة، ويكشف التعارض تلقائياً."),
-    ("b", "4) الإعدادات والقوائم: ضبط بداية الدورة والحد الأدنى للتغطية وأنواع الإجازات."),
+    ("b", "3) تقويم الإجازات: عرض واضح للإجازات المعتمدة فقط (موظفون × أيام) مع إجمالي أيام كل موظف."),
+    ("b", "4) حجز الإجازات: تُسجَّل فيه طلبات الإجازة، ويكشف التعارض تلقائياً."),
+    ("b", "5) الإعدادات والقوائم: ضبط بداية الدورة والحد الأدنى للتغطية وأنواع الإجازات."),
     ("", ""),
     ("h", "نظام الدوام:"),
     ("b", "• 6 أيام عمل متتالية ثم 4 أيام راحة (دورية) — دورة كل 10 أيام."),
@@ -292,6 +310,15 @@ for row in range(L_FIRST, L_LAST + 1):
         elif col not in (4, 5):
             cell.alignment = CENTER
 
+# تعبئة بيانات الإجازات المسجّلة مسبقاً
+for i, (name, typ, s, e, st) in enumerate(LEAVE_DATA):
+    row = L_FIRST + i
+    ws_lv.cell(row=row, column=2, value=name)
+    ws_lv.cell(row=row, column=3, value=typ)
+    ws_lv.cell(row=row, column=4, value=s).number_format = "DD/MM/YYYY"
+    ws_lv.cell(row=row, column=5, value=e).number_format = "DD/MM/YYYY"
+    ws_lv.cell(row=row, column=7, value=st)
+
 # قوائم منسدلة
 dv_name = DataValidation(type="list", formula1=f"={NAMES_RANGE}", allow_blank=True)
 dv_type = DataValidation(type="list", formula1=f"={TYPES_RANGE}", allow_blank=True)
@@ -458,6 +485,110 @@ legend_items = SHIFT_NAMES + ["راحة"] + LEAVE_TYPES
 for i, k in enumerate(legend_items):
     cell = ws_r.cell(row=leg_row + 1 + i, column=2, value=k)
     cell.fill = PatternFill("solid", fgColor=COLORS[k])
+    cell.alignment = RIGHT
+    cell.border = BORDER
+    cell.font = BASE_FONT
+
+# =================================================================  تقويم الإجازات (عرض واضح للإجازات فقط)
+ws_lc = wb.create_sheet("تقويم الإجازات")
+ws_lc.sheet_view.rightToLeft = True
+ws_lc["A1"] = "تقويم الإجازات — يعرض الإجازات المعتمدة فقط بألوانها"
+ws_lc["A1"].font = TITLE_FONT
+ws_lc["A2"] = "كل خلية ملوّنة = إجازة معتمدة لذلك اليوم. الخلايا الفارغة = لا توجد إجازة."
+ws_lc["A2"].font = Font(name="Arial", italic=True, color="44546A", size=10)
+
+for col, h in enumerate(["م", "الاسم", "الرقم الوظيفي"], start=1):
+    style_header(ws_lc.cell(row=3, column=col, value=h))
+ws_lc.column_dimensions["A"].width = 5
+ws_lc.column_dimensions["B"].width = 26
+ws_lc.column_dimensions["C"].width = 13
+
+for i, d in enumerate(dates):
+    col = DAY_COL0 + i
+    letter = get_column_letter(col)
+    ws_lc.column_dimensions[letter].width = 6
+    dn = ws_lc.cell(row=2, column=col, value=AR_DAYS[d.weekday()])
+    dn.fill = PatternFill("solid", fgColor="8EA9DB")
+    dn.font = Font(name="Arial", bold=True, color="1F3864", size=8)
+    dn.alignment = CENTER
+    dn.border = BORDER
+    dc = ws_lc.cell(row=3, column=col, value=d)
+    dc.number_format = "DD/MM"
+    style_header(dc)
+    if d.weekday() == 4:
+        dc.fill = PatternFill("solid", fgColor="C00000")
+
+TOTAL_COL = DAY_COL0 + DAYS            # عمود إجمالي أيام الإجازة لكل موظف
+tcl = ws_lc.cell(row=3, column=TOTAL_COL, value="إجمالي الأيام")
+style_header(tcl)
+ws_lc.column_dimensions[get_column_letter(TOTAL_COL)].width = 11
+
+for idx, (num, name, jobno) in enumerate(EMPLOYEES):
+    row = EMP_ROW0 + idx
+    erow = 2 + idx
+    ws_lc.cell(row=row, column=1, value=num).alignment = CENTER
+    ws_lc.cell(row=row, column=2, value=f"='الموظفون'!B{erow}").alignment = RIGHT
+    ws_lc.cell(row=row, column=3, value=f"='الموظفون'!C{erow}").alignment = CENTER
+    nm = f"'الموظفون'!$B${erow}"
+    for i in range(DAYS):
+        col = DAY_COL0 + i
+        dref = f"{get_column_letter(col)}$3"
+        match = (f'SUMPRODUCT(({EMPS}={nm})*({STARTS}<={dref})*'
+                 f'(({ENDS})>={dref})*({STAT}="معتمد")*ROW({EMPS}))')
+        idxf = f'({match})-{L_FIRST}+1'
+        cc = ws_lc.cell(row=row, column=col,
+                        value=f'=IF({match}=0,"",INDEX({TYPES_COL},{idxf}))')
+        cc.alignment = CENTER
+        cc.font = Font(name="Arial", size=8)
+        cc.border = BORDER
+    # إجمالي أيام الإجازة لهذا الموظف خلال الفترة
+    rrow = (f"{get_column_letter(DAY_COL0)}{row}:"
+            f"{get_column_letter(DAY_COL0+DAYS-1)}{row}")
+    tc = ws_lc.cell(row=row, column=TOTAL_COL, value=f'=SUMPRODUCT(--({rrow}<>""))')
+    tc.alignment = CENTER
+    tc.font = Font(name="Arial", bold=True, size=10)
+    tc.border = BORDER
+    for col in (1, 2, 3):
+        ws_lc.cell(row=row, column=col).border = BORDER
+        ws_lc.cell(row=row, column=col).font = BASE_FONT
+
+# صف إجمالي المُجازين لكل يوم
+lc_total_row = EMP_ROW0 + len(EMPLOYEES)
+tl = ws_lc.cell(row=lc_total_row, column=2, value="عدد المُجازين")
+tl.alignment = RIGHT
+tl.font = Font(name="Arial", bold=True, size=10)
+tl.border = BORDER
+for i in range(DAYS):
+    col = DAY_COL0 + i
+    letter = get_column_letter(col)
+    colrng = f"{letter}{EMP_ROW0}:{letter}{EMP_ROW0+len(EMPLOYEES)-1}"
+    tc = ws_lc.cell(row=lc_total_row, column=col, value=f'=SUMPRODUCT(--({colrng}<>""))')
+    tc.alignment = CENTER
+    tc.font = Font(name="Arial", bold=True, size=9)
+    tc.border = BORDER
+    # تلوين الأيام التي يتجاوز فيها عدد المُجازين الحد المسموح
+    ws_lc.conditional_formatting.add(
+        tc.coordinate,
+        CellIsRule(operator="greaterThan", formula=[MAX_LEAVE],
+                   fill=PatternFill("solid", fgColor="FFC7CE"),
+                   font=Font(color="9C0006", bold=True)))
+
+# تلوين خلايا الإجازات حسب النوع
+lc_grid = (f"{get_column_letter(DAY_COL0)}{EMP_ROW0}:"
+           f"{get_column_letter(DAY_COL0+DAYS-1)}{EMP_ROW0+len(EMPLOYEES)-1}")
+for t in LEAVE_TYPES:
+    ws_lc.conditional_formatting.add(
+        lc_grid,
+        CellIsRule(operator="equal", formula=[f'"{t}"'],
+                   fill=PatternFill("solid", fgColor=COLORS[t])))
+ws_lc.freeze_panes = "D4"
+
+# مفتاح ألوان أنواع الإجازات
+lc_leg = lc_total_row + 2
+ws_lc.cell(row=lc_leg, column=2, value="مفتاح ألوان الإجازات:").font = Font(bold=True, size=10)
+for i, t in enumerate(LEAVE_TYPES):
+    cell = ws_lc.cell(row=lc_leg + 1 + i, column=2, value=t)
+    cell.fill = PatternFill("solid", fgColor=COLORS[t])
     cell.alignment = RIGHT
     cell.border = BORDER
     cell.font = BASE_FONT
