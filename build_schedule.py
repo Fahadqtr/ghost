@@ -427,6 +427,40 @@ back.hyperlink = Hyperlink(ref="H2", location="'لوحة المعلومات'!A1"
 back.font = Font(name="Arial", bold=True, color="2E75B6", underline="single", size=10)
 back.alignment = CENTER
 
+# منطقة الإدخال السريع (تعمل مع زر الماكرو — اختياري) — أعمدة L/M خارج الجدول
+ws_lv.column_dimensions["L"].width = 14
+ws_lv.column_dimensions["M"].width = 20
+qh = ws_lv.cell(row=2, column=12, value="⚡ إدخال سريع (لزر الماكرو)")
+ws_lv.merge_cells("L2:M2")
+qh.font = Font(bold=True, color="FFFFFF", size=10)
+qh.alignment = CENTER
+qh.fill = PatternFill("solid", fgColor="548235")
+quick_fields = [("الاسم", NAMES_RANGE), ("النوع", TYPES_RANGE),
+                ("من تاريخ", None), ("إلى تاريخ", None), ("الحالة", STATUS_RANGE)]
+QUICK_CELLS = {}
+for i, (lbl, lst) in enumerate(quick_fields):
+    r = 3 + i
+    lc = ws_lv.cell(row=r, column=12, value=lbl)
+    lc.font = Font(bold=True, size=10)
+    lc.alignment = RIGHT
+    lc.border = BORDER
+    ic = ws_lv.cell(row=r, column=13)
+    ic.border = BORDER
+    ic.alignment = CENTER
+    ic.fill = PatternFill("solid", fgColor="FFF2CC")
+    ic.protection = Protection(locked=False)
+    QUICK_CELLS[lbl] = ic
+    if lbl in ("من تاريخ", "إلى تاريخ"):
+        ic.number_format = "DD/MM/YYYY"
+    if lst:
+        dv = DataValidation(type="list", formula1=f"={lst}", allow_blank=True)
+        ws_lv.add_data_validation(dv)
+        dv.add(ic.coordinate)
+note = ws_lv.cell(row=8, column=12, value="املأ ثم اضغط زر «حفظ الإجازة»")
+ws_lv.merge_cells("L8:M8")
+note.font = Font(italic=True, size=8, color="44546A")
+note.alignment = CENTER
+
 # =================================================================  جدول الورديات
 ws_r = wb.create_sheet("جدول الورديات")
 ws_r.sheet_view.rightToLeft = True
@@ -990,6 +1024,98 @@ mon_grid = f"C6:C{5+len(EMPLOYEES)}"
 for k, clr in COLORS.items():
     ws_mon.conditional_formatting.add(
         mon_grid, CellIsRule(operator="equal", formula=[f'"{k}"'], fill=cf_fill(clr)))
+
+# =================================================================  التوزيع العادل للإجازات
+ws_fair = wb.create_sheet("التوزيع العادل")
+ws_fair.sheet_view.rightToLeft = True
+ws_fair.sheet_view.showGridLines = False
+for c, w in {"A": 2, "B": 5, "C": 28, "D": 13, "E": 16, "F": 9, "G": 16, "H": 20}.items():
+    ws_fair.column_dimensions[c].width = w
+ws_fair.merge_cells("B1:H1")
+hf = ws_fair["B1"]
+hf.value = "التوزيع العادل للإجازات بين الفريق"
+hf.font = Font(bold=True, size=16, color="FFFFFF")
+hf.alignment = CENTER
+hf.fill = PatternFill("solid", fgColor="1F3864")
+ws_fair.row_dimensions[1].height = 24
+
+FN, FL = 8, 8 + len(EMPLOYEES) - 1          # صفوف البيانات
+DAYS_RNG = f"$E${FN}:$E${FL}"
+# ملخص
+summ = [
+    ("متوسط أيام الإجازة للفريق", f"=ROUND(AVERAGE({DAYS_RNG}),1)"),
+    ("الأكثر أخذاً", f"=INDEX($C${FN}:$C${FL},MATCH(MAX({DAYS_RNG}),{DAYS_RNG},0))"),
+    ("الأقل أخذاً", f"=INDEX($C${FN}:$C${FL},MATCH(MIN({DAYS_RNG}),{DAYS_RNG},0))"),
+]
+for i, (lbl, frm) in enumerate(summ):
+    r = 3 + i
+    lc = ws_fair.cell(row=r, column=2, value=lbl)
+    lc.value = lbl
+    ws_fair.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
+    lc.font = Font(bold=True, size=11)
+    lc.alignment = RIGHT
+    lc.border = BORDER
+    vc = ws_fair.cell(row=r, column=4, value=frm)
+    ws_fair.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
+    vc.font = Font(bold=True, size=12, color="1F3864")
+    vc.alignment = CENTER
+    vc.border = BORDER
+    vc.fill = PatternFill("solid", fgColor="DDEBF7")
+
+# رأس الجدول
+fair_hdr = ["م", "الموظف", "عدد الطلبات", "إجمالي أيام الإجازة", "الترتيب",
+            "الفرق عن المتوسط", "التقييم"]
+for c, ttl in enumerate(fair_hdr, start=2):
+    style_header(ws_fair.cell(row=7, column=c, value=ttl))
+AVG_CELL = "$D$3"
+for i in range(len(EMPLOYEES)):
+    r = FN + i
+    erow = 2 + i
+    nm = f"'الموظفون'!$B${erow}"
+    ws_fair.cell(row=r, column=2, value=i + 1).alignment = CENTER
+    ws_fair.cell(row=r, column=3, value=f"='الموظفون'!B{erow}").alignment = RIGHT
+    ws_fair.cell(row=r, column=4,
+                 value=f'=COUNTIFS({LV_B},{nm},{LV_G},"معتمد")').alignment = CENTER
+    ws_fair.cell(row=r, column=5,
+                 value=f'=SUMIFS({LV_F},{LV_B},{nm},{LV_G},"معتمد")').alignment = CENTER
+    ws_fair.cell(row=r, column=6,
+                 value=f'=RANK($E{r},{DAYS_RNG},0)').alignment = CENTER
+    ws_fair.cell(row=r, column=7,
+                 value=f'=$E{r}-{AVG_CELL}').alignment = CENTER
+    ws_fair.cell(row=r, column=8,
+                 value=(f'=IF($E{r}>{AVG_CELL},"أعلى من المتوسط ⬆",'
+                        f'IF($E{r}<{AVG_CELL},"أقل من المتوسط ⬇","ضمن المتوسط"))')).alignment = CENTER
+    for c in range(2, 9):
+        cell = ws_fair.cell(row=r, column=c)
+        cell.border = BORDER
+        if cell.font.size is None:
+            cell.font = BASE_FONT
+
+# تدرّج لوني على عمود الأيام: أخضر (أقل) ← أحمر (أكثر أخذاً)
+from openpyxl.formatting.rule import ColorScaleRule
+ws_fair.conditional_formatting.add(
+    f"E{FN}:E{FL}",
+    ColorScaleRule(start_type="min", start_color="C6EFCE",
+                   mid_type="percentile", mid_value=50, mid_color="FFEB9C",
+                   end_type="max", end_color="F8696B"))
+# تمييز التقييم
+ws_fair.conditional_formatting.add(
+    f"H{FN}:H{FL}",
+    FormulaRule(formula=[f'LEFT($H{FN},5)="أعلى"'], fill=cf_fill("FCE4D6")))
+ws_fair.conditional_formatting.add(
+    f"H{FN}:H{FL}",
+    FormulaRule(formula=[f'LEFT($H{FN},4)="أقل"'], fill=cf_fill("E2EFDA")))
+
+# رسم بياني
+fair_chart = BarChart()
+fair_chart.type = "bar"
+fair_chart.title = "إجمالي أيام الإجازة لكل موظف (للعدالة)"
+fair_chart.height = 8
+fair_chart.width = 14
+fair_chart.add_data(Reference(ws_fair, min_col=5, min_row=7, max_row=FL), titles_from_data=True)
+fair_chart.set_categories(Reference(ws_fair, min_col=3, min_row=FN, max_row=FL))
+fair_chart.legend = None
+ws_fair.add_chart(fair_chart, "B18")
 
 # =================================================================  حماية الأوراق (قفل الصيغ وترك خانات الإدخال)
 UN = Protection(locked=False)
