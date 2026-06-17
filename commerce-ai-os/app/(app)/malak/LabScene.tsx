@@ -293,7 +293,7 @@ export default function Office3D({
       const ringM = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.032, 16, 56), neon(col.getHex(), 2.0)); ringM.rotation.x = -Math.PI / 2; ringM.position.y = 0.09; group.add(ringM);
       const glowDisc = new THREE.Mesh(new THREE.CircleGeometry(0.46, 40), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.14 })); glowDisc.rotation.x = -Math.PI / 2; glowDisc.position.y = 0.085; group.add(glowDisc);
       scene.add(group);
-      robots[a.id] = { group, headPivot, leftArm, rightArm, eyeL, eyeR, ring: ringM, glowDisc, body, phase: Math.random() * Math.PI * 2, blinkT: 2 + Math.random() * 3, home: { x, z } };
+      robots[a.id] = { group, headPivot, leftArm, rightArm, eyeL, eyeR, ring: ringM, glowDisc, body, phase: Math.random() * Math.PI * 2, blinkT: 2 + Math.random() * 3, home: { x, z }, baseRot: faceRot };
     };
 
     // ---- wall dashboard panels: the reference business zones (fixed) ----
@@ -412,19 +412,26 @@ export default function Office3D({
         const r = robots[a.id]; if (!r) return;
         const isActive = a.id === activeId;
         const baseY = r.centre ? 0.92 : 0;
-        let yOff = anim ? Math.sin(t * 1.6 + r.phase) * 0.03 : 0;
-        r.group.position.y = baseY + yOff;
-        r.body.scale.y = 0.92 + (anim ? Math.sin(t * 2.2 + r.phase) * 0.02 : 0);
-        r.headPivot.rotation.y = anim ? Math.sin(t * 0.6 + r.phase) * 0.18 : 0;
-        r.headPivot.rotation.x = anim ? Math.sin(t * 0.9 + r.phase) * 0.05 : 0;
+        // clearly visible idle life: bigger bob + squash + look-around
+        const bob = anim ? Math.sin(t * 2.4 + r.phase) * 0.09 : 0;
+        r.group.position.y = baseY + bob;
+        r.body.scale.y = 0.92 + (anim ? Math.sin(t * 2.6 + r.phase) * 0.05 : 0);
+        r.headPivot.rotation.y = anim ? Math.sin(t * 0.9 + r.phase) * 0.4 + Math.sin(t * 0.27 + r.phase) * 0.25 : 0;
+        r.headPivot.rotation.x = anim ? Math.sin(t * 1.3 + r.phase) * 0.12 : 0;
+        // gentle in-place sway so they read as alive (not statues)
+        if (!isActive) r.group.rotation.y = r.baseRot + (anim ? Math.sin(t * 0.8 + r.phase) * 0.14 : 0);
 
-        // idle: look "busy" — arms forward typing/working on the console
+        // idle: typing/working on the console, with an occasional wave gesture
         if (!isActive) {
           if (anim) {
-            const tp = t * 6 + r.phase;
-            r.rightArm.rotation.x = -0.7 + Math.sin(tp) * 0.18;
-            r.leftArm.rotation.x = -0.7 + Math.sin(tp + 1.1) * 0.18;
-            r.rightArm.rotation.z = 0.12; r.leftArm.rotation.z = -0.12;
+            const tp = t * 7 + r.phase;
+            let rx = -0.85 + Math.sin(tp) * 0.38;
+            const lx = -0.85 + Math.sin(tp + 1.0) * 0.38;
+            let rz = 0.16; const lz = -0.16;
+            const cyc = (t * 0.4 + r.phase * 1.7) % 7; // ~every 7s this robot waves
+            if (cyc < 1.1) { rx = 0; rz = -1.5 - Math.abs(Math.sin(t * 9)) * 0.5; }
+            r.rightArm.rotation.set(rx, 0, rz);
+            r.leftArm.rotation.set(lx, 0, lz);
           } else {
             r.rightArm.rotation.set(0, 0, 0); r.leftArm.rotation.set(0, 0, 0);
           }
