@@ -79,26 +79,23 @@ export function buildSnoonuCsv(products: ExportProduct[], status: StatusMap): st
 // source shared by the in-app export button and scripts/export_talabat.mjs).
 // See buildTalabatRows()/rowsToCsv() there.
 
-// --- 4) Rafeeq — REAL platform import schema (40 columns, matches a Rafeeq
-// PRODUCTS_DUMP export so the file imports straight back). EN + AR, images, and
-// category id/arabic mapped from Rafeeq's own category list. ------------------
+// --- 4) Rafeeq — REAL upload template the store uses (10 columns + an Arabic
+// sub-header row). IMAGE NAME = the product's SKU (image base name). Category
+// Arabic is mapped from Rafeeq's own category list. -------------------------
 export const RAFEEQ_HEADERS = [
-  "category_id", "category_name_english", "category_name_arabic", "category_status",
-  "subcategory_id", "subcategory_name_english", "subcategory_name_arabic", "subcategory_status",
-  "subsubcategory_id", "subsubcategory_name_english", "subsubcategory_name_arabic", "subsubcategory_status",
-  "product_id", "product_name_english", "product_name_arabic",
-  "product_description_english", "product_description_arabic",
-  "product_status", "product_availability", "active", "product_price", "barcode", "pos_id",
-  "product_preparation_time", "product_image", "groups", "group_id", "group_name_english",
-  "group_name_arabic", "max_selection", "min_selection", "free_selection", "group_status",
-  "group_sort_order", "group_design_type", "option_id", "option_name_english",
-  "option_name_arabic", "option_price", "option_sort_order",
+  "CATEGORY - ENGLISH", "CATEGORY - ARABIC", "SUBCATEGORY - ENGLISH", "SUBCATEGORY - ARABIC",
+  "PRODUCT NAME - ENGLISH", "PRODUCT NAME - ARABIC", "PRICE",
+  "DESCRIPTION - ENGLISH", "DESCRIPTION - ARABIC", "IMAGE NAME",
+];
+// Row 2 in the template: Arabic translation of each header.
+const RAFEEQ_SUBHEADER = [
+  "الفئة-اللغة الإنجليزية", "الفئة-اللغة العربية", "الفئة الفرعية-اللغة الإنجليزية",
+  "الفئة الفرعية-اللغة العربية", "اسم المنتج-اللغة الإنجليزية", "اسم المنتج-اللغة العربية",
+  "السعر", "الوصف-اللغة الإنجليزية", "الوصف -اللغة العربية", "اسم الصورة",
 ];
 
-// Rafeeq's own categories (EN → {id, AR}), taken from a Rafeeq export. Lets the
-// generated file carry the correct category_id + Arabic name for known
-// categories; unknown (new) categories get a blank id and must be created in
-// Rafeeq first.
+// Rafeeq's own categories (EN → {id, AR}), taken from a Rafeeq export. Used to
+// fill the Arabic category name; unknown categories must be created in Rafeeq.
 export const RAFEEQ_CATEGORIES: Record<string, { id: number; ar: string }> = {
   "Masks": { id: 3708630, ar: "الأقنعة" },
   "Face Care": { id: 3708631, ar: "العناية بالوجه" },
@@ -117,23 +114,18 @@ export const RAFEEQ_CATEGORIES: Record<string, { id: number; ar: string }> = {
   "Hand Care": { id: 3708642, ar: "العناية باليدين" },
 };
 
-export function buildRafeeqCsv(products: ExportProduct[], status: StatusMap): string {
+// `status` is unused in this template (Rafeeq has no per-row status column) but
+// kept for a consistent builder signature.
+export function buildRafeeqCsv(products: ExportProduct[], _status: StatusMap): string {
   const rows = products.map((p) => {
     const cat = RAFEEQ_CATEGORIES[(p.main_category ?? "").trim()];
-    const active = status[p.id] === "Active" ? 1 : 1; // export full catalog as listable
     return [
-      cat?.id ?? "", p.main_category ?? "", cat?.ar ?? "", 1,           // category
-      "", "ALL", "الكل", 1,                                            // subcategory
-      "", "", "", "",                                                  // subsubcategory
-      "", p.name_en ?? "", p.name_ar ?? "",                            // product id + names
-      p.description_en ?? "", p.description_ar ?? "",                  // descriptions
-      1, 1, active, p.price ?? "", p.sku ?? "", "",                    // status/price/barcode/pos
-      15, p.image_url ?? "",                                           // prep time + image
-      "", "", "", "", "", "", "", "", "", "",                          // groups
-      "", "", "", "", "",                                              // options
+      p.main_category ?? "", cat?.ar ?? "", p.sub_category ?? "", "",
+      p.name_en ?? "", p.name_ar ?? "", p.price ?? "",
+      p.description_en ?? "", p.description_ar ?? "", p.sku ?? "",
     ];
   });
-  return toCsv(RAFEEQ_HEADERS, rows);
+  return toCsv(RAFEEQ_HEADERS, [RAFEEQ_SUBHEADER, ...rows]);
 }
 
 export const CHANNEL_KEYS = ["shopify", "snoonu", "talabat", "rafeeq"] as const;
