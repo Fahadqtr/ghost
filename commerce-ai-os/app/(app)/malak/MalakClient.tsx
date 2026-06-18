@@ -48,8 +48,8 @@ class UIErrorBoundary extends Component<{ children: React.ReactNode }, { err: Er
   }
 }
 
-// ---- Agent team -----------------------------------------------------------
-type AgentId = "malak" | "noor" | "reem" | "siraj" | "razan" | "rashid" | "latifa";
+// ---- Malak (single assistant — she does everything herself) ---------------
+type AgentId = "malak";
 
 interface AgentDef {
   id: AgentId;
@@ -59,38 +59,20 @@ interface AgentDef {
 }
 
 const AGENTS: AgentDef[] = [
-  { id: "malak", name: "ملاك", role: "المديرة العامة", color: "#4f8bff" },
-  { id: "noor", name: "نور", role: "الكتالوج", color: "#38bdf8" },
-  { id: "reem", name: "ريم", role: "الصور", color: "#ec4899" },
-  { id: "siraj", name: "سراج", role: "المزامنة والمنصّات", color: "#22d3ee" },
-  { id: "razan", name: "رزان", role: "الأسعار والمخزون", color: "#34d399" },
-  { id: "rashid", name: "راشد", role: "التسويق والتقارير", color: "#fbbf24" },
-  { id: "latifa", name: "لطيفة", role: "العملاء", color: "#fb7185" },
+  { id: "malak", name: "ملاك", role: "المديرة العامة — تسوّي كل شي", color: "#4f8bff" },
 ];
 
-// The 8 specialists shown on the rail (Malak herself is the orb).
-const RAIL = AGENTS.filter((a) => a.id !== "malak");
-const agentById = (id: string): AgentDef => AGENTS.find((a) => a.id === id) ?? AGENTS[0];
+const RAIL: AgentDef[] = []; // no team rail anymore
+const agentById = (_id: string): AgentDef => AGENTS[0];
 
-// Wake-word routing for hands-free mode: detect a called agent's name anywhere
-// in the spoken phrase (tolerant of common spelling variants from the speech
-// recognizer). Returns the matched agent id, or null when no name is heard.
-const AGENT_NAME_PATTERNS: { id: AgentId; re: RegExp }[] = [
-  { id: "malak", re: /ملاك|ملك/ },
-  { id: "noor", re: /نور/ },
-  { id: "reem", re: /ريم|ريما/ },
-  { id: "siraj", re: /سراج|سيراج/ },
-  { id: "razan", re: /رزان|روزان/ },
-  { id: "rashid", re: /راشد|رشيد/ },
-  { id: "latifa", re: /لطيفة|لطيفه/ },
-];
+// Wake-word for hands-free mode: only "ملاك" now (single assistant).
+const WAKE_RE = /ملاك|ملك/;
 function detectCalledAgent(text: string): AgentId | null {
-  for (const a of AGENT_NAME_PATTERNS) if (a.re.test(text)) return a.id;
-  return null;
+  return WAKE_RE.test(text) ? "malak" : null;
 }
-// Remove the wake word / agent name (and a leading "يا") to see whether the
-// caller actually said a command, or only the name (e.g. just "يا ملاك").
-const STRIP_NAMES_RE = /\b(يا)\b|ملاك|ملك|نور|ريم|ريما|سراج|سيراج|رزان|روزان|راشد|رشيد|لطيفة|لطيفه/g;
+// Remove the wake word (and a leading "يا") to see whether the caller said a
+// command, or only the wake word (e.g. just "يا ملاك").
+const STRIP_NAMES_RE = /\b(يا)\b|ملاك|ملك/g;
 function commandAfterWake(text: string): string {
   return text.replace(STRIP_NAMES_RE, " ").replace(/\s+/g, " ").trim();
 }
@@ -622,7 +604,7 @@ function ImageRequestPanel({
 function briefSummary(d: any): string {
   const greet = new Date().getHours() < 12 ? "صباح الخير" : "مساء الخير";
   return (
-    `مرحبا، معاك راشد من قسم التقارير. ${greet} فهد. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
+    `${greet} فهد، معاك ملاك. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
     `الأولوية اليوم ${d.priority}.`
   );
 }
@@ -1153,11 +1135,11 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         const res = await fetch("/api/malak/briefing");
         const d = await res.json();
         if (!d || d.error) return;
-        setActiveAgent("rashid");
+        setActiveAgent("malak");
         setPanel({ type: "briefing", item: d });
         // Best-effort voice (may be blocked by autoplay until first interaction;
         // the [▶ استمع] button on the card always works).
-        speak(briefSummary(d), "rashid");
+        speak(briefSummary(d), "malak");
       } catch {
         /* briefing is best-effort */
       }
@@ -1418,12 +1400,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           agents={AGENTS}
           activeAgent={activeAgent}
           state={state}
-          onSelect={(id) => {
-            const ag = id as AgentId;
-            setActiveAgent(ag);
-            setDirectAgent(ag);
-            directAgentRef.current = ag;
-          }}
+          onSelect={() => { unlockAudio(); inputRef.current?.focus(); }}
         />
         <button
           type="button"
@@ -1471,75 +1448,6 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         @keyframes eqbar { 0%,100%{transform:scaleY(0.35)} 50%{transform:scaleY(1)} }
       `}</style>
 
-      {/* Agent rail (tap to talk) */}
-      <div className={`flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${fsActive ? "shrink-0" : ""}`}>
-        {RAIL.map((a) => {
-          const on = a.id === activeAgent;
-          return (
-            <button
-              key={a.id}
-              onClick={() => {
-                const ag = a.id as AgentId;
-                setActiveAgent(ag);
-                setDirectAgent(ag);
-                directAgentRef.current = ag;
-              }}
-              className={`flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-2 py-1.5 transition ${
-                on ? "bg-white shadow-sm" : "opacity-60 hover:opacity-100"
-              }`}
-              style={on ? { boxShadow: `0 0 0 1px ${a.color}66, 0 0 14px ${a.color}44` } : undefined}
-            >
-              <span
-                className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold"
-                style={{ background: on ? a.color : `${a.color}33`, color: on ? "#0b1020" : a.color }}
-              >
-                {a.name.slice(0, 1)}
-              </span>
-              <span className="text-[10px] font-medium leading-none text-slate-600">{a.name}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Agent card (when an agent is selected) */}
-      {directAgent ? (
-        <div
-          className={`flex items-center gap-3 rounded-2xl border p-3 ${fsActive ? "shrink-0" : ""}`}
-          style={{ borderColor: `${agentById(directAgent).color}55`, background: `${agentById(directAgent).color}14` }}
-        >
-          <span
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-bold"
-            style={{ background: agentById(directAgent).color, color: "#0b1020" }}
-          >
-            {agentById(directAgent).name.slice(0, 1)}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-slate-800">{agentById(directAgent).name}</p>
-            <p className="truncate text-[11px] text-slate-500">
-              {agentById(directAgent).role} · آخر مهمة: لا توجد مهام بعد
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              unlockAudio();
-              const a = agentById(directAgent);
-              send(`معك ${a.name}؟ عطني ملخص سريع عن وضع ${a.role} وأهم نقطة تحتاج تصرّف.`);
-              scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-            }}
-            className="shrink-0 rounded-full px-3 py-1.5 text-[12px] font-bold text-[#0b1020]"
-            style={{ background: agentById(directAgent).color }}
-          >
-            تشغيل
-          </button>
-          <button
-            onClick={() => { inputRef.current?.focus(); scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }}
-            className="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[12px] text-slate-600 hover:bg-slate-50"
-          >
-            التفاصيل
-          </button>
-        </div>
-      ) : null}
-
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
           the rest of the space and nothing scrolls the page. */}
@@ -1549,7 +1457,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
         {turns.length === 0 && !typed && panel?.type !== "briefing" ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-slate-500">
-            أهلًا فهد 👋 أنا ملاك وفريقي جاهزين. اسألني عن الكتالوج، الأسعار، أو خلّني أكتب لك محتوى.
+            أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.
           </div>
         ) : null}
 
@@ -1748,7 +1656,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
                 }}
                 onGenerated={(p) => setPanel(p)}
                 onQuick={(q) => { setPanel(null); send(q); }}
-                onListen={(text) => { unlockAudio(); speak(text, "rashid"); }}
+                onListen={(text) => { unlockAudio(); speak(text, "malak"); }}
               />
             </div>
           </div>
