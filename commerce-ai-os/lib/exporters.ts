@@ -6,6 +6,7 @@ export interface ExportProduct {
   id: string;
   sku: string | null;
   snoonu_id: string | null;
+  rafeeq_product_id: string | null; // Rafeeq's own product id — SEPARATE per platform
   barcode: string | null;
   name_en: string | null;
   name_ar: string | null;
