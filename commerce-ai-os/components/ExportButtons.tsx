@@ -1,12 +1,11 @@
 // Per-channel export buttons. Each links to a server route that pulls the live
-// DB and streams a real CSV download (all products). Phase 1: structure-only —
-// stock/images/brand left blank; nothing is sent to any marketplace.
+// DB and streams a real download (all products). Rafeeq is highlighted as the
+// ready-to-upload file (real 10-column template + image name + Arabic category).
 
 const EXPORTS = [
   { key: "shopify", label: "Shopify CSV" },
   { key: "snoonu", label: "Snoonu masterlist" },
   { key: "talabat", label: "Talabat split-CSV" },
-  { key: "rafeeq", label: "Rafeeq CSV" },
 ] as const;
 
 // Images are downloaded in batches so each ZIP finishes well under the
@@ -25,12 +24,28 @@ export default function ExportButtons({ imageCount = 0 }: { imageCount?: number 
   return (
     <div className="card space-y-3">
       <div>
-        <h3 className="text-sm font-semibold text-ink">Export per channel</h3>
+        <h3 className="text-sm font-semibold text-ink">التصدير لكل منصة</h3>
         <p className="text-xs text-muted">
-          Generates a real CSV from the live database (all products). Downloads locally —
-          nothing is sent to any marketplace. Stock & images are left blank for now.
+          يولّد ملفًا حيًّا من قاعدة البيانات (كل المنتجات). ينزّل على جهازك — ما يُرسل لأي منصة.
         </p>
       </div>
+
+      {/* Rafeeq — the ready-to-upload file (real template + images) */}
+      <div className="rounded-xl border border-brand/30 bg-brand-light/40 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h4 className="text-sm font-bold text-ink">🟢 رفيق — ملف الرفع الجاهز</h4>
+            <p className="text-xs text-muted">
+              نفس قالب رفيق بالضبط (10 أعمدة + الفئة بالعربي + اسم الصورة) — حمّله وارفعه مباشرة على رفيق.
+            </p>
+          </div>
+          <a href="/api/export/rafeeq" className="btn-primary shrink-0" download>
+            ⬇ تحميل ملف رفيق
+          </a>
+        </div>
+      </div>
+
+      {/* Other channels */}
       <div className="flex flex-wrap gap-2">
         {EXPORTS.map((e) => (
           <a key={e.key} href={`/api/export/${e.key}`} className="btn-ghost" download>
