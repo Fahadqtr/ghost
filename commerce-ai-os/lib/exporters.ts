@@ -80,19 +80,13 @@ export function buildSnoonuCsv(products: ExportProduct[], status: StatusMap): st
 // source shared by the in-app export button and scripts/export_talabat.mjs).
 // See buildTalabatRows()/rowsToCsv() there.
 
-// --- 4) Rafeeq — store's upload template, minus subcategory, plus BARCODE and
-// RAFEEQ ID columns. IMAGE NAME = SKU; RAFEEQ ID = rafeeq_product_id (or
-// "منتج جديد" when the product isn't on Rafeeq yet). -------------------------
+// --- 4) Rafeeq — English headers only, no subcategory; BARCODE + RAFEEQ ID
+// columns. IMAGE NAME = SKU; RAFEEQ ID = rafeeq_product_id (or "new product"
+// when the product isn't on Rafeeq yet). Exported as a formatted .xlsx. ------
 export const RAFEEQ_HEADERS = [
   "CATEGORY - ENGLISH", "CATEGORY - ARABIC",
   "PRODUCT NAME - ENGLISH", "PRODUCT NAME - ARABIC", "PRICE",
   "DESCRIPTION - ENGLISH", "DESCRIPTION - ARABIC", "IMAGE NAME", "BARCODE", "RAFEEQ ID",
-];
-// Row 2 in the template: Arabic translation of each header.
-const RAFEEQ_SUBHEADER = [
-  "الفئة-اللغة الإنجليزية", "الفئة-اللغة العربية",
-  "اسم المنتج-اللغة الإنجليزية", "اسم المنتج-اللغة العربية", "السعر",
-  "الوصف-اللغة الإنجليزية", "الوصف -اللغة العربية", "اسم الصورة", "الباركود", "معرّف رفيق",
 ];
 
 // Rafeeq's own categories (EN → {id, AR}), taken from a Rafeeq export. Used to
@@ -115,19 +109,26 @@ export const RAFEEQ_CATEGORIES: Record<string, { id: number; ar: string }> = {
   "Hand Care": { id: 3708642, ar: "العناية باليدين" },
 };
 
-// `status` is unused (Rafeeq has no per-row status column) but kept for a
-// consistent builder signature.
-export function buildRafeeqCsv(products: ExportProduct[], _status: StatusMap): string {
+// Array-of-arrays (header + rows) for the Rafeeq export — used to build the xlsx.
+export function buildRafeeqAoa(products: ExportProduct[]): (string | number)[][] {
   const rows = products.map((p) => {
     const cat = RAFEEQ_CATEGORIES[(p.main_category ?? "").trim()];
     return [
       p.main_category ?? "", cat?.ar ?? "",
       p.name_en ?? "", p.name_ar ?? "", p.price ?? "",
       p.description_en ?? "", p.description_ar ?? "", p.sku ?? "",
-      p.barcode ?? "", p.rafeeq_product_id ?? "منتج جديد",
-    ];
+      p.barcode ?? "", p.rafeeq_product_id ?? "new product",
+    ] as (string | number)[];
   });
-  return toCsv(RAFEEQ_HEADERS, [RAFEEQ_SUBHEADER, ...rows]);
+  return [RAFEEQ_HEADERS, ...rows];
+}
+
+// Column widths (chars) for a tidy sheet.
+export const RAFEEQ_COL_WIDTHS = [22, 22, 34, 34, 8, 46, 46, 14, 18, 14];
+
+// `status` unused (no per-row status column) — kept for a consistent signature.
+export function buildRafeeqCsv(products: ExportProduct[], _status: StatusMap): string {
+  return toCsv(RAFEEQ_HEADERS, buildRafeeqAoa(products).slice(1));
 }
 
 export const CHANNEL_KEYS = ["shopify", "snoonu", "talabat", "rafeeq"] as const;
