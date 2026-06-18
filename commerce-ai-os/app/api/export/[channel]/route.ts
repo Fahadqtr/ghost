@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createClient } from "@/lib/supabase/server";
 import {
-  buildShopifyCsv, buildSnoonuCsv, buildRafeeqCsv,
+  buildShopifyCsv, buildSnoonuCsv, buildRafeeqAoa, RAFEEQ_COL_WIDTHS,
   CHANNEL_KEYS, type ChannelKey, type ExportProduct,
   type ExportVariant, type StatusMap,
 } from "@/lib/exporters";
@@ -110,7 +110,27 @@ export async function GET(
     } else if (channel === "snoonu") {
       csv = buildSnoonuCsv(products, status);
     } else {
-      csv = buildRafeeqCsv(products, status);
+      // Rafeeq → a formatted .xlsx (tidy column widths, bold header, autofilter).
+      const require = createRequire(import.meta.url);
+      const XLSX = require("xlsx");
+      const aoa = buildRafeeqAoa(products);
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = RAFEEQ_COL_WIDTHS.map((w) => ({ wch: w }));
+      ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+      const range = XLSX.utils.decode_range(ws["!ref"]);
+      ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: range.e.r, c: range.e.c } }) };
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Rafeeq");
+      const buf: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+      const date = new Date().toISOString().slice(0, 10);
+      return new Response(new Uint8Array(buf), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="rafeeq_export_${date}.xlsx"`,
+          "Cache-Control": "no-store",
+        },
+      });
     }
 
     const date = new Date().toISOString().slice(0, 10);
