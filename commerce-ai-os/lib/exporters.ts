@@ -80,19 +80,19 @@ export function buildSnoonuCsv(products: ExportProduct[], status: StatusMap): st
 // source shared by the in-app export button and scripts/export_talabat.mjs).
 // See buildTalabatRows()/rowsToCsv() there.
 
-// --- 4) Rafeeq — REAL upload template the store uses (10 columns + an Arabic
-// sub-header row). IMAGE NAME = the product's SKU (image base name). Category
-// Arabic is mapped from Rafeeq's own category list. -------------------------
+// --- 4) Rafeeq — store's upload template, minus subcategory, plus BARCODE and
+// RAFEEQ ID columns. IMAGE NAME = SKU; RAFEEQ ID = rafeeq_product_id (or
+// "منتج جديد" when the product isn't on Rafeeq yet). -------------------------
 export const RAFEEQ_HEADERS = [
-  "CATEGORY - ENGLISH", "CATEGORY - ARABIC", "SUBCATEGORY - ENGLISH", "SUBCATEGORY - ARABIC",
+  "CATEGORY - ENGLISH", "CATEGORY - ARABIC",
   "PRODUCT NAME - ENGLISH", "PRODUCT NAME - ARABIC", "PRICE",
-  "DESCRIPTION - ENGLISH", "DESCRIPTION - ARABIC", "IMAGE NAME",
+  "DESCRIPTION - ENGLISH", "DESCRIPTION - ARABIC", "IMAGE NAME", "BARCODE", "RAFEEQ ID",
 ];
 // Row 2 in the template: Arabic translation of each header.
 const RAFEEQ_SUBHEADER = [
-  "الفئة-اللغة الإنجليزية", "الفئة-اللغة العربية", "الفئة الفرعية-اللغة الإنجليزية",
-  "الفئة الفرعية-اللغة العربية", "اسم المنتج-اللغة الإنجليزية", "اسم المنتج-اللغة العربية",
-  "السعر", "الوصف-اللغة الإنجليزية", "الوصف -اللغة العربية", "اسم الصورة",
+  "الفئة-اللغة الإنجليزية", "الفئة-اللغة العربية",
+  "اسم المنتج-اللغة الإنجليزية", "اسم المنتج-اللغة العربية", "السعر",
+  "الوصف-اللغة الإنجليزية", "الوصف -اللغة العربية", "اسم الصورة", "الباركود", "معرّف رفيق",
 ];
 
 // Rafeeq's own categories (EN → {id, AR}), taken from a Rafeeq export. Used to
@@ -115,15 +115,16 @@ export const RAFEEQ_CATEGORIES: Record<string, { id: number; ar: string }> = {
   "Hand Care": { id: 3708642, ar: "العناية باليدين" },
 };
 
-// `status` is unused in this template (Rafeeq has no per-row status column) but
-// kept for a consistent builder signature.
+// `status` is unused (Rafeeq has no per-row status column) but kept for a
+// consistent builder signature.
 export function buildRafeeqCsv(products: ExportProduct[], _status: StatusMap): string {
   const rows = products.map((p) => {
     const cat = RAFEEQ_CATEGORIES[(p.main_category ?? "").trim()];
     return [
-      p.main_category ?? "", cat?.ar ?? "", p.sub_category ?? "", "",
+      p.main_category ?? "", cat?.ar ?? "",
       p.name_en ?? "", p.name_ar ?? "", p.price ?? "",
       p.description_en ?? "", p.description_ar ?? "", p.sku ?? "",
+      p.barcode ?? "", p.rafeeq_product_id ?? "منتج جديد",
     ];
   });
   return toCsv(RAFEEQ_HEADERS, [RAFEEQ_SUBHEADER, ...rows]);
