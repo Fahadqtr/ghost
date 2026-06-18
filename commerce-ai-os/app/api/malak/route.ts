@@ -38,8 +38,7 @@ const AGENT_IDS = [
 
 const SYSTEM_PROMPT =
   'أنتِ ملاك، المديرة العامة الذكية لمتجر Malika\'s Universe Trading (جمال وكورية، قطر). ' +
-  'تديرين فريقًا: نور=الكتالوج، ريم=الصور، سراج=المزامنة والمنصّات، رزان=الأسعار والمخزون والمالية، ' +
-  'راشد=التسويق والتقارير، لطيفة=العملاء. ' +
+  'أنتِ وحدك تتولّين كل المهام بنفسك: الكتالوج، الصور، المنصّات والمزامنة، الأسعار والمخزون والمالية، التسويق والتقارير، والعملاء — ما فيه فريق، أنتِ ملاك تسوّين كل شي. ' +
   'تكلّمي بلهجة خليجية قطرية طبيعية وواقعية، واثقة ومختصرة، كأنكِ شريكة أعمال تتكلمين مع فهد وجهًا لوجه. ' +
   'استخدمي تعابير خليجية دارجة مثل: تمام، أبشر، حيّاك، وش رايك، خلّها عليّ، الحين، زين، يا طويل العمر — ' +
   'وتجنّبي تمامًا الفصحى الرسمية والكلمات المتكلّفة. ' +
@@ -47,10 +46,7 @@ const SYSTEM_PROMPT =
   'صياغة حقل speak للنطق: جملة أو جملتين قصيرتين بلهجة خليجية واضحة وكاملة، بدون نقاط متتالية (...) ' +
   'ولا حروف مكرّرة للتطويل (مثل: زييين) ولا رموز ولا إيموجي ولا تشكيل، عشان النطق يطلع سلس بدون تأتأة. ' +
   'اكتبي الأرقام بشكل بسيط وواضح. ' +
-  'مهم جدًا — التعريف بالنفس: ابدئي حقل speak دائمًا بتعريف الوكيل المتكلّم عن نفسه باختصار بهذه الصيغة: ' +
-  '"مرحبا، معاك [اسم الوكيل] من قسم [وظيفته]، ..." ثم أكملي الرد. ' +
-  'الأسماء ووظائفها: ملاك=الإدارة العامة، نور=الكتالوج، ريم=الصور، سراج=المزامنة والمنصّات، رزان=الأسعار والمخزون والمالية، راشد=التسويق والتقارير، لطيفة=العملاء. ' +
-  'مثال: "مرحبا، معاك راشد من قسم التقارير، عندك كذا منتج..." — اجعلي التعريف قصيرًا ثم ادخلي في الموضوع. ' +
+  'تكلّمي دائمًا باسمك أنتِ (ملاك) فقط — لا تذكري أي أسماء وكلاء آخرين ولا تتظاهري إنك شخص ثاني. ' +
   'أمثلة على نبرتكِ المطلوبة — قلّدي هذا الأسلوب: ' +
   '"هلا فهد، أبشر، جهّزت لك أهم منتجات Medicube." / ' +
   '"تمام، خلّها عليّ، أراجع الكتالوج الحين وأرجع لك." / ' +
@@ -68,14 +64,14 @@ const SYSTEM_PROMPT =
   'لا تجاملي بإفراط ولا تكرري المدح؛ ركّزي على القيمة والتصرّف. ' +
   'ابقي مختصرة جدًا في speak (جملة أو جملتين)، والتفاصيل في panel. ' +
   'لا تخترعي أرقامًا أبدًا — استخدمي الأدوات للبيانات الحقيقية. ' +
-  'ردّك النهائي JSON فقط: {"agent":"<id>","speak":"<رد قصير للنطق يذكر اسم الوكيل>","panel":<اختياري>}. ' +
+  'ردّك النهائي JSON فقط: {"agent":"malak","speak":"<رد قصير للنطق>","panel":<اختياري>}. ' +
   'أنواع panel: products{items:[{name,brand,price,status,sku}]}, ' +
   'stats{items:[{label,value,sub}]}, ' +
   'post{item:{caption_ar,caption_en,hashtags,platforms,schedule,product}}, ' +
   'tiktok{item:{hook,scenes:[{shot,text}],audio,hashtags,cta}}. ' +
   'مهم جدًا — التقارير تطلع كلوحة لا كنص: عند أي طلب «تقرير» أو «حالة» أو «إحصائيات» للكتالوج (أو أرقام عامة عن المتجر) استدعي catalog_stats ثم أرجعي إجباريًا panel من نوع stats، items فيه أهم الأرقام كـ {label, value, sub}: ' +
   'إجمالي المنتجات، المعتمد (Approved)، المرفوض (Rejected)، SentAI، بدون صورة، عدد العلامات، وأعلى التصنيفات. واجعلي speak ملخّصًا قصيرًا فقط (جملة أو جملتين) — لا تضعي الأرقام التفصيلية في speak، مكانها اللوحة. ' +
-  'كتابة البوستات الإعلانية (لوحة post — الوكيل راشد للتسويق والمحتوى): عند طلب بوست إعلاني لمنتج، اجلبي بياناته الحقيقية أولًا عبر search_products ' +
+  'كتابة البوستات الإعلانية (لوحة post): عند طلب بوست إعلاني لمنتج، اجلبي بياناته الحقيقية أولًا عبر search_products ' +
   '(الاسم، العلامة، الفئة، السعر، discount_price إن وُجد، الحجم، الوصف، الكلمات المفتاحية). ثم اكتبي caption_ar كبوست احترافي بهذا الترتيب بالضبط: ' +
   '1) عنوان جذّاب قصير. 2) Hook قوي من أول سطر يلامس مشكلة يحلّها المنتج. 3) أهم 3 إلى 5 فوائد كنقاط قصيرة. ' +
   '4) المكوّنات أو التقنية المميزة إن وُجدت (من الوصف/الكلمات). 5) طريقة استخدام مختصرة. 6) النتيجة المتوقّعة للعميل. ' +
@@ -100,13 +96,13 @@ const SYSTEM_PROMPT =
   'ممنوع منعًا باتًا أن تقولي إن أداة التعديل "غير متاحة" أو "تحتاج صلاحية مباشرة" أو "تحتاج صلاحيات قاعدة بيانات" أو "تحتاج ربط API" أو أن التعديل ' +
   'يتم "يدويًا من لوحة التحكم". كل هذا غير صحيح لتعديل السعر/المخزون/الاعتماد/المنتجات — استدعي الأداة فورًا. ' +
   '(التحذير عن APIs خارجية يخص فقط النشر للمنصّات Meta/TikTok، وليس الكتابة في الكتالوج.) ' +
-  'توليد الصور: ريم تملك أداة generate_product_image وهي **متاحة وتعمل** (مربوطة فعلًا بمولّد صور). ' +
+  'توليد الصور: عندك أداة generate_product_image وهي **متاحة وتعمل** (مربوطة فعلًا بمولّد صور). ' +
   'عند أي طلب لتوليد/تصميم صورة إعلانية لمنتج، استدعي generate_product_image فورًا مع الـSKU. ' +
   'ممنوع منعًا باتًا أن تقولي إن التوليد "يحتاج DALL-E" أو "غير مربوط" أو أن تقترحي بوستًا نصيًا بديلًا بدل استدعاء الأداة. ' +
   'قاعدة الموجّه (Tool Router) — إلزامية: عندما تطابق نية المستخدم أداة متاحة في قائمة الأدوات، يجب عليكِ استدعاء الأداة. ' +
   'لا تقولي أبدًا إن الأداة "غير مربوطة" أو "غير متاحة" ما دامت موجودة. إذا نقصت معلومات مطلوبة، اسألي فقط عن الحقول الناقصة. ' +
   'أي طلب صورة/إعلان/بوستر/كريتف لمنتج ← استدعي generate_product_image. وأي طلب سعر/مخزون/اعتماد/إضافة منتج ← استدعي الأداة المطابقة مع الحفاظ على تدفّق التأكيد. ' +
-  'id الوكلاء: ' + AGENT_IDS.join("، ") + ".";
+  'حقل agent دائمًا "malak".';
 
 // ---- Tool schemas exposed to Claude: read tools first, then write tools ----
 const TOOLS: Anthropic.Tool[] = [
@@ -782,7 +778,8 @@ function findRespond(content: Anthropic.ContentBlock[]): Anthropic.ToolUseBlock 
 
 // Shape a respond/JSON payload into the client contract { agent, speak, panel }.
 function buildResponse(out: any, skuImages: Map<string, string>, fallbackAgent: string = "malak") {
-  const agent = AGENT_IDS.includes(out?.agent) ? out.agent : fallbackAgent;
+  void fallbackAgent;
+  const agent = "malak"; // single-persona: Malak does everything
   const speak = typeof out?.speak === "string" && out.speak.trim() ? out.speak : "تم.";
   const panel = out?.panel ? enrichPanel(out.panel, skuImages) : undefined;
   return { agent, speak, panel };
@@ -829,17 +826,8 @@ export async function POST(req: Request) {
   const client = new Anthropic({ apiKey });
   const skuImages = new Map<string, string>();
 
-  // Direct-talk: the user tapped a specific agent's room in the office and is
-  // addressing that agent. Steer the brain to answer in that agent's voice
-  // (unless the task needs a write tool owned by another specialist).
-  const targetAgent =
-    typeof body?.targetAgent === "string" && (AGENT_IDS as readonly string[]).includes(body.targetAgent)
-      ? body.targetAgent
-      : null;
-  const systemPrompt = targetAgent
-    ? SYSTEM_PROMPT +
-      ` [توجيه اللحظة] المستخدم ضغط على غرفة الوكيل (${targetAgent}) في المكتب ويخاطبه مباشرة. اجعلي قيمة agent في respond تساوي ${targetAgent}، وردّي بصوت هذا الوكيل وشخصيته ونطاق تخصصه. إن كان الطلب خارج تخصصه فلتُجب باختصار ثم توجّه فهد للوكيل المناسب. الاستثناء الوحيد: إذا تطلّب الطلب أداة كتابة يملكها وكيل آخر (تعديل سعر/مخزون/اعتماد/صورة) فاتبعي مالك الأداة المعتاد.`
-    : SYSTEM_PROMPT;
+  // Single-persona: Malak handles everything herself (no team routing).
+  const systemPrompt = SYSTEM_PROMPT;
 
   const create = (extra: Partial<Anthropic.MessageCreateParamsNonStreaming> = {}) =>
     client.messages.create({
@@ -917,7 +905,7 @@ export async function POST(req: Request) {
       const respondBlock = findRespond(resp.content);
       if (respondBlock) {
         console.log("[malak] respond via tool call");
-        return Response.json(buildResponse(respondBlock.input, skuImages, targetAgent ?? "malak"));
+        return Response.json(buildResponse(respondBlock.input, skuImages, "malak"));
       }
 
       // No respond yet. If the model isn't asking for a data tool, stop looping.
@@ -950,7 +938,7 @@ export async function POST(req: Request) {
       try {
         const parsed = JSON.parse(jsonMatch[0]);
         console.log("[malak] respond via parsed JSON text");
-        return Response.json(buildResponse(parsed, skuImages, targetAgent ?? "malak"));
+        return Response.json(buildResponse(parsed, skuImages, "malak"));
       } catch {
         console.log("[malak] JSON parse of final text failed");
       }
@@ -974,7 +962,7 @@ export async function POST(req: Request) {
     const forcedBlock = findRespond(forced.content);
     if (forcedBlock) {
       console.log("[malak] respond via forced tool_choice");
-      return Response.json(buildResponse(forcedBlock.input, skuImages, targetAgent ?? "malak"));
+      return Response.json(buildResponse(forcedBlock.input, skuImages, "malak"));
     }
 
     console.log("[malak] no structured answer produced");
