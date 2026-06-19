@@ -101,7 +101,10 @@ export const NAV_GROUPS = [
       { href: "/agents", label: "الوكلاء", icon: "🤖" },
     ],
   },
-  { title: "المنتجات", items: [{ href: "/products", label: "الكتالوج", icon: "📦" }] },
+  { title: "المنتجات", items: [
+    { href: "/products", label: "الكتالوج", icon: "📦" },
+    { href: "/catalog/health", label: "صحّة الكتالوج", icon: "🩺" },
+  ] },
   {
     title: "المنصات",
     items: [
