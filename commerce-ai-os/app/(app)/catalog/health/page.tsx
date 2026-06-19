@@ -4,20 +4,12 @@
  * Catalog Health — صفحة صحّة الكتالوج
  * Malak Commerce OS
  *
- * الهدف: لوحة وحدة تكشف كل ثغرات الكتالوج قبل أي أتمتة.
- * تطبّق قاعدة المشروع: "لا أتمتة قبل كتالوج 100% نظيف".
- *
- * التركيب:
- *   1. انسخ هذا الملف إلى:
- *        commerce-ai-os/app/(app)/catalog/health/page.tsx
- *   2. أضف رابط التنقّل في lib/constants.ts تحت قسم Catalog:
- *        { label: 'صحّة الكتالوج', href: '/catalog/health', icon: 'Activity' }
- *   3. الصفحة تقرأ مباشرة من Supabase (read-only) — ما تكتب أي شي.
- *
- * يعتمد على السكيما الفعلية:
- *   products(sku, barcode, name_ar, name_en, image_url, price,
- *            snoonu_id, rafeeq_product_id, main_category, approval)
- *   channel_products(product_id, channel_id, channel_price, channel_status)
+ * قراءة فقط (read-only) — تكشف ثغرات الكتالوج قبل أي أتمتة.
+ * مبنية على السكيما الحقيقية لقاعدة البيانات:
+ *   products(id, master_sku, barcode, product_name_en, product_name_ar,
+ *            image_url, price, snoonu_sku, category_id, product_status,
+ *            readiness_score, deleted_at)
+ *   platform_products(platform, price, matched_master_sku)  — مرتبط على master_sku
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -25,38 +17,32 @@ import { createClient } from '@/lib/supabase/client'
 
 // ---------- الأنواع ----------
 type Product = {
-  id: string
-  sku: string | null
+  id: number
+  master_sku: string | null
   barcode: string | null
-  name_ar: string | null
-  name_en: string | null
+  product_name_en: string | null
+  product_name_ar: string | null
   image_url: string | null
   price: number | null
-  snoonu_id: string | null
-  rafeeq_product_id: string | null
-  main_category: string | null
-  approval: string | null
+  snoonu_sku: string | null
+  category_id: number | null
+  product_status: string | null
 }
 
-type ChannelProduct = {
-  product_id: string
-  channel_id: string
-  channel_price: number | null
-  channel_status: string | null
+type PlatformProduct = {
+  platform: string | null
+  price: number | null
+  matched_master_sku: string | null
 }
 
 type IssueKey =
   | 'no_image'
-  | 'no_barcode'
   | 'no_price'
-  | 'zero_price'
-  | 'no_name_ar'
-  | 'no_category'
-  | 'dup_sku'
-  | 'no_snoonu'
-  | 'no_rafeeq'
+  | 'dup_master_sku'
   | 'price_mismatch'
-  | 'not_approved'
+  | 'no_barcode'
+  | 'no_snoonu_sku'
+  | 'not_active'
 
 type IssueDef = {
   key: IssueKey
@@ -68,7 +54,7 @@ type IssueDef = {
 
 type Ctx = {
   dupSkus: Set<string>
-  cpByProduct: Map<string, ChannelProduct[]>
+  ppBySku: Map<string, PlatformProduct[]>
 }
 
 // ---------- تعريف الفحوصات ----------
@@ -81,25 +67,18 @@ const ISSUES: IssueDef[] = [
     test: (p) => !p.image_url || p.image_url.trim() === '',
   },
   {
-    key: 'zero_price',
-    label: 'سعر صفر',
-    desc: 'السعر = 0 — خطأ يطلّع المنتج مجّاني',
-    severity: 'critical',
-    test: (p) => p.price === 0,
-  },
-  {
     key: 'no_price',
     label: 'بدون سعر',
-    desc: 'price فاضي (null)',
+    desc: 'price فاضي (null) أو = 0 — خطأ يطلّع المنتج مجّاني',
     severity: 'critical',
-    test: (p) => p.price === null || p.price === undefined,
+    test: (p) => p.price === null || p.price === undefined || p.price === 0,
   },
   {
-    key: 'dup_sku',
-    label: 'SKU مكرّر',
-    desc: 'نفس الـSKU على أكثر من منتج — يخرّب المطابقة بين المنصّات',
+    key: 'dup_master_sku',
+    label: 'master_sku مكرّر',
+    desc: 'نفس الـmaster_sku على أكثر من منتج — يخرّب المطابقة بين المنصّات',
     severity: 'critical',
-    test: (p, ctx) => !!p.sku && ctx.dupSkus.has(p.sku),
+    test: (p, ctx) => !!p.master_sku && ctx.dupSkus.has(p.master_sku),
   },
   {
     key: 'price_mismatch',
@@ -108,11 +87,12 @@ const ISSUES: IssueDef[] = [
     severity: 'critical',
     test: (p, ctx) => {
       if (p.price === null) return false
-      const cps = ctx.cpByProduct.get(p.id) || []
-      return cps.some(
-        (cp) =>
-          cp.channel_price !== null &&
-          Math.abs((cp.channel_price as number) - (p.price as number)) > 0.001
+      if (!p.master_sku) return false
+      const pps = ctx.ppBySku.get(p.master_sku) || []
+      return pps.some(
+        (pp) =>
+          pp.price !== null &&
+          Math.abs((pp.price as number) - (p.price as number)) > 0.001
       )
     },
   },
@@ -124,48 +104,27 @@ const ISSUES: IssueDef[] = [
     test: (p) => !p.barcode || p.barcode.trim() === '',
   },
   {
-    key: 'no_name_ar',
-    label: 'بدون اسم عربي',
-    desc: 'name_ar فاضي — ناقص للعرض RTL',
-    severity: 'warning',
-    test: (p) => !p.name_ar || p.name_ar.trim() === '',
-  },
-  {
-    key: 'no_category',
-    label: 'بدون تصنيف',
-    desc: 'main_category فاضي',
-    severity: 'warning',
-    test: (p) => !p.main_category || p.main_category.trim() === '',
-  },
-  {
-    key: 'no_snoonu',
+    key: 'no_snoonu_sku',
     label: 'غير مربوط بسنونو',
-    desc: 'snoonu_id فاضي',
+    desc: 'snoonu_sku فاضي',
     severity: 'warning',
-    test: (p) => !p.snoonu_id || p.snoonu_id.trim() === '',
+    test: (p) => !p.snoonu_sku || p.snoonu_sku.trim() === '',
   },
   {
-    key: 'no_rafeeq',
-    label: 'غير مربوط برفيق',
-    desc: 'rafeeq_product_id فاضي',
+    key: 'not_active',
+    label: 'غير نشط',
+    desc: "product_status مو 'active' — لم يُفعّل/يُعتمد بعد",
     severity: 'warning',
-    test: (p) => !p.rafeeq_product_id || String(p.rafeeq_product_id).trim() === '',
+    test: (p) => p.product_status !== 'active',
   },
-  {
-    key: 'not_approved',
-    label: 'غير معتمد',
-    desc: 'approved = false — مسودّة لم تُعتمد بعد',
-    severity: 'warning',
-    // schema uses a text `approval` column (Approved/Rejected/SentAI/null) — not a boolean.
-    test: (p) => p.approval !== 'Approved',
-  },
+  // ملاحظة: بطاقة low_readiness أُسقطت — عمود readiness_score كله NULL حاليًا.
+  // ملاحظة: بطاقة rafeeq أُسقطت — لا يوجد عمود مقابل في السكيما الحالية.
 ]
 
 // ---------- المكوّن ----------
 export default function CatalogHealthPage() {
   const [products, setProducts] = useState<Product[]>([])
-  const [channelProducts, setChannelProducts] = useState<ChannelProduct[]>([])
-  const [channelNames, setChannelNames] = useState<Map<string, string>>(new Map())
+  const [platformProducts, setPlatformProducts] = useState<PlatformProduct[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeIssue, setActiveIssue] = useState<IssueKey | null>(null)
@@ -177,15 +136,16 @@ export default function CatalogHealthPage() {
       try {
         const supabase = createClient()
 
-        // جلب المنتجات على دفعات (تجاوز حد 1000 صف في Supabase)
+        // جلب المنتجات على دفعات (تجاوز حد 1000 صف) — نستبعد المحذوف ناعمًا
         const all: Product[] = []
         const PAGE = 1000
         for (let from = 0; ; from += PAGE) {
           const { data, error } = await supabase
             .from('products')
             .select(
-              'id, sku, barcode, name_ar, name_en, image_url, price, snoonu_id, rafeeq_product_id, main_category, approval'
+              'id, master_sku, barcode, product_name_en, product_name_ar, image_url, price, snoonu_sku, category_id, product_status'
             )
+            .is('deleted_at', null)
             .range(from, from + PAGE - 1)
           if (error) throw error
           if (!data || data.length === 0) break
@@ -193,27 +153,17 @@ export default function CatalogHealthPage() {
           if (data.length < PAGE) break
         }
 
-        const { data: cp, error: cpErr } = await supabase
-          .from('channel_products')
-          .select('product_id, channel_id, channel_price, channel_status')
-        if (cpErr) throw cpErr
-
-        // أسماء القنوات (Snoonu/Rafeeq/…) — دفاعيًا: لو الجدول/العمود مو موجود
-        // نرجع لعرض channel_id الخام بدون ما نكسر الصفحة.
-        const nameMap = new Map<string, string>()
-        try {
-          const { data: ch } = await supabase.from('channels').select('id, name')
-          for (const c of (ch as { id: string; name: string | null }[]) || []) {
-            if (c?.id != null) nameMap.set(String(c.id), c.name ?? String(c.id))
-          }
-        } catch {
-          /* fallback: channel_id */
-        }
+        // إدراجات المنصّات المرتبطة فقط (matched_master_sku != null). لو ما فيه
+        // مطابقات (حاليًا الكل null) → فرق السعر = 0.
+        const { data: pp, error: ppErr } = await supabase
+          .from('platform_products')
+          .select('platform, price, matched_master_sku')
+          .not('matched_master_sku', 'is', null)
+        if (ppErr) throw ppErr
 
         if (!cancelled) {
           setProducts(all)
-          setChannelProducts((cp as ChannelProduct[]) || [])
-          setChannelNames(nameMap)
+          setPlatformProducts((pp as PlatformProduct[]) || [])
         }
       } catch (e: any) {
         if (!cancelled) setError(e?.message || 'فشل تحميل البيانات')
@@ -226,25 +176,26 @@ export default function CatalogHealthPage() {
     }
   }, [])
 
-  // سياق الفحص (تكرار SKU + ربط المنصّات بالمنتج)
+  // سياق الفحص (تكرار master_sku + ربط المنصّات بالـmaster_sku)
   const ctx: Ctx = useMemo(() => {
     const skuCount = new Map<string, number>()
     for (const p of products) {
-      if (p.sku) skuCount.set(p.sku, (skuCount.get(p.sku) || 0) + 1)
+      if (p.master_sku) skuCount.set(p.master_sku, (skuCount.get(p.master_sku) || 0) + 1)
     }
     const dupSkus = new Set<string>()
     skuCount.forEach((n, sku) => {
       if (n > 1) dupSkus.add(sku)
     })
 
-    const cpByProduct = new Map<string, ChannelProduct[]>()
-    for (const cp of channelProducts) {
-      const arr = cpByProduct.get(cp.product_id) || []
-      arr.push(cp)
-      cpByProduct.set(cp.product_id, arr)
+    const ppBySku = new Map<string, PlatformProduct[]>()
+    for (const pp of platformProducts) {
+      if (!pp.matched_master_sku) continue
+      const arr = ppBySku.get(pp.matched_master_sku) || []
+      arr.push(pp)
+      ppBySku.set(pp.matched_master_sku, arr)
     }
-    return { dupSkus, cpByProduct }
-  }, [products, channelProducts])
+    return { dupSkus, ppBySku }
+  }, [products, platformProducts])
 
   // حساب كل المشاكل
   const counts = useMemo(() => {
@@ -262,7 +213,7 @@ export default function CatalogHealthPage() {
   const healthScore = useMemo(() => {
     if (products.length === 0) return 100
     const critKeys = ISSUES.filter((i) => i.severity === 'critical').map((i) => i.key)
-    const dirty = new Set<string>()
+    const dirty = new Set<number>()
     for (const k of critKeys) {
       for (const p of counts.get(k) || []) dirty.add(p.id)
     }
@@ -270,7 +221,7 @@ export default function CatalogHealthPage() {
   }, [products, counts])
 
   const criticalTotal = useMemo(() => {
-    const ids = new Set<string>()
+    const ids = new Set<number>()
     for (const def of ISSUES) {
       if (def.severity !== 'critical') continue
       for (const p of counts.get(def.key) || []) ids.add(p.id)
@@ -285,30 +236,30 @@ export default function CatalogHealthPage() {
       const q = search.trim().toLowerCase()
       list = list.filter(
         (p) =>
-          (p.sku || '').toLowerCase().includes(q) ||
-          (p.name_ar || '').toLowerCase().includes(q) ||
-          (p.name_en || '').toLowerCase().includes(q)
+          (p.master_sku || '').toLowerCase().includes(q) ||
+          (p.product_name_ar || '').toLowerCase().includes(q) ||
+          (p.product_name_en || '').toLowerCase().includes(q)
       )
     }
     return list
   }, [activeIssue, counts, search])
 
-  // صفوف فرق السعر لكل منتج: القنوات اللي سعرها يخالف سعر النظام فقط
+  // صفوف فرق السعر لكل منتج: المنصّات اللي سعرها يخالف سعر النظام فقط
   const mismatchRows = (p: Product) => {
-    if (p.price === null) return []
-    const cps = ctx.cpByProduct.get(p.id) || []
-    return cps
+    if (p.price === null || !p.master_sku) return []
+    const pps = ctx.ppBySku.get(p.master_sku) || []
+    return pps
       .filter(
-        (cp) =>
-          cp.channel_price !== null &&
-          Math.abs((cp.channel_price as number) - (p.price as number)) > 0.001
+        (pp) =>
+          pp.price !== null &&
+          Math.abs((pp.price as number) - (p.price as number)) > 0.001
       )
-      .map((cp) => {
-        const delta = Math.round(((cp.channel_price as number) - (p.price as number)) * 100) / 100
+      .map((pp) => {
+        const delta = Math.round(((pp.price as number) - (p.price as number)) * 100) / 100
         return {
-          name: channelNames.get(String(cp.channel_id)) || String(cp.channel_id),
+          name: pp.platform || 'منصّة',
           system: p.price as number,
-          channel: cp.channel_price as number,
+          channel: pp.price as number,
           delta,
         }
       })
@@ -421,7 +372,7 @@ export default function CatalogHealthPage() {
               <span style={S.detailCount}>{activeList.length}</span>
             </h2>
             <input
-              placeholder="بحث بالـSKU أو الاسم…"
+              placeholder="بحث بالـmaster_sku أو الاسم…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={S.searchInput}
@@ -435,7 +386,7 @@ export default function CatalogHealthPage() {
               <table style={S.table}>
                 <thead>
                   <tr>
-                    <th style={S.th}>SKU</th>
+                    <th style={S.th}>master_sku</th>
                     <th style={S.th}>الاسم</th>
                     <th style={S.th}>السعر</th>
                     <th style={S.th}>التصنيف</th>
@@ -446,10 +397,10 @@ export default function CatalogHealthPage() {
                   {activeList.slice(0, 200).map((p) => (
                     <tr key={p.id} style={S.tr}>
                       <td style={{ ...S.td, fontFamily: 'monospace', direction: 'ltr', textAlign: 'right' }}>
-                        {p.sku || '—'}
+                        {p.master_sku || '—'}
                       </td>
                       <td style={S.td}>
-                        {p.name_ar || p.name_en || '—'}
+                        {p.product_name_ar || p.product_name_en || '—'}
                         {activeIssue === 'price_mismatch' && (
                           <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
                             {mismatchRows(p).map((m, i) => (
@@ -465,9 +416,9 @@ export default function CatalogHealthPage() {
                         )}
                       </td>
                       <td style={S.td}>{p.price ?? '—'}</td>
-                      <td style={S.td}>{p.main_category || '—'}</td>
+                      <td style={S.td}>{p.category_id ?? '—'}</td>
                       <td style={S.td}>
-                        <a href={`/products?sku=${p.sku || ''}`} style={S.fixLink}>
+                        <a href={`/products?sku=${p.master_sku || ''}`} style={S.fixLink}>
                           تصحيح ←
                         </a>
                       </td>
