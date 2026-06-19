@@ -165,6 +165,7 @@ const ISSUES: IssueDef[] = [
 export default function CatalogHealthPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [channelProducts, setChannelProducts] = useState<ChannelProduct[]>([])
+  const [channelNames, setChannelNames] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeIssue, setActiveIssue] = useState<IssueKey | null>(null)
@@ -197,9 +198,22 @@ export default function CatalogHealthPage() {
           .select('product_id, channel_id, channel_price, channel_status')
         if (cpErr) throw cpErr
 
+        // أسماء القنوات (Snoonu/Rafeeq/…) — دفاعيًا: لو الجدول/العمود مو موجود
+        // نرجع لعرض channel_id الخام بدون ما نكسر الصفحة.
+        const nameMap = new Map<string, string>()
+        try {
+          const { data: ch } = await supabase.from('channels').select('id, name')
+          for (const c of (ch as { id: string; name: string | null }[]) || []) {
+            if (c?.id != null) nameMap.set(String(c.id), c.name ?? String(c.id))
+          }
+        } catch {
+          /* fallback: channel_id */
+        }
+
         if (!cancelled) {
           setProducts(all)
           setChannelProducts((cp as ChannelProduct[]) || [])
+          setChannelNames(nameMap)
         }
       } catch (e: any) {
         if (!cancelled) setError(e?.message || 'فشل تحميل البيانات')
@@ -278,6 +292,27 @@ export default function CatalogHealthPage() {
     }
     return list
   }, [activeIssue, counts, search])
+
+  // صفوف فرق السعر لكل منتج: القنوات اللي سعرها يخالف سعر النظام فقط
+  const mismatchRows = (p: Product) => {
+    if (p.price === null) return []
+    const cps = ctx.cpByProduct.get(p.id) || []
+    return cps
+      .filter(
+        (cp) =>
+          cp.channel_price !== null &&
+          Math.abs((cp.channel_price as number) - (p.price as number)) > 0.001
+      )
+      .map((cp) => {
+        const delta = Math.round(((cp.channel_price as number) - (p.price as number)) * 100) / 100
+        return {
+          name: channelNames.get(String(cp.channel_id)) || String(cp.channel_id),
+          system: p.price as number,
+          channel: cp.channel_price as number,
+          delta,
+        }
+      })
+  }
 
   // ---------- العرض ----------
   if (loading) return <Shell><Centered>جارٍ فحص الكتالوج…</Centered></Shell>
@@ -413,11 +448,26 @@ export default function CatalogHealthPage() {
                       <td style={{ ...S.td, fontFamily: 'monospace', direction: 'ltr', textAlign: 'right' }}>
                         {p.sku || '—'}
                       </td>
-                      <td style={S.td}>{p.name_ar || p.name_en || '—'}</td>
+                      <td style={S.td}>
+                        {p.name_ar || p.name_en || '—'}
+                        {activeIssue === 'price_mismatch' && (
+                          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {mismatchRows(p).map((m, i) => (
+                              <span key={i} style={{ fontSize: 12, color: '#475569' }}>
+                                {m.name}: النظام {m.system} · المنصّة {m.channel}{' '}
+                                <span style={{ fontWeight: 700, color: m.delta > 0 ? '#dc2626' : '#d97706' }}>
+                                  ({m.delta > 0 ? '+' : ''}
+                                  {m.delta})
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td style={S.td}>{p.price ?? '—'}</td>
                       <td style={S.td}>{p.main_category || '—'}</td>
                       <td style={S.td}>
-                        <a href={`/catalog/products?sku=${p.sku || ''}`} style={S.fixLink}>
+                        <a href={`/products?sku=${p.sku || ''}`} style={S.fixLink}>
                           تصحيح ←
                         </a>
                       </td>
