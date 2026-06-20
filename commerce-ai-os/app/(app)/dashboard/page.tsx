@@ -1,4 +1,5 @@
 import { getCeoKpis, type NameCount, type ChannelBreak } from "@/lib/dashboard";
+import { recordAndDiffSnapshot } from "@/lib/kpiSnapshots";
 import DashboardRefresh from "@/components/DashboardRefresh";
 
 export const dynamic = "force-dynamic";
@@ -7,6 +8,7 @@ const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 export default async function DashboardPage() {
   const k = await getCeoKpis();
+  const trends = k.configured ? await recordAndDiffSnapshot(k) : null;
   const healthIssues = k.missingPrice + k.missingImage + k.missingBarcode + k.missingCategory;
 
   return (
@@ -23,11 +25,17 @@ export default async function DashboardPage() {
         </div>
       ) : null}
 
+      {trends?.asOf ? (
+        <p className="-mt-2 text-xs text-muted">▲▼ change since {trends.asOf}</p>
+      ) : null}
+
       {/* KPI cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Kpi title="Total products" value={nf(k.totalProducts)} icon="📦" hint="In the catalog" />
+        <Kpi title="Total products" value={nf(k.totalProducts)} icon="📦" hint="In the catalog"
+          delta={trends?.totalProducts ?? undefined} goodWhen="up" />
         <Kpi title="Published across channels" value={nf(k.publishedActive)} icon="🚀"
-          hint={`Active listings on ${k.publishedChannels} channel${k.publishedChannels === 1 ? "" : "s"}`} accent="green" />
+          hint={`Active listings on ${k.publishedChannels} channel${k.publishedChannels === 1 ? "" : "s"}`} accent="green"
+          delta={trends?.publishedActive ?? undefined} goodWhen="up" />
         <Kpi title="Categories · Brands" value={`${k.categoriesCount} · ${k.brandsCount}`} icon="🗂️"
           hint={`${nf(k.productsWithBrand)} products have a brand assigned`} />
         <Kpi title="Featured · Promoted" value={`${nf(k.featuredCount)} · ${nf(k.promotedCount)}`} icon="⭐"
@@ -113,7 +121,7 @@ export default async function DashboardPage() {
   );
 }
 
-function Kpi({ title, value, hint, icon, accent }: { title: string; value: string | number; hint?: string; icon?: string; accent?: "green" | "amber" | "muted" }) {
+function Kpi({ title, value, hint, icon, accent, delta, goodWhen }: { title: string; value: string | number; hint?: string; icon?: string; accent?: "green" | "amber" | "muted"; delta?: number; goodWhen?: "up" | "down" }) {
   const color = accent === "green" ? "text-green-700" : accent === "amber" ? "text-amber-700" : accent === "muted" ? "text-slate-500" : "text-ink";
   return (
     <div className="card">
@@ -121,9 +129,23 @@ function Kpi({ title, value, hint, icon, accent }: { title: string; value: strin
         <p className="text-sm font-medium text-muted">{title}</p>
         {icon ? <span className="text-lg">{icon}</span> : null}
       </div>
-      <p className={`mt-2 text-2xl font-semibold ${color}`}>{value}</p>
+      <div className="mt-2 flex items-baseline gap-2">
+        <p className={`text-2xl font-semibold ${color}`}>{value}</p>
+        {typeof delta === "number" && delta !== 0 ? <Delta value={delta} goodWhen={goodWhen ?? "up"} /> : null}
+      </div>
       {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
     </div>
+  );
+}
+
+function Delta({ value, goodWhen }: { value: number; goodWhen: "up" | "down" }) {
+  const up = value > 0;
+  const good = goodWhen === "up" ? up : !up;
+  const cls = good ? "text-green-600" : "text-red-600";
+  return (
+    <span className={`text-xs font-medium ${cls}`} title="vs previous day">
+      {up ? "▲" : "▼"} {nf(Math.abs(value))}
+    </span>
   );
 }
 
