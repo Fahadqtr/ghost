@@ -16,6 +16,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Lock the zoom so the app stays at true device size. Without this, an
+  // accidental pinch leaves the page zoomed/panned — content gets cut off at the
+  // edges and the screen "widens" on every visit. Locking to scale 1 keeps it
+  // fixed at app size like a native app.
+  maximumScale: 1,
+  userScalable: false,
   themeColor: "#ffffff",
 };
 
