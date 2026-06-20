@@ -25,6 +25,7 @@ export interface CeoKpis {
   inventoryRows: number;
   missingPrice: number;
   missingBarcode: number;
+  missingCategory: number;   // products with no main_category
   publishedActive: number;   // total Active rows across all channel_products
   publishedChannels: number; // how many channels have at least one Active listing
   categoryBreakdown: NameCount[];
@@ -56,7 +57,7 @@ export async function getCeoKpis(): Promise<CeoKpis> {
     approvedCount: 0, rejectedCount: 0, sentAiCount: 0, noApprovalCount: 0, rejectedList: [],
     missingImage: 0, featuredCount: 0, promotedCount: 0,
     inventoryUnits: 0, inventoryRows: 0,
-    missingPrice: 0, missingBarcode: 0, publishedActive: 0, publishedChannels: 0,
+    missingPrice: 0, missingBarcode: 0, missingCategory: 0, publishedActive: 0, publishedChannels: 0,
     categoryBreakdown: [], brandBreakdown: [], channelBreakdown: [],
     generatedAt: new Date().toISOString(),
   };
@@ -149,13 +150,16 @@ export async function getCeoKpis(): Promise<CeoKpis> {
   const publishedActive = channelBreakdown.reduce((s, c) => s + c.active, 0);
   const publishedChannels = channelBreakdown.filter((c) => c.active > 0).length;
 
+  // Products with no category (the "Uncategorized" bucket above).
+  const missingCategory = prodRows.filter((r) => !r.main_category).length;
+
   return {
     configured: true,
     totalProducts, categoriesCount, brandsCount, productsWithBrand,
     approvedCount, rejectedCount, sentAiCount, noApprovalCount, rejectedList,
     missingImage, featuredCount, promotedCount,
     inventoryUnits, inventoryRows: invRows.length,
-    missingPrice, missingBarcode, publishedActive, publishedChannels,
+    missingPrice, missingBarcode, missingCategory, publishedActive, publishedChannels,
     categoryBreakdown, brandBreakdown, channelBreakdown,
     generatedAt: new Date().toISOString(),
   };
