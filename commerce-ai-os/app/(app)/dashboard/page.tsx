@@ -32,8 +32,13 @@ export default async function DashboardPage() {
           hint={`${nf(k.productsWithBrand)} products have a brand assigned`} />
         <Kpi title="Featured · Promoted" value={`${nf(k.featuredCount)} · ${nf(k.promotedCount)}`} icon="⭐"
           hint="is_featured · is_promoted" />
-        <Kpi title="Inventory units" value={nf(k.inventoryUnits)} icon="🏷️"
-          hint={`across ${nf(k.inventoryRows)} products — placeholder, pending stocktake`} accent="muted" />
+        {k.inventoryTracked ? (
+          <Kpi title="Inventory units" value={nf(k.inventoryUnits)} icon="🏷️"
+            hint={`across ${nf(k.inventoryRows)} tracked products`} />
+        ) : (
+          <Kpi title="Inventory" value="—" icon="🏷️"
+            hint={`${nf(k.inventoryRows)} products seeded at 50 · pending stocktake`} accent="muted" />
+        )}
       </div>
 
       {/* Catalog health strip — data quality at a glance */}
