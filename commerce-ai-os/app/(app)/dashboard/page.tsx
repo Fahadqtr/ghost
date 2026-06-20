@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCeoKpis, type NameCount, type ChannelBreak } from "@/lib/dashboard";
+import DashboardRefresh from "@/components/DashboardRefresh";
 
 export const dynamic = "force-dynamic";
 
@@ -7,9 +8,16 @@ const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 export default async function DashboardPage() {
   const k = await getCeoKpis();
+  const healthIssues = k.missingPrice + k.missingImage + k.missingBarcode;
 
   return (
     <div className="space-y-6">
+      {/* Header + live freshness indicator */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-ink">Manager dashboard</h2>
+        {k.configured ? <DashboardRefresh generatedAt={k.generatedAt} /> : null}
+      </div>
+
       {!k.configured ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           Supabase isn’t configured — add your keys to see live KPIs.
@@ -19,16 +27,31 @@ export default async function DashboardPage() {
       {/* KPI cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Kpi title="Total products" value={nf(k.totalProducts)} icon="📦" hint="In the catalog" />
+        <Kpi title="Published across channels" value={nf(k.publishedActive)} icon="🚀"
+          hint={`Active listings on ${k.publishedChannels} channel${k.publishedChannels === 1 ? "" : "s"}`} accent="green" />
         <Kpi title="Categories · Brands" value={`${k.categoriesCount} · ${k.brandsCount}`} icon="🗂️"
           hint={`${nf(k.productsWithBrand)} products have a brand assigned`} />
-        <Kpi title="Live on Snoonu" value={nf(k.approvedCount)} icon="🟢" hint="approval = Approved" accent="green" />
-        <Kpi title="Missing image" value={nf(k.missingImage)} icon="🖼️"
-          hint="image_url is null" accent={k.missingImage > 0 ? "amber" : undefined} />
+        <Kpi title="Snoonu approvals" value={nf(k.approvedCount)} icon="🟢"
+          hint={`approval = Approved · ${nf(k.rejectedCount)} rejected`} />
         <Kpi title="Featured · Promoted" value={`${nf(k.featuredCount)} · ${nf(k.promotedCount)}`} icon="⭐"
           hint="is_featured · is_promoted" />
         <Kpi title="Inventory units" value={nf(k.inventoryUnits)} icon="🏷️"
           hint={`across ${nf(k.inventoryRows)} products — placeholder, pending stocktake`} accent="muted" />
       </div>
+
+      {/* Catalog health strip — data quality at a glance */}
+      <Section title="Catalog health">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <HealthChip label="Missing price" value={k.missingPrice} />
+          <HealthChip label="Missing image" value={k.missingImage} />
+          <HealthChip label="Missing barcode" value={k.missingBarcode} />
+        </div>
+        {healthIssues === 0 ? (
+          <p className="mt-3 text-sm text-green-600">All products have a price, image, and barcode 🎉</p>
+        ) : (
+          <p className="mt-3 text-sm text-amber-700">{nf(healthIssues)} field gap{healthIssues === 1 ? "" : "s"} to fix.</p>
+        )}
+      </Section>
 
       {/* Approval breakdown */}
       <Section title="Approval status (Snoonu)">
@@ -144,6 +167,17 @@ function ApprovalChip({ label, value, tone }: { label: string; value: number; to
     <div className={`rounded-lg px-3 py-2 ${cls}`}>
       <p className="text-xs font-medium">{label}</p>
       <p className="text-xl font-semibold">{nf(value)}</p>
+    </div>
+  );
+}
+
+function HealthChip({ label, value }: { label: string; value: number }) {
+  const ok = value === 0;
+  const cls = ok ? "border-green-100 bg-green-50 text-green-700" : "border-amber-100 bg-amber-50 text-amber-700";
+  return (
+    <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${cls}`}>
+      <span className="text-sm font-medium">{label}</span>
+      <span className="text-lg font-semibold">{ok ? "✓" : nf(value)}</span>
     </div>
   );
 }

@@ -23,9 +23,14 @@ export interface CeoKpis {
   promotedCount: number;
   inventoryUnits: number;
   inventoryRows: number;
+  missingPrice: number;
+  missingBarcode: number;
+  publishedActive: number;   // total Active rows across all channel_products
+  publishedChannels: number; // how many channels have at least one Active listing
   categoryBreakdown: NameCount[];
   brandBreakdown: NameCount[];
   channelBreakdown: ChannelBreak[];
+  generatedAt: string;       // ISO timestamp this snapshot was computed
 }
 
 const PAGE = 1000;
@@ -51,7 +56,9 @@ export async function getCeoKpis(): Promise<CeoKpis> {
     approvedCount: 0, rejectedCount: 0, sentAiCount: 0, noApprovalCount: 0, rejectedList: [],
     missingImage: 0, featuredCount: 0, promotedCount: 0,
     inventoryUnits: 0, inventoryRows: 0,
+    missingPrice: 0, missingBarcode: 0, publishedActive: 0, publishedChannels: 0,
     categoryBreakdown: [], brandBreakdown: [], channelBreakdown: [],
+    generatedAt: new Date().toISOString(),
   };
   if (!empty.configured) return empty;
 
@@ -65,7 +72,7 @@ export async function getCeoKpis(): Promise<CeoKpis> {
   const [
     totalProducts, categoriesCount, brandsCount, productsWithBrand,
     approvedCount, rejectedCount, sentAiCount, noApprovalCount,
-    missingImage, featuredCount, promotedCount,
+    missingImage, featuredCount, promotedCount, missingPrice, missingBarcode,
   ] = await Promise.all([
     c("products"),
     c("product_categories"),
@@ -78,6 +85,8 @@ export async function getCeoKpis(): Promise<CeoKpis> {
     c("products", (b) => b.is("image_url", null)),
     c("products", (b) => b.eq("is_featured", true)),
     c("products", (b) => b.eq("is_promoted", true)),
+    c("products", (b) => b.or("price.is.null,price.eq.0")),
+    c("products", (b) => b.is("barcode", null)),
   ]);
 
   // The actual rejected products (small list — for the "View rejected" panel).
@@ -136,12 +145,18 @@ export async function getCeoKpis(): Promise<CeoKpis> {
   void counts; void idToName;
   const channelBreakdown = [...chMap.values()];
 
+  // Real publishing reach (from channel_products), not the legacy Snoonu approval flag.
+  const publishedActive = channelBreakdown.reduce((s, c) => s + c.active, 0);
+  const publishedChannels = channelBreakdown.filter((c) => c.active > 0).length;
+
   return {
     configured: true,
     totalProducts, categoriesCount, brandsCount, productsWithBrand,
     approvedCount, rejectedCount, sentAiCount, noApprovalCount, rejectedList,
     missingImage, featuredCount, promotedCount,
     inventoryUnits, inventoryRows: invRows.length,
+    missingPrice, missingBarcode, publishedActive, publishedChannels,
     categoryBreakdown, brandBreakdown, channelBreakdown,
+    generatedAt: new Date().toISOString(),
   };
 }
