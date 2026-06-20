@@ -23,9 +23,16 @@ export interface CeoKpis {
   promotedCount: number;
   inventoryUnits: number;
   inventoryRows: number;
+  inventoryTracked: boolean; // false while every row is still the 50-unit placeholder
+  missingPrice: number;
+  missingBarcode: number;
+  missingCategory: number;   // products with no main_category
+  publishedActive: number;   // total Active rows across all channel_products
+  publishedChannels: number; // how many channels have at least one Active listing
   categoryBreakdown: NameCount[];
   brandBreakdown: NameCount[];
   channelBreakdown: ChannelBreak[];
+  generatedAt: string;       // ISO timestamp this snapshot was computed
 }
 
 const PAGE = 1000;
@@ -50,8 +57,10 @@ export async function getCeoKpis(): Promise<CeoKpis> {
     totalProducts: 0, categoriesCount: 0, brandsCount: 0, productsWithBrand: 0,
     approvedCount: 0, rejectedCount: 0, sentAiCount: 0, noApprovalCount: 0, rejectedList: [],
     missingImage: 0, featuredCount: 0, promotedCount: 0,
-    inventoryUnits: 0, inventoryRows: 0,
+    inventoryUnits: 0, inventoryRows: 0, inventoryTracked: false,
+    missingPrice: 0, missingBarcode: 0, missingCategory: 0, publishedActive: 0, publishedChannels: 0,
     categoryBreakdown: [], brandBreakdown: [], channelBreakdown: [],
+    generatedAt: new Date().toISOString(),
   };
   if (!empty.configured) return empty;
 
@@ -65,7 +74,7 @@ export async function getCeoKpis(): Promise<CeoKpis> {
   const [
     totalProducts, categoriesCount, brandsCount, productsWithBrand,
     approvedCount, rejectedCount, sentAiCount, noApprovalCount,
-    missingImage, featuredCount, promotedCount,
+    missingImage, featuredCount, promotedCount, missingPrice, missingBarcode,
   ] = await Promise.all([
     c("products"),
     c("product_categories"),
@@ -78,6 +87,8 @@ export async function getCeoKpis(): Promise<CeoKpis> {
     c("products", (b) => b.is("image_url", null)),
     c("products", (b) => b.eq("is_featured", true)),
     c("products", (b) => b.eq("is_promoted", true)),
+    c("products", (b) => b.or("price.is.null,price.eq.0")),
+    c("products", (b) => b.is("barcode", null)),
   ]);
 
   // The actual rejected products (small list — for the "View rejected" panel).
@@ -100,8 +111,10 @@ export async function getCeoKpis(): Promise<CeoKpis> {
     fetchAll(sb, "brands", "id, name"),
   ]);
 
-  // Inventory units (placeholder 50 each until stocktake).
+  // Inventory units (placeholder 50 each until stocktake). Treat the data as
+  // "tracked" only once at least one row diverges from the 50-unit seed.
   const inventoryUnits = invRows.reduce((s, r) => s + (Number(r.stock_quantity) || 0), 0);
+  const inventoryTracked = invRows.some((r) => Number(r.stock_quantity) !== 50);
 
   // Category breakdown.
   const catMap = new Map<string, number>();
@@ -136,13 +149,22 @@ export async function getCeoKpis(): Promise<CeoKpis> {
   void counts; void idToName;
   const channelBreakdown = [...chMap.values()];
 
+  // Real publishing reach (from channel_products), not the legacy Snoonu approval flag.
+  const publishedActive = channelBreakdown.reduce((s, c) => s + c.active, 0);
+  const publishedChannels = channelBreakdown.filter((c) => c.active > 0).length;
+
+  // Products with no category (the "Uncategorized" bucket above).
+  const missingCategory = prodRows.filter((r) => !r.main_category).length;
+
   return {
     configured: true,
     totalProducts, categoriesCount, brandsCount, productsWithBrand,
     approvedCount, rejectedCount, sentAiCount, noApprovalCount, rejectedList,
     missingImage, featuredCount, promotedCount,
-    inventoryUnits, inventoryRows: invRows.length,
+    inventoryUnits, inventoryRows: invRows.length, inventoryTracked,
+    missingPrice, missingBarcode, missingCategory, publishedActive, publishedChannels,
     categoryBreakdown, brandBreakdown, channelBreakdown,
+    generatedAt: new Date().toISOString(),
   };
 }
 

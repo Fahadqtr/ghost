@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { getCeoKpis, type NameCount, type ChannelBreak } from "@/lib/dashboard";
-import RejectedApprovalList from "@/components/RejectedApprovalList";
+import { recordAndDiffSnapshot } from "@/lib/kpiSnapshots";
+import DashboardRefresh from "@/components/DashboardRefresh";
 
 export const dynamic = "force-dynamic";
 
@@ -8,47 +8,59 @@ const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 export default async function DashboardPage() {
   const k = await getCeoKpis();
+  const trends = k.configured ? await recordAndDiffSnapshot(k) : null;
+  const healthIssues = k.missingPrice + k.missingImage + k.missingBarcode + k.missingCategory;
 
   return (
     <div className="space-y-6">
+      {/* Header + live freshness indicator */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-ink">Manager dashboard</h2>
+        {k.configured ? <DashboardRefresh generatedAt={k.generatedAt} /> : null}
+      </div>
+
       {!k.configured ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           Supabase isn’t configured — add your keys to see live KPIs.
         </div>
       ) : null}
 
+      {trends?.asOf ? (
+        <p className="-mt-2 text-xs text-muted">▲▼ change since {trends.asOf}</p>
+      ) : null}
+
       {/* KPI cards */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-        <Kpi title="Total products" value={nf(k.totalProducts)} icon="📦" hint="In the catalog" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Kpi title="Total products" value={nf(k.totalProducts)} icon="📦" hint="In the catalog"
+          delta={trends?.totalProducts ?? undefined} goodWhen="up" />
+        <Kpi title="Published across channels" value={nf(k.publishedActive)} icon="🚀"
+          hint={`Active listings on ${k.publishedChannels} channel${k.publishedChannels === 1 ? "" : "s"}`} accent="green"
+          delta={trends?.publishedActive ?? undefined} goodWhen="up" />
         <Kpi title="Categories · Brands" value={`${k.categoriesCount} · ${k.brandsCount}`} icon="🗂️"
           hint={`${nf(k.productsWithBrand)} products have a brand assigned`} />
-        <Kpi title="Live on Snoonu" value={nf(k.approvedCount)} icon="🟢" hint="approval = Approved" accent="green" />
-        <Kpi title="Missing image" value={nf(k.missingImage)} icon="🖼️"
-          hint="image_url is null" accent={k.missingImage > 0 ? "amber" : undefined} />
         <Kpi title="Featured · Promoted" value={`${nf(k.featuredCount)} · ${nf(k.promotedCount)}`} icon="⭐"
           hint="is_featured · is_promoted" />
-        <Kpi title="Inventory units" value={nf(k.inventoryUnits)} icon="🏷️"
-          hint={`across ${nf(k.inventoryRows)} products — placeholder, pending stocktake`} accent="muted" />
+        {k.inventoryTracked ? (
+          <Kpi title="Inventory units" value={nf(k.inventoryUnits)} icon="🏷️"
+            hint={`across ${nf(k.inventoryRows)} tracked products`} />
+        ) : (
+          <Kpi title="Inventory" value="—" icon="🏷️"
+            hint={`${nf(k.inventoryRows)} products seeded at 50 · pending stocktake`} accent="muted" />
+        )}
       </div>
 
-      {/* Approval breakdown */}
-      <Section title="Approval status (Snoonu)">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <ApprovalChip label="Approved" value={k.approvedCount} tone="green" />
-          <ApprovalChip label="Rejected" value={k.rejectedCount} tone="red" />
-          <ApprovalChip label="SentAI" value={k.sentAiCount} tone="amber" />
-          <ApprovalChip label="No status" value={k.noApprovalCount} tone="slate" />
+      {/* Catalog health strip — data quality at a glance */}
+      <Section title="Catalog health">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <HealthChip label="Missing price" value={k.missingPrice} />
+          <HealthChip label="Missing image" value={k.missingImage} />
+          <HealthChip label="Missing barcode" value={k.missingBarcode} />
+          <HealthChip label="Missing category" value={k.missingCategory} />
         </div>
-
-        {k.rejectedCount > 0 ? (
-          <details className="mt-3 rounded-lg border border-red-100 bg-red-50/50">
-            <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-red-700">
-              View rejected ({k.rejectedCount})
-            </summary>
-            <RejectedApprovalList items={k.rejectedList} extra={k.rejectedCount - k.rejectedList.length} />
-          </details>
+        {healthIssues === 0 ? (
+          <p className="mt-3 text-sm text-green-600">All products have a price, image, barcode, and category 🎉</p>
         ) : (
-          <p className="mt-3 text-sm text-slate-400">No rejected products 🎉</p>
+          <p className="mt-3 text-sm text-amber-700">{nf(healthIssues)} field gap{healthIssues === 1 ? "" : "s"} to fix.</p>
         )}
       </Section>
 
@@ -109,7 +121,7 @@ export default async function DashboardPage() {
   );
 }
 
-function Kpi({ title, value, hint, icon, accent }: { title: string; value: string | number; hint?: string; icon?: string; accent?: "green" | "amber" | "muted" }) {
+function Kpi({ title, value, hint, icon, accent, delta, goodWhen }: { title: string; value: string | number; hint?: string; icon?: string; accent?: "green" | "amber" | "muted"; delta?: number; goodWhen?: "up" | "down" }) {
   const color = accent === "green" ? "text-green-700" : accent === "amber" ? "text-amber-700" : accent === "muted" ? "text-slate-500" : "text-ink";
   return (
     <div className="card">
@@ -117,22 +129,33 @@ function Kpi({ title, value, hint, icon, accent }: { title: string; value: strin
         <p className="text-sm font-medium text-muted">{title}</p>
         {icon ? <span className="text-lg">{icon}</span> : null}
       </div>
-      <p className={`mt-2 text-2xl font-semibold ${color}`}>{value}</p>
+      <div className="mt-2 flex items-baseline gap-2">
+        <p className={`text-2xl font-semibold ${color}`}>{value}</p>
+        {typeof delta === "number" && delta !== 0 ? <Delta value={delta} goodWhen={goodWhen ?? "up"} /> : null}
+      </div>
       {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
     </div>
   );
 }
 
-function ApprovalChip({ label, value, tone }: { label: string; value: number; tone: "green" | "red" | "amber" | "slate" }) {
-  const cls =
-    tone === "green" ? "bg-green-50 text-green-700"
-    : tone === "red" ? "bg-red-50 text-red-700"
-    : tone === "amber" ? "bg-amber-50 text-amber-700"
-    : "bg-slate-50 text-slate-500";
+function Delta({ value, goodWhen }: { value: number; goodWhen: "up" | "down" }) {
+  const up = value > 0;
+  const good = goodWhen === "up" ? up : !up;
+  const cls = good ? "text-green-600" : "text-red-600";
   return (
-    <div className={`rounded-lg px-3 py-2 ${cls}`}>
-      <p className="text-xs font-medium">{label}</p>
-      <p className="text-xl font-semibold">{nf(value)}</p>
+    <span className={`text-xs font-medium ${cls}`} title="vs previous day">
+      {up ? "▲" : "▼"} {nf(Math.abs(value))}
+    </span>
+  );
+}
+
+function HealthChip({ label, value }: { label: string; value: number }) {
+  const ok = value === 0;
+  const cls = ok ? "border-green-100 bg-green-50 text-green-700" : "border-amber-100 bg-amber-50 text-amber-700";
+  return (
+    <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${cls}`}>
+      <span className="text-sm font-medium">{label}</span>
+      <span className="text-lg font-semibold">{ok ? "✓" : nf(value)}</span>
     </div>
   );
 }
