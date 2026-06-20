@@ -89,10 +89,14 @@ export default function AppShell({
         </div>
       ) : null}
 
-      {/* Main column */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Main column. min-w-0 lets this flex item shrink to the viewport instead
+          of being pushed wider by a wide child (e.g. a min-w table), and
+          overflow-x-hidden on <main> stops the horizontal scroll/zoom that a
+          plain overflow-y-auto otherwise allows (overflow-x computes to auto).
+          Wide tables keep their own inner overflow-x-auto scroll. */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Topbar userEmail={userEmail} onMenuClick={() => setOpen(true)} showMenu={!desktop} />
-        <main className={`flex-1 overflow-y-auto ${isMalak ? "" : "p-4 sm:p-6"}`}>{children}</main>
+        <main className={`min-w-0 flex-1 overflow-x-hidden overflow-y-auto ${isMalak ? "" : "p-4 sm:p-6"}`}>{children}</main>
         {/* Native-app-style bottom tabs (mobile/tablet only) */}
         {!desktop ? <BottomNav /> : null}
       </div>
