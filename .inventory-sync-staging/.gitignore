@@ -1,0 +1,5 @@
+# Never track real catalog/store data — keep only the runner code.
+# (Mirrors the root .gitignore intent that excludes the master catalog xlsx.)
+*.json
+*.ndjson
+*.graphql

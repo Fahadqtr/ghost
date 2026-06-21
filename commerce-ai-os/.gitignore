@@ -43,3 +43,5 @@ talabat_catalog_final.csv
 
 # downloaded image artifacts (regenerate via scripts/download_images.mjs)
 exports/
+snoonu_*.csv
+snoonu_*.xlsx
