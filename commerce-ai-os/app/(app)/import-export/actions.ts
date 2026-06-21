@@ -3,12 +3,19 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { CATEGORIES } from "@/lib/constants";
+import { clean } from "@/lib/malak/talabat-export.mjs";
 
 // One parsed+mapped row from the uploaded Excel, keyed by product field names.
 export type ImportRow = Record<string, string>;
 
 const str = (v: unknown) => {
   const t = String(v ?? "").trim();
+  return t === "" ? null : t;
+};
+// Fields cleaned of emojis/decorative symbols on import (names + descriptions).
+const CLEANED = new Set(["name_en", "name_ar", "description_en", "description_ar"]);
+const cleanStr = (v: unknown) => {
+  const t = clean(v);
   return t === "" ? null : t;
 };
 const num = (v: unknown) => {
@@ -47,7 +54,7 @@ export async function importProducts(rows: ImportRow[]) {
   rows.forEach((row, i) => {
     const out: Record<string, unknown> = {};
     for (const f of PRODUCT_FIELDS) {
-      out[f] = NUMERIC.has(f) ? num(row[f]) : str(row[f]);
+      out[f] = NUMERIC.has(f) ? num(row[f]) : CLEANED.has(f) ? cleanStr(row[f]) : str(row[f]);
     }
 
     // Category must be one of the 11 — do not force-fit (plan rule).

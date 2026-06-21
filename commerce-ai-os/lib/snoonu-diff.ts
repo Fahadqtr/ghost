@@ -15,24 +15,29 @@ export interface SnoonuExportRow {
   is_featured?: string;
   is_promoted?: string;
   has_buy1get1?: string;
+  availability?: string; // Snoonu "Availability" column (True/False) — not synced, used to flag unavailable
+  stock?: string;        // Snoonu "Stock" column — used to tell "disabled" from "out of stock"
 }
 
 export interface FieldChange { field: string; old: string; new: string }
 export interface UpdatedEntry { snoonu_id: string; product_id: string; name_en: string; changes: FieldChange[] }
 export interface NewEntry { id: string; name_en: string }
-export interface MissingEntry { snoonu_id: string; product_id: string; sku: string | null; name_en: string | null }
+export interface MissingEntry { snoonu_id: string; product_id: string; sku: string | null; name_en: string | null; stock?: string | null }
 
 export interface SnoonuDiff {
   ok: boolean;
   error?: string;
   existingOptionalCols: string[];
   missingOptionalCols: string[];
-  counts: { exportRows: number; matched: number; updated: number; newCount: number; missing: number; unchanged: number };
+  counts: { exportRows: number; matched: number; updated: number; newCount: number; missing: number; unchanged: number; rejected: number; unavailable: number; outOfStock: number };
   fieldCounts: Record<string, number>;     // per-column total # of changed rows
   changedColsPerProduct: string[][];        // for each updated product, the changed column names
   updated: UpdatedEntry[];
   newProducts: NewEntry[];
   missing: MissingEntry[];
+  rejected: MissingEntry[];                 // matched products that are Rejected in our catalog
+  unavailable: MissingEntry[];              // matched products with Availability=False on Snoonu
+  outOfStock: MissingEntry[];               // matched products with Stock=0 on Snoonu
 }
 
 export type Field = { ex: keyof SnoonuExportRow; col: string; type: "str" | "num" | "bool" };
@@ -63,18 +68,22 @@ export function readColumns(fields: Field[]): string {
 export const s = (v: unknown) => String(v ?? "").trim();
 
 // Normalize TEXT fields so COSMETIC differences are not treated as changes:
-// escaped newlines, CRLF, unicode form, emoji variation selectors / ZWJ,
-// zero-width chars, NBSP, HTML entities, collapsed space runs, blank lines.
-// Used for both comparison AND the value written on Apply. NOTE: this only
-// removes formatting noise \u2014 genuinely different text (e.g. an extra emoji or
-// extra sentence) still differs, as it should.
+// escaped newlines, CRLF, unicode form, emojis & decorative symbols, zero-width
+// chars, NBSP, HTML entities, collapsed space runs, blank lines.
+// Used for both comparison AND the value written on Apply \u2014 so Snoonu's emoji
+// names/descriptions are neither flagged as changes nor written into our (clean)
+// catalog. Genuinely different WORDS still differ, as they should.
 function safeCp(n: number): string { try { return Number.isFinite(n) ? String.fromCodePoint(n) : ""; } catch { return ""; } }
+// Emojis, flags, dingbats, geometric bullets (kept in sync with the export's clean()).
+const NT_EMOJI = /[\u{1F000}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{25A0}-\u{25FF}]/gu;
 export function normalizeText(v: unknown): string {
   return String(v ?? "")
     .replace(/\\r\\n|\\n|\\r/g, "\n")          // literal "\n"/"\r\n" -> real LF
     .replace(/\\t/g, " ")                       // literal "\t" -> space
     .replace(/\r\n?/g, "\n")                    // CRLF / CR -> LF
     .normalize("NFC")                           // unicode canonical form
+    .replace(NT_EMOJI, "")                      // emojis & decorative symbols
+    .replace(/\(\s*\)/g, "")                    // drop parens left empty, e.g. "(\u25c6)"
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"').replace(/&#0?39;|&apos;/gi, "'")
@@ -167,6 +176,9 @@ export function diffSnoonu(
 }
 
 // --- export header -> field mapping (shared by client + tests) -------------
+// Accepts BOTH the simple test headers and the REAL Snoonu "AllExportData"
+// headers (e.g. "SPI(UniqueIdentifier)", "Product Name (En)(ReadOnly)",
+// "Price Global(Update)") — normHeader strips punctuation/case so they match.
 export const HEADER_MAP: Record<string, keyof SnoonuExportRow> = {
   id: "id",
   nameen: "name_en", namear: "name_ar",
@@ -174,6 +186,11 @@ export const HEADER_MAP: Record<string, keyof SnoonuExportRow> = {
   price: "price", discount: "discount",
   approval: "approval",
   isfeatured: "is_featured", ispromoted: "is_promoted", hasbuy1get1: "has_buy1get1",
+  // Real Snoonu export column names:
+  spiuniqueidentifier: "id",
+  productnameenreadonly: "name_en", productnamearreadonly: "name_ar",
+  productdescriptionenreadonly: "description_en", productdescriptionarreadonly: "description_ar",
+  priceglobalupdate: "price",
 };
 export const normHeader = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -183,7 +200,13 @@ export function mapExportRows(raw: Record<string, unknown>[]): {
   if (!raw.length) return { rows: [], hasId: false, headers: [] };
   const headers = Object.keys(raw[0]);
   const map: Record<string, keyof SnoonuExportRow> = {};
-  for (const h of headers) { const f = HEADER_MAP[normHeader(h)]; if (f) map[h] = f; }
+  for (const h of headers) {
+    const n = normHeader(h);
+    // The Availability/Stock columns include the store name, so match by prefix.
+    const f = HEADER_MAP[n]
+      ?? (n.startsWith("availability") ? "availability" : n.startsWith("stock") ? "stock" : undefined);
+    if (f) map[h] = f;
+  }
   const rows = raw.map((r) => {
     const out: any = {};
     for (const [h, f] of Object.entries(map)) out[f] = String(r[h] ?? "").trim();

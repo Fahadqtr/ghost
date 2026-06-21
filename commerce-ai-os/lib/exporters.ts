@@ -6,6 +6,7 @@ export interface ExportProduct {
   id: string;
   sku: string | null;
   snoonu_id: string | null;
+  rafeeq_product_id: string | null; // Rafeeq's own product id — SEPARATE per platform
   barcode: string | null;
   name_en: string | null;
   name_ar: string | null;
@@ -15,6 +16,7 @@ export interface ExportProduct {
   price: number | null;
   discount_price: number | null;
   image_url: string | null;
+  image_filename: string | null;
   description_en: string | null;
   description_ar: string | null;
   keywords_en: string | null;
@@ -73,51 +75,60 @@ export function buildSnoonuCsv(products: ExportProduct[], status: StatusMap): st
   return toCsv(SNOONU_HEADERS, rows);
 }
 
-// --- 3) Talabat split-CSV (ONE ROW PER VARIANT; EN + AR) -------------------
-export const TALABAT_HEADERS = [
-  "Parent SKU", "Item Name EN", "Item Name AR", "Variant", "Item SKU", "Barcode",
-  "Category", "Price", "Stock", "Talabat Status",
-  "Description EN", "Description AR", "Keywords EN", "Keywords AR",
+// --- 3) Talabat split-CSV ---------------------------------------------------
+// The Talabat format now lives in lib/malak/talabat-export.mjs (the SINGLE
+// source shared by the in-app export button and scripts/export_talabat.mjs).
+// See buildTalabatRows()/rowsToCsv() there.
+
+// --- 4) Rafeeq — English headers only, no subcategory; BARCODE + RAFEEQ ID
+// columns. IMAGE NAME = SKU; RAFEEQ ID = rafeeq_product_id (or "new product"
+// when the product isn't on Rafeeq yet). Exported as a formatted .xlsx. ------
+export const RAFEEQ_HEADERS = [
+  "CATEGORY - ENGLISH", "CATEGORY - ARABIC",
+  "PRODUCT NAME - ENGLISH", "PRODUCT NAME - ARABIC", "PRICE",
+  "DESCRIPTION - ENGLISH", "DESCRIPTION - ARABIC", "IMAGE NAME", "BARCODE", "RAFEEQ ID",
 ];
-export function buildTalabatCsv(
-  products: ExportProduct[],
-  variants: ExportVariant[],
-  status: StatusMap
-): string {
-  const byParent = new Map<string, ExportVariant[]>();
-  for (const v of variants) {
-    if (!byParent.has(v.parent_product_id)) byParent.set(v.parent_product_id, []);
-    byParent.get(v.parent_product_id)!.push(v);
-  }
-  const suffix = (base: string | null, vn: string | null) =>
-    `${base ?? ""}${vn ? " - " + vn : ""}`;
-  const rows: unknown[][] = [];
-  for (const p of products) {
-    const vs = byParent.get(p.id) ?? [];
-    const common = (vn: string | null, sku: string | null, price: number | null) => [
-      p.sku, suffix(p.name_en, vn), suffix(p.name_ar, vn), vn ?? "", sku ?? p.sku,
-      p.barcode, p.main_category, price ?? p.price, "" /*stock later*/,
-      status[p.id] ?? "Not Listed", p.description_en, p.description_ar,
-      p.keywords_en, p.keywords_ar,
-    ];
-    if (vs.length > 0) for (const v of vs) rows.push(common(v.variant_name, v.sku, v.price));
-    else rows.push(common(null, p.sku, p.price));
-  }
-  return toCsv(TALABAT_HEADERS, rows);
+
+// Rafeeq's own categories (EN → {id, AR}), taken from a Rafeeq export. Used to
+// fill the Arabic category name; unknown categories must be created in Rafeeq.
+export const RAFEEQ_CATEGORIES: Record<string, { id: number; ar: string }> = {
+  "Masks": { id: 3708630, ar: "الأقنعة" },
+  "Face Care": { id: 3708631, ar: "العناية بالوجه" },
+  "Beauty Accessories": { id: 3708636, ar: "إكسسوارات الجمال" },
+  "Hair Care": { id: 3708632, ar: "العناية بالشعر" },
+  "Lashes & Nails": { id: 3708633, ar: "الرموش و الأظافر" },
+  "Beauty Bundle": { id: 3708638, ar: "بـاقـة الجـمـال" },
+  "Makeup": { id: 3708643, ar: "المكياج" },
+  "Body Care": { id: 3708639, ar: "العناية بالجسم" },
+  "Rhode Products Section": { id: 3708644, ar: "قسم منتجات رود - rhode" },
+  "Sun Protection": { id: 3708634, ar: "الوقاية من الشمس" },
+  "La Bobo Collection": { id: 3708635, ar: "✨ مجموعة لا بوبو | La Bobo Collection" },
+  "Dental Care": { id: 3708640, ar: "العناية بالأسنان" },
+  "Summer Essentials": { id: 3708645, ar: "مستلزمات الصيف" },
+  "Electronics": { id: 3708641, ar: "إلكترونيات" },
+  "Hand Care": { id: 3708642, ar: "العناية باليدين" },
+};
+
+// Array-of-arrays (header + rows) for the Rafeeq export — used to build the xlsx.
+export function buildRafeeqAoa(products: ExportProduct[]): (string | number)[][] {
+  const rows = products.map((p) => {
+    const cat = RAFEEQ_CATEGORIES[(p.main_category ?? "").trim()];
+    return [
+      p.main_category ?? "", cat?.ar ?? "",
+      p.name_en ?? "", p.name_ar ?? "", p.price ?? "",
+      p.description_en ?? "", p.description_ar ?? "", p.sku ?? "",
+      p.barcode ?? "", p.rafeeq_product_id ?? "new product",
+    ] as (string | number)[];
+  });
+  return [RAFEEQ_HEADERS, ...rows];
 }
 
-// --- 4) Rafeeq (one row per product; EN + AR) ------------------------------
-export const RAFEEQ_HEADERS = [
-  "SKU", "Barcode", "Name EN", "Name AR", "Category", "Price", "Discount Price",
-  "Stock", "Rafeeq Status", "Description EN", "Description AR", "Keywords EN", "Keywords AR",
-];
-export function buildRafeeqCsv(products: ExportProduct[], status: StatusMap): string {
-  const rows = products.map((p) => [
-    p.sku, p.barcode, p.name_en, p.name_ar, p.main_category, p.price,
-    p.discount_price, "" /*stock later*/, status[p.id] ?? "Not Listed",
-    p.description_en, p.description_ar, p.keywords_en, p.keywords_ar,
-  ]);
-  return toCsv(RAFEEQ_HEADERS, rows);
+// Column widths (chars) for a tidy sheet.
+export const RAFEEQ_COL_WIDTHS = [22, 22, 34, 34, 8, 46, 46, 14, 18, 14];
+
+// `status` unused (no per-row status column) — kept for a consistent signature.
+export function buildRafeeqCsv(products: ExportProduct[], _status: StatusMap): string {
+  return toCsv(RAFEEQ_HEADERS, buildRafeeqAoa(products).slice(1));
 }
 
 export const CHANNEL_KEYS = ["shopify", "snoonu", "talabat", "rafeeq"] as const;

@@ -99,15 +99,20 @@ export default function ProductImages({
       )}
 
       <div className="flex flex-col gap-2 border-t border-slate-100 pt-3 sm:flex-row sm:items-center">
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          onChange={onPick}
-          disabled={busy}
-          className="block text-sm"
-        />
-        {busy ? <span className="text-sm text-muted">Uploading…</span> : null}
+        {/* Clear, tappable button (a bare file input is easy to miss on mobile).
+            The actual input is hidden and triggered by the label. */}
+        <label className={`btn-primary inline-flex cursor-pointer items-center gap-1 ${busy ? "pointer-events-none opacity-60" : ""}`}>
+          {busy ? "Uploading…" : "⬆ Upload image"}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            onChange={onPick}
+            disabled={busy}
+            className="hidden"
+          />
+        </label>
+        <span className="text-xs text-muted">Tap to pick from your gallery — uploads right away.</span>
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p> : null}

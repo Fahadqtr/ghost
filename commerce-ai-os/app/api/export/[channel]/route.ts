@@ -1,11 +1,32 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { createClient } from "@/lib/supabase/server";
 import {
-  buildShopifyCsv, buildSnoonuCsv, buildTalabatCsv, buildRafeeqCsv,
+  buildShopifyCsv, buildSnoonuCsv, buildRafeeqAoa, RAFEEQ_COL_WIDTHS,
   CHANNEL_KEYS, type ChannelKey, type ExportProduct,
   type ExportVariant, type StatusMap,
 } from "@/lib/exporters";
+import {
+  buildTalabatRows, rowsToCsv, masterDescEnFromRows,
+} from "@/lib/malak/talabat-export.mjs";
 
+export const runtime = "nodejs"; // needs fs to read the master sheet fallback
 export const dynamic = "force-dynamic";
+
+// Master sheet (gitignored, present locally / not on Vercel) → SKU→Description-EN
+// map. Used ONLY to fill an empty DB description; absent file → empty map.
+function loadMasterDescEn(): Map<string, string> {
+  try {
+    const require = createRequire(import.meta.url);
+    const XLSX = require("xlsx");
+    const buf = readFileSync("./Malikas_Universe_CLEAN_28col.xlsx");
+    const wb = XLSX.read(buf, { type: "buffer" });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+    return masterDescEnFromRows(rows);
+  } catch {
+    return new Map(); // not deployed → DB stays the only source
+  }
+}
 
 const PAGE = 1000;
 async function fetchAll(q: (from: number, to: number) => any): Promise<any[]> {
@@ -20,7 +41,7 @@ async function fetchAll(q: (from: number, to: number) => any): Promise<any[]> {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: { channel: string } }
 ) {
   const channel = params.channel as ChannelKey;
@@ -39,7 +60,7 @@ export async function GET(
     const products = (await fetchAll((from, to) =>
       supabase
         .from("products")
-        .select("id, sku, snoonu_id, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, description_en, description_ar, keywords_en, keywords_ar")
+        .select("id, sku, snoonu_id, rafeeq_product_id, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, image_filename, notes, description_en, description_ar, keywords_en, keywords_ar")
         .order("sku", { ascending: true })
         .range(from, to)
     )) as ExportProduct[];
@@ -63,18 +84,53 @@ export async function GET(
 
     let csv: string;
     if (channel === "talabat") {
+      // Same format as scripts/export_talabat.mjs (shared module): 10 columns,
+      // one row per variant ({sku}-{seq}), Description EN gap-filled from master.
+      // Optional ?cats=A|B|C → include only those categories (default: all).
+      // Optional ?source=new → only products added via Snoonu Sync (notes marker).
+      const url2 = new URL(req.url);
+      const catsParam = url2.searchParams.get("cats");
+      let prods = products;
+      if (url2.searchParams.get("source") === "new") {
+        prods = prods.filter((p: any) => String(p.notes ?? "").startsWith("Imported from Snoonu sync"));
+      }
+      if (catsParam) {
+        const want = new Set(catsParam.split("|").map((s) => s.trim()).filter(Boolean));
+        prods = prods.filter((p) => want.has(String(p.main_category ?? "").trim()));
+      }
       const variants = (await fetchAll((from, to) =>
         supabase.from("product_variants")
           .select("parent_product_id, variant_name, sku, price")
           .range(from, to)
       )) as ExportVariant[];
-      csv = buildTalabatCsv(products, variants, status);
+      const { rows } = buildTalabatRows(prods, variants, loadMasterDescEn());
+      csv = rowsToCsv(rows);
     } else if (channel === "shopify") {
       csv = buildShopifyCsv(products, status);
     } else if (channel === "snoonu") {
       csv = buildSnoonuCsv(products, status);
     } else {
-      csv = buildRafeeqCsv(products, status);
+      // Rafeeq → a formatted .xlsx (tidy column widths, bold header, autofilter).
+      const require = createRequire(import.meta.url);
+      const XLSX = require("xlsx");
+      const aoa = buildRafeeqAoa(products);
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = RAFEEQ_COL_WIDTHS.map((w) => ({ wch: w }));
+      ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+      const range = XLSX.utils.decode_range(ws["!ref"]);
+      ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: range.e.r, c: range.e.c } }) };
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Rafeeq");
+      const buf: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+      const date = new Date().toISOString().slice(0, 10);
+      return new Response(new Uint8Array(buf), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="rafeeq_export_${date}.xlsx"`,
+          "Cache-Control": "no-store",
+        },
+      });
     }
 
     const date = new Date().toISOString().slice(0, 10);

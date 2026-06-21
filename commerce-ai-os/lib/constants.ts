@@ -3,8 +3,8 @@
 
 /**
  * Product categories — must match the `product_categories` table exactly
- * (FK products.main_category -> product_categories.name). Synced to the 17 real
- * categories from the imported master sheet on 2026-06-05.
+ * (FK products.main_category -> product_categories.name). Synced to the real
+ * categories from the imported master sheet (✨Toys cleaned to Toys 2026-06-09).
  */
 export const CATEGORIES = [
   "Face Care",
@@ -22,11 +22,33 @@ export const CATEGORIES = [
   "Thailand Products",
   "Summer And Camping Supplies",
   "Electronics",
-  "✨Toys",
+  "Toys",
   "Uncategorized",
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];
+
+/**
+ * Sales platforms, each with its own independent Product Hub. The PRODUCT DATA
+ * (name/price/images/description/variants) is shared — it lives on the master
+ * (`products`) and is edited once. Only per-platform APPROVAL/REJECTION is
+ * independent: Malika is the master itself (its products.approval), every other
+ * platform stores its approval/rejection in the `platform_status` overlay table
+ * keyed by (product_id, platform). Rejecting on one platform never affects
+ * another, nor the master data.
+ */
+// Note: Malika is itself the Snoonu store, so "Snoonu" is not a separate
+// platform here — it would duplicate the master.
+export const PLATFORMS = [
+  { key: "malika", label: "مليكاس", en: "Malika", master: true },
+  { key: "pure_seoul", label: "Pure Seoul", en: "Pure Seoul", master: false },
+  { key: "talabat", label: "Talabat", en: "Talabat", master: false },
+  { key: "shopify", label: "Shopify", en: "Shopify", master: false },
+  { key: "rafeeq", label: "Rafeeq", en: "Rafeeq", master: false },
+] as const;
+export type PlatformKey = (typeof PLATFORMS)[number]["key"];
+export const PLATFORM_KEYS = PLATFORMS.map((p) => p.key) as readonly PlatformKey[];
+export const platformBy = (key: string) => PLATFORMS.find((p) => p.key === key);
 
 /** Per-channel publishing status options (mirrors channel_products.channel_status). */
 export const CHANNEL_STATUSES = ["Active", "Draft", "Not Listed"] as const;
@@ -61,10 +83,37 @@ export const NAV_ITEMS = [
   { href: "/malak", label: "ملاك · Malak AI", icon: "✨" },
   { href: "/dashboard", label: "CEO Dashboard", icon: "📊" },
   { href: "/products", label: "Product Hub", icon: "📦" },
+  { href: "/platforms", label: "المنصات · Platforms", icon: "🏬" },
   { href: "/inventory", label: "Inventory", icon: "🏷️" },
   { href: "/channels", label: "Channels", icon: "🛒" },
   { href: "/agents", label: "Agents", icon: "🤖" },
   { href: "/import-export", label: "Import / Export", icon: "📤" },
+] as const;
+
+// Grouped navigation (Commerce AI OS). Groups only EXISTING routes under
+// Arabic section headers — no invented pages.
+export const NAV_GROUPS = [
+  { title: "الرئيسية", items: [{ href: "/dashboard", label: "لوحة المدير", icon: "📊" }] },
+  {
+    title: "ملاك والفريق",
+    items: [
+      { href: "/malak", label: "ملاك · Malak AI", icon: "✨" },
+      { href: "/agents", label: "الوكلاء", icon: "🤖" },
+    ],
+  },
+  { title: "المنتجات", items: [
+    { href: "/products", label: "الكتالوج", icon: "📦" },
+    { href: "/catalog/health", label: "صحّة الكتالوج", icon: "🩺" },
+  ] },
+  {
+    title: "المنصات",
+    items: [
+      { href: "/platforms", label: "المنصات", icon: "🏬" },
+      { href: "/channels", label: "القنوات", icon: "🛒" },
+    ],
+  },
+  { title: "المخزون", items: [{ href: "/inventory", label: "الكميات والتنبيهات", icon: "🏷️" }] },
+  { title: "الاستيراد والتصدير", items: [{ href: "/import-export", label: "Excel استيراد/تصدير", icon: "📤" }] },
 ] as const;
 
 export const APP_NAME = "Commerce AI OS";

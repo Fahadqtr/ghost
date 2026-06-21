@@ -4,8 +4,10 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import {
-  computeSnoonuDiff, applySnoonuUpdates, type ApplyResult,
+  computeSnoonuDiff, applySnoonuUpdates, addSnoonuNewProducts,
+  type ApplyResult, type AddNewResult,
 } from "@/app/(app)/import-export/snoonu-actions";
+import { setProductApproval, setProductsApproval } from "@/app/(app)/products/actions";
 import {
   SNOONU_SHEET, mapExportRows, type SnoonuDiff, type SnoonuExportRow,
 } from "@/lib/snoonu-diff";
@@ -34,16 +36,16 @@ export default function SnoonuSync() {
     setBusy(true);
     try {
       const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-      if (!wb.SheetNames.includes(SNOONU_SHEET)) {
-        setError(`Sheet "${SNOONU_SHEET}" not found. Sheets in file: ${wb.SheetNames.join(", ")}`);
-        setBusy(false); return;
-      }
-      const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[SNOONU_SHEET], { defval: "" });
-      if (!raw.length) { setError(`Sheet "${SNOONU_SHEET}" has no rows.`); setBusy(false); return; }
+      // Prefer the named sheet; otherwise use the first sheet (real Snoonu
+      // "AllExportData" files name it "Sheet1").
+      const sheetName = wb.SheetNames.includes(SNOONU_SHEET) ? SNOONU_SHEET : wb.SheetNames[0];
+      if (!sheetName) { setError("The workbook has no sheets."); setBusy(false); return; }
+      const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+      if (!raw.length) { setError(`Sheet "${sheetName}" has no rows.`); setBusy(false); return; }
 
       const { rows, hasId, headers } = mapExportRows(raw);
       if (!hasId) {
-        setError(`No "id" column found (needed to match by snoonu_id). Headers: ${headers.join(", ")}`);
+        setError(`No product-ID column found (need "SPI(UniqueIdentifier)" or "id"). Headers: ${headers.join(", ")}`);
         setBusy(false); return;
       }
 
@@ -64,8 +66,8 @@ export default function SnoonuSync() {
         <div>
           <h3 className="text-sm font-semibold text-ink">Upload Snoonu export</h3>
           <p className="text-xs text-muted">
-            Parses sheet <code>{SNOONU_SHEET}</code> and matches by <code>id</code> → <code>products.snoonu_id</code>.
-            SKU/barcode are ignored. This step is read-only — it only previews a diff.
+            Upload the Snoonu “AllExportData” file. Matches by <code>SPI(UniqueIdentifier)</code> → <code>products.snoonu_id</code>
+            and flags NEW products (in Snoonu, not in your catalog). This step is read-only — it only previews a diff.
           </p>
         </div>
         <input type="file" accept=".xlsx,.xls" onChange={onFile} disabled={busy} className="block text-sm" />
@@ -84,6 +86,86 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
   const [applying, startApply] = useTransition();
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set(DEFAULT_SELECTED));
+
+  // NEW-product import: review + select + confirm before creating them.
+  const [selectedNew, setSelectedNew] = useState<Set<string>>(
+    () => new Set(diff.newProducts.map((n) => n.id))
+  );
+  const [addingNew, startAddNew] = useTransition();
+  const [addResult, setAddResult] = useState<AddNewResult | null>(null);
+
+  // Rejected (in our catalog) products present in the upload — reviewable here.
+  const [rejList, setRejList] = useState(diff.rejected);
+  const [rejBusy, startRej] = useTransition();
+  const [rejPending, setRejPending] = useState<string | null>(null);
+  const approveRej = (productId: string) => {
+    setRejPending(productId);
+    startRej(async () => {
+      const res = await setProductApproval(productId, "Approved");
+      setRejPending(null);
+      if (res?.error) alert(res.error);
+      else setRejList((l) => l.filter((r) => r.product_id !== productId));
+    });
+  };
+
+  // Unavailable on Snoonu (Availability=False in the file) — reviewable here,
+  // with a one-click "reject in our catalog" to keep both sides in sync.
+  const [unavList, setUnavList] = useState(diff.unavailable);
+  const [unavBusy, startUnav] = useTransition();
+  const rejectUnav = (productId: string) => {
+    startUnav(async () => {
+      const res = await setProductApproval(productId, "Rejected", "غير متاح على سنونو");
+      if (res?.error) alert(res.error);
+      else setUnavList((l) => l.filter((r) => r.product_id !== productId));
+    });
+  };
+  const rejectAllUnav = () => {
+    if (!confirm(`رفض ${unavList.length} منتج في كتالوجك (غير متاحة على سنونو)؟`)) return;
+    const ids = unavList.map((r) => r.product_id);
+    startUnav(async () => {
+      const res = await setProductsApproval(ids, "Rejected", "غير متاح على سنونو");
+      if (res?.error) alert(res.error);
+      if (res?.ok || (res?.updated ?? 0) > 0) setUnavList([]);
+    });
+  };
+
+  // MISSING from the export = removed/delisted on Snoonu → reject in our catalog.
+  const [missList, setMissList] = useState(diff.missing);
+  const [missBusy, startMiss] = useTransition();
+  const rejectMiss = (productId: string) => {
+    startMiss(async () => {
+      const res = await setProductApproval(productId, "Rejected");
+      if (res?.error) alert(res.error);
+      else setMissList((l) => l.filter((r) => r.product_id !== productId));
+    });
+  };
+  const rejectAllMiss = () => {
+    if (!confirm(`رفض ${missList.length} منتج محذوفة من سنونو؟`)) return;
+    const ids = missList.map((r) => r.product_id);
+    startMiss(async () => {
+      const res = await setProductsApproval(ids, "Rejected");
+      if (res?.error) alert(res.error);
+      if (res?.ok || (res?.updated ?? 0) > 0) setMissList([]);
+    });
+  };
+  const toggleNew = (id: string) =>
+    setSelectedNew((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  function addNew() {
+    const ids = [...selectedNew];
+    if (ids.length === 0) { alert("اختر منتجًا واحدًا على الأقل."); return; }
+    if (!confirm(
+      `إضافة ${ids.length} منتج جديد للكتالوج؟\n\n` +
+      `بينضافون باسم/سعر/وصف من سنونو، فئة "Uncategorized"، SKU تلقائي بصيغة mk####، وباركود تلقائي فريد.\n` +
+      `تقدر تكمّل الفئة/الصورة لاحقًا. الموجود أصلاً ما يتكرر.`
+    )) return;
+    setAddResult(null);
+    startAddNew(async () => {
+      const res = await addSnoonuNewProducts(rows, ids);
+      setAddResult(res);
+      if (res.ok) router.refresh();
+    });
+  }
 
   const toggle = (col: string) =>
     setSelected((s) => { const n = new Set(s); n.has(col) ? n.delete(col) : n.add(col); return n; });
@@ -122,6 +204,124 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
         <Stat label="New (review)" value={c.newCount} accent="violet" />
         <Stat label="Missing (review)" value={c.missing} accent="slate" />
       </div>
+
+      {/* PRICE DIFFERENCES — highlighted on upload (our price → Snoonu price) */}
+      <Section title={`💰 اختلاف الأسعار — ${diff.fieldCounts.price ?? 0} منتج (سعرنا ← سعر سنونو)`}>
+        {(() => {
+          const priceRows = diff.updated
+            .filter((u) => u.changes.some((ch) => ch.field === "price"))
+            .map((u) => {
+              const ch = u.changes.find((c) => c.field === "price")!;
+              const oldN = Number(ch.old), newN = Number(ch.new);
+              const dir = !isNaN(oldN) && !isNaN(newN) ? (newN > oldN ? "up" : newN < oldN ? "down" : "same") : "same";
+              return { key: u.product_id, name: u.name_en, old: ch.old, new: ch.new, dir };
+            });
+          if (priceRows.length === 0) return <Empty text="ما في فرق بالأسعار بين سنونو والكتالوج. ✅" />;
+          return (
+            <div className="space-y-1">
+              {priceRows.slice(0, 200).map((r) => (
+                <div key={r.key} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm">
+                  <span className="flex-1 text-ink">{r.name || "—"}</span>
+                  <span className="text-slate-500">{r.old}</span>
+                  <span className="text-slate-400">←</span>
+                  <span className={r.dir === "up" ? "font-semibold text-red-600" : r.dir === "down" ? "font-semibold text-green-700" : "text-slate-700"}>
+                    {r.new}{r.dir === "up" ? " ↑" : r.dir === "down" ? " ↓" : ""}
+                  </span>
+                </div>
+              ))}
+              {(diff.fieldCounts.price ?? 0) > priceRows.length ? (
+                <p className="text-xs text-muted">…و {(diff.fieldCounts.price ?? 0) - priceRows.length} منتج آخر بفرق سعر.</p>
+              ) : null}
+              <p className="pt-1 text-xs text-muted">لتطبيق أسعار سنونو: فعّل <code>price</code> في «اختيار الحقول» بالأسفل واضغط Apply. (الأحمر = سنونو أغلى، الأخضر = أرخص.)</p>
+            </div>
+          );
+        })()}
+      </Section>
+
+      {/* REJECTED — products live in this Snoonu file but Rejected in our catalog */}
+      <Section title={`🚫 منتجات مرفوضة في كتالوجك (موجودة بملف سنونو) — ${diff.counts.rejected}`}>
+        {rejList.length === 0 ? (
+          <Empty text={diff.counts.rejected === 0 ? "ما في منتجات مرفوضة في هذا الملف. ✅" : "تمت مراجعة كل المرفوضة."} />
+        ) : (
+          <ul className="divide-y divide-red-100">
+            {rejList.map((r) => (
+              <li key={r.product_id} className="flex items-center justify-between gap-2 py-2 text-sm">
+                <span className="min-w-0 flex-1 truncate text-ink">{r.name_en ?? "—"}</span>
+                <span className="shrink-0 font-mono text-xs text-muted">{r.sku ?? "—"}</span>
+                <button
+                  onClick={() => approveRej(r.product_id)}
+                  disabled={rejBusy && rejPending === r.product_id}
+                  className="shrink-0 rounded-lg bg-green-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {rejBusy && rejPending === r.product_id ? "…" : "✓ اعتمد"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      {/* UNAVAILABLE on Snoonu (Availability=False) — the real "rejected on Snoonu" */}
+      {(() => {
+        const inStock = unavList.filter((r) => (Number(r.stock) || 0) > 0).length;
+        const outStock = unavList.length - inStock;
+        return (
+          <Section title={`⛔ غير متاحة على سنونو · Availability=False — ${diff.counts.unavailable}`}>
+            {unavList.length === 0 ? (
+              <Empty text={diff.counts.unavailable === 0 ? "كل المنتجات متاحة على سنونو. ✅" : "تمت مراجعة كل غير المتاحة."} />
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs text-muted">
+                    عمود Availability=False (مب بالضرورة «مرفوضة» — حالة الرفض مب بالتصدير؛ استخدم أداة اللصق فوق لها).
+                    <span className="text-slate-700"> {inStock} عندها مخزون</span> · <span className="text-amber-700">{outStock} نافدة</span>.
+                  </span>
+                  <button onClick={rejectAllUnav} disabled={unavBusy} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                    {unavBusy ? "…" : `⛔ ارفض الكل عندنا (${unavList.length})`}
+                  </button>
+                </div>
+                <ul className="max-h-96 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+                  {unavList.map((r) => {
+                    const st = Number(r.stock) || 0;
+                    return (
+                      <li key={r.product_id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                        <span className="min-w-0 flex-1 truncate text-ink">{r.name_en ?? "—"}</span>
+                        <span className={`badge shrink-0 ${st > 0 ? "bg-slate-100 text-slate-600" : "bg-amber-100 text-amber-700"}`}>
+                          {st > 0 ? `مخزون ${st}` : "نافد"}
+                        </span>
+                        <span className="shrink-0 font-mono text-xs text-muted">{r.sku ?? "—"}</span>
+                        <button onClick={() => rejectUnav(r.product_id)} disabled={unavBusy} className="shrink-0 rounded-lg border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50">
+                          ارفض عندنا
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </Section>
+        );
+      })()}
+
+      {/* OUT OF STOCK on Snoonu (Stock=0) — informational (Snoonu's stock ≠ ours) */}
+      <Section title={`📦 نافد على سنونو · Stock=0 — ${diff.counts.outOfStock}`}>
+        {diff.outOfStock.length === 0 ? (
+          <Empty text="ما في منتجات نافدة على سنونو. ✅" />
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-muted">مخزونها 0 في سنونو (للعلم — مخزون سنونو منفصل عن مخزونك. راجعها لو تبي تعيد تعبئتها.)</p>
+            <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+              {diff.outOfStock.map((m) => (
+                <li key={m.product_id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                  <a href={`/products/${m.product_id}`} className="min-w-0 flex-1 truncate text-ink hover:underline">{m.name_en ?? "—"}</a>
+                  <span className="badge shrink-0 bg-amber-100 text-amber-700">نافد</span>
+                  <span className="shrink-0 font-mono text-xs text-muted">{m.sku ?? "—"}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Section>
 
       {diff.missingOptionalCols.length ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
@@ -163,27 +363,71 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
         )}
       </Section>
 
-      {/* NEW */}
-      <Section title={`NEW on Snoonu — ${c.newCount} (not in our DB; review, not auto-created)`}>
+      {/* NEW — review, select, then confirm to add into the catalog */}
+      <Section title={`NEW on Snoonu — ${c.newCount} (راجعها واختر، ثم أضفها بموافقتك)`}>
         {diff.newProducts.length === 0 ? <Empty text="No new products." /> : (
-          <ul className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
-            {diff.newProducts.slice(0, 200).map((n, i) => (
-              <li key={i} className="flex gap-2"><span className="font-mono text-[10px] text-muted">{n.id}</span><span className="text-slate-700">{n.name_en || "—"}</span></li>
-            ))}
-            {c.newCount > diff.newProducts.length ? <li className="text-muted">…and {c.newCount - diff.newProducts.length} more.</li> : null}
-          </ul>
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <button type="button" onClick={() => setSelectedNew(new Set(diff.newProducts.map((n) => n.id)))} className="btn-ghost px-2 py-1">تحديد الكل</button>
+              <button type="button" onClick={() => setSelectedNew(new Set())} className="btn-ghost px-2 py-1">إلغاء الكل</button>
+              <span className="text-muted">محدد: {selectedNew.size} من {diff.newProducts.length}</span>
+            </div>
+            <ul className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
+              {diff.newProducts.slice(0, 200).map((n) => (
+                <li key={n.id}>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 px-2 py-1.5 hover:bg-slate-50">
+                    <input type="checkbox" checked={selectedNew.has(n.id)} onChange={() => toggleNew(n.id)} className="h-4 w-4" />
+                    <span className="flex-1 text-slate-700">{n.name_en || "—"}</span>
+                    <span className="font-mono text-[10px] text-muted">{n.id.slice(-6)}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <div className="flex flex-col gap-2 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-muted">
+                بينضافون بـ SKU تلقائي <code>mk####</code> + باركود فريد، وفئة <code>Uncategorized</code> — تشوفهم ملاك والكتالوج فورًا، وتكمّل تفاصيلهم بعدين.
+              </p>
+              <button onClick={addNew} disabled={addingNew || selectedNew.size === 0} className="btn-primary disabled:opacity-50">
+                {addingNew ? "جاري الإضافة…" : `➕ أضف ${selectedNew.size} منتج جديد`}
+              </button>
+            </div>
+            {addResult ? (
+              addResult.ok ? (
+                <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+                  ✓ أُضيف <strong>{addResult.added}</strong> منتج{addResult.skipped ? ` · تخطّى ${addResult.skipped} موجود` : ""}{addResult.failed ? ` · فشل ${addResult.failed}` : ""}. أعد رفع ملف سنونو لتحديث الفرق.
+                </div>
+              ) : (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">فشل الإضافة: {addResult.error}</div>
+              )
+            ) : null}
+          </div>
         )}
       </Section>
 
       {/* MISSING */}
-      <Section title={`MISSING from this export — ${c.missing} (candidate "not listed on Snoonu")`}>
-        {diff.missing.length === 0 ? <Empty text="All our products appear in the export." /> : (
-          <ul className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
-            {diff.missing.slice(0, 200).map((m, i) => (
-              <li key={i} className="flex gap-2"><span className="text-slate-600">{m.sku ?? "—"}</span><span className="text-slate-700">{m.name_en || "—"}</span></li>
-            ))}
-            {c.missing > diff.missing.length ? <li className="text-muted">…and {c.missing - diff.missing.length} more.</li> : null}
-          </ul>
+      <Section title={`🙈 محذوفة من إكسل سنونو — ${c.missing} (موجودة عندك، أزالها سنونو = غير متوفرة)`}>
+        {missList.length === 0 ? (
+          <Empty text={c.missing === 0 ? "كل منتجاتك موجودة في تصدير سنونو. ✅" : "تمت مراجعة كل المحذوفة."} />
+        ) : (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs text-muted">لها snoonu_id (كانت على سنونو) لكنها اختفت من التصدير — يعني سنونو أزالها.</span>
+              <button onClick={rejectAllMiss} disabled={missBusy} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                {missBusy ? "…" : `⛔ ارفض الكل (${missList.length})`}
+              </button>
+            </div>
+            <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+              {missList.map((m) => (
+                <li key={m.product_id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate text-ink">{m.name_en ?? "—"}</span>
+                  <span className="shrink-0 font-mono text-xs text-muted">{m.sku ?? "—"}</span>
+                  <button onClick={() => rejectMiss(m.product_id)} disabled={missBusy} className="shrink-0 rounded-lg border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-50">
+                    ارفض عندنا
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </Section>
 

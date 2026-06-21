@@ -45,23 +45,29 @@ export async function uploadProductImage(formData: FormData) {
   if (pErr || !prod) return { error: "Product not found." };
 
   const sku = String(prod.sku || "img").replace(/[^a-zA-Z0-9_-]/g, "") || "img";
-  const path = `${sku}_${Date.now()}.${ext}`; // clean, unique path (never clobbers the canonical object)
+  // Save the file under the SKU name (e.g. mk1995.jpg) so it matches the catalog
+  // convention and the Talabat "New Image Filename" column. upsert replaces the
+  // product's canonical image.
+  const filename = `${sku}.${ext}`;
 
   try {
     const buf = Buffer.from(await file.arrayBuffer());
     const { error: upErr } = await admin.storage
       .from(BUCKET)
-      .upload(path, buf, { contentType: file.type, upsert: true, cacheControl: "3600" });
+      .upload(filename, buf, { contentType: file.type, upsert: true, cacheControl: "3600" });
     if (upErr) return { error: `Upload failed: ${upErr.message}` };
 
-    const url = admin.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+    // Cache-bust the URL (we overwrote the same object) so the new image shows
+    // immediately; image_filename stays the clean "<sku>.<ext>".
+    const base = admin.storage.from(BUCKET).getPublicUrl(filename).data.publicUrl;
+    const url = `${base}?t=${Date.now()}`;
 
     // make this the primary image
     await admin.from("product_images").update({ is_primary: false }).eq("product_id", productId);
     await admin.from("product_images").insert({
-      product_id: productId, url, filename: path, is_primary: true, sort_order: 0,
+      product_id: productId, url, filename, is_primary: true, sort_order: 0,
     });
-    await admin.from("products").update({ image_url: url }).eq("id", productId);
+    await admin.from("products").update({ image_url: url, image_filename: filename }).eq("id", productId);
 
     revalidate(productId);
     return { ok: true, url };

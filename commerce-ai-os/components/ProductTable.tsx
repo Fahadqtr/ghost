@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CATEGORIES } from "@/lib/constants";
+import { setProductApproval } from "@/app/(app)/products/actions";
 
 const PAGE_SIZE = 50;
 const CHANNELS = ["Shopify", "Snoonu", "Talabat", "Rafeeq"] as const;
@@ -16,6 +17,10 @@ export interface ProductRow {
   name_en: string | null;
   name_ar: string | null;
   main_category: string | null;
+  approval: string | null;
+  rejection_reason: string | null;
+  platform_status: string | null;
+  notes: string | null;
   price: number | null;
   discount_price: number | null;
   stock: number | null;
@@ -49,10 +54,51 @@ function StatusBadge({ status }: { status?: string }) {
   return <span className={`badge ${cls}`}>{s}</span>;
 }
 
+const apprCls = (s: string) =>
+  s === "Approved" ? "bg-green-100 text-green-700"
+  : s === "Rejected" ? "bg-red-100 text-red-700"
+  : s === "SentAI" ? "bg-amber-100 text-amber-700"
+  : "bg-slate-100 text-slate-400";
+
+// Inline approve/reject straight from the list — no need to open the product.
+// stopPropagation keeps the row-click (navigate to detail) from firing.
+function RowApproval({ id, value }: { id: string; value: string | null }) {
+  const [val, setVal] = useState(value ?? "");
+  const [busy, start] = useTransition();
+  return (
+    <select
+      value={val}
+      disabled={busy}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        e.stopPropagation();
+        const v = e.target.value;
+        const prev = val;
+        setVal(v);
+        start(async () => {
+          const res = await setProductApproval(id, v);
+          if (res?.error) { setVal(prev); alert(res.error); }
+        });
+      }}
+      className={`badge cursor-pointer border-0 outline-none ${apprCls(val)} ${busy ? "opacity-50" : ""}`}
+      title="غيّر حالة الاعتماد"
+    >
+      <option value="">بدون</option>
+      <option value="Approved">معتمد</option>
+      <option value="Rejected">مرفوض</option>
+      <option value="SentAI">SentAI</option>
+    </select>
+  );
+}
+
 export default function ProductTable({ products }: { products: ProductRow[] }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
+  const [appr, setAppr] = useState("");
+  const [stk, setStk] = useState("");
+  const [plat, setPlat] = useState("");
+  const [grp, setGrp] = useState("");
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
@@ -65,11 +111,24 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         (p.sku ?? "").toLowerCase().includes(needle) ||
         (p.barcode ?? "").toLowerCase().includes(needle);
       const matchesCat = !cat || p.main_category === cat;
-      return matchesQ && matchesCat;
+      const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
+      const n = Number(p.stock);
+      const matchesStk = !stk
+        || (stk === "out" ? !(n > 0)
+          : stk === "low" ? (n > 0 && n < 10)
+          : stk === "in" ? n >= 10 : true);
+      const matchesPlat = !plat || (plat === "active" ? p.platform_status === "Active" : p.platform_status !== "Active");
+      const rr = p.rejection_reason ?? "";
+      const matchesGrp = !grp || (
+        grp === "new" ? (p.notes ?? "").startsWith("Imported from Snoonu sync")
+        : grp === "image" ? rr.includes("صورة")
+        : grp === "unavail" ? rr.includes("غير متاح")
+        : true);
+      return matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
     });
-  }, [products, q, cat]);
+  }, [products, q, cat, appr, stk, plat, grp]);
 
-  useEffect(() => { setPage(1); }, [q, cat]);
+  useEffect(() => { setPage(1); }, [q, cat, appr, stk, plat, grp]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, totalPages);
@@ -89,6 +148,30 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           <option value="">All categories</option>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
         </select>
+        <select className="input sm:max-w-[12rem]" value={appr} onChange={(e) => setAppr(e.target.value)}>
+          <option value="">كل الحالات</option>
+          <option value="Approved">Approved · معتمد</option>
+          <option value="Rejected">Rejected · مرفوض</option>
+          <option value="SentAI">SentAI</option>
+          <option value="none">بدون حالة</option>
+        </select>
+        <select className="input sm:max-w-[14rem]" value={grp} onChange={(e) => setGrp(e.target.value)}>
+          <option value="">كل المجموعات</option>
+          <option value="new">🆕 جديد · من سنونو</option>
+          <option value="image">🚫 مرفوض · بسبب الصورة</option>
+          <option value="unavail">⛔ مرفوض · غير متاح على سنونو</option>
+        </select>
+        <select className="input sm:max-w-[12rem]" value={stk} onChange={(e) => setStk(e.target.value)}>
+          <option value="">كل المخزون</option>
+          <option value="out">Out of stock · نافد</option>
+          <option value="low">Low · منخفض (1-9)</option>
+          <option value="in">In stock · متوفّر (10+)</option>
+        </select>
+        <select className="input sm:max-w-[12rem]" value={plat} onChange={(e) => setPlat(e.target.value)}>
+          <option value="">مفعّل + غير مفعّل</option>
+          <option value="active">مفعّل · Active</option>
+          <option value="inactive">غير مفعّل · Draft</option>
+        </select>
         <span className="text-sm text-muted sm:ml-auto">
           {filtered.length === products.length ? `${products.length} products` : `${filtered.length} of ${products.length}`}
         </span>
@@ -105,6 +188,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
               <th className="px-3 py-3 font-medium">Snoonu ID</th>
               <th className="px-3 py-3 font-medium">Barcode</th>
               <th className="px-3 py-3 font-medium">Category</th>
+              <th className="px-3 py-3 font-medium">Approval</th>
               <th className="px-3 py-3 font-medium">Price</th>
               <th className="px-3 py-3 font-medium">Disc.</th>
               <th className="px-3 py-3 font-medium">Stock</th>
@@ -114,7 +198,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={15} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
+              <tr><td colSpan={16} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
             ) : (
               visible.map((p) => (
                 <tr
@@ -131,9 +215,15 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                   </td>
                   <td className="px-3 py-3 text-slate-600">{p.barcode ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.main_category ?? "—"}</td>
+                  <td className="px-3 py-3"><RowApproval id={p.id} value={p.approval} /></td>
                   <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.discount_price ?? "—"}</td>
-                  <td className="px-3 py-3 text-slate-600">{p.stock ?? "—"}</td>
+                  <td className="px-3 py-3">
+                    {p.stock == null ? <span className="text-slate-400">—</span>
+                      : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">نافد</span>
+                      : Number(p.stock) < 10 ? <span className="text-amber-700">{p.stock}</span>
+                      : <span className="text-slate-600">{p.stock}</span>}
+                  </td>
                   <td className="px-3 py-3 text-slate-600">{p.variant_count > 0 ? p.variant_count : "—"}</td>
                   {CHANNELS.map((c) => (
                     <td key={c} className="px-3 py-3"><StatusBadge status={p.channels[c]} /></td>

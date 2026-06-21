@@ -7,6 +7,7 @@ import {
   ALWAYS, OPTIONAL, readColumns, computeChanges, diffSnoonu, s,
   type Field, type SnoonuExportRow, type SnoonuDiff,
 } from "@/lib/snoonu-diff";
+import { clean } from "@/lib/malak/talabat-export.mjs";
 
 export type { SnoonuExportRow, SnoonuDiff } from "@/lib/snoonu-diff";
 
@@ -37,9 +38,9 @@ async function readAllProducts(client: any, cols: string): Promise<Record<string
 export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<SnoonuDiff> {
   const empty: SnoonuDiff = {
     ok: false, existingOptionalCols: [], missingOptionalCols: [],
-    counts: { exportRows: 0, matched: 0, updated: 0, newCount: 0, missing: 0, unchanged: 0 },
+    counts: { exportRows: 0, matched: 0, updated: 0, newCount: 0, missing: 0, unchanged: 0, rejected: 0, unavailable: 0, outOfStock: 0 },
     fieldCounts: {}, changedColsPerProduct: [],
-    updated: [], newProducts: [], missing: [],
+    updated: [], newProducts: [], missing: [], rejected: [], unavailable: [], outOfStock: [],
   };
   if (!rows?.length) return { ...empty, error: "No rows parsed from the export." };
 
@@ -59,6 +60,33 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
       return cols;
     });
 
+    // Matched products that are REJECTED in our catalog (present in the upload).
+    const exportIds = new Set(rows.map((r) => s(r.id)).filter(Boolean));
+    const rejected = products
+      .filter((p: any) => p.snoonu_id && exportIds.has(String(p.snoonu_id)) && String(p.approval) === "Rejected")
+      .map((p: any) => ({ snoonu_id: String(p.snoonu_id), product_id: p.id, sku: p.sku ?? null, name_en: p.name_en ?? null }));
+
+    // Matched products marked UNAVAILABLE on Snoonu (Availability=False in the
+    // file). Carry the Snoonu stock so the UI can tell "disabled" (has stock)
+    // from "out of stock".
+    const stockBy = new Map<string, string>();
+    const unavailIds = new Set<string>();
+    for (const r of rows) {
+      const id = s(r.id);
+      if (!id) continue;
+      stockBy.set(id, s(r.stock));
+      if (String(r.availability ?? "").trim().toLowerCase() === "false") unavailIds.add(id);
+    }
+    const unavailable = products
+      .filter((p: any) => p.snoonu_id && unavailIds.has(String(p.snoonu_id)))
+      .map((p: any) => ({ snoonu_id: String(p.snoonu_id), product_id: p.id, sku: p.sku ?? null, name_en: p.name_en ?? null, stock: stockBy.get(String(p.snoonu_id)) ?? null }))
+      .sort((a: any, b: any) => (Number(b.stock) || 0) - (Number(a.stock) || 0)); // in-stock (deliberately disabled) first
+
+    // Matched products that are OUT OF STOCK on Snoonu (Stock=0 in the file).
+    const outOfStock = products
+      .filter((p: any) => p.snoonu_id && stockBy.has(String(p.snoonu_id)) && !(Number(stockBy.get(String(p.snoonu_id))) > 0))
+      .map((p: any) => ({ snoonu_id: String(p.snoonu_id), product_id: p.id, sku: p.sku ?? null, name_en: p.name_en ?? null, stock: stockBy.get(String(p.snoonu_id)) ?? null }));
+
     return {
       ok: true,
       existingOptionalCols,
@@ -70,6 +98,9 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
         newCount: d.newProducts.length,
         missing: d.missing.length,
         unchanged: d.unchanged,
+        rejected: rejected.length,
+        unavailable: unavailable.length,
+        outOfStock: outOfStock.length,
       },
       fieldCounts,
       changedColsPerProduct,
@@ -79,6 +110,9 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
       updated: d.updated.slice(0, 200),
       newProducts: d.newProducts.slice(0, 200),
       missing: d.missing.slice(0, 200),
+      rejected: rejected.slice(0, 200),
+      unavailable: unavailable.slice(0, 300),
+      outOfStock: outOfStock.slice(0, 300),
     };
   } catch (e) {
     return { ...empty, error: e instanceof Error ? e.message : "Unexpected error while computing the diff." };
@@ -154,5 +188,122 @@ export async function applySnoonuUpdates(
     return { ok: true, productsUpdated, fieldWrites, matched, unchanged, failed, columnsWritten: [...colsWritten] };
   } catch (e) {
     return { ...base, error: e instanceof Error ? e.message : "Unexpected error while applying updates." };
+  }
+}
+
+export interface AddNewResult {
+  ok: boolean;
+  error?: string;
+  added: number;
+  skipped: number; // already existed (matched a snoonu_id) — never duplicated
+  failed: number;
+}
+
+// Create the user-approved NEW products (those in the export with a SPI that is
+// not yet a products.snoonu_id). Re-checks server-side so it never duplicates an
+// existing product. Writes via the service-role key. Each product gets a
+// placeholder SKU (SN-<spi>), category "Uncategorized", emoji-cleaned name/desc,
+// price, and a seeded inventory row. Other fields are left blank for the user to
+// fill (SKU/category/image) — so Malak shows them as uncategorized new items.
+export async function addSnoonuNewProducts(
+  rows: SnoonuExportRow[],
+  selectedIds: string[]
+): Promise<AddNewResult> {
+  const base: AddNewResult = { ok: false, added: 0, skipped: 0, failed: 0 };
+  if (!rows?.length) return { ...base, error: "No rows uploaded." };
+  const want = new Set((selectedIds ?? []).map((x) => String(x).trim()).filter(Boolean));
+  if (want.size === 0) return { ...base, error: "No products selected to add." };
+
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { ...base, error: "Not signed in." };
+
+  let admin: ReturnType<typeof createAdminClient>;
+  try { admin = createAdminClient(); }
+  catch (e) { return { ...base, error: e instanceof Error ? e.message : "Service role unavailable." }; }
+
+  try {
+    // Existing snoonu_ids (avoid duplicates) + max mk#### number + barcodes
+    // (so generated SKUs/barcodes never clash with the catalog).
+    const existing = new Set<string>();
+    let maxMk = 0;
+    const usedBarcodes = new Set<string>();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await admin.from("products").select("snoonu_id, sku, barcode").range(from, from + 999);
+      if (error) return { ...base, error: `Read products failed: ${error.message}` };
+      for (const p of data ?? []) {
+        if (p.snoonu_id) existing.add(String(p.snoonu_id).trim());
+        const m = /^mk(\d+)$/i.exec(String(p.sku ?? "").trim());
+        if (m) maxMk = Math.max(maxMk, parseInt(m[1], 10));
+        const bc = String(p.barcode ?? "").trim();
+        if (bc) usedBarcodes.add(bc);
+      }
+      if ((data ?? []).length < 1000) break;
+    }
+
+    // Next SKU in the catalog's mk#### scheme.
+    const nextSku = () => `mk${++maxMk}`;
+    // Unique 13-digit EAN-13 (internal "29" prefix + counter + check digit),
+    // guaranteed not to collide with any existing or in-batch barcode.
+    const ean13Check = (d12: string) => {
+      let sum = 0;
+      for (let i = 0; i < 12; i++) sum += (+d12[i]) * (i % 2 === 0 ? 1 : 3);
+      return String((10 - (sum % 10)) % 10);
+    };
+    let bcSeq = 1;
+    const nextBarcode = () => {
+      for (;;) {
+        const base = "29" + String(bcSeq++).padStart(10, "0");
+        const bc = base + ean13Check(base);
+        if (!usedBarcodes.has(bc)) { usedBarcodes.add(bc); return bc; }
+      }
+    };
+
+    const num = (v: unknown) => { const t = s(v); if (t === "") return null; const n = Number(t); return isNaN(n) ? null : n; };
+    const seen = new Set<string>();
+    const toInsert: Record<string, unknown>[] = [];
+    let skipped = 0;
+    for (const r of rows) {
+      const id = s(r.id);
+      if (!id || !want.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      if (existing.has(id)) { skipped++; continue; } // already in catalog — never duplicate
+      toInsert.push({
+        sku: nextSku(),               // mk#### like the rest of the catalog
+        barcode: nextBarcode(),       // auto, unique, no clash with old barcodes
+        snoonu_id: id,
+        name_en: clean(r.name_en),
+        name_ar: clean(r.name_ar),
+        description_en: clean(r.description_en),
+        description_ar: clean(r.description_ar),
+        price: num(r.price),
+        main_category: "Uncategorized",
+        notes: "Imported from Snoonu sync — set category / image.",
+      });
+    }
+
+    if (toInsert.length === 0) return { ok: true, added: 0, skipped, failed: 0 };
+
+    // Insert in chunks; collect ids to seed inventory.
+    const chunk = (a: any[], n: number) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+    let added = 0, failed = 0;
+    const newIds: string[] = [];
+    for (const part of chunk(toInsert, 200)) {
+      const { data, error } = await admin.from("products").insert(part).select("id");
+      if (error) { failed += part.length; continue; }
+      added += data?.length ?? 0;
+      for (const p of data ?? []) newIds.push(p.id);
+    }
+
+    // Seed inventory rows so they show on the Inventory page (stock 0 to start).
+    if (newIds.length) {
+      const invRows = newIds.map((product_id) => ({ product_id, stock_quantity: 0, low_stock_threshold: 5, sold_quantity: 0 }));
+      for (const part of chunk(invRows, 200)) await admin.from("inventory").insert(part);
+    }
+
+    revalidatePath("/products");
+    revalidatePath("/import-export/snoonu-sync");
+    return { ok: true, added, skipped, failed };
+  } catch (e) {
+    return { ...base, error: e instanceof Error ? e.message : "Unexpected error while adding products." };
   }
 }

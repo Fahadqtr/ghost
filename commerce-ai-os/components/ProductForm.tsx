@@ -39,6 +39,8 @@ function emptyInput(): ProductInput {
     stock_quantity: "",
     stock_status: "",
     platform_status: "",
+    approval: "",
+    rejection_reason: "",
     image_filename: "",
     image_url: "",
     description_en: "",
@@ -132,10 +134,15 @@ export default function ProductForm({
             ))}
           </select>
         </Field>
-        <Field label="Category (locked to 11)">
+        <Field label="Category">
           <select className="input" value={form.main_category} onChange={(e) => set("main_category", e.target.value)}>
             <option value="">— Select category —</option>
-            {CATEGORIES.map((c) => (
+            {/* Always include the product's current category, even if it's not
+                in the known list, so editing never silently drops it. */}
+            {(form.main_category && !CATEGORIES.includes(form.main_category as (typeof CATEGORIES)[number])
+              ? [form.main_category, ...CATEGORIES]
+              : CATEGORIES
+            ).map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
@@ -159,6 +166,19 @@ export default function ProductForm({
           </select>
         </Field>
         <Field label="Platform status"><input className="input" value={form.platform_status} onChange={(e) => set("platform_status", e.target.value)} /></Field>
+        <Field label="حالة الاعتماد · Approval">
+          <select className="input" value={form.approval} onChange={(e) => set("approval", e.target.value)}>
+            <option value="">— بدون / unset —</option>
+            <option value="Approved">Approved · معتمد</option>
+            <option value="Rejected">Rejected · مرفوض</option>
+            <option value="SentAI">SentAI</option>
+          </select>
+        </Field>
+        {form.approval === "Rejected" ? (
+          <Field label="سبب الرفض · Rejection reason">
+            <input className="input" value={form.rejection_reason} onChange={(e) => set("rejection_reason", e.target.value)} placeholder="مثال: بسبب الصورة" />
+          </Field>
+        ) : null}
       </Section>
 
       {/* Media */}
@@ -206,8 +226,9 @@ export default function ProductForm({
         )}
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center justify-between">
+      {/* Actions — sticky so the Save button is always reachable on mobile,
+          where the long form would otherwise push it below the fold. */}
+      <div className="sticky bottom-0 z-10 -mx-1 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white/95 px-3 py-3 shadow-[0_-2px_10px_rgba(0,0,0,0.06)] backdrop-blur">
         <div className="flex gap-2">
           <button type="submit" disabled={saving} className="btn-primary disabled:opacity-60">
             {saving ? "Saving…" : productId ? "Save changes" : "Create product"}

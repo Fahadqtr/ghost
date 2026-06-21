@@ -45,6 +45,8 @@ export default async function EditProductPage({
     stock_quantity: s(product.stock_quantity),
     stock_status: s(product.stock_status),
     platform_status: s(product.platform_status),
+    approval: s(product.approval),
+    rejection_reason: s(product.rejection_reason),
     image_filename: s(product.image_filename),
     image_url: s(product.image_url),
     description_en: s(product.description_en),
