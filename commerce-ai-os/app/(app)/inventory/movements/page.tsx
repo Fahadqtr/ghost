@@ -31,7 +31,7 @@ export default async function MovementsPage() {
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("inventory")
-      .select("id, stock_quantity, products(sku, name_en, name_ar)")
+      .select("id, stock_quantity, products(sku, name_en, name_ar, barcode)")
       .range(from, from + PAGE - 1);
     if (error) break;
     for (const r of (data ?? []) as any[]) {
@@ -43,6 +43,7 @@ export default async function MovementsPage() {
         sku,
         name,
         name_ar: r.products?.name_ar ?? null,
+        barcode: r.products?.barcode ?? null,
         stock: r.stock_quantity ?? 0,
       });
     }

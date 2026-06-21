@@ -3,12 +3,14 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { recordMovement } from "@/app/(app)/inventory/actions";
+import BarcodeScanner from "@/components/BarcodeScanner";
 
 export type PickItem = {
   inventoryId: string;
   sku: string | null;
   name: string | null;
   name_ar: string | null;
+  barcode: string | null;
   stock: number;
 };
 
@@ -26,7 +28,22 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
   const [reason, setReason] = useState("purchase");
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [scanning, setScanning] = useState(false);
   const [pending, startTransition] = useTransition();
+
+  function onScan(code: string) {
+    const c = code.trim();
+    setScanning(false);
+    const found =
+      items.find((it) => (it.barcode ?? "") === c) ||
+      items.find((it) => (it.sku ?? "").toLowerCase() === c.toLowerCase());
+    if (found) {
+      pick(found);
+      setMsg({ kind: "ok", text: `Scanned: ${found.name ?? found.sku}` });
+    } else {
+      setMsg({ kind: "err", text: `No product matches barcode ${c}.` });
+    }
+  }
 
   const matches = useMemo(() => {
     const n = pq.trim().toLowerCase();
@@ -105,12 +122,22 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
             </div>
           ) : (
             <div className="relative">
-              <input
-                className="input"
-                placeholder="Search product name or SKU…"
-                value={pq}
-                onChange={(e) => setPq(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <input
+                  className="input flex-1"
+                  placeholder="Search product name or SKU…"
+                  value={pq}
+                  onChange={(e) => setPq(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn-ghost flex-none px-3 py-2 text-sm"
+                  onClick={() => setScanning(true)}
+                  title="Scan barcode with camera"
+                >
+                  📷 Scan
+                </button>
+              </div>
               {matches.length > 0 && (
                 <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
                   {matches.map((it) => (
@@ -159,11 +186,22 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
         {/* Reason */}
         <div className="space-y-1">
           <label className="label">Reason</label>
-          <select className="input" value={reason} onChange={(e) => setReason(e.target.value)}>
+          <div className="flex flex-wrap gap-2">
             {REASONS[type].map((r) => (
-              <option key={r} value={r} className="capitalize">{r}</option>
+              <button
+                key={r}
+                type="button"
+                onClick={() => setReason(r)}
+                className={`rounded-lg border px-3 py-1.5 text-sm font-medium capitalize ${
+                  reason === r
+                    ? "border-blue-300 bg-blue-50 text-blue-700"
+                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {r}
+              </button>
             ))}
-          </select>
+          </div>
         </div>
 
         {/* Note */}
@@ -181,6 +219,8 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
           <span className={`text-sm ${msg.kind === "ok" ? "text-green-700" : "text-amber-700"}`}>{msg.text}</span>
         )}
       </div>
+
+      {scanning && <BarcodeScanner onDetected={onScan} onClose={() => setScanning(false)} />}
     </div>
   );
 }
