@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { recordMovement } from "@/app/(app)/inventory/actions";
 import BarcodeScanner from "@/components/BarcodeScanner";
+import PhotoIdentify from "@/components/PhotoIdentify";
 
 export type PickItem = {
   inventoryId: string;
@@ -29,6 +30,7 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [identifying, setIdentifying] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function onScan(code: string) {
@@ -137,6 +139,14 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
                 >
                   📷 Scan
                 </button>
+                <button
+                  type="button"
+                  className="btn-ghost flex-none px-3 py-2 text-sm"
+                  onClick={() => setIdentifying(true)}
+                  title="Identify product by photo (AI)"
+                >
+                  🔍 Photo
+                </button>
               </div>
               {matches.length > 0 && (
                 <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
@@ -221,6 +231,16 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
       </div>
 
       {scanning && <BarcodeScanner onDetected={onScan} onClose={() => setScanning(false)} />}
+      {identifying && (
+        <PhotoIdentify
+          onPick={(it) => {
+            pick(it);
+            setIdentifying(false);
+            setMsg({ kind: "ok", text: `Selected: ${it.name ?? it.sku}` });
+          }}
+          onClose={() => setIdentifying(false)}
+        />
+      )}
     </div>
   );
 }

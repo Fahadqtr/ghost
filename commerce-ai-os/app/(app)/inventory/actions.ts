@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import Anthropic from "@anthropic-ai/sdk";
 
 function toNum(v: string | number | null | undefined): number | null {
   if (v === null || v === undefined) return null;
@@ -242,4 +243,125 @@ export async function recordMovement(input: MovementInput) {
   revalidatePath("/inventory/movements");
   revalidatePath("/dashboard");
   return { ok: true, before, after };
+}
+
+export type RecogCandidate = {
+  inventoryId: string;
+  sku: string | null;
+  name: string | null;
+  name_ar: string | null;
+  barcode: string | null;
+  stock: number;
+  image_url: string | null;
+};
+
+/**
+ * Visual product recognition: send a captured photo to Claude (vision), extract
+ * brand / type / keywords, then search the catalog and return the closest
+ * matching products for the user to confirm. Human-in-the-loop by design.
+ */
+export async function recognizeProduct(imageDataUrl: string): Promise<
+  { error: string } | { guess: string; terms: string[]; candidates: RecogCandidate[] }
+> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return { error: "AI vision isn’t configured on the server (ANTHROPIC_API_KEY missing)." };
+
+  const m = /^data:(image\/(?:png|jpe?g|webp));base64,(.+)$/.exec(imageDataUrl || "");
+  if (!m) return { error: "Invalid image capture." };
+  const media_type = m[1] as "image/png" | "image/jpeg" | "image/webp";
+  const data = m[2];
+
+  let guess = "";
+  let tokens: string[] = [];
+  try {
+    const client = new Anthropic({ apiKey });
+    const resp = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 300,
+      system:
+        "You identify retail beauty, skincare, cosmetics and home products from a photo, to search a store catalog. Reply with ONLY compact JSON, no prose.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type, data } },
+            {
+              type: "text",
+              text:
+                'Identify this product for catalog search. Return JSON exactly: {"brand": string, "type": string, "color": string, "keywords": string[], "guess_name": string}. keywords = 5-10 lowercase English words a catalog search would match: brand name, product type, and distinctive words/text visible on the packaging.',
+            },
+          ],
+        },
+      ],
+    });
+    const text = resp.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+    const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+    guess = String(json.guess_name ?? "");
+    const raw: string[] = [
+      ...(Array.isArray(json.keywords) ? json.keywords : []),
+      json.brand,
+      json.type,
+    ].filter(Boolean);
+    // tokenise to safe alphanumeric words for ilike search
+    tokens = Array.from(
+      new Set(
+        raw
+          .join(" ")
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .filter((t) => t.length >= 3)
+      )
+    ).slice(0, 12);
+  } catch (e: any) {
+    return { error: `Vision request failed: ${e?.message ?? "unknown error"}` };
+  }
+
+  if (tokens.length === 0) return { guess, terms: [], candidates: [] };
+
+  const admin = createAdminClient();
+  const orExpr = tokens
+    .flatMap((t) => [`name_en.ilike.%${t}%`, `keywords_en.ilike.%${t}%`])
+    .join(",");
+  const { data: prods } = await admin
+    .from("products")
+    .select("id, sku, name_en, name_ar, barcode, image_url, keywords_en")
+    .or(orExpr)
+    .limit(60);
+
+  const scored = ((prods ?? []) as any[])
+    .map((p) => {
+      const hay = `${p.name_en ?? ""} ${p.keywords_en ?? ""}`.toLowerCase();
+      const score = tokens.reduce((s, t) => s + (hay.includes(t) ? 1 : 0), 0);
+      return { p, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);
+
+  const ids = scored.map((x) => x.p.id);
+  const { data: inv } = ids.length
+    ? await admin.from("inventory").select("id, stock_quantity, product_id").in("product_id", ids)
+    : { data: [] as any[] };
+  const invByProd = new Map((inv ?? []).map((r: any) => [r.product_id, r]));
+
+  const candidates: RecogCandidate[] = scored
+    .map(({ p }) => {
+      const iv = invByProd.get(p.id);
+      if (!iv) return null;
+      return {
+        inventoryId: iv.id,
+        sku: p.sku ?? null,
+        name: p.name_en ?? null,
+        name_ar: p.name_ar ?? null,
+        barcode: p.barcode ?? null,
+        stock: iv.stock_quantity ?? 0,
+        image_url: p.image_url ?? null,
+      };
+    })
+    .filter((c): c is RecogCandidate => c !== null);
+
+  return { guess, terms: tokens, candidates };
 }
