@@ -321,6 +321,7 @@ export async function recognizeProduct(imageDataUrl: string): Promise<
 
   if (tokens.length === 0) return { guess, terms: [], candidates: [] };
 
+  try {
   const admin = createAdminClient();
   const orExpr = tokens
     .flatMap((t) => [`name_en.ilike.%${t}%`, `keywords_en.ilike.%${t}%`])
@@ -364,4 +365,7 @@ export async function recognizeProduct(imageDataUrl: string): Promise<
     .filter((c): c is RecogCandidate => c !== null);
 
   return { guess, terms: tokens, candidates };
+  } catch (e: any) {
+    return { error: `Catalog search failed: ${e?.message ?? "unknown error"}` };
+  }
 }

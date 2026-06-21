@@ -69,15 +69,25 @@ export default function PhotoIdentify({
     const dataUrl = canvas.toDataURL("image/jpeg", 0.6);
     stopCamera();
     setPhase("loading");
-    const res = await recognizeProduct(dataUrl);
-    if ("error" in res) {
-      setError(res.error);
+    try {
+      const res = await Promise.race([
+        recognizeProduct(dataUrl),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Timed out after 45s")), 45000)
+        ),
+      ]);
+      if ("error" in res) {
+        setError(res.error);
+        setPhase("error");
+        return;
+      }
+      setGuess(res.guess || "");
+      setCandidates(res.candidates);
+      setPhase("results");
+    } catch (e: any) {
+      setError(`Recognition failed: ${e?.message ?? "error"}. Try again or search manually.`);
       setPhase("error");
-      return;
     }
-    setGuess(res.guess || "");
-    setCandidates(res.candidates);
-    setPhase("results");
   }
 
   async function retake() {
