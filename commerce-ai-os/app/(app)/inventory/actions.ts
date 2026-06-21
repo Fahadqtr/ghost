@@ -342,7 +342,7 @@ export async function recognizeProduct(imageDataUrl: string): Promise<
     .from("products")
     .select("id, sku, name_en, name_ar, barcode, image_url, keywords_en")
     .or(orExpr)
-    .limit(60);
+    .limit(1000);
 
   const scored = ((prods ?? []) as any[])
     .map((p) => {
