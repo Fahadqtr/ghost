@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 function toNum(v: string | number | null | undefined): number | null {
   if (v === null || v === undefined) return null;
@@ -172,4 +173,73 @@ export async function pushStockToShopify(items: { sku: string; quantity: number 
   }
 
   return { configured: true as const, pushed, failed: errors.length, errors: errors.slice(0, 5) };
+}
+
+export type MovementInput = {
+  inventoryId: string;
+  sku?: string | null;
+  type: "in" | "out";
+  quantity: string | number;
+  reason?: string | null;
+  note?: string | null;
+  by?: string | null;
+};
+
+/**
+ * Record a stock IN/OUT movement: updates inventory.stock_quantity and writes a
+ * ledger row into malak_audit (action_type stock_in / stock_out). Atomic-ish
+ * read-modify-write via the service-role client (server-only).
+ */
+export async function recordMovement(input: MovementInput) {
+  const admin = createAdminClient();
+  const qty = Math.floor(Math.abs(Number(input.quantity)));
+  if (!input.inventoryId || !qty || Number.isNaN(qty)) {
+    return { error: "Pick a product and a quantity greater than 0." };
+  }
+  if (input.type !== "in" && input.type !== "out") return { error: "Invalid movement type." };
+
+  const { data: inv, error: readErr } = await admin
+    .from("inventory")
+    .select("id, stock_quantity, sold_quantity, product_id")
+    .eq("id", input.inventoryId)
+    .single();
+  if (readErr || !inv) return { error: "Inventory row not found." };
+
+  const before = inv.stock_quantity ?? 0;
+  const delta = input.type === "in" ? qty : -qty;
+  const after = before + delta;
+  if (after < 0) {
+    return { error: `Not enough stock: have ${before}, tried to remove ${qty}.` };
+  }
+
+  const patch: Record<string, unknown> = { stock_quantity: after, updated_at: new Date().toISOString() };
+  if (input.type === "out" && (input.reason ?? "").toLowerCase() === "sale") {
+    patch.sold_quantity = (inv.sold_quantity ?? 0) + qty;
+  }
+
+  const { error: upErr } = await admin.from("inventory").update(patch).eq("id", inv.id);
+  if (upErr) return { error: upErr.message };
+
+  await admin.from("malak_audit").insert({
+    agent: input.by || "inventory",
+    action: input.type === "in" ? "stock_in" : "stock_out",
+    action_type: input.type === "in" ? "stock_in" : "stock_out",
+    sku: input.sku ?? null,
+    product_id: inv.product_id ?? null,
+    field: "stock_quantity",
+    old_value: String(before),
+    new_value: String(after),
+    status: "done",
+    details: {
+      quantity: qty,
+      direction: input.type,
+      reason: input.reason ?? null,
+      note: input.note ?? null,
+    },
+  });
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/movements");
+  revalidatePath("/dashboard");
+  return { ok: true, before, after };
 }

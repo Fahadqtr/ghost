@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import KpiCard from "@/components/KpiCard";
 import InventoryTable, { type InventoryRow } from "@/components/InventoryTable";
@@ -62,9 +63,14 @@ export default async function InventoryPage() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted">
-        Single source of stock truth. Edit inline, bulk-update, import/export CSV, and push to Shopify.
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted">
+          Single source of stock truth. Edit inline, bulk-update, import/export CSV, and push to Shopify.
+        </p>
+        <Link href="/inventory/movements" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+          Stock IN / OUT →
+        </Link>
+      </div>
 
       {loadError ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
