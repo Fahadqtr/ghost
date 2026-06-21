@@ -13,6 +13,17 @@ function toNum(v: string | number | null | undefined): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
+// Prefer the service-role client (bypasses RLS); fall back to the request-scoped
+// RLS client when SUPABASE_SERVICE_ROLE_KEY isn't configured (e.g. a preview
+// deployment). Reads and inventory writes work under RLS for a signed-in user.
+function writableClient(): any {
+  try {
+    return createAdminClient();
+  } catch {
+    return createClient();
+  }
+}
+
 /** Single-row inline save (kept for backward compatibility). */
 export async function updateInventory(
   id: string,
@@ -192,7 +203,7 @@ export type MovementInput = {
  * read-modify-write via the service-role client (server-only).
  */
 export async function recordMovement(input: MovementInput) {
-  const admin = createAdminClient();
+  const admin = writableClient();
   const qty = Math.floor(Math.abs(Number(input.quantity)));
   if (!input.inventoryId || !qty || Number.isNaN(qty)) {
     return { error: "Pick a product and a quantity greater than 0." };
@@ -221,7 +232,8 @@ export async function recordMovement(input: MovementInput) {
   const { error: upErr } = await admin.from("inventory").update(patch).eq("id", inv.id);
   if (upErr) return { error: upErr.message };
 
-  await admin.from("malak_audit").insert({
+  // Ledger insert is best-effort: the stock change above already succeeded.
+  const { error: logErr } = await admin.from("malak_audit").insert({
     agent: input.by || "inventory",
     action: input.type === "in" ? "stock_in" : "stock_out",
     action_type: input.type === "in" ? "stock_in" : "stock_out",
@@ -242,7 +254,7 @@ export async function recordMovement(input: MovementInput) {
   revalidatePath("/inventory");
   revalidatePath("/inventory/movements");
   revalidatePath("/dashboard");
-  return { ok: true, before, after };
+  return { ok: true, before, after, logged: !logErr };
 }
 
 export type RecogCandidate = {
@@ -322,7 +334,7 @@ export async function recognizeProduct(imageDataUrl: string): Promise<
   if (tokens.length === 0) return { guess, terms: [], candidates: [] };
 
   try {
-  const admin = createAdminClient();
+  const admin = writableClient();
   const orExpr = tokens
     .flatMap((t) => [`name_en.ilike.%${t}%`, `keywords_en.ilike.%${t}%`])
     .join(",");
@@ -343,10 +355,11 @@ export async function recognizeProduct(imageDataUrl: string): Promise<
     .slice(0, 6);
 
   const ids = scored.map((x) => x.p.id);
-  const { data: inv } = ids.length
+  const invRes = ids.length
     ? await admin.from("inventory").select("id, stock_quantity, product_id").in("product_id", ids)
     : { data: [] as any[] };
-  const invByProd = new Map((inv ?? []).map((r: any) => [r.product_id, r]));
+  const inv = (invRes.data ?? []) as any[];
+  const invByProd = new Map<any, any>(inv.map((r: any) => [r.product_id, r]));
 
   const candidates: RecogCandidate[] = scored
     .map(({ p }) => {

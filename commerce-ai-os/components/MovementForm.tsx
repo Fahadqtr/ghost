@@ -94,9 +94,10 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
         return;
       }
       const after = (res as any).after;
+      const logged = (res as any).logged !== false;
       setMsg({
         kind: "ok",
-        text: `${type === "in" ? "Added" : "Removed"} ${n} × ${selected.name ?? selected.sku} · new stock: ${after}`,
+        text: `${type === "in" ? "Added" : "Removed"} ${n} × ${selected.name ?? selected.sku} · new stock: ${after}${logged ? "" : " (saved, but history log unavailable)"}`,
       });
       // reflect new stock locally + reset the entry
       setSelected({ ...selected, stock: after });
