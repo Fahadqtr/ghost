@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { applyStocktake } from "@/app/(app)/inventory/actions";
+import { applyStocktake, applyShelfCounts } from "@/app/(app)/inventory/actions";
 import { shelfOf } from "@/lib/shelf";
 
 export type CountItem = {
@@ -206,18 +206,23 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
 
   function apply() {
     if (lines.length === 0) return;
-    const counts = lines.map((l) => ({
-      inventoryId: l.item.inventoryId,
-      sku: l.item.sku,
-      counted: l.counted,
-      location: l.assigned ?? null,
-    }));
     startTransition(async () => {
-      const res = await applyStocktake(counts);
+      // Placement mode: a slot is chosen -> save each product's quantity AT that
+      // shelf (does not change total stock). Otherwise a normal full stocktake.
+      const res = assignTo
+        ? await applyShelfCounts(
+            assignTo,
+            lines.map((l) => ({ inventoryId: l.item.inventoryId, counted: l.counted }))
+          )
+        : await applyStocktake(
+            lines.map((l) => ({ inventoryId: l.item.inventoryId, sku: l.item.sku, counted: l.counted }))
+          );
       setMsg({
         kind: res.failed ? "err" : "ok",
         text: res.failed
-          ? `Applied ${res.ok}, ${res.failed} failed: ${res.errors.join("; ")}`
+          ? `Saved ${res.ok}, ${res.failed} failed: ${res.errors.join("; ")}`
+          : assignTo
+          ? `Saved per-shelf quantities for ${res.ok} product${res.ok === 1 ? "" : "s"} in ${assignTo}.`
           : `Applied ${res.ok} count${res.ok === 1 ? "" : "s"} to inventory.`,
       });
       router.refresh();
@@ -253,7 +258,8 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
         </div>
         {assignTo && (
           <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            Scanned items will be counted <b>and</b> moved to slot <b>{assignTo}</b> when you apply.
+            Counting shelf <b>{assignTo}</b> — applying saves how many units sit in this shelf
+            (it does <b>not</b> change each product&apos;s total stock).
           </div>
         )}
         <div className="flex gap-2">
@@ -305,7 +311,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
             onClick={apply}
             disabled={lines.length === 0 || pending}
           >
-            {pending ? "Applying…" : "Apply counts to inventory"}
+            {pending ? "Applying…" : assignTo ? `Save shelf ${assignTo} quantities` : "Apply counts to inventory"}
           </button>
         </div>
       </div>

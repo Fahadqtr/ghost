@@ -159,6 +159,40 @@ export async function setLocation(inventoryId: string, location: string) {
 }
 
 /**
+ * Apply a shelf-scoped count: set each product's quantity AT one slot (placement
+ * only — the master `inventory.stock_quantity` is NOT touched). Used by the
+ * stocktake "count one shelf" flow.
+ */
+export async function applyShelfCounts(
+  location: string,
+  counts: { inventoryId: string; counted: number }[]
+) {
+  const admin = writableClient();
+  const slot = (location ?? "").trim().toUpperCase();
+  if (!slot) return { ok: 0, failed: counts.length, errors: ["No shelf selected."] };
+  const now = new Date().toISOString();
+  let ok = 0;
+  const errors: string[] = [];
+  for (const c of counts) {
+    if (!c.inventoryId) { errors.push("missing row"); continue; }
+    const qty = Math.max(0, Math.floor(Number(c.counted) || 0));
+    if (qty <= 0) {
+      const del = await admin.from("shelf_stock").delete().eq("inventory_id", c.inventoryId).eq("location", slot);
+      if (del.error) { errors.push(del.error.message); continue; }
+    } else {
+      const up = await admin
+        .from("shelf_stock")
+        .upsert({ inventory_id: c.inventoryId, location: slot, quantity: qty, updated_at: now }, { onConflict: "inventory_id,location" });
+      if (up.error) { errors.push(up.error.message); continue; }
+    }
+    ok++;
+  }
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  return { ok, failed: errors.length, errors: errors.slice(0, 5) };
+}
+
+/**
  * Replace a product's per-shelf distribution. `rows` is the full desired set of
  * (location, quantity) placements; empty/zero quantities are dropped. The master
  * total (inventory.stock_quantity) is left untouched — this is placement only.
