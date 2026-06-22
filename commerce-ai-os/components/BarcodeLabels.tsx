@@ -12,6 +12,18 @@ export type LabelProduct = {
 
 type Entry = { product: LabelProduct; copies: number };
 
+// Label-size presets (mm). "sheet" = print many per A4 page using columns.
+const SIZE_PRESETS: { id: string; label: string; w?: number; h?: number }[] = [
+  { id: "sheet", label: "A4 sheet (columns)" },
+  { id: "40x30", label: "40 × 30 mm", w: 40, h: 30 },
+  { id: "50x30", label: "50 × 30 mm", w: 50, h: 30 },
+  { id: "50x25", label: "50 × 25 mm", w: 50, h: 25 },
+  { id: "38x25", label: "38 × 25 mm", w: 38, h: 25 },
+  { id: "60x40", label: "60 × 40 mm", w: 60, h: 40 },
+  { id: "100x50", label: "100 × 50 mm", w: 100, h: 50 },
+  { id: "custom", label: "Custom…" },
+];
+
 function Barcode({ value, height }: { value: string; height: number }) {
   const ref = useRef<SVGSVGElement>(null);
   useEffect(() => {
@@ -37,6 +49,9 @@ export default function BarcodeLabels({ products }: { products: LabelProduct[] }
   const [entries, setEntries] = useState<Entry[]>([]);
   const [copies, setCopies] = useState("1");
   const [cols, setCols] = useState(3);
+  const [sizeId, setSizeId] = useState("sheet");
+  const [customW, setCustomW] = useState("50");
+  const [customH, setCustomH] = useState("30");
   const [showName, setShowName] = useState(true);
   const [showPrice, setShowPrice] = useState(true);
   const [showSku, setShowSku] = useState(true);
@@ -81,7 +96,24 @@ export default function BarcodeLabels({ products }: { products: LabelProduct[] }
     [entries]
   );
 
-  const barcodeHeight = cols >= 4 ? 30 : 40;
+  // Resolve the chosen physical label size (mm). null => A4 "sheet" mode.
+  const size = useMemo(() => {
+    if (sizeId === "sheet") return null;
+    if (sizeId === "custom") {
+      const w = Math.max(10, Math.min(200, Number(customW) || 50));
+      const h = Math.max(10, Math.min(200, Number(customH) || 30));
+      return { w, h };
+    }
+    const p = SIZE_PRESETS.find((s) => s.id === sizeId);
+    return p?.w && p?.h ? { w: p.w, h: p.h } : null;
+  }, [sizeId, customW, customH]);
+
+  // Barcode bar height in px. In fixed-size mode scale to the label height.
+  const barcodeHeight = size
+    ? Math.max(18, Math.round(size.h * (showName || showSku || showPrice ? 1.5 : 2.6)))
+    : cols >= 4
+    ? 30
+    : 40;
 
   return (
     <div className="space-y-4">
@@ -91,7 +123,13 @@ export default function BarcodeLabels({ products }: { products: LabelProduct[] }
           body * { visibility: hidden !important; }
           #label-sheet, #label-sheet * { visibility: visible !important; }
           #label-sheet { position: absolute; left: 0; top: 0; width: 100%; }
-          @page { margin: 8mm; }
+          ${
+            size
+              ? `@page { size: ${size.w}mm ${size.h}mm; margin: 0; }
+                 #label-sheet { display: block; }
+                 .label-cell { width: ${size.w}mm; height: ${size.h}mm; page-break-after: always; border: 0 !important; border-radius: 0 !important; }`
+              : `@page { margin: 8mm; }`
+          }
         }
       `}</style>
 
@@ -134,11 +172,41 @@ export default function BarcodeLabels({ products }: { products: LabelProduct[] }
 
         <div className="flex flex-wrap items-center gap-4 text-sm">
           <label className="flex items-center gap-2">
-            Columns
-            <select className="input w-auto" value={cols} onChange={(e) => setCols(Number(e.target.value))}>
-              {[2, 3, 4, 5].map((c) => <option key={c} value={c}>{c}</option>)}
+            Label size
+            <select className="input w-auto" value={sizeId} onChange={(e) => setSizeId(e.target.value)}>
+              {SIZE_PRESETS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
           </label>
+          {sizeId === "custom" && (
+            <label className="flex items-center gap-1">
+              <input
+                className="input w-16"
+                type="number"
+                min={10}
+                max={200}
+                value={customW}
+                onChange={(e) => setCustomW(e.target.value)}
+              />
+              <span className="text-muted">×</span>
+              <input
+                className="input w-16"
+                type="number"
+                min={10}
+                max={200}
+                value={customH}
+                onChange={(e) => setCustomH(e.target.value)}
+              />
+              <span className="text-muted">mm</span>
+            </label>
+          )}
+          {!size && (
+            <label className="flex items-center gap-2">
+              Columns
+              <select className="input w-auto" value={cols} onChange={(e) => setCols(Number(e.target.value))}>
+                {[2, 3, 4, 5].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+          )}
           <label className="flex items-center gap-2"><input type="checkbox" checked={showName} onChange={(e) => setShowName(e.target.checked)} /> Name</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={showSku} onChange={(e) => setShowSku(e.target.checked)} /> SKU</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={showPrice} onChange={(e) => setShowPrice(e.target.checked)} /> Price</label>
@@ -181,14 +249,14 @@ export default function BarcodeLabels({ products }: { products: LabelProduct[] }
       ) : (
         <div
           id="label-sheet"
-          className="grid gap-2"
-          style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+          className={size ? "flex flex-wrap gap-2" : "grid gap-2"}
+          style={size ? undefined : { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
         >
           {labels.map((p, i) => (
             <div
               key={i}
-              className="flex flex-col items-center gap-0.5 rounded border border-slate-200 bg-white p-2 text-center"
-              style={{ breakInside: "avoid" }}
+              className="label-cell flex flex-col items-center justify-center gap-0.5 overflow-hidden rounded border border-slate-200 bg-white p-2 text-center"
+              style={size ? { width: `${size.w}mm`, height: `${size.h}mm`, breakInside: "avoid" } : { breakInside: "avoid" }}
             >
               {showName && (
                 <div className="line-clamp-2 text-[10px] font-medium leading-tight text-ink">{p.name ?? p.sku}</div>
