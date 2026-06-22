@@ -528,6 +528,10 @@ export default function InventoryTable({
                 const variants = (r.product_id && variantsByProduct[r.product_id]) || [];
                 const isExpanded = expanded.has(r.id);
                 const colCount = hasLocation ? 10 : 9;
+                // Variant-level low/out alerts (reuse the product's threshold per option).
+                const vThr = Number(curThreshold(r)) || 0;
+                const vOut = variants.filter((v) => (v.stock_quantity ?? 0) <= 0).length;
+                const vLow = variants.filter((v) => (v.stock_quantity ?? 0) > 0 && (v.stock_quantity ?? 0) <= vThr).length;
                 return (
                   <Fragment key={r.id}>
                   <tr className="border-b border-slate-100 hover:bg-slate-50">
@@ -559,6 +563,15 @@ export default function InventoryTable({
                             {variants.length > 0 && (
                               <span className="ml-1 text-xs text-muted">· {variants.length} options</span>
                             )}
+                            {vOut > 0 ? (
+                              <span className="ml-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+                                ⚠ {vOut} out
+                              </span>
+                            ) : vLow > 0 ? (
+                              <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                                ⚠ {vLow} low
+                              </span>
+                            ) : null}
                           </div>
                           {r.product_name_ar ? <div className="truncate text-xs text-muted" dir="rtl">{r.product_name_ar}</div> : null}
                         </div>
@@ -651,8 +664,21 @@ export default function InventoryTable({
                             )}
                           </td>
                         )}
-                        <td className="px-4 py-2 text-right text-slate-600">{v.stock_quantity ?? 0}</td>
-                        <td colSpan={5} />
+                        <td className="px-4 py-2 text-right">
+                          {(() => {
+                            const q = v.stock_quantity ?? 0;
+                            const cls = q <= 0 ? "text-red-700 font-semibold" : q <= vThr ? "text-amber-700 font-semibold" : "text-slate-600";
+                            return <span className={cls}>{q}</span>;
+                          })()}
+                        </td>
+                        <td className="px-4 py-2" colSpan={5}>
+                          {(() => {
+                            const q = v.stock_quantity ?? 0;
+                            if (q <= 0) return <span className="badge bg-red-100 text-red-700">Out</span>;
+                            if (q <= vThr) return <span className="badge bg-amber-100 text-amber-700">Low</span>;
+                            return null;
+                          })()}
+                        </td>
                       </tr>
                     ))}
                   </Fragment>
