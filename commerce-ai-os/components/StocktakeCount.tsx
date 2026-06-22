@@ -384,10 +384,10 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
             <thead>
               <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
                 <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3">SKU</th>
+                <th className="hidden px-4 py-3 sm:table-cell">SKU</th>
                 <th className="px-4 py-3">Location</th>
                 <th className="px-4 py-3 text-right">Counted</th>
-                <th className="px-4 py-3 text-right">System</th>
+                <th className="hidden px-4 py-3 text-right sm:table-cell">System</th>
                 <th className="px-4 py-3 text-right">Diff</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -402,7 +402,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                       <div className="font-medium text-ink">{l.item.name ?? "—"}</div>
                       {l.item.name_ar ? <div className="text-xs text-muted" dir="rtl">{l.item.name_ar}</div> : null}
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{l.item.sku ?? "—"}</td>
+                    <td className="hidden px-4 py-3 text-slate-600 sm:table-cell">{l.item.sku ?? "—"}</td>
                     <td className="px-4 py-3">
                       <input
                         list="stk-slots"
@@ -423,7 +423,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                         onChange={(e) => setCounted(l.uid, e.target.value)}
                       />
                     </td>
-                    <td className="px-4 py-3 text-right text-slate-600">{l.item.stock}</td>
+                    <td className="hidden px-4 py-3 text-right text-slate-600 sm:table-cell">{l.item.stock}</td>
                     <td className={`px-4 py-3 text-right font-medium ${diffCls}`}>
                       {diff > 0 ? `+${diff}` : diff}
                     </td>

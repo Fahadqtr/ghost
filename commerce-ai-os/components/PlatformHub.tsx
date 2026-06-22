@@ -137,7 +137,44 @@ export default function PlatformHub({ platform, products }: { platform: string; 
         </span>
       </div>
 
-      <div className="card overflow-x-auto p-0">
+      {/* Cards (mobile) */}
+      <div className="space-y-3 md:hidden">
+        {filtered.length === 0 ? (
+          <div className="card text-center text-sm text-slate-400">ما في منتجات.</div>
+        ) : (
+          visible.map((p) => (
+            <div key={p.id} className="card flex gap-3 p-3">
+              <Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} />
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-ink">{p.name_en ?? "—"}</div>
+                    {p.name_ar ? <div className="truncate text-xs text-muted" dir="rtl">{p.name_ar}</div> : null}
+                  </div>
+                  <RowApproval id={p.id} platform={platform} value={p.approval} />
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                  {p.sku ? <span>SKU {p.sku}</span> : null}
+                  {p.main_category ? <span>{p.main_category}</span> : null}
+                  {p.price != null ? <span>{p.price} QAR</span> : null}
+                  {showAvail
+                    ? p.availability === "OutOfStock"
+                      ? <span className="badge bg-amber-100 text-amber-700">نافد</span>
+                      : p.availability === "InStock"
+                      ? <span className="badge bg-emerald-100 text-emerald-700">متوفّر</span>
+                      : null
+                    : null}
+                </div>
+                {p.approval === "Rejected" && p.rejection_reason
+                  ? <p className="text-[11px] text-red-700">{p.rejection_reason}</p> : null}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Table (desktop / tablet) */}
+      <div className="card hidden overflow-x-auto p-0 md:block">
         <table className="w-full min-w-[800px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
