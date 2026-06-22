@@ -97,8 +97,8 @@ export default function ShelfContents({ items }: { items: ShelfItem[] }) {
                         <thead className="bg-slate-50 text-left text-xs uppercase text-muted">
                           <tr>
                             <th className="px-3 py-2">Product</th>
-                            <th className="px-3 py-2">SKU</th>
-                            <th className="px-3 py-2">Barcode</th>
+                            <th className="hidden px-3 py-2 sm:table-cell">SKU</th>
+                            <th className="hidden px-3 py-2 sm:table-cell">Barcode</th>
                             <th className="px-3 py-2 text-right">Here</th>
                             <th className="px-3 py-2 text-right">Total</th>
                           </tr>
@@ -110,8 +110,8 @@ export default function ShelfContents({ items }: { items: ShelfItem[] }) {
                                 <div className="font-medium text-ink">{p.name ?? p.sku ?? "—"}</div>
                                 {p.name_ar && <div className="text-xs text-muted">{p.name_ar}</div>}
                               </td>
-                              <td className="px-3 py-2 text-slate-600">{p.sku ?? "—"}</td>
-                              <td className="px-3 py-2 font-mono text-slate-600">{p.barcode ?? "—"}</td>
+                              <td className="hidden px-3 py-2 text-slate-600 sm:table-cell">{p.sku ?? "—"}</td>
+                              <td className="hidden px-3 py-2 font-mono text-slate-600 sm:table-cell">{p.barcode ?? "—"}</td>
                               <td className="px-3 py-2 text-right font-semibold text-ink">{p.quantity}</td>
                               <td className="px-3 py-2 text-right text-slate-500">{p.total}</td>
                             </tr>

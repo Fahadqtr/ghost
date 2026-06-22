@@ -410,7 +410,7 @@ export default function InventoryTable({
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex sm:max-w-xs">
+        <div className="relative flex w-full sm:w-auto sm:max-w-xs">
           <input
             className="input w-full pr-9"
             placeholder="Search name / SKU / barcode…"
@@ -497,8 +497,157 @@ export default function InventoryTable({
         </datalist>
       )}
 
-      {/* Table */}
-      <div className="card overflow-x-auto p-0">
+      {/* Cards (mobile) */}
+      <div className="space-y-3 md:hidden">
+        {sorted.length === 0 ? (
+          <div className="card text-center text-sm text-slate-400">No inventory rows.</div>
+        ) : (
+          sorted.map((r) => {
+            const st = statusOf(Number(curStock(r)) || 0, Number(curThreshold(r)) || null);
+            const badge =
+              st === "out" ? "bg-red-100 text-red-700" : st === "low" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700";
+            const dirty = isDirty(r);
+            const variants = (r.product_id && variantsByProduct[r.product_id]) || [];
+            const isExpanded = expanded.has(r.id);
+            const vThr = Number(curThreshold(r)) || 0;
+            const vOut = variants.filter((v) => (v.stock_quantity ?? 0) <= 0).length;
+            const vLow = variants.filter((v) => (v.stock_quantity ?? 0) > 0 && (v.stock_quantity ?? 0) <= vThr).length;
+            return (
+              <div key={r.id} className="card space-y-3 p-3">
+                {/* Header: select + image + name + status */}
+                <div className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1 flex-none"
+                    checked={selected.has(r.id)}
+                    onChange={() => toggleSelect(r.id)}
+                    aria-label="Select row"
+                  />
+                  {r.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={r.image_url} alt="" className="h-10 w-10 flex-none rounded object-cover" loading="lazy" />
+                  ) : (
+                    <div className="h-10 w-10 flex-none rounded bg-slate-100" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-ink">{r.product_name ?? "—"}</div>
+                    {r.product_name_ar ? <div className="truncate text-xs text-muted" dir="rtl">{r.product_name_ar}</div> : null}
+                    <div className="mt-0.5 text-xs text-muted">{r.sku ?? "—"}</div>
+                  </div>
+                  <span className={`badge flex-none ${badge}`}>{st === "out" ? "Out" : st === "low" ? "Low" : "OK"}</span>
+                </div>
+
+                {/* Variant alerts */}
+                {variants.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="text-muted">{variants.length} options</span>
+                    {vOut > 0 ? (
+                      <span className="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-700">⚠ {vOut} out</span>
+                    ) : vLow > 0 ? (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700">⚠ {vLow} low</span>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* Stock + threshold */}
+                <div className="flex items-end gap-3">
+                  <label className="flex-1">
+                    <span className="label">Stock</span>
+                    <input className="input text-right" type="number" value={curStock(r)} onChange={(e) => setStock(r.id, e.target.value)} />
+                  </label>
+                  <label className="flex-1">
+                    <span className="label">Alert at</span>
+                    <input className="input text-right" type="number" value={curThreshold(r)} onChange={(e) => setThreshold(r.id, e.target.value)} />
+                  </label>
+                </div>
+
+                {/* Shelves */}
+                {hasLocation && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-muted">Shelves</span>
+                    {hasShelfStock ? (
+                      variants.length > 0 ? (
+                        <button className="text-xs font-medium text-blue-600 hover:underline" onClick={() => toggleExpand(r.id)}>
+                          {isExpanded ? "Hide options ▾" : "Per option ▸"}
+                        </button>
+                      ) : (
+                        <ShelfStockCell
+                          row={r}
+                          placements={placements[r.id] ?? []}
+                          save={(rs) => saveShelfStock(r.id, rs)}
+                          onEdit={() =>
+                            setEditTarget({
+                              title: r.product_name ?? r.sku ?? "Product",
+                              total: r.stock_quantity ?? 0,
+                              placements: placements[r.id] ?? [],
+                              save: (rs) => saveShelfStock(r.id, rs),
+                            })
+                          }
+                        />
+                      )
+                    ) : (
+                      <LocationCell id={r.id} value={r.location} />
+                    )}
+                  </div>
+                )}
+
+                {/* Variant sub-cards */}
+                {isExpanded &&
+                  variants.map((v) => {
+                    const q = v.stock_quantity ?? 0;
+                    const vname = v.variant_name ?? [v.color, v.size].filter(Boolean).join(" / ") ?? "Option";
+                    return (
+                      <div key={v.id} className="ml-1 flex items-center justify-between gap-2 border-l-2 border-slate-100 py-1 pl-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium text-ink">{vname}</div>
+                          <div className="text-xs text-muted">
+                            Qty{" "}
+                            <span className={q <= 0 ? "font-semibold text-red-700" : q <= vThr ? "font-semibold text-amber-700" : "text-slate-600"}>{q}</span>
+                            {q <= 0 ? <span className="ml-1 text-red-700">· Out</span> : q <= vThr ? <span className="ml-1 text-amber-700">· Low</span> : null}
+                          </div>
+                        </div>
+                        {hasLocation && hasVariantShelf && (
+                          <ShelfStockCell
+                            row={{ id: v.id, stock_quantity: v.stock_quantity } as InventoryRow}
+                            placements={variantPlacements[v.id] ?? []}
+                            save={(rs) => saveVariantShelfStock(v.id, rs)}
+                            onEdit={() =>
+                              setEditTarget({
+                                title: `${r.product_name ?? ""} — ${vname}`,
+                                total: v.stock_quantity ?? 0,
+                                placements: variantPlacements[v.id] ?? [],
+                                save: (rs) => saveVariantShelfStock(v.id, rs),
+                              })
+                            }
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+
+                {/* Footer */}
+                <div className="flex items-center justify-between border-t border-slate-100 pt-2">
+                  <span className="text-xs text-muted">{fmtDate(r.updated_at)} · sold {r.sold_quantity ?? 0}</span>
+                  {rowErrors[r.id] ? (
+                    <span className="text-xs text-red-600" title={rowErrors[r.id]}>Error</span>
+                  ) : (
+                    <button
+                      className="btn-primary px-4 py-1.5 text-xs disabled:opacity-40"
+                      disabled={!dirty || pending}
+                      onClick={() => saveOne(r)}
+                    >
+                      Save
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Table (desktop / tablet) */}
+      <div className="card hidden overflow-x-auto p-0 md:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
