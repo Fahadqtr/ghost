@@ -72,7 +72,12 @@ export async function bulkUpdateInventory(updates: BulkUpdate[]) {
   return { ok, failed: errors.length, errors: errors.slice(0, 5) };
 }
 
-export type StocktakeCount = { inventoryId: string; sku?: string | null; counted: number };
+export type StocktakeCount = {
+  inventoryId: string;
+  sku?: string | null;
+  counted: number;
+  location?: string | null; // when set, also save the product's shelf location
+};
 
 /**
  * Apply a shelf stocktake: set each inventory row's stock_quantity to the
@@ -93,7 +98,7 @@ export async function applyStocktake(counts: StocktakeCount[]) {
     }
     const { data: inv, error: readErr } = await admin
       .from("inventory")
-      .select("id, stock_quantity, product_id")
+      .select("id, stock_quantity, product_id, location")
       .eq("id", c.inventoryId)
       .single();
     if (readErr || !inv) {
@@ -101,14 +106,15 @@ export async function applyStocktake(counts: StocktakeCount[]) {
       continue;
     }
     const before = inv.stock_quantity ?? 0;
-    if (before === counted) {
+    const newLoc = c.location != null ? c.location.trim().toUpperCase() : null;
+    const locChanged = newLoc != null && newLoc !== (inv.location ?? null);
+    if (before === counted && !locChanged) {
       ok++; // no change needed, still a success
       continue;
     }
-    const { error: upErr } = await admin
-      .from("inventory")
-      .update({ stock_quantity: counted, updated_at: now })
-      .eq("id", inv.id);
+    const patch: Record<string, unknown> = { stock_quantity: counted, updated_at: now };
+    if (locChanged) patch.location = newLoc;
+    const { error: upErr } = await admin.from("inventory").update(patch).eq("id", inv.id);
     if (upErr) {
       errors.push(`${c.sku ?? c.inventoryId}: ${upErr.message}`);
       continue;

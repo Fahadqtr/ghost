@@ -11,6 +11,12 @@ export default async function StocktakePage() {
   const probe = await supabase.from("inventory").select("location").limit(1);
   const hasLocation = !probe.error;
 
+  // Defined slots, for assigning locations while counting.
+  const slotsRes = hasLocation
+    ? await supabase.from("shelf_slots").select("code").order("shelf").order("sort")
+    : { data: [] as any[] };
+  const slots: string[] = ((slotsRes.data ?? []) as any[]).map((s) => String(s.code));
+
   // Inventory rows that have a scannable barcode, so a scan maps to a row we can
   // write back to. Page through Supabase's 1000-row cap.
   const items: CountItem[] = [];
@@ -59,7 +65,7 @@ export default async function StocktakePage() {
           Couldn’t load products: {loadError}.
         </div>
       ) : (
-        <StocktakeCount items={items} />
+        <StocktakeCount items={items} slots={slots} />
       )}
     </div>
   );
