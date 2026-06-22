@@ -18,7 +18,7 @@ export default async function InventoryPage() {
     const { data, error } = await supabase
       .from("inventory")
       .select(
-        "id, stock_quantity, low_stock_threshold, sold_quantity, updated_at, products(name_en, name_ar, sku, image_url, main_category)"
+        "id, stock_quantity, low_stock_threshold, sold_quantity, updated_at, products(name_en, name_ar, sku, image_url, main_category, barcode)"
       )
       .order("stock_quantity", { ascending: true, nullsFirst: true })
       .range(from, from + PAGE - 1);
@@ -33,6 +33,7 @@ export default async function InventoryPage() {
         product_name: r.products?.name_en ?? null,
         product_name_ar: r.products?.name_ar ?? null,
         sku: r.products?.sku ?? null,
+        barcode: r.products?.barcode ?? null,
         image_url: r.products?.image_url ?? null,
         category: r.products?.main_category ?? null,
         stock_quantity: r.stock_quantity,

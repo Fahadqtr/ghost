@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import BarcodeScanner from "@/components/BarcodeScanner";
 import {
   updateInventory,
   bulkUpdateInventory,
@@ -15,6 +16,7 @@ export interface InventoryRow {
   product_name: string | null;
   product_name_ar: string | null;
   sku: string | null;
+  barcode: string | null;
   image_url: string | null;
   category: string | null;
   stock_quantity: number | null;
@@ -94,6 +96,7 @@ export default function InventoryTable({
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [q, setQ] = useState("");
+  const [scanning, setScanning] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | Status>("all");
   const [catFilter, setCatFilter] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "stock", dir: "asc" });
@@ -125,7 +128,8 @@ export default function InventoryTable({
         !needle ||
         (r.product_name ?? "").toLowerCase().includes(needle) ||
         (r.product_name_ar ?? "").includes(q.trim()) ||
-        (r.sku ?? "").toLowerCase().includes(needle);
+        (r.sku ?? "").toLowerCase().includes(needle) ||
+        (r.barcode ?? "").toLowerCase().includes(needle);
       const st = statusOf(Number(curStock(r)) || 0, Number(curThreshold(r)) || null);
       const matchesStatus = statusFilter === "all" || st === statusFilter;
       const matchesCat = !catFilter || r.category === catFilter;
@@ -306,9 +310,36 @@ export default function InventoryTable({
 
   return (
     <div className="space-y-3">
+      {/* Camera barcode scanner */}
+      {scanning && (
+        <BarcodeScanner
+          onDetected={(code) => {
+            setQ(code.trim());
+            setScanning(false);
+          }}
+          onClose={() => setScanning(false)}
+        />
+      )}
+
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
-        <input className="input sm:max-w-xs" placeholder="Search name / SKU…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="relative flex sm:max-w-xs">
+          <input
+            className="input w-full pr-9"
+            placeholder="Search name / SKU / barcode…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <button
+            type="button"
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-base leading-none hover:bg-slate-100"
+            title="Scan barcode with camera"
+            aria-label="Scan barcode"
+            onClick={() => setScanning(true)}
+          >
+            📷
+          </button>
+        </div>
         <select className="input w-auto" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}>
           <option value="all">All statuses</option>
           <option value="out">Out of stock</option>
