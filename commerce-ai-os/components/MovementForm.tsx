@@ -12,6 +12,7 @@ export type PickItem = {
   name: string | null;
   name_ar: string | null;
   barcode: string | null;
+  image_url: string | null;
   stock: number;
 };
 
@@ -93,6 +94,11 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
   function setLineQty(inventoryId: string, v: string) {
     const n = Math.max(0, Math.floor(Number(v) || 0));
     setLines((prev) => prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, qty: n } : l)));
+  }
+  function stepQty(inventoryId: string, d: number) {
+    setLines((prev) =>
+      prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, qty: Math.max(0, l.qty + d) } : l))
+    );
   }
   function removeLine(inventoryId: string) {
     setLines((prev) => prev.filter((l) => l.item.inventoryId !== inventoryId));
@@ -226,49 +232,79 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
         <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reference / supplier / details…" />
       </div>
 
-      {/* Cart of scanned products */}
-      {lines.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-slate-200">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase text-muted">
-              <tr>
-                <th className="px-3 py-2">Product</th>
-                <th className="px-3 py-2">SKU</th>
-                <th className="px-3 py-2 text-right">Current</th>
-                <th className="px-3 py-2 text-right">Qty</th>
-                <th className="px-3 py-2 text-right">After</th>
-                <th className="px-3 py-2"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {lines.map((l) => {
-                const after = type === "in" ? l.item.stock + l.qty : l.item.stock - l.qty;
-                return (
-                  <tr key={l.item.inventoryId}>
-                    <td className="px-3 py-2">
-                      <div className="font-medium text-ink">{l.item.name ?? l.item.sku}</div>
-                      {l.item.name_ar && <div className="text-xs text-muted">{l.item.name_ar}</div>}
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">{l.item.sku ?? "—"}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">{l.item.stock}</td>
-                    <td className="px-3 py-2 text-right">
+      {/* Cart of scanned products — one card each */}
+      {lines.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">
+          Scan a product to start your {type === "in" ? "incoming" : "outgoing"} list.
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {lines.map((l) => {
+            const after = type === "in" ? l.item.stock + l.qty : l.item.stock - l.qty;
+            const bad = after < 0;
+            return (
+              <div
+                key={l.item.inventoryId}
+                className={`flex gap-3 rounded-xl border bg-white p-3 shadow-sm ${bad ? "border-red-200" : "border-slate-200"}`}
+              >
+                <div className="h-16 w-16 flex-none overflow-hidden rounded-lg bg-slate-100">
+                  {l.item.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={l.item.image_url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-2xl">📦</div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-ink">{l.item.name ?? l.item.sku}</div>
+                      <div className="text-xs text-muted">{l.item.sku ?? "—"}</div>
+                    </div>
+                    <button
+                      className="flex-none text-slate-400 hover:text-red-600"
+                      title="Remove"
+                      onClick={() => removeLine(l.item.inventoryId)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    {/* qty stepper */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-lg leading-none text-slate-600 hover:bg-slate-50"
+                        onClick={() => stepQty(l.item.inventoryId, -1)}
+                      >
+                        −
+                      </button>
                       <input
-                        className="input w-20 text-right"
+                        className="input h-8 w-14 text-center"
                         type="number"
                         min={0}
                         value={l.qty}
                         onChange={(e) => setLineQty(l.item.inventoryId, e.target.value)}
                       />
-                    </td>
-                    <td className={`px-3 py-2 text-right font-medium ${after < 0 ? "text-red-600" : "text-ink"}`}>{after}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button className="btn-ghost px-2 py-1 text-xs" onClick={() => removeLine(l.item.inventoryId)}>Remove</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <button
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-lg leading-none text-slate-600 hover:bg-slate-50"
+                        onClick={() => stepQty(l.item.inventoryId, 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                    {/* stock change */}
+                    <div className="text-right text-xs">
+                      <span className="text-muted">{l.item.stock}</span>
+                      <span className={`mx-1 ${type === "in" ? "text-green-600" : "text-orange-600"}`}>
+                        {type === "in" ? "↓" : "↑"}
+                      </span>
+                      <span className={`font-semibold ${bad ? "text-red-600" : "text-ink"}`}>{after}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

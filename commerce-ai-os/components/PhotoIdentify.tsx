@@ -139,6 +139,7 @@ export default function PhotoIdentify({
                     name: c.name,
                     name_ar: c.name_ar,
                     barcode: c.barcode,
+                    image_url: c.image_url ?? null,
                     stock: c.stock,
                   });
                 }}
