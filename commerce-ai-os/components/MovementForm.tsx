@@ -55,6 +55,7 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
         (it) =>
           (it.name ?? "").toLowerCase().includes(n) ||
           (it.sku ?? "").toLowerCase().includes(n) ||
+          (it.barcode ?? "").includes(pq.trim()) ||
           (it.name_ar ?? "").includes(pq.trim())
       )
       .slice(0, 8);
@@ -63,6 +64,25 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
   function pick(it: PickItem) {
     setSelected(it);
     setPq("");
+  }
+
+  // Enter in the product box (or a keyboard-wedge scanner) resolves the typed
+  // barcode/SKU to a product and selects it directly.
+  function onProductKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const c = pq.trim();
+    if (!c) return;
+    const found =
+      items.find((it) => (it.barcode ?? "") === c) ||
+      items.find((it) => (it.sku ?? "").toLowerCase() === c.toLowerCase()) ||
+      (matches.length === 1 ? matches[0] : null);
+    if (found) {
+      pick(found);
+      setMsg({ kind: "ok", text: `Selected: ${found.name ?? found.sku}` });
+    } else {
+      setMsg({ kind: "err", text: `No product matches “${c}”.` });
+    }
   }
 
   function switchType(t: "in" | "out") {
@@ -128,9 +148,11 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
               <div className="flex gap-2">
                 <input
                   className="input flex-1"
-                  placeholder="Search product name or SKU…"
+                  placeholder="Search name / SKU / barcode — or scan & press Enter…"
                   value={pq}
                   onChange={(e) => setPq(e.target.value)}
+                  onKeyDown={onProductKeyDown}
+                  autoComplete="off"
                 />
                 <button
                   type="button"
