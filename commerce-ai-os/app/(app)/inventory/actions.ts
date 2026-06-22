@@ -120,18 +120,19 @@ export async function applyStocktake(counts: StocktakeCount[]) {
       continue;
     }
     ok++;
-    // Best-effort ledger entry recording the variance.
+    // Best-effort ledger entry recording the variance. (product_id is a legacy
+    // bigint column — the uuid goes in details, not product_id, or the insert
+    // would error and drop the row.)
     await admin.from("malak_audit").insert({
       agent: "stocktake",
       action: "stocktake",
       action_type: "stocktake",
       sku: c.sku ?? null,
-      product_id: inv.product_id ?? null,
       field: "stock_quantity",
       old_value: String(before),
       new_value: String(counted),
       status: "done",
-      details: { counted, previous: before, variance: counted - before },
+      details: { productId: inv.product_id ?? null, counted, previous: before, variance: counted - before },
     });
   }
 
@@ -370,23 +371,27 @@ export async function recordMovement(input: MovementInput) {
   if (upErr) return { error: upErr.message };
 
   // Ledger insert is best-effort: the stock change above already succeeded.
+  // NOTE: malak_audit.product_id is legacy bigint while products.id is uuid, so
+  // we keep the uuid inside `details` rather than the product_id column (writing
+  // it there errors and silently drops the whole ledger row).
   const { error: logErr } = await admin.from("malak_audit").insert({
     agent: input.by || "inventory",
     action: input.type === "in" ? "stock_in" : "stock_out",
     action_type: input.type === "in" ? "stock_in" : "stock_out",
     sku: input.sku ?? null,
-    product_id: inv.product_id ?? null,
     field: "stock_quantity",
     old_value: String(before),
     new_value: String(after),
     status: "done",
     details: {
+      productId: inv.product_id ?? null,
       quantity: qty,
       direction: input.type,
       reason: input.reason ?? null,
       note: input.note ?? null,
     },
   });
+  if (logErr) console.error("[recordMovement] audit insert failed:", logErr.message);
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/movements");
