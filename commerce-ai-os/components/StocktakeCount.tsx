@@ -181,6 +181,12 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
     const n = Math.max(0, Math.floor(Number(v) || 0));
     setLines((prev) => prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, counted: n } : l)));
   }
+  function setLineLocation(inventoryId: string, v: string) {
+    const code = v.trim().toUpperCase();
+    setLines((prev) =>
+      prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, assigned: code || undefined } : l))
+    );
+  }
   function removeLine(inventoryId: string) {
     setLines((prev) => prev.filter((l) => l.item.inventoryId !== inventoryId));
   }
@@ -325,6 +331,13 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
         </div>
       )}
 
+      {/* Slot-code suggestions for the editable Location inputs */}
+      {slots.length > 0 && (
+        <datalist id="stk-slots">
+          {slots.map((c) => <option key={c} value={c} />)}
+        </datalist>
+      )}
+
       {/* Count table */}
       {lines.length > 0 && (
         <div className="card overflow-x-auto p-0">
@@ -351,14 +364,16 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                       {l.item.name_ar ? <div className="text-xs text-muted" dir="rtl">{l.item.name_ar}</div> : null}
                     </td>
                     <td className="px-4 py-3 text-slate-600">{l.item.sku ?? "—"}</td>
-                    <td className="px-4 py-3 font-mono">
-                      {l.assigned && l.assigned !== l.item.location ? (
-                        <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-800" title="Will be saved on apply">
-                          {l.item.location ? `${l.item.location} → ` : ""}{l.assigned}
-                        </span>
-                      ) : (
-                        <span className="text-slate-600">{l.item.location ?? "—"}</span>
-                      )}
+                    <td className="px-4 py-3">
+                      <input
+                        list="stk-slots"
+                        className={`input w-24 font-mono uppercase ${
+                          l.assigned && l.assigned !== l.item.location ? "border-blue-400 bg-blue-50" : ""
+                        }`}
+                        placeholder={l.item.location ?? "—"}
+                        value={l.assigned ?? l.item.location ?? ""}
+                        onChange={(e) => setLineLocation(l.item.inventoryId, e.target.value)}
+                      />
                     </td>
                     <td className="px-4 py-3 text-right">
                       <input
