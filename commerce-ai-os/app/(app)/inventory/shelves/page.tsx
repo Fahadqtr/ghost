@@ -19,27 +19,76 @@ export default async function ShelvesPage() {
     const { data } = await supabase.from("shelf_slots").select("code, shelf, sort").order("shelf").order("sort");
     slots = ((data ?? []) as any[]).map((s) => ({ code: String(s.code), shelf: String(s.shelf) }));
 
-    // Products assigned to a location, with name + barcode (page through the cap).
+    // Product details by inventory id (name, barcode, total stock).
     const PAGE = 1000;
+    const prodById = new Map<string, { name: string | null; name_ar: string | null; sku: string | null; barcode: string | null; total: number }>();
     for (let from = 0; ; from += PAGE) {
       const { data: inv, error } = await supabase
         .from("inventory")
-        .select("location, products(name_en, name_ar, sku, barcode)")
-        .not("location", "is", null)
+        .select("id, stock_quantity, location, products(name_en, name_ar, sku, barcode)")
         .range(from, from + PAGE - 1);
       if (error) break;
       for (const r of (inv ?? []) as any[]) {
-        const code = String(r.location).toUpperCase();
-        counts[code] = (counts[code] ?? 0) + 1;
-        contents.push({
-          location: code,
+        prodById.set(r.id, {
           name: r.products?.name_en ?? r.products?.name_ar ?? null,
           name_ar: r.products?.name_ar ?? null,
           sku: r.products?.sku ?? null,
           barcode: r.products?.barcode ?? null,
+          total: r.stock_quantity ?? 0,
         });
       }
       if (!inv || inv.length < PAGE) break;
+    }
+
+    // Prefer the per-shelf distribution (shelf_stock); fall back to the single
+    // location column if that table isn't set up yet.
+    const hasShelfStock = !(await supabase.from("shelf_stock").select("id").limit(1)).error;
+    if (hasShelfStock) {
+      for (let from = 0; ; from += PAGE) {
+        const { data: ss, error } = await supabase
+          .from("shelf_stock")
+          .select("inventory_id, location, quantity")
+          .range(from, from + PAGE - 1);
+        if (error) break;
+        for (const r of (ss ?? []) as any[]) {
+          const code = String(r.location).toUpperCase();
+          const p = prodById.get(r.inventory_id);
+          counts[code] = (counts[code] ?? 0) + 1;
+          contents.push({
+            location: code,
+            name: p?.name ?? null,
+            name_ar: p?.name_ar ?? null,
+            sku: p?.sku ?? null,
+            barcode: p?.barcode ?? null,
+            quantity: r.quantity ?? 0,
+            total: p?.total ?? 0,
+          });
+        }
+        if (!ss || ss.length < PAGE) break;
+      }
+    } else {
+      for (let from = 0; ; from += PAGE) {
+        const { data: inv, error } = await supabase
+          .from("inventory")
+          .select("id, stock_quantity, location, products(name_en, name_ar, sku, barcode)")
+          .not("location", "is", null)
+          .range(from, from + PAGE - 1);
+        if (error) break;
+        for (const r of (inv ?? []) as any[]) {
+          const code = String(r.location).toUpperCase();
+          counts[code] = (counts[code] ?? 0) + 1;
+          contents.push({
+            location: code,
+            name: r.products?.name_en ?? r.products?.name_ar ?? null,
+            name_ar: r.products?.name_ar ?? null,
+            sku: r.products?.sku ?? null,
+            barcode: r.products?.barcode ?? null,
+            quantity: r.stock_quantity ?? 0,
+            total: r.stock_quantity ?? 0,
+          });
+        }
+        if (!inv || inv.length < PAGE) break;
+      }
     }
   }
 

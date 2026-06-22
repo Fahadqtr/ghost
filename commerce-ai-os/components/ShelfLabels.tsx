@@ -11,6 +11,8 @@ export type LabelItem = {
   sku: string | null;
   barcode: string | null;
   image_url: string | null;
+  quantity: number; // units in this shelf
+  total: number; // product's total stock
 };
 
 function Barcode({ value, height }: { value: string; height: number }) {
@@ -119,7 +121,9 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
                         <span className="rounded bg-slate-900 px-1 py-0.5 font-mono text-[10px] font-bold text-white">
                           {p.location}
                         </span>
-                        {p.sku && <span className="text-[9px] text-slate-500">{p.sku}</span>}
+                        <span className="rounded bg-blue-600 px-1 py-0.5 text-[10px] font-bold text-white">
+                          ×{p.quantity}
+                        </span>
                       </div>
                       <div className={`flex w-full items-center justify-center overflow-hidden ${compact ? "h-12" : "h-20"}`}>
                         {p.image_url ? (

@@ -9,6 +9,8 @@ export type ShelfItem = {
   name_ar: string | null;
   sku: string | null;
   barcode: string | null;
+  quantity: number; // units in THIS shelf
+  total: number; // product's total stock (all shelves)
 };
 
 export default function ShelfContents({ items }: { items: ShelfItem[] }) {
@@ -85,7 +87,10 @@ export default function ShelfContents({ items }: { items: ShelfItem[] }) {
                 {g.slots.map((s) => (
                   <div key={s.code}>
                     <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">
-                      {s.code} <span className="font-normal">· {s.prods.length}</span>
+                      {s.code}{" "}
+                      <span className="font-normal">
+                        · {s.prods.length} products · {s.prods.reduce((a, p) => a + p.quantity, 0)} units
+                      </span>
                     </div>
                     <div className="overflow-x-auto rounded-lg border border-slate-200">
                       <table className="w-full text-sm">
@@ -94,6 +99,8 @@ export default function ShelfContents({ items }: { items: ShelfItem[] }) {
                             <th className="px-3 py-2">Product</th>
                             <th className="px-3 py-2">SKU</th>
                             <th className="px-3 py-2">Barcode</th>
+                            <th className="px-3 py-2 text-right">Here</th>
+                            <th className="px-3 py-2 text-right">Total</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -105,6 +112,8 @@ export default function ShelfContents({ items }: { items: ShelfItem[] }) {
                               </td>
                               <td className="px-3 py-2 text-slate-600">{p.sku ?? "—"}</td>
                               <td className="px-3 py-2 font-mono text-slate-600">{p.barcode ?? "—"}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-ink">{p.quantity}</td>
+                              <td className="px-3 py-2 text-right text-slate-500">{p.total}</td>
                             </tr>
                           ))}
                         </tbody>
