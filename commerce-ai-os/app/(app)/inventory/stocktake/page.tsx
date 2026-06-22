@@ -7,15 +7,20 @@ export const dynamic = "force-dynamic";
 export default async function StocktakePage() {
   const supabase = createClient();
 
+  // Is the `location` column present yet? (degrade gracefully pre-migration.)
+  const probe = await supabase.from("inventory").select("location").limit(1);
+  const hasLocation = !probe.error;
+
   // Inventory rows that have a scannable barcode, so a scan maps to a row we can
   // write back to. Page through Supabase's 1000-row cap.
   const items: CountItem[] = [];
   let loadError: string | null = null;
   const PAGE = 1000;
+  const sel = `id, stock_quantity${hasLocation ? ", location" : ""}, products!inner(name_en, name_ar, sku, barcode)`;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("inventory")
-      .select("id, stock_quantity, products!inner(name_en, name_ar, sku, barcode)")
+      .select(sel)
       .not("products.barcode", "is", null)
       .neq("products.barcode", "")
       .range(from, from + PAGE - 1);
@@ -30,6 +35,7 @@ export default async function StocktakePage() {
         sku: r.products?.sku ?? null,
         name: r.products?.name_en ?? r.products?.name_ar ?? null,
         name_ar: r.products?.name_ar ?? null,
+        location: hasLocation ? r.location ?? null : null,
         stock: r.stock_quantity ?? 0,
       });
     }

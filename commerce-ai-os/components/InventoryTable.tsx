@@ -3,11 +3,13 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import BarcodeScanner from "@/components/BarcodeScanner";
+import { shelfOf } from "@/lib/shelf";
 import {
   updateInventory,
   bulkUpdateInventory,
   importInventoryBySku,
   pushStockToShopify,
+  setLocation,
   type BulkUpdate,
 } from "@/app/(app)/inventory/actions";
 
@@ -17,6 +19,7 @@ export interface InventoryRow {
   product_name_ar: string | null;
   sku: string | null;
   barcode: string | null;
+  location: string | null;
   image_url: string | null;
   category: string | null;
   stock_quantity: number | null;
@@ -88,9 +91,13 @@ function parseCsv(text: string): Record<string, string>[] {
 export default function InventoryTable({
   rows,
   categories = [],
+  slots = [],
+  hasLocation = false,
 }: {
   rows: InventoryRow[];
   categories?: string[];
+  slots?: string[];
+  hasLocation?: boolean;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -99,6 +106,14 @@ export default function InventoryTable({
   const [scanning, setScanning] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | Status>("all");
   const [catFilter, setCatFilter] = useState("");
+  const [shelfFilter, setShelfFilter] = useState("");
+
+  const shelves = useMemo(() => {
+    const set = new Set<string>();
+    slots.forEach((c) => { const s = shelfOf(c); if (s) set.add(s); });
+    rows.forEach((r) => { const s = shelfOf(r.location); if (s) set.add(s); });
+    return Array.from(set).sort();
+  }, [slots, rows]);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "stock", dir: "asc" });
 
   const [edits, setEdits] = useState<Record<string, { stock?: string; threshold?: string }>>({});
@@ -133,10 +148,11 @@ export default function InventoryTable({
       const st = statusOf(Number(curStock(r)) || 0, Number(curThreshold(r)) || null);
       const matchesStatus = statusFilter === "all" || st === statusFilter;
       const matchesCat = !catFilter || r.category === catFilter;
-      return matchesQ && matchesStatus && matchesCat;
+      const matchesShelf = !shelfFilter || shelfOf(r.location) === shelfFilter;
+      return matchesQ && matchesStatus && matchesCat && matchesShelf;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, q, statusFilter, catFilter, edits]);
+  }, [rows, q, statusFilter, catFilter, shelfFilter, edits]);
 
   const sorted = useMemo(() => {
     const dir = sort.dir === "asc" ? 1 : -1;
@@ -299,6 +315,33 @@ export default function InventoryTable({
     });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-shadow
+  function LocationCell({ id, value }: { id: string; value: string | null }) {
+    const [val, setVal] = useState(value ?? "");
+    const [savePending, startSave] = useTransition();
+    const commit = () => {
+      const next = val.trim().toUpperCase();
+      setVal(next);
+      if (next === (value ?? "")) return;
+      startSave(async () => {
+        await setLocation(id, next);
+        router.refresh();
+      });
+    };
+    return (
+      <input
+        list="slot-codes"
+        className="input w-24 uppercase"
+        placeholder="—"
+        value={val}
+        disabled={savePending}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      />
+    );
+  }
+
   const Th = ({ k, label, num }: { k: SortKey; label: string; num?: boolean }) => (
     <th
       className={`px-4 py-3 font-medium ${num ? "text-right" : "text-left"} cursor-pointer select-none hover:text-ink`}
@@ -354,6 +397,14 @@ export default function InventoryTable({
             ))}
           </select>
         )}
+        {hasLocation && shelves.length > 0 && (
+          <select className="input w-auto" value={shelfFilter} onChange={(e) => setShelfFilter(e.target.value)}>
+            <option value="">All shelves</option>
+            {shelves.map((s) => (
+              <option key={s} value={s}>Shelf {s}</option>
+            ))}
+          </select>
+        )}
         <span className="text-sm text-muted">{sorted.length} of {rows.length}</span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <button className="btn-ghost px-3 py-1 text-xs" onClick={exportCsv}>Export CSV</button>
@@ -395,6 +446,13 @@ export default function InventoryTable({
         </div>
       )}
 
+      {/* Shared slot-code suggestions for the Location inputs */}
+      {hasLocation && (
+        <datalist id="slot-codes">
+          {slots.map((c) => <option key={c} value={c} />)}
+        </datalist>
+      )}
+
       {/* Table */}
       <div className="card overflow-x-auto p-0">
         <table className="w-full text-sm">
@@ -405,6 +463,7 @@ export default function InventoryTable({
               </th>
               <Th k="product" label="Product" />
               <Th k="sku" label="SKU" />
+              {hasLocation && <th className="px-4 py-3 font-medium text-left">Location</th>}
               <Th k="stock" label="Stock" num />
               <Th k="threshold" label="Low threshold" num />
               <Th k="sold" label="Sold" num />
@@ -415,7 +474,7 @@ export default function InventoryTable({
           </thead>
           <tbody>
             {sorted.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">No inventory rows.</td></tr>
+              <tr><td colSpan={hasLocation ? 10 : 9} className="px-4 py-8 text-center text-slate-400">No inventory rows.</td></tr>
             ) : (
               sorted.map((r) => {
                 const st = statusOf(Number(curStock(r)) || 0, Number(curThreshold(r)) || null);
@@ -442,6 +501,11 @@ export default function InventoryTable({
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{r.sku ?? "—"}</td>
+                    {hasLocation && (
+                      <td className="px-4 py-3">
+                        <LocationCell id={r.id} value={r.location} />
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-right">
                       <input className="input w-20 text-right" type="number" value={curStock(r)} onChange={(e) => setStock(r.id, e.target.value)} />
                     </td>

@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { applyStocktake } from "@/app/(app)/inventory/actions";
+import { shelfOf } from "@/lib/shelf";
 
 export type CountItem = {
   inventoryId: string;
@@ -10,6 +11,7 @@ export type CountItem = {
   sku: string | null;
   name: string | null;
   name_ar: string | null;
+  location: string | null;
   stock: number; // current system stock (expected)
 };
 
@@ -56,6 +58,14 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
     return m;
   }, [items]);
 
+  // Shelves present in the catalog, for scoping a count to one shelf.
+  const shelves = useMemo(() => {
+    const set = new Set<string>();
+    for (const it of items) { const s = shelfOf(it.location); if (s) set.add(s); }
+    return Array.from(set).sort();
+  }, [items]);
+
+  const [shelf, setShelf] = useState(""); // "" = all shelves
   const [buf, setBuf] = useState("");
   const [lines, setLines] = useState<Line[]>([]); // most-recent first
   const [unknown, setUnknown] = useState<Unknown[]>([]);
@@ -94,6 +104,13 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
       setLast({ name: `Unknown barcode ${code}`, counted: 0, tone: "warn" });
       return;
     }
+    // Scoped to a shelf: warn (and skip) if the item belongs elsewhere.
+    if (shelf && shelfOf(item.location) !== shelf) {
+      beep(false);
+      const where = item.location ? `shelf ${shelfOf(item.location)}` : "no shelf";
+      setLast({ name: `${item.name ?? item.sku ?? code} is in ${where}, not ${shelf}`, counted: 0, tone: "warn" });
+      return;
+    }
     beep(true);
     setLines((prev) => {
       const i = prev.findIndex((l) => l.item.inventoryId === item.inventoryId);
@@ -105,7 +122,8 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
       } else {
         next = [{ item, counted: 1 }, ...prev];
       }
-      setLast({ name: item.name ?? item.sku ?? code, counted, tone: "ok" });
+      const loc = item.location ? ` [${item.location}]` : "";
+      setLast({ name: `${item.name ?? item.sku ?? code}${loc}`, counted, tone: "ok" });
       return next;
     });
     setHistory((h) => [...h, `k:${item.inventoryId}`]);
@@ -195,7 +213,18 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
     <div className="space-y-4">
       {/* Scan box */}
       <form onSubmit={onSubmit} className="card space-y-3">
-        <label className="text-sm font-medium text-ink">Scan items on the shelf</label>
+        <div className="flex items-center justify-between gap-3">
+          <label className="text-sm font-medium text-ink">Scan items on the shelf</label>
+          {shelves.length > 0 && (
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-muted">Shelf</span>
+              <select className="input w-auto" value={shelf} onChange={(e) => setShelf(e.target.value)}>
+                <option value="">All shelves</option>
+                {shelves.map((s) => <option key={s} value={s}>Shelf {s}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
         <div className="flex gap-2">
           <input
             ref={inputRef}
@@ -279,6 +308,7 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
               <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
                 <th className="px-4 py-3">Product</th>
                 <th className="px-4 py-3">SKU</th>
+                <th className="px-4 py-3">Location</th>
                 <th className="px-4 py-3 text-right">Counted</th>
                 <th className="px-4 py-3 text-right">System</th>
                 <th className="px-4 py-3 text-right">Diff</th>
@@ -296,6 +326,7 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
                       {l.item.name_ar ? <div className="text-xs text-muted" dir="rtl">{l.item.name_ar}</div> : null}
                     </td>
                     <td className="px-4 py-3 text-slate-600">{l.item.sku ?? "—"}</td>
+                    <td className="px-4 py-3 font-mono text-slate-600">{l.item.location ?? "—"}</td>
                     <td className="px-4 py-3 text-right">
                       <input
                         className="input w-20 text-right"
