@@ -584,9 +584,17 @@ function ShelfStockCell({
   placements: { location: string; quantity: number }[];
   onEdit: () => void;
 }) {
+  const router = useRouter();
+  const [syncing, startSync] = useTransition();
   const placed = placements.reduce((s, p) => s + p.quantity, 0);
   const total = row.stock_quantity ?? 0;
   const sorted = placements.slice().sort((a, b) => compareSlot(a.location, b.location));
+
+  const syncTotal = () =>
+    startSync(async () => {
+      await saveShelfStock(row.id, placements.map((p) => ({ location: p.location, quantity: p.quantity })));
+      router.refresh();
+    });
   return (
     <div className="flex items-center gap-2">
       <button className="flex flex-wrap gap-1 text-left" onClick={onEdit} title="Edit shelf locations">
@@ -603,12 +611,14 @@ function ShelfStockCell({
       </button>
       <button className="flex-none text-slate-400 hover:text-ink" onClick={onEdit} title="Edit">✎</button>
       {placed !== total && (
-        <span
-          className="flex-none rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700"
-          title="Placed units don't match the total stock"
+        <button
+          className="flex-none rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700 hover:bg-amber-200 disabled:opacity-50"
+          title="Tap to set total stock = placed units"
+          onClick={syncTotal}
+          disabled={syncing}
         >
-          {placed}/{total}
-        </span>
+          {syncing ? "…" : `set ${total}→${placed}`}
+        </button>
       )}
     </div>
   );
