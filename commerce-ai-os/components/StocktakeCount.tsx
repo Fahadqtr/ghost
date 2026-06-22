@@ -15,13 +15,18 @@ export type CountItem = {
   stock: number; // current system stock (expected)
 };
 
-type Line = { item: CountItem; counted: number; assigned?: string }; // assigned = location to save
+type Line = { uid: string; item: CountItem; counted: number; assigned?: string }; // uid = stable row id
 type Unknown = { code: string; count: number };
 
 // Ignore an identical barcode fired again within this window — kills a scanner's
 // hardware double-trigger without blocking deliberate counting of like pieces
 // (moving the scanner to the next item always takes longer than this).
 const DUP_GUARD_MS = 300;
+
+let uidSeq = 0;
+function newUid(): string {
+  return typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `l${Date.now()}-${uidSeq++}`;
+}
 
 /** Short audio feedback so the user can scan heads-down. */
 function beep(ok: boolean) {
@@ -115,6 +120,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
     }
     beep(true);
     const target = assignTo || undefined; // the shelf this scan belongs to
+    let touchedUid = "";
     setLines((prev) => {
       // A product can appear once per shelf: match on product AND shelf slot.
       const i = prev.findIndex(
@@ -124,19 +130,19 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
       let next: Line[];
       if (i >= 0) {
         counted = prev[i].counted + 1;
+        touchedUid = prev[i].uid;
         next = [{ ...prev[i], counted }, ...prev.slice(0, i), ...prev.slice(i + 1)];
       } else {
-        next = [{ item, counted: 1, assigned: target }, ...prev];
+        touchedUid = newUid();
+        next = [{ uid: touchedUid, item, counted: 1, assigned: target }, ...prev];
       }
       const shown = target ?? item.location;
       const loc = shown ? ` [${shown}]` : "";
       setLast({ name: `${item.name ?? item.sku ?? code}${loc}`, counted, tone: "ok" });
       return next;
     });
-    setHistory((h) => [...h, `k:${item.inventoryId}|${target ?? ""}`]);
+    setHistory((h) => [...h, `k:${touchedUid}`]);
   }
-
-  const lineKey = (l: Line) => `${l.item.inventoryId}|${l.assigned ?? ""}`;
 
   /** Undo the most recent scan (decrement that item by 1, dropping it at 0). */
   function undo() {
@@ -145,15 +151,12 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
       const token = h[h.length - 1];
       guardRef.current = { code: "", t: 0 }; // don't let the guard block a re-scan
       if (token.startsWith("k:")) {
-        const rest = token.slice(2);
-        const sep = rest.lastIndexOf("|");
-        const id = rest.slice(0, sep);
-        const slot = rest.slice(sep + 1);
+        const uid = token.slice(2);
         setLines((prev) => {
-          const i = prev.findIndex((l) => l.item.inventoryId === id && (l.assigned ?? "") === slot);
+          const i = prev.findIndex((l) => l.uid === uid);
           if (i < 0) return prev;
           const counted = prev[i].counted - 1;
-          const name = prev[i].item.name ?? prev[i].item.sku ?? id;
+          const name = prev[i].item.name ?? prev[i].item.sku ?? "";
           setLast({ name: `Undid ${name}`, counted: Math.max(0, counted), tone: "skip" });
           if (counted <= 0) return [...prev.slice(0, i), ...prev.slice(i + 1)];
           const n = [...prev];
@@ -185,16 +188,16 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
     inputRef.current?.focus();
   }
 
-  function setCounted(key: string, v: string) {
+  function setCounted(uid: string, v: string) {
     const n = Math.max(0, Math.floor(Number(v) || 0));
-    setLines((prev) => prev.map((l) => (lineKey(l) === key ? { ...l, counted: n } : l)));
+    setLines((prev) => prev.map((l) => (l.uid === uid ? { ...l, counted: n } : l)));
   }
-  function setLineLocation(key: string, v: string) {
+  function setLineLocation(uid: string, v: string) {
     const code = v.trim().toUpperCase();
-    setLines((prev) => prev.map((l) => (lineKey(l) === key ? { ...l, assigned: code || undefined } : l)));
+    setLines((prev) => prev.map((l) => (l.uid === uid ? { ...l, assigned: code || undefined } : l)));
   }
-  function removeLine(key: string) {
-    setLines((prev) => prev.filter((l) => lineKey(l) !== key));
+  function removeLine(uid: string) {
+    setLines((prev) => prev.filter((l) => l.uid !== uid));
   }
   function clearAll() {
     if (lines.length && !confirm("Clear the whole count session?")) return;
@@ -381,11 +384,10 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
             </thead>
             <tbody>
               {lines.map((l) => {
-                const key = lineKey(l);
                 const diff = l.counted - l.item.stock;
                 const diffCls = diff === 0 ? "text-slate-400" : diff > 0 ? "text-green-700" : "text-red-700";
                 return (
-                  <tr key={key} className="border-b border-slate-100 hover:bg-slate-50">
+                  <tr key={l.uid} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <div className="font-medium text-ink">{l.item.name ?? "—"}</div>
                       {l.item.name_ar ? <div className="text-xs text-muted" dir="rtl">{l.item.name_ar}</div> : null}
@@ -399,7 +401,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                         }`}
                         placeholder={l.item.location ?? "—"}
                         value={l.assigned ?? l.item.location ?? ""}
-                        onChange={(e) => setLineLocation(key, e.target.value)}
+                        onChange={(e) => setLineLocation(l.uid, e.target.value)}
                       />
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -408,7 +410,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                         type="number"
                         min={0}
                         value={l.counted}
-                        onChange={(e) => setCounted(key, e.target.value)}
+                        onChange={(e) => setCounted(l.uid, e.target.value)}
                       />
                     </td>
                     <td className="px-4 py-3 text-right text-slate-600">{l.item.stock}</td>
@@ -416,7 +418,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                       {diff > 0 ? `+${diff}` : diff}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button className="btn-ghost px-2 py-1 text-xs" onClick={() => removeLine(key)}>
+                      <button className="btn-ghost px-2 py-1 text-xs" onClick={() => removeLine(l.uid)}>
                         Remove
                       </button>
                     </td>
