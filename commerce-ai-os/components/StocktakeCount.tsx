@@ -289,8 +289,18 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
             placeholder="Scan a barcode (or type it) and press Enter…"
             value={buf}
             onChange={(e) => setBuf(e.target.value)}
-            onBlur={() => setTimeout(() => inputRef.current?.focus(), 50)}
-            // keep the field hot for a hardware scanner (keyboard wedge)
+            // Keep the field hot for a hardware scanner, but DON'T steal focus
+            // when the user is interacting with another control (dropdowns,
+            // qty/location inputs, buttons).
+            onBlur={(e) => {
+              const to = e.relatedTarget as HTMLElement | null;
+              if (to && ["INPUT", "SELECT", "TEXTAREA", "BUTTON", "OPTION", "A"].includes(to.tagName)) return;
+              setTimeout(() => {
+                const a = document.activeElement as HTMLElement | null;
+                if (a && ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(a.tagName)) return;
+                inputRef.current?.focus();
+              }, 50);
+            }}
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
