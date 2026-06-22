@@ -50,9 +50,14 @@ export default async function ShelvesPage() {
           Shelf map — define your shelves (A, B, C…) and their slots (A1, A2…), then assign products to
           slots from the inventory table.
         </p>
-        <Link href="/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
-          ← Back to inventory
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/inventory/shelves/labels" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+            🖨️ Print labels
+          </Link>
+          <Link href="/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+            ← Back to inventory
+          </Link>
+        </div>
       </div>
 
       {!ready ? (
