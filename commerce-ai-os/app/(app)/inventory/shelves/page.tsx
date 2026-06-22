@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import ShelvesManager, { type Slot } from "@/components/ShelvesManager";
+import ShelfContents, { type ShelfItem } from "@/components/ShelfContents";
 
 export const dynamic = "force-dynamic";
 
@@ -13,22 +14,30 @@ export default async function ShelvesPage() {
 
   let slots: Slot[] = [];
   const counts: Record<string, number> = {};
+  const contents: ShelfItem[] = [];
   if (ready) {
     const { data } = await supabase.from("shelf_slots").select("code, shelf, sort").order("shelf").order("sort");
     slots = ((data ?? []) as any[]).map((s) => ({ code: String(s.code), shelf: String(s.shelf) }));
 
-    // Count products assigned to each slot (page through the 1000-row cap).
+    // Products assigned to a location, with name + barcode (page through the cap).
     const PAGE = 1000;
     for (let from = 0; ; from += PAGE) {
       const { data: inv, error } = await supabase
         .from("inventory")
-        .select("location")
+        .select("location, products(name_en, name_ar, sku, barcode)")
         .not("location", "is", null)
         .range(from, from + PAGE - 1);
       if (error) break;
       for (const r of (inv ?? []) as any[]) {
         const code = String(r.location).toUpperCase();
         counts[code] = (counts[code] ?? 0) + 1;
+        contents.push({
+          location: code,
+          name: r.products?.name_en ?? r.products?.name_ar ?? null,
+          name_ar: r.products?.name_ar ?? null,
+          sku: r.products?.sku ?? null,
+          barcode: r.products?.barcode ?? null,
+        });
       }
       if (!inv || inv.length < PAGE) break;
     }
@@ -56,7 +65,10 @@ export default async function ShelvesPage() {
           </p>
         </div>
       ) : (
-        <ShelvesManager slots={slots} counts={counts} />
+        <>
+          <ShelvesManager slots={slots} counts={counts} />
+          <ShelfContents items={contents} />
+        </>
       )}
     </div>
   );
