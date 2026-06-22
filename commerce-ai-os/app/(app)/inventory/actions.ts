@@ -201,6 +201,60 @@ export async function applyShelfCounts(
 }
 
 /**
+ * Replace a VARIANT's per-shelf distribution. The variant's stock_quantity is set
+ * to the sum of its placements, and the parent product's inventory total is set
+ * to the sum of all its variants' stock.
+ */
+export async function saveVariantShelfStock(
+  variantId: string,
+  rows: { location: string; quantity: number }[]
+) {
+  if (!variantId) return { error: "Missing variant." };
+  const admin = writableClient();
+  const now = new Date().toISOString();
+
+  const merged = new Map<string, number>();
+  for (const r of rows) {
+    const code = (r.location ?? "").trim().toUpperCase();
+    const q = Math.max(0, Math.floor(Number(r.quantity) || 0));
+    if (!code || q <= 0) continue;
+    merged.set(code, (merged.get(code) ?? 0) + q);
+  }
+  const clean = Array.from(merged.entries()).map(([location, quantity]) => ({
+    variant_id: variantId,
+    location,
+    quantity,
+    updated_at: now,
+  }));
+
+  const del = await admin.from("variant_shelf_stock").delete().eq("variant_id", variantId);
+  if (del.error) return { error: del.error.message };
+  if (clean.length) {
+    const ins = await admin.from("variant_shelf_stock").insert(clean);
+    if (ins.error) return { error: ins.error.message };
+  }
+
+  // Variant stock = sum of its placements (only when there's at least one).
+  const totalQty = clean.reduce((s, r) => s + r.quantity, 0);
+  if (clean.length) {
+    await admin.from("product_variants").update({ stock_quantity: totalQty }).eq("id", variantId);
+  }
+
+  // Parent product inventory total = sum of all its variants' stock.
+  const { data: v } = await admin.from("product_variants").select("parent_product_id").eq("id", variantId).single();
+  const parentId = (v as any)?.parent_product_id;
+  if (parentId) {
+    const { data: sibs } = await admin.from("product_variants").select("stock_quantity").eq("parent_product_id", parentId);
+    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
+    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("product_id", parentId);
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
+/**
  * Replace a product's per-shelf distribution. `rows` is the full desired set of
  * (location, quantity) placements; empty/zero quantities are dropped. The total
  * stock (inventory.stock_quantity) is set to the SUM of the placements, and

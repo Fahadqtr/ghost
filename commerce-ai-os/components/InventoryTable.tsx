@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import { shelfOf } from "@/lib/shelf";
@@ -11,12 +11,23 @@ import {
   pushStockToShopify,
   setLocation,
   saveShelfStock,
+  saveVariantShelfStock,
   type BulkUpdate,
 } from "@/app/(app)/inventory/actions";
 import { compareSlot } from "@/lib/shelf";
 
+export interface Variant {
+  id: string;
+  variant_name: string | null;
+  sku: string | null;
+  color: string | null;
+  size: string | null;
+  stock_quantity: number | null;
+}
+
 export interface InventoryRow {
   id: string;
+  product_id: string | null;
   product_name: string | null;
   product_name_ar: string | null;
   sku: string | null;
@@ -97,6 +108,9 @@ export default function InventoryTable({
   hasLocation = false,
   placements = {},
   hasShelfStock = false,
+  variantsByProduct = {},
+  variantPlacements = {},
+  hasVariantShelf = false,
 }: {
   rows: InventoryRow[];
   categories?: string[];
@@ -104,6 +118,9 @@ export default function InventoryTable({
   hasLocation?: boolean;
   placements?: Record<string, { location: string; quantity: number }[]>;
   hasShelfStock?: boolean;
+  variantsByProduct?: Record<string, Variant[]>;
+  variantPlacements?: Record<string, { location: string; quantity: number }[]>;
+  hasVariantShelf?: boolean;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -113,7 +130,14 @@ export default function InventoryTable({
   const [statusFilter, setStatusFilter] = useState<"all" | Status>("all");
   const [catFilter, setCatFilter] = useState("");
   const [shelfFilter, setShelfFilter] = useState("");
-  const [editLoc, setEditLoc] = useState<InventoryRow | null>(null); // multi-shelf editor target
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null); // shelf editor (product or variant)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set()); // product rows showing their variants
+  const toggleExpand = (id: string) =>
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
 
   // Shelves a product occupies (multi-shelf if shelf_stock is on, else single).
   const rowShelves = (r: InventoryRow): string[] => {
@@ -501,13 +525,28 @@ export default function InventoryTable({
                 const badge =
                   st === "out" ? "bg-red-100 text-red-700" : st === "low" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700";
                 const dirty = isDirty(r);
+                const variants = (r.product_id && variantsByProduct[r.product_id]) || [];
+                const isExpanded = expanded.has(r.id);
+                const colCount = hasLocation ? 10 : 9;
                 return (
-                  <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <Fragment key={r.id}>
+                  <tr className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSelect(r.id)} aria-label="Select row" />
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
+                        {variants.length > 0 ? (
+                          <button
+                            className="flex-none text-slate-400 hover:text-ink"
+                            onClick={() => toggleExpand(r.id)}
+                            title={isExpanded ? "Hide options" : `Show ${variants.length} options`}
+                          >
+                            {isExpanded ? "▾" : "▸"}
+                          </button>
+                        ) : (
+                          <span className="w-3 flex-none" />
+                        )}
                         {r.image_url ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={r.image_url} alt="" className="h-8 w-8 flex-none rounded object-cover" loading="lazy" />
@@ -515,7 +554,12 @@ export default function InventoryTable({
                           <div className="h-8 w-8 flex-none rounded bg-slate-100" />
                         )}
                         <div className="min-w-0">
-                          <div className="truncate font-medium text-ink">{r.product_name ?? "—"}</div>
+                          <div className="truncate font-medium text-ink">
+                            {r.product_name ?? "—"}
+                            {variants.length > 0 && (
+                              <span className="ml-1 text-xs text-muted">· {variants.length} options</span>
+                            )}
+                          </div>
                           {r.product_name_ar ? <div className="truncate text-xs text-muted" dir="rtl">{r.product_name_ar}</div> : null}
                         </div>
                       </div>
@@ -524,7 +568,25 @@ export default function InventoryTable({
                     {hasLocation && (
                       <td className="px-4 py-3">
                         {hasShelfStock ? (
-                          <ShelfStockCell row={r} placements={placements[r.id] ?? []} onEdit={() => setEditLoc(r)} />
+                          variants.length > 0 ? (
+                            <button className="text-xs font-medium text-blue-600 hover:underline" onClick={() => toggleExpand(r.id)}>
+                              {isExpanded ? "Hide options ▾" : "Per option ▸"}
+                            </button>
+                          ) : (
+                            <ShelfStockCell
+                              row={r}
+                              placements={placements[r.id] ?? []}
+                              save={(rs) => saveShelfStock(r.id, rs)}
+                              onEdit={() =>
+                                setEditTarget({
+                                  title: r.product_name ?? r.sku ?? "Product",
+                                  total: r.stock_quantity ?? 0,
+                                  placements: placements[r.id] ?? [],
+                                  save: (rs) => saveShelfStock(r.id, rs),
+                                })
+                              }
+                            />
+                          )
                         ) : (
                           <LocationCell id={r.id} value={r.location} />
                         )}
@@ -555,6 +617,45 @@ export default function InventoryTable({
                       )}
                     </td>
                   </tr>
+                  {isExpanded &&
+                    variants.map((v) => (
+                      <tr key={v.id} className="border-b border-slate-100 bg-slate-50/60 text-sm">
+                        <td />
+                        <td className="px-4 py-2" colSpan={2}>
+                          <div className="flex items-center gap-2 pl-8">
+                            <span className="text-slate-400">└</span>
+                            <span className="font-medium text-ink">
+                              {v.variant_name ?? [v.color, v.size].filter(Boolean).join(" / ") ?? "Option"}
+                            </span>
+                            {v.sku && <span className="text-xs text-muted">{v.sku}</span>}
+                          </div>
+                        </td>
+                        {hasLocation && (
+                          <td className="px-4 py-2">
+                            {hasVariantShelf ? (
+                              <ShelfStockCell
+                                row={{ id: v.id, stock_quantity: v.stock_quantity } as InventoryRow}
+                                placements={variantPlacements[v.id] ?? []}
+                                save={(rs) => saveVariantShelfStock(v.id, rs)}
+                                onEdit={() =>
+                                  setEditTarget({
+                                    title: `${r.product_name ?? ""} — ${v.variant_name ?? [v.color, v.size].filter(Boolean).join(" / ")}`,
+                                    total: v.stock_quantity ?? 0,
+                                    placements: variantPlacements[v.id] ?? [],
+                                    save: (rs) => saveVariantShelfStock(v.id, rs),
+                                  })
+                                }
+                              />
+                            ) : (
+                              <span className="text-xs text-slate-400">run variant setup</span>
+                            )}
+                          </td>
+                        )}
+                        <td className="px-4 py-2 text-right text-slate-600">{v.stock_quantity ?? 0}</td>
+                        <td colSpan={5} />
+                      </tr>
+                    ))}
+                  </Fragment>
                 );
               })
             )}
@@ -562,26 +663,35 @@ export default function InventoryTable({
         </table>
       </div>
 
-      {editLoc && hasShelfStock && (
+      {editTarget && (
         <LocationsEditor
-          row={editLoc}
-          placements={placements[editLoc.id] ?? []}
+          target={editTarget}
           slots={slots}
-          onClose={() => setEditLoc(null)}
+          onClose={() => setEditTarget(null)}
         />
       )}
     </div>
   );
 }
 
+type SaveFn = (rows: { location: string; quantity: number }[]) => Promise<any>;
+type EditTarget = {
+  title: string;
+  total: number;
+  placements: { location: string; quantity: number }[];
+  save: SaveFn;
+};
+
 /** Compact read-only summary of where a product's units sit, with an edit button. */
 function ShelfStockCell({
   row,
   placements,
+  save,
   onEdit,
 }: {
   row: InventoryRow;
   placements: { location: string; quantity: number }[];
+  save: SaveFn;
   onEdit: () => void;
 }) {
   const router = useRouter();
@@ -592,7 +702,7 @@ function ShelfStockCell({
 
   const syncTotal = () =>
     startSync(async () => {
-      await saveShelfStock(row.id, placements.map((p) => ({ location: p.location, quantity: p.quantity })));
+      await save(placements.map((p) => ({ location: p.location, quantity: p.quantity })));
       router.refresh();
     });
   return (
@@ -624,28 +734,26 @@ function ShelfStockCell({
   );
 }
 
-/** Modal to edit a product's per-shelf distribution (multiple location+qty rows). */
+/** Modal to edit a product's OR variant's per-shelf distribution. */
 function LocationsEditor({
-  row,
-  placements,
+  target,
   slots,
   onClose,
 }: {
-  row: InventoryRow;
-  placements: { location: string; quantity: number }[];
+  target: EditTarget;
   slots: string[];
   onClose: () => void;
 }) {
   const router = useRouter();
   const [rowsState, setRowsState] = useState<{ location: string; quantity: string }[]>(
-    placements.length
-      ? placements.map((p) => ({ location: p.location, quantity: String(p.quantity) }))
+    target.placements.length
+      ? target.placements.map((p) => ({ location: p.location, quantity: String(p.quantity) }))
       : [{ location: "", quantity: "" }]
   );
   const [pending, start] = useTransition();
   const [err, setErr] = useState<string | null>(null);
 
-  const total = row.stock_quantity ?? 0;
+  const total = target.total;
   const placed = rowsState.reduce((s, r) => s + (Math.max(0, Math.floor(Number(r.quantity) || 0))), 0);
 
   const set = (i: number, k: "location" | "quantity", v: string) =>
@@ -655,10 +763,7 @@ function LocationsEditor({
 
   function save() {
     start(async () => {
-      const res = await saveShelfStock(
-        row.id,
-        rowsState.map((r) => ({ location: r.location, quantity: Number(r.quantity) || 0 }))
-      );
+      const res = await target.save(rowsState.map((r) => ({ location: r.location, quantity: Number(r.quantity) || 0 })));
       if (res && "error" in res && res.error) { setErr(res.error); return; }
       router.refresh();
       onClose();
@@ -668,7 +773,7 @@ function LocationsEditor({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-1 text-sm font-semibold text-ink">{row.product_name ?? row.sku}</div>
+        <div className="mb-1 text-sm font-semibold text-ink">{target.title}</div>
         <div className="mb-3 text-xs text-muted">
           Set how many units sit in each shelf. Total stock becomes the sum ={" "}
           <span className="font-semibold text-ink">{placed}</span>

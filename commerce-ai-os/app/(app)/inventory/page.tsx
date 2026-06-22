@@ -41,11 +41,57 @@ export default async function InventoryPage() {
     }
   }
 
+  // Product variants (options) grouped by parent product, + their per-shelf
+  // distribution. Degrades to empty if the tables aren't set up.
+  const variantsByProduct: Record<string, any[]> = {};
+  const variantPlacements: Record<string, { location: string; quantity: number }[]> = {};
+  let hasVariantShelf = false;
+  {
+    const probeV = await supabase.from("product_variants").select("id").limit(1);
+    if (!probeV.error) {
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from("product_variants")
+          .select("id, parent_product_id, variant_name, sku, color, size, stock_quantity")
+          .range(from, from + 999);
+        if (error) break;
+        for (const v of (data ?? []) as any[]) {
+          (variantsByProduct[v.parent_product_id] ??= []).push({
+            id: v.id,
+            variant_name: v.variant_name,
+            sku: v.sku,
+            color: v.color,
+            size: v.size,
+            stock_quantity: v.stock_quantity,
+          });
+        }
+        if (!data || data.length < 1000) break;
+      }
+    }
+    if (hasLocation) {
+      const probeVS = await supabase.from("variant_shelf_stock").select("id").limit(1);
+      hasVariantShelf = !probeVS.error;
+      if (hasVariantShelf) {
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await supabase
+            .from("variant_shelf_stock")
+            .select("variant_id, location, quantity")
+            .range(from, from + 999);
+          if (error) break;
+          for (const r of (data ?? []) as any[]) {
+            (variantPlacements[r.variant_id] ??= []).push({ location: String(r.location), quantity: r.quantity ?? 0 });
+          }
+          if (!data || data.length < 1000) break;
+        }
+      }
+    }
+  }
+
   // Fetch ALL rows (Supabase caps each request at 1000 — page through them).
   const rows: InventoryRow[] = [];
   let loadError: string | null = null;
   const PAGE = 1000;
-  const sel = `id, stock_quantity, low_stock_threshold, sold_quantity, updated_at${
+  const sel = `id, product_id, stock_quantity, low_stock_threshold, sold_quantity, updated_at${
     hasLocation ? ", location" : ""
   }, products(name_en, name_ar, sku, image_url, main_category, barcode)`;
   for (let from = 0; ; from += PAGE) {
@@ -62,6 +108,7 @@ export default async function InventoryPage() {
     for (const r of (data ?? []) as any[]) {
       rows.push({
         id: r.id,
+        product_id: r.product_id ?? null,
         product_name: r.products?.name_en ?? null,
         product_name_ar: r.products?.name_ar ?? null,
         sku: r.products?.sku ?? null,
@@ -138,6 +185,9 @@ export default async function InventoryPage() {
             hasLocation={hasLocation}
             placements={placements}
             hasShelfStock={hasShelfStock}
+            variantsByProduct={variantsByProduct}
+            variantPlacements={variantPlacements}
+            hasVariantShelf={hasVariantShelf}
           />
         </>
       )}
