@@ -98,7 +98,44 @@ export default function ChannelMatrix({
         </span>
       </div>
 
-      <div className="card overflow-x-auto p-0">
+      {/* Cards (mobile) */}
+      <div className="space-y-3 md:hidden">
+        {visible.map((p) => (
+          <div key={p.id} className="card space-y-2 p-3">
+            <div>
+              <div className="font-medium text-ink">{p.name_en ?? "—"}</div>
+              {p.sku ? <div className="text-xs text-muted">{p.sku}</div> : null}
+            </div>
+            <div className="space-y-2">
+              {channels.map((c, i) => {
+                const key = `${p.id}:${c.id}`;
+                const value = statuses[key] ?? "Not Listed";
+                return (
+                  <div key={c.id} className="flex items-center justify-between gap-2">
+                    <span className="text-sm text-slate-600">
+                      {channelLabels[i]}
+                      {c.supports_variants === false ? <span className="ml-1 text-[10px] text-slate-400">(no variants)</span> : null}
+                    </span>
+                    <select
+                      disabled={pending}
+                      value={value}
+                      onChange={(e) => change(p.id, c.id, e.target.value)}
+                      className={`rounded-md border px-2 py-1 text-xs ${statusStyle[value] ?? statusStyle["Not Listed"]}`}
+                    >
+                      {CHANNEL_STATUSES.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Table (desktop / tablet) */}
+      <div className="card hidden overflow-x-auto p-0 md:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
