@@ -177,7 +177,56 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         </span>
       </div>
 
-      <div className="card overflow-x-auto p-0">
+      {/* Cards (mobile) */}
+      <div className="space-y-3 md:hidden">
+        {filtered.length === 0 ? (
+          <div className="card text-center text-sm text-slate-400">No products found.</div>
+        ) : (
+          visible.map((p) => (
+            <div
+              key={p.id}
+              onClick={() => router.push(`/products/${p.id}`)}
+              className="card flex cursor-pointer gap-3 p-3"
+            >
+              <Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} />
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-ink">{p.name_en ?? "—"}</div>
+                    {p.name_ar ? <div className="truncate text-xs text-muted" dir="rtl">{p.name_ar}</div> : null}
+                  </div>
+                  <RowApproval id={p.id} value={p.approval} />
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                  {p.sku ? <span>SKU {p.sku}</span> : null}
+                  {p.main_category ? <span>{p.main_category}</span> : null}
+                  {p.variant_count > 0 ? <span>{p.variant_count} options</span> : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-slate-600">
+                    {p.price != null ? `${p.price} QAR` : "—"}
+                    {p.discount_price != null ? <span className="ml-1 text-green-700">→ {p.discount_price}</span> : null}
+                  </span>
+                  {p.stock == null ? null
+                    : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">نافد</span>
+                    : Number(p.stock) < 10 ? <span className="text-amber-700">stock {p.stock}</span>
+                    : <span className="text-slate-600">stock {p.stock}</span>}
+                </div>
+                <div className="flex flex-wrap gap-1 pt-0.5">
+                  {CHANNELS.map((c) => (
+                    <span key={c} className="text-[10px]">
+                      <span className="text-slate-400">{c}:</span> <StatusBadge status={p.channels[c]} />
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Table (desktop / tablet) */}
+      <div className="card hidden overflow-x-auto p-0 md:block">
         <table className="w-full min-w-[1200px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
