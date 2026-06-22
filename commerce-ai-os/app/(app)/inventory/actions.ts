@@ -159,9 +159,9 @@ export async function setLocation(inventoryId: string, location: string) {
 }
 
 /**
- * Apply a shelf-scoped count: set each product's quantity AT one slot (placement
- * only — the master `inventory.stock_quantity` is NOT touched). Used by the
- * stocktake "count one shelf" flow.
+ * Apply a shelf-scoped count: set each product's quantity AT one slot, then set
+ * the product's total stock to the SUM of all its shelves. Used by the stocktake
+ * "count one shelf" flow.
  */
 export async function applyShelfCounts(
   location: string,
@@ -173,6 +173,7 @@ export async function applyShelfCounts(
   const now = new Date().toISOString();
   let ok = 0;
   const errors: string[] = [];
+  const touched = new Set<string>();
   for (const c of counts) {
     if (!c.inventoryId) { errors.push("missing row"); continue; }
     const qty = Math.max(0, Math.floor(Number(c.counted) || 0));
@@ -185,7 +186,14 @@ export async function applyShelfCounts(
         .upsert({ inventory_id: c.inventoryId, location: slot, quantity: qty, updated_at: now }, { onConflict: "inventory_id,location" });
       if (up.error) { errors.push(up.error.message); continue; }
     }
+    touched.add(c.inventoryId);
     ok++;
+  }
+  // Re-total each touched product: stock_quantity = sum of all its shelves.
+  for (const id of touched) {
+    const { data } = await admin.from("shelf_stock").select("quantity").eq("inventory_id", id);
+    const sum = ((data ?? []) as any[]).reduce((s, r) => s + (r.quantity ?? 0), 0);
+    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("id", id);
   }
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
@@ -194,9 +202,9 @@ export async function applyShelfCounts(
 
 /**
  * Replace a product's per-shelf distribution. `rows` is the full desired set of
- * (location, quantity) placements; empty/zero quantities are dropped. The master
- * total (inventory.stock_quantity) is left untouched — this is placement only.
- * inventory.location is kept in sync with the largest placement (legacy/primary).
+ * (location, quantity) placements; empty/zero quantities are dropped. The total
+ * stock (inventory.stock_quantity) is set to the SUM of the placements, and
+ * inventory.location is kept in sync with the largest placement (primary).
  */
 export async function saveShelfStock(
   inventoryId: string,
@@ -228,12 +236,14 @@ export async function saveShelfStock(
     if (ins.error) return { error: ins.error.message };
   }
 
-  // Primary location = the slot holding the most units (or null).
+  // Primary location = the slot holding the most units (or null); total stock =
+  // sum of all placements (only when there's at least one, so clearing all
+  // placements doesn't silently zero the stock).
   const primary = clean.slice().sort((a, b) => b.quantity - a.quantity)[0]?.location ?? null;
-  await admin
-    .from("inventory")
-    .update({ location: primary, updated_at: new Date().toISOString() })
-    .eq("id", inventoryId);
+  const totalQty = clean.reduce((s, r) => s + r.quantity, 0);
+  const patch: Record<string, unknown> = { location: primary, updated_at: new Date().toISOString() };
+  if (clean.length) patch.stock_quantity = totalQty;
+  await admin.from("inventory").update(patch).eq("id", inventoryId);
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");

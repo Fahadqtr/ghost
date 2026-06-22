@@ -276,9 +276,9 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
         </div>
         {assignTo && (
           <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            Counting shelf <b>{assignTo}</b> — saves how many units sit in this shelf (total stock
-            unchanged). To put a product in another shelf too, just switch <b>Assign to</b> and scan it
-            again — it gets its own line.
+            Counting shelf <b>{assignTo}</b> — saves how many units sit in this shelf; each product&apos;s
+            total stock becomes the sum of all its shelves. To put a product in another shelf too, just
+            switch <b>Assign to</b> and scan it again — it gets its own line.
           </div>
         )}
         <div className="flex gap-2">

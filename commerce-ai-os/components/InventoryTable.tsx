@@ -660,8 +660,9 @@ function LocationsEditor({
       <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 text-sm font-semibold text-ink">{row.product_name ?? row.sku}</div>
         <div className="mb-3 text-xs text-muted">
-          Distribute the {total} units across shelves. Placed:{" "}
-          <span className={placed === total ? "text-green-700" : "text-amber-700"}>{placed}</span> / {total}
+          Set how many units sit in each shelf. Total stock becomes the sum ={" "}
+          <span className="font-semibold text-ink">{placed}</span>
+          {total !== placed && <span className="text-amber-700"> (was {total})</span>}.
         </div>
 
         <datalist id="loc-editor-slots">
