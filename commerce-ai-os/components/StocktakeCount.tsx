@@ -15,7 +15,7 @@ export type CountItem = {
   stock: number; // current system stock (expected)
 };
 
-type Line = { item: CountItem; counted: number };
+type Line = { item: CountItem; counted: number; assigned?: string }; // assigned = location to save
 type Unknown = { code: string; count: number };
 
 // Ignore an identical barcode fired again within this window — kills a scanner's
@@ -44,7 +44,7 @@ function beep(ok: boolean) {
   }
 }
 
-export default function StocktakeCount({ items }: { items: CountItem[] }) {
+export default function StocktakeCount({ items, slots = [] }: { items: CountItem[]; slots?: string[] }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -66,6 +66,7 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
   }, [items]);
 
   const [shelf, setShelf] = useState(""); // "" = all shelves
+  const [assignTo, setAssignTo] = useState(""); // "" = don't change location
   const [buf, setBuf] = useState("");
   const [lines, setLines] = useState<Line[]>([]); // most-recent first
   const [unknown, setUnknown] = useState<Unknown[]>([]);
@@ -104,8 +105,9 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
       setLast({ name: `Unknown barcode ${code}`, counted: 0, tone: "warn" });
       return;
     }
-    // Scoped to a shelf: warn (and skip) if the item belongs elsewhere.
-    if (shelf && shelfOf(item.location) !== shelf) {
+    // Scoped to a shelf: warn (and skip) if the item belongs elsewhere — unless
+    // we're assigning a location (then the scan moves it here on purpose).
+    if (!assignTo && shelf && shelfOf(item.location) !== shelf) {
       beep(false);
       const where = item.location ? `shelf ${shelfOf(item.location)}` : "no shelf";
       setLast({ name: `${item.name ?? item.sku ?? code} is in ${where}, not ${shelf}`, counted: 0, tone: "warn" });
@@ -114,15 +116,17 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
     beep(true);
     setLines((prev) => {
       const i = prev.findIndex((l) => l.item.inventoryId === item.inventoryId);
+      const assigned = assignTo || prev[i]?.assigned;
       let counted = 1;
       let next: Line[];
       if (i >= 0) {
         counted = prev[i].counted + 1;
-        next = [{ item, counted }, ...prev.slice(0, i), ...prev.slice(i + 1)];
+        next = [{ item, counted, assigned }, ...prev.slice(0, i), ...prev.slice(i + 1)];
       } else {
-        next = [{ item, counted: 1 }, ...prev];
+        next = [{ item, counted: 1, assigned }, ...prev];
       }
-      const loc = item.location ? ` [${item.location}]` : "";
+      const shown = assigned ?? item.location;
+      const loc = shown ? ` [${shown}]` : "";
       setLast({ name: `${item.name ?? item.sku ?? code}${loc}`, counted, tone: "ok" });
       return next;
     });
@@ -177,6 +181,12 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
     const n = Math.max(0, Math.floor(Number(v) || 0));
     setLines((prev) => prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, counted: n } : l)));
   }
+  function setLineLocation(inventoryId: string, v: string) {
+    const code = v.trim().toUpperCase();
+    setLines((prev) =>
+      prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, assigned: code || undefined } : l))
+    );
+  }
   function removeLine(inventoryId: string) {
     setLines((prev) => prev.filter((l) => l.item.inventoryId !== inventoryId));
   }
@@ -196,7 +206,12 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
 
   function apply() {
     if (lines.length === 0) return;
-    const counts = lines.map((l) => ({ inventoryId: l.item.inventoryId, sku: l.item.sku, counted: l.counted }));
+    const counts = lines.map((l) => ({
+      inventoryId: l.item.inventoryId,
+      sku: l.item.sku,
+      counted: l.counted,
+      location: l.assigned ?? null,
+    }));
     startTransition(async () => {
       const res = await applyStocktake(counts);
       setMsg({
@@ -215,16 +230,32 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
       <form onSubmit={onSubmit} className="card space-y-3">
         <div className="flex items-center justify-between gap-3">
           <label className="text-sm font-medium text-ink">Scan items on the shelf</label>
-          {shelves.length > 0 && (
-            <label className="flex items-center gap-2 text-sm">
-              <span className="text-muted">Shelf</span>
-              <select className="input w-auto" value={shelf} onChange={(e) => setShelf(e.target.value)}>
-                <option value="">All shelves</option>
-                {shelves.map((s) => <option key={s} value={s}>Shelf {s}</option>)}
-              </select>
-            </label>
-          )}
+          <div className="flex flex-wrap items-center gap-3">
+            {slots.length > 0 && (
+              <label className="flex items-center gap-2 text-sm">
+                <span className="text-muted">Assign to</span>
+                <select className="input w-auto" value={assignTo} onChange={(e) => setAssignTo(e.target.value)}>
+                  <option value="">— don’t change —</option>
+                  {slots.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </label>
+            )}
+            {shelves.length > 0 && !assignTo && (
+              <label className="flex items-center gap-2 text-sm">
+                <span className="text-muted">Shelf</span>
+                <select className="input w-auto" value={shelf} onChange={(e) => setShelf(e.target.value)}>
+                  <option value="">All shelves</option>
+                  {shelves.map((s) => <option key={s} value={s}>Shelf {s}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
         </div>
+        {assignTo && (
+          <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            Scanned items will be counted <b>and</b> moved to slot <b>{assignTo}</b> when you apply.
+          </div>
+        )}
         <div className="flex gap-2">
           <input
             ref={inputRef}
@@ -300,6 +331,13 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
         </div>
       )}
 
+      {/* Slot-code suggestions for the editable Location inputs */}
+      {slots.length > 0 && (
+        <datalist id="stk-slots">
+          {slots.map((c) => <option key={c} value={c} />)}
+        </datalist>
+      )}
+
       {/* Count table */}
       {lines.length > 0 && (
         <div className="card overflow-x-auto p-0">
@@ -326,7 +364,17 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
                       {l.item.name_ar ? <div className="text-xs text-muted" dir="rtl">{l.item.name_ar}</div> : null}
                     </td>
                     <td className="px-4 py-3 text-slate-600">{l.item.sku ?? "—"}</td>
-                    <td className="px-4 py-3 font-mono text-slate-600">{l.item.location ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      <input
+                        list="stk-slots"
+                        className={`input w-24 font-mono uppercase ${
+                          l.assigned && l.assigned !== l.item.location ? "border-blue-400 bg-blue-50" : ""
+                        }`}
+                        placeholder={l.item.location ?? "—"}
+                        value={l.assigned ?? l.item.location ?? ""}
+                        onChange={(e) => setLineLocation(l.item.inventoryId, e.target.value)}
+                      />
+                    </td>
                     <td className="px-4 py-3 text-right">
                       <input
                         className="input w-20 text-right"

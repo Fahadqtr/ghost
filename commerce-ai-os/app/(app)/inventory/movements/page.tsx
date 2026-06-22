@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import MovementForm, { type PickItem } from "@/components/MovementForm";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export default async function MovementsPage() {
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("inventory")
-      .select("id, stock_quantity, products(sku, name_en, name_ar, barcode)")
+      .select("id, stock_quantity, products(sku, name_en, name_ar, barcode, image_url)")
       .range(from, from + PAGE - 1);
     if (error) break;
     for (const r of (data ?? []) as any[]) {
@@ -44,6 +45,7 @@ export default async function MovementsPage() {
         name,
         name_ar: r.products?.name_ar ?? null,
         barcode: r.products?.barcode ?? null,
+        image_url: r.products?.image_url ?? null,
         stock: r.stock_quantity ?? 0,
       });
     }
@@ -51,8 +53,16 @@ export default async function MovementsPage() {
   }
   items.sort((a, b) => (a.name ?? a.sku ?? "").localeCompare(b.name ?? b.sku ?? ""));
 
-  // Movement ledger (from the audit table)
-  const { data: movData } = await supabase
+  // Movement ledger (from the audit table). Read with the service-role client:
+  // rows are written service-side and malak_audit's RLS may hide them from the
+  // user session. Fall back to the RLS client if the service key isn't set.
+  let ledger = supabase;
+  try {
+    ledger = createAdminClient() as any;
+  } catch {
+    /* no service role configured — use the user client */
+  }
+  const { data: movData } = await ledger
     .from("malak_audit")
     .select("id, created_at, action_type, sku, old_value, new_value, details")
     .in("action_type", ["stock_in", "stock_out"])

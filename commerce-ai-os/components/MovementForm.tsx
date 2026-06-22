@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { recordMovement } from "@/app/(app)/inventory/actions";
 import BarcodeScanner from "@/components/BarcodeScanner";
@@ -12,8 +12,11 @@ export type PickItem = {
   name: string | null;
   name_ar: string | null;
   barcode: string | null;
+  image_url: string | null;
   stock: number;
 };
+
+type Line = { item: PickItem; qty: number };
 
 const REASONS: Record<"in" | "out", string[]> = {
   in: ["purchase", "return", "transfer-in", "adjustment"],
@@ -23,15 +26,32 @@ const REASONS: Record<"in" | "out", string[]> = {
 export default function MovementForm({ items }: { items: PickItem[] }) {
   const router = useRouter();
   const [pq, setPq] = useState("");
-  const [selected, setSelected] = useState<PickItem | null>(null);
+  const [lines, setLines] = useState<Line[]>([]); // most-recent first
   const [type, setType] = useState<"in" | "out">("in");
-  const [qty, setQty] = useState("");
   const [reason, setReason] = useState("purchase");
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [scanning, setScanning] = useState(false);
   const [identifying, setIdentifying] = useState(false);
   const [pending, startTransition] = useTransition();
+  const scanRef = useRef<HTMLInputElement>(null);
+
+  /** Add a scanned/picked product to the cart, or +1 if it's already there. */
+  function addOrInc(found: PickItem) {
+    setLines((prev) => {
+      const i = prev.findIndex((l) => l.item.inventoryId === found.inventoryId);
+      if (i >= 0) {
+        const next = [...prev];
+        next[i] = { ...next[i], qty: next[i].qty + 1 };
+        // bubble the just-counted line to the top
+        return [next[i], ...next.slice(0, i), ...next.slice(i + 1)];
+      }
+      return [{ item: found, qty: 1 }, ...prev];
+    });
+    setPq("");
+    setMsg({ kind: "ok", text: `+1 ${found.name ?? found.sku}` });
+    scanRef.current?.focus();
+  }
 
   function onScan(code: string) {
     const c = code.trim();
@@ -39,12 +59,8 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
     const found =
       items.find((it) => (it.barcode ?? "") === c) ||
       items.find((it) => (it.sku ?? "").toLowerCase() === c.toLowerCase());
-    if (found) {
-      pick(found);
-      setMsg({ kind: "ok", text: `Scanned: ${found.name ?? found.sku}` });
-    } else {
-      setMsg({ kind: "err", text: `No product matches barcode ${c}.` });
-    }
+    if (found) addOrInc(found);
+    else setMsg({ kind: "err", text: `No product matches barcode ${c}.` });
   }
 
   const matches = useMemo(() => {
@@ -55,14 +71,37 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
         (it) =>
           (it.name ?? "").toLowerCase().includes(n) ||
           (it.sku ?? "").toLowerCase().includes(n) ||
+          (it.barcode ?? "").includes(pq.trim()) ||
           (it.name_ar ?? "").includes(pq.trim())
       )
       .slice(0, 8);
   }, [pq, items]);
 
-  function pick(it: PickItem) {
-    setSelected(it);
-    setPq("");
+  // Enter in the scan box (or a keyboard-wedge scanner) resolves and adds +1.
+  function onProductKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const c = pq.trim();
+    if (!c) return;
+    const found =
+      items.find((it) => (it.barcode ?? "") === c) ||
+      items.find((it) => (it.sku ?? "").toLowerCase() === c.toLowerCase()) ||
+      (matches.length === 1 ? matches[0] : null);
+    if (found) addOrInc(found);
+    else setMsg({ kind: "err", text: `No product matches “${c}”.` });
+  }
+
+  function setLineQty(inventoryId: string, v: string) {
+    const n = Math.max(0, Math.floor(Number(v) || 0));
+    setLines((prev) => prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, qty: n } : l)));
+  }
+  function stepQty(inventoryId: string, d: number) {
+    setLines((prev) =>
+      prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, qty: Math.max(0, l.qty + d) } : l))
+    );
+  }
+  function removeLine(inventoryId: string) {
+    setLines((prev) => prev.filter((l) => l.item.inventoryId !== inventoryId));
   }
 
   function switchType(t: "in" | "out") {
@@ -70,104 +109,47 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
     if (!REASONS[t].includes(reason)) setReason(REASONS[t][0]);
   }
 
+  const totalUnits = lines.reduce((s, l) => s + l.qty, 0);
+
   function submit() {
-    if (!selected) {
-      setMsg({ kind: "err", text: "Pick a product first." });
-      return;
-    }
-    const n = Math.floor(Math.abs(Number(qty)));
-    if (!n) {
-      setMsg({ kind: "err", text: "Enter a quantity greater than 0." });
+    const valid = lines.filter((l) => l.qty > 0);
+    if (valid.length === 0) {
+      setMsg({ kind: "err", text: "Scan at least one product first." });
       return;
     }
     startTransition(async () => {
-      const res = await recordMovement({
-        inventoryId: selected.inventoryId,
-        sku: selected.sku,
-        type,
-        quantity: n,
-        reason,
-        note: note.trim() || null,
-      });
-      if (res && "error" in res && res.error) {
-        setMsg({ kind: "err", text: res.error });
-        return;
+      let ok = 0;
+      const errors: string[] = [];
+      for (const l of valid) {
+        const res = await recordMovement({
+          inventoryId: l.item.inventoryId,
+          sku: l.item.sku,
+          type,
+          quantity: l.qty,
+          reason,
+          note: note.trim() || null,
+        });
+        if (res && "error" in res && res.error) errors.push(`${l.item.sku ?? l.item.name}: ${res.error}`);
+        else ok++;
       }
-      const after = (res as any).after;
-      const logged = (res as any).logged !== false;
       setMsg({
-        kind: "ok",
-        text: `${type === "in" ? "Added" : "Removed"} ${n} × ${selected.name ?? selected.sku} · new stock: ${after}${logged ? "" : " (saved, but history log unavailable)"}`,
+        kind: errors.length ? "err" : "ok",
+        text: errors.length
+          ? `Recorded ${ok}, ${errors.length} failed: ${errors.slice(0, 3).join("; ")}`
+          : `Recorded ${type === "in" ? "IN" : "OUT"} for ${ok} product${ok === 1 ? "" : "s"} (${totalUnits} units).`,
       });
-      // reflect new stock locally + reset the entry
-      setSelected({ ...selected, stock: after });
-      setQty("");
-      setNote("");
+      if (!errors.length) {
+        setLines([]);
+        setNote("");
+      }
       router.refresh();
     });
   }
 
   return (
     <div className="card space-y-4">
+      {/* Batch settings: direction + reason apply to everything scanned below */}
       <div className="grid gap-4 sm:grid-cols-2">
-        {/* Product picker */}
-        <div className="space-y-1">
-          <label className="label">Product</label>
-          {selected ? (
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-ink">{selected.name ?? selected.sku}</div>
-                <div className="text-xs text-muted">
-                  {selected.sku} · current stock <span className="font-medium text-ink">{selected.stock}</span>
-                </div>
-              </div>
-              <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setSelected(null)}>Change</button>
-            </div>
-          ) : (
-            <div className="relative">
-              <div className="flex gap-2">
-                <input
-                  className="input flex-1"
-                  placeholder="Search product name or SKU…"
-                  value={pq}
-                  onChange={(e) => setPq(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="btn-ghost flex-none px-3 py-2 text-sm"
-                  onClick={() => setScanning(true)}
-                  title="Scan barcode with camera"
-                >
-                  📷 Scan
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost flex-none px-3 py-2 text-sm"
-                  onClick={() => setIdentifying(true)}
-                  title="Identify product by photo (AI)"
-                >
-                  🔍 Photo
-                </button>
-              </div>
-              {matches.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
-                  {matches.map((it) => (
-                    <button
-                      key={it.inventoryId}
-                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
-                      onClick={() => pick(it)}
-                    >
-                      <span className="min-w-0 truncate">{it.name ?? it.sku}</span>
-                      <span className="flex-none text-xs text-muted">{it.sku} · {it.stock}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Type toggle */}
         <div className="space-y-1">
           <label className="label">Movement</label>
           <div className="flex gap-2">
@@ -187,14 +169,6 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
             </button>
           </div>
         </div>
-
-        {/* Quantity */}
-        <div className="space-y-1">
-          <label className="label">Quantity</label>
-          <input className="input" type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="e.g. 50" />
-        </div>
-
-        {/* Reason */}
         <div className="space-y-1">
           <label className="label">Reason</label>
           <div className="flex flex-wrap gap-2">
@@ -204,9 +178,7 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
                 type="button"
                 onClick={() => setReason(r)}
                 className={`rounded-lg border px-3 py-1.5 text-sm font-medium capitalize ${
-                  reason === r
-                    ? "border-blue-300 bg-blue-50 text-blue-700"
-                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                  reason === r ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"
                 }`}
               >
                 {r}
@@ -214,30 +186,144 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
             ))}
           </div>
         </div>
+      </div>
 
-        {/* Note */}
-        <div className="space-y-1 sm:col-span-2">
-          <label className="label">Note (optional)</label>
-          <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reference / supplier / details…" />
+      {/* Scan box — add as many different products as you like */}
+      <div className="space-y-1">
+        <label className="label">Scan products</label>
+        <div className="relative">
+          <div className="flex gap-2">
+            <input
+              ref={scanRef}
+              className="input flex-1"
+              placeholder="Scan or type name / SKU / barcode, press Enter — scan again to add +1…"
+              value={pq}
+              onChange={(e) => setPq(e.target.value)}
+              onKeyDown={onProductKeyDown}
+              autoComplete="off"
+            />
+            <button type="button" className="btn-ghost flex-none px-3 py-2 text-sm" onClick={() => setScanning(true)} title="Scan barcode with camera">
+              📷 Scan
+            </button>
+            <button type="button" className="btn-ghost flex-none px-3 py-2 text-sm" onClick={() => setIdentifying(true)} title="Identify product by photo (AI)">
+              🔍 Photo
+            </button>
+          </div>
+          {matches.length > 0 && (
+            <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+              {matches.map((it) => (
+                <button
+                  key={it.inventoryId}
+                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                  onClick={() => addOrInc(it)}
+                >
+                  <span className="min-w-0 truncate">{it.name ?? it.sku}</span>
+                  <span className="flex-none text-xs text-muted">{it.sku} · {it.stock}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <button className="btn-primary px-4 py-2 text-sm disabled:opacity-50" disabled={pending} onClick={submit}>
-          {pending ? "Saving…" : type === "in" ? "Record stock IN" : "Record stock OUT"}
+      {/* Note */}
+      <div className="space-y-1">
+        <label className="label">Note (optional)</label>
+        <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reference / supplier / details…" />
+      </div>
+
+      {/* Cart of scanned products — one card each */}
+      {lines.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">
+          Scan a product to start your {type === "in" ? "incoming" : "outgoing"} list.
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {lines.map((l) => {
+            const after = type === "in" ? l.item.stock + l.qty : l.item.stock - l.qty;
+            const bad = after < 0;
+            return (
+              <div
+                key={l.item.inventoryId}
+                className={`flex gap-3 rounded-xl border bg-white p-3 shadow-sm ${bad ? "border-red-200" : "border-slate-200"}`}
+              >
+                <div className="h-16 w-16 flex-none overflow-hidden rounded-lg bg-slate-100">
+                  {l.item.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={l.item.image_url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-2xl">📦</div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-ink">{l.item.name ?? l.item.sku}</div>
+                      <div className="text-xs text-muted">{l.item.sku ?? "—"}</div>
+                    </div>
+                    <button
+                      className="flex-none text-slate-400 hover:text-red-600"
+                      title="Remove"
+                      onClick={() => removeLine(l.item.inventoryId)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    {/* qty stepper */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-lg leading-none text-slate-600 hover:bg-slate-50"
+                        onClick={() => stepQty(l.item.inventoryId, -1)}
+                      >
+                        −
+                      </button>
+                      <input
+                        className="input h-8 w-14 text-center"
+                        type="number"
+                        min={0}
+                        value={l.qty}
+                        onChange={(e) => setLineQty(l.item.inventoryId, e.target.value)}
+                      />
+                      <button
+                        className="h-8 w-8 rounded-lg border border-slate-200 text-lg leading-none text-slate-600 hover:bg-slate-50"
+                        onClick={() => stepQty(l.item.inventoryId, 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                    {/* stock change */}
+                    <div className="text-right text-xs">
+                      <span className="text-muted">{l.item.stock}</span>
+                      <span className={`mx-1 ${type === "in" ? "text-green-600" : "text-orange-600"}`}>
+                        {type === "in" ? "↓" : "↑"}
+                      </span>
+                      <span className={`font-semibold ${bad ? "text-red-600" : "text-ink"}`}>{after}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button className="btn-primary px-4 py-2 text-sm disabled:opacity-50" disabled={pending || lines.length === 0} onClick={submit}>
+          {pending ? "Saving…" : `Record ${type === "in" ? "IN" : "OUT"} · ${lines.length} product${lines.length === 1 ? "" : "s"} (${totalUnits})`}
         </button>
-        {msg && (
-          <span className={`text-sm ${msg.kind === "ok" ? "text-green-700" : "text-amber-700"}`}>{msg.text}</span>
+        {lines.length > 0 && (
+          <button className="btn-ghost px-3 py-2 text-sm" disabled={pending} onClick={() => setLines([])}>Clear</button>
         )}
+        {msg && <span className={`text-sm ${msg.kind === "ok" ? "text-green-700" : "text-amber-700"}`}>{msg.text}</span>}
       </div>
 
       {scanning && <BarcodeScanner onDetected={onScan} onClose={() => setScanning(false)} />}
       {identifying && (
         <PhotoIdentify
           onPick={(it) => {
-            pick(it);
+            addOrInc(it);
             setIdentifying(false);
-            setMsg({ kind: "ok", text: `Selected: ${it.name ?? it.sku}` });
           }}
           onClose={() => setIdentifying(false)}
         />
