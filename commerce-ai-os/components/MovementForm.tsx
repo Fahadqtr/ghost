@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { recordMovement } from "@/app/(app)/inventory/actions";
 import BarcodeScanner from "@/components/BarcodeScanner";
@@ -32,6 +32,22 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
   const [scanning, setScanning] = useState(false);
   const [identifying, setIdentifying] = useState(false);
   const [pending, startTransition] = useTransition();
+  const scanRef = useRef<HTMLInputElement>(null);
+
+  /** A scan/Enter that resolves to a product: select it and add +1 to qty. */
+  function countScan(found: PickItem) {
+    setSelected((cur) => {
+      if (cur && cur.inventoryId === found.inventoryId) {
+        setQty((q) => String((Math.floor(Number(q)) || 0) + 1));
+        return cur;
+      }
+      setQty("1");
+      return found;
+    });
+    setPq("");
+    setMsg({ kind: "ok", text: `+1 ${found.name ?? found.sku}` });
+    scanRef.current?.focus();
+  }
 
   function onScan(code: string) {
     const c = code.trim();
@@ -39,12 +55,8 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
     const found =
       items.find((it) => (it.barcode ?? "") === c) ||
       items.find((it) => (it.sku ?? "").toLowerCase() === c.toLowerCase());
-    if (found) {
-      pick(found);
-      setMsg({ kind: "ok", text: `Scanned: ${found.name ?? found.sku}` });
-    } else {
-      setMsg({ kind: "err", text: `No product matches barcode ${c}.` });
-    }
+    if (found) countScan(found);
+    else setMsg({ kind: "err", text: `No product matches barcode ${c}.` });
   }
 
   const matches = useMemo(() => {
@@ -77,12 +89,8 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
       items.find((it) => (it.barcode ?? "") === c) ||
       items.find((it) => (it.sku ?? "").toLowerCase() === c.toLowerCase()) ||
       (matches.length === 1 ? matches[0] : null);
-    if (found) {
-      pick(found);
-      setMsg({ kind: "ok", text: `Selected: ${found.name ?? found.sku}` });
-    } else {
-      setMsg({ kind: "err", text: `No product matches “${c}”.` });
-    }
+    if (found) countScan(found);
+    else setMsg({ kind: "err", text: `No product matches “${c}”.` });
   }
 
   function switchType(t: "in" | "out") {
@@ -133,60 +141,62 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
         {/* Product picker */}
         <div className="space-y-1">
           <label className="label">Product</label>
-          {selected ? (
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          {selected && (
+            <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium text-ink">{selected.name ?? selected.sku}</div>
                 <div className="text-xs text-muted">
                   {selected.sku} · current stock <span className="font-medium text-ink">{selected.stock}</span>
                 </div>
               </div>
-              <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setSelected(null)}>Change</button>
-            </div>
-          ) : (
-            <div className="relative">
-              <div className="flex gap-2">
-                <input
-                  className="input flex-1"
-                  placeholder="Search name / SKU / barcode — or scan & press Enter…"
-                  value={pq}
-                  onChange={(e) => setPq(e.target.value)}
-                  onKeyDown={onProductKeyDown}
-                  autoComplete="off"
-                />
-                <button
-                  type="button"
-                  className="btn-ghost flex-none px-3 py-2 text-sm"
-                  onClick={() => setScanning(true)}
-                  title="Scan barcode with camera"
-                >
-                  📷 Scan
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost flex-none px-3 py-2 text-sm"
-                  onClick={() => setIdentifying(true)}
-                  title="Identify product by photo (AI)"
-                >
-                  🔍 Photo
-                </button>
-              </div>
-              {matches.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
-                  {matches.map((it) => (
-                    <button
-                      key={it.inventoryId}
-                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
-                      onClick={() => pick(it)}
-                    >
-                      <span className="min-w-0 truncate">{it.name ?? it.sku}</span>
-                      <span className="flex-none text-xs text-muted">{it.sku} · {it.stock}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+              <button className="btn-ghost px-2 py-1 text-xs" onClick={() => { setSelected(null); setQty(""); }}>
+                Clear
+              </button>
             </div>
           )}
+          <div className="relative">
+            <div className="flex gap-2">
+              <input
+                ref={scanRef}
+                className="input flex-1"
+                placeholder={selected ? "Scan again to add +1…" : "Search name / SKU / barcode — or scan & press Enter…"}
+                value={pq}
+                onChange={(e) => setPq(e.target.value)}
+                onKeyDown={onProductKeyDown}
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className="btn-ghost flex-none px-3 py-2 text-sm"
+                onClick={() => setScanning(true)}
+                title="Scan barcode with camera"
+              >
+                📷 Scan
+              </button>
+              <button
+                type="button"
+                className="btn-ghost flex-none px-3 py-2 text-sm"
+                onClick={() => setIdentifying(true)}
+                title="Identify product by photo (AI)"
+              >
+                🔍 Photo
+              </button>
+            </div>
+            {matches.length > 0 && (
+              <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                {matches.map((it) => (
+                  <button
+                    key={it.inventoryId}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    onClick={() => countScan(it)}
+                  >
+                    <span className="min-w-0 truncate">{it.name ?? it.sku}</span>
+                    <span className="flex-none text-xs text-muted">{it.sku} · {it.stock}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Type toggle */}
