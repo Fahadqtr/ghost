@@ -159,6 +159,54 @@ export async function setLocation(inventoryId: string, location: string) {
 }
 
 /**
+ * Replace a product's per-shelf distribution. `rows` is the full desired set of
+ * (location, quantity) placements; empty/zero quantities are dropped. The master
+ * total (inventory.stock_quantity) is left untouched — this is placement only.
+ * inventory.location is kept in sync with the largest placement (legacy/primary).
+ */
+export async function saveShelfStock(
+  inventoryId: string,
+  rows: { location: string; quantity: number }[]
+) {
+  if (!inventoryId) return { error: "Missing inventory row." };
+  const admin = writableClient();
+
+  // Normalize: uppercase codes, merge duplicates, keep positive quantities.
+  const merged = new Map<string, number>();
+  for (const r of rows) {
+    const code = (r.location ?? "").trim().toUpperCase();
+    const q = Math.max(0, Math.floor(Number(r.quantity) || 0));
+    if (!code || q <= 0) continue;
+    merged.set(code, (merged.get(code) ?? 0) + q);
+  }
+  const clean = Array.from(merged.entries()).map(([location, quantity]) => ({
+    inventory_id: inventoryId,
+    location,
+    quantity,
+    updated_at: new Date().toISOString(),
+  }));
+
+  // Replace the product's placements wholesale.
+  const del = await admin.from("shelf_stock").delete().eq("inventory_id", inventoryId);
+  if (del.error) return { error: del.error.message };
+  if (clean.length) {
+    const ins = await admin.from("shelf_stock").insert(clean);
+    if (ins.error) return { error: ins.error.message };
+  }
+
+  // Primary location = the slot holding the most units (or null).
+  const primary = clean.slice().sort((a, b) => b.quantity - a.quantity)[0]?.location ?? null;
+  await admin
+    .from("inventory")
+    .update({ location: primary, updated_at: new Date().toISOString() })
+    .eq("id", inventoryId);
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
+/**
  * Create a shelf and its slots in one go: shelf "A" with count 5 makes
  * A1..A5. Existing slots are left untouched (idempotent upsert).
  */

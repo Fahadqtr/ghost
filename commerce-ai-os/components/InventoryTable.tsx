@@ -10,8 +10,10 @@ import {
   importInventoryBySku,
   pushStockToShopify,
   setLocation,
+  saveShelfStock,
   type BulkUpdate,
 } from "@/app/(app)/inventory/actions";
+import { compareSlot } from "@/lib/shelf";
 
 export interface InventoryRow {
   id: string;
@@ -93,11 +95,15 @@ export default function InventoryTable({
   categories = [],
   slots = [],
   hasLocation = false,
+  placements = {},
+  hasShelfStock = false,
 }: {
   rows: InventoryRow[];
   categories?: string[];
   slots?: string[];
   hasLocation?: boolean;
+  placements?: Record<string, { location: string; quantity: number }[]>;
+  hasShelfStock?: boolean;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -107,13 +113,27 @@ export default function InventoryTable({
   const [statusFilter, setStatusFilter] = useState<"all" | Status>("all");
   const [catFilter, setCatFilter] = useState("");
   const [shelfFilter, setShelfFilter] = useState("");
+  const [editLoc, setEditLoc] = useState<InventoryRow | null>(null); // multi-shelf editor target
+
+  // Shelves a product occupies (multi-shelf if shelf_stock is on, else single).
+  const rowShelves = (r: InventoryRow): string[] => {
+    const p = placements[r.id];
+    if (hasShelfStock && p && p.length) {
+      return Array.from(new Set(p.map((x) => shelfOf(x.location)).filter(Boolean) as string[]));
+    }
+    const s = shelfOf(r.location);
+    return s ? [s] : [];
+  };
 
   const shelves = useMemo(() => {
     const set = new Set<string>();
     slots.forEach((c) => { const s = shelfOf(c); if (s) set.add(s); });
+    Object.values(placements).forEach((arr) =>
+      arr.forEach((x) => { const s = shelfOf(x.location); if (s) set.add(s); })
+    );
     rows.forEach((r) => { const s = shelfOf(r.location); if (s) set.add(s); });
     return Array.from(set).sort();
-  }, [slots, rows]);
+  }, [slots, rows, placements]);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "stock", dir: "asc" });
 
   const [edits, setEdits] = useState<Record<string, { stock?: string; threshold?: string }>>({});
@@ -148,7 +168,7 @@ export default function InventoryTable({
       const st = statusOf(Number(curStock(r)) || 0, Number(curThreshold(r)) || null);
       const matchesStatus = statusFilter === "all" || st === statusFilter;
       const matchesCat = !catFilter || r.category === catFilter;
-      const matchesShelf = !shelfFilter || shelfOf(r.location) === shelfFilter;
+      const matchesShelf = !shelfFilter || rowShelves(r).includes(shelfFilter);
       return matchesQ && matchesStatus && matchesCat && matchesShelf;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -503,7 +523,11 @@ export default function InventoryTable({
                     <td className="px-4 py-3 text-slate-600">{r.sku ?? "—"}</td>
                     {hasLocation && (
                       <td className="px-4 py-3">
-                        <LocationCell id={r.id} value={r.location} />
+                        {hasShelfStock ? (
+                          <ShelfStockCell row={r} placements={placements[r.id] ?? []} onEdit={() => setEditLoc(r)} />
+                        ) : (
+                          <LocationCell id={r.id} value={r.location} />
+                        )}
                       </td>
                     )}
                     <td className="px-4 py-3 text-right">
@@ -536,6 +560,147 @@ export default function InventoryTable({
             )}
           </tbody>
         </table>
+      </div>
+
+      {editLoc && hasShelfStock && (
+        <LocationsEditor
+          row={editLoc}
+          placements={placements[editLoc.id] ?? []}
+          slots={slots}
+          onClose={() => setEditLoc(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Compact read-only summary of where a product's units sit, with an edit button. */
+function ShelfStockCell({
+  row,
+  placements,
+  onEdit,
+}: {
+  row: InventoryRow;
+  placements: { location: string; quantity: number }[];
+  onEdit: () => void;
+}) {
+  const placed = placements.reduce((s, p) => s + p.quantity, 0);
+  const total = row.stock_quantity ?? 0;
+  const sorted = placements.slice().sort((a, b) => compareSlot(a.location, b.location));
+  return (
+    <div className="flex items-center gap-2">
+      <button className="flex flex-wrap gap-1 text-left" onClick={onEdit} title="Edit shelf locations">
+        {sorted.length === 0 ? (
+          <span className="text-slate-400">— set —</span>
+        ) : (
+          sorted.map((p) => (
+            <span key={p.location} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">
+              <span className="font-mono font-medium">{p.location}</span>
+              <span className="text-slate-500">·{p.quantity}</span>
+            </span>
+          ))
+        )}
+      </button>
+      <button className="flex-none text-slate-400 hover:text-ink" onClick={onEdit} title="Edit">✎</button>
+      {placed !== total && (
+        <span
+          className="flex-none rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700"
+          title="Placed units don't match the total stock"
+        >
+          {placed}/{total}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Modal to edit a product's per-shelf distribution (multiple location+qty rows). */
+function LocationsEditor({
+  row,
+  placements,
+  slots,
+  onClose,
+}: {
+  row: InventoryRow;
+  placements: { location: string; quantity: number }[];
+  slots: string[];
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [rowsState, setRowsState] = useState<{ location: string; quantity: string }[]>(
+    placements.length
+      ? placements.map((p) => ({ location: p.location, quantity: String(p.quantity) }))
+      : [{ location: "", quantity: "" }]
+  );
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+
+  const total = row.stock_quantity ?? 0;
+  const placed = rowsState.reduce((s, r) => s + (Math.max(0, Math.floor(Number(r.quantity) || 0))), 0);
+
+  const set = (i: number, k: "location" | "quantity", v: string) =>
+    setRowsState((rs) => rs.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  const add = () => setRowsState((rs) => [...rs, { location: "", quantity: "" }]);
+  const remove = (i: number) => setRowsState((rs) => rs.filter((_, idx) => idx !== i));
+
+  function save() {
+    start(async () => {
+      const res = await saveShelfStock(
+        row.id,
+        rowsState.map((r) => ({ location: r.location, quantity: Number(r.quantity) || 0 }))
+      );
+      if (res && "error" in res && res.error) { setErr(res.error); return; }
+      router.refresh();
+      onClose();
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 text-sm font-semibold text-ink">{row.product_name ?? row.sku}</div>
+        <div className="mb-3 text-xs text-muted">
+          Distribute the {total} units across shelves. Placed:{" "}
+          <span className={placed === total ? "text-green-700" : "text-amber-700"}>{placed}</span> / {total}
+        </div>
+
+        <datalist id="loc-editor-slots">
+          {slots.map((c) => <option key={c} value={c} />)}
+        </datalist>
+
+        <div className="space-y-2">
+          {rowsState.map((r, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                list="loc-editor-slots"
+                className="input flex-1 font-mono uppercase"
+                placeholder="A1"
+                value={r.location}
+                onChange={(e) => set(i, "location", e.target.value)}
+              />
+              <input
+                className="input w-24 text-right"
+                type="number"
+                min={0}
+                placeholder="qty"
+                value={r.quantity}
+                onChange={(e) => set(i, "quantity", e.target.value)}
+              />
+              <button className="flex-none text-slate-400 hover:text-red-600" onClick={() => remove(i)} title="Remove">✕</button>
+            </div>
+          ))}
+        </div>
+
+        <button className="btn-ghost mt-2 px-3 py-1 text-xs" onClick={add}>+ Add shelf</button>
+
+        {err && <div className="mt-2 text-xs text-red-600">{err}</div>}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose} disabled={pending}>Cancel</button>
+          <button className="btn-primary px-4 py-1.5 text-sm disabled:opacity-50" onClick={save} disabled={pending}>
+            {pending ? "Saving…" : "Save"}
+          </button>
+        </div>
       </div>
     </div>
   );

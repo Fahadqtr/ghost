@@ -20,6 +20,27 @@ export default async function InventoryPage() {
     : { data: [] as any[], error: null };
   const slots: string[] = ((slotsRes.data ?? []) as any[]).map((s) => String(s.code));
 
+  // Per-shelf distribution (a product can sit in several shelves). Map by row.
+  const placements: Record<string, { location: string; quantity: number }[]> = {};
+  let hasShelfStock = false;
+  if (hasLocation) {
+    const probeSS = await supabase.from("shelf_stock").select("id").limit(1);
+    hasShelfStock = !probeSS.error;
+    if (hasShelfStock) {
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from("shelf_stock")
+          .select("inventory_id, location, quantity")
+          .range(from, from + 999);
+        if (error) break;
+        for (const r of (data ?? []) as any[]) {
+          (placements[r.inventory_id] ??= []).push({ location: String(r.location), quantity: r.quantity ?? 0 });
+        }
+        if (!data || data.length < 1000) break;
+      }
+    }
+  }
+
   // Fetch ALL rows (Supabase caps each request at 1000 — page through them).
   const rows: InventoryRow[] = [];
   let loadError: string | null = null;
@@ -110,7 +131,14 @@ export default async function InventoryPage() {
             <KpiCard title="Units sold" value={nf(sold)} icon="🧾" />
           </div>
 
-          <InventoryTable rows={rows} categories={categories} slots={slots} hasLocation={hasLocation} />
+          <InventoryTable
+            rows={rows}
+            categories={categories}
+            slots={slots}
+            hasLocation={hasLocation}
+            placements={placements}
+            hasShelfStock={hasShelfStock}
+          />
         </>
       )}
     </div>
