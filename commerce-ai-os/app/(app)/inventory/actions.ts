@@ -159,6 +159,152 @@ export async function setLocation(inventoryId: string, location: string) {
 }
 
 /**
+ * Apply a shelf-scoped count: set each product's quantity AT one slot, then set
+ * the product's total stock to the SUM of all its shelves. Used by the stocktake
+ * "count one shelf" flow.
+ */
+export async function applyShelfCounts(
+  location: string,
+  counts: { inventoryId: string; counted: number }[]
+) {
+  const admin = writableClient();
+  const slot = (location ?? "").trim().toUpperCase();
+  if (!slot) return { ok: 0, failed: counts.length, errors: ["No shelf selected."] };
+  const now = new Date().toISOString();
+  let ok = 0;
+  const errors: string[] = [];
+  const touched = new Set<string>();
+  for (const c of counts) {
+    if (!c.inventoryId) { errors.push("missing row"); continue; }
+    const qty = Math.max(0, Math.floor(Number(c.counted) || 0));
+    if (qty <= 0) {
+      const del = await admin.from("shelf_stock").delete().eq("inventory_id", c.inventoryId).eq("location", slot);
+      if (del.error) { errors.push(del.error.message); continue; }
+    } else {
+      const up = await admin
+        .from("shelf_stock")
+        .upsert({ inventory_id: c.inventoryId, location: slot, quantity: qty, updated_at: now }, { onConflict: "inventory_id,location" });
+      if (up.error) { errors.push(up.error.message); continue; }
+    }
+    touched.add(c.inventoryId);
+    ok++;
+  }
+  // Re-total each touched product: stock_quantity = sum of all its shelves.
+  for (const id of touched) {
+    const { data } = await admin.from("shelf_stock").select("quantity").eq("inventory_id", id);
+    const sum = ((data ?? []) as any[]).reduce((s, r) => s + (r.quantity ?? 0), 0);
+    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("id", id);
+  }
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  return { ok, failed: errors.length, errors: errors.slice(0, 5) };
+}
+
+/**
+ * Replace a VARIANT's per-shelf distribution. The variant's stock_quantity is set
+ * to the sum of its placements, and the parent product's inventory total is set
+ * to the sum of all its variants' stock.
+ */
+export async function saveVariantShelfStock(
+  variantId: string,
+  rows: { location: string; quantity: number }[]
+) {
+  if (!variantId) return { error: "Missing variant." };
+  const admin = writableClient();
+  const now = new Date().toISOString();
+
+  const merged = new Map<string, number>();
+  for (const r of rows) {
+    const code = (r.location ?? "").trim().toUpperCase();
+    const q = Math.max(0, Math.floor(Number(r.quantity) || 0));
+    if (!code || q <= 0) continue;
+    merged.set(code, (merged.get(code) ?? 0) + q);
+  }
+  const clean = Array.from(merged.entries()).map(([location, quantity]) => ({
+    variant_id: variantId,
+    location,
+    quantity,
+    updated_at: now,
+  }));
+
+  const del = await admin.from("variant_shelf_stock").delete().eq("variant_id", variantId);
+  if (del.error) return { error: del.error.message };
+  if (clean.length) {
+    const ins = await admin.from("variant_shelf_stock").insert(clean);
+    if (ins.error) return { error: ins.error.message };
+  }
+
+  // Variant stock = sum of its placements (only when there's at least one).
+  const totalQty = clean.reduce((s, r) => s + r.quantity, 0);
+  if (clean.length) {
+    await admin.from("product_variants").update({ stock_quantity: totalQty }).eq("id", variantId);
+  }
+
+  // Parent product inventory total = sum of all its variants' stock.
+  const { data: v } = await admin.from("product_variants").select("parent_product_id").eq("id", variantId).single();
+  const parentId = (v as any)?.parent_product_id;
+  if (parentId) {
+    const { data: sibs } = await admin.from("product_variants").select("stock_quantity").eq("parent_product_id", parentId);
+    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
+    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("product_id", parentId);
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
+/**
+ * Replace a product's per-shelf distribution. `rows` is the full desired set of
+ * (location, quantity) placements; empty/zero quantities are dropped. The total
+ * stock (inventory.stock_quantity) is set to the SUM of the placements, and
+ * inventory.location is kept in sync with the largest placement (primary).
+ */
+export async function saveShelfStock(
+  inventoryId: string,
+  rows: { location: string; quantity: number }[]
+) {
+  if (!inventoryId) return { error: "Missing inventory row." };
+  const admin = writableClient();
+
+  // Normalize: uppercase codes, merge duplicates, keep positive quantities.
+  const merged = new Map<string, number>();
+  for (const r of rows) {
+    const code = (r.location ?? "").trim().toUpperCase();
+    const q = Math.max(0, Math.floor(Number(r.quantity) || 0));
+    if (!code || q <= 0) continue;
+    merged.set(code, (merged.get(code) ?? 0) + q);
+  }
+  const clean = Array.from(merged.entries()).map(([location, quantity]) => ({
+    inventory_id: inventoryId,
+    location,
+    quantity,
+    updated_at: new Date().toISOString(),
+  }));
+
+  // Replace the product's placements wholesale.
+  const del = await admin.from("shelf_stock").delete().eq("inventory_id", inventoryId);
+  if (del.error) return { error: del.error.message };
+  if (clean.length) {
+    const ins = await admin.from("shelf_stock").insert(clean);
+    if (ins.error) return { error: ins.error.message };
+  }
+
+  // Primary location = the slot holding the most units (or null); total stock =
+  // sum of all placements (only when there's at least one, so clearing all
+  // placements doesn't silently zero the stock).
+  const primary = clean.slice().sort((a, b) => b.quantity - a.quantity)[0]?.location ?? null;
+  const totalQty = clean.reduce((s, r) => s + r.quantity, 0);
+  const patch: Record<string, unknown> = { location: primary, updated_at: new Date().toISOString() };
+  if (clean.length) patch.stock_quantity = totalQty;
+  await admin.from("inventory").update(patch).eq("id", inventoryId);
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
+/**
  * Create a shelf and its slots in one go: shelf "A" with count 5 makes
  * A1..A5. Existing slots are left untouched (idempotent upsert).
  */

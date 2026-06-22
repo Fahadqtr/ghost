@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import { shelfOf } from "@/lib/shelf";
@@ -10,11 +10,24 @@ import {
   importInventoryBySku,
   pushStockToShopify,
   setLocation,
+  saveShelfStock,
+  saveVariantShelfStock,
   type BulkUpdate,
 } from "@/app/(app)/inventory/actions";
+import { compareSlot } from "@/lib/shelf";
+
+export interface Variant {
+  id: string;
+  variant_name: string | null;
+  sku: string | null;
+  color: string | null;
+  size: string | null;
+  stock_quantity: number | null;
+}
 
 export interface InventoryRow {
   id: string;
+  product_id: string | null;
   product_name: string | null;
   product_name_ar: string | null;
   sku: string | null;
@@ -93,11 +106,21 @@ export default function InventoryTable({
   categories = [],
   slots = [],
   hasLocation = false,
+  placements = {},
+  hasShelfStock = false,
+  variantsByProduct = {},
+  variantPlacements = {},
+  hasVariantShelf = false,
 }: {
   rows: InventoryRow[];
   categories?: string[];
   slots?: string[];
   hasLocation?: boolean;
+  placements?: Record<string, { location: string; quantity: number }[]>;
+  hasShelfStock?: boolean;
+  variantsByProduct?: Record<string, Variant[]>;
+  variantPlacements?: Record<string, { location: string; quantity: number }[]>;
+  hasVariantShelf?: boolean;
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -107,13 +130,34 @@ export default function InventoryTable({
   const [statusFilter, setStatusFilter] = useState<"all" | Status>("all");
   const [catFilter, setCatFilter] = useState("");
   const [shelfFilter, setShelfFilter] = useState("");
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null); // shelf editor (product or variant)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set()); // product rows showing their variants
+  const toggleExpand = (id: string) =>
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+
+  // Shelves a product occupies (multi-shelf if shelf_stock is on, else single).
+  const rowShelves = (r: InventoryRow): string[] => {
+    const p = placements[r.id];
+    if (hasShelfStock && p && p.length) {
+      return Array.from(new Set(p.map((x) => shelfOf(x.location)).filter(Boolean) as string[]));
+    }
+    const s = shelfOf(r.location);
+    return s ? [s] : [];
+  };
 
   const shelves = useMemo(() => {
     const set = new Set<string>();
     slots.forEach((c) => { const s = shelfOf(c); if (s) set.add(s); });
+    Object.values(placements).forEach((arr) =>
+      arr.forEach((x) => { const s = shelfOf(x.location); if (s) set.add(s); })
+    );
     rows.forEach((r) => { const s = shelfOf(r.location); if (s) set.add(s); });
     return Array.from(set).sort();
-  }, [slots, rows]);
+  }, [slots, rows, placements]);
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "stock", dir: "asc" });
 
   const [edits, setEdits] = useState<Record<string, { stock?: string; threshold?: string }>>({});
@@ -148,7 +192,7 @@ export default function InventoryTable({
       const st = statusOf(Number(curStock(r)) || 0, Number(curThreshold(r)) || null);
       const matchesStatus = statusFilter === "all" || st === statusFilter;
       const matchesCat = !catFilter || r.category === catFilter;
-      const matchesShelf = !shelfFilter || shelfOf(r.location) === shelfFilter;
+      const matchesShelf = !shelfFilter || rowShelves(r).includes(shelfFilter);
       return matchesQ && matchesStatus && matchesCat && matchesShelf;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -481,13 +525,32 @@ export default function InventoryTable({
                 const badge =
                   st === "out" ? "bg-red-100 text-red-700" : st === "low" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700";
                 const dirty = isDirty(r);
+                const variants = (r.product_id && variantsByProduct[r.product_id]) || [];
+                const isExpanded = expanded.has(r.id);
+                const colCount = hasLocation ? 10 : 9;
+                // Variant-level low/out alerts (reuse the product's threshold per option).
+                const vThr = Number(curThreshold(r)) || 0;
+                const vOut = variants.filter((v) => (v.stock_quantity ?? 0) <= 0).length;
+                const vLow = variants.filter((v) => (v.stock_quantity ?? 0) > 0 && (v.stock_quantity ?? 0) <= vThr).length;
                 return (
-                  <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <Fragment key={r.id}>
+                  <tr className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSelect(r.id)} aria-label="Select row" />
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
+                        {variants.length > 0 ? (
+                          <button
+                            className="flex-none text-slate-400 hover:text-ink"
+                            onClick={() => toggleExpand(r.id)}
+                            title={isExpanded ? "Hide options" : `Show ${variants.length} options`}
+                          >
+                            {isExpanded ? "▾" : "▸"}
+                          </button>
+                        ) : (
+                          <span className="w-3 flex-none" />
+                        )}
                         {r.image_url ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={r.image_url} alt="" className="h-8 w-8 flex-none rounded object-cover" loading="lazy" />
@@ -495,7 +558,21 @@ export default function InventoryTable({
                           <div className="h-8 w-8 flex-none rounded bg-slate-100" />
                         )}
                         <div className="min-w-0">
-                          <div className="truncate font-medium text-ink">{r.product_name ?? "—"}</div>
+                          <div className="truncate font-medium text-ink">
+                            {r.product_name ?? "—"}
+                            {variants.length > 0 && (
+                              <span className="ml-1 text-xs text-muted">· {variants.length} options</span>
+                            )}
+                            {vOut > 0 ? (
+                              <span className="ml-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+                                ⚠ {vOut} out
+                              </span>
+                            ) : vLow > 0 ? (
+                              <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                                ⚠ {vLow} low
+                              </span>
+                            ) : null}
+                          </div>
                           {r.product_name_ar ? <div className="truncate text-xs text-muted" dir="rtl">{r.product_name_ar}</div> : null}
                         </div>
                       </div>
@@ -503,7 +580,29 @@ export default function InventoryTable({
                     <td className="px-4 py-3 text-slate-600">{r.sku ?? "—"}</td>
                     {hasLocation && (
                       <td className="px-4 py-3">
-                        <LocationCell id={r.id} value={r.location} />
+                        {hasShelfStock ? (
+                          variants.length > 0 ? (
+                            <button className="text-xs font-medium text-blue-600 hover:underline" onClick={() => toggleExpand(r.id)}>
+                              {isExpanded ? "Hide options ▾" : "Per option ▸"}
+                            </button>
+                          ) : (
+                            <ShelfStockCell
+                              row={r}
+                              placements={placements[r.id] ?? []}
+                              save={(rs) => saveShelfStock(r.id, rs)}
+                              onEdit={() =>
+                                setEditTarget({
+                                  title: r.product_name ?? r.sku ?? "Product",
+                                  total: r.stock_quantity ?? 0,
+                                  placements: placements[r.id] ?? [],
+                                  save: (rs) => saveShelfStock(r.id, rs),
+                                })
+                              }
+                            />
+                          )
+                        ) : (
+                          <LocationCell id={r.id} value={r.location} />
+                        )}
                       </td>
                     )}
                     <td className="px-4 py-3 text-right">
@@ -531,11 +630,219 @@ export default function InventoryTable({
                       )}
                     </td>
                   </tr>
+                  {isExpanded &&
+                    variants.map((v) => (
+                      <tr key={v.id} className="border-b border-slate-100 bg-slate-50/60 text-sm">
+                        <td />
+                        <td className="px-4 py-2" colSpan={2}>
+                          <div className="flex items-center gap-2 pl-8">
+                            <span className="text-slate-400">└</span>
+                            <span className="font-medium text-ink">
+                              {v.variant_name ?? [v.color, v.size].filter(Boolean).join(" / ") ?? "Option"}
+                            </span>
+                            {v.sku && <span className="text-xs text-muted">{v.sku}</span>}
+                          </div>
+                        </td>
+                        {hasLocation && (
+                          <td className="px-4 py-2">
+                            {hasVariantShelf ? (
+                              <ShelfStockCell
+                                row={{ id: v.id, stock_quantity: v.stock_quantity } as InventoryRow}
+                                placements={variantPlacements[v.id] ?? []}
+                                save={(rs) => saveVariantShelfStock(v.id, rs)}
+                                onEdit={() =>
+                                  setEditTarget({
+                                    title: `${r.product_name ?? ""} — ${v.variant_name ?? [v.color, v.size].filter(Boolean).join(" / ")}`,
+                                    total: v.stock_quantity ?? 0,
+                                    placements: variantPlacements[v.id] ?? [],
+                                    save: (rs) => saveVariantShelfStock(v.id, rs),
+                                  })
+                                }
+                              />
+                            ) : (
+                              <span className="text-xs text-slate-400">run variant setup</span>
+                            )}
+                          </td>
+                        )}
+                        <td className="px-4 py-2 text-right">
+                          {(() => {
+                            const q = v.stock_quantity ?? 0;
+                            const cls = q <= 0 ? "text-red-700 font-semibold" : q <= vThr ? "text-amber-700 font-semibold" : "text-slate-600";
+                            return <span className={cls}>{q}</span>;
+                          })()}
+                        </td>
+                        <td className="px-4 py-2" colSpan={5}>
+                          {(() => {
+                            const q = v.stock_quantity ?? 0;
+                            if (q <= 0) return <span className="badge bg-red-100 text-red-700">Out</span>;
+                            if (q <= vThr) return <span className="badge bg-amber-100 text-amber-700">Low</span>;
+                            return null;
+                          })()}
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
                 );
               })
             )}
           </tbody>
         </table>
+      </div>
+
+      {editTarget && (
+        <LocationsEditor
+          target={editTarget}
+          slots={slots}
+          onClose={() => setEditTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+type SaveFn = (rows: { location: string; quantity: number }[]) => Promise<any>;
+type EditTarget = {
+  title: string;
+  total: number;
+  placements: { location: string; quantity: number }[];
+  save: SaveFn;
+};
+
+/** Compact read-only summary of where a product's units sit, with an edit button. */
+function ShelfStockCell({
+  row,
+  placements,
+  save,
+  onEdit,
+}: {
+  row: InventoryRow;
+  placements: { location: string; quantity: number }[];
+  save: SaveFn;
+  onEdit: () => void;
+}) {
+  const router = useRouter();
+  const [syncing, startSync] = useTransition();
+  const placed = placements.reduce((s, p) => s + p.quantity, 0);
+  const total = row.stock_quantity ?? 0;
+  const sorted = placements.slice().sort((a, b) => compareSlot(a.location, b.location));
+
+  const syncTotal = () =>
+    startSync(async () => {
+      await save(placements.map((p) => ({ location: p.location, quantity: p.quantity })));
+      router.refresh();
+    });
+  return (
+    <div className="flex items-center gap-2">
+      <button className="flex flex-wrap gap-1 text-left" onClick={onEdit} title="Edit shelf locations">
+        {sorted.length === 0 ? (
+          <span className="text-slate-400">— set —</span>
+        ) : (
+          sorted.map((p) => (
+            <span key={p.location} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">
+              <span className="font-mono font-medium">{p.location}</span>
+              <span className="text-slate-500">·{p.quantity}</span>
+            </span>
+          ))
+        )}
+      </button>
+      <button className="flex-none text-slate-400 hover:text-ink" onClick={onEdit} title="Edit">✎</button>
+      {placed !== total && (
+        <button
+          className="flex-none rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700 hover:bg-amber-200 disabled:opacity-50"
+          title="Tap to set total stock = placed units"
+          onClick={syncTotal}
+          disabled={syncing}
+        >
+          {syncing ? "…" : `set ${total}→${placed}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Modal to edit a product's OR variant's per-shelf distribution. */
+function LocationsEditor({
+  target,
+  slots,
+  onClose,
+}: {
+  target: EditTarget;
+  slots: string[];
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [rowsState, setRowsState] = useState<{ location: string; quantity: string }[]>(
+    target.placements.length
+      ? target.placements.map((p) => ({ location: p.location, quantity: String(p.quantity) }))
+      : [{ location: "", quantity: "" }]
+  );
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+
+  const total = target.total;
+  const placed = rowsState.reduce((s, r) => s + (Math.max(0, Math.floor(Number(r.quantity) || 0))), 0);
+
+  const set = (i: number, k: "location" | "quantity", v: string) =>
+    setRowsState((rs) => rs.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  const add = () => setRowsState((rs) => [...rs, { location: "", quantity: "" }]);
+  const remove = (i: number) => setRowsState((rs) => rs.filter((_, idx) => idx !== i));
+
+  function save() {
+    start(async () => {
+      const res = await target.save(rowsState.map((r) => ({ location: r.location, quantity: Number(r.quantity) || 0 })));
+      if (res && "error" in res && res.error) { setErr(res.error); return; }
+      router.refresh();
+      onClose();
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 text-sm font-semibold text-ink">{target.title}</div>
+        <div className="mb-3 text-xs text-muted">
+          Set how many units sit in each shelf. Total stock becomes the sum ={" "}
+          <span className="font-semibold text-ink">{placed}</span>
+          {total !== placed && <span className="text-amber-700"> (was {total})</span>}.
+        </div>
+
+        <datalist id="loc-editor-slots">
+          {slots.map((c) => <option key={c} value={c} />)}
+        </datalist>
+
+        <div className="space-y-2">
+          {rowsState.map((r, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                list="loc-editor-slots"
+                className="input flex-1 font-mono uppercase"
+                placeholder="A1"
+                value={r.location}
+                onChange={(e) => set(i, "location", e.target.value)}
+              />
+              <input
+                className="input w-24 text-right"
+                type="number"
+                min={0}
+                placeholder="qty"
+                value={r.quantity}
+                onChange={(e) => set(i, "quantity", e.target.value)}
+              />
+              <button className="flex-none text-slate-400 hover:text-red-600" onClick={() => remove(i)} title="Remove">✕</button>
+            </div>
+          ))}
+        </div>
+
+        <button className="btn-ghost mt-2 px-3 py-1 text-xs" onClick={add}>+ Add shelf</button>
+
+        {err && <div className="mt-2 text-xs text-red-600">{err}</div>}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="btn-ghost px-3 py-1.5 text-sm" onClick={onClose} disabled={pending}>Cancel</button>
+          <button className="btn-primary px-4 py-1.5 text-sm disabled:opacity-50" onClick={save} disabled={pending}>
+            {pending ? "Saving…" : "Save"}
+          </button>
+        </div>
       </div>
     </div>
   );
