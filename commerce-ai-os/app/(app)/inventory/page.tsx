@@ -67,9 +67,14 @@ export default async function InventoryPage() {
         <p className="text-sm text-muted">
           Single source of stock truth. Edit inline, bulk-update, import/export CSV, and push to Shopify.
         </p>
-        <Link href="/inventory/movements" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
-          Stock IN / OUT →
-        </Link>
+        <div className="flex flex-none gap-2">
+          <Link href="/inventory/labels" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+            🖨️ Barcodes
+          </Link>
+          <Link href="/inventory/movements" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+            Stock IN / OUT →
+          </Link>
+        </div>
       </div>
 
       {loadError ? (
