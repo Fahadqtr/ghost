@@ -72,6 +72,68 @@ export async function bulkUpdateInventory(updates: BulkUpdate[]) {
   return { ok, failed: errors.length, errors: errors.slice(0, 5) };
 }
 
+export type StocktakeCount = { inventoryId: string; sku?: string | null; counted: number };
+
+/**
+ * Apply a shelf stocktake: set each inventory row's stock_quantity to the
+ * physically counted number, and write a `stocktake` ledger row recording the
+ * variance (old → new). Service-role client so it works under preview too.
+ */
+export async function applyStocktake(counts: StocktakeCount[]) {
+  const admin = writableClient();
+  const now = new Date().toISOString();
+  let ok = 0;
+  const errors: string[] = [];
+
+  for (const c of counts) {
+    const counted = Math.max(0, Math.floor(Number(c.counted)));
+    if (!c.inventoryId || Number.isNaN(counted)) {
+      errors.push(`${c.sku ?? c.inventoryId}: invalid count`);
+      continue;
+    }
+    const { data: inv, error: readErr } = await admin
+      .from("inventory")
+      .select("id, stock_quantity, product_id")
+      .eq("id", c.inventoryId)
+      .single();
+    if (readErr || !inv) {
+      errors.push(`${c.sku ?? c.inventoryId}: not found`);
+      continue;
+    }
+    const before = inv.stock_quantity ?? 0;
+    if (before === counted) {
+      ok++; // no change needed, still a success
+      continue;
+    }
+    const { error: upErr } = await admin
+      .from("inventory")
+      .update({ stock_quantity: counted, updated_at: now })
+      .eq("id", inv.id);
+    if (upErr) {
+      errors.push(`${c.sku ?? c.inventoryId}: ${upErr.message}`);
+      continue;
+    }
+    ok++;
+    // Best-effort ledger entry recording the variance.
+    await admin.from("malak_audit").insert({
+      agent: "stocktake",
+      action: "stocktake",
+      action_type: "stocktake",
+      sku: c.sku ?? null,
+      product_id: inv.product_id ?? null,
+      field: "stock_quantity",
+      old_value: String(before),
+      new_value: String(counted),
+      status: "done",
+      details: { counted, previous: before, variance: counted - before },
+    });
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/dashboard");
+  return { ok, failed: errors.length, errors: errors.slice(0, 5) };
+}
+
 export type CsvRow = { sku: string; stock_quantity?: string | number; low_stock_threshold?: string | number };
 
 /** Import stock by SKU: maps each SKU → inventory row, then bulk-updates. */
