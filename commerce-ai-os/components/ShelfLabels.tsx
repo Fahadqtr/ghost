@@ -13,17 +13,17 @@ export type LabelItem = {
   image_url: string | null;
 };
 
-function Barcode({ value }: { value: string }) {
+function Barcode({ value, height }: { value: string; height: number }) {
   const ref = useRef<SVGSVGElement>(null);
   useEffect(() => {
     if (ref.current && value) {
       try {
-        JsBarcode(ref.current, value, { format: "CODE128", width: 1.6, height: 44, displayValue: false, margin: 0 });
+        JsBarcode(ref.current, value, { format: "CODE128", width: 1.4, height, displayValue: false, margin: 0 });
       } catch {
         /* ignore invalid values */
       }
     }
-  }, [value]);
+  }, [value, height]);
   return <svg ref={ref} className="h-auto w-full" />;
 }
 
@@ -83,7 +83,7 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
         <label className="flex items-center gap-2">
           Columns
           <select className="input w-auto" value={cols} onChange={(e) => setCols(Number(e.target.value))}>
-            {[2, 3, 4].map((c) => <option key={c} value={c}>{c}</option>)}
+            {[2, 3, 4, 5, 6, 7, 8].map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
         <span className="text-muted sm:ml-auto">
@@ -108,36 +108,43 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
             <section key={g.shelf} className="shelf-section space-y-3">
               <h2 className="text-lg font-bold text-ink">Shelf {g.shelf}</h2>
               <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
-                {g.items.map((p, i) => (
-                  <div
-                    key={`${p.sku ?? p.barcode ?? i}`}
-                    className="label-cell flex flex-col items-center gap-1 rounded-lg border border-slate-300 bg-white p-2 text-center"
-                  >
-                    <div className="flex w-full items-center justify-between">
-                      <span className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[11px] font-bold text-white">
-                        {p.location}
-                      </span>
-                      {p.sku && <span className="text-[10px] text-slate-500">{p.sku}</span>}
-                    </div>
-                    <div className="flex h-20 w-full items-center justify-center overflow-hidden">
-                      {p.image_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={p.image_url} alt="" className="max-h-20 max-w-full object-contain" />
+                {g.items.map((p, i) => {
+                  const compact = cols >= 5;
+                  return (
+                    <div
+                      key={`${p.sku ?? p.barcode ?? i}`}
+                      className={`label-cell flex flex-col items-center gap-0.5 rounded-lg border border-slate-300 bg-white text-center ${compact ? "p-1" : "p-2"}`}
+                    >
+                      <div className="flex w-full items-center justify-between">
+                        <span className="rounded bg-slate-900 px-1 py-0.5 font-mono text-[10px] font-bold text-white">
+                          {p.location}
+                        </span>
+                        {p.sku && <span className="text-[9px] text-slate-500">{p.sku}</span>}
+                      </div>
+                      <div className={`flex w-full items-center justify-center overflow-hidden ${compact ? "h-12" : "h-20"}`}>
+                        {p.image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={p.image_url} alt="" className="max-h-full max-w-full object-contain" />
+                        ) : (
+                          <div className={compact ? "text-xl" : "text-3xl"}>📦</div>
+                        )}
+                      </div>
+                      <div className={`line-clamp-2 font-semibold leading-tight text-ink ${compact ? "text-[9px]" : "text-xs"}`}>
+                        {p.name ?? p.sku}
+                      </div>
+                      {p.barcode ? (
+                        <>
+                          <Barcode value={p.barcode} height={compact ? 28 : 44} />
+                          <div className={`font-mono tracking-wider text-slate-700 ${compact ? "text-[8px]" : "text-[11px]"}`}>
+                            {p.barcode}
+                          </div>
+                        </>
                       ) : (
-                        <div className="text-3xl">📦</div>
+                        <div className="text-[9px] text-slate-400">no barcode</div>
                       )}
                     </div>
-                    <div className="line-clamp-2 text-xs font-semibold leading-tight text-ink">{p.name ?? p.sku}</div>
-                    {p.barcode ? (
-                      <>
-                        <Barcode value={p.barcode} />
-                        <div className="font-mono text-[11px] tracking-wider text-slate-700">{p.barcode}</div>
-                      </>
-                    ) : (
-                      <div className="text-[10px] text-slate-400">no barcode</div>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           ))}
