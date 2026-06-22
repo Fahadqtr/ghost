@@ -72,6 +72,137 @@ export async function bulkUpdateInventory(updates: BulkUpdate[]) {
   return { ok, failed: errors.length, errors: errors.slice(0, 5) };
 }
 
+export type StocktakeCount = { inventoryId: string; sku?: string | null; counted: number };
+
+/**
+ * Apply a shelf stocktake: set each inventory row's stock_quantity to the
+ * physically counted number, and write a `stocktake` ledger row recording the
+ * variance (old → new). Service-role client so it works under preview too.
+ */
+export async function applyStocktake(counts: StocktakeCount[]) {
+  const admin = writableClient();
+  const now = new Date().toISOString();
+  let ok = 0;
+  const errors: string[] = [];
+
+  for (const c of counts) {
+    const counted = Math.max(0, Math.floor(Number(c.counted)));
+    if (!c.inventoryId || Number.isNaN(counted)) {
+      errors.push(`${c.sku ?? c.inventoryId}: invalid count`);
+      continue;
+    }
+    const { data: inv, error: readErr } = await admin
+      .from("inventory")
+      .select("id, stock_quantity, product_id")
+      .eq("id", c.inventoryId)
+      .single();
+    if (readErr || !inv) {
+      errors.push(`${c.sku ?? c.inventoryId}: not found`);
+      continue;
+    }
+    const before = inv.stock_quantity ?? 0;
+    if (before === counted) {
+      ok++; // no change needed, still a success
+      continue;
+    }
+    const { error: upErr } = await admin
+      .from("inventory")
+      .update({ stock_quantity: counted, updated_at: now })
+      .eq("id", inv.id);
+    if (upErr) {
+      errors.push(`${c.sku ?? c.inventoryId}: ${upErr.message}`);
+      continue;
+    }
+    ok++;
+    // Best-effort ledger entry recording the variance.
+    await admin.from("malak_audit").insert({
+      agent: "stocktake",
+      action: "stocktake",
+      action_type: "stocktake",
+      sku: c.sku ?? null,
+      product_id: inv.product_id ?? null,
+      field: "stock_quantity",
+      old_value: String(before),
+      new_value: String(counted),
+      status: "done",
+      details: { counted, previous: before, variance: counted - before },
+    });
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/dashboard");
+  return { ok, failed: errors.length, errors: errors.slice(0, 5) };
+}
+
+// ── Shelf / bin locations ──────────────────────────────────────────────────
+
+/** Set (or clear) a product's physical shelf location, e.g. "A1". */
+export async function setLocation(inventoryId: string, location: string) {
+  if (!inventoryId) return { error: "Missing inventory row." };
+  const admin = writableClient();
+  const value = location.trim().toUpperCase() || null;
+  const { error } = await admin
+    .from("inventory")
+    .update({ location: value, updated_at: new Date().toISOString() })
+    .eq("id", inventoryId);
+  if (error) return { error: error.message };
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
+/**
+ * Create a shelf and its slots in one go: shelf "A" with count 5 makes
+ * A1..A5. Existing slots are left untouched (idempotent upsert).
+ */
+export async function createShelf(shelf: string, count: number) {
+  const letter = shelf.trim().toUpperCase().replace(/[^A-Z]/g, "");
+  const n = Math.max(1, Math.min(200, Math.floor(count)));
+  if (!letter) return { error: "Enter a shelf letter (A–Z)." };
+  const admin = writableClient();
+  const rows = Array.from({ length: n }, (_, i) => ({
+    code: `${letter}${i + 1}`,
+    shelf: letter,
+    sort: i + 1,
+  }));
+  const { error } = await admin.from("shelf_slots").upsert(rows, { onConflict: "code" });
+  if (error) return { error: error.message };
+  revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory");
+  return { ok: true, created: rows.length };
+}
+
+/** Add a single slot by code, e.g. "C7". */
+export async function addSlot(code: string) {
+  const c = code.trim().toUpperCase().replace(/\s+/g, "");
+  if (!/^[A-Z]+[0-9]+$/.test(c)) return { error: "Use a code like A1, B12." };
+  const shelf = c.match(/^[A-Z]+/)![0];
+  const sort = parseInt(c.replace(/^[A-Z]+/, ""), 10) || 0;
+  const admin = writableClient();
+  const { error } = await admin.from("shelf_slots").upsert({ code: c, shelf, sort }, { onConflict: "code" });
+  if (error) return { error: error.message };
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
+/** Delete one slot. Products sitting there keep their (now free-text) location. */
+export async function deleteSlot(code: string) {
+  const admin = writableClient();
+  const { error } = await admin.from("shelf_slots").delete().eq("code", code);
+  if (error) return { error: error.message };
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
+/** Delete a whole shelf (all its slots). */
+export async function deleteShelf(shelf: string) {
+  const admin = writableClient();
+  const { error } = await admin.from("shelf_slots").delete().eq("shelf", shelf.trim().toUpperCase());
+  if (error) return { error: error.message };
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
 export type CsvRow = { sku: string; stock_quantity?: string | number; low_stock_threshold?: string | number };
 
 /** Import stock by SKU: maps each SKU → inventory row, then bulk-updates. */

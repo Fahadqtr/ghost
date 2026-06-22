@@ -10,16 +10,27 @@ const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 export default async function InventoryPage() {
   const supabase = createClient();
 
+  // Is the `location` column present yet? (degrade gracefully pre-migration.)
+  const probe = await supabase.from("inventory").select("location").limit(1);
+  const hasLocation = !probe.error;
+
+  // Shelf map for the location dropdown + filter (empty if not set up yet).
+  const slotsRes = hasLocation
+    ? await supabase.from("shelf_slots").select("code").order("shelf").order("sort")
+    : { data: [] as any[], error: null };
+  const slots: string[] = ((slotsRes.data ?? []) as any[]).map((s) => String(s.code));
+
   // Fetch ALL rows (Supabase caps each request at 1000 — page through them).
   const rows: InventoryRow[] = [];
   let loadError: string | null = null;
   const PAGE = 1000;
+  const sel = `id, stock_quantity, low_stock_threshold, sold_quantity, updated_at${
+    hasLocation ? ", location" : ""
+  }, products(name_en, name_ar, sku, image_url, main_category, barcode)`;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("inventory")
-      .select(
-        "id, stock_quantity, low_stock_threshold, sold_quantity, updated_at, products(name_en, name_ar, sku, image_url, main_category)"
-      )
+      .select(sel)
       .order("stock_quantity", { ascending: true, nullsFirst: true })
       .range(from, from + PAGE - 1);
 
@@ -33,6 +44,8 @@ export default async function InventoryPage() {
         product_name: r.products?.name_en ?? null,
         product_name_ar: r.products?.name_ar ?? null,
         sku: r.products?.sku ?? null,
+        barcode: r.products?.barcode ?? null,
+        location: hasLocation ? r.location ?? null : null,
         image_url: r.products?.image_url ?? null,
         category: r.products?.main_category ?? null,
         stock_quantity: r.stock_quantity,
@@ -68,6 +81,12 @@ export default async function InventoryPage() {
           Single source of stock truth. Edit inline, bulk-update, import/export CSV, and push to Shopify.
         </p>
         <div className="flex flex-none gap-2">
+          <Link href="/inventory/shelves" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+            🗄️ Shelves
+          </Link>
+          <Link href="/inventory/stocktake" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+            📦 Count shelf
+          </Link>
           <Link href="/inventory/labels" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
             🖨️ Barcodes
           </Link>
@@ -91,7 +110,7 @@ export default async function InventoryPage() {
             <KpiCard title="Units sold" value={nf(sold)} icon="🧾" />
           </div>
 
-          <InventoryTable rows={rows} categories={categories} />
+          <InventoryTable rows={rows} categories={categories} slots={slots} hasLocation={hasLocation} />
         </>
       )}
     </div>
