@@ -60,7 +60,10 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
     <div className="space-y-4">
       <style>{`
         @media print {
-          .print\\:hidden { display: none !important; }
+          /* print ONLY the label sheet — hide app header, bottom nav, controls */
+          body * { visibility: hidden !important; }
+          #shelf-sheet, #shelf-sheet * { visibility: visible !important; }
+          #shelf-sheet { position: absolute; left: 0; top: 0; width: 100%; }
           @page { margin: 10mm; }
           .shelf-section { break-before: page; }
           .shelf-section:first-child { break-before: auto; }
@@ -100,7 +103,7 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
           No products assigned to a shelf yet.
         </div>
       ) : (
-        <div className="space-y-6">
+        <div id="shelf-sheet" className="space-y-6">
           {groups.map((g) => (
             <section key={g.shelf} className="shelf-section space-y-3">
               <h2 className="text-lg font-bold text-ink">Shelf {g.shelf}</h2>
