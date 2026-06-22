@@ -114,24 +114,29 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
       return;
     }
     beep(true);
+    const target = assignTo || undefined; // the shelf this scan belongs to
     setLines((prev) => {
-      const i = prev.findIndex((l) => l.item.inventoryId === item.inventoryId);
-      const assigned = assignTo || prev[i]?.assigned;
+      // A product can appear once per shelf: match on product AND shelf slot.
+      const i = prev.findIndex(
+        (l) => l.item.inventoryId === item.inventoryId && (l.assigned ?? "") === (target ?? "")
+      );
       let counted = 1;
       let next: Line[];
       if (i >= 0) {
         counted = prev[i].counted + 1;
-        next = [{ item, counted, assigned }, ...prev.slice(0, i), ...prev.slice(i + 1)];
+        next = [{ ...prev[i], counted }, ...prev.slice(0, i), ...prev.slice(i + 1)];
       } else {
-        next = [{ item, counted: 1, assigned }, ...prev];
+        next = [{ item, counted: 1, assigned: target }, ...prev];
       }
-      const shown = assigned ?? item.location;
+      const shown = target ?? item.location;
       const loc = shown ? ` [${shown}]` : "";
       setLast({ name: `${item.name ?? item.sku ?? code}${loc}`, counted, tone: "ok" });
       return next;
     });
-    setHistory((h) => [...h, `k:${item.inventoryId}`]);
+    setHistory((h) => [...h, `k:${item.inventoryId}|${target ?? ""}`]);
   }
+
+  const lineKey = (l: Line) => `${l.item.inventoryId}|${l.assigned ?? ""}`;
 
   /** Undo the most recent scan (decrement that item by 1, dropping it at 0). */
   function undo() {
@@ -140,9 +145,12 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
       const token = h[h.length - 1];
       guardRef.current = { code: "", t: 0 }; // don't let the guard block a re-scan
       if (token.startsWith("k:")) {
-        const id = token.slice(2);
+        const rest = token.slice(2);
+        const sep = rest.lastIndexOf("|");
+        const id = rest.slice(0, sep);
+        const slot = rest.slice(sep + 1);
         setLines((prev) => {
-          const i = prev.findIndex((l) => l.item.inventoryId === id);
+          const i = prev.findIndex((l) => l.item.inventoryId === id && (l.assigned ?? "") === slot);
           if (i < 0) return prev;
           const counted = prev[i].counted - 1;
           const name = prev[i].item.name ?? prev[i].item.sku ?? id;
@@ -177,18 +185,16 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
     inputRef.current?.focus();
   }
 
-  function setCounted(inventoryId: string, v: string) {
+  function setCounted(key: string, v: string) {
     const n = Math.max(0, Math.floor(Number(v) || 0));
-    setLines((prev) => prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, counted: n } : l)));
+    setLines((prev) => prev.map((l) => (lineKey(l) === key ? { ...l, counted: n } : l)));
   }
-  function setLineLocation(inventoryId: string, v: string) {
+  function setLineLocation(key: string, v: string) {
     const code = v.trim().toUpperCase();
-    setLines((prev) =>
-      prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, assigned: code || undefined } : l))
-    );
+    setLines((prev) => prev.map((l) => (lineKey(l) === key ? { ...l, assigned: code || undefined } : l)));
   }
-  function removeLine(inventoryId: string) {
-    setLines((prev) => prev.filter((l) => l.item.inventoryId !== inventoryId));
+  function removeLine(key: string) {
+    setLines((prev) => prev.filter((l) => lineKey(l) !== key));
   }
   function clearAll() {
     if (lines.length && !confirm("Clear the whole count session?")) return;
@@ -206,24 +212,33 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
 
   function apply() {
     if (lines.length === 0) return;
+    // Lines tagged with a shelf save per-shelf quantities (placement, total
+    // untouched); untagged lines run a normal full stocktake (sets total).
+    const placement = lines.filter((l) => l.assigned);
+    const normal = lines.filter((l) => !l.assigned);
+    const bySlot = new Map<string, Line[]>();
+    placement.forEach((l) => {
+      const arr = bySlot.get(l.assigned!) ?? [];
+      arr.push(l);
+      bySlot.set(l.assigned!, arr);
+    });
     startTransition(async () => {
-      // Placement mode: a slot is chosen -> save each product's quantity AT that
-      // shelf (does not change total stock). Otherwise a normal full stocktake.
-      const res = assignTo
-        ? await applyShelfCounts(
-            assignTo,
-            lines.map((l) => ({ inventoryId: l.item.inventoryId, counted: l.counted }))
-          )
-        : await applyStocktake(
-            lines.map((l) => ({ inventoryId: l.item.inventoryId, sku: l.item.sku, counted: l.counted }))
-          );
+      let ok = 0;
+      const errors: string[] = [];
+      for (const [slot, ls] of bySlot) {
+        const res = await applyShelfCounts(slot, ls.map((l) => ({ inventoryId: l.item.inventoryId, counted: l.counted })));
+        ok += res.ok;
+        if (res.errors?.length) errors.push(...res.errors);
+      }
+      if (normal.length) {
+        const res = await applyStocktake(normal.map((l) => ({ inventoryId: l.item.inventoryId, sku: l.item.sku, counted: l.counted })));
+        ok += res.ok;
+        if (res.errors?.length) errors.push(...res.errors);
+      }
+      const where = bySlot.size ? `shelf${bySlot.size === 1 ? ` ${[...bySlot.keys()][0]}` : "ves"}` : "inventory";
       setMsg({
-        kind: res.failed ? "err" : "ok",
-        text: res.failed
-          ? `Saved ${res.ok}, ${res.failed} failed: ${res.errors.join("; ")}`
-          : assignTo
-          ? `Saved per-shelf quantities for ${res.ok} product${res.ok === 1 ? "" : "s"} in ${assignTo}.`
-          : `Applied ${res.ok} count${res.ok === 1 ? "" : "s"} to inventory.`,
+        kind: errors.length ? "err" : "ok",
+        text: errors.length ? `Saved ${ok}, ${errors.length} failed: ${errors.slice(0, 3).join("; ")}` : `Saved ${ok} update${ok === 1 ? "" : "s"} to ${where}.`,
       });
       router.refresh();
     });
@@ -258,8 +273,9 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
         </div>
         {assignTo && (
           <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            Counting shelf <b>{assignTo}</b> — applying saves how many units sit in this shelf
-            (it does <b>not</b> change each product&apos;s total stock).
+            Counting shelf <b>{assignTo}</b> — saves how many units sit in this shelf (total stock
+            unchanged). To put a product in another shelf too, just switch <b>Assign to</b> and scan it
+            again — it gets its own line.
           </div>
         )}
         <div className="flex gap-2">
@@ -311,7 +327,11 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
             onClick={apply}
             disabled={lines.length === 0 || pending}
           >
-            {pending ? "Applying…" : assignTo ? `Save shelf ${assignTo} quantities` : "Apply counts to inventory"}
+            {pending
+              ? "Applying…"
+              : lines.some((l) => l.assigned)
+              ? "Save shelf quantities"
+              : "Apply counts to inventory"}
           </button>
         </div>
       </div>
@@ -361,10 +381,11 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
             </thead>
             <tbody>
               {lines.map((l) => {
+                const key = lineKey(l);
                 const diff = l.counted - l.item.stock;
                 const diffCls = diff === 0 ? "text-slate-400" : diff > 0 ? "text-green-700" : "text-red-700";
                 return (
-                  <tr key={l.item.inventoryId} className="border-b border-slate-100 hover:bg-slate-50">
+                  <tr key={key} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <div className="font-medium text-ink">{l.item.name ?? "—"}</div>
                       {l.item.name_ar ? <div className="text-xs text-muted" dir="rtl">{l.item.name_ar}</div> : null}
@@ -378,7 +399,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                         }`}
                         placeholder={l.item.location ?? "—"}
                         value={l.assigned ?? l.item.location ?? ""}
-                        onChange={(e) => setLineLocation(l.item.inventoryId, e.target.value)}
+                        onChange={(e) => setLineLocation(key, e.target.value)}
                       />
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -387,7 +408,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                         type="number"
                         min={0}
                         value={l.counted}
-                        onChange={(e) => setCounted(l.item.inventoryId, e.target.value)}
+                        onChange={(e) => setCounted(key, e.target.value)}
                       />
                     </td>
                     <td className="px-4 py-3 text-right text-slate-600">{l.item.stock}</td>
@@ -395,7 +416,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                       {diff > 0 ? `+${diff}` : diff}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button className="btn-ghost px-2 py-1 text-xs" onClick={() => removeLine(l.item.inventoryId)}>
+                      <button className="btn-ghost px-2 py-1 text-xs" onClick={() => removeLine(key)}>
                         Remove
                       </button>
                     </td>
