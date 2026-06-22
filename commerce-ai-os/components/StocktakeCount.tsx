@@ -16,6 +16,11 @@ export type CountItem = {
 type Line = { item: CountItem; counted: number };
 type Unknown = { code: string; count: number };
 
+// Ignore an identical barcode fired again within this window — kills a scanner's
+// hardware double-trigger without blocking deliberate counting of like pieces
+// (moving the scanner to the next item always takes longer than this).
+const DUP_GUARD_MS = 300;
+
 /** Short audio feedback so the user can scan heads-down. */
 function beep(ok: boolean) {
   try {
@@ -54,13 +59,25 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
   const [buf, setBuf] = useState("");
   const [lines, setLines] = useState<Line[]>([]); // most-recent first
   const [unknown, setUnknown] = useState<Unknown[]>([]);
-  const [last, setLast] = useState<{ name: string; counted: number; ok: boolean } | null>(null);
+  const [history, setHistory] = useState<string[]>([]); // scan stack for Undo
+  const [last, setLast] = useState<{ name: string; counted: number; tone: "ok" | "warn" | "skip" } | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
+  const guardRef = useRef<{ code: string; t: number }>({ code: "", t: 0 });
 
   function scan(raw: string) {
     const code = raw.trim();
     if (!code) return;
+
+    // Instant duplicate guard: swallow an identical code fired again immediately.
+    const now = Date.now();
+    if (guardRef.current.code === code && now - guardRef.current.t < DUP_GUARD_MS) {
+      guardRef.current = { code, t: now };
+      setLast({ name: `Quick re-scan ignored (${code})`, counted: 0, tone: "skip" });
+      return;
+    }
+    guardRef.current = { code, t: now };
+
     const item = byBarcode.get(code);
     if (!item) {
       beep(false);
@@ -73,7 +90,8 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
         }
         return [{ code, count: 1 }, ...u];
       });
-      setLast({ name: `Unknown barcode ${code}`, counted: 0, ok: false });
+      setHistory((h) => [...h, `u:${code}`]);
+      setLast({ name: `Unknown barcode ${code}`, counted: 0, tone: "warn" });
       return;
     }
     beep(true);
@@ -87,9 +105,47 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
       } else {
         next = [{ item, counted: 1 }, ...prev];
       }
-      setLast({ name: item.name ?? item.sku ?? code, counted, ok: true });
+      setLast({ name: item.name ?? item.sku ?? code, counted, tone: "ok" });
       return next;
     });
+    setHistory((h) => [...h, `k:${item.inventoryId}`]);
+  }
+
+  /** Undo the most recent scan (decrement that item by 1, dropping it at 0). */
+  function undo() {
+    setHistory((h) => {
+      if (h.length === 0) return h;
+      const token = h[h.length - 1];
+      guardRef.current = { code: "", t: 0 }; // don't let the guard block a re-scan
+      if (token.startsWith("k:")) {
+        const id = token.slice(2);
+        setLines((prev) => {
+          const i = prev.findIndex((l) => l.item.inventoryId === id);
+          if (i < 0) return prev;
+          const counted = prev[i].counted - 1;
+          const name = prev[i].item.name ?? prev[i].item.sku ?? id;
+          setLast({ name: `Undid ${name}`, counted: Math.max(0, counted), tone: "skip" });
+          if (counted <= 0) return [...prev.slice(0, i), ...prev.slice(i + 1)];
+          const n = [...prev];
+          n[i] = { ...n[i], counted };
+          return n;
+        });
+      } else if (token.startsWith("u:")) {
+        const code = token.slice(2);
+        setUnknown((prev) => {
+          const i = prev.findIndex((x) => x.code === code);
+          if (i < 0) return prev;
+          const count = prev[i].count - 1;
+          if (count <= 0) return [...prev.slice(0, i), ...prev.slice(i + 1)];
+          const n = [...prev];
+          n[i] = { ...n[i], count };
+          return n;
+        });
+        setLast({ name: `Undid unknown ${code}`, counted: 0, tone: "skip" });
+      }
+      return h.slice(0, -1);
+    });
+    inputRef.current?.focus();
   }
 
   function onSubmit(e: React.FormEvent) {
@@ -110,8 +166,10 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
     if (lines.length && !confirm("Clear the whole count session?")) return;
     setLines([]);
     setUnknown([]);
+    setHistory([]);
     setLast(null);
     setMsg(null);
+    guardRef.current = { code: "", t: 0 };
     inputRef.current?.focus();
   }
 
@@ -155,13 +213,18 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
           <button type="submit" className="btn-primary px-4">Add</button>
         </div>
         {last && (
-          <div className={`text-sm ${last.ok ? "text-green-700" : "text-amber-700"}`}>
-            {last.ok ? `✓ ${last.name} — counted ${last.counted}` : `⚠ ${last.name}`}
+          <div
+            className={`text-sm ${
+              last.tone === "ok" ? "text-green-700" : last.tone === "warn" ? "text-amber-700" : "text-slate-500"
+            }`}
+          >
+            {last.tone === "ok" ? `✓ ${last.name} — counted ${last.counted}` : last.tone === "warn" ? `⚠ ${last.name}` : `↩ ${last.name}`}
           </div>
         )}
         <p className="text-xs text-muted">
           Hold your USB/Bluetooth scanner and scan each piece — every scan adds <b>+1</b>. Keep this box focused.
-          You can also edit any count by hand below.
+          An instant re-scan of the same code is ignored, and <b>Undo last</b> reverts a mistaken scan. You can
+          also edit any count by hand below.
         </p>
       </form>
 
@@ -171,6 +234,9 @@ export default function StocktakeCount({ items }: { items: CountItem[] }) {
         <span className="text-muted">{totalUnits} unit{totalUnits === 1 ? "" : "s"} counted</span>
         {variances > 0 && <span className="font-medium text-amber-700">{variances} with variance</span>}
         <div className="ml-auto flex items-center gap-2">
+          <button className="btn-ghost px-3 py-1 text-xs" onClick={undo} disabled={history.length === 0}>
+            ↩ Undo last
+          </button>
           <button className="btn-ghost px-3 py-1 text-xs" onClick={clearAll} disabled={lines.length === 0 && unknown.length === 0}>
             Clear
           </button>
