@@ -20,7 +20,7 @@
  *   channel_products(product_id, channel_id, channel_price, channel_status)
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 // ---------- الأنواع ----------
@@ -167,64 +167,69 @@ export default function CatalogHealthPage() {
   const [channelProducts, setChannelProducts] = useState<ChannelProduct[]>([])
   const [channelNames, setChannelNames] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeIssue, setActiveIssue] = useState<IssueKey | null>(null)
   const [search, setSearch] = useState('')
 
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const supabase = createClient()
+  // يعيد فحص الكتالوج من قاعدة البيانات (قراءة فقط). يُستدعى عند فتح الصفحة
+  // وعند الضغط على زر «تحديث» ليعكس آخر التغييرات بدون إعادة تحميل الصفحة.
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true)
+    else setLoading(true)
+    setError(null)
+    try {
+      const supabase = createClient()
 
-        // جلب المنتجات على دفعات (تجاوز حد 1000 صف في Supabase)
-        const all: Product[] = []
-        const PAGE = 1000
-        for (let from = 0; ; from += PAGE) {
-          const { data, error } = await supabase
-            .from('products')
-            .select(
-              'id, sku, barcode, name_ar, name_en, image_url, price, snoonu_id, rafeeq_product_id, main_category, approval'
-            )
-            .range(from, from + PAGE - 1)
-          if (error) throw error
-          if (!data || data.length === 0) break
-          all.push(...(data as Product[]))
-          if (data.length < PAGE) break
-        }
-
-        const { data: cp, error: cpErr } = await supabase
-          .from('channel_products')
-          .select('product_id, channel_id, channel_price, channel_status')
-        if (cpErr) throw cpErr
-
-        // أسماء القنوات (Snoonu/Rafeeq/…) — دفاعيًا: لو الجدول/العمود مو موجود
-        // نرجع لعرض channel_id الخام بدون ما نكسر الصفحة.
-        const nameMap = new Map<string, string>()
-        try {
-          const { data: ch } = await supabase.from('channels').select('id, name')
-          for (const c of (ch as { id: string; name: string | null }[]) || []) {
-            if (c?.id != null) nameMap.set(String(c.id), c.name ?? String(c.id))
-          }
-        } catch {
-          /* fallback: channel_id */
-        }
-
-        if (!cancelled) {
-          setProducts(all)
-          setChannelProducts((cp as ChannelProduct[]) || [])
-          setChannelNames(nameMap)
-        }
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'فشل تحميل البيانات')
-      } finally {
-        if (!cancelled) setLoading(false)
+      // جلب المنتجات على دفعات (تجاوز حد 1000 صف في Supabase)
+      const all: Product[] = []
+      const PAGE = 1000
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from('products')
+          .select(
+            'id, sku, barcode, name_ar, name_en, image_url, price, snoonu_id, rafeeq_product_id, main_category, approval'
+          )
+          .range(from, from + PAGE - 1)
+        if (error) throw error
+        if (!data || data.length === 0) break
+        all.push(...(data as Product[]))
+        if (data.length < PAGE) break
       }
-    })()
-    return () => {
-      cancelled = true
+
+      const { data: cp, error: cpErr } = await supabase
+        .from('channel_products')
+        .select('product_id, channel_id, channel_price, channel_status')
+      if (cpErr) throw cpErr
+
+      // أسماء القنوات (Snoonu/Rafeeq/…) — دفاعيًا: لو الجدول/العمود مو موجود
+      // نرجع لعرض channel_id الخام بدون ما نكسر الصفحة.
+      const nameMap = new Map<string, string>()
+      try {
+        const { data: ch } = await supabase.from('channels').select('id, name')
+        for (const c of (ch as { id: string; name: string | null }[]) || []) {
+          if (c?.id != null) nameMap.set(String(c.id), c.name ?? String(c.id))
+        }
+      } catch {
+        /* fallback: channel_id */
+      }
+
+      setProducts(all)
+      setChannelProducts((cp as ChannelProduct[]) || [])
+      setChannelNames(nameMap)
+      setLastUpdated(new Date())
+    } catch (e: any) {
+      setError(e?.message || 'فشل تحميل البيانات')
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
     }
   }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
 
   // سياق الفحص (تكرار SKU + ربط المنصّات بالمنتج)
   const ctx: Ctx = useMemo(() => {
@@ -338,6 +343,20 @@ export default function CatalogHealthPage() {
           <p style={S.sub}>
             {products.length.toLocaleString('ar')} منتج · فحص لحظي · قراءة فقط
           </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+            <button
+              onClick={() => load(true)}
+              disabled={loading || refreshing}
+              style={{ ...S.refreshBtn, opacity: loading || refreshing ? 0.6 : 1 }}
+            >
+              {refreshing ? 'جارٍ التحديث…' : '↻ تحديث'}
+            </button>
+            {lastUpdated && (
+              <span style={{ fontSize: 12, color: '#94a3b8' }}>
+                آخر تحديث: {lastUpdated.toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            )}
+          </div>
         </div>
         <div style={S.scoreBox}>
           <div style={{ ...S.scoreRing, borderColor: scoreColor }}>
@@ -515,6 +534,11 @@ const S: Record<string, React.CSSProperties> = {
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16, marginBottom: 20 },
   h1: { fontSize: 26, fontWeight: 800, margin: 0 },
   sub: { fontSize: 14, color: '#64748b', marginTop: 4 },
+  refreshBtn: {
+    font: 'inherit', fontSize: 13, fontWeight: 700, color: '#0f172a',
+    background: '#fff', border: '1.5px solid #cbd5e1', borderRadius: 10,
+    padding: '6px 14px', cursor: 'pointer',
+  },
   scoreBox: { display: 'flex', alignItems: 'center', gap: 14 },
   scoreRing: {
     width: 78, height: 78, borderRadius: '50%', border: '5px solid', display: 'grid',
