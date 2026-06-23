@@ -69,6 +69,8 @@ type IssueDef = {
 type Ctx = {
   dupSkus: Set<string>
   cpByProduct: Map<string, ChannelProduct[]>
+  // per-product variant barcode coverage: total options vs. options carrying a barcode
+  variantStats: Map<string, { total: number; withBc: number }>
 }
 
 // ---------- تعريف الفحوصات ----------
@@ -119,9 +121,15 @@ const ISSUES: IssueDef[] = [
   {
     key: 'no_barcode',
     label: 'بدون باركود',
-    desc: 'barcode فاضي — يحتاج توليد EAN-13',
+    desc: 'barcode فاضي — يحتاج توليد EAN-13 (المنتج ذو الخيارات: كل خيار يحتاج باركود)',
     severity: 'warning',
-    test: (p) => !p.barcode || p.barcode.trim() === '',
+    test: (p, ctx) => {
+      const vs = ctx.variantStats.get(p.id)
+      // منتج له خيارات: يُعتبر مكتمل فقط لمّا كل خياراته فيها باركود.
+      if (vs && vs.total > 0) return vs.withBc < vs.total
+      // منتج عادي بدون خيارات: يعتمد على باركود المنتج نفسه.
+      return !p.barcode || p.barcode.trim() === ''
+    },
   },
   {
     key: 'no_name_ar',
@@ -164,6 +172,7 @@ const ISSUES: IssueDef[] = [
 // ---------- المكوّن ----------
 export default function CatalogHealthPage() {
   const [products, setProducts] = useState<Product[]>([])
+  const [variants, setVariants] = useState<{ parent_product_id: string; barcode: string | null }[]>([])
   const [channelProducts, setChannelProducts] = useState<ChannelProduct[]>([])
   const [channelNames, setChannelNames] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
@@ -203,6 +212,24 @@ export default function CatalogHealthPage() {
         .select('product_id, channel_id, channel_price, channel_status')
       if (cpErr) throw cpErr
 
+      // خيارات المنتجات (للتحقق من تغطية باركود الخيارات). دفاعيًا: لو الجدول/العمود
+      // مو موجود نكمل بدون ما نكسر الصفحة.
+      const vrows: { parent_product_id: string; barcode: string | null }[] = []
+      try {
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await supabase
+            .from('product_variants')
+            .select('parent_product_id, barcode')
+            .range(from, from + PAGE - 1)
+          if (error) break
+          if (!data || data.length === 0) break
+          vrows.push(...(data as any[]))
+          if (data.length < PAGE) break
+        }
+      } catch {
+        /* variants optional */
+      }
+
       // أسماء القنوات (Snoonu/Rafeeq/…) — دفاعيًا: لو الجدول/العمود مو موجود
       // نرجع لعرض channel_id الخام بدون ما نكسر الصفحة.
       const nameMap = new Map<string, string>()
@@ -216,6 +243,7 @@ export default function CatalogHealthPage() {
       }
 
       setProducts(all)
+      setVariants(vrows)
       setChannelProducts((cp as ChannelProduct[]) || [])
       setChannelNames(nameMap)
       setLastUpdated(new Date())
@@ -248,8 +276,19 @@ export default function CatalogHealthPage() {
       arr.push(cp)
       cpByProduct.set(cp.product_id, arr)
     }
-    return { dupSkus, cpByProduct }
-  }, [products, channelProducts])
+
+    // تغطية باركود الخيارات لكل منتج
+    const variantStats = new Map<string, { total: number; withBc: number }>()
+    for (const v of variants) {
+      if (!v.parent_product_id) continue
+      const s = variantStats.get(v.parent_product_id) || { total: 0, withBc: 0 }
+      s.total += 1
+      if (v.barcode && String(v.barcode).trim() !== '') s.withBc += 1
+      variantStats.set(v.parent_product_id, s)
+    }
+
+    return { dupSkus, cpByProduct, variantStats }
+  }, [products, channelProducts, variants])
 
   // حساب كل المشاكل
   const counts = useMemo(() => {
