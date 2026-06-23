@@ -48,6 +48,41 @@ export default async function StocktakePage() {
     if (!data || data.length < PAGE) break;
   }
 
+  // Variant-level barcodes — each option is counted independently and writes back
+  // to product_variants.stock_quantity. Skip cleanly if the barcode column hasn't
+  // been added yet (pre-migration).
+  const vProbe = await supabase.from("product_variants").select("barcode").limit(1);
+  const hasVariantBarcode = !vProbe.error;
+  if (!loadError && hasVariantBarcode) {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("product_variants")
+        .select("id, sku, barcode, variant_name, stock_quantity, products!inner(name_en, name_ar)")
+        .not("barcode", "is", null)
+        .neq("barcode", "")
+        .range(from, from + PAGE - 1);
+      if (error) {
+        loadError = error.message;
+        break;
+      }
+      for (const r of (data ?? []) as any[]) {
+        const parent = r.products?.name_en ?? r.products?.name_ar ?? null;
+        const variant = r.variant_name ?? null;
+        items.push({
+          inventoryId: "",
+          variantId: r.id,
+          barcode: String(r.barcode),
+          sku: r.sku ?? null,
+          name: parent && variant ? `${parent} · ${variant}` : variant ?? parent,
+          name_ar: r.products?.name_ar ?? null,
+          location: null,
+          stock: r.stock_quantity ?? 0,
+        });
+      }
+      if (!data || data.length < PAGE) break;
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
