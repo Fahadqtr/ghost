@@ -28,17 +28,20 @@ export default async function MovementsPage() {
   // Product picker (inventory + product names). Page through the 1000 cap.
   const items: PickItem[] = [];
   const nameBySku = new Map<string, string>();
+  // product_id -> parent inventory row, for attaching variant pick-items.
+  const parentByProduct = new Map<string, { inventoryId: string; name: string | null; image_url: string | null }>();
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("inventory")
-      .select("id, stock_quantity, products(sku, name_en, name_ar, barcode, image_url)")
+      .select("id, stock_quantity, product_id, products(sku, name_en, name_ar, barcode, image_url)")
       .range(from, from + PAGE - 1);
     if (error) break;
     for (const r of (data ?? []) as any[]) {
       const sku = r.products?.sku ?? null;
       const name = r.products?.name_en ?? r.products?.name_ar ?? null;
       if (sku && name) nameBySku.set(sku, name);
+      if (r.product_id) parentByProduct.set(r.product_id, { inventoryId: r.id, name, image_url: r.products?.image_url ?? null });
       items.push({
         inventoryId: r.id,
         sku,
@@ -50,6 +53,42 @@ export default async function MovementsPage() {
       });
     }
     if (!data || data.length < PAGE) break;
+  }
+
+  // Variant pick-items — each option scannable by its own barcode. A movement on
+  // a variant adjusts that option's stock (the parent total is re-derived). Loaded
+  // without an FK embed; failures are non-fatal so product scanning still works.
+  {
+    const vrows: any[] = [];
+    let vError = false;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("product_variants")
+        .select("id, sku, barcode, variant_name, stock_quantity, parent_product_id")
+        .not("barcode", "is", null)
+        .neq("barcode", "")
+        .range(from, from + PAGE - 1);
+      if (error) { vError = true; break; }
+      vrows.push(...((data ?? []) as any[]));
+      if (!data || data.length < PAGE) break;
+    }
+    if (!vError) {
+      for (const r of vrows) {
+        const parent = r.parent_product_id ? parentByProduct.get(r.parent_product_id) : undefined;
+        if (!parent) continue; // no parent inventory row — skip
+        const variant = r.variant_name ?? null;
+        items.push({
+          inventoryId: parent.inventoryId,
+          variantId: r.id,
+          sku: r.sku ?? null,
+          name: parent.name && variant ? `${parent.name} · ${variant}` : variant ?? parent.name,
+          name_ar: null,
+          barcode: r.barcode ?? null,
+          image_url: parent.image_url ?? null,
+          stock: r.stock_quantity ?? 0,
+        });
+      }
+    }
   }
   items.sort((a, b) => (a.name ?? a.sku ?? "").localeCompare(b.name ?? b.sku ?? ""));
 
