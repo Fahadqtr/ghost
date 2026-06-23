@@ -50,23 +50,38 @@ export default async function StocktakePage() {
 
   // Variant-level barcodes — each option is counted independently and writes back
   // to product_variants.stock_quantity. Skip cleanly if the barcode column hasn't
-  // been added yet (pre-migration).
+  // been added yet (pre-migration). Parent names are fetched in a separate query
+  // (no FK-embed dependency — parent_product_id may not be a declared foreign key).
   const vProbe = await supabase.from("product_variants").select("barcode").limit(1);
   const hasVariantBarcode = !vProbe.error;
   if (!loadError && hasVariantBarcode) {
+    const vrows: any[] = [];
+    let vError = false;
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await supabase
         .from("product_variants")
-        .select("id, sku, barcode, variant_name, stock_quantity, products!inner(name_en, name_ar)")
+        .select("id, sku, barcode, variant_name, stock_quantity, parent_product_id")
         .not("barcode", "is", null)
         .neq("barcode", "")
         .range(from, from + PAGE - 1);
       if (error) {
-        loadError = error.message;
+        vError = true; // non-fatal: keep the product-level stocktake working
         break;
       }
-      for (const r of (data ?? []) as any[]) {
-        const parent = r.products?.name_en ?? r.products?.name_ar ?? null;
+      vrows.push(...((data ?? []) as any[]));
+      if (!data || data.length < PAGE) break;
+    }
+    if (!vError && vrows.length > 0) {
+      // Resolve parent product names by id, in chunks.
+      const parentIds = Array.from(new Set(vrows.map((r) => r.parent_product_id).filter(Boolean)));
+      const nameById = new Map<string, string | null>();
+      for (let i = 0; i < parentIds.length; i += 300) {
+        const chunk = parentIds.slice(i, i + 300);
+        const { data } = await supabase.from("products").select("id, name_en, name_ar").in("id", chunk);
+        for (const p of (data ?? []) as any[]) nameById.set(p.id, p.name_en ?? p.name_ar ?? null);
+      }
+      for (const r of vrows) {
+        const parent = nameById.get(r.parent_product_id) ?? null;
         const variant = r.variant_name ?? null;
         items.push({
           inventoryId: "",
@@ -74,12 +89,11 @@ export default async function StocktakePage() {
           barcode: String(r.barcode),
           sku: r.sku ?? null,
           name: parent && variant ? `${parent} · ${variant}` : variant ?? parent,
-          name_ar: r.products?.name_ar ?? null,
+          name_ar: null,
           location: null,
           stock: r.stock_quantity ?? 0,
         });
       }
-      if (!data || data.length < PAGE) break;
     }
   }
 

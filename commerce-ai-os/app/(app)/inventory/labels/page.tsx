@@ -35,20 +35,36 @@ export default async function LabelsPage() {
 
   // Variant-level barcodes — each option gets its own printable label, named
   // "Parent · Variant" so it's easy to find alongside the product barcodes.
+  // Parent names are fetched separately (no FK-embed dependency, since
+  // parent_product_id may not be a declared foreign key). Variant-load failures
+  // are non-fatal so product labels still work.
   if (!loadError) {
+    const vrows: any[] = [];
+    let vError = false;
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await supabase
         .from("product_variants")
-        .select("sku, variant_name, price, barcode, products(name_en, name_ar)")
+        .select("sku, variant_name, price, barcode, parent_product_id")
         .not("barcode", "is", null)
         .neq("barcode", "")
         .range(from, from + PAGE - 1);
       if (error) {
-        loadError = error.message;
+        vError = true;
         break;
       }
-      for (const r of (data ?? []) as any[]) {
-        const parent = r.products?.name_en ?? r.products?.name_ar ?? null;
+      vrows.push(...((data ?? []) as any[]));
+      if (!data || data.length < PAGE) break;
+    }
+    if (!vError && vrows.length > 0) {
+      const parentIds = Array.from(new Set(vrows.map((r) => r.parent_product_id).filter(Boolean)));
+      const nameById = new Map<string, string | null>();
+      for (let i = 0; i < parentIds.length; i += 300) {
+        const chunk = parentIds.slice(i, i + 300);
+        const { data } = await supabase.from("products").select("id, name_en, name_ar").in("id", chunk);
+        for (const p of (data ?? []) as any[]) nameById.set(p.id, p.name_en ?? p.name_ar ?? null);
+      }
+      for (const r of vrows) {
+        const parent = nameById.get(r.parent_product_id) ?? null;
         const variant = r.variant_name ?? null;
         const name = parent && variant ? `${parent} · ${variant}` : variant ?? parent;
         products.push({
@@ -58,7 +74,6 @@ export default async function LabelsPage() {
           barcode: String(r.barcode),
         });
       }
-      if (!data || data.length < PAGE) break;
     }
   }
 
