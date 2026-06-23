@@ -621,6 +621,99 @@ export async function recordMovement(input: MovementInput) {
   return { ok: true, before, after, logged: !logErr };
 }
 
+export type VariantMovementInput = {
+  variantId: string;
+  sku?: string | null;
+  type: "in" | "out";
+  quantity: string | number;
+  reason?: string | null;
+  note?: string | null;
+  by?: string | null;
+};
+
+/**
+ * Record a stock IN/OUT movement for a single VARIANT (option): applies the delta
+ * to product_variants.stock_quantity, then re-totals the parent product's
+ * inventory (= sum of its variants). Mirrors recordMovement but at variant grain,
+ * keeping the parent pool consistent with the variants' independent stock.
+ */
+export async function recordVariantMovement(input: VariantMovementInput) {
+  const admin = writableClient();
+  const qty = Math.floor(Math.abs(Number(input.quantity)));
+  if (!input.variantId || !qty || Number.isNaN(qty)) {
+    return { error: "Pick a variant and a quantity greater than 0." };
+  }
+  if (input.type !== "in" && input.type !== "out") return { error: "Invalid movement type." };
+
+  const { data: v, error: readErr } = await admin
+    .from("product_variants")
+    .select("id, stock_quantity, parent_product_id")
+    .eq("id", input.variantId)
+    .single();
+  if (readErr || !v) return { error: "Variant not found." };
+
+  const before = v.stock_quantity ?? 0;
+  const delta = input.type === "in" ? qty : -qty;
+  const after = before + delta;
+  if (after < 0) {
+    return { error: `Not enough stock: have ${before}, tried to remove ${qty}.` };
+  }
+
+  const { error: upErr } = await admin
+    .from("product_variants")
+    .update({ stock_quantity: after })
+    .eq("id", v.id);
+  if (upErr) return { error: upErr.message };
+
+  // Re-total the parent product's inventory = sum of all its variants' stock.
+  // (Bump sold_quantity on a sale, like recordMovement does.)
+  const now = new Date().toISOString();
+  const parentId = v.parent_product_id;
+  if (parentId) {
+    const { data: sibs } = await admin
+      .from("product_variants")
+      .select("stock_quantity")
+      .eq("parent_product_id", parentId);
+    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
+    const patch: Record<string, unknown> = { stock_quantity: sum, updated_at: now };
+    if (input.type === "out" && (input.reason ?? "").toLowerCase() === "sale") {
+      const { data: invRow } = await admin
+        .from("inventory")
+        .select("sold_quantity")
+        .eq("product_id", parentId)
+        .maybeSingle();
+      patch.sold_quantity = ((invRow as any)?.sold_quantity ?? 0) + qty;
+    }
+    await admin.from("inventory").update(patch).eq("product_id", parentId);
+  }
+
+  // Best-effort ledger row (uuid kept in details — see note in recordMovement).
+  const { error: logErr } = await admin.from("malak_audit").insert({
+    agent: input.by || "inventory",
+    action: input.type === "in" ? "stock_in" : "stock_out",
+    action_type: input.type === "in" ? "stock_in" : "stock_out",
+    sku: input.sku ?? null,
+    field: "variant_stock_quantity",
+    old_value: String(before),
+    new_value: String(after),
+    status: "done",
+    details: {
+      variantId: v.id,
+      productId: parentId ?? null,
+      quantity: qty,
+      direction: input.type,
+      reason: input.reason ?? null,
+      note: input.note ?? null,
+    },
+  });
+  if (logErr) console.error("[recordVariantMovement] audit insert failed:", logErr.message);
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/movements");
+  revalidatePath("/dashboard");
+  return { ok: true, before, after, logged: !logErr };
+}
+
 export type RecogCandidate = {
   inventoryId: string;
   sku: string | null;

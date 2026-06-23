@@ -2,12 +2,13 @@
 
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { recordMovement } from "@/app/(app)/inventory/actions";
+import { recordMovement, recordVariantMovement } from "@/app/(app)/inventory/actions";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import PhotoIdentify from "@/components/PhotoIdentify";
 
 export type PickItem = {
   inventoryId: string;
+  variantId?: string | null; // set => this pick is a specific variant (option)
   sku: string | null;
   name: string | null;
   name_ar: string | null;
@@ -15,6 +16,10 @@ export type PickItem = {
   image_url: string | null;
   stock: number;
 };
+
+// Stable cart identity: a variant stands on its own, else the inventory row.
+// (Variants of one product share a parent inventoryId, so that can't be the key.)
+const uidOf = (it: PickItem) => it.variantId ?? it.inventoryId;
 
 type Line = { item: PickItem; qty: number };
 
@@ -39,7 +44,7 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
   /** Add a scanned/picked product to the cart, or +1 if it's already there. */
   function addOrInc(found: PickItem) {
     setLines((prev) => {
-      const i = prev.findIndex((l) => l.item.inventoryId === found.inventoryId);
+      const i = prev.findIndex((l) => uidOf(l.item) === uidOf(found));
       if (i >= 0) {
         const next = [...prev];
         next[i] = { ...next[i], qty: next[i].qty + 1 };
@@ -91,17 +96,17 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
     else setMsg({ kind: "err", text: `No product matches “${c}”.` });
   }
 
-  function setLineQty(inventoryId: string, v: string) {
+  function setLineQty(uid: string, v: string) {
     const n = Math.max(0, Math.floor(Number(v) || 0));
-    setLines((prev) => prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, qty: n } : l)));
+    setLines((prev) => prev.map((l) => (uidOf(l.item) === uid ? { ...l, qty: n } : l)));
   }
-  function stepQty(inventoryId: string, d: number) {
+  function stepQty(uid: string, d: number) {
     setLines((prev) =>
-      prev.map((l) => (l.item.inventoryId === inventoryId ? { ...l, qty: Math.max(0, l.qty + d) } : l))
+      prev.map((l) => (uidOf(l.item) === uid ? { ...l, qty: Math.max(0, l.qty + d) } : l))
     );
   }
-  function removeLine(inventoryId: string) {
-    setLines((prev) => prev.filter((l) => l.item.inventoryId !== inventoryId));
+  function removeLine(uid: string) {
+    setLines((prev) => prev.filter((l) => uidOf(l.item) !== uid));
   }
 
   function switchType(t: "in" | "out") {
@@ -121,14 +126,23 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
       let ok = 0;
       const errors: string[] = [];
       for (const l of valid) {
-        const res = await recordMovement({
-          inventoryId: l.item.inventoryId,
-          sku: l.item.sku,
-          type,
-          quantity: l.qty,
-          reason,
-          note: note.trim() || null,
-        });
+        const res = l.item.variantId
+          ? await recordVariantMovement({
+              variantId: l.item.variantId,
+              sku: l.item.sku,
+              type,
+              quantity: l.qty,
+              reason,
+              note: note.trim() || null,
+            })
+          : await recordMovement({
+              inventoryId: l.item.inventoryId,
+              sku: l.item.sku,
+              type,
+              quantity: l.qty,
+              reason,
+              note: note.trim() || null,
+            });
         if (res && "error" in res && res.error) errors.push(`${l.item.sku ?? l.item.name}: ${res.error}`);
         else ok++;
       }
@@ -244,7 +258,7 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
             const bad = after < 0;
             return (
               <div
-                key={l.item.inventoryId}
+                key={uidOf(l.item)}
                 className={`flex gap-3 rounded-xl border bg-white p-3 shadow-sm ${bad ? "border-red-200" : "border-slate-200"}`}
               >
                 <div className="h-16 w-16 flex-none overflow-hidden rounded-lg bg-slate-100">
@@ -264,7 +278,7 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
                     <button
                       className="flex-none text-slate-400 hover:text-red-600"
                       title="Remove"
-                      onClick={() => removeLine(l.item.inventoryId)}
+                      onClick={() => removeLine(uidOf(l.item))}
                     >
                       ✕
                     </button>
@@ -274,7 +288,7 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
                     <div className="flex items-center gap-1">
                       <button
                         className="h-8 w-8 rounded-lg border border-slate-200 text-lg leading-none text-slate-600 hover:bg-slate-50"
-                        onClick={() => stepQty(l.item.inventoryId, -1)}
+                        onClick={() => stepQty(uidOf(l.item), -1)}
                       >
                         −
                       </button>
@@ -283,11 +297,11 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
                         type="number"
                         min={0}
                         value={l.qty}
-                        onChange={(e) => setLineQty(l.item.inventoryId, e.target.value)}
+                        onChange={(e) => setLineQty(uidOf(l.item), e.target.value)}
                       />
                       <button
                         className="h-8 w-8 rounded-lg border border-slate-200 text-lg leading-none text-slate-600 hover:bg-slate-50"
-                        onClick={() => stepQty(l.item.inventoryId, 1)}
+                        onClick={() => stepQty(uidOf(l.item), 1)}
                       >
                         +
                       </button>
