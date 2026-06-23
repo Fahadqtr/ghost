@@ -126,8 +126,10 @@ export default function BarcodeLabels({ products }: { products: LabelProduct[] }
           ${
             size
               ? `@page { size: ${size.w}mm ${size.h}mm; margin: 0; }
-                 #label-sheet { display: block; }
-                 .label-cell { width: ${size.w}mm; height: ${size.h}mm; page-break-after: always; border: 0 !important; border-radius: 0 !important; }`
+                 html, body { width: ${size.w}mm; }
+                 #label-sheet { display: block !important; gap: 0 !important; }
+                 .label-cell { width: ${size.w}mm !important; height: ${size.h}mm !important; margin: 0 !important; padding: 1mm !important; gap: 0 !important; overflow: hidden; box-sizing: border-box; border: 0 !important; border-radius: 0 !important; page-break-after: always; break-after: page; }
+                 .label-cell:last-child { page-break-after: avoid; break-after: avoid; }`
               : `@page { margin: 8mm; }`
           }
         }

@@ -13,6 +13,7 @@ export interface VariantInput {
   id?: string;
   variant_name: string;
   sku: string;
+  barcode: string;
   color: string;
   size: string;
   price: string;
@@ -109,6 +110,7 @@ function toVariantRows(parentId: string, variants: VariantInput[]) {
       parent_product_id: parentId,
       variant_name: str(v.variant_name),
       sku: str(v.sku),
+      barcode: str(v.barcode),
       color: str(v.color),
       size: str(v.size),
       price: num(v.price),

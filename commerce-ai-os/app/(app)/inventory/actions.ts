@@ -141,6 +141,82 @@ export async function applyStocktake(counts: StocktakeCount[]) {
   return { ok, failed: errors.length, errors: errors.slice(0, 5) };
 }
 
+export type VariantCount = {
+  variantId: string;
+  sku?: string | null;
+  counted: number;
+};
+
+/**
+ * Apply a VARIANT-level stocktake: set each variant's stock_quantity to the
+ * physically counted number, then re-total each affected parent product's
+ * inventory (= sum of its variants' stock). Each option is counted independently
+ * — used when scanning per-variant barcodes on the shelf.
+ */
+export async function applyVariantStocktake(counts: VariantCount[]) {
+  const admin = writableClient();
+  const now = new Date().toISOString();
+  let ok = 0;
+  const errors: string[] = [];
+  const parents = new Set<string>();
+
+  for (const c of counts) {
+    const counted = Math.max(0, Math.floor(Number(c.counted)));
+    if (!c.variantId || Number.isNaN(counted)) {
+      errors.push(`${c.sku ?? c.variantId}: invalid count`);
+      continue;
+    }
+    const { data: v, error: readErr } = await admin
+      .from("product_variants")
+      .select("id, stock_quantity, parent_product_id")
+      .eq("id", c.variantId)
+      .single();
+    if (readErr || !v) {
+      errors.push(`${c.sku ?? c.variantId}: not found`);
+      continue;
+    }
+    const before = v.stock_quantity ?? 0;
+    if (before !== counted) {
+      const { error: upErr } = await admin
+        .from("product_variants")
+        .update({ stock_quantity: counted })
+        .eq("id", v.id);
+      if (upErr) {
+        errors.push(`${c.sku ?? c.variantId}: ${upErr.message}`);
+        continue;
+      }
+      // Best-effort variance ledger (uuid kept in details, see note in applyStocktake).
+      await admin.from("malak_audit").insert({
+        agent: "stocktake",
+        action: "stocktake",
+        action_type: "stocktake",
+        sku: c.sku ?? null,
+        field: "variant_stock_quantity",
+        old_value: String(before),
+        new_value: String(counted),
+        status: "done",
+        details: { variantId: v.id, productId: v.parent_product_id ?? null, counted, previous: before, variance: counted - before },
+      });
+    }
+    if (v.parent_product_id) parents.add(v.parent_product_id);
+    ok++;
+  }
+
+  // Re-total each affected parent: inventory.stock_quantity = sum of its variants.
+  for (const pid of parents) {
+    const { data: sibs } = await admin
+      .from("product_variants")
+      .select("stock_quantity")
+      .eq("parent_product_id", pid);
+    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
+    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("product_id", pid);
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/dashboard");
+  return { ok, failed: errors.length, errors: errors.slice(0, 5) };
+}
+
 // ── Shelf / bin locations ──────────────────────────────────────────────────
 
 /** Set (or clear) a product's physical shelf location, e.g. "A1". */

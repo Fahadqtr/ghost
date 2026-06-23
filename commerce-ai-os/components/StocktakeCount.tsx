@@ -2,11 +2,12 @@
 
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { applyStocktake, applyShelfCounts } from "@/app/(app)/inventory/actions";
+import { applyStocktake, applyShelfCounts, applyVariantStocktake } from "@/app/(app)/inventory/actions";
 import { shelfOf } from "@/lib/shelf";
 
 export type CountItem = {
   inventoryId: string;
+  variantId?: string | null; // set => this line counts a specific variant (option)
   barcode: string;
   sku: string | null;
   name: string | null;
@@ -14,6 +15,9 @@ export type CountItem = {
   location: string | null;
   stock: number; // current system stock (expected)
 };
+
+// Stable row identity: a variant counts on its own, otherwise the inventory row.
+const keyOf = (it: CountItem) => it.variantId ?? it.inventoryId;
 
 type Line = { uid: string; item: CountItem; counted: number; assigned?: string }; // uid = stable row id
 type Unknown = { code: string; count: number };
@@ -119,12 +123,14 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
       return;
     }
     beep(true);
-    const target = assignTo || undefined; // the shelf this scan belongs to
+    // Variants are counted independently (own stock); shelf placement for variants
+    // lives in its own editor, so a variant scan ignores the "Assign to" shelf.
+    const target = item.variantId ? undefined : assignTo || undefined;
     let touchedUid = "";
     setLines((prev) => {
-      // A product can appear once per shelf: match on product AND shelf slot.
+      // A product can appear once per shelf: match on row identity AND shelf slot.
       const i = prev.findIndex(
-        (l) => l.item.inventoryId === item.inventoryId && (l.assigned ?? "") === (target ?? "")
+        (l) => keyOf(l.item) === keyOf(item) && (l.assigned ?? "") === (target ?? "")
       );
       let counted = 1;
       let next: Line[];
@@ -215,10 +221,13 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
 
   function apply() {
     if (lines.length === 0) return;
-    // Lines tagged with a shelf save per-shelf quantities (placement, total
-    // untouched); untagged lines run a normal full stocktake (sets total).
-    const placement = lines.filter((l) => l.assigned);
-    const normal = lines.filter((l) => !l.assigned);
+    // Variant lines write back to product_variants (own stock); product lines
+    // tagged with a shelf save per-shelf quantities (placement, total untouched);
+    // remaining product lines run a normal full stocktake (sets total).
+    const variantLines = lines.filter((l) => l.item.variantId);
+    const productLines = lines.filter((l) => !l.item.variantId);
+    const placement = productLines.filter((l) => l.assigned);
+    const normal = productLines.filter((l) => !l.assigned);
     const bySlot = new Map<string, Line[]>();
     placement.forEach((l) => {
       const arr = bySlot.get(l.assigned!) ?? [];
@@ -235,6 +244,11 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
       }
       if (normal.length) {
         const res = await applyStocktake(normal.map((l) => ({ inventoryId: l.item.inventoryId, sku: l.item.sku, counted: l.counted })));
+        ok += res.ok;
+        if (res.errors?.length) errors.push(...res.errors);
+      }
+      if (variantLines.length) {
+        const res = await applyVariantStocktake(variantLines.map((l) => ({ variantId: l.item.variantId!, sku: l.item.sku, counted: l.counted })));
         ok += res.ok;
         if (res.errors?.length) errors.push(...res.errors);
       }
@@ -404,15 +418,19 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
                     </td>
                     <td className="hidden px-4 py-3 text-slate-600 sm:table-cell">{l.item.sku ?? "—"}</td>
                     <td className="px-4 py-3">
-                      <input
-                        list="stk-slots"
-                        className={`input w-24 font-mono uppercase ${
-                          l.assigned && l.assigned !== l.item.location ? "border-blue-400 bg-blue-50" : ""
-                        }`}
-                        placeholder={l.item.location ?? "—"}
-                        value={l.assigned ?? l.item.location ?? ""}
-                        onChange={(e) => setLineLocation(l.uid, e.target.value)}
-                      />
+                      {l.item.variantId ? (
+                        <span className="text-xs text-muted">variant</span>
+                      ) : (
+                        <input
+                          list="stk-slots"
+                          className={`input w-24 font-mono uppercase ${
+                            l.assigned && l.assigned !== l.item.location ? "border-blue-400 bg-blue-50" : ""
+                          }`}
+                          placeholder={l.item.location ?? "—"}
+                          value={l.assigned ?? l.item.location ?? ""}
+                          onChange={(e) => setLineLocation(l.uid, e.target.value)}
+                        />
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <input

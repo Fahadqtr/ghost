@@ -41,6 +41,7 @@ export interface ProductVariant {
   parent_product_id: string;
   variant_name: string | null;
   sku: string | null;
+  barcode: string | null;
   color: string | null;
   size: string | null;
   price: number | null;
