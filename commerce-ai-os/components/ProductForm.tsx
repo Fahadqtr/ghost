@@ -15,6 +15,7 @@ import {
 const EMPTY_VARIANT: VariantInput = {
   variant_name: "",
   sku: "",
+  barcode: "",
   color: "",
   size: "",
   price: "",
@@ -210,9 +211,10 @@ export default function ProductForm({
         ) : (
           <div className="space-y-2">
             {form.variants.map((v, i) => (
-              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-6">
+              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-7">
                 <input className="input" placeholder="Variant name" value={v.variant_name} onChange={(e) => setVariant(i, "variant_name", e.target.value)} />
                 <input className="input" placeholder="SKU" value={v.sku} onChange={(e) => setVariant(i, "sku", e.target.value)} />
+                <input className="input" placeholder="Barcode" value={v.barcode} onChange={(e) => setVariant(i, "barcode", e.target.value)} />
                 <input className="input" placeholder="Color" value={v.color} onChange={(e) => setVariant(i, "color", e.target.value)} />
                 <input className="input" placeholder="Size" value={v.size} onChange={(e) => setVariant(i, "size", e.target.value)} />
                 <input className="input" type="number" step="0.01" placeholder="Price" value={v.price} onChange={(e) => setVariant(i, "price", e.target.value)} />

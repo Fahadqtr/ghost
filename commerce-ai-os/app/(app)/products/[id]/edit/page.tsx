@@ -59,6 +59,7 @@ export default async function EditProductPage({
         id: v.id,
         variant_name: s(v.variant_name),
         sku: s(v.sku),
+        barcode: s(v.barcode),
         color: s(v.color),
         size: s(v.size),
         price: s(v.price),

@@ -33,6 +33,35 @@ export default async function LabelsPage() {
     if (!data || data.length < PAGE) break;
   }
 
+  // Variant-level barcodes — each option gets its own printable label, named
+  // "Parent · Variant" so it's easy to find alongside the product barcodes.
+  if (!loadError) {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("product_variants")
+        .select("sku, variant_name, price, barcode, products(name_en, name_ar)")
+        .not("barcode", "is", null)
+        .neq("barcode", "")
+        .range(from, from + PAGE - 1);
+      if (error) {
+        loadError = error.message;
+        break;
+      }
+      for (const r of (data ?? []) as any[]) {
+        const parent = r.products?.name_en ?? r.products?.name_ar ?? null;
+        const variant = r.variant_name ?? null;
+        const name = parent && variant ? `${parent} · ${variant}` : variant ?? parent;
+        products.push({
+          sku: r.sku ?? null,
+          name,
+          price: r.price ?? null,
+          barcode: String(r.barcode),
+        });
+      }
+      if (!data || data.length < PAGE) break;
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 print:hidden">
