@@ -172,6 +172,22 @@ export default function InventoryTable({
       n.has(id) ? n.delete(id) : n.add(id);
       return n;
     });
+  // Quick-select: toggle ALL of a product's options at once.
+  const productVariantIds = (r: InventoryRow) =>
+    ((r.product_id && variantsByProduct[r.product_id]) || []).map((v) => v.id);
+  const allVariantsSelected = (r: InventoryRow) => {
+    const ids = productVariantIds(r);
+    return ids.length > 0 && ids.every((id) => selectedVariants.has(id));
+  };
+  const toggleAllVariants = (r: InventoryRow) => {
+    const ids = productVariantIds(r);
+    setSelectedVariants((s) => {
+      const n = new Set(s);
+      const all = ids.length > 0 && ids.every((id) => n.has(id));
+      ids.forEach((id) => (all ? n.delete(id) : n.add(id)));
+      return n;
+    });
+  };
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [bulkValue, setBulkValue] = useState("");
   const [bulkSlot, setBulkSlot] = useState("");
@@ -385,21 +401,24 @@ export default function InventoryTable({
     startTransition(async () => {
       let errText = "";
       let total = 0;
+      // Both actions may return a partial result ({ done, error }): count what
+      // succeeded AND surface the error, then still refresh so the UI reflects
+      // the rows that did move.
       if (pids.length) {
-        const r = await bulkAssignShelf(pids, slot);
-        if (r && "error" in r && r.error) errText = r.error;
-        else total += (r as any)?.done ?? pids.length;
+        const r = (await bulkAssignShelf(pids, slot)) as any;
+        if (r?.error) errText = r.error;
+        total += r?.done ?? (r?.error ? 0 : pids.length);
       }
-      if (!errText && vids.length) {
-        const r = await bulkAssignVariantShelf(vids, slot);
-        if (r && "error" in r && r.error) errText = r.error;
-        else total += (r as any)?.done ?? vids.length;
+      if (vids.length) {
+        const r = (await bulkAssignVariantShelf(vids, slot)) as any;
+        if (r?.error) errText = errText ? `${errText} | ${r.error}` : r.error;
+        total += r?.done ?? (r?.error ? 0 : vids.length);
       }
       if (errText) {
-        setMsg({ kind: "err", text: errText });
-        return;
+        setMsg({ kind: "err", text: total > 0 ? `أُضيف ${total}، لكن: ${errText}` : errText });
+      } else {
+        setMsg({ kind: "ok", text: `أُضيف ${total} عنصر للرفّ ${slot}` });
       }
-      setMsg({ kind: "ok", text: `أُضيف ${total} عنصر للرفّ ${slot}` });
       setSelected(new Set());
       setSelectedVariants(new Set());
       setBulkSlot("");
@@ -679,6 +698,17 @@ export default function InventoryTable({
                 )}
 
                 {/* Variant sub-cards */}
+                {isExpanded && variants.length > 0 && (
+                  <label className="ml-1 flex items-center gap-2 border-l-2 border-slate-100 py-1 pl-3 text-xs font-medium text-blue-700">
+                    <input
+                      type="checkbox"
+                      checked={allVariantsSelected(r)}
+                      onChange={() => toggleAllVariants(r)}
+                      aria-label="Select all options"
+                    />
+                    {allVariantsSelected(r) ? "مسح تحديد الخيارات" : `تحديد كل الخيارات (${variants.length})`}
+                  </label>
+                )}
                 {isExpanded &&
                   variants.map((v) => {
                     const q = v.stock_quantity ?? 0;
@@ -873,6 +903,23 @@ export default function InventoryTable({
                       )}
                     </td>
                   </tr>
+                  {isExpanded && variants.length > 0 && (
+                    <tr className="border-b border-slate-100 bg-slate-50/60 text-xs">
+                      <td className="px-3 py-1.5 text-center">
+                        <input
+                          type="checkbox"
+                          checked={allVariantsSelected(r)}
+                          onChange={() => toggleAllVariants(r)}
+                          aria-label="Select all options"
+                        />
+                      </td>
+                      <td className="px-4 py-1.5 font-medium text-blue-700" colSpan={12}>
+                        <button type="button" className="hover:underline" onClick={() => toggleAllVariants(r)}>
+                          {allVariantsSelected(r) ? "مسح تحديد الخيارات" : `تحديد كل الخيارات (${variants.length})`}
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                   {isExpanded &&
                     variants.map((v) => (
                       <tr key={v.id} className="border-b border-slate-100 bg-slate-50/60 text-sm">

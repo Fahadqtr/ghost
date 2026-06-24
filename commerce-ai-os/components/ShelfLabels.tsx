@@ -5,6 +5,7 @@ import JsBarcode from "jsbarcode";
 import { shelfOf, compareSlot } from "@/lib/shelf";
 
 export type LabelItem = {
+  id: string; // unique per label (inventory_id or variant_id) — for stable keys/picks
   location: string;
   name: string | null;
   name_ar: string | null;
@@ -30,7 +31,7 @@ function Barcode({ value, height }: { value: string; height: number }) {
 }
 
 // Stable identity for a single label (a product/variant at one slot).
-const keyOf = (it: LabelItem) => `${it.location.toUpperCase()}|${it.sku ?? ""}|${it.barcode ?? ""}`;
+const keyOf = (it: LabelItem) => `${it.id}|${it.location.toUpperCase()}`;
 
 export default function ShelfLabels({ items }: { items: LabelItem[] }) {
   const [shelf, setShelf] = useState("");

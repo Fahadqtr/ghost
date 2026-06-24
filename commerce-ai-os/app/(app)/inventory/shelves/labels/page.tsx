@@ -13,7 +13,7 @@ export default async function ShelfLabelsPage() {
   const items: LabelItem[] = [];
   if (ready) {
     const PAGE = 1000;
-    const prodById = new Map<string, Omit<LabelItem, "location" | "quantity">>();
+    const prodById = new Map<string, Omit<LabelItem, "location" | "quantity" | "id">>();
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await supabase
         .from("inventory")
@@ -44,7 +44,7 @@ export default async function ShelfLabelsPage() {
         for (const r of (ss ?? []) as any[]) {
           const p = prodById.get(r.inventory_id);
           if (!p) continue;
-          items.push({ ...p, location: String(r.location).toUpperCase(), quantity: r.quantity ?? 0 });
+          items.push({ ...p, id: r.inventory_id, location: String(r.location).toUpperCase(), quantity: r.quantity ?? 0 });
         }
         if (!ss || ss.length < PAGE) break;
       }
@@ -58,6 +58,7 @@ export default async function ShelfLabelsPage() {
         if (error) break;
         for (const r of (data ?? []) as any[]) {
           items.push({
+            id: r.id,
             location: String(r.location).toUpperCase(),
             name: r.products?.name_en ?? r.products?.name_ar ?? null,
             name_ar: r.products?.name_ar ?? null,
@@ -123,6 +124,7 @@ export default async function ShelfLabelsPage() {
           const name_ar =
             par?.name_ar && v.variant_name ? `${par.name_ar} · ${v.variant_name}` : par?.name_ar ?? v.variant_name ?? null;
           items.push({
+            id: r.variant_id,
             location: String(r.location).toUpperCase(),
             name,
             name_ar,
