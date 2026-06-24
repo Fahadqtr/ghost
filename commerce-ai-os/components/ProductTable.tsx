@@ -25,6 +25,7 @@ export interface ProductRow {
   discount_price: number | null;
   stock: number | null;
   variant_count: number;
+  variants?: { name: string | null; barcode: string }[];
   channels: Record<string, string>;
 }
 
@@ -109,7 +110,8 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         (p.name_en ?? "").toLowerCase().includes(needle) ||
         (p.name_ar ?? "").toLowerCase().includes(needle) ||
         (p.sku ?? "").toLowerCase().includes(needle) ||
-        (p.barcode ?? "").toLowerCase().includes(needle);
+        (p.barcode ?? "").toLowerCase().includes(needle) ||
+        (p.variants ?? []).some((v) => v.barcode.toLowerCase().includes(needle));
       const matchesCat = !cat || p.main_category === cat;
       const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
       const n = Number(p.stock);
@@ -136,12 +138,32 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
   const start = (current - 1) * PAGE_SIZE;
   const visible = filtered.slice(start, start + PAGE_SIZE);
 
+  // الخيار(ات) اللي باركودها يطابق نص البحث الحالي — لإظهار أي خيار «ضربت» عليه
+  const matchedVariants = (p: ProductRow) => {
+    const n = q.trim().toLowerCase();
+    if (!n) return [] as { name: string | null; barcode: string }[];
+    return (p.variants ?? []).filter((v) => v.barcode.toLowerCase().includes(n));
+  };
+  const VariantHits = ({ p }: { p: ProductRow }) => {
+    const hits = matchedVariants(p);
+    if (hits.length === 0) return null;
+    return (
+      <div className="mt-1 flex flex-wrap gap-1">
+        {hits.map((v, i) => (
+          <span key={i} className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+            🎯 خيار: {v.name || "—"} · <span className="font-mono">{v.barcode}</span>
+          </span>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <input
           className="input sm:max-w-xs"
-          placeholder="Search name (EN/AR), SKU, barcode…"
+          placeholder="Search name (EN/AR), SKU, barcode (incl. variants)…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -196,6 +218,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                   <div className="min-w-0">
                     <div className="truncate font-medium text-ink">{p.name_en ?? "—"}</div>
                     {p.name_ar ? <div className="truncate text-xs text-muted" dir="rtl">{p.name_ar}</div> : null}
+                    <VariantHits p={p} />
                   </div>
                   <RowApproval id={p.id} value={p.approval} />
                 </div>
@@ -258,7 +281,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                   className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                 >
                   <td className="px-3 py-2"><Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} /></td>
-                  <td className="px-3 py-3 font-medium text-ink">{p.name_en ?? "—"}</td>
+                  <td className="px-3 py-3 font-medium text-ink">{p.name_en ?? "—"}<VariantHits p={p} /></td>
                   <td className="px-3 py-3 text-slate-600" dir="rtl">{p.name_ar ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.sku ?? "—"}</td>
                   <td className="px-3 py-3 font-mono text-xs text-slate-500" title={p.snoonu_id ?? ""}>

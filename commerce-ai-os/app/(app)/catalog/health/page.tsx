@@ -396,6 +396,20 @@ export default function CatalogHealthPage() {
     return ids.size
   }, [counts])
 
+  // باركود الخيارات لكل منتج (للبحث/المسح)
+  const variantBcByProduct = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const v of variants) {
+      if (!v.parent_product_id || !v.barcode) continue
+      const bc = String(v.barcode).trim().toLowerCase()
+      if (!bc) continue
+      const arr = m.get(v.parent_product_id) || []
+      arr.push(bc)
+      m.set(v.parent_product_id, arr)
+    }
+    return m
+  }, [variants])
+
   const activeList = useMemo(() => {
     if (!activeIssue) return []
     let list = counts.get(activeIssue) || []
@@ -405,11 +419,13 @@ export default function CatalogHealthPage() {
         (p) =>
           (p.sku || '').toLowerCase().includes(q) ||
           (p.name_ar || '').toLowerCase().includes(q) ||
-          (p.name_en || '').toLowerCase().includes(q)
+          (p.name_en || '').toLowerCase().includes(q) ||
+          (p.barcode || '').toLowerCase().includes(q) ||
+          (variantBcByProduct.get(p.id) || []).some((b) => b.includes(q))
       )
     }
     return list
-  }, [activeIssue, counts, search])
+  }, [activeIssue, counts, search, variantBcByProduct])
 
   // صفوف فرق السعر لكل منتج: القنوات اللي سعرها يخالف سعر النظام فقط
   const mismatchRows = (p: Product) => {
@@ -772,7 +788,7 @@ export default function CatalogHealthPage() {
               <span style={S.detailCount}>{activeList.length}</span>
             </h2>
             <input
-              placeholder="بحث بالـSKU أو الاسم…"
+              placeholder="بحث بالـSKU أو الاسم أو الباركود (مع باركود الخيارات)…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               style={S.searchInput}
