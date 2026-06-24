@@ -52,7 +52,7 @@ export default async function InventoryPage() {
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase
           .from("product_variants")
-          .select("id, parent_product_id, variant_name, sku, color, size, stock_quantity")
+          .select("id, parent_product_id, variant_name, sku, barcode, color, size, stock_quantity")
           .range(from, from + 999);
         if (error) break;
         for (const v of (data ?? []) as any[]) {
@@ -60,6 +60,7 @@ export default async function InventoryPage() {
             id: v.id,
             variant_name: v.variant_name,
             sku: v.sku,
+            barcode: v.barcode,
             color: v.color,
             size: v.size,
             stock_quantity: v.stock_quantity,
