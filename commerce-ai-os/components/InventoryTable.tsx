@@ -12,6 +12,7 @@ import {
   setLocation,
   saveShelfStock,
   saveVariantShelfStock,
+  bulkAssignShelf,
   type BulkUpdate,
 } from "@/app/(app)/inventory/actions";
 import { compareSlot } from "@/lib/shelf";
@@ -164,6 +165,7 @@ export default function InventoryTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [bulkValue, setBulkValue] = useState("");
+  const [bulkSlot, setBulkSlot] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -343,6 +345,23 @@ export default function InventoryTable({
     e.target.value = "";
   }
 
+  function assignSelectedToShelf() {
+    const slot = bulkSlot.trim().toUpperCase();
+    if (!slot || selected.size === 0) return;
+    const ids = [...selected];
+    startTransition(async () => {
+      const res = await bulkAssignShelf(ids, slot);
+      if (res && "error" in res && res.error) {
+        setMsg({ kind: "err", text: res.error });
+        return;
+      }
+      setMsg({ kind: "ok", text: `أُضيف ${(res as any)?.done ?? ids.length} منتج للرفّ ${slot}` });
+      setSelected(new Set());
+      setBulkSlot("");
+      router.refresh();
+    });
+  }
+
   function pushSelected() {
     if (selected.size === 0) return;
     const items = selectedRows
@@ -475,6 +494,25 @@ export default function InventoryTable({
               Apply
             </button>
           </div>
+          {hasLocation && (
+            <div className="flex items-center gap-2">
+              <span className="text-slate-600">أضف للرفّ</span>
+              <input
+                list="slot-codes"
+                className="input w-24 uppercase"
+                placeholder="A1"
+                value={bulkSlot}
+                onChange={(e) => setBulkSlot(e.target.value)}
+              />
+              <button
+                className="btn-ghost px-3 py-1 text-xs disabled:opacity-50"
+                disabled={bulkSlot.trim() === "" || pending}
+                onClick={assignSelectedToShelf}
+              >
+                إضافة
+              </button>
+            </div>
+          )}
           <button className="btn-ghost px-3 py-1 text-xs" onClick={pushSelected} disabled={pending}>
             Push to Shopify
           </button>

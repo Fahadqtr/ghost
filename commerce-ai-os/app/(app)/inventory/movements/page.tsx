@@ -104,7 +104,7 @@ export default async function MovementsPage() {
   const { data: movData } = await ledger
     .from("malak_audit")
     .select("id, created_at, action_type, sku, old_value, new_value, details")
-    .in("action_type", ["stock_in", "stock_out"])
+    .in("action_type", ["stock_in", "stock_out", "shelf_assign", "shelf_move", "shelf_remove"])
     .order("created_at", { ascending: false })
     .limit(300);
   const movements = (movData ?? []) as Movement[];
@@ -120,7 +120,7 @@ export default async function MovementsPage() {
 
       <div className="card overflow-x-auto p-0">
         <div className="border-b border-slate-200 px-4 py-3 text-sm font-medium text-ink">
-          Movement history <span className="text-muted">({movements.length})</span>
+          سجل الحركات · Movement &amp; shelf history <span className="text-muted">({movements.length})</span>
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -140,23 +140,34 @@ export default async function MovementsPage() {
             ) : (
               movements.map((m) => {
                 const isIn = m.action_type === "stock_in";
+                const isOut = m.action_type === "stock_out";
+                const isShelf = !isIn && !isOut;
                 const qty = m.details?.quantity ?? "—";
-                const reason = m.details?.reason ?? "—";
+                const reason = isShelf
+                  ? m.action_type === "shelf_assign" ? "إسناد رفّ"
+                    : m.action_type === "shelf_move" ? "نقل رفّ"
+                    : "إزالة من رفّ"
+                  : (m.details?.reason ?? "—");
                 const note = m.details?.note ?? "";
                 const name = (m.sku && nameBySku.get(m.sku)) || "—";
+                const badge = isIn ? "bg-green-100 text-green-700"
+                  : isOut ? "bg-orange-100 text-orange-700"
+                  : m.action_type === "shelf_remove" ? "bg-red-100 text-red-700"
+                  : "bg-blue-100 text-blue-700";
+                const label = isIn ? "IN ↓" : isOut ? "OUT ↑" : "رفّ ▦";
                 return (
                   <tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-3 text-xs text-muted">{fmtDateTime(m.created_at)}</td>
                     <td className="px-4 py-3">
-                      <span className={`badge ${isIn ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"}`}>
-                        {isIn ? "IN ↓" : "OUT ↑"}
-                      </span>
+                      <span className={`badge ${badge}`}>{label}</span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-medium text-ink">{name}</div>
                       <div className="text-xs text-muted">{m.sku ?? "—"}</div>
                     </td>
-                    <td className="px-4 py-3 text-right font-medium">{isIn ? "+" : "−"}{qty}</td>
+                    <td className="px-4 py-3 text-right font-medium">
+                      {isShelf ? (qty === "—" ? "—" : qty) : `${isIn ? "+" : "−"}${qty}`}
+                    </td>
                     <td className="px-4 py-3 text-slate-600 capitalize">{reason}</td>
                     <td className="px-4 py-3 text-right text-slate-600">{m.old_value ?? "—"} → {m.new_value ?? "—"}</td>
                     <td className="px-4 py-3 text-slate-500">{note}</td>
