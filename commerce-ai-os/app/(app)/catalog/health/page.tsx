@@ -55,6 +55,7 @@ type IssueKey =
   | 'dup_sku'
   | 'no_snoonu'
   | 'no_rafeeq'
+  | 'no_channel_link'
   | 'price_mismatch'
   | 'not_approved'
 
@@ -160,6 +161,17 @@ const ISSUES: IssueDef[] = [
     test: (p) => !p.rafeeq_product_id || String(p.rafeeq_product_id).trim() === '',
   },
   {
+    key: 'no_channel_link',
+    label: 'غير مربوط بكل المنصّات',
+    desc: 'ينقصه ربط سنونو و/أو رفيق — ربط سريع للكل بالـSKU',
+    severity: 'warning',
+    test: (p) =>
+      !p.snoonu_id ||
+      p.snoonu_id.trim() === '' ||
+      !p.rafeeq_product_id ||
+      String(p.rafeeq_product_id).trim() === '',
+  },
+  {
     key: 'not_approved',
     label: 'غير معتمد',
     desc: 'approved = false — مسودّة لم تُعتمد بعد',
@@ -187,6 +199,9 @@ const BULK_ACTION: Partial<Record<IssueKey, string>> = {
   not_approved: 'اعتماد المحدد',
   no_barcode: 'توليد باركود للمحدد',
   price_mismatch: 'مطابقة أسعار المنصّات للمحدد',
+  no_snoonu: 'ربط سريع بالـSKU',
+  no_rafeeq: 'ربط سريع بالـSKU',
+  no_channel_link: 'ربط بكل المنصّات (SKU)',
 }
 
 const emptyToNull = (v: unknown) =>
@@ -594,6 +609,31 @@ export default function CatalogHealthPage() {
             return p && p.price !== null ? { ...cp, channel_price: p.price } : cp
           })
         )
+      } else if (activeIssue === 'no_snoonu' || activeIssue === 'no_rafeeq' || activeIssue === 'no_channel_link') {
+        // ربط سريع: نحط الـSKU كمعرّف المنصّة للحقول الفاضية فقط
+        const patches = new Map<string, Partial<Product>>()
+        const skipped: string[] = []
+        for (const id of ids) {
+          const p = products.find((x) => x.id === id)
+          if (!p) continue
+          if (!p.sku || p.sku.trim() === '') {
+            skipped.push(id)
+            continue
+          }
+          const patch: Partial<Product> = {}
+          const wantSnoonu = activeIssue === 'no_snoonu' || activeIssue === 'no_channel_link'
+          const wantRafeeq = activeIssue === 'no_rafeeq' || activeIssue === 'no_channel_link'
+          if (wantSnoonu && (!p.snoonu_id || p.snoonu_id.trim() === '')) patch.snoonu_id = p.sku
+          if (wantRafeeq && (!p.rafeeq_product_id || String(p.rafeeq_product_id).trim() === ''))
+            patch.rafeeq_product_id = p.sku
+          if (Object.keys(patch).length) patches.set(id, patch)
+        }
+        for (const [id, patch] of patches) {
+          const { error } = await supabase.from('products').update(patch).eq('id', id)
+          if (error) throw error
+        }
+        setProducts((prev) => prev.map((p) => (patches.has(p.id) ? { ...p, ...patches.get(p.id) } : p)))
+        if (skipped.length) setBulkErr(`تم تخطّي ${skipped.length} منتج بدون SKU — لا يمكن ربطها تلقائيًا`)
       }
 
       setLastUpdated(new Date())
