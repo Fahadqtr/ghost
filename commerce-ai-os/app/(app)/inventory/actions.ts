@@ -607,12 +607,15 @@ export async function moveShelfStock(inventoryId: string, fromLocation: string, 
  * each product's placement with the chosen slot (holding its full stock) and
  * logs every assignment to the movement history.
  */
-export async function bulkAssignShelf(inventoryIds: string[], location: string) {
+export async function bulkAssignShelf(inventoryIds: string[], location: string, setQty?: number) {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const slot = (location ?? "").trim().toUpperCase();
   const ids = (inventoryIds ?? []).filter(Boolean);
   if (!slot || ids.length === 0) return { error: "اختر رفّاً ومنتجاً واحداً على الأقل." };
+  // When provided, the placed quantity is forced to this value (and the row's
+  // total stock is updated to match) — lets "set qty + assign shelf" be one step.
+  const forced = setQty == null ? null : Math.max(0, Math.floor(setQty));
   const admin = writableClient();
   const now = new Date().toISOString();
   const hasShelfStock = !(await admin.from("shelf_stock").select("id").limit(1)).error;
@@ -627,7 +630,7 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string) 
       .single();
     if (!inv) continue;
     const before = (inv as any).location ?? null;
-    const qty = (inv as any).stock_quantity ?? 0;
+    const qty = forced ?? ((inv as any).stock_quantity ?? 0);
     // 0 units → nothing to place; keep `location` consistent with the (empty)
     // shelf map instead of pointing at a slot that holds no shelf_stock row.
     const newLoc = qty > 0 ? slot : null;
@@ -642,7 +645,9 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string) 
         if (ins.error) { errors.push(ins.error.message); continue; }
       }
     }
-    const up = await admin.from("inventory").update({ location: newLoc, updated_at: now }).eq("id", id);
+    const patch: Record<string, unknown> = { location: newLoc, updated_at: now };
+    if (forced != null) patch.stock_quantity = forced;
+    const up = await admin.from("inventory").update(patch).eq("id", id);
     if (up.error) { errors.push(up.error.message); continue; }
 
     await logAudit(admin, {
@@ -669,12 +674,14 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string) 
  * stock is placed at the slot (replacing its placements), the parent product's
  * inventory total is re-synced, and every assignment is logged to history.
  */
-export async function bulkAssignVariantShelf(variantIds: string[], location: string) {
+export async function bulkAssignVariantShelf(variantIds: string[], location: string, setQty?: number) {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const slot = (location ?? "").trim().toUpperCase();
   const ids = (variantIds ?? []).filter(Boolean);
   if (!slot || ids.length === 0) return { error: "اختر رفّاً وخياراً واحداً على الأقل." };
+  // When provided, force each option's placed quantity (and its stock) to this.
+  const forced = setQty == null ? null : Math.max(0, Math.floor(setQty));
   const admin = writableClient();
   const now = new Date().toISOString();
   const parents = new Set<string>();
@@ -690,7 +697,7 @@ export async function bulkAssignVariantShelf(variantIds: string[], location: str
     if (!v) continue;
     // Track the parent up front so a mid-loop failure still re-syncs its total.
     if ((v as any).parent_product_id) parents.add((v as any).parent_product_id);
-    const qty = (v as any).stock_quantity ?? 0;
+    const qty = forced ?? ((v as any).stock_quantity ?? 0);
     const del = await admin.from("variant_shelf_stock").delete().eq("variant_id", id);
     if (del.error) { errors.push(del.error.message); continue; }
     if (qty > 0) {
@@ -698,6 +705,10 @@ export async function bulkAssignVariantShelf(variantIds: string[], location: str
         .from("variant_shelf_stock")
         .insert({ variant_id: id, location: slot, quantity: qty, updated_at: now });
       if (ins.error) { errors.push(ins.error.message); continue; }
+    }
+    if (forced != null) {
+      const uv = await admin.from("product_variants").update({ stock_quantity: forced }).eq("id", id);
+      if (uv.error) { errors.push(uv.error.message); continue; }
     }
     await logAudit(admin, {
       action: "shelf_assign",

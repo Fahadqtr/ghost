@@ -398,6 +398,10 @@ export default function InventoryTable({
     }
     const vids = [...variantIds];
     if (!slot || (pids.length === 0 && vids.length === 0)) return;
+    // If the "Set stock to" field is filled, place that quantity (and set each
+    // item's stock to it) — so 0-stock options also land on the shelf.
+    const raw = bulkValue.trim();
+    const setQty = raw === "" ? undefined : Math.max(0, Math.floor(Number(raw) || 0));
     startTransition(async () => {
       let errText = "";
       let total = 0;
@@ -405,19 +409,20 @@ export default function InventoryTable({
       // succeeded AND surface the error, then still refresh so the UI reflects
       // the rows that did move.
       if (pids.length) {
-        const r = (await bulkAssignShelf(pids, slot)) as any;
+        const r = (await bulkAssignShelf(pids, slot, setQty)) as any;
         if (r?.error) errText = r.error;
         total += r?.done ?? (r?.error ? 0 : pids.length);
       }
       if (vids.length) {
-        const r = (await bulkAssignVariantShelf(vids, slot)) as any;
+        const r = (await bulkAssignVariantShelf(vids, slot, setQty)) as any;
         if (r?.error) errText = errText ? `${errText} | ${r.error}` : r.error;
         total += r?.done ?? (r?.error ? 0 : vids.length);
       }
+      const qtyNote = setQty != null ? ` (كمية ${setQty})` : "";
       if (errText) {
         setMsg({ kind: "err", text: total > 0 ? `أُضيف ${total}، لكن: ${errText}` : errText });
       } else {
-        setMsg({ kind: "ok", text: `أُضيف ${total} عنصر للرفّ ${slot}` });
+        setMsg({ kind: "ok", text: `أُضيف ${total} عنصر للرفّ ${slot}${qtyNote}` });
       }
       setSelected(new Set());
       setSelectedVariants(new Set());
@@ -576,15 +581,19 @@ export default function InventoryTable({
                 className="btn-ghost px-3 py-1 text-xs disabled:opacity-50"
                 disabled={bulkSlot.trim() === "" || pending}
                 onClick={assignSelectedToShelf}
+                title={bulkValue.trim() !== "" ? `يضع كمية ${bulkValue.trim()} لكل عنصر` : "يضع المخزون الحالي لكل عنصر"}
               >
                 إضافة
               </button>
+              {bulkValue.trim() !== "" && (
+                <span className="text-xs text-blue-700">كمية {bulkValue.trim()} لكل عنصر</span>
+              )}
             </div>
           )}
           <button className="btn-ghost px-3 py-1 text-xs" onClick={pushSelected} disabled={pending}>
             Push to Shopify
           </button>
-          <button className="btn-ghost px-3 py-1 text-xs" onClick={() => setSelected(new Set())}>Clear selection</button>
+          <button className="btn-ghost px-3 py-1 text-xs" onClick={() => { setSelected(new Set()); setSelectedVariants(new Set()); }}>Clear selection</button>
         </div>
       )}
 
