@@ -169,6 +169,31 @@ const ISSUES: IssueDef[] = [
   },
 ]
 
+// الحقل المعني بكل مشكلة — يُبرز داخل نافذة التصحيح ليصلحه المستخدم أول
+const ISSUE_FIELD: Partial<Record<IssueKey, keyof Product>> = {
+  no_image: 'image_url',
+  no_barcode: 'barcode',
+  no_price: 'price',
+  zero_price: 'price',
+  no_name_ar: 'name_ar',
+  no_category: 'main_category',
+  no_snoonu: 'snoonu_id',
+  no_rafeeq: 'rafeeq_product_id',
+}
+
+const emptyToNull = (v: unknown) =>
+  v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim()
+
+// توليد باركود EAN-13 صالح (12 رقم + خانة تحقّق)
+function genEan13(): string {
+  let d = ''
+  for (let i = 0; i < 12; i++) d += Math.floor(Math.random() * 10)
+  let sum = 0
+  for (let i = 0; i < 12; i++) sum += (i % 2 === 0 ? 1 : 3) * Number(d[i])
+  const check = (10 - (sum % 10)) % 10
+  return d + check
+}
+
 // ---------- المكوّن ----------
 export default function CatalogHealthPage() {
   const [products, setProducts] = useState<Product[]>([])
@@ -181,6 +206,12 @@ export default function CatalogHealthPage() {
   const [error, setError] = useState<string | null>(null)
   const [activeIssue, setActiveIssue] = useState<IssueKey | null>(null)
   const [search, setSearch] = useState('')
+
+  // نافذة التصحيح المنبثقة
+  const [fixProduct, setFixProduct] = useState<Product | null>(null)
+  const [form, setForm] = useState<Partial<Product>>({})
+  const [saving, setSaving] = useState(false)
+  const [saveErr, setSaveErr] = useState<string | null>(null)
 
   // يعيد فحص الكتالوج من قاعدة البيانات (قراءة فقط). يُستدعى عند فتح الصفحة
   // وعند الضغط على زر «تحديث» ليعكس آخر التغييرات بدون إعادة تحميل الصفحة.
@@ -367,6 +398,54 @@ export default function CatalogHealthPage() {
       })
   }
 
+  // فتح نافذة التصحيح وتعبئتها بقيم المنتج الحالية
+  const openFix = (p: Product) => {
+    setFixProduct(p)
+    setForm({
+      name_ar: p.name_ar ?? '',
+      name_en: p.name_en ?? '',
+      price: p.price,
+      barcode: p.barcode ?? '',
+      main_category: p.main_category ?? '',
+      image_url: p.image_url ?? '',
+      snoonu_id: p.snoonu_id ?? '',
+      rafeeq_product_id: p.rafeeq_product_id ?? '',
+    } as Partial<Product>)
+    setSaveErr(null)
+  }
+
+  // حفظ التعديلات في Supabase ثم تحديث الحالة محليًا (تعيد العدّادات حسابها فورًا)
+  const saveFix = async () => {
+    if (!fixProduct) return
+    setSaving(true)
+    setSaveErr(null)
+    try {
+      const rawPrice = form.price as unknown
+      const patch = {
+        name_ar: emptyToNull(form.name_ar),
+        name_en: emptyToNull(form.name_en),
+        price: rawPrice === undefined || rawPrice === null || String(rawPrice).trim() === ''
+          ? null
+          : Number(rawPrice),
+        barcode: emptyToNull(form.barcode),
+        main_category: emptyToNull(form.main_category),
+        image_url: emptyToNull(form.image_url),
+        snoonu_id: emptyToNull(form.snoonu_id),
+        rafeeq_product_id: emptyToNull(form.rafeeq_product_id),
+      }
+      const supabase = createClient()
+      const { error } = await supabase.from('products').update(patch).eq('id', fixProduct.id)
+      if (error) throw error
+      setProducts((prev) => prev.map((x) => (x.id === fixProduct.id ? { ...x, ...patch } : x)))
+      setLastUpdated(new Date())
+      setFixProduct(null)
+    } catch (e: any) {
+      setSaveErr(e?.message || 'فشل الحفظ')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // ---------- العرض ----------
   if (loading) return <Shell><Centered>جارٍ فحص الكتالوج…</Centered></Shell>
   if (error)
@@ -534,9 +613,9 @@ export default function CatalogHealthPage() {
                       <td style={S.td}>{p.price ?? '—'}</td>
                       <td style={S.td}>{p.main_category || '—'}</td>
                       <td style={S.td}>
-                        <a href={`/products/${p.id}/edit`} style={S.fixLink}>
+                        <button onClick={() => openFix(p)} style={S.fixBtn}>
                           تصحيح ←
-                        </a>
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -552,6 +631,92 @@ export default function CatalogHealthPage() {
 
       {!activeIssue && (
         <p style={S.hint}>اضغط أي بطاقة لعرض المنتجات المتأثرة وتصحيحها</p>
+      )}
+
+      {/* نافذة التصحيح المنبثقة */}
+      {fixProduct && (
+        <div style={S.overlay} onClick={() => !saving && setFixProduct(null)}>
+          <div style={S.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <div>
+                <h3 style={S.modalTitle}>تصحيح المنتج</h3>
+                <span style={S.modalSku}>{fixProduct.sku || '—'}</span>
+              </div>
+              <button onClick={() => !saving && setFixProduct(null)} style={S.modalClose} aria-label="إغلاق">
+                ✕
+              </button>
+            </div>
+
+            <div style={S.modalBody}>
+              {(() => {
+                const focusField = activeIssue ? ISSUE_FIELD[activeIssue] : undefined
+                const variant = ctx.variantStats.get(fixProduct.id)
+                const hasVariants = !!variant && variant.total > 0
+                const fieldStyle = (k: keyof Product): React.CSSProperties => ({
+                  ...S.input,
+                  ...(focusField === k ? { borderColor: '#2563eb', boxShadow: '0 0 0 2px #bfdbfe' } : {}),
+                })
+                const set = (k: keyof Product, v: any) => setForm((f) => ({ ...f, [k]: v }))
+                return (
+                  <>
+                    <label style={S.fieldLabel}>الاسم العربي</label>
+                    <input style={fieldStyle('name_ar')} value={(form.name_ar as string) ?? ''} onChange={(e) => set('name_ar', e.target.value)} dir="rtl" />
+
+                    <label style={S.fieldLabel}>الاسم الإنجليزي</label>
+                    <input style={fieldStyle('name_en')} value={(form.name_en as string) ?? ''} onChange={(e) => set('name_en', e.target.value)} dir="ltr" />
+
+                    <label style={S.fieldLabel}>السعر</label>
+                    <input style={fieldStyle('price')} type="number" value={(form.price as number) ?? ''} onChange={(e) => set('price', e.target.value)} dir="ltr" />
+
+                    <label style={S.fieldLabel}>الباركود</label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input style={{ ...fieldStyle('barcode'), flex: 1 }} value={(form.barcode as string) ?? ''} onChange={(e) => set('barcode', e.target.value)} dir="ltr" />
+                      <button type="button" style={S.genBtn} onClick={() => set('barcode', genEan13())}>
+                        توليد EAN-13
+                      </button>
+                    </div>
+                    {hasVariants && (
+                      <p style={S.variantNote}>
+                        ⚠ هذا المنتج له {variant!.total} خيار ({variant!.withBc}/{variant!.total} فيها باركود).
+                        باركود المنتج هنا لا يغطّي الخيارات — افتح{' '}
+                        <a href={`/products/${fixProduct.id}/edit`} style={{ color: '#2563eb' }}>صفحة التعديل الكاملة</a>{' '}
+                        لباركود كل خيار.
+                      </p>
+                    )}
+
+                    <label style={S.fieldLabel}>التصنيف</label>
+                    <input style={fieldStyle('main_category')} value={(form.main_category as string) ?? ''} onChange={(e) => set('main_category', e.target.value)} dir="rtl" />
+
+                    <label style={S.fieldLabel}>رابط الصورة</label>
+                    <input style={fieldStyle('image_url')} value={(form.image_url as string) ?? ''} onChange={(e) => set('image_url', e.target.value)} dir="ltr" />
+
+                    <div style={{ display: 'flex', gap: 12 }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={S.fieldLabel}>Snoonu ID</label>
+                        <input style={fieldStyle('snoonu_id')} value={(form.snoonu_id as string) ?? ''} onChange={(e) => set('snoonu_id', e.target.value)} dir="ltr" />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={S.fieldLabel}>Rafeeq ID</label>
+                        <input style={fieldStyle('rafeeq_product_id')} value={(form.rafeeq_product_id as string) ?? ''} onChange={(e) => set('rafeeq_product_id', e.target.value)} dir="ltr" />
+                      </div>
+                    </div>
+                  </>
+                )
+              })()}
+
+              {saveErr && <p style={S.saveErr}>{saveErr}</p>}
+            </div>
+
+            <div style={S.modalFoot}>
+              <button onClick={() => setFixProduct(null)} disabled={saving} style={S.btnGhost}>
+                إلغاء
+              </button>
+              <button onClick={saveFix} disabled={saving} style={{ ...S.btnPrimary, opacity: saving ? 0.6 : 1 }}>
+                {saving ? 'جارٍ الحفظ…' : 'حفظ'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Shell>
   )
@@ -617,8 +782,50 @@ const S: Record<string, React.CSSProperties> = {
   th: { textAlign: 'right', padding: '10px 16px', fontSize: 12, fontWeight: 700, color: '#64748b', borderBottom: '1px solid #e2e8f0', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #f1f5f9' },
   td: { padding: '10px 16px', whiteSpace: 'nowrap' },
-  fixLink: { color: '#2563eb', fontWeight: 600, fontSize: 13, textDecoration: 'none' },
+  fixBtn: {
+    color: '#2563eb', fontWeight: 600, fontSize: 13, font: 'inherit',
+    background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+  },
   empty: { padding: 32, textAlign: 'center', color: '#16a34a', fontWeight: 600 },
+  overlay: {
+    position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'grid',
+    placeItems: 'center', padding: 16, zIndex: 50,
+  },
+  modal: {
+    width: 'min(560px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+    background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,.3)',
+  },
+  modalHead: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12,
+    padding: '16px 20px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc',
+  },
+  modalTitle: { fontSize: 18, fontWeight: 800, margin: 0 },
+  modalSku: { fontSize: 13, color: '#64748b', fontFamily: 'monospace', direction: 'ltr', display: 'inline-block', marginTop: 2 },
+  modalClose: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#64748b', lineHeight: 1 },
+  modalBody: { padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 },
+  fieldLabel: { fontSize: 12, fontWeight: 700, color: '#475569', marginTop: 10, marginBottom: 4 },
+  input: {
+    width: '100%', padding: '9px 12px', borderRadius: 10, border: '1.5px solid #cbd5e1',
+    fontSize: 14, font: 'inherit', boxSizing: 'border-box',
+  },
+  genBtn: {
+    font: 'inherit', fontSize: 12, fontWeight: 700, color: '#0f172a', background: '#f1f5f9',
+    border: '1.5px solid #cbd5e1', borderRadius: 10, padding: '0 12px', cursor: 'pointer', whiteSpace: 'nowrap',
+  },
+  variantNote: { fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px', marginTop: 6, lineHeight: 1.6 },
+  saveErr: { color: '#dc2626', fontSize: 13, fontWeight: 600, marginTop: 12 },
+  modalFoot: {
+    display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 20px',
+    borderTop: '1px solid #e2e8f0', background: '#f8fafc',
+  },
+  btnGhost: {
+    font: 'inherit', fontSize: 14, fontWeight: 700, color: '#475569', background: '#fff',
+    border: '1.5px solid #cbd5e1', borderRadius: 10, padding: '8px 18px', cursor: 'pointer',
+  },
+  btnPrimary: {
+    font: 'inherit', fontSize: 14, fontWeight: 700, color: '#fff', background: '#0f172a',
+    border: 'none', borderRadius: 10, padding: '8px 22px', cursor: 'pointer',
+  },
   more: { padding: 12, textAlign: 'center', fontSize: 13, color: '#94a3b8' },
   hint: { marginTop: 24, textAlign: 'center', fontSize: 14, color: '#94a3b8' },
 }
