@@ -853,6 +853,23 @@ export default function CatalogHealthPage() {
                             ))}
                           </div>
                         )}
+                        {activeIssue === 'no_barcode' &&
+                          (() => {
+                            const vs = ctx.variantStats.get(p.id)
+                            if (vs && vs.total > 0) {
+                              const missing = vs.total - vs.withBc
+                              return (
+                                <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, color: '#92400e' }}>
+                                  ناقص باركود: {missing} من {vs.total} خيار
+                                </div>
+                              )
+                            }
+                            return (
+                              <div style={{ marginTop: 4, fontSize: 12, color: '#92400e' }}>
+                                باركود المنتج فاضي
+                              </div>
+                            )
+                          })()}
                       </td>
                       <td style={S.td}>{p.price ?? '—'}</td>
                       <td style={S.td}>{p.main_category || '—'}</td>
