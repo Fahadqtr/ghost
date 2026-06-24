@@ -123,6 +123,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         grp === "new" ? (p.notes ?? "").startsWith("Imported from Snoonu sync")
         : grp === "image" ? rr.includes("صورة")
         : grp === "unavail" ? rr.includes("غير متاح")
+        : grp === "variants" ? p.variant_count > 0
         : true);
       return matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
     });
@@ -157,6 +158,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         </select>
         <select className="input sm:max-w-[14rem]" value={grp} onChange={(e) => setGrp(e.target.value)}>
           <option value="">كل المجموعات</option>
+          <option value="variants">🎚️ له خيارات · variants</option>
           <option value="new">🆕 جديد · من سنونو</option>
           <option value="image">🚫 مرفوض · بسبب الصورة</option>
           <option value="unavail">⛔ مرفوض · غير متاح على سنونو</option>
