@@ -1,9 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { shelfOf, compareSlot } from "@/lib/shelf";
+import { removeFromShelf, moveShelfStock } from "@/app/(app)/inventory/actions";
 
 export type ShelfItem = {
+  inventory_id: string;
   location: string;
   name: string | null;
   name_ar: string | null;
@@ -13,8 +16,39 @@ export type ShelfItem = {
   total: number; // product's total stock (all shelves)
 };
 
-export default function ShelfContents({ items }: { items: ShelfItem[] }) {
+export default function ShelfContents({ items, slotCodes = [] }: { items: ShelfItem[]; slotCodes?: string[] }) {
   const [q, setQ] = useState("");
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  const allSlots = useMemo(() => {
+    const set = new Set<string>(slotCodes.map((c) => c.toUpperCase()));
+    for (const it of items) set.add(it.location.toUpperCase());
+    return Array.from(set).sort(compareSlot);
+  }, [slotCodes, items]);
+
+  const runAction = (key: string, fn: () => Promise<{ error?: string } | { ok: true } | void>) => {
+    setBusyKey(key);
+    startTransition(async () => {
+      const res = await fn();
+      setBusyKey(null);
+      if (res && "error" in res && res.error) {
+        alert(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  const onMove = (p: ShelfItem, to: string) => {
+    if (!to || to === p.location) return;
+    runAction(`${p.inventory_id}:${p.location}`, () => moveShelfStock(p.inventory_id, p.location, to));
+  };
+  const onRemove = (p: ShelfItem) => {
+    if (!confirm(`شيل «${p.name ?? p.sku ?? "المنتج"}» من الرفّ ${p.location}؟`)) return;
+    runAction(`${p.inventory_id}:${p.location}`, () => removeFromShelf(p.inventory_id, p.location));
+  };
 
   // Filter, then group by shelf → slot.
   const groups = useMemo(() => {
@@ -101,6 +135,7 @@ export default function ShelfContents({ items }: { items: ShelfItem[] }) {
                             <th className="hidden px-3 py-2 sm:table-cell">Barcode</th>
                             <th className="px-3 py-2 text-right">Here</th>
                             <th className="px-3 py-2 text-right">Total</th>
+                            <th className="px-3 py-2 text-right print:hidden">إجراءات</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -114,6 +149,32 @@ export default function ShelfContents({ items }: { items: ShelfItem[] }) {
                               <td className="hidden px-3 py-2 font-mono text-slate-600 sm:table-cell">{p.barcode ?? "—"}</td>
                               <td className="px-3 py-2 text-right font-semibold text-ink">{p.quantity}</td>
                               <td className="px-3 py-2 text-right text-slate-500">{p.total}</td>
+                              <td className="px-3 py-2 text-right print:hidden">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <select
+                                    className="input h-7 w-auto py-0 text-xs"
+                                    value={p.location}
+                                    disabled={pending && busyKey === `${p.inventory_id}:${p.location}`}
+                                    onChange={(e) => onMove(p, e.target.value)}
+                                    title="نقل لرفّ آخر"
+                                  >
+                                    {!allSlots.includes(p.location) && <option value={p.location}>{p.location}</option>}
+                                    {allSlots.map((c) => (
+                                      <option key={c} value={c}>
+                                        {c}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                    disabled={pending && busyKey === `${p.inventory_id}:${p.location}`}
+                                    onClick={() => onRemove(p)}
+                                    title="شيل من الرفّ"
+                                  >
+                                    ✕ شيل
+                                  </button>
+                                </div>
+                              </td>
                             </tr>
                           ))}
                         </tbody>

@@ -99,6 +99,23 @@ export default function ProductForm({
   // توليد باركود للمنتج الرئيسي
   const generateBarcode = () => setForm((f) => ({ ...f, barcode: genEan13() }));
 
+  // مسح بالماسح: الماسح يرسل Enter بعد الباركود. بدل ما يحفظ الفورم، ننتقل لحقل
+  // باركود الخيار التالي ليُمسح بسرعة (وللأخير نخرج من الحقل بدون حفظ).
+  const focusVariantBarcode = (idx: number) => {
+    const el = document.querySelector(`[data-vbc="${idx}"]`) as HTMLInputElement | null;
+    if (el) {
+      el.focus();
+      el.select();
+    }
+    return !!el;
+  };
+  const onBarcodeEnter = (e: React.KeyboardEvent, nextIdx: number) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (!focusVariantBarcode(nextIdx)) (e.target as HTMLInputElement).blur();
+    }
+  };
+
   // توليد باركود الخيارات: نفس الباركود الرئيسي + لاحقة تسلسلية (-1، -2…).
   // لو الرئيسي فاضي نولّد له EAN-13 أول، ونملأ الخيارات الفاضية فقط.
   const generateVariantBarcodes = () =>
@@ -149,7 +166,7 @@ export default function ProductForm({
         <Field label="SKU"><input className="input" value={form.sku} onChange={(e) => set("sku", e.target.value)} /></Field>
         <Field label="Barcode">
           <div className="flex gap-2">
-            <input className="input flex-1" value={form.barcode} onChange={(e) => set("barcode", e.target.value)} />
+            <input className="input flex-1" value={form.barcode} onChange={(e) => set("barcode", e.target.value)} onKeyDown={(e) => onBarcodeEnter(e, 0)} />
             <button type="button" className="btn-ghost whitespace-nowrap" onClick={generateBarcode}>توليد</button>
           </div>
         </Field>
@@ -253,7 +270,7 @@ export default function ProductForm({
               <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-7">
                 <input className="input" placeholder="Variant name" value={v.variant_name} onChange={(e) => setVariant(i, "variant_name", e.target.value)} />
                 <input className="input" placeholder="SKU" value={v.sku} onChange={(e) => setVariant(i, "sku", e.target.value)} />
-                <input className="input" placeholder="Barcode" value={v.barcode} onChange={(e) => setVariant(i, "barcode", e.target.value)} />
+                <input className="input" placeholder="Barcode" data-vbc={i} value={v.barcode} onChange={(e) => setVariant(i, "barcode", e.target.value)} onKeyDown={(e) => onBarcodeEnter(e, i + 1)} />
                 <input className="input" placeholder="Color" value={v.color} onChange={(e) => setVariant(i, "color", e.target.value)} />
                 <input className="input" placeholder="Size" value={v.size} onChange={(e) => setVariant(i, "size", e.target.value)} />
                 <input className="input" type="number" step="0.01" placeholder="Price" value={v.price} onChange={(e) => setVariant(i, "price", e.target.value)} />
