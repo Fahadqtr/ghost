@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import BarcodeScanner from "@/components/BarcodeScanner";
 import { CATEGORIES } from "@/lib/constants";
 import { setProductApproval } from "@/app/(app)/products/actions";
 
@@ -95,6 +96,7 @@ function RowApproval({ id, value }: { id: string; value: string | null }) {
 export default function ProductTable({ products }: { products: ProductRow[] }) {
   const router = useRouter();
   const [q, setQ] = useState("");
+  const [scanning, setScanning] = useState(false);
   const [cat, setCat] = useState("");
   const [appr, setAppr] = useState("");
   const [stk, setStk] = useState("");
@@ -192,13 +194,33 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <input
-          className="input sm:max-w-xs"
-          placeholder="Search name (EN/AR), SKU, barcode (incl. variants)…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+      {scanning && (
+        <BarcodeScanner
+          onDetected={(code) => {
+            setQ(code.trim());
+            setScanning(false);
+          }}
+          onClose={() => setScanning(false)}
         />
+      )}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex w-full sm:max-w-xs">
+          <input
+            className="input w-full pr-9"
+            placeholder="Search name (EN/AR), SKU, barcode (incl. variants)…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <button
+            type="button"
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-base leading-none hover:bg-slate-100"
+            title="Scan barcode with camera"
+            aria-label="Scan barcode"
+            onClick={() => setScanning(true)}
+          >
+            📷
+          </button>
+        </div>
         <select className="input sm:max-w-xs" value={cat} onChange={(e) => setCat(e.target.value)}>
           <option value="">All categories</option>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}

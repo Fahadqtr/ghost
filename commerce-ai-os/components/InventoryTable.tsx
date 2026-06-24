@@ -22,6 +22,7 @@ export interface Variant {
   id: string;
   variant_name: string | null;
   sku: string | null;
+  barcode: string | null;
   color: string | null;
   size: string | null;
   stock_quantity: number | null;
@@ -190,6 +191,18 @@ export default function InventoryTable({
     return (e.stock !== undefined && e.stock !== o.stock) || (e.threshold !== undefined && e.threshold !== o.threshold);
   };
 
+  // Does any of this product's options match the search? (barcode / sku / name)
+  const variantMatch = (r: InventoryRow, needle: string) => {
+    if (!needle) return false;
+    const vs = (r.product_id && variantsByProduct[r.product_id]) || [];
+    return vs.some(
+      (v) =>
+        (v.barcode ?? "").toLowerCase().includes(needle) ||
+        (v.sku ?? "").toLowerCase().includes(needle) ||
+        (v.variant_name ?? "").toLowerCase().includes(needle)
+    );
+  };
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return rows.filter((r) => {
@@ -198,7 +211,8 @@ export default function InventoryTable({
         (r.product_name ?? "").toLowerCase().includes(needle) ||
         (r.product_name_ar ?? "").includes(q.trim()) ||
         (r.sku ?? "").toLowerCase().includes(needle) ||
-        (r.barcode ?? "").toLowerCase().includes(needle);
+        (r.barcode ?? "").toLowerCase().includes(needle) ||
+        variantMatch(r, needle);
       const st = statusOf(Number(curStock(r)) || 0, Number(curThreshold(r)) || null);
       const matchesStatus = statusFilter === "all" || st === statusFilter;
       const matchesCat = !catFilter || r.category === catFilter;
@@ -355,8 +369,18 @@ export default function InventoryTable({
 
   function assignSelectedToShelf() {
     const slot = bulkSlot.trim().toUpperCase();
-    const pids = [...selected];
-    const vids = [...selectedVariants];
+    // A product that has options stores its shelf stock on the OPTIONS, not on
+    // the product row — so a selected variant-product is expanded into its
+    // options here. Only optionless products go through the product path.
+    const pids: string[] = [];
+    const variantIds = new Set(selectedVariants);
+    for (const rowId of selected) {
+      const r = rows.find((x) => x.id === rowId);
+      const vs = (r?.product_id && variantsByProduct[r.product_id]) || [];
+      if (vs.length > 0) vs.forEach((v) => variantIds.add(v.id));
+      else pids.push(rowId);
+    }
+    const vids = [...variantIds];
     if (!slot || (pids.length === 0 && vids.length === 0)) return;
     startTransition(async () => {
       let errText = "";
@@ -571,7 +595,7 @@ export default function InventoryTable({
               st === "out" ? "bg-red-100 text-red-700" : st === "low" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700";
             const dirty = isDirty(r);
             const variants = (r.product_id && variantsByProduct[r.product_id]) || [];
-            const isExpanded = expanded.has(r.id);
+            const isExpanded = expanded.has(r.id) || variantMatch(r, q.trim().toLowerCase());
             const vThr = Number(curThreshold(r)) || 0;
             const vOut = variants.filter((v) => (v.stock_quantity ?? 0) <= 0).length;
             const vLow = variants.filter((v) => (v.stock_quantity ?? 0) > 0 && (v.stock_quantity ?? 0) <= vThr).length;
@@ -745,7 +769,7 @@ export default function InventoryTable({
                   st === "out" ? "bg-red-100 text-red-700" : st === "low" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700";
                 const dirty = isDirty(r);
                 const variants = (r.product_id && variantsByProduct[r.product_id]) || [];
-                const isExpanded = expanded.has(r.id);
+                const isExpanded = expanded.has(r.id) || variantMatch(r, q.trim().toLowerCase());
                 const colCount = hasLocation ? 10 : 9;
                 // Variant-level low/out alerts (reuse the product's threshold per option).
                 const vThr = Number(curThreshold(r)) || 0;
