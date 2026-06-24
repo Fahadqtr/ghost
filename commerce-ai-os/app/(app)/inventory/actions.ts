@@ -1218,3 +1218,79 @@ export async function recognizeProduct(imageDataUrl: string): Promise<
     return { error: `Catalog search failed: ${e?.message ?? "unknown error"}` };
   }
 }
+
+/**
+ * Mark a pasted list of product names as out of stock across platforms:
+ *  - zeroes inventory.stock_quantity (and every variant's stock),
+ *  - sets products.stock_status = "Out of Stock",
+ *  - delists each linked sales channel (channel_status = "Not Listed"),
+ *  - pushes quantity 0 to Shopify (best-effort).
+ * Names are matched against sku / name_en / name_ar (case/punctuation-insensitive,
+ * trailing "…" tolerated). Returns matched count, the unmatched lines, and the
+ * Shopify push result so the UI can show exactly what happened.
+ */
+export async function markOutOfStockByNames(text: string): Promise<{
+  error?: string;
+  matched: number;
+  unmatched: string[];
+  shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
+}> {
+  const unauth = await requireUser();
+  if (unauth) return { error: (unauth as any).error ?? "Not signed in.", matched: 0, unmatched: [] };
+
+  const lines = [...new Set((text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean))];
+  if (lines.length === 0) return { matched: 0, unmatched: [] };
+
+  const admin = writableClient();
+
+  // Load the whole catalog once for fuzzy name matching.
+  const all: any[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await admin.from("products").select("id, sku, name_en, name_ar").range(f, f + 999);
+    if (error) return { error: error.message, matched: 0, unmatched: [] };
+    all.push(...(data ?? []));
+    if ((data ?? []).length < 1000) break;
+  }
+  const norm = (s: string) =>
+    String(s ?? "").toLowerCase().replace(/[’‘'`´]/g, "").replace(/\s+/g, " ").trim();
+
+  const ids = new Set<string>();
+  const skus = new Set<string>();
+  const unmatched: string[] = [];
+  for (const line of lines) {
+    const ln = norm(line).replace(/[.…]+$/, "").trim();
+    if (!ln) continue;
+    const hits = all.filter(
+      (p) =>
+        norm(p.sku) === ln ||
+        (p.name_en && norm(p.name_en).includes(ln)) ||
+        (p.name_ar && norm(p.name_ar).includes(ln))
+    );
+    if (hits.length === 0) { unmatched.push(line); continue; }
+    for (const h of hits) { ids.add(h.id); if (h.sku) skus.add(String(h.sku)); }
+  }
+
+  const idList = [...ids];
+  const now = new Date().toISOString();
+  for (let i = 0; i < idList.length; i += 200) {
+    const chunk = idList.slice(i, i + 200);
+    await admin.from("inventory").update({ stock_quantity: 0, updated_at: now }).in("product_id", chunk);
+    await admin.from("product_variants").update({ stock_quantity: 0 }).in("parent_product_id", chunk);
+    await admin.from("products").update({ stock_status: "Out of Stock" }).in("id", chunk);
+    await admin.from("channel_products").update({ channel_status: "Not Listed" }).in("product_id", chunk);
+  }
+
+  // Best-effort: push 0 stock to Shopify for every matched SKU.
+  let shopify: { configured: boolean; pushed?: number; failed?: number; message?: string } | undefined;
+  if (skus.size > 0) {
+    const res = await pushStockToShopify([...skus].map((sku) => ({ sku, quantity: 0 })));
+    shopify = res.configured
+      ? { configured: true, pushed: res.pushed, failed: res.failed }
+      : { configured: false, message: res.message };
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/out-of-stock");
+  revalidatePath("/products");
+  return { matched: idList.length, unmatched, shopify };
+}
