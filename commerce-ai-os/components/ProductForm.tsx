@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CATEGORIES, STOCK_STATUSES } from "@/lib/constants";
 import type { Brand } from "@/lib/types";
@@ -8,6 +8,8 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  nextProductSku,
+  describeProductFromImage,
   type ProductInput,
   type VariantInput,
 } from "@/app/(app)/products/actions";
@@ -21,6 +23,11 @@ const EMPTY_VARIANT: VariantInput = {
   price: "",
   stock_quantity: "",
 };
+
+// slug للـSKU: "Iphone 16 Pro" -> "iphone-16-pro"
+function slug(s: string): string {
+  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
 
 // توليد باركود EAN-13 صالح (12 رقم + خانة تحقّق)
 function genEan13(): string {
@@ -130,6 +137,65 @@ export default function ProductForm({
       };
     });
 
+  // --- SKU generation -------------------------------------------------------
+  const [skuBusy, setSkuBusy] = useState(false);
+  // توليد SKU للمنتج (mk#### التالي في الكتالوج).
+  const generateSku = async () => {
+    setSkuBusy(true);
+    const res = await nextProductSku();
+    setSkuBusy(false);
+    if (res.error) { setError(res.error); return; }
+    if (res.sku) setForm((f) => ({ ...f, sku: res.sku }));
+    return res.sku;
+  };
+  // توليد SKU للخيارات: {parentSku}-{N}-{slug(name)}. يملأ الفاضية فقط، ويولّد
+  // SKU رئيسي أول لو كان فاضياً.
+  const generateVariantSkus = async () => {
+    let base = form.sku.trim();
+    if (!base) base = (await generateSku()) || "";
+    if (!base) return;
+    setForm((f) => ({
+      ...f,
+      sku: base,
+      variants: f.variants.map((v, i) =>
+        v.sku.trim()
+          ? v
+          : { ...v, sku: `${base}-${i + 1}${v.variant_name.trim() ? `-${slug(v.variant_name)}` : ""}` }
+      ),
+    }));
+  };
+
+  // For a NEW product, pre-fill the SKU with the next mk#### on first load.
+  useEffect(() => {
+    if (!productId && !form.sku.trim()) void generateSku();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- AI: title + description from the product image ------------------------
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMsg, setAiMsg] = useState<string | null>(null);
+  const describeFromImage = async () => {
+    const url = form.image_url.trim();
+    if (!url) { setAiMsg("أضف Image URL أولاً."); return; }
+    setAiBusy(true);
+    setAiMsg(null);
+    const res = await describeProductFromImage(url);
+    setAiBusy(false);
+    if (res.error) { setAiMsg(res.error); return; }
+    const d = res.data!;
+    // Fill empty fields; don't clobber anything the user already typed.
+    setForm((f) => ({
+      ...f,
+      name_en: f.name_en.trim() || d.name_en,
+      name_ar: f.name_ar.trim() || d.name_ar,
+      description_en: f.description_en.trim() || d.description_en,
+      description_ar: f.description_ar.trim() || d.description_ar,
+      keywords_en: f.keywords_en.trim() || d.keywords_en,
+      keywords_ar: f.keywords_ar.trim() || d.keywords_ar,
+    }));
+    setAiMsg("تم توليد العنوان والوصف ✓");
+  };
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -163,7 +229,14 @@ export default function ProductForm({
 
       {/* Identity */}
       <Section title="Identity">
-        <Field label="SKU"><input className="input" value={form.sku} onChange={(e) => set("sku", e.target.value)} /></Field>
+        <Field label="SKU">
+          <div className="flex gap-2">
+            <input className="input flex-1" value={form.sku} onChange={(e) => set("sku", e.target.value)} />
+            <button type="button" className="btn-ghost whitespace-nowrap disabled:opacity-50" onClick={generateSku} disabled={skuBusy}>
+              {skuBusy ? "…" : "توليد"}
+            </button>
+          </div>
+        </Field>
         <Field label="Barcode">
           <div className="flex gap-2">
             <input className="input flex-1" value={form.barcode} onChange={(e) => set("barcode", e.target.value)} onKeyDown={(e) => onBarcodeEnter(e, 0)} />
@@ -234,7 +307,30 @@ export default function ProductForm({
       {/* Media */}
       <Section title="Media">
         <Field label="Image filename"><input className="input" value={form.image_filename} onChange={(e) => set("image_filename", e.target.value)} /></Field>
-        <Field label="Image URL"><input className="input" value={form.image_url} onChange={(e) => set("image_url", e.target.value)} /></Field>
+        <Field label="Image URL">
+          <input
+            className="input"
+            value={form.image_url}
+            onChange={(e) => set("image_url", e.target.value)}
+            onBlur={() => {
+              // Auto-draft once when an image is added and content is still empty.
+              if (form.image_url.trim() && !form.name_en.trim() && !form.description_en.trim() && !aiBusy) void describeFromImage();
+            }}
+          />
+        </Field>
+        <Field label="الذكاء · AI" wide>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn-ghost whitespace-nowrap disabled:opacity-50"
+              onClick={describeFromImage}
+              disabled={aiBusy || !form.image_url.trim()}
+            >
+              {aiBusy ? "…يحلّل الصورة" : "✨ توليد العنوان والوصف من الصورة"}
+            </button>
+            {aiMsg ? <span className="text-xs text-muted">{aiMsg}</span> : null}
+          </div>
+        </Field>
       </Section>
 
       {/* Content */}
@@ -255,9 +351,14 @@ export default function ProductForm({
           </div>
           <div className="flex gap-2">
             {form.variants.length > 0 ? (
-              <button type="button" className="btn-ghost whitespace-nowrap" onClick={generateVariantBarcodes} title="نفس الباركود الرئيسي + -1، -2…">
-                توليد باركود الخيارات
-              </button>
+              <>
+                <button type="button" className="btn-ghost whitespace-nowrap" onClick={generateVariantSkus} title="{SKU الرئيسي}-1-اسم-الخيار…">
+                  توليد SKU الخيارات
+                </button>
+                <button type="button" className="btn-ghost whitespace-nowrap" onClick={generateVariantBarcodes} title="نفس الباركود الرئيسي + -1، -2…">
+                  توليد باركود الخيارات
+                </button>
+              </>
             ) : null}
             <button type="button" className="btn-ghost" onClick={addVariant}>+ Add variant</button>
           </div>
