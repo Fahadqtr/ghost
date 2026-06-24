@@ -1251,23 +1251,29 @@ export async function markOutOfStockByNames(text: string): Promise<{
     all.push(...(data ?? []));
     if ((data ?? []).length < 1000) break;
   }
-  const norm = (s: string) =>
-    String(s ?? "").toLowerCase().replace(/[’‘'`´]/g, "").replace(/\s+/g, " ").trim();
+  // Loose key: keep only letters/digits (drops spaces, dashes – — -, &, (), …,
+  // ², quotes) so "Bath Bombs Set – 6 Pieces" matches the catalog whatever the
+  // punctuation. Latin + Arabic letters kept.
+  const keyOf = (s: string) =>
+    String(s ?? "").toLowerCase().replace(/[^a-z0-9؀-ۿ]/g, "");
+  const cat = all.map((p) => ({ p, en: keyOf(p.name_en), ar: keyOf(p.name_ar), sku: keyOf(p.sku) }));
 
   const ids = new Set<string>();
   const skus = new Set<string>();
   const unmatched: string[] = [];
   for (const line of lines) {
-    const ln = norm(line).replace(/[.…]+$/, "").trim();
-    if (!ln) continue;
-    const hits = all.filter(
-      (p) =>
-        norm(p.sku) === ln ||
-        (p.name_en && norm(p.name_en).includes(ln)) ||
-        (p.name_ar && norm(p.name_ar).includes(ln))
+    const ln = keyOf(line.replace(/[.…]+$/, ""));
+    if (ln.length < 5) { unmatched.push(line); continue; }
+    // Match on SKU equality, or either-direction containment of the name key
+    // (handles "Name – 6 Pieces" in paste vs "Name" in catalog and vice-versa).
+    const hits = cat.filter(
+      (c) =>
+        (c.sku && c.sku === ln) ||
+        (c.en.length >= 6 && (c.en.includes(ln) || ln.includes(c.en))) ||
+        (c.ar.length >= 6 && (c.ar.includes(ln) || ln.includes(c.ar)))
     );
     if (hits.length === 0) { unmatched.push(line); continue; }
-    for (const h of hits) { ids.add(h.id); if (h.sku) skus.add(String(h.sku)); }
+    for (const h of hits) { ids.add(h.p.id); if (h.p.sku) skus.add(String(h.p.sku)); }
   }
 
   const idList = [...ids];
