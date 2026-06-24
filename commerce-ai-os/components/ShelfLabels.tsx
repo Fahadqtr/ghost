@@ -31,6 +31,7 @@ function Barcode({ value, height }: { value: string; height: number }) {
 
 export default function ShelfLabels({ items }: { items: LabelItem[] }) {
   const [shelf, setShelf] = useState("");
+  const [slot, setSlot] = useState(""); // a specific rack within the shelf (e.g. A2)
   const [cols, setCols] = useState(3);
 
   const shelves = useMemo(() => {
@@ -39,8 +40,22 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
     return Array.from(set).sort();
   }, [items]);
 
+  // Slots (racks) available — narrowed to the chosen shelf when one is selected.
+  const slots = useMemo(() => {
+    const set = new Set<string>();
+    for (const it of items) {
+      const loc = it.location.toUpperCase();
+      if (!shelf || shelfOf(loc) === shelf) set.add(loc);
+    }
+    return Array.from(set).sort(compareSlot);
+  }, [items, shelf]);
+
   const groups = useMemo(() => {
-    const picked = shelf ? items.filter((it) => shelfOf(it.location) === shelf) : items;
+    const picked = slot
+      ? items.filter((it) => it.location.toUpperCase() === slot)
+      : shelf
+        ? items.filter((it) => shelfOf(it.location) === shelf)
+        : items;
     const byShelf = new Map<string, LabelItem[]>();
     for (const it of picked) {
       const s = shelfOf(it.location) ?? "?";
@@ -56,7 +71,7 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
           (a, b) => compareSlot(a.location, b.location) || (a.name ?? "").localeCompare(b.name ?? "")
         ),
       }));
-  }, [items, shelf]);
+  }, [items, shelf, slot]);
 
   return (
     <div className="space-y-4">
@@ -77,9 +92,20 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
       <div className="card flex flex-wrap items-center gap-4 text-sm print:hidden">
         <label className="flex items-center gap-2">
           Shelf
-          <select className="input w-auto" value={shelf} onChange={(e) => setShelf(e.target.value)}>
+          <select
+            className="input w-auto"
+            value={shelf}
+            onChange={(e) => { setShelf(e.target.value); setSlot(""); }}
+          >
             <option value="">All shelves</option>
             {shelves.map((s) => <option key={s} value={s}>Shelf {s}</option>)}
+          </select>
+        </label>
+        <label className="flex items-center gap-2">
+          Slot
+          <select className="input w-auto" value={slot} onChange={(e) => setSlot(e.target.value)}>
+            <option value="">All slots</option>
+            {slots.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
         <label className="flex items-center gap-2">
