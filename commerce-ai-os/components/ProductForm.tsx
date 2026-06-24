@@ -22,6 +22,16 @@ const EMPTY_VARIANT: VariantInput = {
   stock_quantity: "",
 };
 
+// توليد باركود EAN-13 صالح (12 رقم + خانة تحقّق)
+function genEan13(): string {
+  let d = "";
+  for (let i = 0; i < 12; i++) d += Math.floor(Math.random() * 10);
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += (i % 2 === 0 ? 1 : 3) * Number(d[i]);
+  const check = (10 - (sum % 10)) % 10;
+  return d + check;
+}
+
 function emptyInput(): ProductInput {
   return {
     sku: "",
@@ -86,6 +96,23 @@ export default function ProductForm({
   const removeVariant = (i: number) =>
     setForm((f) => ({ ...f, variants: f.variants.filter((_, idx) => idx !== i) }));
 
+  // توليد باركود للمنتج الرئيسي
+  const generateBarcode = () => setForm((f) => ({ ...f, barcode: genEan13() }));
+
+  // توليد باركود الخيارات: نفس الباركود الرئيسي + لاحقة تسلسلية (-1، -2…).
+  // لو الرئيسي فاضي نولّد له EAN-13 أول، ونملأ الخيارات الفاضية فقط.
+  const generateVariantBarcodes = () =>
+    setForm((f) => {
+      const base = f.barcode.trim() || genEan13();
+      return {
+        ...f,
+        barcode: base,
+        variants: f.variants.map((v, i) =>
+          v.barcode.trim() ? v : { ...v, barcode: `${base}-${i + 1}` }
+        ),
+      };
+    });
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -120,7 +147,12 @@ export default function ProductForm({
       {/* Identity */}
       <Section title="Identity">
         <Field label="SKU"><input className="input" value={form.sku} onChange={(e) => set("sku", e.target.value)} /></Field>
-        <Field label="Barcode"><input className="input" value={form.barcode} onChange={(e) => set("barcode", e.target.value)} /></Field>
+        <Field label="Barcode">
+          <div className="flex gap-2">
+            <input className="input flex-1" value={form.barcode} onChange={(e) => set("barcode", e.target.value)} />
+            <button type="button" className="btn-ghost whitespace-nowrap" onClick={generateBarcode}>توليد</button>
+          </div>
+        </Field>
         <Field label="Name (EN)"><input className="input" value={form.name_en} onChange={(e) => set("name_en", e.target.value)} /></Field>
         <Field label="Name (AR)"><input dir="rtl" className="input" value={form.name_ar} onChange={(e) => set("name_ar", e.target.value)} /></Field>
       </Section>
@@ -204,7 +236,14 @@ export default function ProductForm({
             <h3 className="text-sm font-semibold text-ink">Variants</h3>
             <p className="text-xs text-muted">Parent–child rows. Drives the Talabat splitter in a later phase.</p>
           </div>
-          <button type="button" className="btn-ghost" onClick={addVariant}>+ Add variant</button>
+          <div className="flex gap-2">
+            {form.variants.length > 0 ? (
+              <button type="button" className="btn-ghost whitespace-nowrap" onClick={generateVariantBarcodes} title="نفس الباركود الرئيسي + -1، -2…">
+                توليد باركود الخيارات
+              </button>
+            ) : null}
+            <button type="button" className="btn-ghost" onClick={addVariant}>+ Add variant</button>
+          </div>
         </div>
         {form.variants.length === 0 ? (
           <p className="text-sm text-slate-400">No variants. This product is sold as a single item.</p>
