@@ -369,8 +369,18 @@ export default function InventoryTable({
 
   function assignSelectedToShelf() {
     const slot = bulkSlot.trim().toUpperCase();
-    const pids = [...selected];
-    const vids = [...selectedVariants];
+    // A product that has options stores its shelf stock on the OPTIONS, not on
+    // the product row — so a selected variant-product is expanded into its
+    // options here. Only optionless products go through the product path.
+    const pids: string[] = [];
+    const variantIds = new Set(selectedVariants);
+    for (const rowId of selected) {
+      const r = rows.find((x) => x.id === rowId);
+      const vs = (r?.product_id && variantsByProduct[r.product_id]) || [];
+      if (vs.length > 0) vs.forEach((v) => variantIds.add(v.id));
+      else pids.push(rowId);
+    }
+    const vids = [...variantIds];
     if (!slot || (pids.length === 0 && vids.length === 0)) return;
     startTransition(async () => {
       let errText = "";
