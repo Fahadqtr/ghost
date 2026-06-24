@@ -281,6 +281,7 @@ export async function setLocation(inventoryId: string, location: string) {
   });
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   revalidatePath("/inventory/movements");
   return { ok: true };
 }
@@ -326,6 +327,7 @@ export async function applyShelfCounts(
   }
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   return { ok, failed: errors.length, errors: errors.slice(0, 5) };
 }
 
@@ -382,6 +384,7 @@ export async function saveVariantShelfStock(
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   return { ok: true };
 }
 
@@ -442,6 +445,7 @@ export async function saveShelfStock(
   });
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   revalidatePath("/inventory/movements");
   return { ok: true };
 }
@@ -541,6 +545,7 @@ export async function removeFromShelf(inventoryId: string, location: string) {
   });
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   revalidatePath("/inventory/movements");
   return { ok: true };
 }
@@ -592,6 +597,7 @@ export async function moveShelfStock(inventoryId: string, fromLocation: string, 
   });
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   revalidatePath("/inventory/movements");
   return { ok: true };
 }
@@ -648,6 +654,7 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string) 
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   revalidatePath("/inventory/movements");
   return { ok: true, done };
 }
@@ -705,6 +712,7 @@ export async function bulkAssignVariantShelf(variantIds: string[], location: str
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   revalidatePath("/inventory/movements");
   return { ok: true, done };
 }
@@ -728,6 +736,7 @@ export async function createShelf(shelf: string, count: number) {
   const { error } = await admin.from("shelf_slots").upsert(rows, { onConflict: "code" });
   if (error) return { error: error.message };
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   revalidatePath("/inventory");
   return { ok: true, created: rows.length };
 }
@@ -744,6 +753,7 @@ export async function addSlot(code: string) {
   const { error } = await admin.from("shelf_slots").upsert({ code: c, shelf, sort }, { onConflict: "code" });
   if (error) return { error: error.message };
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   return { ok: true };
 }
 
@@ -755,6 +765,7 @@ export async function deleteSlot(code: string) {
   const { error } = await admin.from("shelf_slots").delete().eq("code", code);
   if (error) return { error: error.message };
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   return { ok: true };
 }
 
@@ -766,6 +777,7 @@ export async function deleteShelf(shelf: string) {
   const { error } = await admin.from("shelf_slots").delete().eq("shelf", shelf.trim().toUpperCase());
   if (error) return { error: error.message };
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/shelves/labels");
   return { ok: true };
 }
 
