@@ -2,11 +2,18 @@
 // same catalog data the existing read tools use. No writes, no Claude — just a
 // few fast head-count queries. Shown once per session when /malak opens.
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Read-only catalog counts, but still store data — require a signed-in user.
+  const {
+    data: { user },
+  } = await createClient().auth.getUser();
+  if (!user) return Response.json({ error: "غير مسجّل الدخول." }, { status: 401 });
+
   let sb;
   try {
     sb = createAdminClient();

@@ -13,6 +13,10 @@ export default async function ShelvesPage() {
   const ready = !probe.error;
 
   let slots: Slot[] = [];
+  // Distinct products per slot (the UI labels this number "products"). Track a
+  // Set of inventory ids so a product that happens to have two rows for the same
+  // slot isn't counted twice.
+  const slotProducts: Record<string, Set<string>> = {};
   const counts: Record<string, number> = {};
   const contents: ShelfItem[] = [];
   if (ready) {
@@ -53,7 +57,8 @@ export default async function ShelvesPage() {
         for (const r of (ss ?? []) as any[]) {
           const code = String(r.location).toUpperCase();
           const p = prodById.get(r.inventory_id);
-          counts[code] = (counts[code] ?? 0) + 1;
+          (slotProducts[code] ??= new Set()).add(String(r.inventory_id));
+          counts[code] = slotProducts[code].size;
           contents.push({
             location: code,
             name: p?.name ?? null,
@@ -76,7 +81,8 @@ export default async function ShelvesPage() {
         if (error) break;
         for (const r of (inv ?? []) as any[]) {
           const code = String(r.location).toUpperCase();
-          counts[code] = (counts[code] ?? 0) + 1;
+          (slotProducts[code] ??= new Set()).add(String(r.id));
+          counts[code] = slotProducts[code].size;
           contents.push({
             location: code,
             name: r.products?.name_en ?? r.products?.name_ar ?? null,

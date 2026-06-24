@@ -207,10 +207,19 @@ export default function CatalogHealthPage() {
         if (data.length < PAGE) break
       }
 
-      const { data: cp, error: cpErr } = await supabase
-        .from('channel_products')
-        .select('product_id, channel_id, channel_price, channel_status')
-      if (cpErr) throw cpErr
+      // قنوات المنتجات على دفعات أيضًا — بدون ذلك يتوقف الجلب عند 1000 صف
+      // ويفوّت فحص اختلاف السعر سجلات بصمت.
+      const cp: ChannelProduct[] = []
+      for (let from = 0; ; from += PAGE) {
+        const { data, error: cpErr } = await supabase
+          .from('channel_products')
+          .select('product_id, channel_id, channel_price, channel_status')
+          .range(from, from + PAGE - 1)
+        if (cpErr) throw cpErr
+        if (!data || data.length === 0) break
+        cp.push(...(data as ChannelProduct[]))
+        if (data.length < PAGE) break
+      }
 
       // خيارات المنتجات (للتحقق من تغطية باركود الخيارات). دفاعيًا: لو الجدول/العمود
       // مو موجود نكمل بدون ما نكسر الصفحة.
@@ -244,7 +253,7 @@ export default function CatalogHealthPage() {
 
       setProducts(all)
       setVariants(vrows)
-      setChannelProducts((cp as ChannelProduct[]) || [])
+      setChannelProducts(cp)
       setChannelNames(nameMap)
       setLastUpdated(new Date())
     } catch (e: any) {

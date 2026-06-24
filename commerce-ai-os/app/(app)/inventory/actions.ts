@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireUser } from "@/lib/auth/requireUser";
 import Anthropic from "@anthropic-ai/sdk";
 
 function toNum(v: string | number | null | undefined): number | null {
@@ -29,6 +30,8 @@ export async function updateInventory(
   id: string,
   values: { stock_quantity: string; low_stock_threshold: string }
 ) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   const supabase = createClient();
   const { error } = await supabase
     .from("inventory")
@@ -53,6 +56,8 @@ export type BulkUpdate = {
 
 /** Apply many inventory edits in one call (bulk save / set-selected). */
 export async function bulkUpdateInventory(updates: BulkUpdate[]) {
+  const unauth = await requireUser();
+  if (unauth) return { ok: 0, failed: updates.length, errors: [unauth.error] };
   const supabase = createClient();
   const now = new Date().toISOString();
   let ok = 0;
@@ -85,6 +90,8 @@ export type StocktakeCount = {
  * variance (old → new). Service-role client so it works under preview too.
  */
 export async function applyStocktake(counts: StocktakeCount[]) {
+  const unauth = await requireUser();
+  if (unauth) return { ok: 0, failed: counts.length, errors: [unauth.error] };
   const admin = writableClient();
   const now = new Date().toISOString();
   let ok = 0;
@@ -154,6 +161,8 @@ export type VariantCount = {
  * — used when scanning per-variant barcodes on the shelf.
  */
 export async function applyVariantStocktake(counts: VariantCount[]) {
+  const unauth = await requireUser();
+  if (unauth) return { ok: 0, failed: counts.length, errors: [unauth.error] };
   const admin = writableClient();
   const now = new Date().toISOString();
   let ok = 0;
@@ -221,6 +230,8 @@ export async function applyVariantStocktake(counts: VariantCount[]) {
 
 /** Set (or clear) a product's physical shelf location, e.g. "A1". */
 export async function setLocation(inventoryId: string, location: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   if (!inventoryId) return { error: "Missing inventory row." };
   const admin = writableClient();
   const value = location.trim().toUpperCase() || null;
@@ -243,6 +254,8 @@ export async function applyShelfCounts(
   location: string,
   counts: { inventoryId: string; counted: number }[]
 ) {
+  const unauth = await requireUser();
+  if (unauth) return { ok: 0, failed: counts.length, errors: [unauth.error] };
   const admin = writableClient();
   const slot = (location ?? "").trim().toUpperCase();
   if (!slot) return { ok: 0, failed: counts.length, errors: ["No shelf selected."] };
@@ -285,6 +298,8 @@ export async function saveVariantShelfStock(
   variantId: string,
   rows: { location: string; quantity: number }[]
 ) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   if (!variantId) return { error: "Missing variant." };
   const admin = writableClient();
   const now = new Date().toISOString();
@@ -340,6 +355,8 @@ export async function saveShelfStock(
   inventoryId: string,
   rows: { location: string; quantity: number }[]
 ) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   if (!inventoryId) return { error: "Missing inventory row." };
   const admin = writableClient();
 
@@ -385,6 +402,8 @@ export async function saveShelfStock(
  * A1..A5. Existing slots are left untouched (idempotent upsert).
  */
 export async function createShelf(shelf: string, count: number) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   const letter = shelf.trim().toUpperCase().replace(/[^A-Z]/g, "");
   const n = Math.max(1, Math.min(200, Math.floor(count)));
   if (!letter) return { error: "Enter a shelf letter (A–Z)." };
@@ -403,6 +422,8 @@ export async function createShelf(shelf: string, count: number) {
 
 /** Add a single slot by code, e.g. "C7". */
 export async function addSlot(code: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   const c = code.trim().toUpperCase().replace(/\s+/g, "");
   if (!/^[A-Z]+[0-9]+$/.test(c)) return { error: "Use a code like A1, B12." };
   const shelf = c.match(/^[A-Z]+/)![0];
@@ -416,6 +437,8 @@ export async function addSlot(code: string) {
 
 /** Delete one slot. Products sitting there keep their (now free-text) location. */
 export async function deleteSlot(code: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   const admin = writableClient();
   const { error } = await admin.from("shelf_slots").delete().eq("code", code);
   if (error) return { error: error.message };
@@ -425,6 +448,8 @@ export async function deleteSlot(code: string) {
 
 /** Delete a whole shelf (all its slots). */
 export async function deleteShelf(shelf: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   const admin = writableClient();
   const { error } = await admin.from("shelf_slots").delete().eq("shelf", shelf.trim().toUpperCase());
   if (error) return { error: error.message };
@@ -436,6 +461,8 @@ export type CsvRow = { sku: string; stock_quantity?: string | number; low_stock_
 
 /** Import stock by SKU: maps each SKU → inventory row, then bulk-updates. */
 export async function importInventoryBySku(rows: CsvRow[]) {
+  const unauth = await requireUser();
+  if (unauth) return { updated: 0, notFound: 0, failed: 0, missing: [] as string[], error: unauth.error };
   const supabase = createClient();
   const clean = rows
     .map((r) => ({ ...r, sku: String(r.sku ?? "").trim() }))
@@ -489,6 +516,8 @@ export async function importInventoryBySku(rows: CsvRow[]) {
  * it returns a clear "not configured" status instead of pretending to work.
  */
 export async function pushStockToShopify(items: { sku: string; quantity: number }[]) {
+  const unauth = await requireUser();
+  if (unauth) return { configured: false as const, message: unauth.error };
   const SHOP = process.env.SHOPIFY_SHOP;
   const TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
   const LOCATION = process.env.SHOPIFY_LOCATION_ID || "gid://shopify/Location/81908531438";
@@ -563,6 +592,8 @@ export type MovementInput = {
  * read-modify-write via the service-role client (server-only).
  */
 export async function recordMovement(input: MovementInput) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   const admin = writableClient();
   const qty = Math.floor(Math.abs(Number(input.quantity)));
   if (!input.inventoryId || !qty || Number.isNaN(qty)) {
@@ -638,6 +669,8 @@ export type VariantMovementInput = {
  * keeping the parent pool consistent with the variants' independent stock.
  */
 export async function recordVariantMovement(input: VariantMovementInput) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   const admin = writableClient();
   const qty = Math.floor(Math.abs(Number(input.quantity)));
   if (!input.variantId || !qty || Number.isNaN(qty)) {
@@ -732,6 +765,8 @@ export type RecogCandidate = {
 export async function recognizeProduct(imageDataUrl: string): Promise<
   { error: string } | { guess: string; terms: string[]; candidates: RecogCandidate[] }
 > {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { error: "AI vision isn’t configured on the server (ANTHROPIC_API_KEY missing)." };
 

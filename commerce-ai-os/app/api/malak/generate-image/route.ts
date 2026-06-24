@@ -5,6 +5,8 @@
 // real product link still happens through the existing /api/malak/commit after
 // the user approves. No product write happens here.
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
+import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { verifyAction, signAction, type MalakAction } from "@/lib/malak/confirm";
 
 export const runtime = "nodejs";
@@ -49,6 +51,13 @@ function buildPrompt(name: string, style: string, hasRef: boolean, portrait = fa
 }
 
 export async function POST(req: Request) {
+  // Paid OpenAI call + storage write — require a signed-in user (defense in
+  // depth) on top of the signed token.
+  const {
+    data: { user },
+  } = await createClient().auth.getUser();
+  if (!user) return Response.json({ error: "غير مسجّل الدخول." }, { status: 401 });
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return Response.json({ error: "ميزة توليد الصور غير مهيأة (OPENAI_API_KEY مفقود على الخادم)." }, { status: 200 });
@@ -87,7 +96,7 @@ export async function POST(req: Request) {
   try {
     let r: Response;
     if (currentImage) {
-      const imgRes = await fetch(currentImage);
+      const imgRes = await fetch(assertSafeImageUrl(currentImage));
       if (!imgRes.ok) throw new Error("تعذّر تحميل الصورة الحالية للمرجع.");
       const buf = Buffer.from(await imgRes.arrayBuffer());
       const type = imgRes.headers.get("content-type") || "image/png";

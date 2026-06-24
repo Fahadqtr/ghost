@@ -125,17 +125,30 @@ export default async function InventoryPage() {
     if (!data || data.length < PAGE) break;
   }
 
+  // Effective stock per product: when a product is sold as options, its real
+  // stock lives on the variants, and the inventory row often reads 0. Sum the
+  // variant stock for those products so the KPIs don't under-count them; simple
+  // products keep using their inventory row.
+  const effectiveStock = (r: InventoryRow): number => {
+    const vs = r.product_id ? variantsByProduct[r.product_id] : null;
+    if (vs && vs.length > 0) {
+      return vs.reduce((s, v) => s + (Number(v.stock_quantity) || 0), 0);
+    }
+    return r.stock_quantity ?? 0;
+  };
+
   // KPI summary
   const total = rows.length;
-  const out = rows.filter((r) => (r.stock_quantity ?? 0) <= 0).length;
-  const low = rows.filter(
-    (r) =>
-      r.stock_quantity != null &&
-      r.stock_quantity > 0 &&
+  const out = rows.filter((r) => effectiveStock(r) <= 0).length;
+  const low = rows.filter((r) => {
+    const eff = effectiveStock(r);
+    return (
+      eff > 0 &&
       r.low_stock_threshold != null &&
-      r.stock_quantity <= r.low_stock_threshold
-  ).length;
-  const units = rows.reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
+      eff <= r.low_stock_threshold
+    );
+  }).length;
+  const units = rows.reduce((s, r) => s + effectiveStock(r), 0);
   const sold = rows.reduce((s, r) => s + (r.sold_quantity ?? 0), 0);
 
   const categories = Array.from(
