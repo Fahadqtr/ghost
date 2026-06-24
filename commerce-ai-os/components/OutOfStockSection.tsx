@@ -28,7 +28,9 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
   const [paste, setPaste] = useState("");
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<{
+    applied: boolean;
     matched: number;
+    products: { sku: string | null; name: string | null }[];
     unmatched: string[];
     shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
     error?: string;
@@ -80,13 +82,22 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
     URL.revokeObjectURL(url);
   }
 
-  function markPasted() {
+  // Step 1: preview (dry run) — match names and show what WOULD be marked.
+  function previewPasted() {
     if (!paste.trim()) return;
     setResult(null);
     startTransition(async () => {
-      const res = await markOutOfStockByNames(paste);
+      const res = await markOutOfStockByNames(paste, false);
       setResult(res);
-      if (!res.error) {
+    });
+  }
+  // Step 2: approve — actually write the changes.
+  function approvePasted() {
+    if (!paste.trim()) return;
+    startTransition(async () => {
+      const res = await markOutOfStockByNames(paste, true);
+      setResult(res);
+      if (!res.error && res.applied) {
         setPaste("");
         router.refresh();
       }
@@ -111,32 +122,55 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
           ➕ علّم منتجات نافدة بلصق أسمائها
         </summary>
         <p className="mt-2 text-xs text-muted">
-          الصق أسماء المنتجات (سطر لكل منتج). يُصفّر المخزون (والخيارات)، ويضع الحالة «Out of Stock»، ويُلغي إدراج القنوات، ويدفع 0 لـShopify.
+          الصق أسماء المنتجات (سطر لكل منتج) ثم <b>«معاينة»</b> لتشوف اللي بينعلّم — ما يتغيّر شي إلا بعد ما تضغط <b>«اعتمد وطبّق»</b>.
+          عند الاعتماد: يُصفّر المخزون (والخيارات)، ويضع «Out of Stock»، ويُلغي إدراج القنوات، ويدفع 0 لـShopify. (نفس المنتجات تغطّي ماليكاس وبيور سيول.)
         </p>
         <textarea
           className="input mt-2 min-h-32 w-full font-mono text-xs"
           placeholder={"Product name one\nProduct name two\n…"}
           value={paste}
-          onChange={(e) => setPaste(e.target.value)}
+          onChange={(e) => { setPaste(e.target.value); setResult(null); }}
         />
-        <div className="mt-2 flex items-center gap-3">
-          <button className="btn-primary px-4 py-1.5 text-xs disabled:opacity-50" disabled={pending || !paste.trim()} onClick={markPasted}>
-            {pending ? "…يعلّم" : "علّم out of stock"}
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <button className="btn-ghost px-4 py-1.5 text-xs disabled:opacity-50" disabled={pending || !paste.trim()} onClick={previewPasted}>
+            {pending && !result ? "…يطابق" : "🔍 معاينة"}
           </button>
-          {result && !result.error && (
+          {result && !result.error && !result.applied && (
+            <>
+              <button className="btn-primary px-4 py-1.5 text-xs disabled:opacity-50" disabled={pending || result.matched === 0} onClick={approvePasted}>
+                {pending ? "…يطبّق" : `✅ اعتمد وطبّق (${result.matched})`}
+              </button>
+              <span className="text-xs text-amber-700">معاينة فقط — لم يُطبَّق بعد</span>
+            </>
+          )}
+          {result?.applied && (
             <span className="text-xs text-emerald-700">
-              ✓ {result.matched} منتج عُلّم
+              ✓ تم — {result.matched} منتج عُلّم
               {result.shopify
                 ? result.shopify.configured
                   ? ` · Shopify: ${result.shopify.pushed} دُفع${result.shopify.failed ? `، ${result.shopify.failed} فشل` : ""}`
                   : " · Shopify غير مفعّل"
                 : ""}
-              {result.unmatched.length ? ` · ${result.unmatched.length} غير مطابق` : ""}
             </span>
           )}
           {result?.error && <span className="text-xs text-red-600">{result.error}</span>}
         </div>
-        {result && result.unmatched.length > 0 && (
+
+        {/* Preview: what would be marked */}
+        {result && !result.error && !result.applied && result.products.length > 0 && (
+          <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-900">
+            <div className="mb-1 font-medium">سيُعلَّم {result.products.length} منتج نافد — راجع ثم اعتمد:</div>
+            <ul className="max-h-48 space-y-0.5 overflow-auto pr-2">
+              {result.products.map((p, i) => (
+                <li key={i} className="flex items-center gap-2">
+                  {p.sku ? <span className="font-mono text-emerald-700">{p.sku}</span> : null}
+                  <span className="truncate">{p.name ?? "—"}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {result && !result.error && result.unmatched.length > 0 && (
           <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
             <div className="mb-1 font-medium">غير مطابق ({result.unmatched.length}) — راجع الإملاء:</div>
             <ul className="max-h-40 list-disc space-y-0.5 overflow-auto pr-4">

@@ -1229,17 +1229,19 @@ export async function recognizeProduct(imageDataUrl: string): Promise<
  * trailing "…" tolerated). Returns matched count, the unmatched lines, and the
  * Shopify push result so the UI can show exactly what happened.
  */
-export async function markOutOfStockByNames(text: string): Promise<{
+export async function markOutOfStockByNames(text: string, apply = false): Promise<{
   error?: string;
+  applied: boolean;
   matched: number;
+  products: { sku: string | null; name: string | null }[];
   unmatched: string[];
   shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
 }> {
   const unauth = await requireUser();
-  if (unauth) return { error: (unauth as any).error ?? "Not signed in.", matched: 0, unmatched: [] };
+  if (unauth) return { error: (unauth as any).error ?? "Not signed in.", applied: false, matched: 0, products: [], unmatched: [] };
 
   const lines = [...new Set((text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean))];
-  if (lines.length === 0) return { matched: 0, unmatched: [] };
+  if (lines.length === 0) return { applied: false, matched: 0, products: [], unmatched: [] };
 
   const admin = writableClient();
 
@@ -1247,7 +1249,7 @@ export async function markOutOfStockByNames(text: string): Promise<{
   const all: any[] = [];
   for (let f = 0; ; f += 1000) {
     const { data, error } = await admin.from("products").select("id, sku, name_en, name_ar").range(f, f + 999);
-    if (error) return { error: error.message, matched: 0, unmatched: [] };
+    if (error) return { error: error.message, applied: false, matched: 0, products: [], unmatched: [] };
     all.push(...(data ?? []));
     if ((data ?? []).length < 1000) break;
   }
@@ -1271,8 +1273,13 @@ export async function markOutOfStockByNames(text: string): Promise<{
 
   const ids = new Set<string>();
   const skus = new Set<string>();
+  const matchedList: { sku: string | null; name: string | null }[] = [];
   const unmatched: string[] = [];
-  const take = (c: (typeof cat)[number]) => { ids.add(c.p.id); if (c.p.sku) skus.add(String(c.p.sku)); };
+  const take = (c: (typeof cat)[number]) => {
+    if (!ids.has(c.p.id)) matchedList.push({ sku: c.p.sku ?? null, name: c.p.name_en ?? c.p.name_ar ?? null });
+    ids.add(c.p.id);
+    if (c.p.sku) skus.add(String(c.p.sku));
+  };
   for (const line of lines) {
     const ln = keyOf(line.replace(/[.…]+$/, ""));
     if (ln.length < 5) { unmatched.push(line); continue; }
@@ -1309,6 +1316,13 @@ export async function markOutOfStockByNames(text: string): Promise<{
   }
 
   const idList = [...ids];
+
+  // Dry run: report what WOULD be marked, write nothing. The UI shows this for
+  // review and only calls again with apply=true after the user approves.
+  if (!apply) {
+    return { applied: false, matched: idList.length, products: matchedList, unmatched };
+  }
+
   const now = new Date().toISOString();
   for (let i = 0; i < idList.length; i += 200) {
     const chunk = idList.slice(i, i + 200);
@@ -1330,5 +1344,5 @@ export async function markOutOfStockByNames(text: string): Promise<{
   revalidatePath("/inventory");
   revalidatePath("/inventory/out-of-stock");
   revalidatePath("/products");
-  return { matched: idList.length, unmatched, shopify };
+  return { applied: true, matched: idList.length, products: matchedList, unmatched, shopify };
 }
