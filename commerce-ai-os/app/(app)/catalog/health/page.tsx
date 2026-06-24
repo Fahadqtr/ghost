@@ -171,6 +171,7 @@ const ISSUES: IssueDef[] = [
 
 // الحقل المعني بكل مشكلة — يُبرز داخل نافذة التصحيح ليصلحه المستخدم أول
 const ISSUE_FIELD: Partial<Record<IssueKey, keyof Product>> = {
+  dup_sku: 'sku',
   no_image: 'image_url',
   no_barcode: 'barcode',
   no_price: 'price',
@@ -213,6 +214,8 @@ export default function CatalogHealthPage() {
   const [fixProduct, setFixProduct] = useState<Product | null>(null)
   const [form, setForm] = useState<Partial<Product>>({})
   const [variantForm, setVariantForm] = useState<{ id: string; name: string; barcode: string }[]>([])
+  const [approved, setApproved] = useState(false)
+  const [syncChannels, setSyncChannels] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState<string | null>(null)
 
@@ -405,6 +408,7 @@ export default function CatalogHealthPage() {
   const openFix = (p: Product) => {
     setFixProduct(p)
     setForm({
+      sku: p.sku ?? '',
       name_ar: p.name_ar ?? '',
       name_en: p.name_en ?? '',
       price: p.price,
@@ -419,6 +423,8 @@ export default function CatalogHealthPage() {
         .filter((v) => v.parent_product_id === p.id)
         .map((v) => ({ id: v.id, name: v.variant_name ?? '', barcode: v.barcode ?? '' }))
     )
+    setApproved(p.approval === 'Approved')
+    setSyncChannels(activeIssue === 'price_mismatch')
     setSaveErr(null)
   }
 
@@ -439,17 +445,21 @@ export default function CatalogHealthPage() {
     setSaveErr(null)
     try {
       const rawPrice = form.price as unknown
+      const price = rawPrice === undefined || rawPrice === null || String(rawPrice).trim() === ''
+        ? null
+        : Number(rawPrice)
       const patch = {
+        sku: emptyToNull(form.sku),
         name_ar: emptyToNull(form.name_ar),
         name_en: emptyToNull(form.name_en),
-        price: rawPrice === undefined || rawPrice === null || String(rawPrice).trim() === ''
-          ? null
-          : Number(rawPrice),
+        price,
         barcode: emptyToNull(form.barcode),
         main_category: emptyToNull(form.main_category),
         image_url: emptyToNull(form.image_url),
         snoonu_id: emptyToNull(form.snoonu_id),
         rafeeq_product_id: emptyToNull(form.rafeeq_product_id),
+        // اعتماد المنتج: مفعّل → Approved، وإلا نُبقي القيمة الأصلية (ونصفّرها لو كانت معتمدة وأُلغي الاعتماد)
+        approval: approved ? 'Approved' : fixProduct.approval === 'Approved' ? null : fixProduct.approval,
       }
       const supabase = createClient()
       const { error } = await supabase.from('products').update(patch).eq('id', fixProduct.id)
@@ -462,6 +472,28 @@ export default function CatalogHealthPage() {
           .update({ barcode: emptyToNull(v.barcode) })
           .eq('id', v.id)
         if (vErr) throw vErr
+      }
+
+      // مطابقة أسعار المنصّات على سعر النظام (النظام هو المصدر الرسمي)
+      if (syncChannels && price !== null) {
+        const rows = (ctx.cpByProduct.get(fixProduct.id) || []).filter(
+          (cp) => cp.channel_price !== null && Math.abs((cp.channel_price as number) - price) > 0.001
+        )
+        for (const cp of rows) {
+          const { error: cErr } = await supabase
+            .from('channel_products')
+            .update({ channel_price: price })
+            .eq('product_id', fixProduct.id)
+            .eq('channel_id', cp.channel_id)
+          if (cErr) throw cErr
+        }
+        setChannelProducts((prev) =>
+          prev.map((cp) =>
+            cp.product_id === fixProduct.id && cp.channel_price !== null
+              ? { ...cp, channel_price: price }
+              : cp
+          )
+        )
       }
 
       setProducts((prev) => prev.map((x) => (x.id === fixProduct.id ? { ...x, ...patch } : x)))
@@ -693,6 +725,9 @@ export default function CatalogHealthPage() {
                 const set = (k: keyof Product, v: any) => setForm((f) => ({ ...f, [k]: v }))
                 return (
                   <>
+                    <label style={S.fieldLabel}>SKU</label>
+                    <input style={fieldStyle('sku')} value={(form.sku as string) ?? ''} onChange={(e) => set('sku', e.target.value)} dir="ltr" />
+
                     <label style={S.fieldLabel}>الاسم العربي</label>
                     <input style={fieldStyle('name_ar')} value={(form.name_ar as string) ?? ''} onChange={(e) => set('name_ar', e.target.value)} dir="rtl" />
 
@@ -757,6 +792,31 @@ export default function CatalogHealthPage() {
                         <input style={fieldStyle('rafeeq_product_id')} value={(form.rafeeq_product_id as string) ?? ''} onChange={(e) => set('rafeeq_product_id', e.target.value)} dir="ltr" />
                       </div>
                     </div>
+
+                    {/* فرق السعر بين المنصّات */}
+                    {mismatchRows(fixProduct).length > 0 && (
+                      <div style={S.variantBox}>
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>فرق سعر بين المنصّات</span>
+                        {mismatchRows(fixProduct).map((m, i) => (
+                          <p key={i} style={{ fontSize: 12, color: '#475569', margin: '6px 0 0' }}>
+                            {m.name}: النظام {m.system} · المنصّة {m.channel}{' '}
+                            <span style={{ fontWeight: 700, color: m.delta > 0 ? '#dc2626' : '#d97706' }}>
+                              ({m.delta > 0 ? '+' : ''}{m.delta})
+                            </span>
+                          </p>
+                        ))}
+                        <label style={S.checkRow}>
+                          <input type="checkbox" checked={syncChannels} onChange={(e) => setSyncChannels(e.target.checked)} />
+                          مطابقة أسعار المنصّات على سعر النظام عند الحفظ
+                        </label>
+                      </div>
+                    )}
+
+                    {/* اعتماد المنتج */}
+                    <label style={{ ...S.checkRow, marginTop: 12 }}>
+                      <input type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} />
+                      اعتماد المنتج (Approved)
+                    </label>
                   </>
                 )
               })()}
@@ -874,6 +934,7 @@ const S: Record<string, React.CSSProperties> = {
   variantHint: { fontSize: 11, color: '#92400e', margin: '6px 0 10px', lineHeight: 1.6 },
   variantRow: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 },
   variantName: { fontSize: 12, fontWeight: 600, color: '#475569', minWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#0f172a', cursor: 'pointer', marginTop: 8 },
   saveErr: { color: '#dc2626', fontSize: 13, fontWeight: 600, marginTop: 12 },
   modalFoot: {
     display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 20px',
