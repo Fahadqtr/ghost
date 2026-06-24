@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CATEGORIES } from "@/lib/constants";
 import { setProductApproval } from "@/app/(app)/products/actions";
@@ -101,6 +101,13 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
   const [plat, setPlat] = useState("");
   const [grp, setGrp] = useState("");
   const [page, setPage] = useState(1);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (id: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -154,6 +161,31 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
             🎯 خيار: {v.name || "—"} · <span className="font-mono">{v.barcode}</span>
           </span>
         ))}
+      </div>
+    );
+  };
+
+  // المنتج «مفتوح» إذا وسّعه المستخدم أو طابق البحث أحد باركودات خياراته
+  const isOpen = (p: ProductRow) => expanded.has(p.id) || matchedVariants(p).length > 0;
+  // قائمة خيارات المنتج (اسم + باركود) تُعرض داخل القائمة بدون فتح المنتج
+  const VariantList = ({ p }: { p: ProductRow }) => {
+    const n = q.trim().toLowerCase();
+    const vs = p.variants ?? [];
+    if (vs.length === 0) return <div className="px-2 py-1 text-xs text-slate-400">لا توجد خيارات لهذا المنتج.</div>;
+    return (
+      <div className="space-y-1">
+        {vs.map((v, i) => {
+          const hit = !!n && v.barcode.toLowerCase().includes(n);
+          return (
+            <div
+              key={i}
+              className={`flex items-center justify-between gap-3 rounded px-2 py-1 text-xs ${hit ? "bg-emerald-100 font-medium text-emerald-800" : "text-slate-600"}`}
+            >
+              <span className="truncate">{hit ? "🎯 " : ""}{v.name || `خيار ${i + 1}`}</span>
+              <span className="flex-none font-mono">{v.barcode || "—"}</span>
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -225,8 +257,20 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
                   {p.sku ? <span>SKU {p.sku}</span> : null}
                   {p.main_category ? <span>{p.main_category}</span> : null}
-                  {p.variant_count > 0 ? <span>{p.variant_count} options</span> : null}
+                  {p.variant_count > 0 ? (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleExpand(p.id); }}
+                      className="font-medium text-brand"
+                    >
+                      {p.variant_count} options {isOpen(p) ? "▴" : "▾"}
+                    </button>
+                  ) : null}
                 </div>
+                {isOpen(p) && (p.variants?.length ?? 0) > 0 ? (
+                  <div onClick={(e) => e.stopPropagation()} className="rounded-lg bg-slate-50 p-2">
+                    <VariantList p={p} />
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="text-slate-600">
                     {p.price != null ? `${p.price} QAR` : "—"}
@@ -275,8 +319,8 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
               <tr><td colSpan={16} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
             ) : (
               visible.map((p) => (
+                <Fragment key={p.id}>
                 <tr
-                  key={p.id}
                   onClick={() => router.push(`/products/${p.id}`)}
                   className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                 >
@@ -298,11 +342,30 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                       : Number(p.stock) < 10 ? <span className="text-amber-700">{p.stock}</span>
                       : <span className="text-slate-600">{p.stock}</span>}
                   </td>
-                  <td className="px-3 py-3 text-slate-600">{p.variant_count > 0 ? p.variant_count : "—"}</td>
+                  <td className="px-3 py-3 text-slate-600">
+                    {p.variant_count > 0 ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleExpand(p.id); }}
+                        className="font-medium text-brand hover:underline"
+                        title="عرض الخيارات"
+                      >
+                        {p.variant_count} {isOpen(p) ? "▴" : "▾"}
+                      </button>
+                    ) : "—"}
+                  </td>
                   {CHANNELS.map((c) => (
                     <td key={c} className="px-3 py-3"><StatusBadge status={p.channels[c]} /></td>
                   ))}
                 </tr>
+                {isOpen(p) && (p.variants?.length ?? 0) > 0 ? (
+                  <tr className="border-b border-slate-100 bg-slate-50/60">
+                    <td colSpan={16} className="px-6 py-2">
+                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">خيارات المنتج</div>
+                      <VariantList p={p} />
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               ))
             )}
           </tbody>
