@@ -103,6 +103,20 @@ function toProductRow(input: ProductInput) {
   };
 }
 
+// Turn a raw Postgres write error into something a human can act on. The most
+// common one is a duplicate SKU/barcode (unique violation, code 23505) which
+// otherwise surfaces as "duplicate key value violates unique constraint …".
+function friendlyWriteError(
+  error: { code?: string; message: string } | null,
+  fallback: string
+): string {
+  if (!error) return fallback;
+  if (error.code === "23505") {
+    return "A product with this SKU or barcode already exists. Please use a unique value.";
+  }
+  return error.message || fallback;
+}
+
 function toVariantRows(parentId: string, variants: VariantInput[]) {
   return variants
     .filter((v) => str(v.variant_name) || str(v.sku))
@@ -121,6 +135,8 @@ function toVariantRows(parentId: string, variants: VariantInput[]) {
 // --- actions --------------------------------------------------------------
 
 export async function createProduct(input: ProductInput) {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { error: "Not signed in." };
   const supabase = createClient();
 
   let productRow;
@@ -137,21 +153,31 @@ export async function createProduct(input: ProductInput) {
     .single();
 
   if (error || !product) {
-    return { error: error?.message ?? "Could not create product." };
+    return { error: friendlyWriteError(error, "Could not create product.") };
   }
 
   // Seed an inventory row so the product appears on the Inventory page.
-  await supabase.from("inventory").insert({
-    product_id: product.id,
-    stock_quantity: productRow.stock_quantity ?? 0,
-    low_stock_threshold: 5,
-    sold_quantity: 0,
-  });
+  const invErr = (
+    await supabase.from("inventory").insert({
+      product_id: product.id,
+      stock_quantity: productRow.stock_quantity ?? 0,
+      low_stock_threshold: 5,
+      sold_quantity: 0,
+    })
+  ).error;
+  if (invErr) {
+    return {
+      error: `Product created, but its inventory row failed: ${invErr.message}`,
+    };
+  }
 
   // Insert variants (parent-child) if any.
   const variantRows = toVariantRows(product.id, input.variants);
   if (variantRows.length > 0) {
-    await supabase.from("product_variants").insert(variantRows);
+    const vErr = (await supabase.from("product_variants").insert(variantRows)).error;
+    if (vErr) {
+      return { error: friendlyWriteError(vErr, "Product created, but its variants failed to save.") };
+    }
   }
 
   revalidatePath("/products");
@@ -160,6 +186,8 @@ export async function createProduct(input: ProductInput) {
 }
 
 export async function updateProduct(id: string, input: ProductInput) {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { error: "Not signed in." };
   const supabase = createClient();
 
   let productRow;
@@ -174,17 +202,45 @@ export async function updateProduct(id: string, input: ProductInput) {
     .update(productRow)
     .eq("id", id);
 
-  if (error) return { error: error.message };
+  if (error) return { error: friendlyWriteError(error, "Could not update product.") };
+
+  // Keep the inventory pool in sync. The Inventory & Dashboard pages read stock
+  // from the `inventory` table (not `products`), so an edit that doesn't write
+  // `inventory` would leave the displayed stock stale. Update the existing row
+  // if there is one, otherwise seed a new one (older products may predate it).
+  const { data: invRow } = await supabase
+    .from("inventory")
+    .select("id")
+    .eq("product_id", id)
+    .maybeSingle();
+  const invErr = invRow
+    ? (
+        await supabase
+          .from("inventory")
+          .update({ stock_quantity: productRow.stock_quantity ?? 0 })
+          .eq("product_id", id)
+      ).error
+    : (
+        await supabase.from("inventory").insert({
+          product_id: id,
+          stock_quantity: productRow.stock_quantity ?? 0,
+          low_stock_threshold: 5,
+          sold_quantity: 0,
+        })
+      ).error;
+  if (invErr) return { error: `Product saved, but stock sync failed: ${invErr.message}` };
 
   // Replace variants: delete existing, re-insert the submitted set.
   await supabase.from("product_variants").delete().eq("parent_product_id", id);
   const variantRows = toVariantRows(id, input.variants);
   if (variantRows.length > 0) {
-    await supabase.from("product_variants").insert(variantRows);
+    const vErr = (await supabase.from("product_variants").insert(variantRows)).error;
+    if (vErr) return { error: friendlyWriteError(vErr, "Could not save variants.") };
   }
 
   revalidatePath("/products");
   revalidatePath(`/products/${id}`);
+  revalidatePath("/inventory");
   redirect("/products");
 }
 
@@ -314,6 +370,8 @@ export async function extractRejectedFromImages(
 }
 
 export async function deleteProduct(id: string) {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { error: "Not signed in." };
   const supabase = createClient();
   // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).
   await supabase.from("product_variants").delete().eq("parent_product_id", id);

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { signAction } from "@/lib/malak/confirm";
 import { detectForcedTool } from "@/lib/malak/intent";
 import { CATEGORIES } from "@/lib/constants";
@@ -786,6 +787,14 @@ function buildResponse(out: any, skuImages: Map<string, string>, fallbackAgent: 
 }
 
 export async function POST(req: Request) {
+  // Defense in depth: this route reads the catalog and mints signed write
+  // tokens with the service-role client, so don't rely on middleware alone —
+  // require a signed-in user here too.
+  const {
+    data: { user },
+  } = await createClient().auth.getUser();
+  if (!user) return Response.json({ error: "غير مسجّل الدخول." }, { status: 401 });
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return Response.json(

@@ -3,6 +3,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireUser } from "@/lib/auth/requireUser";
 
 export type ProductForContent = {
   sku: string;
@@ -64,6 +65,8 @@ async function fetchProduct(sku: string): Promise<ProductForContent | null> {
 
 /** Generate Instagram caption (AR + EN + hashtags) via Claude. */
 export async function generateCaption(sku: string): Promise<{ error: string } | CaptionResult> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { error: "ANTHROPIC_API_KEY isn’t configured on the server." };
   const p = await fetchProduct(sku);
@@ -120,6 +123,8 @@ export async function generateMedia(
   kind: "image" | "video",
   _sku: string
 ): Promise<{ configured: false; message: string } | { configured: true; url: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { configured: false, message: unauth.error };
   const key = process.env.HIGGSFIELD_API_KEY;
   if (!key) {
     return {
@@ -145,6 +150,8 @@ export async function saveGeneratedContent(row: {
   image_url?: string | null;
   video_url?: string | null;
 }) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
   // Service role if available, else the request-scoped RLS client.
   let db: any;
   try {

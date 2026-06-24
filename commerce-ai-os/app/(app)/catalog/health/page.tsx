@@ -55,6 +55,7 @@ type IssueKey =
   | 'dup_sku'
   | 'no_snoonu'
   | 'no_rafeeq'
+  | 'no_channel_link'
   | 'price_mismatch'
   | 'not_approved'
 
@@ -160,6 +161,17 @@ const ISSUES: IssueDef[] = [
     test: (p) => !p.rafeeq_product_id || String(p.rafeeq_product_id).trim() === '',
   },
   {
+    key: 'no_channel_link',
+    label: 'غير مربوط بكل المنصّات',
+    desc: 'ينقصه ربط سنونو و/أو رفيق — ربط سريع للكل بالـSKU',
+    severity: 'warning',
+    test: (p) =>
+      !p.snoonu_id ||
+      p.snoonu_id.trim() === '' ||
+      !p.rafeeq_product_id ||
+      String(p.rafeeq_product_id).trim() === '',
+  },
+  {
     key: 'not_approved',
     label: 'غير معتمد',
     desc: 'approved = false — مسودّة لم تُعتمد بعد',
@@ -169,10 +181,48 @@ const ISSUES: IssueDef[] = [
   },
 ]
 
+// الحقل المعني بكل مشكلة — يُبرز داخل نافذة التصحيح ليصلحه المستخدم أول
+const ISSUE_FIELD: Partial<Record<IssueKey, keyof Product>> = {
+  dup_sku: 'sku',
+  no_image: 'image_url',
+  no_barcode: 'barcode',
+  no_price: 'price',
+  zero_price: 'price',
+  no_name_ar: 'name_ar',
+  no_category: 'main_category',
+  no_snoonu: 'snoonu_id',
+  no_rafeeq: 'rafeeq_product_id',
+}
+
+// الإجراءات الجماعية المتاحة لكل مشكلة (الباقي يحتاج قيمة فردية فيُصحّح من المودال)
+const BULK_ACTION: Partial<Record<IssueKey, string>> = {
+  not_approved: 'اعتماد المحدد',
+  no_barcode: 'توليد باركود للمحدد',
+  price_mismatch: 'مطابقة أسعار المنصّات للمحدد',
+  no_snoonu: 'ربط سريع بالـSKU',
+  no_rafeeq: 'ربط سريع بالـSKU',
+  no_channel_link: 'ربط بكل المنصّات (SKU)',
+}
+
+const emptyToNull = (v: unknown) =>
+  v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim()
+
+// توليد باركود EAN-13 صالح (12 رقم + خانة تحقّق)
+function genEan13(): string {
+  let d = ''
+  for (let i = 0; i < 12; i++) d += Math.floor(Math.random() * 10)
+  let sum = 0
+  for (let i = 0; i < 12; i++) sum += (i % 2 === 0 ? 1 : 3) * Number(d[i])
+  const check = (10 - (sum % 10)) % 10
+  return d + check
+}
+
 // ---------- المكوّن ----------
 export default function CatalogHealthPage() {
   const [products, setProducts] = useState<Product[]>([])
-  const [variants, setVariants] = useState<{ parent_product_id: string; barcode: string | null }[]>([])
+  const [variants, setVariants] = useState<
+    { id: string; parent_product_id: string; variant_name: string | null; barcode: string | null }[]
+  >([])
   const [channelProducts, setChannelProducts] = useState<ChannelProduct[]>([])
   const [channelNames, setChannelNames] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
@@ -181,6 +231,20 @@ export default function CatalogHealthPage() {
   const [error, setError] = useState<string | null>(null)
   const [activeIssue, setActiveIssue] = useState<IssueKey | null>(null)
   const [search, setSearch] = useState('')
+
+  // نافذة التصحيح المنبثقة
+  const [fixProduct, setFixProduct] = useState<Product | null>(null)
+  const [form, setForm] = useState<Partial<Product>>({})
+  const [variantForm, setVariantForm] = useState<{ id: string; name: string; barcode: string }[]>([])
+  const [approved, setApproved] = useState(false)
+  const [syncChannels, setSyncChannels] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveErr, setSaveErr] = useState<string | null>(null)
+
+  // التحديد الجماعي
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkErr, setBulkErr] = useState<string | null>(null)
 
   // يعيد فحص الكتالوج من قاعدة البيانات (قراءة فقط). يُستدعى عند فتح الصفحة
   // وعند الضغط على زر «تحديث» ليعكس آخر التغييرات بدون إعادة تحميل الصفحة.
@@ -207,19 +271,28 @@ export default function CatalogHealthPage() {
         if (data.length < PAGE) break
       }
 
-      const { data: cp, error: cpErr } = await supabase
-        .from('channel_products')
-        .select('product_id, channel_id, channel_price, channel_status')
-      if (cpErr) throw cpErr
+      // قنوات المنتجات على دفعات أيضًا — بدون ذلك يتوقف الجلب عند 1000 صف
+      // ويفوّت فحص اختلاف السعر سجلات بصمت.
+      const cp: ChannelProduct[] = []
+      for (let from = 0; ; from += PAGE) {
+        const { data, error: cpErr } = await supabase
+          .from('channel_products')
+          .select('product_id, channel_id, channel_price, channel_status')
+          .range(from, from + PAGE - 1)
+        if (cpErr) throw cpErr
+        if (!data || data.length === 0) break
+        cp.push(...(data as ChannelProduct[]))
+        if (data.length < PAGE) break
+      }
 
       // خيارات المنتجات (للتحقق من تغطية باركود الخيارات). دفاعيًا: لو الجدول/العمود
       // مو موجود نكمل بدون ما نكسر الصفحة.
-      const vrows: { parent_product_id: string; barcode: string | null }[] = []
+      const vrows: { id: string; parent_product_id: string; variant_name: string | null; barcode: string | null }[] = []
       try {
         for (let from = 0; ; from += PAGE) {
           const { data, error } = await supabase
             .from('product_variants')
-            .select('parent_product_id, barcode')
+            .select('id, parent_product_id, variant_name, barcode')
             .range(from, from + PAGE - 1)
           if (error) break
           if (!data || data.length === 0) break
@@ -244,7 +317,7 @@ export default function CatalogHealthPage() {
 
       setProducts(all)
       setVariants(vrows)
-      setChannelProducts((cp as ChannelProduct[]) || [])
+      setChannelProducts(cp)
       setChannelNames(nameMap)
       setLastUpdated(new Date())
     } catch (e: any) {
@@ -358,6 +431,220 @@ export default function CatalogHealthPage() {
       })
   }
 
+  // فتح نافذة التصحيح وتعبئتها بقيم المنتج الحالية
+  const openFix = (p: Product) => {
+    setFixProduct(p)
+    setForm({
+      sku: p.sku ?? '',
+      name_ar: p.name_ar ?? '',
+      name_en: p.name_en ?? '',
+      price: p.price,
+      barcode: p.barcode ?? '',
+      main_category: p.main_category ?? '',
+      image_url: p.image_url ?? '',
+      snoonu_id: p.snoonu_id ?? '',
+      rafeeq_product_id: p.rafeeq_product_id ?? '',
+    } as Partial<Product>)
+    setVariantForm(
+      variants
+        .filter((v) => v.parent_product_id === p.id)
+        .map((v) => ({ id: v.id, name: v.variant_name ?? '', barcode: v.barcode ?? '' }))
+    )
+    setApproved(p.approval === 'Approved')
+    setSyncChannels(activeIssue === 'price_mismatch')
+    setSaveErr(null)
+  }
+
+  // توليد باركود الخيارات: نفس الباركود الرئيسي + لاحقة تسلسلية (-1، -2…).
+  // لو الباركود الرئيسي فاضي نولّد EAN-13 له أول ثم نشتقّ منه.
+  const genVariantBarcodes = () => {
+    setForm((f) => {
+      const base = emptyToNull(f.barcode) ? String(f.barcode).trim() : genEan13()
+      setVariantForm((vf) => vf.map((v, i) => ({ ...v, barcode: `${base}-${i + 1}` })))
+      return { ...f, barcode: base }
+    })
+  }
+
+  // حفظ التعديلات في Supabase ثم تحديث الحالة محليًا (تعيد العدّادات حسابها فورًا)
+  const saveFix = async () => {
+    if (!fixProduct) return
+    setSaving(true)
+    setSaveErr(null)
+    try {
+      const rawPrice = form.price as unknown
+      const price = rawPrice === undefined || rawPrice === null || String(rawPrice).trim() === ''
+        ? null
+        : Number(rawPrice)
+      const patch = {
+        sku: emptyToNull(form.sku),
+        name_ar: emptyToNull(form.name_ar),
+        name_en: emptyToNull(form.name_en),
+        price,
+        barcode: emptyToNull(form.barcode),
+        main_category: emptyToNull(form.main_category),
+        image_url: emptyToNull(form.image_url),
+        snoonu_id: emptyToNull(form.snoonu_id),
+        rafeeq_product_id: emptyToNull(form.rafeeq_product_id),
+        // اعتماد المنتج: مفعّل → Approved، وإلا نُبقي القيمة الأصلية (ونصفّرها لو كانت معتمدة وأُلغي الاعتماد)
+        approval: approved ? 'Approved' : fixProduct.approval === 'Approved' ? null : fixProduct.approval,
+      }
+      const supabase = createClient()
+      const { error } = await supabase.from('products').update(patch).eq('id', fixProduct.id)
+      if (error) throw error
+
+      // حفظ باركود كل خيار على حدة (إن وُجدت خيارات)
+      for (const v of variantForm) {
+        const { error: vErr } = await supabase
+          .from('product_variants')
+          .update({ barcode: emptyToNull(v.barcode) })
+          .eq('id', v.id)
+        if (vErr) throw vErr
+      }
+
+      // مطابقة أسعار المنصّات على سعر النظام (النظام هو المصدر الرسمي)
+      if (syncChannels && price !== null) {
+        const rows = (ctx.cpByProduct.get(fixProduct.id) || []).filter(
+          (cp) => cp.channel_price !== null && Math.abs((cp.channel_price as number) - price) > 0.001
+        )
+        for (const cp of rows) {
+          const { error: cErr } = await supabase
+            .from('channel_products')
+            .update({ channel_price: price })
+            .eq('product_id', fixProduct.id)
+            .eq('channel_id', cp.channel_id)
+          if (cErr) throw cErr
+        }
+        setChannelProducts((prev) =>
+          prev.map((cp) =>
+            cp.product_id === fixProduct.id && cp.channel_price !== null
+              ? { ...cp, channel_price: price }
+              : cp
+          )
+        )
+      }
+
+      setProducts((prev) => prev.map((x) => (x.id === fixProduct.id ? { ...x, ...patch } : x)))
+      if (variantForm.length) {
+        const bcById = new Map(variantForm.map((v) => [v.id, emptyToNull(v.barcode)]))
+        setVariants((prev) =>
+          prev.map((v) => (bcById.has(v.id) ? { ...v, barcode: bcById.get(v.id) ?? null } : v))
+        )
+      }
+      setLastUpdated(new Date())
+      setFixProduct(null)
+    } catch (e: any) {
+      setSaveErr(e?.message || 'فشل الحفظ')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // تنفيذ الإجراء الجماعي على العناصر المحدّدة حسب نوع المشكلة الحالية
+  const runBulk = async () => {
+    if (!activeIssue || selected.size === 0) return
+    setBulkBusy(true)
+    setBulkErr(null)
+    try {
+      const supabase = createClient()
+      const ids = [...selected]
+
+      if (activeIssue === 'not_approved') {
+        for (let i = 0; i < ids.length; i += 200) {
+          const { error } = await supabase
+            .from('products')
+            .update({ approval: 'Approved' })
+            .in('id', ids.slice(i, i + 200))
+          if (error) throw error
+        }
+        setProducts((prev) => prev.map((p) => (selected.has(p.id) ? { ...p, approval: 'Approved' } : p)))
+      } else if (activeIssue === 'no_barcode') {
+        const prodPatch = new Map<string, string>()
+        const varPatch: { id: string; barcode: string }[] = []
+        for (const id of ids) {
+          const p = products.find((x) => x.id === id)
+          if (!p) continue
+          const vs = variants.filter((v) => v.parent_product_id === id)
+          if (vs.length > 0) {
+            const has = p.barcode && p.barcode.trim() !== ''
+            const base = has ? (p.barcode as string).trim() : genEan13()
+            if (!has) prodPatch.set(id, base)
+            vs.forEach((v, i) => {
+              if (!(v.barcode && String(v.barcode).trim() !== '')) varPatch.push({ id: v.id, barcode: `${base}-${i + 1}` })
+            })
+          } else if (!(p.barcode && p.barcode.trim() !== '')) {
+            prodPatch.set(id, genEan13())
+          }
+        }
+        for (const [id, bc] of prodPatch) {
+          const { error } = await supabase.from('products').update({ barcode: bc }).eq('id', id)
+          if (error) throw error
+        }
+        for (const v of varPatch) {
+          const { error } = await supabase.from('product_variants').update({ barcode: v.barcode }).eq('id', v.id)
+          if (error) throw error
+        }
+        setProducts((prev) => prev.map((p) => (prodPatch.has(p.id) ? { ...p, barcode: prodPatch.get(p.id)! } : p)))
+        const vb = new Map(varPatch.map((v) => [v.id, v.barcode]))
+        setVariants((prev) => prev.map((v) => (vb.has(v.id) ? { ...v, barcode: vb.get(v.id)! } : v)))
+      } else if (activeIssue === 'price_mismatch') {
+        for (const id of ids) {
+          const p = products.find((x) => x.id === id)
+          if (!p || p.price === null) continue
+          const rows = (ctx.cpByProduct.get(id) || []).filter(
+            (cp) => cp.channel_price !== null && Math.abs((cp.channel_price as number) - (p.price as number)) > 0.001
+          )
+          for (const cp of rows) {
+            const { error } = await supabase
+              .from('channel_products')
+              .update({ channel_price: p.price })
+              .eq('product_id', id)
+              .eq('channel_id', cp.channel_id)
+            if (error) throw error
+          }
+        }
+        setChannelProducts((prev) =>
+          prev.map((cp) => {
+            if (!selected.has(cp.product_id) || cp.channel_price === null) return cp
+            const p = products.find((x) => x.id === cp.product_id)
+            return p && p.price !== null ? { ...cp, channel_price: p.price } : cp
+          })
+        )
+      } else if (activeIssue === 'no_snoonu' || activeIssue === 'no_rafeeq' || activeIssue === 'no_channel_link') {
+        // ربط سريع: نحط الـSKU كمعرّف المنصّة للحقول الفاضية فقط
+        const patches = new Map<string, Partial<Product>>()
+        const skipped: string[] = []
+        for (const id of ids) {
+          const p = products.find((x) => x.id === id)
+          if (!p) continue
+          if (!p.sku || p.sku.trim() === '') {
+            skipped.push(id)
+            continue
+          }
+          const patch: Partial<Product> = {}
+          const wantSnoonu = activeIssue === 'no_snoonu' || activeIssue === 'no_channel_link'
+          const wantRafeeq = activeIssue === 'no_rafeeq' || activeIssue === 'no_channel_link'
+          if (wantSnoonu && (!p.snoonu_id || p.snoonu_id.trim() === '')) patch.snoonu_id = p.sku
+          if (wantRafeeq && (!p.rafeeq_product_id || String(p.rafeeq_product_id).trim() === ''))
+            patch.rafeeq_product_id = p.sku
+          if (Object.keys(patch).length) patches.set(id, patch)
+        }
+        for (const [id, patch] of patches) {
+          const { error } = await supabase.from('products').update(patch).eq('id', id)
+          if (error) throw error
+        }
+        setProducts((prev) => prev.map((p) => (patches.has(p.id) ? { ...p, ...patches.get(p.id) } : p)))
+        if (skipped.length) setBulkErr(`تم تخطّي ${skipped.length} منتج بدون SKU — لا يمكن ربطها تلقائيًا`)
+      }
+
+      setLastUpdated(new Date())
+      setSelected(new Set())
+    } catch (e: any) {
+      setBulkErr(e?.message || 'فشل الإجراء الجماعي')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   // ---------- العرض ----------
   if (loading) return <Shell><Centered>جارٍ فحص الكتالوج…</Centered></Shell>
   if (error)
@@ -441,6 +728,8 @@ export default function CatalogHealthPage() {
               onClick={() => {
                 setActiveIssue(isActive ? null : def.key)
                 setSearch('')
+                setSelected(new Set())
+                setBulkErr(null)
               }}
               style={{
                 ...S.card,
@@ -490,9 +779,37 @@ export default function CatalogHealthPage() {
             <p style={S.empty}>ما فيه منتجات بهذه المشكلة 🎉</p>
           ) : (
             <div style={S.tableWrap}>
+              {/* شريط الإجراء الجماعي */}
+              {(() => {
+                const bulkLabel = BULK_ACTION[activeIssue]
+                if (!bulkLabel) return null
+                const allSelected = activeList.length > 0 && activeList.every((p) => selected.has(p.id))
+                return (
+                  <div style={S.bulkBar}>
+                    <label style={S.checkRow}>
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={() => setSelected(allSelected ? new Set() : new Set(activeList.map((p) => p.id)))}
+                      />
+                      تحديد الكل ({activeList.length})
+                    </label>
+                    <span style={{ fontSize: 13, color: '#64748b' }}>محدد: {selected.size}</span>
+                    <button
+                      onClick={runBulk}
+                      disabled={bulkBusy || selected.size === 0}
+                      style={{ ...S.btnPrimary, opacity: bulkBusy || selected.size === 0 ? 0.5 : 1 }}
+                    >
+                      {bulkBusy ? 'جارٍ التنفيذ…' : bulkLabel}
+                    </button>
+                    {bulkErr && <span style={{ color: '#dc2626', fontSize: 13, fontWeight: 600 }}>{bulkErr}</span>}
+                  </div>
+                )
+              })()}
               <table style={S.table}>
                 <thead>
                   <tr>
+                    {BULK_ACTION[activeIssue] && <th style={S.th}></th>}
                     <th style={S.th}>SKU</th>
                     <th style={S.th}>الاسم</th>
                     <th style={S.th}>السعر</th>
@@ -503,6 +820,21 @@ export default function CatalogHealthPage() {
                 <tbody>
                   {activeList.slice(0, 200).map((p) => (
                     <tr key={p.id} style={S.tr}>
+                      {BULK_ACTION[activeIssue] && (
+                        <td style={S.td}>
+                          <input
+                            type="checkbox"
+                            checked={selected.has(p.id)}
+                            onChange={() =>
+                              setSelected((s) => {
+                                const n = new Set(s)
+                                n.has(p.id) ? n.delete(p.id) : n.add(p.id)
+                                return n
+                              })
+                            }
+                          />
+                        </td>
+                      )}
                       <td style={{ ...S.td, fontFamily: 'monospace', direction: 'ltr', textAlign: 'right' }}>
                         {p.sku || '—'}
                       </td>
@@ -525,9 +857,9 @@ export default function CatalogHealthPage() {
                       <td style={S.td}>{p.price ?? '—'}</td>
                       <td style={S.td}>{p.main_category || '—'}</td>
                       <td style={S.td}>
-                        <a href={`/products?sku=${p.sku || ''}`} style={S.fixLink}>
+                        <button onClick={() => openFix(p)} style={S.fixBtn}>
                           تصحيح ←
-                        </a>
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -543,6 +875,143 @@ export default function CatalogHealthPage() {
 
       {!activeIssue && (
         <p style={S.hint}>اضغط أي بطاقة لعرض المنتجات المتأثرة وتصحيحها</p>
+      )}
+
+      {/* نافذة التصحيح المنبثقة */}
+      {fixProduct && (
+        <div style={S.overlay} onClick={() => !saving && setFixProduct(null)}>
+          <div style={S.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <div>
+                <h3 style={S.modalTitle}>تصحيح المنتج</h3>
+                <span style={S.modalSku}>{fixProduct.sku || '—'}</span>
+              </div>
+              <button onClick={() => !saving && setFixProduct(null)} style={S.modalClose} aria-label="إغلاق">
+                ✕
+              </button>
+            </div>
+
+            <div style={S.modalBody}>
+              {(() => {
+                const focusField = activeIssue ? ISSUE_FIELD[activeIssue] : undefined
+                const variant = ctx.variantStats.get(fixProduct.id)
+                const hasVariants = !!variant && variant.total > 0
+                const fieldStyle = (k: keyof Product): React.CSSProperties => ({
+                  ...S.input,
+                  ...(focusField === k ? { borderColor: '#2563eb', boxShadow: '0 0 0 2px #bfdbfe' } : {}),
+                })
+                const set = (k: keyof Product, v: any) => setForm((f) => ({ ...f, [k]: v }))
+                return (
+                  <>
+                    <label style={S.fieldLabel}>SKU</label>
+                    <input style={fieldStyle('sku')} value={(form.sku as string) ?? ''} onChange={(e) => set('sku', e.target.value)} dir="ltr" />
+
+                    <label style={S.fieldLabel}>الاسم العربي</label>
+                    <input style={fieldStyle('name_ar')} value={(form.name_ar as string) ?? ''} onChange={(e) => set('name_ar', e.target.value)} dir="rtl" />
+
+                    <label style={S.fieldLabel}>الاسم الإنجليزي</label>
+                    <input style={fieldStyle('name_en')} value={(form.name_en as string) ?? ''} onChange={(e) => set('name_en', e.target.value)} dir="ltr" />
+
+                    <label style={S.fieldLabel}>السعر</label>
+                    <input style={fieldStyle('price')} type="number" value={(form.price as number) ?? ''} onChange={(e) => set('price', e.target.value)} dir="ltr" />
+
+                    <label style={S.fieldLabel}>الباركود</label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input style={{ ...fieldStyle('barcode'), flex: 1 }} value={(form.barcode as string) ?? ''} onChange={(e) => set('barcode', e.target.value)} dir="ltr" />
+                      <button type="button" style={S.genBtn} onClick={() => set('barcode', genEan13())}>
+                        توليد EAN-13
+                      </button>
+                    </div>
+                    {hasVariants && (
+                      <div style={S.variantBox}>
+                        <div style={S.variantHead}>
+                          <span style={{ fontWeight: 700, fontSize: 13 }}>
+                            باركود الخيارات ({variantForm.filter((v) => v.barcode.trim()).length}/{variantForm.length})
+                          </span>
+                          <button type="button" style={S.genBtn} onClick={genVariantBarcodes}>
+                            توليد من الرئيسي (-1، -2…)
+                          </button>
+                        </div>
+                        <p style={S.variantHint}>
+                          كل خيار ياخذ نفس الباركود الرئيسي بلاحقة تسلسلية. لازم تحفظ ليُعتبر المنتج مكتمل.
+                        </p>
+                        {variantForm.map((v, i) => (
+                          <div key={v.id} style={S.variantRow}>
+                            <span style={S.variantName}>{v.name || `خيار ${i + 1}`}</span>
+                            <input
+                              style={{ ...S.input, flex: 1 }}
+                              value={v.barcode}
+                              onChange={(e) =>
+                                setVariantForm((vf) =>
+                                  vf.map((x, j) => (j === i ? { ...x, barcode: e.target.value } : x))
+                                )
+                              }
+                              dir="ltr"
+                              placeholder="باركود الخيار"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <label style={S.fieldLabel}>التصنيف</label>
+                    <input style={fieldStyle('main_category')} value={(form.main_category as string) ?? ''} onChange={(e) => set('main_category', e.target.value)} dir="rtl" />
+
+                    <label style={S.fieldLabel}>رابط الصورة</label>
+                    <input style={fieldStyle('image_url')} value={(form.image_url as string) ?? ''} onChange={(e) => set('image_url', e.target.value)} dir="ltr" />
+
+                    <div style={{ display: 'flex', gap: 12 }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={S.fieldLabel}>Snoonu ID</label>
+                        <input style={fieldStyle('snoonu_id')} value={(form.snoonu_id as string) ?? ''} onChange={(e) => set('snoonu_id', e.target.value)} dir="ltr" />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={S.fieldLabel}>Rafeeq ID</label>
+                        <input style={fieldStyle('rafeeq_product_id')} value={(form.rafeeq_product_id as string) ?? ''} onChange={(e) => set('rafeeq_product_id', e.target.value)} dir="ltr" />
+                      </div>
+                    </div>
+
+                    {/* فرق السعر بين المنصّات */}
+                    {mismatchRows(fixProduct).length > 0 && (
+                      <div style={S.variantBox}>
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>فرق سعر بين المنصّات</span>
+                        {mismatchRows(fixProduct).map((m, i) => (
+                          <p key={i} style={{ fontSize: 12, color: '#475569', margin: '6px 0 0' }}>
+                            {m.name}: النظام {m.system} · المنصّة {m.channel}{' '}
+                            <span style={{ fontWeight: 700, color: m.delta > 0 ? '#dc2626' : '#d97706' }}>
+                              ({m.delta > 0 ? '+' : ''}{m.delta})
+                            </span>
+                          </p>
+                        ))}
+                        <label style={S.checkRow}>
+                          <input type="checkbox" checked={syncChannels} onChange={(e) => setSyncChannels(e.target.checked)} />
+                          مطابقة أسعار المنصّات على سعر النظام عند الحفظ
+                        </label>
+                      </div>
+                    )}
+
+                    {/* اعتماد المنتج */}
+                    <label style={{ ...S.checkRow, marginTop: 12 }}>
+                      <input type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} />
+                      اعتماد المنتج (Approved)
+                    </label>
+                  </>
+                )
+              })()}
+
+              {saveErr && <p style={S.saveErr}>{saveErr}</p>}
+            </div>
+
+            <div style={S.modalFoot}>
+              <button onClick={() => setFixProduct(null)} disabled={saving} style={S.btnGhost}>
+                إلغاء
+              </button>
+              <button onClick={saveFix} disabled={saving} style={{ ...S.btnPrimary, opacity: saving ? 0.6 : 1 }}>
+                {saving ? 'جارٍ الحفظ…' : 'حفظ'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Shell>
   )
@@ -608,8 +1077,56 @@ const S: Record<string, React.CSSProperties> = {
   th: { textAlign: 'right', padding: '10px 16px', fontSize: 12, fontWeight: 700, color: '#64748b', borderBottom: '1px solid #e2e8f0', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #f1f5f9' },
   td: { padding: '10px 16px', whiteSpace: 'nowrap' },
-  fixLink: { color: '#2563eb', fontWeight: 600, fontSize: 13, textDecoration: 'none' },
+  fixBtn: {
+    color: '#2563eb', fontWeight: 600, fontSize: 13, font: 'inherit',
+    background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+  },
   empty: { padding: 32, textAlign: 'center', color: '#16a34a', fontWeight: 600 },
+  overlay: {
+    position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', display: 'grid',
+    placeItems: 'center', padding: 16, zIndex: 50,
+  },
+  modal: {
+    width: 'min(560px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column',
+    background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,.3)',
+  },
+  modalHead: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12,
+    padding: '16px 20px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc',
+  },
+  modalTitle: { fontSize: 18, fontWeight: 800, margin: 0 },
+  modalSku: { fontSize: 13, color: '#64748b', fontFamily: 'monospace', direction: 'ltr', display: 'inline-block', marginTop: 2 },
+  modalClose: { background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: '#64748b', lineHeight: 1 },
+  modalBody: { padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 },
+  fieldLabel: { fontSize: 12, fontWeight: 700, color: '#475569', marginTop: 10, marginBottom: 4 },
+  input: {
+    width: '100%', padding: '9px 12px', borderRadius: 10, border: '1.5px solid #cbd5e1',
+    fontSize: 14, font: 'inherit', boxSizing: 'border-box',
+  },
+  genBtn: {
+    font: 'inherit', fontSize: 12, fontWeight: 700, color: '#0f172a', background: '#f1f5f9',
+    border: '1.5px solid #cbd5e1', borderRadius: 10, padding: '0 12px', cursor: 'pointer', whiteSpace: 'nowrap',
+  },
+  variantBox: { marginTop: 8, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: 12 },
+  variantHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  variantHint: { fontSize: 11, color: '#92400e', margin: '6px 0 10px', lineHeight: 1.6 },
+  variantRow: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 },
+  variantName: { fontSize: 12, fontWeight: 600, color: '#475569', minWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#0f172a', cursor: 'pointer', marginTop: 8 },
+  bulkBar: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', padding: '12px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' },
+  saveErr: { color: '#dc2626', fontSize: 13, fontWeight: 600, marginTop: 12 },
+  modalFoot: {
+    display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 20px',
+    borderTop: '1px solid #e2e8f0', background: '#f8fafc',
+  },
+  btnGhost: {
+    font: 'inherit', fontSize: 14, fontWeight: 700, color: '#475569', background: '#fff',
+    border: '1.5px solid #cbd5e1', borderRadius: 10, padding: '8px 18px', cursor: 'pointer',
+  },
+  btnPrimary: {
+    font: 'inherit', fontSize: 14, fontWeight: 700, color: '#fff', background: '#0f172a',
+    border: 'none', borderRadius: 10, padding: '8px 22px', cursor: 'pointer',
+  },
   more: { padding: 12, textAlign: 'center', fontSize: 13, color: '#94a3b8' },
   hint: { marginTop: 24, textAlign: 'center', fontSize: 14, color: '#94a3b8' },
 }

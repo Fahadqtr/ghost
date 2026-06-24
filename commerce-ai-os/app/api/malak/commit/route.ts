@@ -3,6 +3,7 @@
 // card: verify the signed action token, perform the mutation with the service
 // role (bypasses RLS), then log a row to `malak_audit`. No token → no write.
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { verifyAction, type MalakAction } from "@/lib/malak/confirm";
 
 export const runtime = "nodejs";
@@ -189,6 +190,14 @@ async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<s
 }
 
 export async function POST(req: Request) {
+  // This route performs real service-role writes. The signed token gates which
+  // change runs, but require a signed-in user too (defense in depth) so a leaked
+  // token alone can't mutate the catalog.
+  const {
+    data: { user },
+  } = await createClient().auth.getUser();
+  if (!user) return Response.json({ error: "غير مسجّل الدخول." }, { status: 401 });
+
   let token: unknown;
   try {
     const body = await req.json();

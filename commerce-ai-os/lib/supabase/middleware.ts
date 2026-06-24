@@ -15,8 +15,23 @@ export async function updateSession(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // If Supabase isn't configured, don't block the app — just pass through.
-  if (!url || !key) return supabaseResponse;
+  const path = request.nextUrl.pathname;
+  const isPublic = PUBLIC_PATHS.some(
+    (p) => path === p || path.startsWith(p + "/")
+  );
+
+  // If Supabase isn't configured we can't verify anyone. In production that's a
+  // misconfiguration — fail CLOSED (send protected routes to /login) rather than
+  // serving the whole app unauthenticated. In dev, pass through so local work
+  // without env vars isn't blocked.
+  if (!url || !key) {
+    if (process.env.NODE_ENV === "production" && !isPublic) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      return NextResponse.redirect(redirectUrl);
+    }
+    return supabaseResponse;
+  }
 
   const supabase = createServerClient(url, key, {
     cookies: {
@@ -41,11 +56,6 @@ export async function updateSession(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const path = request.nextUrl.pathname;
-  const isPublic = PUBLIC_PATHS.some(
-    (p) => path === p || path.startsWith(p + "/")
-  );
 
   // Not logged in and trying to reach a protected page -> /login
   if (!user && !isPublic) {
