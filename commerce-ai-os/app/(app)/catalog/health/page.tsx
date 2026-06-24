@@ -839,7 +839,12 @@ export default function CatalogHealthPage() {
                         {p.sku || '—'}
                       </td>
                       <td style={S.td}>
-                        {p.name_ar || p.name_en || '—'}
+                        <div>{p.name_ar || '—'}</div>
+                        {p.name_en && (
+                          <div style={{ fontSize: 12, color: '#64748b', direction: 'ltr', textAlign: 'right' }}>
+                            {p.name_en}
+                          </div>
+                        )}
                         {activeIssue === 'price_mismatch' && (
                           <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
                             {mismatchRows(p).map((m, i) => (
