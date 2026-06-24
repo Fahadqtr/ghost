@@ -38,18 +38,18 @@ export default async function ProductsPage() {
         supabase.from("channel_products").select("product_id, channel_id, channel_status").range(from, to)
       ),
       fetchAll((from, to) =>
-        supabase.from("product_variants").select("parent_product_id, barcode").range(from, to)
+        supabase.from("product_variants").select("parent_product_id, variant_name, barcode").range(from, to)
       ),
     ]);
 
-    // parent_product_id -> [variant barcodes] (for barcode search/scanning)
-    const vbcByProduct = new Map<string, string[]>();
+    // parent_product_id -> [{name, barcode}] (for barcode search + showing which option matched)
+    const variantsByProduct = new Map<string, { name: string | null; barcode: string }[]>();
     for (const v of variantRows as any[]) {
       const bc = v?.barcode ? String(v.barcode).trim() : "";
       if (!v?.parent_product_id || !bc) continue;
-      const arr = vbcByProduct.get(v.parent_product_id) ?? [];
-      arr.push(bc);
-      vbcByProduct.set(v.parent_product_id, arr);
+      const arr = variantsByProduct.get(v.parent_product_id) ?? [];
+      arr.push({ name: v.variant_name ?? null, barcode: bc });
+      variantsByProduct.set(v.parent_product_id, arr);
     }
 
     const chanList = (channels as any).data ?? [];
@@ -81,7 +81,7 @@ export default async function ProductsPage() {
       discount_price: p.discount_price,
       stock: p.inventory?.[0]?.stock_quantity ?? null,
       variant_count: p.product_variants?.[0]?.count ?? 0,
-      variant_barcodes: vbcByProduct.get(p.id) ?? [],
+      variants: variantsByProduct.get(p.id) ?? [],
       channels: statusByProduct.get(p.id) ?? {},
     }));
   } catch (e) {
