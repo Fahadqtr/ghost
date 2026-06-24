@@ -197,7 +197,9 @@ function genEan13(): string {
 // ---------- المكوّن ----------
 export default function CatalogHealthPage() {
   const [products, setProducts] = useState<Product[]>([])
-  const [variants, setVariants] = useState<{ parent_product_id: string; barcode: string | null }[]>([])
+  const [variants, setVariants] = useState<
+    { id: string; parent_product_id: string; variant_name: string | null; barcode: string | null }[]
+  >([])
   const [channelProducts, setChannelProducts] = useState<ChannelProduct[]>([])
   const [channelNames, setChannelNames] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
@@ -210,6 +212,7 @@ export default function CatalogHealthPage() {
   // نافذة التصحيح المنبثقة
   const [fixProduct, setFixProduct] = useState<Product | null>(null)
   const [form, setForm] = useState<Partial<Product>>({})
+  const [variantForm, setVariantForm] = useState<{ id: string; name: string; barcode: string }[]>([])
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState<string | null>(null)
 
@@ -254,12 +257,12 @@ export default function CatalogHealthPage() {
 
       // خيارات المنتجات (للتحقق من تغطية باركود الخيارات). دفاعيًا: لو الجدول/العمود
       // مو موجود نكمل بدون ما نكسر الصفحة.
-      const vrows: { parent_product_id: string; barcode: string | null }[] = []
+      const vrows: { id: string; parent_product_id: string; variant_name: string | null; barcode: string | null }[] = []
       try {
         for (let from = 0; ; from += PAGE) {
           const { data, error } = await supabase
             .from('product_variants')
-            .select('parent_product_id, barcode')
+            .select('id, parent_product_id, variant_name, barcode')
             .range(from, from + PAGE - 1)
           if (error) break
           if (!data || data.length === 0) break
@@ -411,7 +414,22 @@ export default function CatalogHealthPage() {
       snoonu_id: p.snoonu_id ?? '',
       rafeeq_product_id: p.rafeeq_product_id ?? '',
     } as Partial<Product>)
+    setVariantForm(
+      variants
+        .filter((v) => v.parent_product_id === p.id)
+        .map((v) => ({ id: v.id, name: v.variant_name ?? '', barcode: v.barcode ?? '' }))
+    )
     setSaveErr(null)
+  }
+
+  // توليد باركود الخيارات: نفس الباركود الرئيسي + لاحقة تسلسلية (-1، -2…).
+  // لو الباركود الرئيسي فاضي نولّد EAN-13 له أول ثم نشتقّ منه.
+  const genVariantBarcodes = () => {
+    setForm((f) => {
+      const base = emptyToNull(f.barcode) ? String(f.barcode).trim() : genEan13()
+      setVariantForm((vf) => vf.map((v, i) => ({ ...v, barcode: `${base}-${i + 1}` })))
+      return { ...f, barcode: base }
+    })
   }
 
   // حفظ التعديلات في Supabase ثم تحديث الحالة محليًا (تعيد العدّادات حسابها فورًا)
@@ -436,7 +454,23 @@ export default function CatalogHealthPage() {
       const supabase = createClient()
       const { error } = await supabase.from('products').update(patch).eq('id', fixProduct.id)
       if (error) throw error
+
+      // حفظ باركود كل خيار على حدة (إن وُجدت خيارات)
+      for (const v of variantForm) {
+        const { error: vErr } = await supabase
+          .from('product_variants')
+          .update({ barcode: emptyToNull(v.barcode) })
+          .eq('id', v.id)
+        if (vErr) throw vErr
+      }
+
       setProducts((prev) => prev.map((x) => (x.id === fixProduct.id ? { ...x, ...patch } : x)))
+      if (variantForm.length) {
+        const bcById = new Map(variantForm.map((v) => [v.id, emptyToNull(v.barcode)]))
+        setVariants((prev) =>
+          prev.map((v) => (bcById.has(v.id) ? { ...v, barcode: bcById.get(v.id) ?? null } : v))
+        )
+      }
       setLastUpdated(new Date())
       setFixProduct(null)
     } catch (e: any) {
@@ -676,12 +710,35 @@ export default function CatalogHealthPage() {
                       </button>
                     </div>
                     {hasVariants && (
-                      <p style={S.variantNote}>
-                        ⚠ هذا المنتج له {variant!.total} خيار ({variant!.withBc}/{variant!.total} فيها باركود).
-                        باركود المنتج هنا لا يغطّي الخيارات — افتح{' '}
-                        <a href={`/products/${fixProduct.id}/edit`} style={{ color: '#2563eb' }}>صفحة التعديل الكاملة</a>{' '}
-                        لباركود كل خيار.
-                      </p>
+                      <div style={S.variantBox}>
+                        <div style={S.variantHead}>
+                          <span style={{ fontWeight: 700, fontSize: 13 }}>
+                            باركود الخيارات ({variantForm.filter((v) => v.barcode.trim()).length}/{variantForm.length})
+                          </span>
+                          <button type="button" style={S.genBtn} onClick={genVariantBarcodes}>
+                            توليد من الرئيسي (-1، -2…)
+                          </button>
+                        </div>
+                        <p style={S.variantHint}>
+                          كل خيار ياخذ نفس الباركود الرئيسي بلاحقة تسلسلية. لازم تحفظ ليُعتبر المنتج مكتمل.
+                        </p>
+                        {variantForm.map((v, i) => (
+                          <div key={v.id} style={S.variantRow}>
+                            <span style={S.variantName}>{v.name || `خيار ${i + 1}`}</span>
+                            <input
+                              style={{ ...S.input, flex: 1 }}
+                              value={v.barcode}
+                              onChange={(e) =>
+                                setVariantForm((vf) =>
+                                  vf.map((x, j) => (j === i ? { ...x, barcode: e.target.value } : x))
+                                )
+                              }
+                              dir="ltr"
+                              placeholder="باركود الخيار"
+                            />
+                          </div>
+                        ))}
+                      </div>
                     )}
 
                     <label style={S.fieldLabel}>التصنيف</label>
@@ -812,7 +869,11 @@ const S: Record<string, React.CSSProperties> = {
     font: 'inherit', fontSize: 12, fontWeight: 700, color: '#0f172a', background: '#f1f5f9',
     border: '1.5px solid #cbd5e1', borderRadius: 10, padding: '0 12px', cursor: 'pointer', whiteSpace: 'nowrap',
   },
-  variantNote: { fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px', marginTop: 6, lineHeight: 1.6 },
+  variantBox: { marginTop: 8, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: 12 },
+  variantHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  variantHint: { fontSize: 11, color: '#92400e', margin: '6px 0 10px', lineHeight: 1.6 },
+  variantRow: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 },
+  variantName: { fontSize: 12, fontWeight: 600, color: '#475569', minWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   saveErr: { color: '#dc2626', fontSize: 13, fontWeight: 600, marginTop: 12 },
   modalFoot: {
     display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 20px',
