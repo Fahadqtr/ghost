@@ -13,6 +13,7 @@ export type OosItem = {
   image_url: string | null;
   category: string | null;
   stock: number;
+  activeChannels: string[];
   updated_at: string | null;
 };
 
@@ -33,24 +34,41 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
     error?: string;
   } | null>(null);
 
+  const [channel, setChannel] = useState(""); // focus one channel (e.g. Pure Seoul)
+  const [activeOnly, setActiveOnly] = useState(false); // out of stock but still live
+
+  // All channel names that appear as "still active" on an out-of-stock product.
+  const channels = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of items) for (const c of p.activeChannels) s.add(c);
+    return Array.from(s).sort();
+  }, [items]);
+
   const filtered = useMemo(() => {
     const n = q.trim().toLowerCase();
-    if (!n) return items;
-    return items.filter(
-      (p) =>
+    return items.filter((p) => {
+      const matchesQ =
+        !n ||
         (p.name_en ?? "").toLowerCase().includes(n) ||
         (p.name_ar ?? "").includes(q.trim()) ||
         (p.sku ?? "").toLowerCase().includes(n) ||
-        (p.barcode ?? "").toLowerCase().includes(n)
-    );
-  }, [items, q]);
+        (p.barcode ?? "").toLowerCase().includes(n);
+      const matchesChannel = !channel || p.activeChannels.includes(channel);
+      const matchesActive = !activeOnly || p.activeChannels.length > 0;
+      return matchesQ && matchesChannel && matchesActive;
+    });
+  }, [items, q, channel, activeOnly]);
+
+  const mismatchCount = useMemo(() => items.filter((p) => p.activeChannels.length > 0).length, [items]);
 
   function exportCsv() {
-    const header = ["sku", "barcode", "name_en", "name_ar", "category", "stock", "updated_at"];
+    const header = ["sku", "barcode", "name_en", "name_ar", "category", "stock", "active_channels", "updated_at"];
     const lines = [header.join(",")];
     for (const p of filtered) {
       lines.push(
-        [p.sku, p.barcode, p.name_en, p.name_ar, p.category, p.stock, p.updated_at].map(csvEscape).join(",")
+        [p.sku, p.barcode, p.name_en, p.name_ar, p.category, p.stock, p.activeChannels.join(" | "), p.updated_at]
+          .map(csvEscape)
+          .join(",")
       );
     }
     const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
@@ -128,6 +146,19 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
         )}
       </details>
 
+      {/* Mismatch banner: out of stock but still live on a channel */}
+      {mismatchCount > 0 && (
+        <div className="card flex flex-wrap items-center gap-2 border-amber-200 bg-amber-50 py-2 text-sm text-amber-900 print:hidden">
+          <span className="font-medium">⚠ {mismatchCount} منتج نافد لكن لا يزال «مفعّل» في قناة</span>
+          <button
+            className="text-xs text-blue-700 hover:underline"
+            onClick={() => setActiveOnly((v) => !v)}
+          >
+            {activeOnly ? "إظهار الكل" : "اعرض الفروقات فقط"}
+          </button>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="card flex flex-wrap items-center gap-3 print:hidden">
         <input
@@ -136,6 +167,16 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
+        {channels.length > 0 && (
+          <select className="input w-auto" value={channel} onChange={(e) => setChannel(e.target.value)}>
+            <option value="">كل القنوات</option>
+            {channels.map((c) => <option key={c} value={c}>مفعّل في: {c}</option>)}
+          </select>
+        )}
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />
+          مفعّل في قناة فقط
+        </label>
         <span className="text-sm text-muted">{filtered.length} منتج نافد</span>
         <div className="flex gap-2 sm:ml-auto">
           <button className="btn-ghost px-4 py-1.5 text-xs disabled:opacity-50" disabled={filtered.length === 0} onClick={exportCsv}>
@@ -168,6 +209,11 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
                   {p.sku ? <span className="font-mono">{p.sku}</span> : null}
                   {p.category ? <span>· {p.category}</span> : null}
                   <span className="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-700">Out · {p.stock}</span>
+                  {p.activeChannels.map((c) => (
+                    <span key={c} className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700" title="نافد لكن لا يزال مفعّلاً في هذه القناة">
+                      مفعّل: {c}
+                    </span>
+                  ))}
                 </div>
               </div>
             </div>

@@ -45,6 +45,30 @@ export default async function OutOfStockPage() {
       if (!data || data.length < PAGE) break;
     }
 
+    // Channels a product is still ACTIVE on — so we can flag "out of stock here
+    // but still live on a channel" (e.g. Pure Seoul).
+    const activeByProduct = new Map<string, string[]>();
+    {
+      const { data: chans } = await supabase.from("channels").select("id, name");
+      const chanName = new Map<string, string>(((chans ?? []) as any[]).map((c) => [c.id, c.name]));
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from("channel_products")
+          .select("product_id, channel_id, channel_status")
+          .range(from, from + PAGE - 1);
+        if (error) break;
+        for (const r of (data ?? []) as any[]) {
+          if ((r.channel_status ?? "") !== "Active") continue;
+          const nm = chanName.get(r.channel_id);
+          if (!nm) continue;
+          const arr = activeByProduct.get(r.product_id) ?? [];
+          if (!arr.includes(nm)) arr.push(nm);
+          activeByProduct.set(r.product_id, arr);
+        }
+        if (!data || data.length < PAGE) break;
+      }
+    }
+
     for (const r of rows as any[]) {
       const invStock = r.stock_quantity ?? 0;
       const vSum = (r.product_id && variantSum.get(r.product_id)) ?? 0;
@@ -62,6 +86,7 @@ export default async function OutOfStockPage() {
         image_url: r.products?.image_url ?? null,
         category: r.products?.main_category ?? null,
         stock: effective,
+        activeChannels: (r.product_id && activeByProduct.get(r.product_id)) || [],
         updated_at: r.updated_at ?? null,
       });
     }
