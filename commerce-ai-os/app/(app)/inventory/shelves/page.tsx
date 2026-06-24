@@ -60,6 +60,7 @@ export default async function ShelvesPage() {
           (slotProducts[code] ??= new Set()).add(String(r.inventory_id));
           counts[code] = slotProducts[code].size;
           contents.push({
+            inventory_id: String(r.inventory_id),
             location: code,
             name: p?.name ?? null,
             name_ar: p?.name_ar ?? null,
@@ -84,6 +85,7 @@ export default async function ShelvesPage() {
           (slotProducts[code] ??= new Set()).add(String(r.id));
           counts[code] = slotProducts[code].size;
           contents.push({
+            inventory_id: String(r.id),
             location: code,
             name: r.products?.name_en ?? r.products?.name_ar ?? null,
             name_ar: r.products?.name_ar ?? null,
@@ -127,7 +129,7 @@ export default async function ShelvesPage() {
       ) : (
         <>
           <ShelvesManager slots={slots} counts={counts} />
-          <ShelfContents items={contents} />
+          <ShelfContents items={contents} slotCodes={slots.map((s) => s.code)} />
         </>
       )}
     </div>

@@ -397,6 +397,84 @@ export async function saveShelfStock(
   return { ok: true };
 }
 
+/** Recompute inventory.location (primary slot) + total stock from shelf_stock. */
+async function resyncInventoryFromShelfStock(
+  admin: ReturnType<typeof writableClient>,
+  inventoryId: string
+) {
+  const { data } = await admin
+    .from("shelf_stock")
+    .select("location, quantity")
+    .eq("inventory_id", inventoryId);
+  const rows = (data ?? []) as { location: string; quantity: number }[];
+  const primary = rows.slice().sort((a, b) => b.quantity - a.quantity)[0]?.location ?? null;
+  const total = rows.reduce((s, r) => s + (r.quantity ?? 0), 0);
+  const patch: Record<string, unknown> = { location: primary, updated_at: new Date().toISOString() };
+  // Don't silently zero stock when the last placement is removed — only adjust
+  // the total while there's still at least one placement to sum.
+  if (rows.length) patch.stock_quantity = total;
+  await admin.from("inventory").update(patch).eq("id", inventoryId);
+}
+
+/** Remove a product from a single shelf slot (deletes that shelf_stock row). */
+export async function removeFromShelf(inventoryId: string, location: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const slot = (location ?? "").trim().toUpperCase();
+  if (!inventoryId || !slot) return { error: "Missing inventory row or slot." };
+  const admin = writableClient();
+
+  const del = await admin.from("shelf_stock").delete().eq("inventory_id", inventoryId).eq("location", slot);
+  if (del.error) return { error: del.error.message };
+
+  await resyncInventoryFromShelfStock(admin, inventoryId);
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
+/** Move a product's placement from one slot to another (merges if the target
+ *  already holds units of the same product). */
+export async function moveShelfStock(inventoryId: string, fromLocation: string, toLocation: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const from = (fromLocation ?? "").trim().toUpperCase();
+  const to = (toLocation ?? "").trim().toUpperCase();
+  if (!inventoryId || !from || !to) return { error: "Missing inventory row or slot." };
+  if (from === to) return { ok: true };
+  const admin = writableClient();
+
+  const { data: src } = await admin
+    .from("shelf_stock")
+    .select("quantity")
+    .eq("inventory_id", inventoryId)
+    .eq("location", from)
+    .maybeSingle();
+  if (!src) return { error: "Placement not found." };
+  const { data: dst } = await admin
+    .from("shelf_stock")
+    .select("quantity")
+    .eq("inventory_id", inventoryId)
+    .eq("location", to)
+    .maybeSingle();
+
+  const now = new Date().toISOString();
+  const del = await admin.from("shelf_stock").delete().eq("inventory_id", inventoryId).eq("location", from);
+  if (del.error) return { error: del.error.message };
+  const up = await admin
+    .from("shelf_stock")
+    .upsert(
+      { inventory_id: inventoryId, location: to, quantity: (dst?.quantity ?? 0) + (src.quantity ?? 0), updated_at: now },
+      { onConflict: "inventory_id,location" }
+    );
+  if (up.error) return { error: up.error.message };
+
+  await resyncInventoryFromShelfStock(admin, inventoryId);
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  return { ok: true };
+}
+
 /**
  * Create a shelf and its slots in one go: shelf "A" with count 5 makes
  * A1..A5. Existing slots are left untouched (idempotent upsert).
