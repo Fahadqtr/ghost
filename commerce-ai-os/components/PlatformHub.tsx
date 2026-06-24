@@ -69,7 +69,9 @@ export default function PlatformHub({ platform, products }: { platform: string; 
       const matchesQ = !needle
         || (p.name_en ?? "").toLowerCase().includes(needle)
         || (p.name_ar ?? "").toLowerCase().includes(needle)
-        || (p.sku ?? "").toLowerCase().includes(needle);
+        || (p.sku ?? "").toLowerCase().includes(needle)
+        || (p.barcode ?? "").toLowerCase().includes(needle)
+        || (p.variant_barcodes ?? []).some((b) => b.toLowerCase().includes(needle));
       const matchesCat = !cat || p.main_category === cat;
       const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
       const matchesAvl = !avl || (avl === "out" ? p.availability === "OutOfStock" : avl === "in" ? p.availability === "InStock" : !p.availability);
@@ -112,7 +114,7 @@ export default function PlatformHub({ platform, products }: { platform: string; 
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <input className="input sm:max-w-xs" placeholder="بحث بالاسم (EN/AR) أو SKU…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="input sm:max-w-xs" placeholder="بحث بالاسم/SKU/باركود (مع باركود الخيارات)…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="input sm:max-w-xs" value={cat} onChange={(e) => setCat(e.target.value)}>
           <option value="">كل الفئات</option>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
