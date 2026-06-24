@@ -369,6 +369,97 @@ export async function extractRejectedFromImages(
   }
 }
 
+/** Next SKU in the catalog's mk#### scheme (max existing mk-number + 1). */
+export async function nextProductSku(): Promise<{ sku: string; error?: string }> {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { sku: "", error: "Not signed in." };
+  const supabase = createClient();
+  let maxMk = 0;
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from("products").select("sku").range(from, from + 999);
+    if (error) return { sku: "", error: error.message };
+    for (const p of data ?? []) {
+      const m = /^mk(\d+)$/i.exec(String((p as any).sku ?? "").trim());
+      if (m) maxMk = Math.max(maxMk, parseInt(m[1], 10));
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+  return { sku: `mk${maxMk + 1}` };
+}
+
+const ALLOWED_IMG = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
+/** Vision: look at a product image and draft a title + description + keywords
+ *  (EN/AR). Returns the suggested fields; the form decides what to apply. */
+export async function describeProductFromImage(
+  imageUrl: string
+): Promise<{
+  error?: string;
+  data?: { name_en: string; name_ar: string; description_en: string; description_ar: string; keywords_en: string; keywords_ar: string };
+}> {
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { error: "Not signed in." };
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return { error: "ميزة الذكاء غير مفعّلة (ANTHROPIC_API_KEY)." };
+  const url = (imageUrl ?? "").trim();
+  if (!url) return { error: "أضف صورة (Image URL) أولاً." };
+
+  let media_type = "image/jpeg";
+  let b64 = "";
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return { error: `تعذّر جلب الصورة (${r.status}).` };
+    const ct = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    media_type = ALLOWED_IMG.has(ct) ? ct : "image/jpeg";
+    b64 = Buffer.from(await r.arrayBuffer()).toString("base64");
+  } catch {
+    return { error: "تعذّر جلب الصورة من الرابط." };
+  }
+  if (!b64) return { error: "الصورة فارغة." };
+
+  const PROMPT =
+    "أنت مساعد كتالوج تجارة إلكترونية. حلّل صورة المنتج وأرجِع JSON فقط بهذه الحقول بالضبط:\n" +
+    '{"name_en":"","name_ar":"","description_en":"","description_ar":"","keywords_en":"","keywords_ar":""}\n' +
+    "- name: عنوان منتج موجز وجذّاب (≤ 70 حرفاً).\n" +
+    "- description: وصف تسويقي من جملتين إلى ثلاث.\n" +
+    "- keywords: من 5 إلى 8 كلمات مفصولة بفواصل.\n" +
+    "العربية بالعربية والإنجليزية بالإنجليزية. أجب بـ JSON فقط بدون أي نص آخر.";
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const resp = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1200,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type, data: b64 } } as any,
+            { type: "text", text: PROMPT },
+          ],
+        },
+      ],
+    });
+    const text = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return { error: "ما قدرت أحلّل الصورة." };
+    const j = JSON.parse(m[0]);
+    const s = (x: any) => (x == null ? "" : String(x).trim());
+    return {
+      data: {
+        name_en: s(j.name_en),
+        name_ar: s(j.name_ar),
+        description_en: s(j.description_en),
+        description_ar: s(j.description_ar),
+        keywords_en: s(j.keywords_en),
+        keywords_ar: s(j.keywords_ar),
+      },
+    };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "فشل تحليل الصورة." };
+  }
+}
+
 export async function deleteProduct(id: string) {
   const { data: { user } } = await createClient().auth.getUser();
   if (!user) return { error: "Not signed in." };
