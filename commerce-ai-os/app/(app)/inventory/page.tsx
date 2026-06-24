@@ -175,6 +175,9 @@ export default async function InventoryPage() {
           <Link href="/inventory/movements" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
             Stock IN / OUT →
           </Link>
+          <Link href="/inventory/out-of-stock" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+            ⚠ النافدة · Out of stock
+          </Link>
         </div>
       </div>
 
