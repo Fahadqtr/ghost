@@ -397,6 +397,26 @@ export async function saveShelfStock(
   return { ok: true };
 }
 
+/** Set barcodes on specific variant rows. Uses the service-role client so it
+ *  works even when product_variants RLS has no UPDATE policy for the user (the
+ *  rest of the app only ever inserts/deletes variants, never updates them from
+ *  the browser, so a client-side update would silently affect 0 rows). */
+export async function setVariantBarcodes(updates: { id: string; barcode: string | null }[]) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  if (!updates?.length) return { ok: true };
+  const admin = writableClient();
+  for (const u of updates) {
+    if (!u.id) continue;
+    const bc = u.barcode && u.barcode.trim() !== "" ? u.barcode.trim() : null;
+    const { error } = await admin.from("product_variants").update({ barcode: bc }).eq("id", u.id);
+    if (error) return { error: error.message };
+  }
+  revalidatePath("/catalog/health");
+  revalidatePath("/inventory");
+  return { ok: true };
+}
+
 /** Recompute inventory.location (primary slot) + total stock from shelf_stock. */
 async function resyncInventoryFromShelfStock(
   admin: ReturnType<typeof writableClient>,

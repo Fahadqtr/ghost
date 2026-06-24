@@ -22,6 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { setVariantBarcodes } from '@/app/(app)/inventory/actions'
 
 // ---------- الأنواع ----------
 type Product = {
@@ -492,13 +493,12 @@ export default function CatalogHealthPage() {
       const { error } = await supabase.from('products').update(patch).eq('id', fixProduct.id)
       if (error) throw error
 
-      // حفظ باركود كل خيار على حدة (إن وُجدت خيارات)
-      for (const v of variantForm) {
-        const { error: vErr } = await supabase
-          .from('product_variants')
-          .update({ barcode: emptyToNull(v.barcode) })
-          .eq('id', v.id)
-        if (vErr) throw vErr
+      // حفظ باركود كل خيار عبر service role (RLS قد يمنع UPDATE من المتصفّح)
+      if (variantForm.length) {
+        const res = await setVariantBarcodes(
+          variantForm.map((v) => ({ id: v.id, barcode: emptyToNull(v.barcode) }))
+        )
+        if (res && 'error' in res && res.error) throw new Error(res.error)
       }
 
       // مطابقة أسعار المنصّات على سعر النظام (النظام هو المصدر الرسمي)
@@ -579,9 +579,9 @@ export default function CatalogHealthPage() {
           const { error } = await supabase.from('products').update({ barcode: bc }).eq('id', id)
           if (error) throw error
         }
-        for (const v of varPatch) {
-          const { error } = await supabase.from('product_variants').update({ barcode: v.barcode }).eq('id', v.id)
-          if (error) throw error
+        if (varPatch.length) {
+          const res = await setVariantBarcodes(varPatch)
+          if (res && 'error' in res && res.error) throw new Error(res.error)
         }
         setProducts((prev) => prev.map((p) => (prodPatch.has(p.id) ? { ...p, barcode: prodPatch.get(p.id)! } : p)))
         const vb = new Map(varPatch.map((v) => [v.id, v.barcode]))
