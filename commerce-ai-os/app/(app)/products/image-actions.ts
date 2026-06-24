@@ -76,6 +76,47 @@ export async function uploadProductImage(formData: FormData) {
   }
 }
 
+// Upload an image for a product that doesn't exist yet (the "New product"
+// form). Stores the file in the bucket and returns its public URL + filename so
+// the form can set image_url/image_filename; the product is created afterwards
+// with createProduct. No product_images row is written (there's no product id).
+export async function uploadNewProductImage(formData: FormData) {
+  const {
+    data: { user },
+  } = await createClient().auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const file = formData.get("file");
+  const skuRaw = String(formData.get("sku") || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!(file instanceof File) || file.size === 0) return { error: "No file selected." };
+  if (file.size > MAX_BYTES) return { error: `File too large (${(file.size / 1048576).toFixed(1)} MB). Max 10 MB.` };
+
+  const ext = EXT[file.type];
+  if (!ext) return { error: `Unsupported type "${file.type || "unknown"}". Use JPG, PNG, WebP, or GIF (HEIC isn't supported by browsers).` };
+
+  let admin;
+  try { admin = createAdminClient(); }
+  catch (e) { return { error: e instanceof Error ? e.message : "Service role unavailable." }; }
+
+  // Name by SKU when known (catalog convention), else a unique temporary name.
+  const base = skuRaw || `new-${Date.now()}`;
+  const filename = `${base}.${ext}`;
+
+  try {
+    const buf = Buffer.from(await file.arrayBuffer());
+    const { error: upErr } = await admin.storage
+      .from(BUCKET)
+      .upload(filename, buf, { contentType: file.type, upsert: true, cacheControl: "3600" });
+    if (upErr) return { error: `Upload failed: ${upErr.message}` };
+
+    const publicUrl = admin.storage.from(BUCKET).getPublicUrl(filename).data.publicUrl;
+    const url = `${publicUrl}?t=${Date.now()}`;
+    return { ok: true, url, filename };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Unexpected upload error." };
+  }
+}
+
 // Remove an image (by url). If it was the primary, repoint products.image_url
 // to another image (or null). Storage object is left in place (harmless).
 export async function removeProductImage(productId: string, url: string) {

@@ -13,6 +13,7 @@ import {
   type ProductInput,
   type VariantInput,
 } from "@/app/(app)/products/actions";
+import { uploadNewProductImage } from "@/app/(app)/products/image-actions";
 
 const EMPTY_VARIANT: VariantInput = {
   variant_name: "",
@@ -171,11 +172,31 @@ export default function ProductForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // --- Image upload from the computer ---------------------------------------
+  const [upBusy, setUpBusy] = useState(false);
+  const onUploadImage = async (file: File | null | undefined) => {
+    if (!file) return;
+    setUpBusy(true);
+    setAiMsg(null);
+    const fd = new FormData();
+    fd.append("file", file);
+    if (form.sku.trim()) fd.append("sku", form.sku.trim());
+    const res = await uploadNewProductImage(fd);
+    setUpBusy(false);
+    if ("error" in res && res.error) { setError(res.error); return; }
+    const url = (res as any).url as string;
+    const filename = (res as any).filename as string;
+    setForm((f) => ({ ...f, image_url: url, image_filename: filename }));
+    setError(null);
+    // Auto-draft title/description from the freshly uploaded image when empty.
+    if (!form.name_en.trim() && !form.description_en.trim()) void describeFromImage(url);
+  };
+
   // --- AI: title + description from the product image ------------------------
   const [aiBusy, setAiBusy] = useState(false);
   const [aiMsg, setAiMsg] = useState<string | null>(null);
-  const describeFromImage = async () => {
-    const url = form.image_url.trim();
+  const describeFromImage = async (urlOverride?: string) => {
+    const url = (urlOverride ?? form.image_url).trim();
     if (!url) { setAiMsg("أضف Image URL أولاً."); return; }
     setAiBusy(true);
     setAiMsg(null);
@@ -306,6 +327,28 @@ export default function ProductForm({
 
       {/* Media */}
       <Section title="Media">
+        {!productId && (
+          <Field label="رفع صورة من الكمبيوتر · Upload image" wide>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="btn-ghost cursor-pointer whitespace-nowrap">
+                {upBusy ? "…يرفع" : "📁 اختر صورة"}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  disabled={upBusy}
+                  onChange={(e) => { void onUploadImage(e.target.files?.[0]); e.target.value = ""; }}
+                />
+              </label>
+              {form.image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={form.image_url} alt="" className="h-14 w-14 rounded border border-slate-200 object-contain" />
+              ) : (
+                <span className="text-xs text-muted">JPG / PNG / WebP / GIF · حتى 10MB</span>
+              )}
+            </div>
+          </Field>
+        )}
         <Field label="Image filename"><input className="input" value={form.image_filename} onChange={(e) => set("image_filename", e.target.value)} /></Field>
         <Field label="Image URL">
           <input
@@ -323,7 +366,7 @@ export default function ProductForm({
             <button
               type="button"
               className="btn-ghost whitespace-nowrap disabled:opacity-50"
-              onClick={describeFromImage}
+              onClick={() => void describeFromImage()}
               disabled={aiBusy || !form.image_url.trim()}
             >
               {aiBusy ? "…يحلّل الصورة" : "✨ توليد العنوان والوصف من الصورة"}
