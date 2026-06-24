@@ -618,6 +618,7 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string) 
   const hasShelfStock = !(await admin.from("shelf_stock").select("id").limit(1)).error;
 
   let done = 0;
+  const errors: string[] = [];
   for (const id of ids) {
     const { data: inv } = await admin
       .from("inventory")
@@ -627,26 +628,29 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string) 
     if (!inv) continue;
     const before = (inv as any).location ?? null;
     const qty = (inv as any).stock_quantity ?? 0;
+    // 0 units → nothing to place; keep `location` consistent with the (empty)
+    // shelf map instead of pointing at a slot that holds no shelf_stock row.
+    const newLoc = qty > 0 ? slot : null;
 
     if (hasShelfStock) {
       const del = await admin.from("shelf_stock").delete().eq("inventory_id", id);
-      if (del.error) return { error: del.error.message };
+      if (del.error) { errors.push(del.error.message); continue; }
       if (qty > 0) {
         const ins = await admin
           .from("shelf_stock")
           .insert({ inventory_id: id, location: slot, quantity: qty, updated_at: now });
-        if (ins.error) return { error: ins.error.message };
+        if (ins.error) { errors.push(ins.error.message); continue; }
       }
     }
-    const up = await admin.from("inventory").update({ location: slot, updated_at: now }).eq("id", id);
-    if (up.error) return { error: up.error.message };
+    const up = await admin.from("inventory").update({ location: newLoc, updated_at: now }).eq("id", id);
+    if (up.error) { errors.push(up.error.message); continue; }
 
     await logAudit(admin, {
       action: "shelf_assign",
       sku: (inv as any).products?.sku ?? null,
       field: "location",
       oldVal: before,
-      newVal: slot,
+      newVal: newLoc,
       details: { inventoryId: id, quantity: qty },
     });
     done++;
@@ -656,6 +660,7 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string) 
   revalidatePath("/inventory/shelves");
   revalidatePath("/inventory/shelves/labels");
   revalidatePath("/inventory/movements");
+  if (errors.length) return { ok: done > 0, done, error: `${done} نُسب، ${errors.length} فشل: ${errors.join("; ")}` };
   return { ok: true, done };
 }
 
@@ -675,6 +680,7 @@ export async function bulkAssignVariantShelf(variantIds: string[], location: str
   const parents = new Set<string>();
 
   let done = 0;
+  const errors: string[] = [];
   for (const id of ids) {
     const { data: v } = await admin
       .from("product_variants")
@@ -682,16 +688,17 @@ export async function bulkAssignVariantShelf(variantIds: string[], location: str
       .eq("id", id)
       .single();
     if (!v) continue;
+    // Track the parent up front so a mid-loop failure still re-syncs its total.
+    if ((v as any).parent_product_id) parents.add((v as any).parent_product_id);
     const qty = (v as any).stock_quantity ?? 0;
     const del = await admin.from("variant_shelf_stock").delete().eq("variant_id", id);
-    if (del.error) return { error: del.error.message };
+    if (del.error) { errors.push(del.error.message); continue; }
     if (qty > 0) {
       const ins = await admin
         .from("variant_shelf_stock")
         .insert({ variant_id: id, location: slot, quantity: qty, updated_at: now });
-      if (ins.error) return { error: ins.error.message };
+      if (ins.error) { errors.push(ins.error.message); continue; }
     }
-    if ((v as any).parent_product_id) parents.add((v as any).parent_product_id);
     await logAudit(admin, {
       action: "shelf_assign",
       sku: (v as any).sku ?? null,
@@ -704,6 +711,7 @@ export async function bulkAssignVariantShelf(variantIds: string[], location: str
   }
 
   // Re-sync each affected parent product's inventory total = sum of variant stock.
+  // Runs regardless of per-item failures so the parent total never drifts.
   for (const parentId of parents) {
     const { data: sibs } = await admin.from("product_variants").select("stock_quantity").eq("parent_product_id", parentId);
     const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
@@ -714,6 +722,7 @@ export async function bulkAssignVariantShelf(variantIds: string[], location: str
   revalidatePath("/inventory/shelves");
   revalidatePath("/inventory/shelves/labels");
   revalidatePath("/inventory/movements");
+  if (errors.length) return { ok: done > 0, done, error: `${done} نُسب، ${errors.length} فشل: ${errors.join("; ")}` };
   return { ok: true, done };
 }
 

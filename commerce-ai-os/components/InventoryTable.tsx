@@ -401,21 +401,24 @@ export default function InventoryTable({
     startTransition(async () => {
       let errText = "";
       let total = 0;
+      // Both actions may return a partial result ({ done, error }): count what
+      // succeeded AND surface the error, then still refresh so the UI reflects
+      // the rows that did move.
       if (pids.length) {
-        const r = await bulkAssignShelf(pids, slot);
-        if (r && "error" in r && r.error) errText = r.error;
-        else total += (r as any)?.done ?? pids.length;
+        const r = (await bulkAssignShelf(pids, slot)) as any;
+        if (r?.error) errText = r.error;
+        total += r?.done ?? (r?.error ? 0 : pids.length);
       }
-      if (!errText && vids.length) {
-        const r = await bulkAssignVariantShelf(vids, slot);
-        if (r && "error" in r && r.error) errText = r.error;
-        else total += (r as any)?.done ?? vids.length;
+      if (vids.length) {
+        const r = (await bulkAssignVariantShelf(vids, slot)) as any;
+        if (r?.error) errText = errText ? `${errText} | ${r.error}` : r.error;
+        total += r?.done ?? (r?.error ? 0 : vids.length);
       }
       if (errText) {
-        setMsg({ kind: "err", text: errText });
-        return;
+        setMsg({ kind: "err", text: total > 0 ? `أُضيف ${total}، لكن: ${errText}` : errText });
+      } else {
+        setMsg({ kind: "ok", text: `أُضيف ${total} عنصر للرفّ ${slot}` });
       }
-      setMsg({ kind: "ok", text: `أُضيف ${total} عنصر للرفّ ${slot}` });
       setSelected(new Set());
       setSelectedVariants(new Set());
       setBulkSlot("");

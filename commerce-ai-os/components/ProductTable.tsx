@@ -120,7 +120,9 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         (p.name_ar ?? "").toLowerCase().includes(needle) ||
         (p.sku ?? "").toLowerCase().includes(needle) ||
         (p.barcode ?? "").toLowerCase().includes(needle) ||
-        (p.variants ?? []).some((v) => v.barcode.toLowerCase().includes(needle));
+        (p.variants ?? []).some(
+          (v) => v.barcode.toLowerCase().includes(needle) || (v.name ?? "").toLowerCase().includes(needle)
+        );
       const matchesCat = !cat || p.main_category === cat;
       const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
       const n = Number(p.stock);
