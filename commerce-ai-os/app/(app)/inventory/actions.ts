@@ -1263,12 +1263,39 @@ export async function markOutOfStockByNames(text: string, apply = false): Promis
     new Set(
       String(s ?? "").toLowerCase().replace(/[^a-z0-9؀-ۿ ]/g, " ").split(/\s+/).filter((w) => w.length >= 3)
     );
+  // Variant-suffix stripper: drops parentheticals "(50ml)", size/unit tokens, and
+  // trailing "– Gold" / "- Mint Green" style segments that are only colour/size
+  // words — so a pasted "Smeg Thermal Tumbler – Gold" can still reach the catalog
+  // "Smeg Thermal Tumbler" (where colour is a variant, not part of the name).
+  const COLORS = new Set([
+    "gold","silver","rose","pink","peach","mint","green","blue","red","black","white",
+    "purple","beige","brown","gray","grey","ivory","cream","clear","nude","lavender",
+    "yellow","orange","navy","teal","violet","coral","tan","khaki","champagne","bronze",
+  ]);
+  const variantWord = (w: string) =>
+    COLORS.has(w) ||
+    /^\d/.test(w) ||
+    /^(ml|g|kg|l|cm|mm|pcs|pc|pieces?|pack|set|pro|max|models?|colou?rs?|size|sizes?|and|with|the|for)$/.test(w) ||
+    w.length <= 2;
+  const stripVariant = (s: string) => {
+    let x = String(s ?? "").toLowerCase().replace(/\([^)]*\)/g, " ");
+    const parts = x.split(/[–—-]/);
+    while (parts.length > 1) {
+      const tail = parts[parts.length - 1].trim().split(/\s+/).filter(Boolean);
+      if (tail.length > 0 && tail.length <= 4 && tail.every(variantWord)) parts.pop();
+      else break;
+    }
+    return parts.join(" ").replace(/\b\d+\s?(ml|g|kg|l|cm|mm|pcs|pc|pieces?)\b/g, " ");
+  };
   const cat = all.map((p) => ({
     p,
     en: keyOf(p.name_en),
     ar: keyOf(p.name_ar),
     sku: keyOf(p.sku),
     t: toks(`${p.name_en ?? ""} ${p.name_ar ?? ""}`),
+    cen: keyOf(stripVariant(p.name_en)),
+    car: keyOf(stripVariant(p.name_ar)),
+    ct: toks(`${stripVariant(p.name_en)} ${stripVariant(p.name_ar)}`),
   }));
 
   const ids = new Set<string>();
@@ -1311,6 +1338,35 @@ export async function markOutOfStockByNames(text: string, apply = false): Promis
         else if (score > second) second = score;
       }
       if (best && bestScore >= 0.75 && bestScore - second >= 0.08) { take(best); continue; }
+    }
+
+    // 3) Colour/size-tolerant retry: strip the variant suffix from both sides and
+    //    re-run containment + a (stricter-margin) token overlap. Lets "… – Gold"
+    //    or "… (50ml)" reach a catalog product whose name omits the variant.
+    const cl = keyOf(stripVariant(line.replace(/[.…]+$/, "")));
+    if (cl.length >= 6) {
+      const chits = cat.filter(
+        (c) =>
+          (c.cen.length >= 6 && (c.cen.includes(cl) || cl.includes(c.cen))) ||
+          (c.car.length >= 6 && (c.car.includes(cl) || cl.includes(c.car)))
+      );
+      if (chits.length > 0) { for (const h of chits) take(h); continue; }
+
+      const clt = [...toks(stripVariant(line))];
+      if (clt.length >= 3) {
+        let best: (typeof cat)[number] | null = null;
+        let bestScore = 0;
+        let second = 0;
+        for (const c of cat) {
+          if (c.ct.size === 0) continue;
+          let m = 0;
+          for (const w of clt) if (c.ct.has(w)) m++;
+          const score = m / clt.length;
+          if (score > bestScore) { second = bestScore; bestScore = score; best = c; }
+          else if (score > second) second = score;
+        }
+        if (best && bestScore >= 0.8 && bestScore - second >= 0.12) { take(best); continue; }
+      }
     }
     unmatched.push(line);
   }
