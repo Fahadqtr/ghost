@@ -136,6 +136,11 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
                       <div className={`line-clamp-2 font-semibold leading-tight text-ink ${compact ? "text-[9px]" : "text-xs"}`}>
                         {p.name ?? p.sku}
                       </div>
+                      {p.sku ? (
+                        <div className={`font-mono text-slate-500 ${compact ? "text-[8px]" : "text-[10px]"}`}>
+                          {p.sku}
+                        </div>
+                      ) : null}
                       {p.barcode ? (
                         <>
                           <Barcode value={p.barcode} height={compact ? 28 : 44} />
