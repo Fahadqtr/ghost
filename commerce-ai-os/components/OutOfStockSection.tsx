@@ -12,6 +12,7 @@ export type OosItem = {
   barcode: string | null;
   image_url: string | null;
   category: string | null;
+  stock: number;
   updated_at: string | null;
 };
 
@@ -49,7 +50,7 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
     const lines = [header.join(",")];
     for (const p of filtered) {
       lines.push(
-        [p.sku, p.barcode, p.name_en, p.name_ar, p.category, 0, p.updated_at].map(csvEscape).join(",")
+        [p.sku, p.barcode, p.name_en, p.name_ar, p.category, p.stock, p.updated_at].map(csvEscape).join(",")
       );
     }
     const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
@@ -166,7 +167,7 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
                   {p.sku ? <span className="font-mono">{p.sku}</span> : null}
                   {p.category ? <span>· {p.category}</span> : null}
-                  <span className="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-700">Out</span>
+                  <span className="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-700">Out · {p.stock}</span>
                 </div>
               </div>
             </div>

@@ -1256,24 +1256,56 @@ export async function markOutOfStockByNames(text: string): Promise<{
   // punctuation. Latin + Arabic letters kept.
   const keyOf = (s: string) =>
     String(s ?? "").toLowerCase().replace(/[^a-z0-9؀-ۿ]/g, "");
-  const cat = all.map((p) => ({ p, en: keyOf(p.name_en), ar: keyOf(p.name_ar), sku: keyOf(p.sku) }));
+  // Significant words (≥3 chars) for the token-overlap fallback.
+  const toks = (s: string) =>
+    new Set(
+      String(s ?? "").toLowerCase().replace(/[^a-z0-9؀-ۿ ]/g, " ").split(/\s+/).filter((w) => w.length >= 3)
+    );
+  const cat = all.map((p) => ({
+    p,
+    en: keyOf(p.name_en),
+    ar: keyOf(p.name_ar),
+    sku: keyOf(p.sku),
+    t: toks(`${p.name_en ?? ""} ${p.name_ar ?? ""}`),
+  }));
 
   const ids = new Set<string>();
   const skus = new Set<string>();
   const unmatched: string[] = [];
+  const take = (c: (typeof cat)[number]) => { ids.add(c.p.id); if (c.p.sku) skus.add(String(c.p.sku)); };
   for (const line of lines) {
     const ln = keyOf(line.replace(/[.…]+$/, ""));
     if (ln.length < 5) { unmatched.push(line); continue; }
-    // Match on SKU equality, or either-direction containment of the name key
-    // (handles "Name – 6 Pieces" in paste vs "Name" in catalog and vice-versa).
+    // 1) SKU equality, or either-direction containment of the name key
+    //    (handles "Name – 6 Pieces" in paste vs "Name" in catalog and vice-versa).
     const hits = cat.filter(
       (c) =>
         (c.sku && c.sku === ln) ||
         (c.en.length >= 6 && (c.en.includes(ln) || ln.includes(c.en))) ||
         (c.ar.length >= 6 && (c.ar.includes(ln) || ln.includes(c.ar)))
     );
-    if (hits.length === 0) { unmatched.push(line); continue; }
-    for (const h of hits) { ids.add(h.p.id); if (h.p.sku) skus.add(String(h.p.sku)); }
+    if (hits.length > 0) { for (const h of hits) take(h); continue; }
+
+    // 2) Fallback: token overlap — catches re-ordered / slightly reworded names.
+    //    Pick the single best product by share of the line's words it covers,
+    //    but only if it clears a high bar AND clearly beats the runner-up (so
+    //    near-duplicates like "… Pink" vs "… Peach" don't cross-match).
+    const lt = [...toks(line)];
+    if (lt.length >= 4) {
+      let best: (typeof cat)[number] | null = null;
+      let bestScore = 0;
+      let second = 0;
+      for (const c of cat) {
+        if (c.t.size === 0) continue;
+        let m = 0;
+        for (const w of lt) if (c.t.has(w)) m++;
+        const score = m / lt.length;
+        if (score > bestScore) { second = bestScore; bestScore = score; best = c; }
+        else if (score > second) second = score;
+      }
+      if (best && bestScore >= 0.75 && bestScore - second >= 0.08) { take(best); continue; }
+    }
+    unmatched.push(line);
   }
 
   const idList = [...ids];

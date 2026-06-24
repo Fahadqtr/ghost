@@ -46,9 +46,13 @@ export default async function OutOfStockPage() {
     }
 
     for (const r of rows as any[]) {
-      const hasVariants = r.product_id && variantSum.has(r.product_id);
-      const effective = hasVariants ? variantSum.get(r.product_id)! : (r.stock_quantity ?? 0);
-      if (effective > 0) continue; // only out-of-stock
+      const invStock = r.stock_quantity ?? 0;
+      const vSum = (r.product_id && variantSum.get(r.product_id)) ?? 0;
+      // Out of stock only when BOTH the inventory total AND the summed option
+      // stock are 0 — so a product that still has stock on either side is never
+      // shown here by mistake.
+      const effective = Math.max(invStock, vSum);
+      if (effective > 0) continue; // only genuinely out-of-stock
       items.push({
         id: r.product_id,
         name_en: r.products?.name_en ?? null,
@@ -57,6 +61,7 @@ export default async function OutOfStockPage() {
         barcode: r.products?.barcode ?? null,
         image_url: r.products?.image_url ?? null,
         category: r.products?.main_category ?? null,
+        stock: effective,
         updated_at: r.updated_at ?? null,
       });
     }
