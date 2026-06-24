@@ -29,10 +29,22 @@ function Barcode({ value, height }: { value: string; height: number }) {
   return <svg ref={ref} className="h-auto w-full" />;
 }
 
+// Stable identity for a single label (a product/variant at one slot).
+const keyOf = (it: LabelItem) => `${it.location.toUpperCase()}|${it.sku ?? ""}|${it.barcode ?? ""}`;
+
 export default function ShelfLabels({ items }: { items: LabelItem[] }) {
   const [shelf, setShelf] = useState("");
   const [slot, setSlot] = useState(""); // a specific rack within the shelf (e.g. A2)
   const [cols, setCols] = useState(3);
+  const [q, setQ] = useState(""); // search to find products to pick
+  const [picks, setPicks] = useState<Set<string>>(new Set()); // chosen labels
+  const [pickedOnly, setPickedOnly] = useState(false); // show only the chosen ones
+  const togglePick = (k: string) =>
+    setPicks((s) => {
+      const n = new Set(s);
+      n.has(k) ? n.delete(k) : n.add(k);
+      return n;
+    });
 
   const shelves = useMemo(() => {
     const set = new Set<string>();
@@ -51,11 +63,21 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
   }, [items, shelf]);
 
   const groups = useMemo(() => {
-    const picked = slot
+    const needle = q.trim().toLowerCase();
+    let picked = slot
       ? items.filter((it) => it.location.toUpperCase() === slot)
       : shelf
         ? items.filter((it) => shelfOf(it.location) === shelf)
         : items;
+    if (pickedOnly) picked = picked.filter((it) => picks.has(keyOf(it)));
+    if (needle)
+      picked = picked.filter(
+        (it) =>
+          (it.name ?? "").toLowerCase().includes(needle) ||
+          (it.name_ar ?? "").includes(q.trim()) ||
+          (it.sku ?? "").toLowerCase().includes(needle) ||
+          (it.barcode ?? "").toLowerCase().includes(needle)
+      );
     const byShelf = new Map<string, LabelItem[]>();
     for (const it of picked) {
       const s = shelfOf(it.location) ?? "?";
@@ -71,7 +93,7 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
           (a, b) => compareSlot(a.location, b.location) || (a.name ?? "").localeCompare(b.name ?? "")
         ),
       }));
-  }, [items, shelf, slot]);
+  }, [items, shelf, slot, q, pickedOnly, picks]);
 
   return (
     <div className="space-y-4">
@@ -114,6 +136,30 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
             {[2, 3, 4, 5, 6, 7, 8].map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </label>
+        <input
+          className="input w-auto sm:max-w-[14rem]"
+          placeholder="Search name / SKU / barcode…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={pickedOnly}
+            onChange={(e) => setPickedOnly(e.target.checked)}
+          />
+          المحدّد فقط · Selected only
+          {picks.size > 0 && <span className="text-muted">({picks.size})</span>}
+        </label>
+        {picks.size > 0 && (
+          <button
+            type="button"
+            className="text-xs text-blue-600 hover:underline"
+            onClick={() => { setPicks(new Set()); setPickedOnly(false); }}
+          >
+            مسح التحديد
+          </button>
+        )}
         <span className="text-muted sm:ml-auto">
           {groups.reduce((s, g) => s + g.items.length, 0)} labels
         </span>
@@ -138,11 +184,19 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
               <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
                 {g.items.map((p, i) => {
                   const compact = cols >= 5;
+                  const k = keyOf(p);
                   return (
                     <div
-                      key={`${p.sku ?? p.barcode ?? i}`}
-                      className={`label-cell flex flex-col items-center gap-0.5 rounded-lg border border-slate-300 bg-white text-center ${compact ? "p-1" : "p-2"}`}
+                      key={`${k}|${i}`}
+                      className={`label-cell relative flex flex-col items-center gap-0.5 rounded-lg border bg-white text-center ${picks.has(k) ? "border-blue-500 ring-1 ring-blue-300" : "border-slate-300"} ${compact ? "p-1" : "p-2"}`}
                     >
+                      <input
+                        type="checkbox"
+                        className="absolute left-1 top-1 print:hidden"
+                        checked={picks.has(k)}
+                        onChange={() => togglePick(k)}
+                        aria-label="Pick this label"
+                      />
                       <div className="flex w-full items-center justify-between">
                         <span className="rounded bg-slate-900 px-1 py-0.5 font-mono text-[10px] font-bold text-white">
                           {p.location}
