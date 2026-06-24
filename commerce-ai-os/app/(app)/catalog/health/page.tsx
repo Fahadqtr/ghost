@@ -534,7 +534,7 @@ export default function CatalogHealthPage() {
                       <td style={S.td}>{p.price ?? '—'}</td>
                       <td style={S.td}>{p.main_category || '—'}</td>
                       <td style={S.td}>
-                        <a href={`/products?sku=${p.sku || ''}`} style={S.fixLink}>
+                        <a href={`/products/${p.id}/edit`} style={S.fixLink}>
                           تصحيح ←
                         </a>
                       </td>
