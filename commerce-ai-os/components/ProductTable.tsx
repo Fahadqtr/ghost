@@ -25,6 +25,7 @@ export interface ProductRow {
   discount_price: number | null;
   stock: number | null;
   variant_count: number;
+  variant_barcodes?: string[];
   channels: Record<string, string>;
 }
 
@@ -109,7 +110,8 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         (p.name_en ?? "").toLowerCase().includes(needle) ||
         (p.name_ar ?? "").toLowerCase().includes(needle) ||
         (p.sku ?? "").toLowerCase().includes(needle) ||
-        (p.barcode ?? "").toLowerCase().includes(needle);
+        (p.barcode ?? "").toLowerCase().includes(needle) ||
+        (p.variant_barcodes ?? []).some((b) => b.toLowerCase().includes(needle));
       const matchesCat = !cat || p.main_category === cat;
       const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
       const n = Number(p.stock);
@@ -141,7 +143,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <input
           className="input sm:max-w-xs"
-          placeholder="Search name (EN/AR), SKU, barcode…"
+          placeholder="Search name (EN/AR), SKU, barcode (incl. variants)…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
