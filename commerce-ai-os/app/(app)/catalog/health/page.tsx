@@ -182,6 +182,13 @@ const ISSUE_FIELD: Partial<Record<IssueKey, keyof Product>> = {
   no_rafeeq: 'rafeeq_product_id',
 }
 
+// الإجراءات الجماعية المتاحة لكل مشكلة (الباقي يحتاج قيمة فردية فيُصحّح من المودال)
+const BULK_ACTION: Partial<Record<IssueKey, string>> = {
+  not_approved: 'اعتماد المحدد',
+  no_barcode: 'توليد باركود للمحدد',
+  price_mismatch: 'مطابقة أسعار المنصّات للمحدد',
+}
+
 const emptyToNull = (v: unknown) =>
   v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim()
 
@@ -218,6 +225,11 @@ export default function CatalogHealthPage() {
   const [syncChannels, setSyncChannels] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState<string | null>(null)
+
+  // التحديد الجماعي
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkErr, setBulkErr] = useState<string | null>(null)
 
   // يعيد فحص الكتالوج من قاعدة البيانات (قراءة فقط). يُستدعى عند فتح الصفحة
   // وعند الضغط على زر «تحديث» ليعكس آخر التغييرات بدون إعادة تحميل الصفحة.
@@ -512,6 +524,87 @@ export default function CatalogHealthPage() {
     }
   }
 
+  // تنفيذ الإجراء الجماعي على العناصر المحدّدة حسب نوع المشكلة الحالية
+  const runBulk = async () => {
+    if (!activeIssue || selected.size === 0) return
+    setBulkBusy(true)
+    setBulkErr(null)
+    try {
+      const supabase = createClient()
+      const ids = [...selected]
+
+      if (activeIssue === 'not_approved') {
+        for (let i = 0; i < ids.length; i += 200) {
+          const { error } = await supabase
+            .from('products')
+            .update({ approval: 'Approved' })
+            .in('id', ids.slice(i, i + 200))
+          if (error) throw error
+        }
+        setProducts((prev) => prev.map((p) => (selected.has(p.id) ? { ...p, approval: 'Approved' } : p)))
+      } else if (activeIssue === 'no_barcode') {
+        const prodPatch = new Map<string, string>()
+        const varPatch: { id: string; barcode: string }[] = []
+        for (const id of ids) {
+          const p = products.find((x) => x.id === id)
+          if (!p) continue
+          const vs = variants.filter((v) => v.parent_product_id === id)
+          if (vs.length > 0) {
+            const has = p.barcode && p.barcode.trim() !== ''
+            const base = has ? (p.barcode as string).trim() : genEan13()
+            if (!has) prodPatch.set(id, base)
+            vs.forEach((v, i) => {
+              if (!(v.barcode && String(v.barcode).trim() !== '')) varPatch.push({ id: v.id, barcode: `${base}-${i + 1}` })
+            })
+          } else if (!(p.barcode && p.barcode.trim() !== '')) {
+            prodPatch.set(id, genEan13())
+          }
+        }
+        for (const [id, bc] of prodPatch) {
+          const { error } = await supabase.from('products').update({ barcode: bc }).eq('id', id)
+          if (error) throw error
+        }
+        for (const v of varPatch) {
+          const { error } = await supabase.from('product_variants').update({ barcode: v.barcode }).eq('id', v.id)
+          if (error) throw error
+        }
+        setProducts((prev) => prev.map((p) => (prodPatch.has(p.id) ? { ...p, barcode: prodPatch.get(p.id)! } : p)))
+        const vb = new Map(varPatch.map((v) => [v.id, v.barcode]))
+        setVariants((prev) => prev.map((v) => (vb.has(v.id) ? { ...v, barcode: vb.get(v.id)! } : v)))
+      } else if (activeIssue === 'price_mismatch') {
+        for (const id of ids) {
+          const p = products.find((x) => x.id === id)
+          if (!p || p.price === null) continue
+          const rows = (ctx.cpByProduct.get(id) || []).filter(
+            (cp) => cp.channel_price !== null && Math.abs((cp.channel_price as number) - (p.price as number)) > 0.001
+          )
+          for (const cp of rows) {
+            const { error } = await supabase
+              .from('channel_products')
+              .update({ channel_price: p.price })
+              .eq('product_id', id)
+              .eq('channel_id', cp.channel_id)
+            if (error) throw error
+          }
+        }
+        setChannelProducts((prev) =>
+          prev.map((cp) => {
+            if (!selected.has(cp.product_id) || cp.channel_price === null) return cp
+            const p = products.find((x) => x.id === cp.product_id)
+            return p && p.price !== null ? { ...cp, channel_price: p.price } : cp
+          })
+        )
+      }
+
+      setLastUpdated(new Date())
+      setSelected(new Set())
+    } catch (e: any) {
+      setBulkErr(e?.message || 'فشل الإجراء الجماعي')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   // ---------- العرض ----------
   if (loading) return <Shell><Centered>جارٍ فحص الكتالوج…</Centered></Shell>
   if (error)
@@ -595,6 +688,8 @@ export default function CatalogHealthPage() {
               onClick={() => {
                 setActiveIssue(isActive ? null : def.key)
                 setSearch('')
+                setSelected(new Set())
+                setBulkErr(null)
               }}
               style={{
                 ...S.card,
@@ -644,9 +739,37 @@ export default function CatalogHealthPage() {
             <p style={S.empty}>ما فيه منتجات بهذه المشكلة 🎉</p>
           ) : (
             <div style={S.tableWrap}>
+              {/* شريط الإجراء الجماعي */}
+              {(() => {
+                const bulkLabel = BULK_ACTION[activeIssue]
+                if (!bulkLabel) return null
+                const allSelected = activeList.length > 0 && activeList.every((p) => selected.has(p.id))
+                return (
+                  <div style={S.bulkBar}>
+                    <label style={S.checkRow}>
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={() => setSelected(allSelected ? new Set() : new Set(activeList.map((p) => p.id)))}
+                      />
+                      تحديد الكل ({activeList.length})
+                    </label>
+                    <span style={{ fontSize: 13, color: '#64748b' }}>محدد: {selected.size}</span>
+                    <button
+                      onClick={runBulk}
+                      disabled={bulkBusy || selected.size === 0}
+                      style={{ ...S.btnPrimary, opacity: bulkBusy || selected.size === 0 ? 0.5 : 1 }}
+                    >
+                      {bulkBusy ? 'جارٍ التنفيذ…' : bulkLabel}
+                    </button>
+                    {bulkErr && <span style={{ color: '#dc2626', fontSize: 13, fontWeight: 600 }}>{bulkErr}</span>}
+                  </div>
+                )
+              })()}
               <table style={S.table}>
                 <thead>
                   <tr>
+                    {BULK_ACTION[activeIssue] && <th style={S.th}></th>}
                     <th style={S.th}>SKU</th>
                     <th style={S.th}>الاسم</th>
                     <th style={S.th}>السعر</th>
@@ -657,6 +780,21 @@ export default function CatalogHealthPage() {
                 <tbody>
                   {activeList.slice(0, 200).map((p) => (
                     <tr key={p.id} style={S.tr}>
+                      {BULK_ACTION[activeIssue] && (
+                        <td style={S.td}>
+                          <input
+                            type="checkbox"
+                            checked={selected.has(p.id)}
+                            onChange={() =>
+                              setSelected((s) => {
+                                const n = new Set(s)
+                                n.has(p.id) ? n.delete(p.id) : n.add(p.id)
+                                return n
+                              })
+                            }
+                          />
+                        </td>
+                      )}
                       <td style={{ ...S.td, fontFamily: 'monospace', direction: 'ltr', textAlign: 'right' }}>
                         {p.sku || '—'}
                       </td>
@@ -935,6 +1073,7 @@ const S: Record<string, React.CSSProperties> = {
   variantRow: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 },
   variantName: { fontSize: 12, fontWeight: 600, color: '#475569', minWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#0f172a', cursor: 'pointer', marginTop: 8 },
+  bulkBar: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', padding: '12px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' },
   saveErr: { color: '#dc2626', fontSize: 13, fontWeight: 600, marginTop: 12 },
   modalFoot: {
     display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '14px 20px',
