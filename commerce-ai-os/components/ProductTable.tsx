@@ -266,6 +266,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
             <div
               key={p.id}
               onClick={() => router.push(`/products/${p.id}`)}
+              onMouseEnter={() => router.prefetch(`/products/${p.id}`)}
               className="card flex cursor-pointer gap-3 p-3"
             >
               <Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} />
@@ -346,6 +347,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                 <Fragment key={p.id}>
                 <tr
                   onClick={() => router.push(`/products/${p.id}`)}
+                  onMouseEnter={() => router.prefetch(`/products/${p.id}`)}
                   className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                 >
                   <td className="px-3 py-2"><Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} /></td>
