@@ -25,6 +25,36 @@ function writableClient(): any {
   }
 }
 
+// Best-effort audit ledger write (malak_audit). Never throws — the underlying
+// data change has already succeeded by the time we log. Mirrors recordMovement's
+// pattern: product uuid goes inside `details`, not the legacy bigint column.
+async function logAudit(
+  admin: any,
+  entry: { action: string; sku?: string | null; field?: string; oldVal?: string | null; newVal?: string | null; details?: Record<string, unknown> }
+) {
+  try {
+    await admin.from("malak_audit").insert({
+      agent: "inventory",
+      action: entry.action,
+      action_type: entry.action,
+      sku: entry.sku ?? null,
+      field: entry.field ?? null,
+      old_value: entry.oldVal ?? null,
+      new_value: entry.newVal ?? null,
+      status: "done",
+      details: entry.details ?? {},
+    });
+  } catch (e) {
+    console.error("[logAudit] insert failed:", e);
+  }
+}
+
+// Resolve a product's SKU from an inventory row id (for audit labelling).
+async function skuForInventory(admin: any, inventoryId: string): Promise<string | null> {
+  const { data } = await admin.from("inventory").select("products(sku)").eq("id", inventoryId).single();
+  return (data as any)?.products?.sku ?? null;
+}
+
 /** Single-row inline save (kept for backward compatibility). */
 export async function updateInventory(
   id: string,
@@ -235,13 +265,23 @@ export async function setLocation(inventoryId: string, location: string) {
   if (!inventoryId) return { error: "Missing inventory row." };
   const admin = writableClient();
   const value = location.trim().toUpperCase() || null;
+  const { data: prev } = await admin.from("inventory").select("location, products(sku)").eq("id", inventoryId).single();
   const { error } = await admin
     .from("inventory")
     .update({ location: value, updated_at: new Date().toISOString() })
     .eq("id", inventoryId);
   if (error) return { error: error.message };
+  await logAudit(admin, {
+    action: "shelf_move",
+    sku: (prev as any)?.products?.sku ?? null,
+    field: "location",
+    oldVal: (prev as any)?.location ?? null,
+    newVal: value,
+    details: { inventoryId },
+  });
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/movements");
   return { ok: true };
 }
 
@@ -392,8 +432,17 @@ export async function saveShelfStock(
   if (clean.length) patch.stock_quantity = totalQty;
   await admin.from("inventory").update(patch).eq("id", inventoryId);
 
+  await logAudit(admin, {
+    action: "shelf_assign",
+    sku: await skuForInventory(admin, inventoryId),
+    field: "location",
+    oldVal: null,
+    newVal: clean.map((c) => `${c.location}×${c.quantity}`).join(", ") || null,
+    details: { inventoryId, placements: clean.map((c) => ({ location: c.location, quantity: c.quantity })) },
+  });
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/movements");
   return { ok: true };
 }
 
@@ -482,8 +531,17 @@ export async function removeFromShelf(inventoryId: string, location: string) {
   if (del.error) return { error: del.error.message };
 
   await resyncInventoryFromShelfStock(admin, inventoryId);
+  await logAudit(admin, {
+    action: "shelf_remove",
+    sku: await skuForInventory(admin, inventoryId),
+    field: "location",
+    oldVal: slot,
+    newVal: null,
+    details: { inventoryId },
+  });
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/movements");
   return { ok: true };
 }
 
@@ -524,9 +582,131 @@ export async function moveShelfStock(inventoryId: string, fromLocation: string, 
   if (up.error) return { error: up.error.message };
 
   await resyncInventoryFromShelfStock(admin, inventoryId);
+  await logAudit(admin, {
+    action: "shelf_move",
+    sku: await skuForInventory(admin, inventoryId),
+    field: "location",
+    oldVal: from,
+    newVal: to,
+    details: { inventoryId, quantity: src.quantity ?? 0 },
+  });
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/movements");
   return { ok: true };
+}
+
+/**
+ * Bulk-assign selected products to one shelf slot in a single batch. Replaces
+ * each product's placement with the chosen slot (holding its full stock) and
+ * logs every assignment to the movement history.
+ */
+export async function bulkAssignShelf(inventoryIds: string[], location: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const slot = (location ?? "").trim().toUpperCase();
+  const ids = (inventoryIds ?? []).filter(Boolean);
+  if (!slot || ids.length === 0) return { error: "اختر رفّاً ومنتجاً واحداً على الأقل." };
+  const admin = writableClient();
+  const now = new Date().toISOString();
+  const hasShelfStock = !(await admin.from("shelf_stock").select("id").limit(1)).error;
+
+  let done = 0;
+  for (const id of ids) {
+    const { data: inv } = await admin
+      .from("inventory")
+      .select("id, stock_quantity, location, products(sku)")
+      .eq("id", id)
+      .single();
+    if (!inv) continue;
+    const before = (inv as any).location ?? null;
+    const qty = (inv as any).stock_quantity ?? 0;
+
+    if (hasShelfStock) {
+      const del = await admin.from("shelf_stock").delete().eq("inventory_id", id);
+      if (del.error) return { error: del.error.message };
+      if (qty > 0) {
+        const ins = await admin
+          .from("shelf_stock")
+          .insert({ inventory_id: id, location: slot, quantity: qty, updated_at: now });
+        if (ins.error) return { error: ins.error.message };
+      }
+    }
+    const up = await admin.from("inventory").update({ location: slot, updated_at: now }).eq("id", id);
+    if (up.error) return { error: up.error.message };
+
+    await logAudit(admin, {
+      action: "shelf_assign",
+      sku: (inv as any).products?.sku ?? null,
+      field: "location",
+      oldVal: before,
+      newVal: slot,
+      details: { inventoryId: id, quantity: qty },
+    });
+    done++;
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/movements");
+  return { ok: true, done };
+}
+
+/**
+ * Bulk-assign selected variants (options) to one shelf slot. Each variant's full
+ * stock is placed at the slot (replacing its placements), the parent product's
+ * inventory total is re-synced, and every assignment is logged to history.
+ */
+export async function bulkAssignVariantShelf(variantIds: string[], location: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const slot = (location ?? "").trim().toUpperCase();
+  const ids = (variantIds ?? []).filter(Boolean);
+  if (!slot || ids.length === 0) return { error: "اختر رفّاً وخياراً واحداً على الأقل." };
+  const admin = writableClient();
+  const now = new Date().toISOString();
+  const parents = new Set<string>();
+
+  let done = 0;
+  for (const id of ids) {
+    const { data: v } = await admin
+      .from("product_variants")
+      .select("id, stock_quantity, parent_product_id, variant_name, sku")
+      .eq("id", id)
+      .single();
+    if (!v) continue;
+    const qty = (v as any).stock_quantity ?? 0;
+    const del = await admin.from("variant_shelf_stock").delete().eq("variant_id", id);
+    if (del.error) return { error: del.error.message };
+    if (qty > 0) {
+      const ins = await admin
+        .from("variant_shelf_stock")
+        .insert({ variant_id: id, location: slot, quantity: qty, updated_at: now });
+      if (ins.error) return { error: ins.error.message };
+    }
+    if ((v as any).parent_product_id) parents.add((v as any).parent_product_id);
+    await logAudit(admin, {
+      action: "shelf_assign",
+      sku: (v as any).sku ?? null,
+      field: "location",
+      oldVal: null,
+      newVal: slot,
+      details: { variantId: id, variantName: (v as any).variant_name ?? null, quantity: qty },
+    });
+    done++;
+  }
+
+  // Re-sync each affected parent product's inventory total = sum of variant stock.
+  for (const parentId of parents) {
+    const { data: sibs } = await admin.from("product_variants").select("stock_quantity").eq("parent_product_id", parentId);
+    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
+    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("product_id", parentId);
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/movements");
+  return { ok: true, done };
 }
 
 /**

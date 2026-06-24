@@ -12,6 +12,8 @@ import {
   setLocation,
   saveShelfStock,
   saveVariantShelfStock,
+  bulkAssignShelf,
+  bulkAssignVariantShelf,
   type BulkUpdate,
 } from "@/app/(app)/inventory/actions";
 import { compareSlot } from "@/lib/shelf";
@@ -162,8 +164,16 @@ export default function InventoryTable({
 
   const [edits, setEdits] = useState<Record<string, { stock?: string; threshold?: string }>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedVariants, setSelectedVariants] = useState<Set<string>>(new Set());
+  const toggleVariant = (id: string) =>
+    setSelectedVariants((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [bulkValue, setBulkValue] = useState("");
+  const [bulkSlot, setBulkSlot] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -343,6 +353,36 @@ export default function InventoryTable({
     e.target.value = "";
   }
 
+  function assignSelectedToShelf() {
+    const slot = bulkSlot.trim().toUpperCase();
+    const pids = [...selected];
+    const vids = [...selectedVariants];
+    if (!slot || (pids.length === 0 && vids.length === 0)) return;
+    startTransition(async () => {
+      let errText = "";
+      let total = 0;
+      if (pids.length) {
+        const r = await bulkAssignShelf(pids, slot);
+        if (r && "error" in r && r.error) errText = r.error;
+        else total += (r as any)?.done ?? pids.length;
+      }
+      if (!errText && vids.length) {
+        const r = await bulkAssignVariantShelf(vids, slot);
+        if (r && "error" in r && r.error) errText = r.error;
+        else total += (r as any)?.done ?? vids.length;
+      }
+      if (errText) {
+        setMsg({ kind: "err", text: errText });
+        return;
+      }
+      setMsg({ kind: "ok", text: `أُضيف ${total} عنصر للرفّ ${slot}` });
+      setSelected(new Set());
+      setSelectedVariants(new Set());
+      setBulkSlot("");
+      router.refresh();
+    });
+  }
+
   function pushSelected() {
     if (selected.size === 0) return;
     const items = selectedRows
@@ -465,9 +505,13 @@ export default function InventoryTable({
       </div>
 
       {/* Bulk bar */}
-      {selected.size > 0 && (
+      {(selected.size > 0 || selectedVariants.size > 0) && (
         <div className="card flex flex-wrap items-center gap-3 border-blue-200 bg-blue-50 py-3 text-sm">
-          <span className="font-medium text-blue-900">{selected.size} selected</span>
+          <span className="font-medium text-blue-900">
+            {selected.size > 0 ? `${selected.size} منتج` : ""}
+            {selected.size > 0 && selectedVariants.size > 0 ? " + " : ""}
+            {selectedVariants.size > 0 ? `${selectedVariants.size} خيار` : ""} محدّد
+          </span>
           <div className="flex items-center gap-2">
             <span className="text-slate-600">Set stock to</span>
             <input className="input w-24" type="number" value={bulkValue} onChange={(e) => setBulkValue(e.target.value)} placeholder="50" />
@@ -475,6 +519,25 @@ export default function InventoryTable({
               Apply
             </button>
           </div>
+          {hasLocation && (
+            <div className="flex items-center gap-2">
+              <span className="text-slate-600">أضف للرفّ</span>
+              <input
+                list="slot-codes"
+                className="input w-24 uppercase"
+                placeholder="A1"
+                value={bulkSlot}
+                onChange={(e) => setBulkSlot(e.target.value)}
+              />
+              <button
+                className="btn-ghost px-3 py-1 text-xs disabled:opacity-50"
+                disabled={bulkSlot.trim() === "" || pending}
+                onClick={assignSelectedToShelf}
+              >
+                إضافة
+              </button>
+            </div>
+          )}
           <button className="btn-ghost px-3 py-1 text-xs" onClick={pushSelected} disabled={pending}>
             Push to Shopify
           </button>
@@ -598,7 +661,14 @@ export default function InventoryTable({
                     const vname = v.variant_name ?? [v.color, v.size].filter(Boolean).join(" / ") ?? "Option";
                     return (
                       <div key={v.id} className="ml-1 flex items-center justify-between gap-2 border-l-2 border-slate-100 py-1 pl-3">
-                        <div className="min-w-0">
+                        <input
+                          type="checkbox"
+                          className="flex-none"
+                          checked={selectedVariants.has(v.id)}
+                          onChange={() => toggleVariant(v.id)}
+                          aria-label="Select option"
+                        />
+                        <div className="min-w-0 flex-1">
                           <div className="truncate text-sm font-medium text-ink">{vname}</div>
                           <div className="text-xs text-muted">
                             Qty{" "}
@@ -782,7 +852,14 @@ export default function InventoryTable({
                   {isExpanded &&
                     variants.map((v) => (
                       <tr key={v.id} className="border-b border-slate-100 bg-slate-50/60 text-sm">
-                        <td />
+                        <td className="px-3 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedVariants.has(v.id)}
+                            onChange={() => toggleVariant(v.id)}
+                            aria-label="Select option"
+                          />
+                        </td>
                         <td className="px-4 py-2" colSpan={2}>
                           <div className="flex items-center gap-2 pl-8">
                             <span className="text-slate-400">└</span>
