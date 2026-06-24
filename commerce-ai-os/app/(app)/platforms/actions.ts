@@ -33,6 +33,7 @@ const APPROVAL = new Set(["", "Approved", "Rejected", "SentAI"]);
 export interface PlatformProduct {
   id: string;
   sku: string | null;
+  barcode: string | null;
   name_en: string | null;
   name_ar: string | null;
   main_category: string | null;
@@ -41,6 +42,7 @@ export interface PlatformProduct {
   approval: string | null;
   rejection_reason: string | null;
   availability: string | null;   // 'InStock' | 'OutOfStock' | null (overlay platforms)
+  variant_barcodes: string[];    // barcodes of this product's options (for scanning/search)
 }
 
 const PAGE = 1000;
@@ -49,7 +51,7 @@ async function fetchAllProducts(sb: ReturnType<typeof createClient>): Promise<an
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await sb
       .from("products")
-      .select("id, sku, name_en, name_ar, main_category, price, image_url, approval, rejection_reason")
+      .select("id, sku, barcode, name_en, name_ar, main_category, price, image_url, approval, rejection_reason")
       .order("sku", { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
@@ -57,6 +59,32 @@ async function fetchAllProducts(sb: ReturnType<typeof createClient>): Promise<an
     if ((data ?? []).length < PAGE) break;
   }
   return out;
+}
+
+// Variant barcodes grouped by parent product (for scanning/searching options).
+// Non-fatal: if the table/column is missing we just return an empty map.
+async function fetchVariantBarcodes(sb: ReturnType<typeof createClient>): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  try {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await sb
+        .from("product_variants")
+        .select("parent_product_id, barcode")
+        .range(from, from + PAGE - 1);
+      if (error) break;
+      for (const r of (data ?? []) as any[]) {
+        const bc = r.barcode ? String(r.barcode).trim() : "";
+        if (!r.parent_product_id || !bc) continue;
+        const arr = map.get(r.parent_product_id) ?? [];
+        arr.push(bc);
+        map.set(r.parent_product_id, arr);
+      }
+      if ((data ?? []).length < PAGE) break;
+    }
+  } catch {
+    /* variants optional */
+  }
+  return map;
 }
 
 // Master product data + the chosen platform's approval/rejection overlaid.
@@ -69,9 +97,12 @@ export async function getPlatformProducts(platform: string): Promise<{ error?: s
 
   try {
     const rows = await fetchAllProducts(sb);
+    const vbc = await fetchVariantBarcodes(sb);
     if (meta.master) {
       // Malika = master: approval lives on the products row itself.
-      return { products: rows.map((p) => ({ ...p, availability: null })) as PlatformProduct[] };
+      return {
+        products: rows.map((p) => ({ ...p, availability: null, variant_barcodes: vbc.get(p.id) ?? [] })) as PlatformProduct[],
+      };
     }
     // Overlay platform: pull its statuses and merge onto the master rows.
     const ov = new Map<string, { approval: string | null; rejection_reason: string | null; availability: string | null }>();
@@ -88,7 +119,7 @@ export async function getPlatformProducts(platform: string): Promise<{ error?: s
     return {
       products: rows.map((p) => {
         const o = ov.get(p.id);
-        return { ...p, approval: o?.approval ?? null, rejection_reason: o?.rejection_reason ?? null, availability: o?.availability ?? null } as PlatformProduct;
+        return { ...p, approval: o?.approval ?? null, rejection_reason: o?.rejection_reason ?? null, availability: o?.availability ?? null, variant_barcodes: vbc.get(p.id) ?? [] } as PlatformProduct;
       }),
     };
   } catch (e) {

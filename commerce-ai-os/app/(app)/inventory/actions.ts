@@ -417,6 +417,40 @@ export async function setVariantBarcodes(updates: { id: string; barcode: string 
   return { ok: true };
 }
 
+/** Upsert a product's variant rows: rows with an id are updated (name/barcode),
+ *  rows without an id are inserted as new options. Service-role write so it
+ *  propagates everywhere (inventory KPIs, labels, catalog health). */
+export async function upsertVariants(
+  parentProductId: string,
+  rows: { id?: string | null; variant_name: string | null; barcode: string | null }[]
+) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  if (!parentProductId) return { error: "Missing product." };
+  const admin = writableClient();
+  for (const r of rows) {
+    const bc = r.barcode && r.barcode.trim() !== "" ? r.barcode.trim() : null;
+    const name = r.variant_name && r.variant_name.trim() !== "" ? r.variant_name.trim() : null;
+    if (r.id) {
+      const { error } = await admin
+        .from("product_variants")
+        .update({ variant_name: name, barcode: bc })
+        .eq("id", r.id);
+      if (error) return { error: error.message };
+    } else {
+      // Skip empty new rows (no name and no barcode).
+      if (!name && !bc) continue;
+      const { error } = await admin
+        .from("product_variants")
+        .insert({ parent_product_id: parentProductId, variant_name: name, barcode: bc });
+      if (error) return { error: error.message };
+    }
+  }
+  revalidatePath("/catalog/health");
+  revalidatePath("/inventory");
+  return { ok: true };
+}
+
 /** Recompute inventory.location (primary slot) + total stock from shelf_stock. */
 async function resyncInventoryFromShelfStock(
   admin: ReturnType<typeof writableClient>,

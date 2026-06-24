@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { setVariantBarcodes } from '@/app/(app)/inventory/actions'
+import { setVariantBarcodes, upsertVariants } from '@/app/(app)/inventory/actions'
 
 // ---------- الأنواع ----------
 type Product = {
@@ -493,10 +493,12 @@ export default function CatalogHealthPage() {
       const { error } = await supabase.from('products').update(patch).eq('id', fixProduct.id)
       if (error) throw error
 
-      // حفظ باركود كل خيار عبر service role (RLS قد يمنع UPDATE من المتصفّح)
+      // حفظ الخيارات عبر service role: يحدّث الموجود ويضيف الجديد (idless)
+      const hasNewVariant = variantForm.some((v) => !v.id)
       if (variantForm.length) {
-        const res = await setVariantBarcodes(
-          variantForm.map((v) => ({ id: v.id, barcode: emptyToNull(v.barcode) }))
+        const res = await upsertVariants(
+          fixProduct.id,
+          variantForm.map((v) => ({ id: v.id || null, variant_name: v.name, barcode: emptyToNull(v.barcode) }))
         )
         if (res && 'error' in res && res.error) throw new Error(res.error)
       }
@@ -532,6 +534,8 @@ export default function CatalogHealthPage() {
       }
       setLastUpdated(new Date())
       setFixProduct(null)
+      // الخيارات الجديدة تحتاج معرّفات من القاعدة → نعيد الجلب ليتحدّث كل شي
+      if (hasNewVariant) load(true)
     } catch (e: any) {
       setSaveErr(e?.message || 'فشل الحفظ')
     } finally {
@@ -958,8 +962,18 @@ export default function CatalogHealthPage() {
                           كل خيار ياخذ نفس الباركود الرئيسي بلاحقة تسلسلية. لازم تحفظ ليُعتبر المنتج مكتمل.
                         </p>
                         {variantForm.map((v, i) => (
-                          <div key={v.id} style={S.variantRow}>
-                            <span style={S.variantName}>{v.name || `خيار ${i + 1}`}</span>
+                          <div key={v.id || `new-${i}`} style={S.variantRow}>
+                            <input
+                              style={{ ...S.input, width: 110 }}
+                              value={v.name}
+                              onChange={(e) =>
+                                setVariantForm((vf) =>
+                                  vf.map((x, j) => (j === i ? { ...x, name: e.target.value } : x))
+                                )
+                              }
+                              dir="rtl"
+                              placeholder={`خيار ${i + 1}`}
+                            />
                             <input
                               style={{ ...S.input, flex: 1 }}
                               value={v.barcode}
@@ -971,8 +985,25 @@ export default function CatalogHealthPage() {
                               dir="ltr"
                               placeholder="باركود الخيار"
                             />
+                            {!v.id && (
+                              <button
+                                type="button"
+                                onClick={() => setVariantForm((vf) => vf.filter((_, j) => j !== i))}
+                                style={{ ...S.genBtn, color: '#dc2626', padding: '0 8px' }}
+                                title="حذف الخيار الجديد"
+                              >
+                                ✕
+                              </button>
+                            )}
                           </div>
                         ))}
+                        <button
+                          type="button"
+                          onClick={() => setVariantForm((vf) => [...vf, { id: '', name: '', barcode: '' }])}
+                          style={{ ...S.genBtn, marginTop: 8 }}
+                        >
+                          + إضافة خيار
+                        </button>
                       </div>
                     )}
 
