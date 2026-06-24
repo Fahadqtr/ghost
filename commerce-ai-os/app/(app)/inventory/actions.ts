@@ -653,6 +653,63 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string) 
 }
 
 /**
+ * Bulk-assign selected variants (options) to one shelf slot. Each variant's full
+ * stock is placed at the slot (replacing its placements), the parent product's
+ * inventory total is re-synced, and every assignment is logged to history.
+ */
+export async function bulkAssignVariantShelf(variantIds: string[], location: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const slot = (location ?? "").trim().toUpperCase();
+  const ids = (variantIds ?? []).filter(Boolean);
+  if (!slot || ids.length === 0) return { error: "اختر رفّاً وخياراً واحداً على الأقل." };
+  const admin = writableClient();
+  const now = new Date().toISOString();
+  const parents = new Set<string>();
+
+  let done = 0;
+  for (const id of ids) {
+    const { data: v } = await admin
+      .from("product_variants")
+      .select("id, stock_quantity, parent_product_id, variant_name, sku")
+      .eq("id", id)
+      .single();
+    if (!v) continue;
+    const qty = (v as any).stock_quantity ?? 0;
+    const del = await admin.from("variant_shelf_stock").delete().eq("variant_id", id);
+    if (del.error) return { error: del.error.message };
+    if (qty > 0) {
+      const ins = await admin
+        .from("variant_shelf_stock")
+        .insert({ variant_id: id, location: slot, quantity: qty, updated_at: now });
+      if (ins.error) return { error: ins.error.message };
+    }
+    if ((v as any).parent_product_id) parents.add((v as any).parent_product_id);
+    await logAudit(admin, {
+      action: "shelf_assign",
+      sku: (v as any).sku ?? null,
+      field: "location",
+      oldVal: null,
+      newVal: slot,
+      details: { variantId: id, variantName: (v as any).variant_name ?? null, quantity: qty },
+    });
+    done++;
+  }
+
+  // Re-sync each affected parent product's inventory total = sum of variant stock.
+  for (const parentId of parents) {
+    const { data: sibs } = await admin.from("product_variants").select("stock_quantity").eq("parent_product_id", parentId);
+    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
+    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("product_id", parentId);
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/shelves");
+  revalidatePath("/inventory/movements");
+  return { ok: true, done };
+}
+
+/**
  * Create a shelf and its slots in one go: shelf "A" with count 5 makes
  * A1..A5. Existing slots are left untouched (idempotent upsert).
  */
