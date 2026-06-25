@@ -53,6 +53,13 @@ export default async function ImportExportPage() {
       <p className="text-sm text-muted">
         Import and per-channel export. Exports pull the live database; no real marketplace API is called.
       </p>
+      <Link href="/import-export/availability" className="card flex items-center justify-between border-brand/30 bg-brand/5 hover:bg-brand/10">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">🔁 مطابقة التوفّر بين المنصّات</h3>
+          <p className="text-xs text-muted">ارفع قوائم مليكاس · Pure Seoul · Talabat · Rafeeq → وحّد النافد على الكل وادفعه لـ Shopify.</p>
+        </div>
+        <span className="text-brand">→</span>
+      </Link>
       <Link href="/import-export/snoonu-sync" className="card flex items-center justify-between hover:bg-slate-50">
         <div>
           <h3 className="text-sm font-semibold text-ink">🔄 Snoonu Sync</h3>
