@@ -41,12 +41,14 @@ export interface MasterProduct {
   barcode?: string | null;
   name_en?: string | null;
   name_ar?: string | null;
+  image_url?: string | null;
 }
 
 export interface MatrixRow {
   id: string;
   sku: string | null;
   name_en: string | null;
+  image_url: string | null;
   perPlatform: Record<string, Avail>;
   reconciled: "in" | "out";
   conflict: boolean; // disagreement: out on ≥1 platform AND in on ≥1 platform
@@ -178,6 +180,7 @@ export function reconcile(masters: MasterProduct[], uploads: PlatformUpload[]): 
       id,
       sku: m?.sku ?? null,
       name_en: m?.name_en ?? null,
+      image_url: m?.image_url ?? null,
       perPlatform,
       reconciled,
       conflict: anyOut && anyIn,

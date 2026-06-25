@@ -35,7 +35,7 @@ export async function reconcileAvailabilityAction(
     for (let f = 0; ; f += PAGE) {
       const { data, error } = await sb
         .from("products")
-        .select("id, snoonu_id, rafeeq_product_id, sku, barcode, name_en, name_ar")
+        .select("id, snoonu_id, rafeeq_product_id, sku, barcode, name_en, name_ar, image_url")
         .range(f, f + PAGE - 1);
       if (error) return { ok: false, error: error.message };
       masters.push(...((data ?? []) as MasterProduct[]));

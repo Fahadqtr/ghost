@@ -260,12 +260,15 @@ export default function AvailabilityReconcile() {
           <div className="card overflow-x-auto">
             <div className="mb-2 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-ink">جدول المقارنة{capped ? " (أول 1500)" : ""}</h3>
-              <button className="btn-ghost px-2 py-1 text-xs"
-                onClick={() => downloadCsv(
-                  "availability_matrix.csv",
-                  ["SKU", "Name EN", ...cols.map((p) => LABEL[p] ?? p), "الموحّد", "تعارض"],
-                  res.matrix.map((m) => [m.sku, m.name_en, ...cols.map((p) => m.perPlatform[p] ?? "absent"), m.reconciled, m.conflict ? "نعم" : ""])
-                )}>⬇ CSV</button>
+              <div className="flex gap-2">
+                <button className="btn-ghost px-2 py-1 text-xs" onClick={() => window.print()}>🖨️ PDF</button>
+                <button className="btn-ghost px-2 py-1 text-xs"
+                  onClick={() => downloadCsv(
+                    "availability_matrix.csv",
+                    ["SKU", "Name EN", ...cols.map((p) => LABEL[p] ?? p), "الموحّد", "تعارض"],
+                    res.matrix.map((m) => [m.sku, m.name_en, ...cols.map((p) => m.perPlatform[p] ?? "absent"), m.reconciled, m.conflict ? "نعم" : ""])
+                  )}>⬇ CSV</button>
+              </div>
             </div>
             <table className="w-full text-right text-xs">
               <thead>
@@ -279,8 +282,13 @@ export default function AvailabilityReconcile() {
                 {res.matrix.map((m) => (
                   <tr key={m.id} className={`border-b border-slate-50 ${m.conflict ? "bg-amber-50" : ""}`}>
                     <td className="py-1.5 pl-2">
-                      <span className="text-ink">{m.name_en ?? "—"}</span>
-                      {m.sku ? <span className="ml-1 font-mono text-[10px] text-muted">{m.sku}</span> : null}
+                      <div className="flex items-center gap-2">
+                        <Thumb src={m.image_url} />
+                        <span>
+                          <span className="text-ink">{m.name_en ?? "—"}</span>
+                          {m.sku ? <span className="ml-1 font-mono text-[10px] text-muted">{m.sku}</span> : null}
+                        </span>
+                      </div>
                     </td>
                     {cols.map((p) => {
                       const a = m.perPlatform[p] ?? "absent";
@@ -295,8 +303,114 @@ export default function AvailabilityReconcile() {
             </table>
             {res.matrix.length === 0 ? <p className="py-3 text-center text-sm text-slate-400">لا شيء انطابق.</p> : null}
           </div>
+
+          {/* Print-only PDF sheet: product cards with images + reconciled status.
+              Hidden on screen; the browser's "Save as PDF" captures just this. */}
+          <PrintSheet matrix={res.matrix} cols={cols} counts={c} capped={capped} />
         </>
       ) : null}
+    </div>
+  );
+}
+
+// Small square product thumbnail; falls back to a placeholder box.
+function Thumb({ src, size = 28 }: { src?: string | null; size?: number }) {
+  if (!src) {
+    return (
+      <span
+        className="inline-flex shrink-0 items-center justify-center rounded bg-slate-100 text-[9px] text-slate-300"
+        style={{ width: size, height: size }}
+      >
+        —
+      </span>
+    );
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      crossOrigin="anonymous"
+      className="shrink-0 rounded border border-slate-100 object-cover"
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
+// Print-friendly comparison sheet. Renders a header, the count summary, and a
+// product-card table (image + name/SKU + per-platform availability + reconciled).
+function PrintSheet({
+  matrix,
+  cols,
+  counts,
+  capped,
+}: {
+  matrix: ReconcileResult["matrix"];
+  cols: string[];
+  counts: ReconcileResult["counts"];
+  capped: boolean;
+}) {
+  return (
+    <div id="avail-print" aria-hidden>
+      <style>{`
+        #avail-print { display: none; }
+        @media print {
+          body * { visibility: hidden !important; }
+          #avail-print, #avail-print * { visibility: visible !important; }
+          #avail-print { display: block !important; position: absolute; inset: 0; width: 100%; padding: 6mm; color: #0f172a; }
+          #avail-print table { width: 100%; border-collapse: collapse; font-size: 10px; }
+          #avail-print th, #avail-print td { border: 1px solid #e2e8f0; padding: 3px 4px; }
+          #avail-print thead { display: table-header-group; }
+          #avail-print tr { page-break-inside: avoid; }
+          #avail-print img { width: 34px; height: 34px; object-fit: cover; border-radius: 4px; }
+          @page { size: A4 landscape; margin: 8mm; }
+        }
+      `}</style>
+
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+        <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>تقرير مطابقة التوفّر بين المنصّات</h1>
+        <span style={{ fontSize: 11, color: "#64748b" }}>
+          {SOURCES.map((s) => s.label).join(" · ")}
+        </span>
+      </div>
+      <p style={{ fontSize: 11, color: "#334155", margin: "0 0 8px" }}>
+        منتجات: {counts.products} · نافد (موحّد): {counts.out} · متوفّر (موحّد): {counts.inStock} · تعارضات: {counts.conflicts}
+        {capped ? " · (معروض أول 1500)" : ""}
+      </p>
+
+      <table dir="rtl">
+        <thead>
+          <tr style={{ background: "#f8fafc" }}>
+            <th style={{ width: 44 }}>صورة</th>
+            <th style={{ textAlign: "right" }}>المنتج</th>
+            {cols.map((p) => (
+              <th key={p} style={{ textAlign: "center" }}>{LABEL[p] ?? p}</th>
+            ))}
+            <th style={{ textAlign: "center" }}>الموحّد</th>
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.map((m) => (
+            <tr key={m.id} style={m.conflict ? { background: "#fffbeb" } : undefined}>
+              <td style={{ textAlign: "center" }}>
+                {m.image_url ? <img src={m.image_url} alt="" crossOrigin="anonymous" /> : "—"}
+              </td>
+              <td style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 600 }}>{m.name_en ?? "—"}</div>
+                {m.sku ? <div style={{ fontFamily: "monospace", fontSize: 9, color: "#64748b" }}>{m.sku}</div> : null}
+              </td>
+              {cols.map((p) => {
+                const a = m.perPlatform[p] ?? "absent";
+                return <td key={p} style={{ textAlign: "center" }}>{CELL[a].t}</td>;
+              })}
+              <td style={{ textAlign: "center", fontWeight: 700, color: m.reconciled === "out" ? "#dc2626" : "#059669" }}>
+                {m.reconciled === "out" ? "⛔" : "✅"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
