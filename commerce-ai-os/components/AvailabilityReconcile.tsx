@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { cellToAvailable, type PlatformUpload, type ReconcileResult, type Avail } from "@/lib/availability-reconcile";
 import {
@@ -100,6 +100,21 @@ export default function AvailabilityReconcile() {
   const [applied, setApplied] = useState<string | null>(null);
   const [shopMsg, setShopMsg] = useState<string | null>(null);
   const [pushing, setPushing] = useState(false);
+  // View filters — apply to the on-screen table, CSV, and PDF alike so the user
+  // can print one status ("كل حاله") or one platform's comparison ("كل مقارنة").
+  const [statusFilter, setStatusFilter] = useState<"all" | "out" | "in" | "conflict">("all");
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
+
+  const filtered = useMemo(() => {
+    if (!res) return [];
+    return res.matrix.filter((m) => {
+      if (statusFilter === "out" && m.reconciled !== "out") return false;
+      if (statusFilter === "in" && m.reconciled !== "in") return false;
+      if (statusFilter === "conflict" && !m.conflict) return false;
+      if (platformFilter !== "all" && (m.perPlatform[platformFilter] ?? "absent") === "absent") return false;
+      return true;
+    });
+  }, [res, statusFilter, platformFilter]);
 
   async function onFile(platform: string, e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -162,6 +177,72 @@ export default function AvailabilityReconcile() {
 
   const c = res?.counts;
   const cols = res?.platforms ?? [];
+
+  const STATUS_LABEL: Record<string, string> = { all: "كل الحالات", out: "النافد فقط", in: "المتوفّر فقط", conflict: "التعارضات فقط" };
+  function filterLabel() {
+    const parts = [STATUS_LABEL[statusFilter]];
+    if (platformFilter !== "all") parts.push(`منصّة: ${LABEL[platformFilter] ?? platformFilter}`);
+    return parts.join(" · ");
+  }
+
+  // Build a self-contained report document and print it from a fresh window.
+  // A new window (not the app page) avoids the Vercel preview toolbar and the
+  // app chrome, so "Save as PDF" reliably captures only the comparison.
+  function printPdf() {
+    if (!filtered.length) { alert("ما في صفوف بهذا الفلتر."); return; }
+    const w = window.open("", "_blank");
+    if (!w) { alert("اسمح بالنوافذ المنبثقة (popups) عشان نطبع الـ PDF."); return; }
+    const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    const outN = filtered.filter((m) => m.reconciled === "out").length;
+    const inN = filtered.filter((m) => m.reconciled === "in").length;
+    const confN = filtered.filter((m) => m.conflict).length;
+    const head = cols.map((p) => `<th class="ctr">${esc(LABEL[p] ?? p)}</th>`).join("");
+    const rows = filtered.map((m) => {
+      const cells = cols.map((p) => `<td class="ctr">${CELL[m.perPlatform[p] ?? "absent"].t}</td>`).join("");
+      const img = m.image_url ? `<img src="${esc(m.image_url)}" referrerpolicy="no-referrer">` : "—";
+      return `<tr class="${m.conflict ? "conf" : ""}"><td class="ctr">${img}</td>`
+        + `<td class="nm"><b>${esc(m.name_en ?? "—")}</b>${m.sku ? `<div class="sku">${esc(m.sku)}</div>` : ""}</td>`
+        + `${cells}<td class="ctr rec ${m.reconciled}">${m.reconciled === "out" ? "⛔" : "✅"}</td></tr>`;
+    }).join("");
+    w.document.write(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
+<title>تقرير مطابقة التوفّر</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Tahoma, Arial, sans-serif; color: #0f172a; margin: 0; padding: 14px; }
+  h1 { font-size: 17px; margin: 0; }
+  .sub { font-size: 11px; color: #64748b; }
+  .hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 2px solid #0f172a; padding-bottom: 6px; margin-bottom: 8px; }
+  .meta { font-size: 11px; color: #334155; margin-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  th, td { border: 1px solid #e2e8f0; padding: 3px 5px; }
+  thead { display: table-header-group; background: #f1f5f9; }
+  tr { page-break-inside: avoid; }
+  .ctr { text-align: center; }
+  .nm { text-align: right; }
+  .sku { font-family: monospace; font-size: 9px; color: #64748b; }
+  .conf { background: #fffbeb; }
+  .rec.out { color: #dc2626; font-weight: 700; }
+  .rec.in { color: #059669; font-weight: 700; }
+  img { width: 34px; height: 34px; object-fit: cover; border-radius: 4px; vertical-align: middle; }
+  @page { size: A4 landscape; margin: 8mm; }
+</style></head><body>
+<div class="hd"><div><h1>تقرير مطابقة التوفّر بين المنصّات</h1><div class="sub">${esc(SOURCES.map((s) => s.label).join(" · "))}</div></div>
+<div class="sub">${esc(filterLabel())}</div></div>
+<div class="meta">منتجات: ${filtered.length} · نافد: ${outN} · متوفّر: ${inN} · تعارضات: ${confN}${capped ? " · (أول 1500)" : ""}</div>
+<table><thead><tr><th class="ctr">صورة</th><th class="nm">المنتج</th>${head}<th class="ctr">الموحّد</th></tr></thead><tbody>${rows}</tbody></table>
+<script>
+  function go(){ window.focus(); window.print(); }
+  var imgs = Array.prototype.slice.call(document.images), left = imgs.length;
+  if (!left) { setTimeout(go, 100); }
+  else {
+    var done = function(){ if (--left <= 0) setTimeout(go, 150); };
+    imgs.forEach(function(im){ if (im.complete) done(); else { im.onload = done; im.onerror = done; } });
+    setTimeout(go, 4000); // fallback so slow images never block printing
+  }
+<\/script>
+</body></html>`);
+    w.document.close();
+  }
 
   return (
     <div className="space-y-4">
@@ -258,18 +339,45 @@ export default function AvailabilityReconcile() {
 
           {/* Matrix */}
           <div className="card overflow-x-auto">
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-ink">جدول المقارنة{capped ? " (أول 1500)" : ""}</h3>
               <div className="flex gap-2">
-                <button className="btn-ghost px-2 py-1 text-xs" onClick={() => window.print()}>🖨️ PDF</button>
+                <button className="btn-ghost px-2 py-1 text-xs" onClick={printPdf}>🖨️ PDF</button>
                 <button className="btn-ghost px-2 py-1 text-xs"
                   onClick={() => downloadCsv(
                     "availability_matrix.csv",
                     ["SKU", "Name EN", ...cols.map((p) => LABEL[p] ?? p), "الموحّد", "تعارض"],
-                    res.matrix.map((m) => [m.sku, m.name_en, ...cols.map((p) => m.perPlatform[p] ?? "absent"), m.reconciled, m.conflict ? "نعم" : ""])
+                    filtered.map((m) => [m.sku, m.name_en, ...cols.map((p) => m.perPlatform[p] ?? "absent"), m.reconciled, m.conflict ? "نعم" : ""])
                   )}>⬇ CSV</button>
               </div>
             </div>
+
+            {/* Filters — pick a status and/or one platform, then طبّق/CSV/PDF يتبع الفلتر. */}
+            <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-muted">الحالة:</span>
+              {([
+                ["all", `الكل (${c.products})`],
+                ["out", `نافد (${c.out})`],
+                ["in", `متوفّر (${c.inStock})`],
+                ["conflict", `تعارض (${c.conflicts})`],
+              ] as const).map(([k, lbl]) => (
+                <button key={k} onClick={() => setStatusFilter(k)}
+                  className={`rounded-full px-2.5 py-0.5 ${statusFilter === k ? "bg-brand text-white" : "bg-slate-100 text-ink hover:bg-slate-200"}`}>
+                  {lbl}
+                </button>
+              ))}
+              <span className="ml-2 text-muted">المنصّة:</span>
+              <button onClick={() => setPlatformFilter("all")}
+                className={`rounded-full px-2.5 py-0.5 ${platformFilter === "all" ? "bg-brand text-white" : "bg-slate-100 text-ink hover:bg-slate-200"}`}>الكل</button>
+              {cols.map((p) => (
+                <button key={p} onClick={() => setPlatformFilter(p)}
+                  className={`rounded-full px-2.5 py-0.5 ${platformFilter === p ? "bg-brand text-white" : "bg-slate-100 text-ink hover:bg-slate-200"}`}>
+                  {LABEL[p] ?? p}
+                </button>
+              ))}
+              <span className="ml-auto text-muted">معروض: {filtered.length}</span>
+            </div>
+
             <table className="w-full text-right text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-muted">
@@ -279,7 +387,7 @@ export default function AvailabilityReconcile() {
                 </tr>
               </thead>
               <tbody>
-                {res.matrix.map((m) => (
+                {filtered.map((m) => (
                   <tr key={m.id} className={`border-b border-slate-50 ${m.conflict ? "bg-amber-50" : ""}`}>
                     <td className="py-1.5 pl-2">
                       <div className="flex items-center gap-2">
@@ -301,12 +409,8 @@ export default function AvailabilityReconcile() {
                 ))}
               </tbody>
             </table>
-            {res.matrix.length === 0 ? <p className="py-3 text-center text-sm text-slate-400">لا شيء انطابق.</p> : null}
+            {filtered.length === 0 ? <p className="py-3 text-center text-sm text-slate-400">{res.matrix.length ? "ما في صفوف بهذا الفلتر." : "لا شيء انطابق."}</p> : null}
           </div>
-
-          {/* Print-only PDF sheet: product cards with images + reconciled status.
-              Hidden on screen; the browser's "Save as PDF" captures just this. */}
-          <PrintSheet matrix={res.matrix} cols={cols} counts={c} capped={capped} />
         </>
       ) : null}
     </div>
@@ -331,87 +435,10 @@ function Thumb({ src, size = 28 }: { src?: string | null; size?: number }) {
       src={src}
       alt=""
       loading="lazy"
-      crossOrigin="anonymous"
+      referrerPolicy="no-referrer"
       className="shrink-0 rounded border border-slate-100 object-cover"
       style={{ width: size, height: size }}
     />
-  );
-}
-
-// Print-friendly comparison sheet. Renders a header, the count summary, and a
-// product-card table (image + name/SKU + per-platform availability + reconciled).
-function PrintSheet({
-  matrix,
-  cols,
-  counts,
-  capped,
-}: {
-  matrix: ReconcileResult["matrix"];
-  cols: string[];
-  counts: ReconcileResult["counts"];
-  capped: boolean;
-}) {
-  return (
-    <div id="avail-print" aria-hidden>
-      <style>{`
-        #avail-print { display: none; }
-        @media print {
-          body * { visibility: hidden !important; }
-          #avail-print, #avail-print * { visibility: visible !important; }
-          #avail-print { display: block !important; position: absolute; inset: 0; width: 100%; padding: 6mm; color: #0f172a; }
-          #avail-print table { width: 100%; border-collapse: collapse; font-size: 10px; }
-          #avail-print th, #avail-print td { border: 1px solid #e2e8f0; padding: 3px 4px; }
-          #avail-print thead { display: table-header-group; }
-          #avail-print tr { page-break-inside: avoid; }
-          #avail-print img { width: 34px; height: 34px; object-fit: cover; border-radius: 4px; }
-          @page { size: A4 landscape; margin: 8mm; }
-        }
-      `}</style>
-
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
-        <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>تقرير مطابقة التوفّر بين المنصّات</h1>
-        <span style={{ fontSize: 11, color: "#64748b" }}>
-          {SOURCES.map((s) => s.label).join(" · ")}
-        </span>
-      </div>
-      <p style={{ fontSize: 11, color: "#334155", margin: "0 0 8px" }}>
-        منتجات: {counts.products} · نافد (موحّد): {counts.out} · متوفّر (موحّد): {counts.inStock} · تعارضات: {counts.conflicts}
-        {capped ? " · (معروض أول 1500)" : ""}
-      </p>
-
-      <table dir="rtl">
-        <thead>
-          <tr style={{ background: "#f8fafc" }}>
-            <th style={{ width: 44 }}>صورة</th>
-            <th style={{ textAlign: "right" }}>المنتج</th>
-            {cols.map((p) => (
-              <th key={p} style={{ textAlign: "center" }}>{LABEL[p] ?? p}</th>
-            ))}
-            <th style={{ textAlign: "center" }}>الموحّد</th>
-          </tr>
-        </thead>
-        <tbody>
-          {matrix.map((m) => (
-            <tr key={m.id} style={m.conflict ? { background: "#fffbeb" } : undefined}>
-              <td style={{ textAlign: "center" }}>
-                {m.image_url ? <img src={m.image_url} alt="" crossOrigin="anonymous" /> : "—"}
-              </td>
-              <td style={{ textAlign: "right" }}>
-                <div style={{ fontWeight: 600 }}>{m.name_en ?? "—"}</div>
-                {m.sku ? <div style={{ fontFamily: "monospace", fontSize: 9, color: "#64748b" }}>{m.sku}</div> : null}
-              </td>
-              {cols.map((p) => {
-                const a = m.perPlatform[p] ?? "absent";
-                return <td key={p} style={{ textAlign: "center" }}>{CELL[a].t}</td>;
-              })}
-              <td style={{ textAlign: "center", fontWeight: 700, color: m.reconciled === "out" ? "#dc2626" : "#059669" }}>
-                {m.reconciled === "out" ? "⛔" : "✅"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }
 
