@@ -1402,3 +1402,110 @@ export async function markOutOfStockByNames(text: string, apply = false): Promis
   revalidatePath("/products");
   return { applied: true, matched: idList.length, products: matchedList, unmatched, shopify };
 }
+
+/**
+ * Match every sales channel (Snoonu/Pure Seoul, Talabat, Shopify, Rafeeq) to the
+ * Malika's catalog for products that are SOLD OUT: any product whose shared stock
+ * pool is 0 but is still "Active" on a channel gets delisted (channel_status →
+ * "Not Listed"), and 0 stock is re-pushed to Shopify. Malika's (the catalog) is
+ * the source of truth. apply=false is a dry run that only reports the mismatch.
+ */
+export async function matchChannelsToMalika(apply = false): Promise<{
+  error?: string;
+  applied: boolean;
+  products: { sku: string | null; name: string | null; channels: string[] }[];
+  channelRows: number;
+  shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
+}> {
+  const unauth = await requireUser();
+  if (unauth) return { error: (unauth as any).error ?? "Not signed in.", applied: false, products: [], channelRows: 0 };
+
+  const admin = writableClient();
+  const PAGE = 1000;
+
+  // Sum variant stock per parent — a product is "out" only when every option is out.
+  const variantSum = new Map<string, number>();
+  {
+    const probe = await admin.from("product_variants").select("id").limit(1);
+    if (!probe.error) {
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await admin.from("product_variants").select("parent_product_id, stock_quantity").range(from, from + PAGE - 1);
+        if (error) break;
+        for (const v of (data ?? []) as any[]) {
+          if (!v.parent_product_id) continue;
+          variantSum.set(v.parent_product_id, (variantSum.get(v.parent_product_id) ?? 0) + (v.stock_quantity ?? 0));
+        }
+        if (!data || data.length < PAGE) break;
+      }
+    }
+  }
+
+  // Out-of-stock product ids: max(inventory total, summed variant stock) <= 0.
+  const oos = new Set<string>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await admin.from("inventory").select("product_id, stock_quantity").range(from, from + PAGE - 1);
+    if (error) return { error: error.message, applied: false, products: [], channelRows: 0 };
+    for (const r of (data ?? []) as any[]) {
+      if (!r.product_id) continue;
+      const effective = Math.max(r.stock_quantity ?? 0, variantSum.get(r.product_id) ?? 0);
+      if (effective <= 0) oos.add(r.product_id);
+    }
+    if (!data || data.length < PAGE) break;
+  }
+
+  // Channel id → name.
+  const { data: chans } = await admin.from("channels").select("id, name");
+  const chanName = new Map<string, string>(((chans ?? []) as any[]).map((c) => [c.id, c.name]));
+
+  // Out-of-stock products still "Active" on a channel = the mismatch to fix.
+  const activeChannelsByProduct = new Map<string, Set<string>>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await admin.from("channel_products").select("product_id, channel_id, channel_status").range(from, from + PAGE - 1);
+    if (error) return { error: error.message, applied: false, products: [], channelRows: 0 };
+    for (const r of (data ?? []) as any[]) {
+      if ((r.channel_status ?? "") !== "Active") continue;
+      if (!oos.has(r.product_id)) continue;
+      const nm = chanName.get(r.channel_id);
+      if (!nm) continue;
+      const set = activeChannelsByProduct.get(r.product_id) ?? new Set<string>();
+      set.add(nm);
+      activeChannelsByProduct.set(r.product_id, set);
+    }
+    if (!data || data.length < PAGE) break;
+  }
+
+  const productIds = [...activeChannelsByProduct.keys()];
+  const channelRows = [...activeChannelsByProduct.values()].reduce((n, s) => n + s.size, 0);
+
+  // Names/SKUs for the preview + Shopify push.
+  const meta = new Map<string, { sku: string | null; name: string | null }>();
+  for (let i = 0; i < productIds.length; i += 200) {
+    const chunk = productIds.slice(i, i + 200);
+    const { data } = await admin.from("products").select("id, sku, name_en, name_ar").in("id", chunk);
+    for (const p of (data ?? []) as any[]) meta.set(p.id, { sku: p.sku ?? null, name: p.name_en ?? p.name_ar ?? null });
+  }
+  const products = productIds
+    .map((id) => ({ sku: meta.get(id)?.sku ?? null, name: meta.get(id)?.name ?? null, channels: [...(activeChannelsByProduct.get(id) ?? [])].sort() }))
+    .sort((a, b) => (a.name ?? a.sku ?? "").localeCompare(b.name ?? b.sku ?? ""));
+
+  // Dry run: report the mismatch, write nothing.
+  if (!apply) return { applied: false, products, channelRows };
+
+  for (let i = 0; i < productIds.length; i += 200) {
+    const chunk = productIds.slice(i, i + 200);
+    await admin.from("channel_products").update({ channel_status: "Not Listed" }).in("product_id", chunk).eq("channel_status", "Active");
+  }
+
+  // Best-effort: re-push 0 stock to Shopify for the affected SKUs.
+  let shopify: { configured: boolean; pushed?: number; failed?: number; message?: string } | undefined;
+  const skus = products.map((p) => p.sku).filter((s): s is string => !!s);
+  if (skus.length > 0) {
+    const res = await pushStockToShopify(skus.map((sku) => ({ sku, quantity: 0 })));
+    shopify = res.configured ? { configured: true, pushed: res.pushed, failed: res.failed } : { configured: false, message: res.message };
+  }
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/out-of-stock");
+  revalidatePath("/channels");
+  return { applied: true, products, channelRows, shopify };
+}
