@@ -21,15 +21,34 @@ const SOURCES = [
 const LABEL: Record<string, string> = Object.fromEntries(SOURCES.map((s) => [s.key, s.label]));
 
 interface Parsed {
-  rows: PlatformUpload["rows"];
+  raw: Record<string, unknown>[];
+  headers: string[];
   fileName: string;
   total: number;
-  inCount: number;
-  outCount: number;
-  unknown: number;
-  availCol: string | null;
+  availColAuto: string;   // auto-detected availability column (the default)
   nameCol: string | null;
   idCol: string | null;
+  barcodeCol: string | null;
+  skuCol: string | null;
+}
+
+// Build the normalized upload rows + counts from a chosen availability column.
+// Kept separate from detection so the user can override the column per file.
+function buildRows(p: Parsed, availCol: string): { rows: PlatformUpload["rows"]; inCount: number; outCount: number; unknown: number } {
+  const rows: PlatformUpload["rows"] = [];
+  let inCount = 0, outCount = 0, unknown = 0;
+  for (const r of p.raw) {
+    const available = cellToAvailable(r[availCol]);
+    if (available === true) inCount++; else if (available === false) outCount++; else unknown++;
+    rows.push({
+      name: p.nameCol ? String(r[p.nameCol] ?? "") : undefined,
+      id: p.idCol ? String(r[p.idCol] ?? "") : undefined,
+      barcode: p.barcodeCol ? String(r[p.barcodeCol] ?? "") : undefined,
+      sku: p.skuCol ? String(r[p.skuCol] ?? "") : undefined,
+      available,
+    });
+  }
+  return { rows, inCount, outCount, unknown };
 }
 
 function downloadCsv(name: string, headers: string[], rows: (string | number | null | undefined)[][]) {
@@ -75,20 +94,12 @@ function parseWorkbook(wb: XLSX.WorkBook, fileName: string): Parsed | { error: s
   if (!availCol) return { error: `ما لقيت عمود التوفّر/الحالة. الأعمدة: ${headers.slice(0, 10).join(" · ")}…` };
   if (!nameCol && !idCol && !barcodeCol && !skuCol) return { error: `ما لقيت عمود اسم/مُعرّف. الأعمدة: ${headers.slice(0, 10).join(" · ")}…` };
 
-  const rows: PlatformUpload["rows"] = [];
-  let inCount = 0, outCount = 0, unknown = 0;
-  for (const r of raw) {
-    const available = cellToAvailable(r[availCol]);
-    if (available === true) inCount++; else if (available === false) outCount++; else unknown++;
-    rows.push({
-      name: nameCol ? String(r[nameCol] ?? "") : undefined,
-      id: idCol ? String(r[idCol] ?? "") : undefined,
-      barcode: barcodeCol ? String(r[barcodeCol] ?? "") : undefined,
-      sku: skuCol ? String(r[skuCol] ?? "") : undefined,
-      available,
-    });
-  }
-  return { rows, fileName, total: raw.length, inCount, outCount, unknown, availCol, nameCol: nameCol ?? null, idCol: idCol ?? null };
+  return {
+    raw, headers, fileName, total: raw.length,
+    availColAuto: availCol,
+    nameCol: nameCol ?? null, idCol: idCol ?? null,
+    barcodeCol: barcodeCol ?? null, skuCol: skuCol ?? null,
+  };
 }
 
 const CELL: Record<Avail, { t: string; c: string }> = {
@@ -99,6 +110,7 @@ const CELL: Record<Avail, { t: string; c: string }> = {
 
 export default function AvailabilityReconcile() {
   const [parsed, setParsed] = useState<Record<string, Parsed>>({});
+  const [availChoice, setAvailChoice] = useState<Record<string, string>>({}); // per-platform column override
   const [fileErr, setFileErr] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,11 +136,23 @@ export default function AvailabilityReconcile() {
     });
   }, [res, statusFilter, platformFilter]);
 
+  // Effective availability column per platform (override or auto-detected) and
+  // the rows/counts built from it. Re-derives whenever a file or override changes.
+  const built = useMemo(() => {
+    const out: Record<string, { availCol: string; rows: PlatformUpload["rows"]; inCount: number; outCount: number; unknown: number }> = {};
+    for (const [platform, p] of Object.entries(parsed)) {
+      const availCol = (availChoice[platform] && p.headers.includes(availChoice[platform])) ? availChoice[platform] : p.availColAuto;
+      out[platform] = { availCol, ...buildRows(p, availCol) };
+    }
+    return out;
+  }, [parsed, availChoice]);
+
   async function onFile(platform: string, e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setRes(null); setApplied(null); setShopMsg(null);
     setFileErr((m) => ({ ...m, [platform]: "" }));
+    setAvailChoice((m) => { const n = { ...m }; delete n[platform]; return n; }); // reset override for new file
     try {
       const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
       const out = parseWorkbook(wb, file.name);
@@ -140,7 +164,7 @@ export default function AvailabilityReconcile() {
   }
 
   async function runCompare() {
-    const uploads: PlatformUpload[] = Object.entries(parsed).map(([platform, p]) => ({ platform, rows: p.rows }));
+    const uploads: PlatformUpload[] = Object.entries(parsed).map(([platform, p]) => ({ platform, rows: built[platform]?.rows ?? buildRows(p, p.availColAuto).rows }));
     if (!uploads.length) { setError("ارفع قائمة وحدة على الأقل."); return; }
     setBusy(true); setError(null); setRes(null); setApplied(null); setShopMsg(null);
     try {
@@ -258,7 +282,9 @@ export default function AvailabilityReconcile() {
       <div className="grid gap-3 sm:grid-cols-2">
         {SOURCES.map((s) => {
           const p = parsed[s.key];
+          const b = built[s.key];
           const err = fileErr[s.key];
+          const overridden = !!p && b && b.availCol !== p.availColAuto;
           return (
             <div key={s.key} className="card space-y-2">
               <div className="flex items-center justify-between">
@@ -267,11 +293,24 @@ export default function AvailabilityReconcile() {
               </div>
               <p className="text-[11px] text-muted">{s.hint}</p>
               <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => onFile(s.key, e)} className="block w-full text-xs" />
-              {p ? (
-                <p className="text-[11px] text-muted">
-                  متوفّر {p.inCount} · نافد {p.outCount}{p.unknown ? ` · غير معروف ${p.unknown}` : ""}
-                  <br />عمود التوفّر: <code className="text-[10px]">{p.availCol}</code>
-                </p>
+              {p && b ? (
+                <>
+                  <p className="text-[11px] text-muted">
+                    متوفّر {b.inCount} · نافد {b.outCount}{b.unknown ? ` · غير معروف ${b.unknown}` : ""}
+                  </p>
+                  <label className="block text-[11px] text-muted">
+                    عمود التوفّر:
+                    <select
+                      value={b.availCol}
+                      onChange={(e) => { setAvailChoice((m) => ({ ...m, [s.key]: e.target.value })); setRes(null); }}
+                      className={`mt-0.5 block w-full rounded border px-1 py-0.5 text-[11px] ${overridden ? "border-amber-400 bg-amber-50" : "border-slate-200"}`}>
+                      {p.headers.map((h) => (
+                        <option key={h} value={h}>{h === p.availColAuto ? `${h} (تلقائي)` : h}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {overridden ? <p className="text-[10px] text-amber-700">⚠ تجاوزت العمود التلقائي.</p> : null}
+                </>
               ) : null}
               {err ? <pre className="whitespace-pre-wrap rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">{err}</pre> : null}
             </div>
