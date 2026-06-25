@@ -1229,17 +1229,19 @@ export async function recognizeProduct(imageDataUrl: string): Promise<
  * trailing "…" tolerated). Returns matched count, the unmatched lines, and the
  * Shopify push result so the UI can show exactly what happened.
  */
-export async function markOutOfStockByNames(text: string): Promise<{
+export async function markOutOfStockByNames(text: string, apply = false): Promise<{
   error?: string;
+  applied: boolean;
   matched: number;
+  products: { sku: string | null; name: string | null }[];
   unmatched: string[];
   shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
 }> {
   const unauth = await requireUser();
-  if (unauth) return { error: (unauth as any).error ?? "Not signed in.", matched: 0, unmatched: [] };
+  if (unauth) return { error: (unauth as any).error ?? "Not signed in.", applied: false, matched: 0, products: [], unmatched: [] };
 
   const lines = [...new Set((text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean))];
-  if (lines.length === 0) return { matched: 0, unmatched: [] };
+  if (lines.length === 0) return { applied: false, matched: 0, products: [], unmatched: [] };
 
   const admin = writableClient();
 
@@ -1247,7 +1249,7 @@ export async function markOutOfStockByNames(text: string): Promise<{
   const all: any[] = [];
   for (let f = 0; ; f += 1000) {
     const { data, error } = await admin.from("products").select("id, sku, name_en, name_ar").range(f, f + 999);
-    if (error) return { error: error.message, matched: 0, unmatched: [] };
+    if (error) return { error: error.message, applied: false, matched: 0, products: [], unmatched: [] };
     all.push(...(data ?? []));
     if ((data ?? []).length < 1000) break;
   }
@@ -1261,18 +1263,50 @@ export async function markOutOfStockByNames(text: string): Promise<{
     new Set(
       String(s ?? "").toLowerCase().replace(/[^a-z0-9؀-ۿ ]/g, " ").split(/\s+/).filter((w) => w.length >= 3)
     );
+  // Variant-suffix stripper: drops parentheticals "(50ml)", size/unit tokens, and
+  // trailing "– Gold" / "- Mint Green" style segments that are only colour/size
+  // words — so a pasted "Smeg Thermal Tumbler – Gold" can still reach the catalog
+  // "Smeg Thermal Tumbler" (where colour is a variant, not part of the name).
+  const COLORS = new Set([
+    "gold","silver","rose","pink","peach","mint","green","blue","red","black","white",
+    "purple","beige","brown","gray","grey","ivory","cream","clear","nude","lavender",
+    "yellow","orange","navy","teal","violet","coral","tan","khaki","champagne","bronze",
+  ]);
+  const variantWord = (w: string) =>
+    COLORS.has(w) ||
+    /^\d/.test(w) ||
+    /^(ml|g|kg|l|cm|mm|pcs|pc|pieces?|pack|set|pro|max|models?|colou?rs?|size|sizes?|and|with|the|for)$/.test(w) ||
+    w.length <= 2;
+  const stripVariant = (s: string) => {
+    let x = String(s ?? "").toLowerCase().replace(/\([^)]*\)/g, " ");
+    const parts = x.split(/[–—-]/);
+    while (parts.length > 1) {
+      const tail = parts[parts.length - 1].trim().split(/\s+/).filter(Boolean);
+      if (tail.length > 0 && tail.length <= 4 && tail.every(variantWord)) parts.pop();
+      else break;
+    }
+    return parts.join(" ").replace(/\b\d+\s?(ml|g|kg|l|cm|mm|pcs|pc|pieces?)\b/g, " ");
+  };
   const cat = all.map((p) => ({
     p,
     en: keyOf(p.name_en),
     ar: keyOf(p.name_ar),
     sku: keyOf(p.sku),
     t: toks(`${p.name_en ?? ""} ${p.name_ar ?? ""}`),
+    cen: keyOf(stripVariant(p.name_en)),
+    car: keyOf(stripVariant(p.name_ar)),
+    ct: toks(`${stripVariant(p.name_en)} ${stripVariant(p.name_ar)}`),
   }));
 
   const ids = new Set<string>();
   const skus = new Set<string>();
+  const matchedList: { sku: string | null; name: string | null }[] = [];
   const unmatched: string[] = [];
-  const take = (c: (typeof cat)[number]) => { ids.add(c.p.id); if (c.p.sku) skus.add(String(c.p.sku)); };
+  const take = (c: (typeof cat)[number]) => {
+    if (!ids.has(c.p.id)) matchedList.push({ sku: c.p.sku ?? null, name: c.p.name_en ?? c.p.name_ar ?? null });
+    ids.add(c.p.id);
+    if (c.p.sku) skus.add(String(c.p.sku));
+  };
   for (const line of lines) {
     const ln = keyOf(line.replace(/[.…]+$/, ""));
     if (ln.length < 5) { unmatched.push(line); continue; }
@@ -1305,10 +1339,46 @@ export async function markOutOfStockByNames(text: string): Promise<{
       }
       if (best && bestScore >= 0.75 && bestScore - second >= 0.08) { take(best); continue; }
     }
+
+    // 3) Colour/size-tolerant retry: strip the variant suffix from both sides and
+    //    re-run containment + a (stricter-margin) token overlap. Lets "… – Gold"
+    //    or "… (50ml)" reach a catalog product whose name omits the variant.
+    const cl = keyOf(stripVariant(line.replace(/[.…]+$/, "")));
+    if (cl.length >= 6) {
+      const chits = cat.filter(
+        (c) =>
+          (c.cen.length >= 6 && (c.cen.includes(cl) || cl.includes(c.cen))) ||
+          (c.car.length >= 6 && (c.car.includes(cl) || cl.includes(c.car)))
+      );
+      if (chits.length > 0) { for (const h of chits) take(h); continue; }
+
+      const clt = [...toks(stripVariant(line))];
+      if (clt.length >= 3) {
+        let best: (typeof cat)[number] | null = null;
+        let bestScore = 0;
+        let second = 0;
+        for (const c of cat) {
+          if (c.ct.size === 0) continue;
+          let m = 0;
+          for (const w of clt) if (c.ct.has(w)) m++;
+          const score = m / clt.length;
+          if (score > bestScore) { second = bestScore; bestScore = score; best = c; }
+          else if (score > second) second = score;
+        }
+        if (best && bestScore >= 0.8 && bestScore - second >= 0.12) { take(best); continue; }
+      }
+    }
     unmatched.push(line);
   }
 
   const idList = [...ids];
+
+  // Dry run: report what WOULD be marked, write nothing. The UI shows this for
+  // review and only calls again with apply=true after the user approves.
+  if (!apply) {
+    return { applied: false, matched: idList.length, products: matchedList, unmatched };
+  }
+
   const now = new Date().toISOString();
   for (let i = 0; i < idList.length; i += 200) {
     const chunk = idList.slice(i, i + 200);
@@ -1330,5 +1400,5 @@ export async function markOutOfStockByNames(text: string): Promise<{
   revalidatePath("/inventory");
   revalidatePath("/inventory/out-of-stock");
   revalidatePath("/products");
-  return { matched: idList.length, unmatched, shopify };
+  return { applied: true, matched: idList.length, products: matchedList, unmatched, shopify };
 }
