@@ -53,14 +53,22 @@ function parseWorkbook(wb: XLSX.WorkBook, fileName: string): Parsed | { error: s
     find((h) => h.includes("rafeeq") || (h.includes("product") && h.includes("id")) || h === "productid");
   const barcodeCol = find((h) => h.includes("barcode") || h === "ean" || h === "upc" || h.includes("باركود"));
   const skuCol = find((h) => h === "sku" || h.includes("sku"));
+  // Product name — prefer an explicit product-name column over a category/
+  // subcategory name (Rafeeq sheets carry both; "category_name_english" must
+  // never win), then fall back to a generic name column.
   const nameCol =
-    find((h) => h === "name_en" || /product name \(en\)/.test(h)) ||
-    find((h) => h === "name" || h.includes("name") || h.includes("اسم") || h.includes("product name") || h === "title");
-  // Availability: prefer an explicit status/active/availability column, else a
-  // branchStatus column, else fall back to a stock/quantity column.
+    find((h) => h === "name_en" || h === "product_name_english" || /product[_ ]name.*(en|english)/.test(h)) ||
+    find((h) => /product name \(en\)/.test(h) || h === "name" || h === "title" || h.includes("product_name") || h.includes("product name")) ||
+    find((h) => h.includes("اسم المنتج")) ||
+    find((h) => h.includes("name") || h.includes("اسم"));
+  // Availability: the "availability/in-stock" concept must beat a generic
+  // active/status flag. Rafeeq carries product_availability (real 0/1 stock)
+  // alongside active=1 always — picking "active" would mark everything in stock.
+  // Order: explicit availability → status/active → branchStatus → stock/qty.
   const availCol =
-    find((h) => h === "availability" || h.startsWith("availability") || h === "status" || h.includes("active") ||
-      h.includes("مفعل") || h.includes("الحالة") || h.includes("التوفر") || h.includes("التوفّر")) ||
+    find((h) => h === "availability" || h.includes("availability") || h.includes("in_stock") || h.includes("instock") ||
+      h.includes("التوفر") || h.includes("التوفّر") || h.includes("متوفر")) ||
+    find((h) => h === "status" || h.includes("active") || h.includes("مفعل") || h.includes("الحالة")) ||
     find((h) => h.endsWith("branchstatus")) ||
     find((h) => h.startsWith("stock") || h.includes("stock") || h === "quantity" || h === "qty" || h.includes("كمية") || h.includes("مخزون"));
 
