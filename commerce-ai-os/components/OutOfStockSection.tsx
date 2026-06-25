@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { markOutOfStockByNames } from "@/app/(app)/inventory/actions";
+import { markOutOfStockByNames, matchChannelsToMalika } from "@/app/(app)/inventory/actions";
 
 export type OosItem = {
   id: string;
@@ -38,6 +38,28 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
 
   const [channel, setChannel] = useState(""); // focus one channel (e.g. Pure Seoul)
   const [activeOnly, setActiveOnly] = useState(false); // out of stock but still live
+
+  // "Match channels to Malika's" — delist sold-out products still Active on a channel.
+  const [matchPending, startMatch] = useTransition();
+  const [matchRes, setMatchRes] = useState<{
+    applied: boolean;
+    channelRows: number;
+    products: { sku: string | null; name: string | null; channels: string[] }[];
+    shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
+    error?: string;
+  } | null>(null);
+
+  function previewMatch() {
+    setMatchRes(null);
+    startMatch(async () => setMatchRes(await matchChannelsToMalika(false)));
+  }
+  function approveMatch() {
+    startMatch(async () => {
+      const res = await matchChannelsToMalika(true);
+      setMatchRes(res);
+      if (!res.error && res.applied) router.refresh();
+    });
+  }
 
   // All channel names that appear as "still active" on an out-of-stock product.
   const channels = useMemo(() => {
@@ -182,14 +204,50 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
 
       {/* Mismatch banner: out of stock but still live on a channel */}
       {mismatchCount > 0 && (
-        <div className="card flex flex-wrap items-center gap-2 border-amber-200 bg-amber-50 py-2 text-sm text-amber-900 print:hidden">
-          <span className="font-medium">⚠ {mismatchCount} منتج نافد لكن لا يزال «مفعّل» في قناة</span>
-          <button
-            className="text-xs text-blue-700 hover:underline"
-            onClick={() => setActiveOnly((v) => !v)}
-          >
-            {activeOnly ? "إظهار الكل" : "اعرض الفروقات فقط"}
-          </button>
+        <div className="card space-y-2 border-amber-200 bg-amber-50 py-2 text-sm text-amber-900 print:hidden">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-medium">⚠ {mismatchCount} منتج نافد لكن لا يزال «مفعّل» في قناة</span>
+            <button className="text-xs text-blue-700 hover:underline" onClick={() => setActiveOnly((v) => !v)}>
+              {activeOnly ? "إظهار الكل" : "اعرض الفروقات فقط"}
+            </button>
+            <span className="grow" />
+            <button className="btn-ghost px-3 py-1 text-xs disabled:opacity-50" disabled={matchPending} onClick={previewMatch}>
+              {matchPending && !matchRes ? "…يطابق" : "🔁 طابق الكل مع ماليكاس"}
+            </button>
+            {matchRes && !matchRes.error && !matchRes.applied && (
+              <button className="btn-primary px-3 py-1 text-xs disabled:opacity-50" disabled={matchPending || matchRes.products.length === 0} onClick={approveMatch}>
+                {matchPending ? "…يطبّق" : `✅ اعتمد التطابق (${matchRes.products.length})`}
+              </button>
+            )}
+          </div>
+
+          {matchRes?.error && <div className="text-xs text-red-600">{matchRes.error}</div>}
+          {matchRes?.applied && (
+            <div className="text-xs text-emerald-700">
+              ✓ تم التطابق — أُلغي إدراج {matchRes.products.length} منتج ({matchRes.channelRows} سطر قناة)
+              {matchRes.shopify ? (matchRes.shopify.configured ? ` · Shopify: ${matchRes.shopify.pushed} دُفع` : " · Shopify غير مفعّل") : ""}
+            </div>
+          )}
+          {matchRes && !matchRes.error && !matchRes.applied && (
+            matchRes.products.length === 0 ? (
+              <div className="text-xs text-emerald-700">✓ كل المنصّات مطابقة لماليكاس — ما فيه فروقات.</div>
+            ) : (
+              <div className="rounded-lg border border-amber-300 bg-white/60 p-2 text-xs">
+                <div className="mb-1 font-medium text-amber-800">
+                  بيُلغى إدراج {matchRes.products.length} منتج مخلّص في القنوات التالية — راجع ثم اعتمد:
+                </div>
+                <ul className="max-h-48 space-y-0.5 overflow-auto pr-2">
+                  {matchRes.products.map((p, i) => (
+                    <li key={i} className="flex items-center gap-2">
+                      {p.sku ? <span className="font-mono text-amber-700">{p.sku}</span> : null}
+                      <span className="truncate">{p.name ?? "—"}</span>
+                      <span className="shrink-0 text-amber-600">→ {p.channels.join("، ")}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+          )}
         </div>
       )}
 
