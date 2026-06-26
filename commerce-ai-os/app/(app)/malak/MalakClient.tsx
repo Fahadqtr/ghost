@@ -3,6 +3,7 @@
 import { Component, useCallback, useEffect, useRef, useState } from "react";
 import type { MalakKpis } from "@/lib/dashboard";
 import JarvisOrb from "./JarvisOrb";
+import { HudLeft, HudRight, HudObjective, type ScanData } from "./HudParts";
 
 // In-app error boundary: instead of the white "Application error" screen, show
 // the actual error text (visible on mobile, no console needed) + a reload.
@@ -802,6 +803,7 @@ export default function MalakPage({ kpis }: { kpis?: MalakKpis }) {
 function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [panel, setPanel] = useState<PanelData | null>(null);
+  const [scanData, setScanData] = useState<ScanData | null>(null); // HUD side panels
   const [input, setInput] = useState("");
   const [state, setState] = useState<OrbState>("idle");
   const [activeAgent, setActiveAgent] = useState<AgentId>("malak");
@@ -1235,9 +1237,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         const d = await res.json();
         if (!d || d.error) return;
         setActiveAgent("malak");
-        setPanel({ type: "scan", item: d });
-        // Best-effort voice (may be blocked by autoplay until first interaction;
-        // the [▶ استمع] button on the card always works).
+        setScanData(d as ScanData); // feeds the HUD side panels (no modal popup)
+        // Best-effort voice (may be blocked by autoplay until first interaction).
         speak(briefSummary(d), "malak");
       } catch {
         /* scan is best-effort */
@@ -1454,7 +1455,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             `flex h-[100dvh] w-full flex-col gap-3 overflow-hidden bg-[#eef2f8] p-3 sm:p-4 ${
               pseudoFs ? "fixed inset-0 z-50" : ""
             }`
-          : "mx-auto w-full max-w-6xl space-y-4 pb-2"
+          : "mx-auto w-full max-w-7xl space-y-3 pb-2"
       }
     >
       {/* Header (hidden in fullscreen to give the lab the whole screen) */}
@@ -1486,6 +1487,14 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           </button>
         </div>
       ) : null}
+
+      {/* Unified Mission-Control HUD: side panels frame the orb + chat into one
+          screen. display:contents in fullscreen keeps the orb full-screen. */}
+      <div className={fsActive ? "contents" : "grid grid-cols-1 gap-3 lg:grid-cols-12"}>
+        {!fsActive && scanData ? (
+          <div className="order-2 lg:order-1 lg:col-span-3"><HudLeft scan={scanData} onAction={send} /></div>
+        ) : null}
+        <div className={fsActive ? "contents" : "order-1 space-y-4 lg:order-2 lg:col-span-6"}>
 
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
           In fullscreen it grows to fill the screen. */}
@@ -1706,6 +1715,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         </form>
        </div>
       </div>
+        </div>{/* center column */}
+        {!fsActive && scanData ? (
+          <div className="order-3 lg:col-span-3"><HudRight scan={scanData} /></div>
+        ) : null}
+      </div>{/* HUD grid */}
+      {!fsActive && scanData ? <HudObjective scan={scanData} /> : null}
 
       {/* Holographic output overlay (JARVIS): structured results pop up here */}
       {panel ? (

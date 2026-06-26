@@ -1,3 +1,3 @@
-// /malak/hud — same Mission-Control HUD (the main /malak screen also renders it).
-export { default } from "../MalakHud";
-export const dynamic = "force-dynamic";
+// الـHUD اندمج في الشاشة الرئيسية — إعادة توجيه.
+import { redirect } from "next/navigation";
+export default function Page() { redirect("/malak"); }
