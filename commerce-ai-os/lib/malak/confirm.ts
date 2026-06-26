@@ -12,7 +12,8 @@ export type MalakActionType =
   | "set_approval"
   | "add_product"
   | "set_image"
-  | "generate_image";
+  | "generate_image"
+  | "sync_availability"; // bulk: hide out-of-stock products still listed on channels + push 0 to Shopify
 
 export interface MalakProductDraft {
   name_en: string;
@@ -40,6 +41,7 @@ export interface MalakAction {
   product?: MalakProductDraft;
   style?: string; // image generation style (hero / lifestyle)
   size?: string; // image generation size, e.g. 1024x1024 / 1024x1536
+  count?: number; // sync_availability: previewed number of products to fix
   ts: number;
 }
 

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { signAction } from "@/lib/malak/confirm";
 import { detectForcedTool } from "@/lib/malak/intent";
 import { CATEGORIES } from "@/lib/constants";
+import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
 
 // Malak AI — server brain. Holds all secrets (ANTHROPIC_API_KEY +
 // Supabase service role); the browser only ever sees the final structured JSON.
@@ -103,6 +104,8 @@ const SYSTEM_PROMPT =
   'قاعدة الموجّه (Tool Router) — إلزامية: عندما تطابق نية المستخدم أداة متاحة في قائمة الأدوات، يجب عليكِ استدعاء الأداة. ' +
   'لا تقولي أبدًا إن الأداة "غير مربوطة" أو "غير متاحة" ما دامت موجودة. إذا نقصت معلومات مطلوبة، اسألي فقط عن الحقول الناقصة. ' +
   'أي طلب صورة/إعلان/بوستر/كريتف لمنتج ← استدعي generate_product_image. وأي طلب سعر/مخزون/اعتماد/إضافة منتج ← استدعي الأداة المطابقة مع الحفاظ على تدفّق التأكيد. ' +
+  'المزامنة بين المنصّات: عندك أداة sync_availability **متاحة وتعمل** — تكتشف المنتجات النافدة اللي لا زالت ظاهرة على القنوات وتجهّز إخفاءها ودفع صفر لشوبيفاي بكرت تأكيد بالجملة. ' +
+  'عند أي طلب «زامني/طابقي/وحّدي التوفّر» أو «ادفعي النافد لشوبيفاي» أو «طابقي المنصّات مع ماليكاس» استدعي sync_availability فورًا، ولا تقولي إنها غير متاحة أو تتم يدويًا. ' +
   'حقل agent دائمًا "malak".';
 
 // ---- Tool schemas exposed to Claude: read tools first, then write tools ----
@@ -241,6 +244,12 @@ const TOOLS: Anthropic.Tool[] = [
       },
       required: ["sku"],
     },
+  },
+  {
+    name: "sync_availability",
+    description:
+      "زامني التوفّر بين المنصّات: تكتشف المنتجات النافدة (مخزونها صفر) اللي لا زالت ظاهرة/Active على أي قناة، وتجهّز إخفاءها (Not Listed) ودفع مخزون 0 لشوبيفاي عشان كل المنصّات تتطابق مع النظام. لا تنفّذ فورًا — تعرض معاينة بعدد المنتجات ثم كرت تأكيد بالجملة. استدعيها عند أي طلب «زامني/طابقي/وحّدي التوفّر» أو «ادفعي النافد لشوبيفاي» أو «طابقي المنصّات مع ماليكاس». الوكيل: سراج (المزامنة).",
+    input_schema: { type: "object", properties: {} },
   },
   {
     name: "respond",
@@ -513,7 +522,7 @@ function enrichPanel(panel: any, skuImages: Map<string, string>) {
 // These NEVER mutate data. Each validates inputs, reads the current value, and
 // returns a signed CONFIRM panel. The write happens in /api/malak/commit only
 // after the user confirms.
-const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image", "generate_product_image"];
+const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image", "generate_product_image", "sync_availability"];
 const APPROVAL_VALUES = ["Approved", "Rejected", "SentAI"];
 
 // Which agent "owns" each write tool (for direct error responses).
@@ -525,6 +534,7 @@ function agentForTool(name: string): string {
     case "add_product": return "noor";
     case "set_image": return "reem";
     case "generate_product_image": return "reem";
+    case "sync_availability": return "siraj";
     default: return "malak";
   }
 }
@@ -570,6 +580,45 @@ async function generateSku(sb: Sb, category: string | null, sub: string | null):
 }
 
 async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: string | null } = {}): Promise<PrepResult> {
+  if (name === "sync_availability") {
+    // Preview only (apply=false): how many out-of-stock products are still
+    // listed/Active on a channel — the mismatch to fix across all platforms.
+    const preview = await matchChannelsToMalika(false);
+    if (preview.error) return { ok: false, error: preview.error };
+    const n = preview.products.length;
+    if (n === 0) {
+      return {
+        ok: true, agent: "siraj",
+        speak: "معاك سراج من المزامنة. فحصت المنصّات وكل النافد مخفي صح — ما في شي نزامنه الحين.",
+        panel: null,
+      };
+    }
+    const sampleNames = preview.products.slice(0, 6).map((p) => p.name || p.sku || "—");
+    const shopTxt = preview.shopify?.configured ? "ويُدفع مخزون 0 لشوبيفاي" : "(دفع شوبيفاي غير مفعّل — يتم بالنظام فقط)";
+    const token = signAction({ v: 1, type: "sync_availability", agent: "siraj", count: n, ts: Date.now() });
+    return {
+      ok: true, agent: "siraj",
+      speak: `معاك سراج. لقيت ${n} منتج نافد لا زال ظاهر على المنصّات. أقدر أخفيهم على كل القنوات ${preview.shopify?.configured ? "وأدفع صفر لشوبيفاي" : "بالنظام"}. راجع وأكّد.`,
+      panel: {
+        type: "confirm",
+        item: {
+          title: "مزامنة التوفّر بين المنصّات",
+          agent: "siraj",
+          operation: `إخفاء ${n} منتج نافد على القنوات ${shopTxt}`,
+          name: null,
+          sku: null,
+          changes: [
+            { label: "منتجات نافدة لا زالت ظاهرة", old: "Active", new: "Not Listed" },
+            { label: "العدد", old: "—", new: n },
+            { label: "أمثلة", old: "", new: sampleNames.join(" · ") },
+          ],
+          token,
+          warning: `عملية بالجملة على عدّة منصّات (${n} منتج). غير قابلة للتراجع تلقائيًا — راجع قبل التأكيد.`,
+        },
+      },
+    };
+  }
+
   if (name === "generate_product_image") {
     const sku = String(input?.sku ?? "").trim();
     if (!sku) return { ok: false, error: "SKU مطلوب لتوليد الصورة." };
