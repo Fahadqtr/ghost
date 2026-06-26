@@ -856,6 +856,35 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const srcNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Live output level (0..1) of Malak's voice, sampled from an analyser while
+  // she speaks — drives the JARVIS orb's breathing so it moves with her voice.
+  const levelRef = useRef(0);
+  const meterRafRef = useRef<number | null>(null);
+
+  // Tap the Web Audio graph: node → analyser → destination, then sample RMS.
+  const startMeter = useCallback((ctx: AudioContext, node: AudioBufferSourceNode): AnalyserNode => {
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    node.connect(analyser);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const tick = () => {
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / data.length); // ~0..0.5 for speech
+      // smooth + normalize to a lively 0..1
+      levelRef.current = levelRef.current * 0.6 + Math.min(1, rms * 2.4) * 0.4;
+      meterRafRef.current = requestAnimationFrame(tick);
+    };
+    meterRafRef.current = requestAnimationFrame(tick);
+    return analyser;
+  }, []);
+
+  const stopMeter = useCallback(() => {
+    if (meterRafRef.current != null) cancelAnimationFrame(meterRafRef.current);
+    meterRafRef.current = null;
+    levelRef.current = 0;
+  }, []);
 
   const getCtx = (): AudioContext | null => {
     if (typeof window === "undefined") return null;
@@ -929,6 +958,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   // ---- TTS ----
   // Stop any in-flight audio / browser speech before starting something new.
   const stopAudio = useCallback(() => {
+    stopMeter();
     try {
       if (srcNodeRef.current) {
         srcNodeRef.current.onended = null;
@@ -949,7 +979,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [stopMeter]);
 
   // Speak lifecycle (centralised). In hands-free we KEEP the mic running while
   // Malak talks so the user can interrupt (barge-in); her own voice is filtered
@@ -1036,10 +1066,13 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               const audioBuf = await ctx.decodeAudioData(buf.slice(0));
               const node = ctx.createBufferSource();
               node.buffer = audioBuf;
-              node.connect(ctx.destination);
+              // node → analyser → destination so we can meter her live level.
+              const analyser = startMeter(ctx, node);
+              analyser.connect(ctx.destination);
               node.onended = () => {
                 if (srcNodeRef.current === node) {
                   srcNodeRef.current = null;
+                  stopMeter();
                   onSpeakEnd();
                 }
               };
@@ -1468,7 +1501,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           aria-label="ركّز الإدخال"
           className="flex items-center justify-center"
         >
-          <JarvisOrb state={state} size={fsActive ? Math.round(orbSize * 2) : Math.round(orbSize * 1.7)} />
+          <JarvisOrb state={state} size={fsActive ? Math.round(orbSize * 2) : Math.round(orbSize * 1.7)} levelRef={levelRef} />
         </button>
         <button
           type="button"
