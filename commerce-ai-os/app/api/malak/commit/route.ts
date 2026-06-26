@@ -9,6 +9,13 @@ import { verifyAction, type MalakAction } from "@/lib/malak/confirm";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Tier-2 safety limits from the Malak Constitution, enforced server-side here
+// (the authoritative write path) — not just in the prompt. Below-cost is the
+// absolute red line (never expands with trust); the ±15% band is flagged on the
+// audit trail so an out-of-band change is always visible, but still allowed
+// because the human already tapped [أكّد] (that tap IS the escalation approval).
+const PRICE_SELF_BAND = 0.15; // ±15% self-execute window
+
 type Sb = ReturnType<typeof createAdminClient>;
 
 async function firstRow(builder: any): Promise<any | null> {
@@ -22,6 +29,7 @@ interface CommitOutcome {
   field?: string;
   oldValue?: unknown;
   newValue?: unknown;
+  overBand?: number; // signed % when a price change exceeded the ±15% band
 }
 
 // Resolve the target product by the signed productId first (robust to SKU
@@ -58,13 +66,35 @@ async function commitStock(sb: Sb, a: MalakAction): Promise<CommitOutcome | { er
 }
 
 async function commitPrice(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
-  const p = await findTarget(sb, a, "id, name_en, price");
+  const p = await findTarget(sb, a, "id, name_en, price, cost");
   if (!p) return { error: `المنتج غير موجود (${a.sku}).` };
   const price = Number(a.newValue);
   if (!Number.isFinite(price) || price < 0) return { error: "سعر غير صالح." };
+
+  // 🔴 Red line — never below cost. Hard block even with a confirm tap; this
+  // limit never expands with trust. A genuine below-cost price must be set
+  // deliberately from the product editor, not slipped through a Malak card.
+  const cost = Number(p.cost);
+  if (Number.isFinite(cost) && cost > 0 && price < cost) {
+    return { error: `ممنوع: السعر ${price} ر.ق تحت التكلفة (${cost} ر.ق) — خط أحمر. لو فعلًا تقصده، عدّله يدويًا من صفحة المنتج.` };
+  }
+
   const { error } = await sb.from("products").update({ price }).eq("id", p.id);
   if (error) return { error: error.message };
-  return { message: `تم تحديث سعر ${p.name_en}: ${p.price ?? "—"} ← ${price} ر.ق`, productId: p.id, field: "price", oldValue: p.price, newValue: price };
+
+  // Flag a change beyond the ±15% self-execute band so it's visible (in the
+  // result line + audit details) as an out-of-band/escalated change.
+  const oldPrice = Number(p.price);
+  let pct: number | null = null, note = "";
+  if (Number.isFinite(oldPrice) && oldPrice > 0) {
+    pct = (price - oldPrice) / oldPrice;
+    if (Math.abs(pct) > PRICE_SELF_BAND) note = ` (تغيير ${pct > 0 ? "+" : ""}${Math.round(pct * 100)}٪ — فوق حدّ ±١٥٪)`;
+  }
+  return {
+    message: `تم تحديث سعر ${p.name_en}: ${p.price ?? "—"} ← ${price} ر.ق${note}`,
+    productId: p.id, field: "price", oldValue: p.price, newValue: price,
+    overBand: pct != null && Math.abs(pct) > PRICE_SELF_BAND ? Math.round(pct * 100) : undefined,
+  };
 }
 
 async function commitApproval(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
@@ -170,8 +200,8 @@ async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<s
       field: out.field ?? a.field ?? null,
       old_value: out.oldValue != null ? String(out.oldValue) : a.oldValue != null ? String(a.oldValue) : null,
       new_value: out.newValue != null ? String(out.newValue) : null,
-      details: { ...a, productId: out.productId ?? a.productId ?? null },
-      status: "committed",
+      details: { ...a, productId: out.productId ?? a.productId ?? null, ...(out.overBand != null ? { overBand: out.overBand } : {}) },
+      status: out.overBand != null ? "committed_over_band" : "committed",
     };
     const { error } = await sb.from("malak_audit").insert(row);
     if (error) {
