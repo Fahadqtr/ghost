@@ -1461,10 +1461,10 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {fsActive ? null : (
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
-            <h1 className="text-lg font-extrabold tracking-tight text-slate-900 sm:text-xl">
-              ملاك · <span className="text-slate-400">Malak AI</span>
+            <h1 className="text-lg font-extrabold tracking-tight text-cyan-50 sm:text-xl">
+              ملاك · <span className="text-cyan-300/50">Malak AI</span>
             </h1>
-            <p className="text-xs text-slate-500">المديرة العامة الذكية · Malika&apos;s Universe Trading</p>
+            <p className="text-xs text-cyan-300/60">المديرة العامة الذكية · Malika&apos;s Universe Trading</p>
           </div>
         </div>
       )}
@@ -1552,12 +1552,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
           the rest of the space and nothing scrolls the page. */}
-      <div className={`rounded-3xl border border-slate-200 bg-white p-2.5 shadow-sm sm:p-3 ${fsActive ? "shrink-0" : ""}`}>
+      <div className={`rounded-3xl border border-cyan-500/15 p-2.5 shadow-sm sm:p-3 ${fsActive ? "shrink-0" : ""}`} style={{ background: "rgba(8,20,40,0.45)" }}>
         {/* Transcript + panel. In fullscreen it gets a taller, comfortably
             scrollable area (the lab flexes to fill the rest, no page overflow). */}
         <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
         {turns.length === 0 && !typed && panel?.type !== "briefing" && panel?.type !== "scan" ? (
-          <div className="mx-auto max-w-md pt-4 text-center text-sm text-slate-500">
+          <div className="mx-auto max-w-md pt-4 text-center text-sm text-cyan-300/60">
             أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.
           </div>
         ) : null}
@@ -1567,8 +1567,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             <div
               className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                 t.role === "user"
-                  ? "bg-slate-100 text-slate-800"
-                  : "bg-gradient-to-br from-blue-500 to-purple-600 text-white shadow-sm"
+                  ? "border border-cyan-500/20 bg-cyan-500/10 text-cyan-50"
+                  : "bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-sm"
               }`}
             >
               {t.text}
@@ -1589,7 +1589,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       </div>
 
         {/* Composer */}
-        <div className="mt-2 border-t border-slate-200 pt-2.5">
+        <div className="mt-2 border-t border-cyan-500/20 pt-2.5">
         {/* Hands-free wake mode: call any agent by name, no button */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <button
@@ -1599,7 +1599,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:opacity-30 ${
               handsFree
                 ? "bg-emerald-500 text-white"
-                : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                : "border border-cyan-400/30 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
             }`}
             style={handsFree ? { boxShadow: "0 0 16px rgba(16,185,129,0.6)" } : undefined}
             aria-pressed={handsFree}
@@ -1610,7 +1610,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           {handsFree ? (
             <span className="truncate text-[11px] text-emerald-600">قل «ملاك» بأي وقت — وتقدر تقاطعها وهي تتكلم</span>
           ) : (
-            <span className="hidden truncate text-[11px] text-slate-400 sm:block">فعّلها مرّة وتبقى تنصت لـ«ملاك» كل زيارة</span>
+            <span className="hidden truncate text-[11px] text-cyan-300/50 sm:block">فعّلها مرّة وتبقى تنصت لـ«ملاك» كل زيارة</span>
           )}
         </div>
         {/* Quick prompts */}
@@ -1619,7 +1619,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             <button
               key={q}
               onClick={() => send(q)}
-              className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-100"
+              className="shrink-0 rounded-full border border-cyan-400/25 bg-cyan-500/5 px-3 py-1.5 text-xs text-cyan-200/80 transition hover:bg-cyan-500/15"
             >
               {q}
             </button>
@@ -1635,13 +1635,13 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               alt="مرفق"
               className="h-9 w-9 rounded-md object-cover"
             />
-            <span className="flex-1 truncate text-[12px] text-slate-600">📎 {pendingImage.name}</span>
-            <span className="text-[11px] text-slate-400">اكتب الـSKU وأرسل</span>
+            <span className="flex-1 truncate text-[12px] text-cyan-100/80">📎 {pendingImage.name}</span>
+            <span className="text-[11px] text-cyan-300/50">اكتب الـSKU وأرسل</span>
             <button
               type="button"
               onClick={() => setPendingImage(null)}
               aria-label="إزالة الصورة"
-              className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300"
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30"
             >
               ×
             </button>
@@ -1672,7 +1672,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             onClick={() => fileInputRef.current?.click()}
             aria-label="إرفاق صورة"
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg transition ${
-              pendingImage ? "bg-pink-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              pendingImage ? "bg-pink-500 text-white" : "bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
             }`}
           >
             📎
@@ -1683,7 +1683,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             disabled={!micSupported}
             aria-label="ميكروفون"
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg transition disabled:opacity-30 ${
-              listening ? "bg-rose-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              listening ? "bg-rose-500 text-white" : "bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
             }`}
             style={listening ? { boxShadow: "0 0 18px rgba(244,63,94,0.6)" } : undefined}
           >
@@ -1694,7 +1694,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="اكتب لملاك… (أو استخدم الميكروفون)"
-            className="h-11 flex-1 rounded-full border border-slate-300 bg-slate-50 px-4 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none"
+            className="h-11 flex-1 rounded-full border border-cyan-500/25 bg-cyan-500/5 px-4 text-sm text-cyan-50 placeholder:text-cyan-300/40 focus:border-cyan-400/60 focus:bg-cyan-500/10 focus:outline-none"
           />
           <button
             type="submit"

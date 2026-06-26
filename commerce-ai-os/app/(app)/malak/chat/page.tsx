@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "ملاك — محادثة" };
 export default async function Page() {
   const kpis = await getMalakKpis();
   return (
-    <div dir="rtl" className={`${tajawal.className} min-h-full w-full overflow-x-hidden bg-[#eef2f8] p-4 text-slate-800 sm:p-6`}>
+    <div dir="rtl" className={`${tajawal.className} min-h-full w-full overflow-x-hidden p-4 text-slate-100 sm:p-6`} style={{ background: "#020510" }}>
       <MalakClient kpis={kpis} />
     </div>
   );
