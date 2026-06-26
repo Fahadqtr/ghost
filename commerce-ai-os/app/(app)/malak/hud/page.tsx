@@ -1,10 +1,9 @@
 "use client";
 
-// ملاك — Mission Control HUD (JARVIS-style full dashboard preview). Faithful to
-// the reference: header + status chips, state tabs, clock/coords, left SYSTEM
-// VITALS + TELEMETRY, center orb with reticle, right PROXIMITY + AUDIO I/O +
-// DIAGNOSTICS, bottom PRIMARY OBJECTIVE. Cyan-on-near-black, monospace, thin
-// glowing strokes. Standalone so we can iterate before wiring real data.
+// ملاك — Mission Control HUD (JARVIS skin, REAL data). The dashboard pulls live
+// store data from /api/malak/scan: STORE VITALS = real coverage %, ACTION QUEUE
+// = the prioritized issues, ACTIVITY LOG = real malak_audit, PLATFORMS = sync
+// status, PRIMARY OBJECTIVE = today's priority. Cyan-on-near-black monospace HUD.
 
 import { useEffect, useRef, useState } from "react";
 import JarvisOrb, { type OrbState } from "../JarvisOrb";
@@ -13,6 +12,8 @@ const CY = "#4cc3ff";
 const CY_DIM = "rgba(76,195,255,0.55)";
 const CY_FAINT = "rgba(76,195,255,0.25)";
 const AMBER = "#ffb454";
+const GREEN = "#3ddc97";
+const ROSE = "#ff6b8a";
 
 const STATE_TABS: { id: OrbState; label: string }[] = [
   { id: "idle", label: "IDLE" },
@@ -21,33 +22,24 @@ const STATE_TABS: { id: OrbState; label: string }[] = [
   { id: "speaking", label: "TALKING" },
 ];
 
-const VITALS = [
-  { label: "NEURAL CORE", value: 37, unit: "%" },
-  { label: "MEMORY", value: 67, unit: "%" },
-  { label: "LATENCY", value: 18, unit: "ms", raw: "9.55ms" },
-  { label: "SIGNAL", value: 96, unit: "%" },
-  { label: "THERMAL", value: 40, unit: "°C", raw: "39.5°C" },
-  { label: "THROUGHPUT", value: 52, unit: "", raw: "1.0 GB/s" },
-];
+const ACTION_AR: Record<string, string> = {
+  update_stock: "مخزون", set_price: "سعر", set_approval: "اعتماد",
+  add_product: "منتج", set_image: "صورة", sync_availability: "مزامنة",
+};
 
-const LOG_LINES = [
-  ["01:16:41", "OK", "context.load 256k tokens"],
-  ["12:44:23", "OK", "embedding.cache throttle 0.04"],
-  ["19:43:15", "OK", "core.heartbeat buffer clear"],
-  ["21:15:36", "ERR", "audio.stream ctx resumed"],
-  ["15:10:38", "OK", "vector.query sync complete"],
-  ["21:17:06", "OK", "sensor.poll handshake ok"],
-  ["22:25:01", "OK", "neural.inference quantized"],
-  ["20:46:08", "OK", "context.load latency 12ms"],
-  ["02:32:59", "OK", "core.heartbeat sync complete"],
-  ["06:47:42", "OK", "signal.trace quantized"],
-  ["14:11:59", "OK", "audio.stream quantized"],
-];
+const PLATFORMS = ["مليكاس", "Pure Seoul", "Talabat", "Rafeeq", "Shopify"];
+
+interface Scan {
+  total: number; approved: number; rejected: number; missingImages: number;
+  lowStock: number; outOfStock: number; suspiciousPrice: number; channelMismatch: number;
+  issues: { key: string; icon: string; title: string; count: number; prompt: string; severity: string }[];
+  recentActivity: { created_at: string; action_type: string; sku: string | null; old_value: string | null; new_value: string | null; status: string | null }[];
+  priority: string; allClear: boolean;
+}
 
 function Bracket({ at }: { at: string }) {
   return <span className={`pointer-events-none absolute h-7 w-7 ${at}`} style={{ borderColor: CY_DIM }} />;
 }
-
 function Chip({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 text-[9px] tracking-widest" style={{ borderColor: CY_FAINT, color: CY_DIM }}>
@@ -56,132 +48,84 @@ function Chip({ children }: { children: React.ReactNode }) {
     </span>
   );
 }
-
-function Panel({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
+function Panel({ title, right, children, className = "" }: { title: string; right?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
     <div className={`relative rounded border p-2.5 ${className}`} style={{ borderColor: CY_FAINT, background: "rgba(8,20,40,0.35)" }}>
-      <p className="mb-2 font-mono text-[9px] tracking-[0.3em]" style={{ color: CY_DIM }}>{`{ ${title} }`}</p>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="font-mono text-[9px] tracking-[0.3em]" style={{ color: CY_DIM }}>{`{ ${title} }`}</p>
+        {right}
+      </div>
       {children}
     </div>
   );
 }
-
-function VitalBar({ label, value, raw, unit }: { label: string; value: number; raw?: string; unit: string }) {
+function VitalBar({ label, pct, note, tone = CY }: { label: string; pct: number; note: string; tone?: string }) {
   return (
     <div className="mb-2">
-      <div className="mb-0.5 flex items-center justify-between font-mono text-[9px]" style={{ color: "rgba(174,230,255,0.8)" }}>
+      <div className="mb-0.5 flex items-center justify-between font-mono text-[9px]" style={{ color: "rgba(174,230,255,0.85)" }}>
         <span style={{ color: CY_DIM }}>{label}</span>
-        <span>{raw ?? `${value}${unit}`}</span>
+        <span>{note}</span>
       </div>
       <div className="h-1 w-full overflow-hidden rounded-full" style={{ background: "rgba(76,195,255,0.12)" }}>
-        <div className="h-full rounded-full" style={{ width: `${value}%`, background: CY, boxShadow: `0 0 8px ${CY}` }} />
+        <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.min(100, pct))}%`, background: tone, boxShadow: `0 0 8px ${tone}` }} />
       </div>
     </div>
   );
 }
 
-function LogFeed({ lines }: { lines: string[][] }) {
-  return (
-    <div className="space-y-1 font-mono text-[8.5px] leading-relaxed">
-      {lines.map(([t, st, msg], i) => (
-        <div key={i} className="flex gap-2" style={{ color: "rgba(174,230,255,0.5)" }}>
-          <span style={{ color: CY_FAINT }}>{t}</span>
-          <span style={{ color: st === "ERR" ? AMBER : "rgba(76,195,255,0.7)" }}>{st}</span>
-          <span className="truncate">{msg}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// Sweeping proximity radar.
-function Radar() {
-  return (
-    <div className="relative mx-auto aspect-square w-full max-w-[150px]">
-      <div className="absolute inset-0 rounded-full border" style={{ borderColor: CY_FAINT }} />
-      <div className="absolute inset-[18%] rounded-full border" style={{ borderColor: "rgba(76,195,255,0.18)" }} />
-      <div className="absolute inset-[40%] rounded-full border" style={{ borderColor: "rgba(76,195,255,0.18)" }} />
-      <div className="absolute left-1/2 top-0 h-full w-px" style={{ background: "rgba(76,195,255,0.18)" }} />
-      <div className="absolute left-0 top-1/2 h-px w-full" style={{ background: "rgba(76,195,255,0.18)" }} />
-      <div className="absolute inset-0 rounded-full" style={{ background: `conic-gradient(from 0deg, ${CY}55, transparent 25%)`, animation: "radarSweep 3s linear infinite" }} />
-      <span className="absolute h-1.5 w-1.5 rounded-full" style={{ left: "66%", top: "38%", background: CY, boxShadow: `0 0 6px ${CY}` }} />
-      <span className="absolute h-1.5 w-1.5 rounded-full" style={{ left: "40%", top: "62%", background: CY, boxShadow: `0 0 6px ${CY}` }} />
-    </div>
-  );
-}
-
-// Live-ish audio equalizer bars.
-function AudioBars({ active }: { active: boolean }) {
-  const bars = 40;
-  return (
-    <div className="flex h-10 items-center gap-[2px]">
-      {Array.from({ length: bars }).map((_, i) => (
-        <span
-          key={i}
-          className="flex-1 rounded-full"
-          style={{
-            height: "100%",
-            background: CY,
-            opacity: 0.5,
-            transformOrigin: "center",
-            animation: active ? `eq ${0.6 + (i % 5) * 0.12}s ${i * 0.03}s ease-in-out infinite` : "none",
-            transform: active ? undefined : "scaleY(0.18)",
-          }}
-        />
-      ))}
-    </div>
-  );
+function timeArab(iso: string): string {
+  try { return new Intl.DateTimeFormat("ar", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Qatar" }).format(new Date(iso)); }
+  catch { return ""; }
 }
 
 export default function MalakHud() {
   const [state, setState] = useState<OrbState>("idle");
   const [now, setNow] = useState("--:--:--");
   const [orbSize, setOrbSize] = useState(360);
+  const [scan, setScan] = useState<Scan | null>(null);
+  const [loading, setLoading] = useState(true);
   const levelRef = useRef(0);
 
   useEffect(() => {
     const tick = () => {
       const d = new Date();
-      const p = (n: number, l = 2) => String(n).padStart(l, "0");
+      const p = (n: number) => String(n).padStart(2, "0");
       setNow(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(Math.floor(d.getMilliseconds() / 10))}`);
     };
     tick();
     const id = setInterval(tick, 80);
-    const fit = () => setOrbSize(Math.min(460, Math.round(Math.min(window.innerWidth * 0.42, window.innerHeight * 0.6))));
+    const fit = () => setOrbSize(Math.min(440, Math.round(Math.min(window.innerWidth * 0.4, window.innerHeight * 0.55))));
     fit();
     window.addEventListener("resize", fit);
     return () => { clearInterval(id); window.removeEventListener("resize", fit); };
   }, []);
 
-  // Drive the audio bars + orb breathing in the TALKING tab with a synthetic
-  // level (the live page feeds a real levelRef instead).
   useEffect(() => {
-    if (state !== "speaking") { levelRef.current = 0; return; }
-    let raf = 0;
-    const t0 = performance.now();
-    const loop = (t: number) => {
-      const s = (t - t0) / 1000;
-      levelRef.current = Math.abs(0.6 * Math.sin(s * 7.3) + 0.4 * Math.sin(s * 12.1));
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [state]);
+    setState("thinking");
+    (async () => {
+      try {
+        const r = await fetch("/api/malak/scan");
+        const d = await r.json();
+        if (!d?.error) setScan(d);
+      } catch { /* keep placeholders */ }
+      finally { setLoading(false); setState("idle"); }
+    })();
+  }, []);
+
+  const pct = (x: number, of: number) => (of > 0 ? Math.round((x / of) * 100) : 0);
+  const t = scan?.total ?? 0;
+  const synced = (scan?.channelMismatch ?? 0) === 0;
 
   return (
     <div dir="ltr" className="relative -m-4 min-h-[calc(100vh-2rem)] overflow-hidden font-mono sm:-m-6" style={{ background: "#020510", color: CY }}>
       <style>{`
-        @keyframes radarSweep { to { transform: rotate(360deg); } }
         @keyframes eq { 0%,100% { transform: scaleY(0.2); } 50% { transform: scaleY(1); } }
         @keyframes hudScan { to { transform: translateY(100%); } }
       `}</style>
 
-      {/* grid */}
       <div className="pointer-events-none absolute inset-0 opacity-[0.10]" style={{
-        backgroundImage: `linear-gradient(${CY} 1px, transparent 1px), linear-gradient(90deg, ${CY} 1px, transparent 1px)`,
-        backgroundSize: "40px 40px",
+        backgroundImage: `linear-gradient(${CY} 1px, transparent 1px), linear-gradient(90deg, ${CY} 1px, transparent 1px)`, backgroundSize: "40px 40px",
       }} />
-      {/* scanline */}
       <div className="pointer-events-none absolute inset-x-0 top-0 h-24 opacity-30" style={{ background: `linear-gradient(${CY}22, transparent)`, animation: "hudScan 6s linear infinite" }} />
 
       <Bracket at="left-3 top-3 border-l-2 border-t-2" />
@@ -193,28 +137,21 @@ export default function MalakHud() {
       <div className="relative z-10 flex flex-wrap items-start justify-between gap-3 px-5 pt-5">
         <div>
           <p className="text-[13px] font-bold tracking-[0.2em]" style={{ color: "#cfeeff" }}>MALIKA&apos;S UNIVERSE <span style={{ color: CY_DIM }}>// COMMERCE CONTROL</span></p>
-          <p className="text-[9px] tracking-[0.25em]" style={{ color: CY_DIM }}>M.A.L.A.K · MALIKA&apos;S AUTONOMOUS LOGISTICS &amp; ASSISTANT KERNEL</p>
+          <p className="text-[9px] tracking-[0.25em]" style={{ color: CY_DIM }}>M.A.L.A.K · نظام إدارة المتجر الذكي</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            <Chip>ONLINE</Chip><Chip>SECURE</Chip><Chip>ENCRYPTED</Chip><Chip>AUTH-LVL9</Chip>
+            <Chip>ONLINE</Chip><Chip>SECURE</Chip><Chip>{synced ? "SYNCED" : "SYNC NEEDED"}</Chip><Chip>AUTH-LVL9</Chip>
           </div>
         </div>
-
-        {/* state tabs */}
         <div className="flex items-center gap-1 rounded border p-1" style={{ borderColor: CY_FAINT }}>
           {STATE_TABS.map((s) => (
-            <button key={s.id} onClick={() => setState(s.id)}
-              className="rounded px-2.5 py-1 text-[9px] tracking-widest transition"
-              style={state === s.id ? { background: "rgba(76,195,255,0.18)", color: "#cfeeff", boxShadow: `inset 0 0 10px ${CY}44` } : { color: CY_DIM }}>
-              {s.label}
-            </button>
+            <button key={s.id} onClick={() => setState(s.id)} className="rounded px-2.5 py-1 text-[9px] tracking-widest transition"
+              style={state === s.id ? { background: "rgba(76,195,255,0.18)", color: "#cfeeff", boxShadow: `inset 0 0 10px ${CY}44` } : { color: CY_DIM }}>{s.label}</button>
           ))}
         </div>
-
         <div className="text-right">
           <p className="text-[26px] font-bold leading-none tracking-wider" style={{ color: "#cfeeff", textShadow: `0 0 12px ${CY}88` }}>{now}</p>
-          <p className="mt-1 text-[9px] tracking-widest" style={{ color: CY_DIM }}>SESSION · 7E4A-99F2-01C0</p>
-          <p className="text-[9px] tracking-widest" style={{ color: CY_DIM }}>LAT 25.2854°N · LON 51.5310°E</p>
-          <p className="text-[9px] tracking-widest" style={{ color: CY_DIM }}>DOHA · QA · BEARING 087°</p>
+          <p className="mt-1 text-[9px] tracking-widest" style={{ color: CY_DIM }}>منتجات: {t} · معتمد: {scan?.approved ?? "—"}</p>
+          <p className="text-[9px] tracking-widest" style={{ color: CY_DIM }}>DOHA · QA</p>
         </div>
       </div>
 
@@ -222,46 +159,104 @@ export default function MalakHud() {
       <div className="relative z-10 grid grid-cols-12 gap-3 px-5 pt-4">
         {/* LEFT */}
         <div className="col-span-3 space-y-3">
-          <Panel title="SYSTEM VITALS">
-            {VITALS.map((v) => <VitalBar key={v.label} {...v} />)}
+          <Panel title="STORE VITALS">
+            <VitalBar label="CATALOG معتمد" pct={pct(scan?.approved ?? 0, t)} note={`${scan?.approved ?? 0}/${t}`} tone={GREEN} />
+            <VitalBar label="IN-STOCK متوفّر" pct={pct(t - (scan?.outOfStock ?? 0), t)} note={`نافد ${scan?.outOfStock ?? 0}`} tone={(scan?.outOfStock ?? 0) ? AMBER : GREEN} />
+            <VitalBar label="IMAGES صور" pct={pct(t - (scan?.missingImages ?? 0), t)} note={`ناقص ${scan?.missingImages ?? 0}`} tone={(scan?.missingImages ?? 0) ? CY : GREEN} />
+            <VitalBar label="PRICING تسعير" pct={pct(t - (scan?.suspiciousPrice ?? 0), t)} note={`مشكلة ${scan?.suspiciousPrice ?? 0}`} tone={(scan?.suspiciousPrice ?? 0) ? AMBER : GREEN} />
+            <VitalBar label="SYNC مزامنة" pct={synced ? 100 : 60} note={synced ? "متطابق" : `${scan?.channelMismatch} تعارض`} tone={synced ? GREEN : ROSE} />
           </Panel>
-          <Panel title="TELEMETRY"><LogFeed lines={LOG_LINES} /></Panel>
+
+          <Panel title="ACTION QUEUE" right={<span className="text-[8.5px]" style={{ color: CY_DIM }}>{scan?.issues?.length ?? 0}</span>}>
+            {scan?.allClear ? (
+              <p className="py-2 text-center text-[10px]" style={{ color: GREEN }}>✓ كل شي تمام</p>
+            ) : (
+              <div className="space-y-1.5">
+                {(scan?.issues ?? []).map((is) => (
+                  <a key={is.key} href="/malak" className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 transition hover:bg-white/5"
+                    style={{ borderColor: is.severity === "high" ? "rgba(255,107,138,0.4)" : is.severity === "med" ? "rgba(255,180,84,0.35)" : CY_FAINT }}>
+                    <span className="text-[9px]" style={{ color: "rgba(174,230,255,0.85)" }}>{is.icon} {is.title}</span>
+                    <span className="font-bold text-[11px]" style={{ color: is.severity === "high" ? ROSE : is.severity === "med" ? AMBER : CY }}>{is.count}</span>
+                  </a>
+                ))}
+                {loading ? <p className="py-2 text-center text-[9px]" style={{ color: CY_DIM }}>…يفحص</p> : null}
+              </div>
+            )}
+          </Panel>
         </div>
 
-        {/* CENTER ORB */}
-        <div className="col-span-6 flex flex-col items-center justify-start pt-6">
+        {/* CENTER */}
+        <div className="col-span-6 flex flex-col items-center justify-start pt-4">
           <JarvisOrb state={state} size={orbSize} levelRef={levelRef} />
-          <p className="mt-2 text-[10px] tracking-[0.35em]" style={{ color: CY_DIM }}>
-            {state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY"}
+          <p className="mt-1 text-[10px] tracking-[0.35em]" style={{ color: CY_DIM }}>
+            {loading ? "SCANNING" : state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : "STANDBY"}
           </p>
         </div>
 
         {/* RIGHT */}
         <div className="col-span-3 space-y-3">
-          <Panel title="PROXIMITY"><Radar /></Panel>
+          <Panel title="PLATFORMS">
+            <div className="space-y-1.5">
+              {PLATFORMS.map((p) => {
+                const flagged = !synced && p === "Shopify";
+                return (
+                  <div key={p} className="flex items-center justify-between text-[9px]" style={{ color: "rgba(174,230,255,0.8)" }}>
+                    <span>{p}</span>
+                    <span className="flex items-center gap-1.5" style={{ color: flagged ? ROSE : GREEN }}>
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: flagged ? ROSE : GREEN, boxShadow: `0 0 6px ${flagged ? ROSE : GREEN}` }} />
+                      {flagged ? "MISMATCH" : "ALIGNED"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </Panel>
+
           <Panel title="AUDIO I/O">
-            <AudioBars active={state === "speaking" || state === "listening"} />
+            <div className="flex h-9 items-center gap-[2px]">
+              {Array.from({ length: 36 }).map((_, i) => (
+                <span key={i} className="flex-1 rounded-full" style={{
+                  height: "100%", background: CY, opacity: 0.5,
+                  animation: state === "speaking" || state === "listening" ? `eq ${0.6 + (i % 5) * 0.12}s ${i * 0.03}s ease-in-out infinite` : "none",
+                  transform: state === "speaking" || state === "listening" ? undefined : "scaleY(0.18)",
+                }} />
+              ))}
+            </div>
             <p className="mt-1 text-[8.5px] tracking-widest" style={{ color: CY_FAINT }}>48kHz · 24bit</p>
           </Panel>
-          <Panel title="DIAGNOSTICS"><LogFeed lines={LOG_LINES.slice(0, 7)} /></Panel>
+
+          <Panel title="ACTIVITY LOG" right={<a href="/malak/audit" className="text-[8.5px] underline" style={{ color: CY_DIM }}>الكل</a>}>
+            <div className="space-y-1 font-mono text-[8.5px] leading-relaxed">
+              {(scan?.recentActivity ?? []).length === 0 ? (
+                <p className="py-1 text-center" style={{ color: CY_FAINT }}>{loading ? "…" : "ما في نشاط بعد"}</p>
+              ) : (scan?.recentActivity ?? []).map((a, i) => (
+                <div key={i} className="flex gap-2" style={{ color: "rgba(174,230,255,0.55)" }}>
+                  <span style={{ color: CY_FAINT }}>{timeArab(a.created_at)}</span>
+                  <span style={{ color: a.status?.includes("over_band") ? AMBER : "rgba(76,195,255,0.7)" }}>{ACTION_AR[a.action_type] ?? a.action_type}</span>
+                  <span className="truncate">{a.sku ?? ""} {a.old_value != null ? `${a.old_value}→${a.new_value}` : ""}</span>
+                </div>
+              ))}
+            </div>
+          </Panel>
         </div>
       </div>
 
       {/* PRIMARY OBJECTIVE */}
       <div className="relative z-10 mx-5 mt-4 rounded border p-3" style={{ borderColor: CY_FAINT, background: "rgba(8,20,40,0.4)" }}>
         <div className="flex items-center justify-between">
-          <p className="text-[9px] tracking-[0.3em]" style={{ color: AMBER }}>■ PRIMARY OBJECTIVE</p>
-          <p className="text-[9px] tracking-widest" style={{ color: CY_DIM }}>MISSION · REV-03</p>
+          <p className="text-[9px] tracking-[0.3em]" style={{ color: AMBER }}>■ أولوية اليوم</p>
+          <p className="text-[9px] tracking-widest" style={{ color: CY_DIM }}>{(scan?.issues?.length ?? 0)} بند يحتاج تصرّف</p>
         </div>
         <div className="mt-2 flex items-end gap-6">
-          <div><p className="text-[8.5px] tracking-widest" style={{ color: CY_FAINT }}>TARGET</p><p className="text-xl font-bold" style={{ color: "#cfeeff" }}>$10,000<span className="text-[10px]" style={{ color: CY_DIM }}>/MRR</span></p></div>
-          <div><p className="text-[8.5px] tracking-widest" style={{ color: CY_FAINT }}>CURRENT</p><p className="text-xl font-bold" style={{ color: CY }}>$2,846</p></div>
-          <div><p className="text-[8.5px] tracking-widest" style={{ color: CY_FAINT }}>GAP</p><p className="text-xl font-bold" style={{ color: AMBER }}>$7,154</p></div>
           <div className="flex-1">
-            <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: "rgba(76,195,255,0.12)" }}>
-              <div className="h-full rounded-full" style={{ width: "28%", background: CY, boxShadow: `0 0 8px ${CY}` }} />
+            <p className="text-base font-bold" style={{ color: "#cfeeff" }}>{scan?.priority ?? "…يفحص الوضع"}</p>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full" style={{ background: "rgba(76,195,255,0.12)" }}>
+              <div className="h-full rounded-full" style={{ width: `${pct(t - ((scan?.outOfStock ?? 0) + (scan?.missingImages ?? 0) + (scan?.suspiciousPrice ?? 0)), t)}%`, background: GREEN, boxShadow: `0 0 8px ${GREEN}` }} />
             </div>
+            <p className="mt-1 text-[8.5px] tracking-widest" style={{ color: CY_FAINT }}>HEALTH · صحّة الكتالوج العامة</p>
           </div>
+          <a href="/malak" className="shrink-0 rounded border px-4 py-2 text-[10px] tracking-widest transition hover:bg-white/5"
+            style={{ borderColor: CY, color: "#cfeeff", boxShadow: `0 0 14px ${CY}44` }}>افتح ملاك ←</a>
         </div>
       </div>
     </div>
