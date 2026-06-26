@@ -678,6 +678,12 @@ function BriefingPanel({
         >
           اعرض ستوك منخفض
         </button>
+        <a
+          href="/malak/audit"
+          className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-[12px] text-white/80 transition hover:bg-white/10"
+        >
+          📋 سجل ملاك
+        </a>
       </div>
     </div>
   );
