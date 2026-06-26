@@ -158,11 +158,11 @@ export default async function InventoryPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">
           Single source of stock truth. Edit inline, bulk-update, import/export CSV, and push to Shopify.
         </p>
-        <div className="flex flex-none gap-2">
+        <div className="flex flex-wrap gap-2 sm:flex-nowrap">
           <Link href="/inventory/shelves" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
             🗄️ Shelves
           </Link>
