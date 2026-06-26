@@ -32,7 +32,7 @@ export interface MalakProductDraft {
 export interface MalakAction {
   v: 1;
   type: MalakActionType;
-  agent: string; // active agent id (razan / noor / reem)
+  agent: string; // always "malak" (single persona, no team)
   sku?: string;
   productId?: string;
   field?: string;
