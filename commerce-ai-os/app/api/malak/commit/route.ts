@@ -3,9 +3,10 @@
 // card: verify the signed action token, perform the mutation with the service
 // role (bypasses RLS), then log a row to `malak_audit`. No token → no write.
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 import { verifyAction, type MalakAction } from "@/lib/malak/confirm";
 import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
+import { requireMalakWriter } from "@/lib/malak/authz";
+import { consumeOnce } from "@/lib/malak/ratelimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -227,7 +228,7 @@ async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<s
         "[malak-commit] audit insert FAILED:",
         JSON.stringify({ message: error.message, details: (error as any).details, hint: (error as any).hint, code: (error as any).code })
       );
-      return `failed: ${error.message}${(error as any).details ? " | " + (error as any).details : ""}`;
+      return "failed"; // generic to client; details are in the server log (F6)
     }
     return "ok";
   } catch (e: any) {
@@ -237,13 +238,11 @@ async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<s
 }
 
 export async function POST(req: Request) {
-  // This route performs real service-role writes. The signed token gates which
-  // change runs, but require a signed-in user too (defense in depth) so a leaked
-  // token alone can't mutate the catalog.
-  const {
-    data: { user },
-  } = await createClient().auth.getUser();
-  if (!user) return Response.json({ error: "غير مسجّل الدخول." }, { status: 401 });
+  // This route performs real service-role writes. Require a signed-in user who
+  // is on the writer allow-list (F2) — not just any authenticated account — so a
+  // leaked token or low-trust session can't mutate the catalog.
+  const auth = await requireMalakWriter();
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
 
   let token: unknown;
   try {
@@ -255,6 +254,12 @@ export async function POST(req: Request) {
 
   const action = verifyAction(token);
   if (!action) return Response.json({ error: "طلب التأكيد غير صالح أو منتهي الصلاحية. أعد العملية." }, { status: 400 });
+
+  // Single-use (F7): a given confirm token can only be committed once (within its
+  // 15-min lifetime), so a captured token can't be replayed.
+  if (typeof token === "string" && !consumeOnce(`tok:${token}`, 15 * 60 * 1000)) {
+    return Response.json({ ok: true, duplicate: true, audit: "skipped", message: "هالعملية تأكّدت قبل — تجاهلت التكرار." });
+  }
 
   const sb = createAdminClient();
 

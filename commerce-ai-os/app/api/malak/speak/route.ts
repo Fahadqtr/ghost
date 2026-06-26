@@ -3,6 +3,9 @@
 // Malika's custom voice. Returns audio/mpeg. The client plays it; if this route
 // is not configured (204) or errors (502), the client falls back to the
 // browser's speechSynthesis voice so the voice never breaks.
+import { createClient } from "@/lib/supabase/server";
+import { rateLimit } from "@/lib/malak/ratelimit";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -66,6 +69,12 @@ export async function POST(req: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   // Not configured → tell the client to use its browser voice instead.
   if (!apiKey) return new Response(null, { status: 204 });
+
+  // Paid TTS — require a signed-in user and rate-limit per user (F3). On block,
+  // return 204 so the client gracefully falls back to the browser voice.
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return new Response(null, { status: 204 });
+  if (!rateLimit(`speak:${user.id}`, 40, 60_000).ok) return new Response(null, { status: 204 });
 
   let text = "";
   let agent: unknown;

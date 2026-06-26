@@ -1,18 +1,8 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { Component, useCallback, useEffect, useRef, useState } from "react";
 import type { MalakKpis } from "@/lib/dashboard";
-
-// مشهد المكتب 3D (Three.js) — ثقيل، يُحمَّل فقط على المتصفح وعند الحاجة.
-const Office3D = dynamic(() => import("./LabScene"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex min-h-0 flex-1 items-center justify-center text-white/40">
-      <p className="text-sm">…يُحمّل مقر ملاك 3D</p>
-    </div>
-  ),
-});
+import JarvisOrb from "./JarvisOrb";
 
 // In-app error boundary: instead of the white "Application error" screen, show
 // the actual error text (visible on mobile, no console needed) + a reload.
@@ -105,7 +95,7 @@ const txt = (v: any): string =>
   : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan";
   items?: any[];
   item?: any;
 }
@@ -689,6 +679,75 @@ function BriefingPanel({
   );
 }
 
+// Proactive scan card (Phase 3): greeting + a prioritized list of issues, each
+// with a one-tap [عالجها] button that routes the fix prompt back through Malak.
+function ScanPanel({
+  item,
+  onQuick,
+  onListen,
+}: {
+  item: any;
+  onQuick: (q: string) => void;
+  onListen: (text: string) => void;
+}) {
+  const hr = new Date().getHours();
+  const greet = hr < 12 ? "صباح الخير" : "مساء الخير";
+  const issues: { key: string; icon: string; title: string; count: number; prompt: string; severity: string }[] = item.issues ?? [];
+  const sevTone: Record<string, string> = {
+    high: "border-rose-400/30 bg-rose-500/10",
+    med: "border-amber-400/30 bg-amber-500/10",
+    low: "border-sky-400/30 bg-sky-500/10",
+  };
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/10 to-purple-500/10 p-3 text-right backdrop-blur sm:p-4">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          onClick={() => onListen(briefSummary(item))}
+          className="shrink-0 rounded-full border border-amber-400/40 bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200 transition hover:bg-amber-500/25"
+        >
+          ▶ استمع
+        </button>
+        <p className="text-base font-extrabold text-white">{greet} فهد</p>
+      </div>
+
+      {item.allClear ? (
+        <p className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-3 text-center text-[13px] font-medium text-emerald-100">
+          ✅ كل شي تمام — ما في بند عاجل اليوم. عندك {item.total ?? 0} منتج، الوضع نظيف.
+        </p>
+      ) : (
+        <>
+          <p className="text-[12px] text-white/70">🔍 اللي يحتاج تصرّف — مرتّب بالأهم:</p>
+          <div className="space-y-2">
+            {issues.map((is) => (
+              <div key={is.key} className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 ${sevTone[is.severity] ?? "border-white/15 bg-white/5"}`}>
+                <button
+                  onClick={() => onQuick(is.prompt)}
+                  className="shrink-0 rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white transition hover:bg-white/25"
+                >
+                  عالجها ←
+                </button>
+                <span className="text-[13px] text-white/85">
+                  {is.icon} {is.title} <span className="font-extrabold text-white">({is.count})</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        <a
+          href="/malak/audit"
+          className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-[12px] text-white/80 transition hover:bg-white/10"
+        >
+          📋 سجل ملاك
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function Panel({
   data,
   onConfirmDone,
@@ -710,6 +769,8 @@ function Panel({
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
   if (data.type === "briefing" && data.item)
     return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
+  if (data.type === "scan" && data.item)
+    return <ScanPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
   if (data.type === "image_request" && data.item)
     return (
       <ImageRequestPanel
@@ -748,7 +809,6 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const [typed, setTyped] = useState(""); // typewriter buffer for latest malak turn
   const [micSupported, setMicSupported] = useState(true);
   const [orbSize, setOrbSize] = useState(160); // responsive; set on mount
-  const [view, setView] = useState<"orb" | "office">("orb"); // الأورب أو مشهد المكتب
   // الوكيل المُخاطَب مباشرة عند النقر على غرفته في المكتب (يُمرَّر للعقل كـ targetAgent).
   const [directAgent, setDirectAgent] = useState<AgentId | null>(null);
   // تنبيه خطأ احترافي (التفاصيل التقنية تظهر فقط في وضع المطوّر ?dev=1).
@@ -1128,7 +1188,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     [turns, typewriter, speak, stopAudio, unlockAudio, pendingImage, resumeHandsFree]
   );
 
-  // ---- Morning briefing: auto store status ONCE per session on open --------
+  // ---- Proactive scan: auto store status + actionable issues ONCE on open ---
   const briefedRef = useRef(false);
   useEffect(() => {
     if (briefedRef.current) return;
@@ -1138,16 +1198,16 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     sessionStorage.setItem("malak_briefed", "1");
     (async () => {
       try {
-        const res = await fetch("/api/malak/briefing");
+        const res = await fetch("/api/malak/scan");
         const d = await res.json();
         if (!d || d.error) return;
         setActiveAgent("malak");
-        setPanel({ type: "briefing", item: d });
+        setPanel({ type: "scan", item: d });
         // Best-effort voice (may be blocked by autoplay until first interaction;
         // the [▶ استمع] button on the card always works).
         speak(briefSummary(d), "malak");
       } catch {
-        /* briefing is best-effort */
+        /* scan is best-effort */
       }
     })();
   }, [speak]);
@@ -1394,19 +1454,22 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         </div>
       ) : null}
 
-      {/* Hero: the interactive 3D lab (click an agent to talk).
-          In fullscreen it grows (flex-1) to fill the whole screen. */}
+      {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
+          In fullscreen it grows to fill the screen. */}
       <div
-        className={`relative flex flex-col overflow-hidden rounded-3xl border border-slate-200 bg-[#e6ebf3] shadow-sm ${
-          fsActive ? "min-h-0 flex-1" : "h-[42vh] sm:h-[58vh]"
+        className={`relative flex flex-col items-center justify-center overflow-hidden rounded-3xl border border-cyan-500/20 shadow-sm ${
+          fsActive ? "min-h-0 flex-1" : "h-[36vh] sm:h-[46vh]"
         }`}
+        style={{ background: "#020510" }}
       >
-        <Office3D
-          agents={AGENTS}
-          activeAgent={activeAgent}
-          state={state}
-          onSelect={() => { unlockAudio(); inputRef.current?.focus(); }}
-        />
+        <button
+          type="button"
+          onClick={() => { unlockAudio(); inputRef.current?.focus(); }}
+          aria-label="ركّز الإدخال"
+          className="flex items-center justify-center"
+        >
+          <JarvisOrb state={state} size={fsActive ? Math.round(orbSize * 2) : Math.round(orbSize * 1.7)} />
+        </button>
         <button
           type="button"
           onClick={toggleFullscreen}
@@ -1460,7 +1523,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         {/* Transcript + panel. In fullscreen it gets a taller, comfortably
             scrollable area (the lab flexes to fill the rest, no page overflow). */}
         <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
-        {turns.length === 0 && !typed && panel?.type !== "briefing" ? (
+        {turns.length === 0 && !typed && panel?.type !== "briefing" && panel?.type !== "scan" ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-slate-500">
             أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.
           </div>

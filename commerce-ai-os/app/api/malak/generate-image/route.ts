@@ -5,9 +5,10 @@
 // real product link still happens through the existing /api/malak/commit after
 // the user approves. No product write happens here.
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { verifyAction, signAction, type MalakAction } from "@/lib/malak/confirm";
+import { requireMalakWriter } from "@/lib/malak/authz";
+import { rateLimit } from "@/lib/malak/ratelimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,12 +52,13 @@ function buildPrompt(name: string, style: string, hasRef: boolean, portrait = fa
 }
 
 export async function POST(req: Request) {
-  // Paid OpenAI call + storage write — require a signed-in user (defense in
-  // depth) on top of the signed token.
-  const {
-    data: { user },
-  } = await createClient().auth.getUser();
-  if (!user) return Response.json({ error: "غير مسجّل الدخول." }, { status: 401 });
+  // Paid OpenAI call + storage write — require an allow-listed writer (F2) on
+  // top of the signed token, and a per-user daily cap (F3) so the paid image
+  // endpoint can't be looped into a big bill.
+  const auth = await requireMalakWriter();
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
+  const cap = rateLimit(`img:${auth.email}`, 40, 24 * 60 * 60_000);
+  if (!cap.ok) return Response.json({ error: "وصلت الحدّ اليومي لتوليد الصور. جرّب بكرة." }, { status: 200 });
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -120,8 +122,8 @@ export async function POST(req: Request) {
     }
     if (!r.ok) {
       const errBody = (await r.text()).slice(0, 300);
-      console.error("[malak-genimage] OpenAI", r.status, errBody);
-      return Response.json({ error: `فشل التوليد من OpenAI (${r.status}). ${errBody}` }, { status: 200 });
+      console.error("[malak-genimage] OpenAI", r.status, errBody); // details to log only (F6)
+      return Response.json({ error: `تعذّر توليد الصورة الحين (رمز ${r.status}). جرّب مرة ثانية.` }, { status: 200 });
     }
     const data: any = await r.json();
     b64 = data?.data?.[0]?.b64_json ?? null;
@@ -135,7 +137,7 @@ export async function POST(req: Request) {
   let bytes: Buffer;
   try {
     if (b64) bytes = Buffer.from(b64, "base64");
-    else if (imgUrl) bytes = Buffer.from(await (await fetch(imgUrl)).arrayBuffer());
+    else if (imgUrl) bytes = Buffer.from(await (await fetch(assertSafeImageUrl(imgUrl))).arrayBuffer()); // F4: SSRF guard
     else return Response.json({ error: "ما رجع أي صورة من المولّد." }, { status: 200 });
   } catch {
     return Response.json({ error: "تعذّرت قراءة الصورة المولّدة." }, { status: 200 });
