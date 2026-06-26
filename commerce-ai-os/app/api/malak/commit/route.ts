@@ -5,6 +5,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { verifyAction, type MalakAction } from "@/lib/malak/confirm";
+import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -159,6 +160,22 @@ async function commitSetImage(sb: Sb, a: MalakAction): Promise<CommitOutcome | {
   return { message: `تم ربط صورة ${p.name_en}.`, productId: p.id, field: "image_url", oldValue: p.image_url ?? null, newValue: url };
 }
 
+// Bulk cross-platform sync: hide every out-of-stock product still listed on a
+// channel + push 0 to Shopify. Delegates to the shared action (apply=true).
+async function commitSync(_sb: Sb): Promise<CommitOutcome | { error: string }> {
+  const r = await matchChannelsToMalika(true);
+  if (r.error) return { error: r.error };
+  const s = r.shopify;
+  const shopBit = s?.configured
+    ? ` · شوبيفاي: دُفع ${s.pushed ?? 0}${s.failed ? ` (فشل ${s.failed})` : ""}`
+    : " · (دفع شوبيفاي غير مفعّل)";
+  return {
+    message: `تمت المزامنة: أُخفي ${r.products.length} منتج نافد على ${r.channelRows} إدراج قناة${shopBit}.`,
+    field: "channel_sync",
+    newValue: r.products.length,
+  };
+}
+
 // Idempotency: was an identical write already logged in the last 30s? Used to
 // drop accidental double-taps. Best-effort — if the audit table is missing or
 // mismatched the query errors and we DON'T block the write (fail open).
@@ -255,6 +272,7 @@ export async function POST(req: Request) {
       case "set_approval": out = await commitApproval(sb, action); break;
       case "add_product": out = await commitAddProduct(sb, action); break;
       case "set_image": out = await commitSetImage(sb, action); break;
+      case "sync_availability": out = await commitSync(sb); break;
       default: return Response.json({ error: "نوع عملية غير معروف." }, { status: 400 });
     }
     if ("error" in out) return Response.json({ error: out.error }, { status: 200 });

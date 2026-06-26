@@ -152,19 +152,19 @@ export async function POST(req: Request) {
 
   // Token B: a normal set_image action → approved via the existing /commit.
   const setToken = signAction({
-    v: 1, type: "set_image", agent: "reem", sku: p.sku, productId: p.id,
+    v: 1, type: "set_image", agent: "malak", sku: p.sku, productId: p.id,
     field: "image_url", oldValue: currentImage, newValue: url, ts: Date.now(),
   });
 
   return Response.json({
     ok: true,
-    agent: "reem",
-    speak: `ريم: جهّزت الصورة المولّدة لـ ${p.name_en}. راجع المعاينة واعتمدها لو عجبتك.`,
+    agent: "malak",
+    speak: `جهّزت الصورة المولّدة لـ ${p.name_en}. راجع المعاينة واعتمدها لو عجبتك.`,
     panel: {
       type: "confirm",
       item: {
         title: "معاينة الصورة المولّدة",
-        agent: "reem",
+        agent: "malak",
         operation: "اعتماد الصورة المولّدة كصورة المنتج",
         name: p.name_en,
         sku: p.sku,

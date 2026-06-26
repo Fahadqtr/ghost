@@ -604,7 +604,7 @@ function ImageRequestPanel({
 function briefSummary(d: any): string {
   const greet = new Date().getHours() < 12 ? "صباح الخير" : "مساء الخير";
   return (
-    `${greet} فهد، معاك ملاك. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
+    `${greet} فهد. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
     `الأولوية اليوم ${d.priority}.`
   );
 }
@@ -1201,8 +1201,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         awakeUntilRef.current = Date.now() + AWAKE_MS;
         // Bare wake word with no command → acknowledge and keep listening.
         if (called && commandAfterWake(transcript).length < 2) {
-          const a = agentById(called);
-          const greet = called === "malak" ? "نعم فهد، تأمر؟" : `معاك ${a.name}، تأمر؟`;
+          const greet = "نعم فهد، تأمر؟";
           setTyped("");
           setTurns((prev) => [...prev, { role: "malak", text: greet }]);
           speak(greet, called);

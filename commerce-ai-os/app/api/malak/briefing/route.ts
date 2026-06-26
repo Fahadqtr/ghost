@@ -47,7 +47,7 @@ export async function GET() {
     else priority = "الوضع ممتاز — ما فيه بند عاجل اليوم";
 
     return Response.json({
-      agent: "rashid",
+      agent: "malak",
       total,
       missingImages,
       lowStock,

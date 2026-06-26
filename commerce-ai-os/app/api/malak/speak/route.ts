@@ -8,31 +8,10 @@ export const dynamic = "force-dynamic";
 
 const MODEL_ID = "eleven_multilingual_v2"; // strong Arabic support
 
-// The 7 agent ids the brain can return (matches app/api/malak/route.ts).
-const AGENT_IDS = [
-  "malak", "noor", "reem", "siraj", "razan", "rashid", "latifa",
-];
-
-// Per-agent voice — authentic GULF (Khaleeji) voices, gender-matched, chosen
-// from the ElevenLabs Arabic library and approved by the user. Malak falls back
-// to ELEVENLABS_VOICE_ID (Lama, gulf female). Overridable via ELEVENLABS_VOICE_<AGENT>.
-const AGENT_VOICES: Record<string, string> = {
-  noor: "KxMRrXEjbJ6kZ93yT3fq", // الكتالوج — Salma (خليجي، أنثى)
-  reem: "cdxrkuYK4nZwDSkjw5sa", // الصور — Amira (خليجي، أنثى)
-  razan: "ZBf5V86GjdTx6Sdsex5C", // الأسعار والمخزون — Samira (خليجي، أنثى)
-  latifa: "LEqoCOGNjyExRiRUZhkv", // العملاء — Latifa (خليجي، أنثى)
-  siraj: "taIPgcOka6lQyJOPdNGp", // المزامنة والمنصّات — Ali (سعودي، ذكر)
-  rashid: "3GnbqfjaW8xI6hRTVx4Y", // التسويق والتقارير — Nasser (سعودي، ذكر)
-};
-
-function resolveVoiceId(agent: unknown): string | undefined {
-  const a = typeof agent === "string" ? agent.trim().toLowerCase() : "";
-  if (a && AGENT_IDS.includes(a)) {
-    const specific = process.env[`ELEVENLABS_VOICE_${a.toUpperCase()}`];
-    if (specific && specific.trim()) return specific.trim();
-    if (AGENT_VOICES[a]) return AGENT_VOICES[a];
-  }
-  return process.env.ELEVENLABS_VOICE_ID; // malak → Malika (أنثى)
+// One voice — Malak's (no team). The `agent` param is ignored now; every reply
+// is hers. Voice is Malika (gulf female) via ELEVENLABS_VOICE_ID.
+function resolveVoiceId(_agent?: unknown): string | undefined {
+  return process.env.ELEVENLABS_VOICE_ID;
 }
 
 // ---- Spell digits as Arabic words so TTS pronounces numbers correctly ------

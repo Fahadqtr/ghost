@@ -42,6 +42,13 @@ export function detectForcedTool(text: string): string | null {
     return "list_uncategorized";
   }
 
+  // ---- Cross-platform availability sync (Siraj) ---------------------------
+  // "زامني/طابقي/وحّدي التوفّر" · "ادفعي النافد لشوبيفاي" · "طابقي المنصّات مع ماليكاس".
+  const syncVerb = /(زامن|زامني|مزامنة|طابق|طابقي|مطابقة|وحّد|وحد|وحّدي|sync|reconcile)/;
+  const syncObject = /(التوفّر|التوفر|المنصّات|المنصات|القنوات|النافد|النافدة|المخلّص|شوبيفاي|shopify|channels?|availability)/;
+  if ((syncVerb.test(t) && syncObject.test(t)) || /(ادفعي?|ادفع|دفع).{0,12}(النافد|النافدة|شوبيفاي|shopify)/.test(t))
+    return "sync_availability";
+
   // ---- Catalog write intents ----------------------------------------------
   if (/(منتج جديد|أضف\s*منتج|اضف\s*منتج|أضيفي?\s*منتج|اضافة\s*منتج|إضافة\s*منتج|add\s*product|new\s*product)/.test(t))
     return "add_product";

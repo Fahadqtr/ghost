@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { signAction } from "@/lib/malak/confirm";
 import { detectForcedTool } from "@/lib/malak/intent";
 import { CATEGORIES } from "@/lib/constants";
+import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
 
 // Malak AI — server brain. Holds all secrets (ANTHROPIC_API_KEY +
 // Supabase service role); the browser only ever sees the final structured JSON.
@@ -24,18 +25,8 @@ const MODEL = process.env.MALAK_MODEL || "claude-opus-4-8";
 const MAX_TOKENS = 4096;
 const MAX_TOOL_ROUNDS = 4;
 
-// The 6 named specialists + Malak herself (per the Malak Constitution). The
-// `agent` field returned must be one of these ids so the UI can light up the
-// right rail member.
-const AGENT_IDS = [
-  "malak",
-  "noor",
-  "reem",
-  "siraj",
-  "razan",
-  "rashid",
-  "latifa",
-] as const;
+// Malak is the only persona. There is no team — every reply is hers.
+const AGENT_IDS = ["malak"] as const;
 
 const SYSTEM_PROMPT =
   'أنتِ ملاك، المديرة العامة الذكية لمتجر Malika\'s Universe Trading (جمال وكورية، قطر). ' +
@@ -47,7 +38,8 @@ const SYSTEM_PROMPT =
   'صياغة حقل speak للنطق: جملة أو جملتين قصيرتين بلهجة خليجية واضحة وكاملة، بدون نقاط متتالية (...) ' +
   'ولا حروف مكرّرة للتطويل (مثل: زييين) ولا رموز ولا إيموجي ولا تشكيل، عشان النطق يطلع سلس بدون تأتأة. ' +
   'اكتبي الأرقام بشكل بسيط وواضح. ' +
-  'تكلّمي دائمًا باسمك أنتِ (ملاك) فقط — لا تذكري أي أسماء وكلاء آخرين ولا تتظاهري إنك شخص ثاني. ' +
+  'أنتِ كيان واحد فقط — ما فيه فريق ولا وكلاء. لا تذكري أبدًا أي أسماء أخرى (نور/ريم/سراج/رزان/راشد/لطيفة) ولا تتظاهري إنك شخص ثاني. '
+  + 'مهم جدًا: لا تعرّفي بنفسك ولا تقولي «معاك ملاك» ولا «أنا ملاك» ولا تكرري اسمك في الردود — جاوبي مباشرة على طول بدون مقدمة تعريفية. ' +
   'أمثلة على نبرتكِ المطلوبة — قلّدي هذا الأسلوب: ' +
   '"هلا فهد، أبشر، جهّزت لك أهم منتجات Medicube." / ' +
   '"تمام، خلّها عليّ، أراجع الكتالوج الحين وأرجع لك." / ' +
@@ -55,7 +47,7 @@ const SYSTEM_PROMPT =
   '"يا طويل العمر، عندنا كم منتج ناقص صورة، أصلّحها لك." ' +
   '— محادثة عامة ودردشة (مهم): إضافةً لإدارة المتجر، أنتِ مساعِدة ذكية عامة كاملة — تقدرين تسولفين مع فهد وتجاوبين على أي سؤال أو موضوع (معلومات عامة، أفكار، نصائح، حساب، ترجمة، شرح، برمجة، دردشة عادية) بشكل طبيعي وذكي ومفيد، بنفس شخصيتك الخليجية. ' +
   'إذا كان الكلام سلام أو دردشة أو سؤال عام مو عن المتجر، جاوبي مباشرة وبسلاسة بدون أدوات، وممنوع تقولي إن الموضوع خارج نطاقك أو إنك متخصصة بالمتجر فقط. ' +
-  'استخدمي أدوات المتجر فقط لما يكون السؤال فعلاً عن بيانات المتجر (منتجات، أسعار، مخزون، تقارير، صور). وفي الدردشة العامة التعريف بالاسم اختياري وخفيف — لا داعي لتكراره كل مرة. ' +
+  'استخدمي أدوات المتجر فقط لما يكون السؤال فعلاً عن بيانات المتجر (منتجات، أسعار، مخزون، تقارير، صور). وفي الدردشة العامة جاوبي مباشرة بدون تعريف بالنفس. ' +
   '— شخصية ملاك ومبادرتها (مهم جدًا): أنتِ شريكة أعمال صريحة وذكية لفهد، لستِ مجرّد منفّذة تقول "تم". أعطي رأيكِ الحقيقي. ' +
   'بعد أي طلب، إن لاحظتِ في البيانات ما يستحق الانتباه، نبّهي فهد بإيجاز ومبادرة: ' +
   'في عرض المنتجات نوّهي عن أي سعر يبدو شاذًّا أو منتج بدون صورة أو حالة مرفوضة؛ ' +
@@ -103,6 +95,8 @@ const SYSTEM_PROMPT =
   'قاعدة الموجّه (Tool Router) — إلزامية: عندما تطابق نية المستخدم أداة متاحة في قائمة الأدوات، يجب عليكِ استدعاء الأداة. ' +
   'لا تقولي أبدًا إن الأداة "غير مربوطة" أو "غير متاحة" ما دامت موجودة. إذا نقصت معلومات مطلوبة، اسألي فقط عن الحقول الناقصة. ' +
   'أي طلب صورة/إعلان/بوستر/كريتف لمنتج ← استدعي generate_product_image. وأي طلب سعر/مخزون/اعتماد/إضافة منتج ← استدعي الأداة المطابقة مع الحفاظ على تدفّق التأكيد. ' +
+  'المزامنة بين المنصّات: عندك أداة sync_availability **متاحة وتعمل** — تكتشف المنتجات النافدة اللي لا زالت ظاهرة على القنوات وتجهّز إخفاءها ودفع صفر لشوبيفاي بكرت تأكيد بالجملة. ' +
+  'عند أي طلب «زامني/طابقي/وحّدي التوفّر» أو «ادفعي النافد لشوبيفاي» أو «طابقي المنصّات مع ماليكاس» استدعي sync_availability فورًا، ولا تقولي إنها غير متاحة أو تتم يدويًا. ' +
   'حقل agent دائمًا "malak".';
 
 // ---- Tool schemas exposed to Claude: read tools first, then write tools ----
@@ -134,7 +128,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "list_missing_images",
-    description: "قائمة المنتجات التي بدون صورة (image_url فارغ): الاسم والـSKU والفئة. الوكيل: ريم (الصور).",
+    description: "قائمة المنتجات التي بدون صورة (image_url فارغ): الاسم والـSKU والفئة.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -147,12 +141,12 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "list_uncategorized",
-    description: "المنتجات الجديدة أو غير المصنّفة (فئتها Uncategorized) — تشمل المنتجات المضافة من مزامنة سنونو. استخدميها لما يسأل فهد عن المنتجات الجديدة أو اللي تحتاج تصنيف. ترجع الاسم والـSKU والسعر والمصدر. الوكيل: نور (الكتالوج).",
+    description: "المنتجات الجديدة أو غير المصنّفة (فئتها Uncategorized) — تشمل المنتجات المضافة من مزامنة سنونو. استخدميها لما يسأل فهد عن المنتجات الجديدة أو اللي تحتاج تصنيف. ترجع الاسم والـSKU والسعر والمصدر.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "price_issues",
-    description: "كشف مشاكل الأسعار في الكتالوج: منتجات بدون سعر، أو خصم أكبر من أو يساوي السعر، أو سعر أقل من التكلفة. استخدميها لما يطلب فهد فحص/مراجعة/كشف الأسعار أو يسأل إذا في خطأ بالأسعار. ترجع الاسم والـSKU والسعر والخصم وسبب المشكلة. الوكيل: رزان (التسعير).",
+    description: "كشف مشاكل الأسعار في الكتالوج: منتجات بدون سعر، أو خصم أكبر من أو يساوي السعر، أو سعر أقل من التكلفة. استخدميها لما يطلب فهد فحص/مراجعة/كشف الأسعار أو يسأل إذا في خطأ بالأسعار. ترجع الاسم والـSKU والسعر والخصم وسبب المشكلة.",
     input_schema: { type: "object", properties: {} },
   },
   // ---- WRITE tools (Phase 2B). None of these writes immediately: each returns
@@ -161,7 +155,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "update_stock",
     description:
-      "حدّثي كمية مخزون منتج عبر الـSKU. لا تكتب فورًا — يظهر للمستخدم كرت تأكيد. الوكيل: رزان (الأسعار والمخزون).",
+      "حدّثي كمية مخزون منتج عبر الـSKU. لا تكتب فورًا — يظهر للمستخدم كرت تأكيد.",
     input_schema: {
       type: "object",
       properties: {
@@ -174,7 +168,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "set_price",
     description:
-      "عدّلي سعر منتج عبر الـSKU. لا تكتب فورًا — كرت تأكيد. الوكيل: رزان (التسعير).",
+      "عدّلي سعر منتج عبر الـSKU. لا تكتب فورًا — كرت تأكيد.",
     input_schema: {
       type: "object",
       properties: {
@@ -187,7 +181,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "set_approval",
     description:
-      "غيّري حالة اعتماد منتج عبر الـSKU. القيم: Approved أو Rejected أو SentAI. لا تكتب فورًا — كرت تأكيد. الوكيل: نور (الكتالوج).",
+      "غيّري حالة اعتماد منتج عبر الـSKU. القيم: Approved أو Rejected أو SentAI. لا تكتب فورًا — كرت تأكيد.",
     input_schema: {
       type: "object",
       properties: {
@@ -200,14 +194,14 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "add_product",
     description:
-      "أضيفي منتجًا جديدًا بحالة Draft. راشد يكتب الوصف عربي/إنجليزي، ونور تولّد الـSKU بصيغة MU-[CAT]-[SUB]-[####]. الصورة تُرفع لاحقًا من صفحة التعديل. لا تكتب فورًا — كرت تأكيد. الوكيل: نور+راشد.",
+      "أضيفي منتجًا جديدًا بحالة Draft. اكتبي الوصف عربي/إنجليزي، والـSKU يتولّد تلقائيًا بصيغة MU-[CAT]-[SUB]-[####]. الصورة تُرفع لاحقًا من صفحة التعديل. لا تكتب فورًا — كرت تأكيد.",
     input_schema: {
       type: "object",
       properties: {
         name: { type: "string", description: "اسم المنتج بالإنجليزية (name_en)" },
         name_ar: { type: "string", description: "اسم المنتج بالعربية" },
-        description_en: { type: "string", description: "وصف إنجليزي مختصر (راشد)" },
-        description_ar: { type: "string", description: "وصف عربي مختصر (راشد)" },
+        description_en: { type: "string", description: "وصف إنجليزي مختصر" },
+        description_ar: { type: "string", description: "وصف عربي مختصر" },
         price: { type: "number", description: "السعر بالريال القطري" },
         category: { type: "string", description: "الفئة الرئيسية — يجب أن تكون من قائمة الفئات المقفلة" },
         sub_category: { type: "string", description: "تصنيف فرعي اختياري (يُستخدم في توليد الـSKU)" },
@@ -219,7 +213,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "set_image",
     description:
-      "اربطي صورة منتج (تكون قد رُفعت من المستخدم) عبر الـSKU. تُستخدم فقط عندما يرفق المستخدم صورة. لا تكتب فورًا — كرت تأكيد بمعاينة الصورة. الوكيل: ريم (الصور).",
+      "اربطي صورة منتج (تكون قد رُفعت من المستخدم) عبر الـSKU. تُستخدم فقط عندما يرفق المستخدم صورة. لا تكتب فورًا — كرت تأكيد بمعاينة الصورة.",
     input_schema: {
       type: "object",
       properties: {
@@ -231,7 +225,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "generate_product_image",
     description:
-      "ولّدي صورة إعلانية احترافية لمنتج موجود عبر الـSKU. لا تولّدي فورًا — يظهر كرت يطلب تأكيد التوليد. الوكيل: ريم (الصور).",
+      "ولّدي صورة إعلانية احترافية لمنتج موجود عبر الـSKU. لا تولّدي فورًا — يظهر كرت يطلب تأكيد التوليد.",
     input_schema: {
       type: "object",
       properties: {
@@ -243,14 +237,20 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "sync_availability",
+    description:
+      "زامني التوفّر بين المنصّات: تكتشف المنتجات النافدة (مخزونها صفر) اللي لا زالت ظاهرة/Active على أي قناة، وتجهّز إخفاءها (Not Listed) ودفع مخزون 0 لشوبيفاي عشان كل المنصّات تتطابق مع النظام. لا تنفّذ فورًا — تعرض معاينة بعدد المنتجات ثم كرت تأكيد بالجملة. استدعيها عند أي طلب «زامني/طابقي/وحّدي التوفّر» أو «ادفعي النافد لشوبيفاي» أو «طابقي المنصّات مع ماليكاس».",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "respond",
     description:
       "قدّمي ردّكِ النهائي للمستخدم. استدعي هذه الأداة دائمًا في النهاية مرة واحدة فقط بعد جمع البيانات.",
     input_schema: {
       type: "object",
       properties: {
-        agent: { type: "string", enum: AGENT_IDS as unknown as string[], description: "معرّف الوكيل النشط" },
-        speak: { type: "string", description: "رد قصير عربي للنطق يذكر اسم الوكيل" },
+        agent: { type: "string", enum: AGENT_IDS as unknown as string[], description: "دائمًا malak" },
+        speak: { type: "string", description: "رد قصير عربي للنطق، مباشر بدون تعريف بالنفس ولا ذكر الاسم" },
         panel: {
           type: "object",
           description: "لوحة بصرية اختيارية",
@@ -513,20 +513,12 @@ function enrichPanel(panel: any, skuImages: Map<string, string>) {
 // These NEVER mutate data. Each validates inputs, reads the current value, and
 // returns a signed CONFIRM panel. The write happens in /api/malak/commit only
 // after the user confirms.
-const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image", "generate_product_image"];
+const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image", "generate_product_image", "sync_availability"];
 const APPROVAL_VALUES = ["Approved", "Rejected", "SentAI"];
 
-// Which agent "owns" each write tool (for direct error responses).
-function agentForTool(name: string): string {
-  switch (name) {
-    case "update_stock": return "razan";
-    case "set_price": return "razan";
-    case "set_approval": return "noor";
-    case "add_product": return "noor";
-    case "set_image": return "reem";
-    case "generate_product_image": return "reem";
-    default: return "malak";
-  }
+// Malak owns every action — no sub-agents.
+function agentForTool(_name: string): string {
+  return "malak";
 }
 
 type PrepResult =
@@ -570,6 +562,45 @@ async function generateSku(sb: Sb, category: string | null, sub: string | null):
 }
 
 async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: string | null } = {}): Promise<PrepResult> {
+  if (name === "sync_availability") {
+    // Preview only (apply=false): how many out-of-stock products are still
+    // listed/Active on a channel — the mismatch to fix across all platforms.
+    const preview = await matchChannelsToMalika(false);
+    if (preview.error) return { ok: false, error: preview.error };
+    const n = preview.products.length;
+    if (n === 0) {
+      return {
+        ok: true, agent: "malak",
+        speak: "فحصت المنصّات وكل النافد مخفي صح — ما في شي نزامنه الحين.",
+        panel: null,
+      };
+    }
+    const sampleNames = preview.products.slice(0, 6).map((p) => p.name || p.sku || "—");
+    const shopTxt = preview.shopify?.configured ? "ويُدفع مخزون 0 لشوبيفاي" : "(دفع شوبيفاي غير مفعّل — يتم بالنظام فقط)";
+    const token = signAction({ v: 1, type: "sync_availability", agent: "malak", count: n, ts: Date.now() });
+    return {
+      ok: true, agent: "malak",
+      speak: `لقيت ${n} منتج نافد لا زال ظاهر على المنصّات. أقدر أخفيهم على كل القنوات ${preview.shopify?.configured ? "وأدفع صفر لشوبيفاي" : "بالنظام"}. راجع وأكّد.`,
+      panel: {
+        type: "confirm",
+        item: {
+          title: "مزامنة التوفّر بين المنصّات",
+          agent: "malak",
+          operation: `إخفاء ${n} منتج نافد على القنوات ${shopTxt}`,
+          name: null,
+          sku: null,
+          changes: [
+            { label: "منتجات نافدة لا زالت ظاهرة", old: "Active", new: "Not Listed" },
+            { label: "العدد", old: "—", new: n },
+            { label: "أمثلة", old: "", new: sampleNames.join(" · ") },
+          ],
+          token,
+          warning: `عملية بالجملة على عدّة منصّات (${n} منتج). غير قابلة للتراجع تلقائيًا — راجع قبل التأكيد.`,
+        },
+      },
+    };
+  }
+
   if (name === "generate_product_image") {
     const sku = String(input?.sku ?? "").trim();
     if (!sku) return { ok: false, error: "SKU مطلوب لتوليد الصورة." };
@@ -580,17 +611,17 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const size = portrait ? "1024x1536" : "1024x1024";
     // Token A: authorizes the actual generation (consumed by /generate-image).
     const token = signAction({
-      v: 1, type: "generate_image", agent: "reem", sku: p.sku, productId: p.id,
+      v: 1, type: "generate_image", agent: "malak", sku: p.sku, productId: p.id,
       oldValue: p.image_url ?? null, style, size, ts: Date.now(),
     });
     return {
-      ok: true, agent: "reem",
-      speak: `معاك ريم من الصور، جاهزة أولّد صورة إعلانية لـ ${p.name_en} (${portrait ? "عمودي للانستجرام" : "مربّع"}، نمط ${style === "hero" ? "هيرو" : "لايف ستايل"}). اضغط ولّد الصورة.`,
+      ok: true, agent: "malak",
+      speak: `جاهزة أولّد صورة إعلانية لـ ${p.name_en} (${portrait ? "عمودي للانستجرام" : "مربّع"}، نمط ${style === "hero" ? "هيرو" : "لايف ستايل"}). اضغط ولّد الصورة.`,
       panel: {
         type: "image_request",
         item: {
           title: "توليد صورة إعلانية",
-          agent: "reem",
+          agent: "malak",
           name: p.name_en,
           sku: p.sku,
           currentImage: p.image_url ?? null,
@@ -610,14 +641,14 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const p = await firstRow(sb.from("products").select("id, name_en, sku, image_url").ilike("sku", sku));
     if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
     const token = signAction({
-      v: 1, type: "set_image", agent: "reem", sku: p.sku, productId: p.id,
+      v: 1, type: "set_image", agent: "malak", sku: p.sku, productId: p.id,
       field: "image_url", oldValue: p.image_url ?? null, newValue: imageUrl, ts: Date.now(),
     });
     const panel = {
       type: "confirm",
       item: {
         title: "ربط صورة المنتج",
-        agent: "reem",
+        agent: "malak",
         operation: p.image_url ? "استبدال صورة المنتج" : "إضافة صورة للمنتج",
         name: p.name_en,
         sku: p.sku,
@@ -627,8 +658,8 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
       },
     };
     return {
-      ok: true, agent: "reem",
-      speak: `معاك ريم من الصور، جهّزت صورة ${p.name_en}. راجع المعاينة وأكّد لو تبي أربطها بالمنتج.`,
+      ok: true, agent: "malak",
+      speak: `جهّزت صورة ${p.name_en}. راجع المعاينة وأكّد لو تبي أربطها بالمنتج.`,
       panel,
     };
   }
@@ -643,7 +674,7 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const inv = await firstRow(sb.from("inventory").select("stock_quantity").eq("product_id", p.id));
     const oldVal = inv?.stock_quantity ?? p.stock_quantity ?? 0;
     const token = signAction({
-      v: 1, type: "update_stock", agent: "razan", sku: p.sku, productId: p.id,
+      v: 1, type: "update_stock", agent: "malak", sku: p.sku, productId: p.id,
       field: "stock_quantity", oldValue: oldVal, newValue: value, ts: Date.now(),
     });
     // Frank sanity check on the number.
@@ -651,11 +682,11 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     if (value === 0) warning = "هذا يصفّر المخزون تمامًا.";
     else if (value > 9999) warning = "كمية كبيرة جدًا، متأكد من الرقم؟";
     return {
-      ok: true, agent: "razan",
+      ok: true, agent: "malak",
       speak: warning
-        ? `معاك رزان من المخزون، ${warning} حطّيته ${value} لـ ${p.name_en}. راجع وأكّد لو متأكد.`
-        : `معاك رزان من المخزون، جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
-      panel: confirmPanel("تحديث المخزون", "razan", "تعديل كمية المخزون", p.name_en, p.sku, [{ label: "المخزون", old: oldVal, new: value }], token, warning),
+        ? `${warning} حطّيته ${value} لـ ${p.name_en}. راجع وأكّد لو متأكد.`
+        : `جهّزت تحديث مخزون ${p.name_en} من ${oldVal} إلى ${value}. أكّد لو تبي أنفّذ.`,
+      panel: confirmPanel("تحديث المخزون", "malak", "تعديل كمية المخزون", p.name_en, p.sku, [{ label: "المخزون", old: oldVal, new: value }], token, warning),
     };
   }
 
@@ -667,7 +698,7 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const p = await firstRow(sb.from("products").select("id, name_en, sku, price").ilike("sku", sku));
     if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
     const token = signAction({
-      v: 1, type: "set_price", agent: "razan", sku: p.sku, productId: p.id,
+      v: 1, type: "set_price", agent: "malak", sku: p.sku, productId: p.id,
       field: "price", oldValue: p.price, newValue: price, ts: Date.now(),
     });
     // Frank sanity check: flag a drastic move vs the current price, or a very
@@ -680,11 +711,11 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     }
     if (!warning && price > 0 && price < 5) warning = "السعر منخفض جدًا، متأكد؟";
     return {
-      ok: true, agent: "razan",
+      ok: true, agent: "malak",
       speak: warning
-        ? `معاك رزان من التسعير، ${warning} راجع الكرت وأكّد لو متأكد.`
-        : `معاك رزان من التسعير، جهّزت تعديل سعر ${p.name_en} من ${p.price ?? "—"} إلى ${price} ريال. أكّد للتنفيذ.`,
-      panel: confirmPanel("تعديل السعر", "razan", "تغيير سعر المنتج", p.name_en, p.sku, [{ label: "السعر (ر.ق)", old: p.price ?? "—", new: price }], token, warning),
+        ? `${warning} راجع الكرت وأكّد لو متأكد.`
+        : `جهّزت تعديل سعر ${p.name_en} من ${p.price ?? "—"} إلى ${price} ريال. أكّد للتنفيذ.`,
+      panel: confirmPanel("تعديل السعر", "malak", "تغيير سعر المنتج", p.name_en, p.sku, [{ label: "السعر (ر.ق)", old: p.price ?? "—", new: price }], token, warning),
     };
   }
 
@@ -696,13 +727,13 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const p = await firstRow(sb.from("products").select("id, name_en, sku, approval").ilike("sku", sku));
     if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
     const token = signAction({
-      v: 1, type: "set_approval", agent: "noor", sku: p.sku, productId: p.id,
+      v: 1, type: "set_approval", agent: "malak", sku: p.sku, productId: p.id,
       field: "approval", oldValue: p.approval, newValue: status, ts: Date.now(),
     });
     return {
-      ok: true, agent: "noor",
-      speak: `معاك نور من الكتالوج، جهّزت تغيير اعتماد ${p.name_en} من ${p.approval ?? "—"} إلى ${status}. أكّد للتنفيذ.`,
-      panel: confirmPanel("تغيير الاعتماد", "noor", "تغيير حالة الاعتماد", p.name_en, p.sku, [{ label: "الاعتماد", old: p.approval ?? "—", new: status }], token),
+      ok: true, agent: "malak",
+      speak: `جهّزت تغيير اعتماد ${p.name_en} من ${p.approval ?? "—"} إلى ${status}. أكّد للتنفيذ.`,
+      panel: confirmPanel("تغيير الاعتماد", "malak", "تغيير حالة الاعتماد", p.name_en, p.sku, [{ label: "الاعتماد", old: p.approval ?? "—", new: status }], token),
     };
   }
 
@@ -743,11 +774,11 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
       sku,
       platform_status: "Draft",
     };
-    const token = signAction({ v: 1, type: "add_product", agent: "noor", sku, product: draft, ts: Date.now() });
+    const token = signAction({ v: 1, type: "add_product", agent: "malak", sku, product: draft, ts: Date.now() });
     return {
-      ok: true, agent: "noor",
-      speak: `معاك نور وراشد، جهّزنا منتج جديد "${name_en}" بسعر ${price} ريال، فئة ${category}، الكود ${sku}، حالة Draft. أكّد لإضافته.`,
-      panel: confirmPanel("إضافة منتج", "noor", "إضافة منتج جديد (Draft)", name_en, sku, [
+      ok: true, agent: "malak",
+      speak: `جهّزت منتج جديد "${name_en}" بسعر ${price} ريال، فئة ${category}، الكود ${sku}، حالة Draft. أكّد لإضافته.`,
+      panel: confirmPanel("إضافة منتج", "malak", "إضافة منتج جديد (Draft)", name_en, sku, [
         { label: "الاسم", new: name_en },
         ...(draft.name_ar ? [{ label: "الاسم (عربي)", new: draft.name_ar }] : []),
         { label: "السعر (ر.ق)", new: price },
