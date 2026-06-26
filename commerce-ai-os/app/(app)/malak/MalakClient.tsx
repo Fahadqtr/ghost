@@ -804,6 +804,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [panel, setPanel] = useState<PanelData | null>(null);
   const [scanData, setScanData] = useState<ScanData | null>(null); // HUD side panels
+  const [hudClock, setHudClock] = useState("--:--:--");
   const [input, setInput] = useState("");
   const [state, setState] = useState<OrbState>("idle");
   const [activeAgent, setActiveAgent] = useState<AgentId>("malak");
@@ -1223,23 +1224,32 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     [turns, typewriter, speak, stopAudio, unlockAudio, pendingImage, resumeHandsFree]
   );
 
-  // ---- Proactive scan: auto store status + actionable issues ONCE on open ---
+  // Live HUD clock.
+  useEffect(() => {
+    const tick = () => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); setHudClock(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`); };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ---- Proactive scan: ALWAYS load the data on open (it feeds the HUD side
+  // panels every visit). Only the spoken briefing is throttled to once/session.
   const briefedRef = useRef(false);
   useEffect(() => {
     if (briefedRef.current) return;
     if (typeof window === "undefined") return;
-    if (sessionStorage.getItem("malak_briefed")) return;
     briefedRef.current = true;
-    sessionStorage.setItem("malak_briefed", "1");
     (async () => {
       try {
         const res = await fetch("/api/malak/scan");
         const d = await res.json();
         if (!d || d.error) return;
         setActiveAgent("malak");
-        setScanData(d as ScanData); // feeds the HUD side panels (no modal popup)
-        // Best-effort voice (may be blocked by autoplay until first interaction).
-        speak(briefSummary(d), "malak");
+        setScanData(d as ScanData); // feeds the HUD side panels (every load)
+        if (!sessionStorage.getItem("malak_briefed")) {
+          sessionStorage.setItem("malak_briefed", "1");
+          speak(briefSummary(d), "malak"); // voice brief once per session
+        }
       } catch {
         /* scan is best-effort */
       }
@@ -1458,14 +1468,24 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           : "mx-auto w-full max-w-7xl space-y-3 pb-2"
       }
     >
-      {/* Header (hidden in fullscreen to give the lab the whole screen) */}
+      {/* Mission-Control header (hidden in fullscreen) */}
       {fsActive ? null : (
-        <div className="flex flex-wrap items-end justify-between gap-2">
+        <div dir="ltr" className="flex flex-wrap items-start justify-between gap-3 font-mono">
           <div>
-            <h1 className="text-lg font-extrabold tracking-tight text-cyan-50 sm:text-xl">
-              ملاك · <span className="text-cyan-300/50">Malak AI</span>
-            </h1>
-            <p className="text-xs text-cyan-300/60">المديرة العامة الذكية · Malika&apos;s Universe Trading</p>
+            <p className="text-[13px] font-bold tracking-[0.2em] text-cyan-50">MALIKA&apos;S UNIVERSE <span className="text-cyan-300/50">// COMMERCE CONTROL</span></p>
+            <p dir="rtl" className="text-[10px] tracking-[0.15em] text-cyan-300/50">ملاك · المديرة العامة الذكية</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {["ONLINE", "SECURE", scanData ? (scanData.channelMismatch ? "SYNC NEEDED" : "SYNCED") : "…", "AUTH-LVL9"].map((c, i) => (
+                <span key={i} className="inline-flex items-center gap-1 rounded-sm border border-cyan-500/25 px-2 py-0.5 text-[8.5px] tracking-widest text-cyan-300/60">
+                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" style={{ boxShadow: "0 0 6px #4cc3ff" }} />{c}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-[22px] font-bold leading-none tracking-wider text-cyan-50" style={{ textShadow: "0 0 12px #4cc3ff88" }}>{hudClock}</p>
+            <p className="mt-1 text-[9px] tracking-widest text-cyan-300/50">منتجات: {scanData?.total ?? "—"} · معتمد: {scanData?.approved ?? "—"}</p>
+            <p className="text-[9px] tracking-widest text-cyan-300/50">DOHA · QA</p>
           </div>
         </div>
       )}
