@@ -54,8 +54,9 @@ function VitalBar({ label, p, note, tone = "rgba(130,185,225,0.85)" }: { label: 
         <span style={{ color: "rgba(150,195,230,0.7)" }}>{label}</span>
         <span style={{ color: "rgba(180,210,235,0.85)" }}>{note}</span>
       </div>
-      <div className="h-[3px] w-full overflow-hidden" style={{ background: "rgba(120,170,210,0.12)" }}>
+      <div className="relative h-[3px] w-full" style={{ background: "rgba(120,170,210,0.12)" }}>
         <div className="h-full" style={{ width: `${Math.max(2, Math.min(100, p))}%`, background: tone }} />
+        <span className="absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: `${Math.max(2, Math.min(100, p))}%`, background: tone, boxShadow: `0 0 6px ${tone}` }} />
       </div>
     </div>
   );
@@ -180,8 +181,12 @@ export function HudRight({ scan, levelRef }: { scan: ScanData; levelRef?: Mutabl
         </div>
       </Panel>
       <Panel title="AUDIO I/O">
-        <AudioMeter levelRef={levelRef} />
-        <p className="mt-1 text-[8px] tracking-widest" style={{ color: "rgba(120,175,215,0.45)" }}>48kHz · 24bit · ملاك</p>
+        <div className="border p-2" style={{ borderColor: "rgba(120,175,215,0.25)" }}>
+          <AudioMeter levelRef={levelRef} />
+          <div className="mt-1.5 flex items-center justify-between text-[8px] tracking-widest" style={{ color: "rgba(120,175,215,0.45)" }}>
+            <span>48kHz · 24bit</span><span>RX · ملاك</span>
+          </div>
+        </div>
       </Panel>
       <Panel title="DIAGNOSTICS" right={<a href="/malak/audit" className="text-[8px] underline" style={{ color: "rgba(120,175,215,0.5)" }}>الكل</a>}>
         <Feed rows={scan.recentActivity} />

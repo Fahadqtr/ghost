@@ -1462,11 +1462,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           ? // Fullscreen: full-width, full-height flex column so the lab fills the
             // screen. 100dvh accounts for mobile browser chrome; pseudoFs adds
             // fixed positioning since there's no native FS element (iOS Safari).
-            `flex h-[100dvh] w-full flex-col gap-3 overflow-hidden bg-[#eef2f8] p-3 sm:p-4 ${
+            `flex h-[100dvh] w-full flex-col gap-3 overflow-hidden p-3 sm:p-4 ${
               pseudoFs ? "fixed inset-0 z-50" : ""
             }`
           : "mx-auto w-full max-w-7xl space-y-3 pb-2"
       }
+      style={fsActive ? { background: "#040a14" } : undefined}
     >
       {/* Mission-Control header (hidden in fullscreen) */}
       {fsActive ? null : (
