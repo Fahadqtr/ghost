@@ -126,10 +126,11 @@ export async function createLiveSession(startUrl?: string, profileId?: string, v
         body: JSON.stringify({
           ...(start ? { start_url: start } : {}),
           ...(withProfile ? { profile } : {}),
-          // Server region. Hyperbeam defaults to "NA" (North America) — far from
-          // the Gulf, so the WebRTC video stalls/blacks out over mobile. Default
-          // to "EU" (closest to Qatar); override with HYPERBEAM_REGION (EU/AS/NA).
-          region: (process.env.HYPERBEAM_REGION || "EU").trim().toUpperCase(),
+          // Server region for latency. Hyperbeam's default "NA" blacks out over
+          // mobile in the Gulf. "AS" (Asia) and "EU" are both far closer to
+          // Qatar; default to AS and let HYPERBEAM_REGION (AS/EU/NA) tune which
+          // node actually feels fastest from the user's network.
+          region: (process.env.HYPERBEAM_REGION || "AS").trim().toUpperCase(),
           width,
           height,
           // Lower frame rate = less bandwidth = far smoother over mobile (4G),
