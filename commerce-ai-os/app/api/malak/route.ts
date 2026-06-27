@@ -8,7 +8,7 @@ import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { rateLimit } from "@/lib/malak/ratelimit";
 import { fetchPageContent, browserConfigured } from "@/lib/malak/browser";
-import { webSearch, searchConfigured } from "@/lib/malak/search";
+import { webSearch, searchConfigured, searchEnvNamesPresent } from "@/lib/malak/search";
 
 // Malak AI — server brain. Holds all secrets (ANTHROPIC_API_KEY +
 // Supabase service role); the browser only ever sees the final structured JSON.
@@ -576,11 +576,15 @@ async function lowStock(sb: Sb, input: any) {
 async function webSearchTool(input: any) {
   const query = typeof input?.query === "string" ? input.query.trim() : "";
   if (!query) return { error: "ما فيه كلمات بحث." };
-  if (!searchConfigured())
+  if (!searchConfigured()) {
+    // Log which (if any) search env names are present — a misnamed var is the
+    // most common cause and this makes it obvious in the server logs.
+    console.warn(`[malak][search] NOT configured. present env names=[${searchEnvNamesPresent().join(",") || "none"}]`);
     return {
       error: "خدمة البحث غير مهيأة بعد على الخادم.",
       note: "لتفعيل البحث في النت: أضيفي BRAVE_SEARCH_TOKEN (أو TAVILY_API_KEY) في إعدادات الخادم. أو أعطيني رابط موقع مباشر وأفتحه بـ browse_web.",
     };
+  }
   const out = await webSearch(query);
   if (!out.ok) return { error: out.error ?? "تعذّر البحث.", query };
   return {
