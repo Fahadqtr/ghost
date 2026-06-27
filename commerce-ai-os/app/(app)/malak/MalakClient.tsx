@@ -919,8 +919,8 @@ function PlayerPanel({ item }: { item: any }) {
           </button>
         )}
       </div>
-      <a href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 px-3 py-1.5 text-[12px] text-rose-200 hover:bg-rose-400/10">↗ افتح في يوتيوب</a>
+      <a href={`https://music.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 px-3 py-1.5 text-[12px] text-rose-200 hover:bg-rose-400/10">🎵 افتح في يوتيوب ميوزك</a>
     </div>
   );
 }
@@ -929,6 +929,7 @@ function PlayerPanel({ item }: { item: any }) {
 // Temu, Shein…) with full speed + sound, instead of a flaky embedded browser.
 function LinksPanel({ items }: { items: any[] }) {
   const icon = (host: string) => {
+    if (/music\.youtube/.test(host)) return "🎵";
     if (/youtu/.test(host)) return "▶";
     if (/temu/.test(host)) return "🛒";
     if (/shein/.test(host)) return "🛍️";
