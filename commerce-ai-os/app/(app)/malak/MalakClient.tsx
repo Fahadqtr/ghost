@@ -1454,6 +1454,14 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   // Combined flag: native fullscreen OR the CSS fallback.
   const fsActive = isFs || pseudoFs;
 
+  // The HUD panels always render (so the dashboard frame is always there); they
+  // fill with zeros until the scan loads.
+  const sd: ScanData = scanData ?? {
+    total: 0, approved: 0, rejected: 0, missingImages: 0, lowStock: 0, outOfStock: 0,
+    suspiciousPrice: 0, channelMismatch: 0, issues: [], recentActivity: [],
+    priority: "…يفحص الوضع", allClear: true,
+  };
+
   return (
     <div
       ref={rootRef}
@@ -1512,16 +1520,16 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Unified Mission-Control HUD: side panels frame the orb + chat into one
           screen. display:contents in fullscreen keeps the orb full-screen. */}
       <div className={fsActive ? "contents" : "grid grid-cols-1 gap-3 lg:grid-cols-12"}>
-        {!fsActive && scanData ? (
-          <div className="order-2 lg:order-1 lg:col-span-3"><HudLeft scan={scanData} onAction={send} /></div>
+        {!fsActive ? (
+          <div className="order-2 lg:order-1 lg:col-span-3"><HudLeft scan={sd} onAction={send} /></div>
         ) : null}
-        <div className={fsActive ? "contents" : "order-1 space-y-4 lg:order-2 lg:col-span-6"}>
+        <div className={fsActive ? "contents" : "order-1 lg:order-2 lg:col-span-6"}>
 
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
           In fullscreen it grows to fill the screen. */}
       <div
         className={`relative flex flex-col items-center justify-center overflow-hidden ${
-          fsActive ? "min-h-0 flex-1" : "h-[42vh] sm:h-[52vh]"
+          fsActive ? "min-h-0 flex-1" : "h-[34vh] sm:h-[44vh]"
         }`}
         style={{ background: "transparent" }}
       >
@@ -1599,6 +1607,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         @keyframes hudIn { 0%{opacity:0;transform:translateY(12px) scale(.94);filter:blur(6px)} 100%{opacity:1;transform:none;filter:none} }
         @keyframes eqbar { 0%,100%{transform:scaleY(0.35)} 50%{transform:scaleY(1)} }
       `}</style>
+        </div>{/* center column = orb only */}
+        {!fsActive ? (
+          <div className="order-3 lg:col-span-3"><HudRight scan={sd} levelRef={levelRef} /></div>
+        ) : null}
+      </div>{/* HUD grid */}
+      {!fsActive ? <HudObjective scan={sd} /> : null}
 
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
@@ -1756,13 +1770,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           </button>
         </form>
        </div>
-      </div>
-        </div>{/* center column */}
-        {!fsActive && scanData ? (
-          <div className="order-3 lg:col-span-3"><HudRight scan={scanData} levelRef={levelRef} /></div>
-        ) : null}
-      </div>{/* HUD grid */}
-      {!fsActive && scanData ? <HudObjective scan={scanData} /> : null}
+      </div>{/* chat card (full-width, below the HUD) */}
 
       {/* Holographic output overlay (JARVIS): structured results pop up here */}
       {panel ? (
