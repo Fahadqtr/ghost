@@ -126,11 +126,10 @@ export async function createLiveSession(startUrl?: string, profileId?: string, v
         body: JSON.stringify({
           ...(start ? { start_url: start } : {}),
           ...(withProfile ? { profile } : {}),
-          // Server region for latency. Hyperbeam's default "NA" blacks out over
-          // mobile in the Gulf. "AS" (Asia) and "EU" are both far closer to
-          // Qatar; default to AS and let HYPERBEAM_REGION (AS/EU/NA) tune which
-          // node actually feels fastest from the user's network.
-          region: (process.env.HYPERBEAM_REGION || "AS").trim().toUpperCase(),
+          // Server region for latency. Tested from Qatar: "NA" and "AS"
+          // (Singapore) black out; "EU" (Frankfurt) is the only node that
+          // actually streams. Default to EU; override via HYPERBEAM_REGION.
+          region: (process.env.HYPERBEAM_REGION || "EU").trim().toUpperCase(),
           width,
           height,
           // Lower frame rate = less bandwidth = far smoother over mobile (4G),
