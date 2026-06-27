@@ -50,6 +50,28 @@ export function assertSafeImageUrl(raw: string): string {
   return u.toString();
 }
 
+/**
+ * Validate a URL is safe for Malak to browse server-side. Like the image guard
+ * but also accepts http:// (some sites still serve over plain http) while still
+ * blocking internal/metadata targets. Returns the normalized URL or throws with
+ * a human-readable (Arabic) message.
+ */
+export function assertSafeBrowseUrl(raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(String(raw).trim());
+  } catch {
+    throw new Error("الرابط غير صالح.");
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") {
+    throw new Error("الرابط يجب أن يكون موقع ويب (http أو https).");
+  }
+  if (isPrivateHost(u.hostname)) {
+    throw new Error("الرابط يشير إلى عنوان داخلي غير مسموح به.");
+  }
+  return u.toString();
+}
+
 /** Non-throwing variant: returns the safe URL or null (handy in bulk loops). */
 export function safeImageUrlOrNull(raw: unknown): string | null {
   if (typeof raw !== "string" || raw.trim() === "") return null;
