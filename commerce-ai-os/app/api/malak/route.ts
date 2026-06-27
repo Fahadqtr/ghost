@@ -724,7 +724,25 @@ async function openLiveBrowser(
   // profile (its session id becomes the durable profile id for next time).
   const profileId = liveCtx.profileId || undefined;
   const s = await createLiveSession(url || undefined, profileId, liveCtx.viewport);
-  if (!s.ok || !s.embedUrl || !s.adminToken) return { error: s.error ?? "تعذّر فتح المتصفح الحي.", url };
+  if (!s.ok || !s.embedUrl || !s.adminToken) {
+    console.warn(`[malak][live] hyperbeam create failed: ${s.error}`);
+    // Audio browser failed — open the fast no-audio browser instead so the user
+    // still gets the page (muted) rather than nothing, and surface the reason.
+    if (browserConfigured()) {
+      const lu = await openLiveURL(url || undefined);
+      if (lu.ok && lu.liveUrl) {
+        liveHolder.embedUrl = lu.liveUrl;
+        liveHolder.kind = "browserbase";
+        if (url) liveHolder.url = url;
+        return {
+          ok: true,
+          url: url || null,
+          note: `متصفح الصوت متعطّل مؤقتًا (${s.error ?? "خطأ Hyperbeam"})، ففتحت المتصفح السريع **بدون صوت** بدل ما يطيح كل شي. بلّغي فهد بإيجاز إن الصوت غير متاح الحين والسبب التقني، وإنه يقدر يفتح الرابط بنفسه بصوت. أرجعي panel نوعه live فيه item:{url,title}.`,
+        };
+      }
+    }
+    return { error: s.error ?? "تعذّر فتح المتصفح الحي.", url };
+  }
   liveHolder.embedUrl = s.embedUrl;
   if (url) liveHolder.url = url;
   const data: LiveSessionData = { sid: s.sessionId || "", embedUrl: s.embedUrl, adminToken: s.adminToken, ts: Date.now() };
