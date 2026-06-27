@@ -132,9 +132,9 @@ export async function createLiveSession(startUrl?: string, profileId?: string, v
           region: (process.env.HYPERBEAM_REGION || "EU").trim().toUpperCase(),
           width,
           height,
-          // Lower frame rate = less bandwidth = far smoother over mobile (4G),
-          // which froze at 24fps. Override with HYPERBEAM_FPS if on good WiFi.
-          fps: Math.max(5, Math.min(30, Number(process.env.HYPERBEAM_FPS) || 15)),
+          // Hyperbeam rejects fps below 24 (HTTP 400 invalid_request), so 24 is
+          // the floor. Override up with HYPERBEAM_FPS (24-60) on good WiFi.
+          fps: Math.max(24, Math.min(60, Number(process.env.HYPERBEAM_FPS) || 24)),
           ublock: true,
           // Reclaim forgotten sessions, but give the user room to browse/think
           // (180s was too aggressive — sessions died mid-use and went black).

@@ -669,25 +669,14 @@ async function openLiveBrowser(
 ) {
   const url = typeof input?.url === "string" ? input.url.trim() : "";
 
-  // Pick the backend: YouTube/music/video NEED audio → Hyperbeam. Everything
-  // else (shopping, general browsing) → Browserbase, which streams a lighter,
-  // snappier interactive view (no audio). Falls back to Hyperbeam if Browserbase
-  // isn't configured or fails.
+  // Pick the fast (no-audio) backend for non-audio sites. NOTE: Browserless
+  // liveURL is plan-gated off on this account ("plan does not support Live
+  // URLs"), so only Browserbase is tried here; otherwise we fall through to
+  // Hyperbeam (which works for non-audio too — audio just goes unused).
   const wantsAudio = /youtube\.com|youtu\.be|music|spotify|soundcloud|netflix|anghami|\bvideo\b|\baudio\b/i.test(url);
   if (!wantsAudio) {
     const fastNote =
-      "فتحت متصفّحًا حيًّا سريعًا (بدون صوت) داخل ملاك، تفاعلي — اضغط واكتب داخله. أرجعي panel نوعه live فيه item:{url,title}. لو تسوّق: ذكّري فهد يسجّل دخوله ويضيف للعربة بنفسه ويراجع قبل الدفع. (للصوت/يوتيوب نستخدم المتصفح الآخر.)";
-    // Prefer Browserless liveURL — reuses the existing account, no extra signup.
-    if (browserConfigured()) {
-      const lu = await openLiveURL(url || undefined);
-      if (lu.ok && lu.liveUrl) {
-        liveHolder.embedUrl = lu.liveUrl;
-        liveHolder.kind = "browserbase"; // client treats it as a sandboxed no-audio view
-        if (url) liveHolder.url = url;
-        return { ok: true, url: url || null, note: fastNote };
-      }
-    }
-    // Otherwise Browserbase, if configured.
+      "فتحت متصفّحًا حيًّا سريعًا (بدون صوت) داخل ملاك، تفاعلي — اضغط واكتب داخله. أرجعي panel نوعه live فيه item:{url,title}. لو تسوّق: ذكّري فهد يسجّل دخوله ويضيف للعربة بنفسه ويراجع قبل الدفع.";
     if (browserbaseConfigured()) {
       const bb = await openBrowserbase(url || undefined, liveCtx.viewport);
       if (bb.ok && bb.liveUrl) {
