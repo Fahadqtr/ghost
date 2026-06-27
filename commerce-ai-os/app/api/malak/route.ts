@@ -696,18 +696,23 @@ async function openLiveBrowser(
   const data: LiveSessionData = { sid: s.sessionId || "", embedUrl: s.embedUrl, adminToken: s.adminToken, ts: Date.now() };
   liveCtx.existing = data;
   liveCtx.cookies.push(`malak_live=${encodeLive(data)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${LIVE_TTL_SEC}`);
-  // Persist the durable profile id: keep the existing one, or adopt this fresh
-  // session's id as the new profile. Refresh the 90-day cookie either way.
+  // Persist the durable profile id ONLY if profiles actually worked (they may be
+  // plan-gated, in which case createLiveSession fell back to no-profile).
   const durable = profileId || s.sessionId;
-  if (durable) {
+  if (s.profileUsed && durable) {
     liveCtx.profileId = durable;
     liveCtx.cookies.push(`malak_profile=${encodeProfile(durable)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${PROFILE_TTL_SEC}`);
   }
-  const loaded = Boolean(profileId);
+  const loaded = Boolean(profileId) && s.profileUsed;
+  const persistNote = s.profileUsed
+    ? (loaded
+        ? " حمّلت بروفايلك المحفوظ — لو سبق وسجّلت دخولك راح تلقاك داخل، وإلا سجّل مرة وحدة ويُحفظ تلقائيًا للمرات الجاية."
+        : " سجّل دخولك مرة وحدة داخل النافذة ويتحفظ تلقائيًا عشان تبقى مسجّل المرات الجاية.")
+    : " ملاحظة: حفظ تسجيل الدخول يحتاج ترقية خطة المتصفح الحي، فحاليًا تسجّل دخولك كل جلسة.";
   return {
     ok: true,
     url: url || null,
-    note: `فتحت جلسة متصفح حيّة بصوت داخل ملاك (تفاعلية على جهاز فهد).${loaded ? " حمّلت بروفايلك المحفوظ — لو سبق وسجّلت دخولك راح تلقاك داخل، وإلا سجّل مرة وحدة ويُحفظ تلقائيًا للمرات الجاية." : " سجّل دخولك مرة وحدة داخل النافذة ويتحفظ تلقائيًا عشان تبقى مسجّل المرات الجاية."} أرجعي panel نوعه live فيه item:{url,title}. ذكّري فهد إنه يضيف للعربة بنفسه ويراجع قبل الدفع، والصوت يطلع من النافذة مباشرة.`,
+    note: `فتحت جلسة متصفح حيّة بصوت داخل ملاك (تفاعلية على جهاز فهد).${persistNote} أرجعي panel نوعه live فيه item:{url,title}. ذكّري فهد إنه يضيف للعربة بنفسه ويراجع قبل الدفع، والصوت يطلع من النافذة مباشرة.`,
   };
 }
 
