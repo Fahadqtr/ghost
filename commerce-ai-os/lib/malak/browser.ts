@@ -51,14 +51,15 @@ export async function openLiveURL(
     }, 30_000);
     const liveUrl = json?.data?.live?.liveURL || json?.data?.liveURL?.liveURL;
     if (!liveUrl) {
-      const err = Array.isArray(json?.errors) ? json.errors[0]?.message : "no liveURL";
-      console.warn(`[malak][liveurl] no url: ${String(err).slice(0, 160)}`);
-      return { ok: false, error: "تعذّر فتح المتصفح الحي السريع." };
+      const err = Array.isArray(json?.errors) ? json.errors.map((e: any) => e?.message).join("; ") : "no liveURL in response";
+      console.warn(`[malak][liveurl] no url: ${String(err).slice(0, 200)}`);
+      return { ok: false, error: `تعذّر فتح المتصفح السريع: ${String(err).slice(0, 160)}` };
     }
     return { ok: true, liveUrl };
   } catch (e: any) {
-    const msg = e?.name === "AbortError" ? "انتهت مهلة فتح المتصفح الحي السريع." : "تعذّر الاتصال بالمتصفح الحي السريع.";
-    console.warn(`[malak][liveurl] ${msg}: ${e?.message || e}`);
+    const detail = String(e?.message || e).slice(0, 160);
+    const msg = e?.name === "AbortError" ? "انتهت مهلة فتح المتصفح الحي السريع." : `تعذّر الاتصال بالمتصفح السريع: ${detail}`;
+    console.warn(`[malak][liveurl] ${msg}`);
     return { ok: false, error: msg };
   }
 }
