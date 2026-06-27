@@ -10,6 +10,7 @@ import { rateLimit } from "@/lib/malak/ratelimit";
 import { fetchPageContent, browserConfigured, runBrowserActions, type ActionStep } from "@/lib/malak/browser";
 import { webSearch, searchConfigured, searchEnvNamesPresent } from "@/lib/malak/search";
 import { createLiveSession, liveConfigured, liveNavigate, encodeLive, decodeLive, encodeProfile, decodeProfile, LIVE_TTL_SEC, PROFILE_TTL_SEC, type LiveSessionData } from "@/lib/malak/live";
+import { openBrowserbase, browserbaseConfigured } from "@/lib/malak/browserbase";
 
 // Malak AI — server brain. Holds all secrets (ANTHROPIC_API_KEY +
 // Supabase service role); the browser only ever sees the final structured JSON.
@@ -658,12 +659,34 @@ async function webSearchTool(input: any) {
 // model loop via `liveHolder`; the cookie to set goes via `liveCtx`.
 async function openLiveBrowser(
   input: any,
-  liveHolder: { embedUrl?: string; url?: string },
+  liveHolder: { embedUrl?: string; url?: string; kind?: "hyperbeam" | "browserbase" },
   liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[]; viewport?: { w: number; h: number } },
 ) {
   const url = typeof input?.url === "string" ? input.url.trim() : "";
+
+  // Pick the backend: YouTube/music/video NEED audio → Hyperbeam. Everything
+  // else (shopping, general browsing) → Browserbase, which streams a lighter,
+  // snappier interactive view (no audio). Falls back to Hyperbeam if Browserbase
+  // isn't configured or fails.
+  const wantsAudio = /youtube\.com|youtu\.be|music|spotify|soundcloud|netflix|anghami|\bvideo\b|\baudio\b/i.test(url);
+  if (!wantsAudio && browserbaseConfigured()) {
+    const bb = await openBrowserbase(url || undefined, liveCtx.viewport);
+    if (bb.ok && bb.liveUrl) {
+      liveHolder.embedUrl = bb.liveUrl;
+      liveHolder.kind = "browserbase";
+      if (url) liveHolder.url = url;
+      return {
+        ok: true,
+        url: url || null,
+        note: "فتحت متصفّحًا حيًّا سريعًا (بدون صوت) داخل ملاك، تفاعلي — اضغط واكتب داخله. أرجعي panel نوعه live فيه item:{url,title}. لو تسوّق: ذكّري فهد يسجّل دخوله ويضيف للعربة بنفسه ويراجع قبل الدفع. (للصوت/يوتيوب نستخدم المتصفح الآخر.)",
+      };
+    }
+    // else: fall through to Hyperbeam.
+  }
+
   if (!liveConfigured())
     return { error: "خدمة المتصفح الحي غير مهيأة بعد على الخادم.", note: "أضيفي HYPERBEAM_API_KEY في إعدادات الخادم لتفعيل المتصفح الحي بالصوت." };
+  liveHolder.kind = "hyperbeam";
 
   // Reuse the existing logged-in session if we still have one.
   const existing = liveCtx.existing;
@@ -759,7 +782,7 @@ async function browseWeb(input: any) {
   };
 }
 
-async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, string>, shotHolder: { dataUrl?: string; url?: string }, liveHolder: { embedUrl?: string; url?: string }, liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[]; viewport?: { w: number; h: number } }) {
+async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, string>, shotHolder: { dataUrl?: string; url?: string }, liveHolder: { embedUrl?: string; url?: string; kind?: "hyperbeam" | "browserbase" }, liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[]; viewport?: { w: number; h: number } }) {
   let result: any;
   switch (name) {
     case "search_products":
@@ -820,7 +843,7 @@ function enrichPanel(
   panel: any,
   skuImages: Map<string, string>,
   shotHolder?: { dataUrl?: string; url?: string },
-  liveHolder?: { embedUrl?: string; url?: string },
+  liveHolder?: { embedUrl?: string; url?: string; kind?: "hyperbeam" | "browserbase" },
 ) {
   if (panel?.type === "products" && Array.isArray(panel.items)) {
     for (const it of panel.items) {
@@ -834,7 +857,8 @@ function enrichPanel(
   }
   if (panel?.type === "live" && liveHolder?.embedUrl) {
     panel.item = panel.item || {};
-    panel.item.embedUrl = liveHolder.embedUrl;       // Hyperbeam interactive embed
+    panel.item.embedUrl = liveHolder.embedUrl;       // interactive embed
+    panel.item.kind = liveHolder.kind || "hyperbeam"; // backend → iframe attrs/audio
     if (liveHolder.url) panel.item.url = panel.item.url || liveHolder.url;
   }
   return panel;
@@ -1145,7 +1169,7 @@ function buildResponse(
   skuImages: Map<string, string>,
   fallbackAgent: string = "malak",
   shotHolder?: { dataUrl?: string; url?: string },
-  liveHolder?: { embedUrl?: string; url?: string },
+  liveHolder?: { embedUrl?: string; url?: string; kind?: "hyperbeam" | "browserbase" },
 ) {
   void fallbackAgent;
   const agent = "malak"; // single-persona: Malak does everything
@@ -1215,7 +1239,7 @@ export async function POST(req: Request) {
   // Captures a browser_action result screenshot (data URL) out of the model loop.
   const shotHolder: { dataUrl?: string; url?: string } = {};
   // Captures a Hyperbeam live-browser embed URL out of the model loop.
-  const liveHolder: { embedUrl?: string; url?: string } = {};
+  const liveHolder: { embedUrl?: string; url?: string; kind?: "hyperbeam" | "browserbase" } = {};
   // Persisted live session (signed cookie) so a login survives across turns, and
   // a durable signed profile id (90d) so logins persist across whole sessions.
   const cookieHeader = req.headers.get("cookie") || "";
