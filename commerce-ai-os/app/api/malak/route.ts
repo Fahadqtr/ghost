@@ -75,7 +75,9 @@ const SYSTEM_PROMPT =
   'browser{item:{url,title,summary}}, ' +
   'search{items:[{title,url,snippet}]}, ' +
   'live{item:{url,title}}, ' +
-  'links{items:[{label,url,note}]}. ' +
+  'links{items:[{label,url,note}]}, ' +
+  'player{item:{videoId,title}}. ' +
+  'تشغيل الأغاني بصوت (مهم): لأي طلب «شغّلي أغنية…» أو «أبي أسمع…» أو اسم أغنية/مطرب، استدعي play_song، ثم أرجعي panel نوعه player فيه item:{videoId,title} — يشتغل مشغّل يوتيوب داخل ملاك ويسمع فهد الأغنية بصوت مباشرة (مو رابط خارجي). ' +
   'الوضع الذكي (مهم جدًا وموثوق — فضّليه على المتصفح الحي): المتصفح المُضمّن متقلّب على شبكة فهد، فالأفضل والأسرع إن **ملاك العقل وجوال فهد اليد**. ' +
   'لأي طلب «شغّلي/افتحي يوتيوب/موسيقى/فيديو» أو «دوّري/اشتري من تيمو/شي إن»: ابحثي (web_search) للعثور على الأفضل، ثم أرجعي panel نوعه **links** فيه أزرار تفتح **مباشرة في تطبيق فهد** (يوتيوب يفتح بصوت كامل وفوري؛ تيمو/شي إن يفتحون بالتطبيق مسجّل دخول). ' +
   'لليوتيوب استخدمي رابط بحث/فيديو يوتيوب (https://www.youtube.com/results?search_query=الكلمات أو رابط فيديو مباشر). للتسوّق استخدمي روابط بحث تيمو/شي إن. اجعلي label واضحًا («▶ افتح في يوتيوب»، «🛒 افتح في تيمو») وnote مختصرًا. ' +
@@ -289,6 +291,16 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "play_song",
+    description:
+      "شغّلي أغنية/مقطع صوتي داخل ملاك مباشرة بصوت. لأي طلب «شغّلي أغنية كذا» أو «أبي أسمع كذا» أو اسم أغنية/مطرب. تبحث في يوتيوب وترجع معرّف الفيديو، والسيرفر يضمّن مشغّل يوتيوب يشتغل بصوت على جهاز فهد (بدون حاجز بوت لأنه يشتغل في متصفح فهد). أرجعي بعدها panel نوعه player فيه item:{videoId,title}.",
+    input_schema: {
+      type: "object",
+      properties: { query: { type: "string", description: "اسم الأغنية/المطرب أو وصف المقطع" } },
+      required: ["query"],
+    },
+  },
+  {
     name: "web_search",
     description:
       "ابحثي في الإنترنت عبر محرك بحث حقيقي وترجع النتائج كقائمة (عنوان + رابط + مقتطف) — بدون كابتشا. استخدميها لأي «ابحثي/دوّري في النت/قوقل عن…» أو «شوفي/قارني أسعار المنافسين». بعدها لو تبين تفاصيل صفحة معيّنة استخدمي browse_web على رابطها. أرجعي panel نوعه search فيه items:[{title,url,snippet}].",
@@ -368,7 +380,7 @@ const TOOLS: Anthropic.Tool[] = [
           type: "object",
           description: "لوحة بصرية اختيارية",
           properties: {
-            type: { type: "string", enum: ["products", "stats", "post", "tiktok", "browser", "search", "live", "links"] },
+            type: { type: "string", enum: ["products", "stats", "post", "tiktok", "browser", "search", "live", "links", "player"] },
             items: { type: "array", items: { type: "object" } },
             item: { type: "object" },
           },
@@ -634,6 +646,28 @@ async function lowStock(sb: Sb, input: any) {
   };
 }
 
+// Find a song on YouTube and return its video id so the client can embed the
+// YouTube player (plays in the user's browser → real sound, no bot wall).
+async function playSong(input: any) {
+  const query = typeof input?.query === "string" ? input.query.trim() : "";
+  if (!query) return { error: "أي أغنية تبي أشغّل؟" };
+  if (!searchConfigured())
+    return { error: "خدمة البحث غير مهيأة على الخادم.", note: "أضيفي BRAVE_SEARCH_TOKEN لتشغيل الأغاني." };
+  const out = await webSearch(`${query} يوتيوب`, 10);
+  if (!out.ok) return { error: out.error ?? "تعذّر البحث عن الأغنية.", query };
+  let videoId = "", title = "";
+  for (const r of out.results) {
+    const m = String(r.url || "").match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/);
+    if (m) { videoId = m[1]; title = r.title || query; break; }
+  }
+  if (!videoId)
+    return { error: "ما لقيت الأغنية على يوتيوب بصيغة قابلة للتشغيل.", query, note: "أرجعي links panel فيه زر بحث يوتيوب https://www.youtube.com/results?search_query=الكلمات بدلًا." };
+  return {
+    videoId, title, query,
+    note: "أرجعي panel نوعه player فيه item:{videoId, title}. هذا يضمّن مشغّل يوتيوب داخل ملاك ويشغّل الأغنية بصوت على جهاز فهد. speak جملة قصيرة فقط.",
+  };
+}
+
 // Search the web via a proper search API (no CAPTCHA, unlike scraping Google).
 async function webSearchTool(input: any) {
   const query = typeof input?.query === "string" ? input.query.trim() : "";
@@ -856,6 +890,9 @@ async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, 
       break;
     case "web_search":
       result = await webSearchTool(input);
+      break;
+    case "play_song":
+      result = await playSong(input);
       break;
     case "browser_action":
       result = await browserAction(input, shotHolder);

@@ -102,7 +102,7 @@ const txt = (v: any): string =>
   : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser" | "search" | "live" | "links";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser" | "search" | "live" | "links" | "player";
   items?: any[];
   item?: any;
 }
@@ -888,6 +888,43 @@ function LiveBrowserPanel({ item }: { item: any }) {
   );
 }
 
+// In-app music/video player — embeds the YouTube IFrame player, which runs in
+// the USER's browser (their IP), so playback works WITH SOUND and isn't blocked
+// by YouTube's datacenter bot wall (unlike the server-side live browser).
+function PlayerPanel({ item }: { item: any }) {
+  const raw = txt(item?.videoId);
+  const videoId = /^[A-Za-z0-9_-]{11}$/.test(raw) ? raw : "";
+  const title = txt(item?.title);
+  const [play, setPlay] = useState(false);
+  if (!videoId) return null;
+  return (
+    <div className="space-y-2 text-right">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-rose-200">🎵 تشغيل بصوت</span>
+      {title ? <p className="px-1 text-sm font-bold text-white">{title}</p> : null}
+      <div className="relative overflow-hidden rounded-xl border border-rose-400/20 bg-black" style={{ aspectRatio: "16 / 9" }}>
+        {play ? (
+          <iframe
+            src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1`}
+            title={title || "player"}
+            className="h-full w-full"
+            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+            allowFullScreen
+          />
+        ) : (
+          <button type="button" onClick={() => setPlay(true)} className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-rose-100">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`} alt={title} className="absolute inset-0 h-full w-full object-cover opacity-50" />
+            <span className="z-10 text-5xl drop-shadow">▶</span>
+            <span className="z-10 text-[13px] font-semibold drop-shadow">اضغط للتشغيل بصوت</span>
+          </button>
+        )}
+      </div>
+      <a href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 px-3 py-1.5 text-[12px] text-rose-200 hover:bg-rose-400/10">↗ افتح في يوتيوب</a>
+    </div>
+  );
+}
+
 // Big tappable action links — open straight in the user's native apps (YouTube,
 // Temu, Shein…) with full speed + sound, instead of a flaky embedded browser.
 function LinksPanel({ items }: { items: any[] }) {
@@ -1108,6 +1145,7 @@ function Panel({
   if (data.type === "browser" && data.item) return <BrowserPanel item={data.item} />;
   if (data.type === "search" && Array.isArray(data.items)) return <SearchPanel items={data.items} />;
   if (data.type === "links" && Array.isArray(data.items)) return <LinksPanel items={data.items} />;
+  if (data.type === "player" && data.item) return <PlayerPanel item={data.item} />;
   if (data.type === "live" && data.item) return <LiveBrowserPanel item={data.item} />;
   if (data.type === "briefing" && data.item)
     return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;

@@ -12,6 +12,11 @@ export function detectForcedTool(text: string): string | null {
   // net/a search engine → web_search (search APIs avoid the CAPTCHA wall that
   // scraping Google results hits). Both require explicit web words so we don't
   // steal catalog reads like "دوّر على منتجات كورية" (search OUR catalog).
+  // Play a song with sound → embedded YouTube player (play_song). "شغّل أغنية…".
+  const playSongCue = /(شغّل|شغل|شغّلي|شغلي|سمّعني|سمعني|أبي\s*أسمع|ابي\s*اسمع|حطّ|حط|play)/;
+  const songNoun = /(أغنية|اغنية|أغاني|اغاني|song|track|موسيقى|مقطع|أنشودة|انشوده|قرآن|قران|sound)/;
+  if (playSongCue.test(t) && songNoun.test(t)) return "play_song";
+
   // NOTE: shopping (تيمو/شي إن) and "play music/video" are intentionally NOT
   // force-routed to the (flaky) embedded live browser anymore. The model is
   // guided by the system prompt to prefer the reliable smart flow (web_search +
