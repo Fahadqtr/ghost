@@ -92,9 +92,15 @@ export function decodeLive(token: unknown, maxAgeMs = LIVE_TTL_SEC * 1000): Live
 // logins restored), or omit to start fresh AND save a new profile — the
 // returned sessionId becomes that profile id for next time. Profiles persist
 // the user's logins across sessions (Hyperbeam deletes them after 3 months idle).
-export async function createLiveSession(startUrl?: string, profileId?: string): Promise<LiveSession> {
+export async function createLiveSession(startUrl?: string, profileId?: string, viewport?: { w?: number; h?: number }): Promise<LiveSession> {
   const key = (process.env.HYPERBEAM_API_KEY || "").trim();
   if (!key) return { ok: false, error: "خدمة المتصفح الحي غير مهيأة على الخادم (HYPERBEAM_API_KEY)." };
+
+  // Size the VM to the user's device so a phone gets the mobile site (portrait)
+  // instead of a squished desktop layout. Default to a desktop size.
+  const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)));
+  const width = viewport?.w && viewport.w > 0 ? clamp(viewport.w, 360, 1920) : 1280;
+  const height = viewport?.h && viewport.h > 0 ? clamp(viewport.h, 600, 1080) : 720;
 
   let start: string | undefined;
   if (startUrl && startUrl.trim()) {
@@ -117,8 +123,8 @@ export async function createLiveSession(startUrl?: string, profileId?: string): 
         body: JSON.stringify({
           ...(start ? { start_url: start } : {}),
           ...(withProfile ? { profile } : {}),
-          width: 1280,
-          height: 720,
+          width,
+          height,
           fps: 24,
           ublock: true,
           // Reclaim idle/forgotten sessions so the free tier isn't burned.
