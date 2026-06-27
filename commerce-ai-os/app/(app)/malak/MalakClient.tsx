@@ -857,10 +857,16 @@ function LiveBrowserPanel({ item }: { item: any }) {
       {!big ? (
         <>
           <p className="px-1 text-[12px] leading-relaxed text-white/70">متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. ⛶ تكبير · ⟳ لو صارت سوداء.</p>
-          {url ? (
-            <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-[12px] text-emerald-200 hover:bg-emerald-400/10">↗ افتح في تبويب جديد</a>
-          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {/* Opening the EMBED url in a top-level tab works even when the phone
+                blocks third-party cookies (which black out the iframe). */}
+            <a href={embedUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/60 bg-emerald-400/10 px-3 py-1.5 text-[12px] font-semibold text-emerald-200 hover:bg-emerald-400/20">🖥️ افتح البث في تبويب (لو الشاشة سوداء)</a>
+            {url ? (
+              <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-[12px] text-emerald-200 hover:bg-emerald-400/10">↗ الموقع مباشرة</a>
+            ) : null}
+          </div>
         </>
       ) : null}
     </div>
