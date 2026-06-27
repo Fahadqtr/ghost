@@ -98,7 +98,10 @@ export async function createLiveSession(startUrl?: string, profileId?: string, v
 
   // Size the VM to the user's device so a phone gets the mobile site (portrait)
   // instead of a squished desktop layout. Default to a desktop size.
-  const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)));
+  // IMPORTANT: dimensions MUST be even — the H.264 video encoder needs even
+  // width/height, and odd values produce a BLACK stream.
+  const even = (n: number) => Math.round(n) - (Math.round(n) % 2);
+  const clamp = (n: number, lo: number, hi: number) => even(Math.max(lo, Math.min(hi, n)));
   const width = viewport?.w && viewport.w > 0 ? clamp(viewport.w, 360, 1920) : 1280;
   const height = viewport?.h && viewport.h > 0 ? clamp(viewport.h, 600, 1080) : 720;
 
@@ -127,8 +130,9 @@ export async function createLiveSession(startUrl?: string, profileId?: string, v
           height,
           fps: 24,
           ublock: true,
-          // Reclaim idle/forgotten sessions so the free tier isn't burned.
-          timeout: { absolute: 1800, inactive: 180, warning: 30, offline: 60 },
+          // Reclaim forgotten sessions, but give the user room to browse/think
+          // (180s was too aggressive — sessions died mid-use and went black).
+          timeout: { absolute: 1800, inactive: 600, warning: 30, offline: 120 },
         }),
         signal: ctrl.signal,
       });
