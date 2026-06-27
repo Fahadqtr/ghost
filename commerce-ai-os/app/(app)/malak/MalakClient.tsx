@@ -102,7 +102,7 @@ const txt = (v: any): string =>
   : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser";
   items?: any[];
   item?: any;
 }
@@ -757,6 +757,67 @@ function ScanPanel({
 
 // A draggable holographic result window. Several can be open at once; drag by
 // the header, close with ✕.
+// Popup "browser screen": Malak opened a real site server-side; we show a live
+// screenshot of it (loaded lazily from /api/malak/browse) plus her summary.
+function BrowserPanel({ item }: { item: any }) {
+  const url: string = txt(item?.url) || "";
+  const title: string = txt(item?.title) || "";
+  const summary: string = txt(item?.summary) || "";
+  const [bust, setBust] = useState(0);
+  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+  let host = "";
+  try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
+  const shotSrc = url ? `/api/malak/browse?url=${encodeURIComponent(url)}${bust ? `&_=${bust}` : ""}` : "";
+  const reload = () => { setState("loading"); setBust((b) => b + 1); };
+
+  return (
+    <div className="space-y-3 text-right">
+      {/* faux browser chrome */}
+      <div className="flex items-center gap-2 rounded-t-xl border border-cyan-400/30 bg-black/40 px-3 py-2">
+        <span className="flex gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></span>
+        <span dir="ltr" className="flex-1 truncate rounded-md bg-white/5 px-2 py-1 text-left font-mono text-[11px] text-cyan-200/80">{host || "—"}</span>
+        <button type="button" onClick={reload} title="تحديث" className="flex h-6 w-6 items-center justify-center rounded-md border border-cyan-400/30 text-cyan-200 hover:bg-cyan-400/10">⟳</button>
+      </div>
+
+      {title ? <p className="px-1 text-sm font-bold text-white">{title}</p> : null}
+
+      <div className="relative overflow-hidden rounded-xl border border-white/10 bg-black/30">
+        {state === "loading" ? (
+          <div className="flex h-44 items-center justify-center text-[12px] text-cyan-200/70">
+            <span className="animate-pulse">يفتح الصفحة في المتصفح…</span>
+          </div>
+        ) : null}
+        {url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={shotSrc}
+            alt={title || host}
+            onLoad={() => setState("ok")}
+            onError={() => setState("error")}
+            className={`max-h-[46vh] w-full object-contain object-top ${state === "ok" ? "block" : "hidden"}`}
+          />
+        ) : null}
+        {state === "error" ? (
+          <div className="flex h-44 flex-col items-center justify-center gap-2 px-4 text-center text-[12px] text-amber-200/90">
+            <span>ما قدرت ألتقط صورة الصفحة الحين.</span>
+            <span className="text-white/50">قد تحتاج خدمة المتصفح تتفعّل على الخادم (BROWSERLESS_URL / BROWSERLESS_TOKEN)، أو الموقع رفض الفتح.</span>
+            <button type="button" onClick={reload} className="rounded-md border border-cyan-400/40 px-3 py-1 text-cyan-200 hover:bg-cyan-400/10">جرّب مرة ثانية</button>
+          </div>
+        ) : null}
+      </div>
+
+      {summary ? <p className="px-1 text-[13px] leading-relaxed text-white/80">{summary}</p> : null}
+
+      {url ? (
+        <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/40 px-3 py-1.5 text-[12px] text-cyan-200 hover:bg-cyan-400/10">
+          ↗ افتح في تبويب جديد
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 function ResultWindow({
   data, index, onClose, onConfirmDone, onConfirmCancel, onGenerated, onQuick, onListen,
 }: {
@@ -851,6 +912,7 @@ function Panel({
   if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} />;
   if (data.type === "post" && data.item) return <PostPanel item={data.item} />;
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
+  if (data.type === "browser" && data.item) return <BrowserPanel item={data.item} />;
   if (data.type === "briefing" && data.item)
     return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
   if (data.type === "scan" && data.item)
