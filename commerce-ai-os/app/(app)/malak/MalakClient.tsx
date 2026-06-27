@@ -1691,11 +1691,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         @keyframes eqbar { 0%,100%{transform:scaleY(0.35)} 50%{transform:scaleY(1)} }
         @keyframes screenInL { 0%{opacity:0;transform:translateX(-26px)} 100%{opacity:1;transform:none} }
         @keyframes screenInR { 0%{opacity:0;transform:translateX(26px)} 100%{opacity:1;transform:none} }
+        @keyframes screenInB { 0%{opacity:0;transform:translateY(22px)} 100%{opacity:1;transform:none} }
       `}</style>
         </div>{/* center column = orb only */}
         <div className="order-3 lg:col-span-3" style={{ animation: "screenInR .5s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} /></div>
       </div>{/* HUD grid */}
-      <HudObjective scan={sd} />
+      <div style={{ animation: "screenInB .55s ease-out both" }}><HudObjective scan={sd} /></div>
 
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
