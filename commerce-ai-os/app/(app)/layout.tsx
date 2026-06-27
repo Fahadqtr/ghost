@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import AppShell from "@/components/AppShell";
+import StaleDeploymentBanner from "@/components/StaleDeploymentBanner";
 import { createClient } from "@/lib/supabase/server";
 
 // Authenticated app shell: responsive sidebar/drawer + topbar.
@@ -17,5 +18,10 @@ export default async function AppLayout({
 
   if (!user) redirect("/login");
 
-  return <AppShell userEmail={user.email}>{children}</AppShell>;
+  return (
+    <AppShell userEmail={user.email}>
+      <StaleDeploymentBanner />
+      {children}
+    </AppShell>
+  );
 }
