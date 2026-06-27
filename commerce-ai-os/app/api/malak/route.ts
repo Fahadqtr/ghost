@@ -9,7 +9,7 @@ import { requireMalakWriter } from "@/lib/malak/authz";
 import { rateLimit } from "@/lib/malak/ratelimit";
 import { fetchPageContent, browserConfigured, runBrowserActions, type ActionStep } from "@/lib/malak/browser";
 import { webSearch, searchConfigured, searchEnvNamesPresent } from "@/lib/malak/search";
-import { createLiveSession, liveConfigured, liveNavigate, encodeLive, decodeLive, LIVE_TTL_SEC, type LiveSessionData } from "@/lib/malak/live";
+import { createLiveSession, liveConfigured, liveNavigate, encodeLive, decodeLive, encodeProfile, decodeProfile, LIVE_TTL_SEC, PROFILE_TTL_SEC, type LiveSessionData } from "@/lib/malak/live";
 
 // Malak AI — server brain. Holds all secrets (ANTHROPIC_API_KEY +
 // Supabase service role); the browser only ever sees the final structured JSON.
@@ -659,7 +659,7 @@ async function webSearchTool(input: any) {
 async function openLiveBrowser(
   input: any,
   liveHolder: { embedUrl?: string; url?: string },
-  liveCtx: { existing?: LiveSessionData | null; setCookie?: string },
+  liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[] },
 ) {
   const url = typeof input?.url === "string" ? input.url.trim() : "";
   if (!liveConfigured())
@@ -685,18 +685,29 @@ async function openLiveBrowser(
     };
   }
 
-  // None active → create one (optionally starting at the requested URL).
-  const s = await createLiveSession(url || undefined);
+  // None active → create one. Load the saved profile (cookies + logins) if we
+  // have one so the user stays signed in; otherwise start fresh + save a new
+  // profile (its session id becomes the durable profile id for next time).
+  const profileId = liveCtx.profileId || undefined;
+  const s = await createLiveSession(url || undefined, profileId);
   if (!s.ok || !s.embedUrl || !s.adminToken) return { error: s.error ?? "تعذّر فتح المتصفح الحي.", url };
   liveHolder.embedUrl = s.embedUrl;
   if (url) liveHolder.url = url;
   const data: LiveSessionData = { sid: s.sessionId || "", embedUrl: s.embedUrl, adminToken: s.adminToken, ts: Date.now() };
   liveCtx.existing = data;
-  liveCtx.setCookie = `malak_live=${encodeLive(data)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${LIVE_TTL_SEC}`;
+  liveCtx.cookies.push(`malak_live=${encodeLive(data)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${LIVE_TTL_SEC}`);
+  // Persist the durable profile id: keep the existing one, or adopt this fresh
+  // session's id as the new profile. Refresh the 90-day cookie either way.
+  const durable = profileId || s.sessionId;
+  if (durable) {
+    liveCtx.profileId = durable;
+    liveCtx.cookies.push(`malak_profile=${encodeProfile(durable)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${PROFILE_TTL_SEC}`);
+  }
+  const loaded = Boolean(profileId);
   return {
     ok: true,
     url: url || null,
-    note: "فتحت جلسة متصفح حيّة بصوت داخل ملاك (تفاعلية على جهاز فهد). سجّل دخولك بنفسك داخل النافذة لو احتجت. أرجعي panel نوعه live فيه item:{url,title}. ذكّري فهد إنه يضيف للعربة بنفسه ويراجع قبل الدفع، والصوت يطلع من النافذة مباشرة.",
+    note: `فتحت جلسة متصفح حيّة بصوت داخل ملاك (تفاعلية على جهاز فهد).${loaded ? " حمّلت بروفايلك المحفوظ — لو سبق وسجّلت دخولك راح تلقاك داخل، وإلا سجّل مرة وحدة ويُحفظ تلقائيًا للمرات الجاية." : " سجّل دخولك مرة وحدة داخل النافذة ويتحفظ تلقائيًا عشان تبقى مسجّل المرات الجاية."} أرجعي panel نوعه live فيه item:{url,title}. ذكّري فهد إنه يضيف للعربة بنفسه ويراجع قبل الدفع، والصوت يطلع من النافذة مباشرة.`,
   };
 }
 
@@ -743,7 +754,7 @@ async function browseWeb(input: any) {
   };
 }
 
-async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, string>, shotHolder: { dataUrl?: string; url?: string }, liveHolder: { embedUrl?: string; url?: string }, liveCtx: { existing?: LiveSessionData | null; setCookie?: string }) {
+async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, string>, shotHolder: { dataUrl?: string; url?: string }, liveHolder: { embedUrl?: string; url?: string }, liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[] }) {
   let result: any;
   switch (name) {
     case "search_products":
@@ -1200,14 +1211,23 @@ export async function POST(req: Request) {
   const shotHolder: { dataUrl?: string; url?: string } = {};
   // Captures a Hyperbeam live-browser embed URL out of the model loop.
   const liveHolder: { embedUrl?: string; url?: string } = {};
-  // Persisted live session (signed cookie) so a login survives across turns.
-  const liveCookie = (req.headers.get("cookie") || "").match(/(?:^|;\s*)malak_live=([^;]+)/)?.[1];
-  const liveCtx: { existing?: LiveSessionData | null; setCookie?: string } = {
+  // Persisted live session (signed cookie) so a login survives across turns, and
+  // a durable signed profile id (90d) so logins persist across whole sessions.
+  const cookieHeader = req.headers.get("cookie") || "";
+  const liveCookie = cookieHeader.match(/(?:^|;\s*)malak_live=([^;]+)/)?.[1];
+  const profCookie = cookieHeader.match(/(?:^|;\s*)malak_profile=([^;]+)/)?.[1];
+  const liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[] } = {
     existing: liveCookie ? decodeLive(decodeURIComponent(liveCookie)) : null,
+    profileId: profCookie ? decodeProfile(decodeURIComponent(profCookie)) : null,
+    cookies: [],
   };
-  // Helper: send JSON and set the live-session cookie if one was (re)created.
-  const reply = (body: any) =>
-    Response.json(body, liveCtx.setCookie ? { headers: { "Set-Cookie": liveCtx.setCookie } } : undefined);
+  // Helper: send JSON and set any live/profile cookies that were (re)created.
+  const reply = (body: any) => {
+    if (!liveCtx.cookies.length) return Response.json(body);
+    const headers = new Headers({ "Content-Type": "application/json" });
+    for (const c of liveCtx.cookies) headers.append("Set-Cookie", c);
+    return new Response(JSON.stringify(body), { status: 200, headers });
+  };
 
   // Single-persona: Malak handles everything herself (no team routing).
   const systemPrompt = SYSTEM_PROMPT;
