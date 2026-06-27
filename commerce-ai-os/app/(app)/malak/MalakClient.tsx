@@ -1637,8 +1637,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       >
         <button
           type="button"
-          onClick={() => { unlockAudio(); inputRef.current?.focus(); }}
-          aria-label="ركّز الإدخال"
+          onClick={() => { if (micSupported) { toggleMic(); } else { unlockAudio(); inputRef.current?.focus(); } }}
+          aria-label={listening ? "إيقاف المايك" : "تكلّم مع ملاك"}
           className="flex h-full w-full items-center justify-center"
         >
           <AiCoreOrb state={state} levelRef={levelRef} />
