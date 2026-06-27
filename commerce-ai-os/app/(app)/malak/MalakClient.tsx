@@ -1532,6 +1532,27 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         >
           <JarvisOrb state={state} size={fsActive ? Math.round(orbSize * 2) : Math.round(orbSize * 1.7)} levelRef={levelRef} />
         </button>
+
+        {/* floating HUD tags around the orb (mix of real data + status) */}
+        {(() => {
+          const tot = scanData?.total ?? 0;
+          const synced = !(scanData?.channelMismatch);
+          const health = tot ? Math.round((tot - ((scanData?.outOfStock ?? 0) + (scanData?.missingImages ?? 0) + (scanData?.suspiciousPrice ?? 0))) / tot * 100) : 0;
+          const stLabel = state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY";
+          const tags: { c: string; t: string }[] = [
+            { c: "left-[6%] top-[16%]", t: "CORE · STABLE" },
+            { c: "right-[6%] top-[14%]", t: `LINK · ${synced ? "OK" : "SYNC"}` },
+            { c: "left-[3%] top-1/2 -translate-y-1/2", t: `SKU · ${tot}` },
+            { c: "right-[3%] top-1/2 -translate-y-1/2", t: `HEALTH · ${health}%` },
+            { c: "left-[9%] bottom-[16%]", t: `SCAN · ${stLabel}` },
+            { c: "right-[8%] bottom-[18%]", t: "PWR · 100%" },
+          ];
+          return tags.map((g, i) => (
+            <span key={i} dir="ltr" className={`pointer-events-none absolute z-10 hidden font-mono text-[8px] tracking-widest sm:block ${g.c}`} style={{ color: "rgba(140,190,225,0.5)" }}>
+              <span style={{ color: "rgba(140,190,225,0.35)" }}>› </span>{g.t}
+            </span>
+          ));
+        })()}
         <button
           type="button"
           onClick={toggleFullscreen}
