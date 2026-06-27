@@ -1,8 +1,14 @@
 "use client";
 
 import { Component, useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import type { MalakKpis } from "@/lib/dashboard";
-import JarvisOrb from "./JarvisOrb";
+
+// Real 3D AI core (R3F) — browser-only, so load it without SSR.
+const AiCoreOrb = dynamic(() => import("./AiCoreOrb"), {
+  ssr: false,
+  loading: () => <div className="h-full w-full" />,
+});
 import { HudLeft, HudRight, HudObjective, type ScanData } from "./HudParts";
 
 // In-app error boundary: instead of the white "Application error" screen, show
@@ -1615,8 +1621,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           onClick={() => { unlockAudio(); inputRef.current?.focus(); }}
           aria-label="ركّز الإدخال"
           className="flex items-center justify-center"
+          style={{ width: fsActive ? Math.round(orbSize * 2.6) : Math.round(orbSize * 2.3), height: fsActive ? Math.round(orbSize * 2.6) : Math.round(orbSize * 2.3) }}
         >
-          <JarvisOrb state={state} size={fsActive ? Math.round(orbSize * 2) : Math.round(orbSize * 1.7)} levelRef={levelRef} />
+          <AiCoreOrb state={state} levelRef={levelRef} />
         </button>
 
         {/* floating HUD tags around the orb (mix of real data + status) */}
