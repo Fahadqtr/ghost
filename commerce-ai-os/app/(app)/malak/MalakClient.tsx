@@ -774,6 +774,9 @@ function LiveBrowserPanel({ item }: { item: any }) {
   // The stream often shows black until the first tap (mobile media autoplay) /
   // while the VM boots — show a one-tap "start" hint over the iframe.
   const [started, setStarted] = useState(false);
+  // Bumping this remounts the iframe → reconnects to the SAME (persistent)
+  // session, recovering from a black/stalled stream without a new VM.
+  const [reloadKey, setReloadKey] = useState(0);
   let host = "";
   try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
 
@@ -810,6 +813,7 @@ function LiveBrowserPanel({ item }: { item: any }) {
       <div className="flex items-center gap-2 rounded-t-xl border border-emerald-400/30 bg-black/40 px-3 py-2">
         <span className="flex gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></span>
         <span className="flex-1 truncate text-[11px] font-semibold text-emerald-300">🔴 مباشر بصوت{host ? ` · ${host}` : ""}</span>
+        <button type="button" onClick={() => { setStarted(true); setReloadKey((k) => k + 1); }} title="إعادة تحميل" aria-label="إعادة تحميل" className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">⟳</button>
         <button type="button" onClick={toggleBig} title={big ? "تصغير" : "تكبير"} aria-label="تكبير الشاشة" className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">{big ? "✕" : "⛶"}</button>
       </div>
 
@@ -828,6 +832,7 @@ function LiveBrowserPanel({ item }: { item: any }) {
           <button type="button" onClick={toggleBig} aria-label="تصغير" className="absolute left-3 top-3 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-emerald-400/50 bg-black/70 text-lg text-emerald-100">✕</button>
         ) : null}
         <iframe
+          key={reloadKey}
           src={embedUrl}
           title={title}
           className="h-full w-full"
@@ -851,7 +856,7 @@ function LiveBrowserPanel({ item }: { item: any }) {
 
       {!big ? (
         <>
-          <p className="px-1 text-[12px] leading-relaxed text-white/70">متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. اضغط ⛶ للتكبير لملء الشاشة.</p>
+          <p className="px-1 text-[12px] leading-relaxed text-white/70">متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. ⛶ تكبير · ⟳ لو صارت سوداء.</p>
           {url ? (
             <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
               className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-[12px] text-emerald-200 hover:bg-emerald-400/10">↗ افتح في تبويب جديد</a>
