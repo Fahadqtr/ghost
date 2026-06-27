@@ -19,6 +19,50 @@ export function browserConfigured(): boolean {
   return Boolean(base() && token());
 }
 
+// Interactive LIVE browser via Browserless BrowserQL `liveURL` — a lightweight
+// jpeg screencast the user can click/type in, reusing the SAME Browserless
+// account (no extra signup). No audio (use Hyperbeam for that). Returns an
+// embeddable streaming URL; the browser stays alive for `timeout` ms.
+export async function openLiveURL(
+  rawUrl?: string,
+): Promise<{ ok: true; liveUrl: string } | { ok: false; error: string }> {
+  if (!browserConfigured()) return { ok: false, error: "خدمة المتصفح غير مهيأة على الخادم." };
+  let url = "https://www.google.com";
+  if (rawUrl && rawUrl.trim()) {
+    try { url = assertSafeBrowseUrl(rawUrl); }
+    catch (e: any) { return { ok: false, error: e?.message || "رابط غير صالح." }; }
+  }
+  // Keep the browser alive 10 min for the user to interact; jpeg+compressed for
+  // bandwidth; interactable so clicks/typing reach the page; resizable to fit.
+  const query = `mutation Live {
+    goto(url: ${JSON.stringify(url)}) { status }
+    live: liveURL(interactable: true, type: jpeg, quality: 60, resizable: true, compressed: true, timeout: 600000) { liveURL }
+  }`;
+  try {
+    const json: any = await withTimeout(async (signal) => {
+      const res = await fetch(`${base()}/chromium/bql?token=${encodeURIComponent(token())}&timeout=60000`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+        signal,
+      });
+      if (!res.ok) throw new Error(`bql ${res.status}: ${(await res.text().catch(() => "")).slice(0, 120)}`);
+      return res.json();
+    }, 30_000);
+    const liveUrl = json?.data?.live?.liveURL || json?.data?.liveURL?.liveURL;
+    if (!liveUrl) {
+      const err = Array.isArray(json?.errors) ? json.errors[0]?.message : "no liveURL";
+      console.warn(`[malak][liveurl] no url: ${String(err).slice(0, 160)}`);
+      return { ok: false, error: "تعذّر فتح المتصفح الحي السريع." };
+    }
+    return { ok: true, liveUrl };
+  } catch (e: any) {
+    const msg = e?.name === "AbortError" ? "انتهت مهلة فتح المتصفح الحي السريع." : "تعذّر الاتصال بالمتصفح الحي السريع.";
+    console.warn(`[malak][liveurl] ${msg}: ${e?.message || e}`);
+    return { ok: false, error: msg };
+  }
+}
+
 function base(): string {
   return (process.env.BROWSERLESS_URL || "").trim().replace(/\/+$/, "");
 }

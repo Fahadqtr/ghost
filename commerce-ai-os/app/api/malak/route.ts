@@ -7,7 +7,7 @@ import { CATEGORIES, PLATFORMS } from "@/lib/constants";
 import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { rateLimit } from "@/lib/malak/ratelimit";
-import { fetchPageContent, browserConfigured, runBrowserActions, type ActionStep } from "@/lib/malak/browser";
+import { fetchPageContent, browserConfigured, runBrowserActions, openLiveURL, type ActionStep } from "@/lib/malak/browser";
 import { webSearch, searchConfigured, searchEnvNamesPresent } from "@/lib/malak/search";
 import { createLiveSession, liveConfigured, liveNavigate, encodeLive, decodeLive, encodeProfile, decodeProfile, LIVE_TTL_SEC, PROFILE_TTL_SEC, type LiveSessionData } from "@/lib/malak/live";
 import { openBrowserbase, browserbaseConfigured } from "@/lib/malak/browserbase";
@@ -669,19 +669,30 @@ async function openLiveBrowser(
   // snappier interactive view (no audio). Falls back to Hyperbeam if Browserbase
   // isn't configured or fails.
   const wantsAudio = /youtube\.com|youtu\.be|music|spotify|soundcloud|netflix|anghami|\bvideo\b|\baudio\b/i.test(url);
-  if (!wantsAudio && browserbaseConfigured()) {
-    const bb = await openBrowserbase(url || undefined, liveCtx.viewport);
-    if (bb.ok && bb.liveUrl) {
-      liveHolder.embedUrl = bb.liveUrl;
-      liveHolder.kind = "browserbase";
-      if (url) liveHolder.url = url;
-      return {
-        ok: true,
-        url: url || null,
-        note: "فتحت متصفّحًا حيًّا سريعًا (بدون صوت) داخل ملاك، تفاعلي — اضغط واكتب داخله. أرجعي panel نوعه live فيه item:{url,title}. لو تسوّق: ذكّري فهد يسجّل دخوله ويضيف للعربة بنفسه ويراجع قبل الدفع. (للصوت/يوتيوب نستخدم المتصفح الآخر.)",
-      };
+  if (!wantsAudio) {
+    const fastNote =
+      "فتحت متصفّحًا حيًّا سريعًا (بدون صوت) داخل ملاك، تفاعلي — اضغط واكتب داخله. أرجعي panel نوعه live فيه item:{url,title}. لو تسوّق: ذكّري فهد يسجّل دخوله ويضيف للعربة بنفسه ويراجع قبل الدفع. (للصوت/يوتيوب نستخدم المتصفح الآخر.)";
+    // Prefer Browserless liveURL — reuses the existing account, no extra signup.
+    if (browserConfigured()) {
+      const lu = await openLiveURL(url || undefined);
+      if (lu.ok && lu.liveUrl) {
+        liveHolder.embedUrl = lu.liveUrl;
+        liveHolder.kind = "browserbase"; // client treats it as a sandboxed no-audio view
+        if (url) liveHolder.url = url;
+        return { ok: true, url: url || null, note: fastNote };
+      }
     }
-    // else: fall through to Hyperbeam.
+    // Otherwise Browserbase, if configured.
+    if (browserbaseConfigured()) {
+      const bb = await openBrowserbase(url || undefined, liveCtx.viewport);
+      if (bb.ok && bb.liveUrl) {
+        liveHolder.embedUrl = bb.liveUrl;
+        liveHolder.kind = "browserbase";
+        if (url) liveHolder.url = url;
+        return { ok: true, url: url || null, note: fastNote };
+      }
+    }
+    // else: fall through to Hyperbeam (audio-capable) below.
   }
 
   if (!liveConfigured())
