@@ -1623,15 +1623,15 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
 
       {/* Unified Mission-Control HUD: side panels frame the orb + chat into one
           screen. display:contents in fullscreen keeps the orb full-screen. */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
-        <div className="order-2 lg:order-1 lg:col-span-3" style={{ animation: "screenInL .26s ease-out both" }}><HudLeft scan={sd} onAction={send} /></div>
-        <div className="order-1 lg:order-2 lg:col-span-6">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+        <div className="order-2 md:order-1 md:col-span-3" style={{ animation: "screenInL .26s ease-out both" }}><HudLeft scan={sd} onAction={send} /></div>
+        <div className="order-1 md:order-2 md:col-span-6">
 
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
           In fullscreen it grows to fill the screen. */}
       <div
         className={`relative flex flex-col items-center justify-center overflow-hidden ${
-          fsActive ? "h-[40vh]" : "h-[34vh] sm:h-[44vh]"
+          fsActive ? "h-[60vh]" : "h-[36vh] sm:h-[44vh] md:h-[60vh]"
         }`}
         style={{ background: "transparent" }}
       >
@@ -1639,8 +1639,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           type="button"
           onClick={() => { unlockAudio(); inputRef.current?.focus(); }}
           aria-label="ركّز الإدخال"
-          className="flex items-center justify-center"
-          style={{ width: fsActive ? Math.round(orbSize * 2.6) : Math.round(orbSize * 2.3), height: fsActive ? Math.round(orbSize * 2.6) : Math.round(orbSize * 2.3) }}
+          className="flex h-full w-full items-center justify-center"
         >
           <AiCoreOrb state={state} levelRef={levelRef} />
         </button>
@@ -1720,7 +1719,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         @keyframes screenInB { 0%{opacity:0;transform:translateY(22px)} 100%{opacity:1;transform:none} }
       `}</style>
         </div>{/* center column = orb only */}
-        <div className="order-3 lg:col-span-3" style={{ animation: "screenInR .26s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} /></div>
+        <div className="order-3 md:col-span-3" style={{ animation: "screenInR .26s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} /></div>
       </div>{/* HUD grid */}
       <div style={{ animation: "screenInB .28s ease-out both" }}><HudObjective scan={sd} /></div>
 
