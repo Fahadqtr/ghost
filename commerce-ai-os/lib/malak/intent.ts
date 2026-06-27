@@ -12,6 +12,13 @@ export function detectForcedTool(text: string): string | null {
   // net/a search engine → web_search (search APIs avoid the CAPTCHA wall that
   // scraping Google results hits). Both require explicit web words so we don't
   // steal catalog reads like "دوّر على منتجات كورية" (search OUR catalog).
+  // Live browser with audio (Hyperbeam) — anything about watching/hearing live
+  // or playing sound. Must win over the screenshot tools (which are silent).
+  const liveCue = /(لايف|مباشر|حي\b|حيّ|بصوت|صوت|أسمع|اسمع|اسمعي|سمّعي|نسمع|أشوف\s*مباشر|شوفه\s*مباشر|متصفح\s*حي|live\s*browser|with\s*sound|audio)/;
+  const playCue = /(شغّل|شغل|شغّلي|شغلي|play|تشغيل)/;
+  if (liveCue.test(t) || (playCue.test(t) && /(فيديو|موسيقى|أغنية|اغنية|يوتيوب|youtube|video|music|song|صوت)/.test(t)))
+    return "open_live_browser";
+
   // Interactive control (click/type/select/login) — needs browser_action, not a
   // read-only open. Look for control verbs alongside a web/page context.
   const controlVerb = /(اضغط|اضغطي|دوس|دوسي|اختر|اختاري|سجّل|سجل|سجّلي|سجلي|عبّي|عبي|املئي?|اكتبي?\s*في|شغّل|شغل|شغّلي|شغلي|نزّل|مرّري?|click|press|select|login|log\s*in|fill|submit|type\s*in)/;
