@@ -12,19 +12,13 @@ export function detectForcedTool(text: string): string | null {
   // net/a search engine → web_search (search APIs avoid the CAPTCHA wall that
   // scraping Google results hits). Both require explicit web words so we don't
   // steal catalog reads like "دوّر على منتجات كورية" (search OUR catalog).
-  // Shopping mode (Temu/Shein/any store): a real shopping site needs the live
-  // logged-in session, not a server-side screenshot. Route store/cart intents to
-  // open_live_browser (it reuses + navigates the persistent session).
-  const shopSite = /(تيمو|temu|شي\s*إن|شي\s*ان|شين|shein|amazon|أمازون|نون|noon|ايباي|ebay|عربة|العربة|cart|سلة|أضف\s*للعربة|اطلب|تسوّق|تسوق|متجر\s*online)/;
-  const shopVerb = /(افتح|افتحي|سوّ|سوي|دوّر|دور|ابحث|ابحثي|اطلب|اطلبي|اشتر|اشتري|أضف|اضف|قارن|قارني|shop|buy|order|add)/;
-  if (shopSite.test(t) && (shopVerb.test(t) || /(تريند|trend|منتج|product|سعر|price)/.test(t))) return "open_live_browser";
-
-  // Live browser with audio (Hyperbeam) — anything about watching/hearing live
-  // or playing sound. Must win over the screenshot tools (which are silent).
-  const liveCue = /(لايف|مباشر|حي\b|حيّ|بصوت|صوت|أسمع|اسمع|اسمعي|سمّعي|نسمع|أشوف\s*مباشر|شوفه\s*مباشر|متصفح\s*حي|live\s*browser|with\s*sound|audio)/;
-  const playCue = /(شغّل|شغل|شغّلي|شغلي|play|تشغيل)/;
-  if (liveCue.test(t) || (playCue.test(t) && /(فيديو|موسيقى|أغنية|اغنية|يوتيوب|youtube|video|music|song|صوت)/.test(t)))
-    return "open_live_browser";
+  // NOTE: shopping (تيمو/شي إن) and "play music/video" are intentionally NOT
+  // force-routed to the (flaky) embedded live browser anymore. The model is
+  // guided by the system prompt to prefer the reliable smart flow (web_search +
+  // a `links` panel that opens the user's native apps with full speed/sound).
+  // open_live_browser is only used when the user explicitly asks for embedded.
+  // We force it only on a clear explicit "embedded live browser" request.
+  if (/(متصفح\s*حي|مضمّن|مضمن|لايف\s*داخل|live\s*browser)/.test(t)) return "open_live_browser";
 
   // Interactive control (click/type/select/login) — needs browser_action, not a
   // read-only open. Look for control verbs alongside a web/page context.

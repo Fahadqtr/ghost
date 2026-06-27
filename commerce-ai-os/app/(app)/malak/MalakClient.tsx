@@ -102,7 +102,7 @@ const txt = (v: any): string =>
   : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser" | "search" | "live";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser" | "search" | "live" | "links";
   items?: any[];
   item?: any;
 }
@@ -888,6 +888,42 @@ function LiveBrowserPanel({ item }: { item: any }) {
   );
 }
 
+// Big tappable action links — open straight in the user's native apps (YouTube,
+// Temu, Shein…) with full speed + sound, instead of a flaky embedded browser.
+function LinksPanel({ items }: { items: any[] }) {
+  const icon = (host: string) => {
+    if (/youtu/.test(host)) return "▶";
+    if (/temu/.test(host)) return "🛒";
+    if (/shein/.test(host)) return "🛍️";
+    if (/google|bing/.test(host)) return "🔎";
+    return "↗";
+  };
+  return (
+    <div className="space-y-2 text-right">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-cyan-200">🔗 افتح بتطبيقك</span>
+      <div className="space-y-2">
+        {items.map((it, i) => {
+          const url = txt(it?.url);
+          let host = "";
+          try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
+          if (!url) return null;
+          return (
+            <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-3 rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-3 py-3 text-cyan-100 hover:bg-cyan-400/20">
+              <span className="text-xl">{icon(host)}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-bold">{txt(it?.label) || host || url}</span>
+                {it?.note ? <span className="block truncate text-[11px] text-white/60">{txt(it.note)}</span> : (host ? <span dir="ltr" className="block truncate text-left font-mono text-[10px] text-emerald-300/70">{host}</span> : null)}
+              </span>
+              <span className="text-cyan-300">↗</span>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Web-search results list (from a search API — no CAPTCHA). Each row links out.
 function SearchPanel({ items }: { items: any[] }) {
   return (
@@ -1071,6 +1107,7 @@ function Panel({
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
   if (data.type === "browser" && data.item) return <BrowserPanel item={data.item} />;
   if (data.type === "search" && Array.isArray(data.items)) return <SearchPanel items={data.items} />;
+  if (data.type === "links" && Array.isArray(data.items)) return <LinksPanel items={data.items} />;
   if (data.type === "live" && data.item) return <LiveBrowserPanel item={data.item} />;
   if (data.type === "briefing" && data.item)
     return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
