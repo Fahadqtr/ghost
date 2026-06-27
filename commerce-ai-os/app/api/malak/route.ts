@@ -74,7 +74,12 @@ const SYSTEM_PROMPT =
   'tiktok{item:{hook,scenes:[{shot,text}],audio,hashtags,cta}}, ' +
   'browser{item:{url,title,summary}}, ' +
   'search{items:[{title,url,snippet}]}, ' +
-  'live{item:{url,title}}. ' +
+  'live{item:{url,title}}, ' +
+  'links{items:[{label,url,note}]}. ' +
+  'الوضع الذكي (مهم جدًا وموثوق — فضّليه على المتصفح الحي): المتصفح المُضمّن متقلّب على شبكة فهد، فالأفضل والأسرع إن **ملاك العقل وجوال فهد اليد**. ' +
+  'لأي طلب «شغّلي/افتحي يوتيوب/موسيقى/فيديو» أو «دوّري/اشتري من تيمو/شي إن»: ابحثي (web_search) للعثور على الأفضل، ثم أرجعي panel نوعه **links** فيه أزرار تفتح **مباشرة في تطبيق فهد** (يوتيوب يفتح بصوت كامل وفوري؛ تيمو/شي إن يفتحون بالتطبيق مسجّل دخول). ' +
+  'لليوتيوب استخدمي رابط بحث/فيديو يوتيوب (https://www.youtube.com/results?search_query=الكلمات أو رابط فيديو مباشر). للتسوّق استخدمي روابط بحث تيمو/شي إن. اجعلي label واضحًا («▶ افتح في يوتيوب»، «🛒 افتح في تيمو») وnote مختصرًا. ' +
+  'وضّحي لفهد إن الضغط يفتح التطبيق بصوت/سرعة كاملة. تقدرين تدمجين: web_search لأفضل خيار + links للفتح، وأحيانًا browse_web للقطة. استخدمي open_live_browser فقط لو فهد طلب صراحةً «داخل ملاك/مضمّن». ' +
   'الإنترنت — أدوات مهمّة: ' +
   '(١) web_search للبحث في النت: لأي «ابحثي/دوّري في النت أو قوقل عن…» أو «قارني/شوفي أسعار المنافسين» استخدمي web_search — ترجع نتائج نظيفة بدون كابتشا. **لا تفتحي صفحة نتائج جوجل بـ browse_web أبدًا** لأنها تتحجب بكابتشا (unusual traffic). بعد web_search أرجعي panel نوعه search فيه items:[{title,url,snippet}]، ولو فهد يبي تفاصيل نتيجة معيّنة افتحي رابطها بـ browse_web. ' +
   '(٢) browse_web لفتح صفحة محدّدة (قراءة فقط): تفتح أي رابط حقيقي وتقرأه وتلتقط لقطة. استخدميها لـ«افتحي هذا الرابط/الموقع»، «ادخلي صفحة المنتج عند المنافس ولخّصيها». بعدها أرجعي إجباريًا panel نوعه browser فيه item:{url,title,summary} — السيرفر يعرض «شاشة متصفح» منبثقة فيها لقطة الصفحة الحيّة. ' +
@@ -363,7 +368,7 @@ const TOOLS: Anthropic.Tool[] = [
           type: "object",
           description: "لوحة بصرية اختيارية",
           properties: {
-            type: { type: "string", enum: ["products", "stats", "post", "tiktok", "browser", "search", "live"] },
+            type: { type: "string", enum: ["products", "stats", "post", "tiktok", "browser", "search", "live", "links"] },
             items: { type: "array", items: { type: "object" } },
             item: { type: "object" },
           },
