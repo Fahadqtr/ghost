@@ -1,24 +1,23 @@
 "use client";
 
-// JARVIS-style atom orb (shared by the live Malak hero + the /orb-lab preview).
-// A glowing cyan core that breathes, three tilted orbiting nodes (atom), and
-// concentric reticle rings — driven by Malak's state. 2D canvas, no Three.js.
-// `level` (0..1) optionally drives the "speaking" breathing from real audio.
+// Mission-Control particle-sphere orb (matches the JARVIS reference): a rotating
+// globe of points + thin concentric reticle rings + cardinal tick marks, in a
+// muted desaturated blue. State-driven (idle/listening/thinking/speaking);
+// `levelRef` (0..1) optionally drives the speaking motion from real audio.
+// 2D canvas, no Three.js.
 
 import { useEffect, useRef } from "react";
 
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
 
-const MID = "#4cc3ff";
-
 export default function JarvisOrb({
   state,
-  size = 220,
+  size = 320,
   levelRef,
 }: {
   state: OrbState;
   size?: number;
-  levelRef?: React.MutableRefObject<number>; // live audio level 0..1 (optional)
+  levelRef?: React.MutableRefObject<number>;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef<OrbState>(state);
@@ -35,7 +34,7 @@ export default function JarvisOrb({
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let raf = 0;
     const t0 = performance.now();
-    let W = size, H = size, cx = size / 2, cy = size / 2, R = size * 0.13;
+    let W = size, H = size, cx = size / 2, cy = size / 2, R = size * 0.30;
 
     function setup() {
       W = canvas.clientWidth || size;
@@ -43,77 +42,94 @@ export default function JarvisOrb({
       canvas.width = Math.round(W * dpr);
       canvas.height = Math.round(H * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      cx = W / 2; cy = H / 2; R = Math.min(W, H) * 0.13;
+      cx = W / 2; cy = H / 2; R = Math.min(W, H) * 0.30;
     }
     setup();
     const ro = new ResizeObserver(setup);
     ro.observe(canvas);
 
-    function orbit(t: number, tiltDeg: number, rx: number, ry: number, phase: number, speed: number, bright: number) {
-      const tilt = (tiltDeg * Math.PI) / 180;
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(tilt);
-      ctx.beginPath();
-      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(76,195,255,${0.18 * bright})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      const a = t * speed + phase;
-      const nx = Math.cos(a) * rx;
-      const ny = Math.sin(a) * ry;
-      const depth = (Math.sin(a) + 1) / 2;
-      const nr = 2.2 + depth * 3.2;
-      ctx.shadowBlur = 14 * bright;
-      ctx.shadowColor = MID;
-      ctx.beginPath();
-      ctx.arc(nx, ny, nr, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(174,230,255,${0.5 + 0.5 * depth})`;
-      ctx.fill();
-      ctx.restore();
+    // Fibonacci sphere — but each point keeps its latitude (y, rLat) and an
+    // angle that advances at its OWN rate, so the cloud SWIRLS like a galaxy
+    // (differential rotation) instead of turning as a rigid ball.
+    const N = 620;
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const pts: { y: number; rLat: number; phi0: number; spd: number; tw: number }[] = [];
+    for (let i = 0; i < N; i++) {
+      const y = 1 - (i / (N - 1)) * 2;
+      const rLat = Math.sqrt(1 - y * y);
+      // equator faster than poles + a little per-point variance → swirl
+      const spd = 0.55 + 0.9 * rLat + (((i * 41) % 17) / 17) * 0.25;
+      pts.push({ y, rLat, phi0: golden * i, spd, tw: ((i * 7) % 31) / 31 });
     }
 
-    function reticle(t: number, bright: number) {
+    const stroke = (al: number) => `rgba(130,185,225,${al})`;
+
+    function reticle(t: number, a: number) {
+      // concentric thin rings
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 2.7, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(76,195,255,${0.22 * bright})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      const ticks = 60;
-      for (let i = 0; i < ticks; i++) {
-        const ang = (i / ticks) * Math.PI * 2 + t * 0.05;
-        const r1 = R * 2.45, r2 = i % 5 === 0 ? R * 2.32 : R * 2.4;
+      for (const [rad, alpha] of [[R * 1.12, 0.32], [R * 1.34, 0.20], [R * 1.62, 0.12]] as const) {
         ctx.beginPath();
-        ctx.moveTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
-        ctx.lineTo(Math.cos(ang) * r2, Math.sin(ang) * r2);
-        ctx.strokeStyle = `rgba(76,195,255,${(i % 5 === 0 ? 0.5 : 0.22) * bright})`;
+        ctx.arc(0, 0, rad, 0, Math.PI * 2);
+        ctx.strokeStyle = stroke(alpha * a);
         ctx.lineWidth = 1;
         ctx.stroke();
       }
-      ctx.rotate(t * 0.12);
-      ctx.beginPath();
-      ctx.setLineDash([4, 14]);
-      ctx.arc(0, 0, R * 3.15, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(76,195,255,${0.35 * bright})`;
-      ctx.lineWidth = 1.4;
-      ctx.stroke();
-      ctx.setLineDash([]);
       ctx.restore();
-    }
 
-    function loadingArc(t: number, bright: number) {
+      // fine tick scale around the inner ring (36 ticks, every 9th longer)
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.rotate(t * 2.4);
+      for (let k = 0; k < 36; k++) {
+        const ang = (k / 36) * Math.PI * 2;
+        const big = k % 9 === 0;
+        const r1 = R * 1.34, r2 = R * (big ? 1.22 : 1.29);
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
+        ctx.lineTo(Math.cos(ang) * r2, Math.sin(ang) * r2);
+        ctx.strokeStyle = stroke((big ? 0.5 : 0.2) * a);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // cardinal chevron brackets at N/E/S/W (between the two outer rings)
+      ctx.save();
+      ctx.translate(cx, cy);
+      for (let q = 0; q < 4; q++) {
+        const ang = q * Math.PI / 2 - Math.PI / 2;
+        ctx.save();
+        ctx.rotate(ang);
+        const rr = R * 1.46, w = 0.13;
+        ctx.strokeStyle = stroke(0.6 * a);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(-w) * (rr - R * 0.07), Math.sin(-w) * (rr - R * 0.07));
+        ctx.lineTo(rr, 0);
+        ctx.lineTo(Math.cos(w) * (rr - R * 0.07), Math.sin(w) * (rr - R * 0.07));
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+
+      // slowly rotating dashed ring with small square markers riding it
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(t * 0.06);
       ctx.beginPath();
-      ctx.arc(0, 0, R * 3.5, 0, Math.PI * 0.6);
-      ctx.strokeStyle = `rgba(174,230,255,${0.85 * bright})`;
-      ctx.lineWidth = 2;
-      ctx.shadowBlur = 12;
-      ctx.shadowColor = MID;
+      ctx.setLineDash([2, 15]);
+      ctx.arc(0, 0, R * 1.62, 0, Math.PI * 2);
+      ctx.strokeStyle = stroke(0.3 * a);
+      ctx.lineWidth = 1;
       ctx.stroke();
+      ctx.setLineDash([]);
+      for (let m = 0; m < 3; m++) {
+        const ang = (m / 3) * Math.PI * 2;
+        const mx = Math.cos(ang) * R * 1.62, my = Math.sin(ang) * R * 1.62;
+        ctx.strokeStyle = stroke(0.55 * a);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(mx - 2, my - 2, 4, 4);
+      }
       ctx.restore();
     }
 
@@ -121,51 +137,53 @@ export default function JarvisOrb({
       const t = (now - t0) / 1000;
       const st = stateRef.current;
 
-      let breathe = 0.04, speed = 0.5, glow = 0.6, ringBright = 0.7;
-      if (st === "idle") { breathe = 0.04; speed = 0.4; glow = 0.55; ringBright = 0.6; }
-      else if (st === "listening") { breathe = 0.05 + 0.03 * (0.5 + 0.5 * Math.sin(t * 5)); speed = 0.7; glow = 0.85; ringBright = 0.95; }
-      else if (st === "thinking") { breathe = 0.045; speed = 1.9; glow = 0.9; ringBright = 0.85; }
+      let spin = 0.18, jitter = 0, bright = 0.6, ringA = 0.85, breathe = 0.0;
+      if (st === "idle") { spin = 0.16; bright = 0.55; ringA = 0.8; }
+      else if (st === "listening") { spin = 0.26; bright = 0.8; ringA = 1; breathe = 0.02; }
+      else if (st === "thinking") { spin = 0.7; bright = 0.85; ringA = 0.9; jitter = 0.4; }
       else if (st === "speaking") {
         const live = levelRef && levelRef.current > 0 ? Math.min(1, levelRef.current) : -1;
-        const amp = live >= 0
-          ? live
-          : Math.abs(0.6 * Math.sin(t * 7.3) + 0.4 * Math.sin(t * 12.1) + 0.2 * Math.sin(t * 23.7));
-        breathe = 0.05 + 0.12 * amp; speed = 1.2; glow = 1.0; ringBright = 1.0;
+        const amp = live >= 0 ? live : Math.abs(0.6 * Math.sin(t * 7.3) + 0.4 * Math.sin(t * 12.1));
+        spin = 0.3; bright = 0.95; ringA = 1; breathe = 0.05 + 0.09 * amp; jitter = 0.25 * amp;
       }
 
       ctx.clearRect(0, 0, W, H);
 
-      const vg = ctx.createRadialGradient(cx, cy, R, cx, cy, Math.max(W, H) * 0.55);
-      vg.addColorStop(0, "rgba(8,24,48,0.45)");
-      vg.addColorStop(1, "rgba(2,5,16,0)");
-      ctx.fillStyle = vg;
-      ctx.fillRect(0, 0, W, H);
-
-      reticle(t, ringBright);
-      if (st === "thinking") loadingArc(t, ringBright);
-
-      orbit(t, 0, R * 2.0, R * 0.78, 0, speed, ringBright);
-      orbit(t, 60, R * 2.0, R * 0.78, 2.1, speed * 0.92, ringBright);
-      orbit(t, 120, R * 2.0, R * 0.78, 4.2, speed * 1.08, ringBright);
-
-      const r = R * (1 + breathe * Math.sin(t * 2.4) + (st === "speaking" ? breathe : 0));
-      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 2.4);
-      g.addColorStop(0, `rgba(255,255,255,${0.9 * glow})`);
-      g.addColorStop(0.18, `rgba(174,230,255,${0.95 * glow})`);
-      g.addColorStop(0.5, `rgba(76,195,255,${0.55 * glow})`);
-      g.addColorStop(1, "rgba(8,30,60,0)");
-      ctx.shadowBlur = 40 * glow;
-      ctx.shadowColor = MID;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      // faint inner glow
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.3);
+      g.addColorStop(0, `rgba(40,90,140,${0.22 * bright})`);
+      g.addColorStop(1, "rgba(4,10,22,0)");
       ctx.fillStyle = g;
-      ctx.fill();
-      ctx.shadowBlur = 0;
-
       ctx.beginPath();
-      ctx.arc(cx, cy, r * 0.32, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255,255,255,${0.85 * glow})`;
+      ctx.arc(cx, cy, R * 1.3, 0, Math.PI * 2);
       ctx.fill();
+
+      reticle(t, ringA);
+
+      // view tilt (gentle bob)
+      const ax = 0.42 + Math.sin(t * 0.12) * 0.05;
+      const cosX = Math.cos(ax), sinX = Math.sin(ax);
+      const rad = R * (1 + breathe);
+      for (let i = 0; i < N; i++) {
+        const p = pts[i];
+        // each point swirls at its own angular rate (galaxy differential spin)
+        const phi = p.phi0 + t * spin * p.spd;
+        let x = Math.cos(phi) * p.rLat;
+        let z = Math.sin(phi) * p.rLat;
+        // tilt about X for a 3D read
+        let y = p.y * cosX - z * sinX;
+        z = p.y * sinX + z * cosX;
+        const depth = (z + 1) / 2; // 0 back .. 1 front
+        const jr = jitter ? Math.sin(i * 12.9 + t * 6) * jitter * 0.04 : 0;
+        const px = cx + x * rad * (1 + jr);
+        const py = cy + y * rad * (1 + jr);
+        const tw = 0.75 + 0.25 * Math.sin(t * (1.5 + p.tw * 2) + i); // twinkle
+        const dot = 0.5 + depth * 1.4;
+        ctx.beginPath();
+        ctx.arc(px, py, dot, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(150,205,240,${(0.1 + depth * 0.62) * bright * tw})`;
+        ctx.fill();
+      }
 
       raf = requestAnimationFrame(draw);
     }

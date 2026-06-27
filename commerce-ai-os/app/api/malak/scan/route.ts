@@ -35,14 +35,20 @@ export async function GET() {
       return count ?? 0;
     };
 
-    const [total, rejected, missingImages, suspiciousPrice, lowRows] = await Promise.all([
+    const [total, approved, rejected, missingImages, suspiciousPrice, outOfStockRows, lowRows, activity] = await Promise.all([
       head(),
+      head((b) => b.eq("approval", "Approved")),
       head((b) => b.eq("approval", "Rejected")),
       head((b) => b.is("image_url", null)),
       head((b) => b.or("price.is.null,price.lte.0")),
+      sb.from("inventory").select("product_id").lte("stock_quantity", 0).limit(5000),
       sb.from("inventory").select("product_id").lt("stock_quantity", 10).limit(1000),
+      // Recent Malak actions for the activity feed (best-effort; table may be empty).
+      sb.from("malak_audit").select("created_at, action_type, sku, old_value, new_value, status").order("created_at", { ascending: false }).limit(10),
     ]);
     const lowStock = (lowRows.data ?? []).length;
+    const outOfStock = (outOfStockRows.data ?? []).length;
+    const recentActivity = (activity.data ?? []) as { created_at: string; action_type: string; sku: string | null; old_value: string | null; new_value: string | null; status: string | null }[];
 
     // Cross-platform mismatch: out-of-stock products still Active on a channel.
     // Same preview the sync tool runs; tolerant of failure (count → 0).
@@ -70,9 +76,10 @@ export async function GET() {
 
     return Response.json({
       agent: "malak",
-      total, rejected, missingImages, lowStock,
+      total, approved, rejected, missingImages, lowStock, outOfStock,
       suspiciousPrice, channelMismatch,
       issues,
+      recentActivity,
       allClear: issues.length === 0,
       priority,
     });

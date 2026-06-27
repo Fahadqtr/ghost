@@ -3,6 +3,7 @@
 import { Component, useCallback, useEffect, useRef, useState } from "react";
 import type { MalakKpis } from "@/lib/dashboard";
 import JarvisOrb from "./JarvisOrb";
+import { HudLeft, HudRight, HudObjective, type ScanData } from "./HudParts";
 
 // In-app error boundary: instead of the white "Application error" screen, show
 // the actual error text (visible on mobile, no console needed) + a reload.
@@ -802,6 +803,8 @@ export default function MalakPage({ kpis }: { kpis?: MalakKpis }) {
 function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [panel, setPanel] = useState<PanelData | null>(null);
+  const [scanData, setScanData] = useState<ScanData | null>(null); // HUD side panels
+  const [hudClock, setHudClock] = useState("--:--:--");
   const [input, setInput] = useState("");
   const [state, setState] = useState<OrbState>("idle");
   const [activeAgent, setActiveAgent] = useState<AgentId>("malak");
@@ -856,6 +859,35 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const srcNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Live output level (0..1) of Malak's voice, sampled from an analyser while
+  // she speaks — drives the JARVIS orb's breathing so it moves with her voice.
+  const levelRef = useRef(0);
+  const meterRafRef = useRef<number | null>(null);
+
+  // Tap the Web Audio graph: node → analyser → destination, then sample RMS.
+  const startMeter = useCallback((ctx: AudioContext, node: AudioBufferSourceNode): AnalyserNode => {
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    node.connect(analyser);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const tick = () => {
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / data.length); // ~0..0.5 for speech
+      // smooth + normalize to a lively 0..1
+      levelRef.current = levelRef.current * 0.6 + Math.min(1, rms * 2.4) * 0.4;
+      meterRafRef.current = requestAnimationFrame(tick);
+    };
+    meterRafRef.current = requestAnimationFrame(tick);
+    return analyser;
+  }, []);
+
+  const stopMeter = useCallback(() => {
+    if (meterRafRef.current != null) cancelAnimationFrame(meterRafRef.current);
+    meterRafRef.current = null;
+    levelRef.current = 0;
+  }, []);
 
   const getCtx = (): AudioContext | null => {
     if (typeof window === "undefined") return null;
@@ -929,6 +961,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   // ---- TTS ----
   // Stop any in-flight audio / browser speech before starting something new.
   const stopAudio = useCallback(() => {
+    stopMeter();
     try {
       if (srcNodeRef.current) {
         srcNodeRef.current.onended = null;
@@ -949,7 +982,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [stopMeter]);
 
   // Speak lifecycle (centralised). In hands-free we KEEP the mic running while
   // Malak talks so the user can interrupt (barge-in); her own voice is filtered
@@ -1036,10 +1069,13 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               const audioBuf = await ctx.decodeAudioData(buf.slice(0));
               const node = ctx.createBufferSource();
               node.buffer = audioBuf;
-              node.connect(ctx.destination);
+              // node → analyser → destination so we can meter her live level.
+              const analyser = startMeter(ctx, node);
+              analyser.connect(ctx.destination);
               node.onended = () => {
                 if (srcNodeRef.current === node) {
                   srcNodeRef.current = null;
+                  stopMeter();
                   onSpeakEnd();
                 }
               };
@@ -1188,24 +1224,32 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     [turns, typewriter, speak, stopAudio, unlockAudio, pendingImage, resumeHandsFree]
   );
 
-  // ---- Proactive scan: auto store status + actionable issues ONCE on open ---
+  // Live HUD clock.
+  useEffect(() => {
+    const tick = () => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); setHudClock(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`); };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ---- Proactive scan: ALWAYS load the data on open (it feeds the HUD side
+  // panels every visit). Only the spoken briefing is throttled to once/session.
   const briefedRef = useRef(false);
   useEffect(() => {
     if (briefedRef.current) return;
     if (typeof window === "undefined") return;
-    if (sessionStorage.getItem("malak_briefed")) return;
     briefedRef.current = true;
-    sessionStorage.setItem("malak_briefed", "1");
     (async () => {
       try {
         const res = await fetch("/api/malak/scan");
         const d = await res.json();
         if (!d || d.error) return;
         setActiveAgent("malak");
-        setPanel({ type: "scan", item: d });
-        // Best-effort voice (may be blocked by autoplay until first interaction;
-        // the [▶ استمع] button on the card always works).
-        speak(briefSummary(d), "malak");
+        setScanData(d as ScanData); // feeds the HUD side panels (every load)
+        if (!sessionStorage.getItem("malak_briefed")) {
+          sessionStorage.setItem("malak_briefed", "1");
+          speak(briefSummary(d), "malak"); // voice brief once per session
+        }
       } catch {
         /* scan is best-effort */
       }
@@ -1410,6 +1454,14 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   // Combined flag: native fullscreen OR the CSS fallback.
   const fsActive = isFs || pseudoFs;
 
+  // The HUD panels always render (so the dashboard frame is always there); they
+  // fill with zeros until the scan loads.
+  const sd: ScanData = scanData ?? {
+    total: 0, approved: 0, rejected: 0, missingImages: 0, lowStock: 0, outOfStock: 0,
+    suspiciousPrice: 0, channelMismatch: 0, issues: [], recentActivity: [],
+    priority: "…يفحص الوضع", allClear: true,
+  };
+
   return (
     <div
       ref={rootRef}
@@ -1418,23 +1470,34 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           ? // Fullscreen: full-width, full-height flex column so the lab fills the
             // screen. 100dvh accounts for mobile browser chrome; pseudoFs adds
             // fixed positioning since there's no native FS element (iOS Safari).
-            `flex h-[100dvh] w-full flex-col gap-3 overflow-hidden bg-[#eef2f8] p-3 sm:p-4 ${
+            `h-[100dvh] w-full space-y-3 overflow-y-auto p-3 sm:p-4 ${
               pseudoFs ? "fixed inset-0 z-50" : ""
             }`
-          : "mx-auto w-full max-w-6xl space-y-4 pb-2"
+          : "mx-auto w-full max-w-7xl space-y-3 pb-2"
       }
+      style={fsActive ? { background: "#040a14" } : undefined}
     >
-      {/* Header (hidden in fullscreen to give the lab the whole screen) */}
-      {fsActive ? null : (
-        <div className="flex flex-wrap items-end justify-between gap-2">
+      {/* Mission-Control header */}
+      {true ? (
+        <div dir="ltr" className="flex flex-wrap items-start justify-between gap-3 font-mono">
           <div>
-            <h1 className="text-lg font-extrabold tracking-tight text-slate-900 sm:text-xl">
-              ملاك · <span className="text-slate-400">Malak AI</span>
-            </h1>
-            <p className="text-xs text-slate-500">المديرة العامة الذكية · Malika&apos;s Universe Trading</p>
+            <p className="text-[13px] font-bold tracking-[0.2em] text-cyan-50">MALIKA&apos;S UNIVERSE <span className="text-cyan-300/50">// COMMERCE CONTROL</span></p>
+            <p dir="rtl" className="text-[10px] tracking-[0.15em] text-cyan-300/50">ملاك · المديرة العامة الذكية</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {["ONLINE", "SECURE", scanData ? (scanData.channelMismatch ? "SYNC NEEDED" : "SYNCED") : "…", "AUTH-LVL9"].map((c, i) => (
+                <span key={i} className="inline-flex items-center gap-1 rounded-sm border border-cyan-500/25 px-2 py-0.5 text-[8.5px] tracking-widest text-cyan-300/60">
+                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" style={{ boxShadow: "0 0 6px #4cc3ff" }} />{c}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-[22px] font-bold leading-none tracking-wider text-cyan-50" style={{ textShadow: "0 0 12px #4cc3ff88" }}>{hudClock}</p>
+            <p className="mt-1 text-[9px] tracking-widest text-cyan-300/50">منتجات: {scanData?.total ?? "—"} · معتمد: {scanData?.approved ?? "—"}</p>
+            <p className="text-[9px] tracking-widest text-cyan-300/50">DOHA · QA</p>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Professional error alert (raw technical details only when ?dev=1) */}
       {errorAlert ? (
@@ -1454,13 +1517,19 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         </div>
       ) : null}
 
+      {/* Unified Mission-Control HUD: side panels frame the orb + chat into one
+          screen. display:contents in fullscreen keeps the orb full-screen. */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
+        <div className="order-2 lg:order-1 lg:col-span-3"><HudLeft scan={sd} onAction={send} /></div>
+        <div className="order-1 lg:order-2 lg:col-span-6">
+
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
           In fullscreen it grows to fill the screen. */}
       <div
-        className={`relative flex flex-col items-center justify-center overflow-hidden rounded-3xl border border-cyan-500/20 shadow-sm ${
-          fsActive ? "min-h-0 flex-1" : "h-[36vh] sm:h-[46vh]"
+        className={`relative flex flex-col items-center justify-center overflow-hidden ${
+          fsActive ? "h-[40vh]" : "h-[34vh] sm:h-[44vh]"
         }`}
-        style={{ background: "#020510" }}
+        style={{ background: "transparent" }}
       >
         <button
           type="button"
@@ -1468,8 +1537,35 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           aria-label="ركّز الإدخال"
           className="flex items-center justify-center"
         >
-          <JarvisOrb state={state} size={fsActive ? Math.round(orbSize * 2) : Math.round(orbSize * 1.7)} />
+          <JarvisOrb state={state} size={fsActive ? Math.round(orbSize * 2) : Math.round(orbSize * 1.7)} levelRef={levelRef} />
         </button>
+
+        {/* floating HUD tags around the orb (mix of real data + status) */}
+        {(() => {
+          const tot = scanData?.total ?? 0;
+          const synced = !(scanData?.channelMismatch);
+          const health = tot ? Math.round((tot - ((scanData?.outOfStock ?? 0) + (scanData?.missingImages ?? 0) + (scanData?.suspiciousPrice ?? 0))) / tot * 100) : 0;
+          const stLabel = state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY";
+          const tags: { c: string; t: string }[] = [
+            { c: "left-1/2 -translate-x-1/2 top-[2%]", t: `STATE · ${stLabel}` },
+            { c: "left-[16%] top-[7%]", t: `SKU · ${tot}` },
+            { c: "right-[16%] top-[7%]", t: `معتمد · ${scanData?.approved ?? 0}` },
+            { c: "left-[5%] top-[26%]", t: `نافد · ${scanData?.outOfStock ?? 0}` },
+            { c: "right-[5%] top-[26%]", t: `HEALTH · ${health}%` },
+            { c: "left-[2%] top-1/2 -translate-y-1/2", t: `أسعار · ${scanData?.suspiciousPrice ?? 0}` },
+            { c: "right-[2%] top-1/2 -translate-y-1/2", t: `ستوك · ${scanData?.lowStock ?? 0}` },
+            { c: "left-[5%] bottom-[26%]", t: `صور ناقصة · ${scanData?.missingImages ?? 0}` },
+            { c: "right-[5%] bottom-[26%]", t: `مرفوض · ${scanData?.rejected ?? 0}` },
+            { c: "left-[16%] bottom-[7%]", t: `بنود · ${scanData?.issues?.length ?? 0}` },
+            { c: "right-[16%] bottom-[7%]", t: `SYNC · ${synced ? "OK" : (scanData?.channelMismatch ?? 0)}` },
+            { c: "left-1/2 -translate-x-1/2 bottom-[2%]", t: `PROD · ${tot}` },
+          ];
+          return tags.map((g, i) => (
+            <span key={i} dir="ltr" className={`pointer-events-none absolute z-10 hidden font-mono text-[8px] tracking-widest sm:block ${g.c}`} style={{ color: "rgba(140,190,225,0.5)" }}>
+              <span style={{ color: "rgba(140,190,225,0.35)" }}>› </span>{g.t}
+            </span>
+          ));
+        })()}
         <button
           type="button"
           onClick={toggleFullscreen}
@@ -1515,16 +1611,20 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         @keyframes hudIn { 0%{opacity:0;transform:translateY(12px) scale(.94);filter:blur(6px)} 100%{opacity:1;transform:none;filter:none} }
         @keyframes eqbar { 0%,100%{transform:scaleY(0.35)} 50%{transform:scaleY(1)} }
       `}</style>
+        </div>{/* center column = orb only */}
+        <div className="order-3 lg:col-span-3"><HudRight scan={sd} levelRef={levelRef} /></div>
+      </div>{/* HUD grid */}
+      <HudObjective scan={sd} />
 
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
           the rest of the space and nothing scrolls the page. */}
-      <div className={`rounded-3xl border border-slate-200 bg-white p-2.5 shadow-sm sm:p-3 ${fsActive ? "shrink-0" : ""}`}>
+      <div className={`border-t p-2.5 sm:p-3 ${fsActive ? "shrink-0" : ""}`} style={{ borderColor: "rgba(120,175,215,0.18)" }}>
         {/* Transcript + panel. In fullscreen it gets a taller, comfortably
             scrollable area (the lab flexes to fill the rest, no page overflow). */}
         <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
         {turns.length === 0 && !typed && panel?.type !== "briefing" && panel?.type !== "scan" ? (
-          <div className="mx-auto max-w-md pt-4 text-center text-sm text-slate-500">
+          <div className="mx-auto max-w-md pt-4 text-center text-sm text-cyan-300/60">
             أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.
           </div>
         ) : null}
@@ -1534,8 +1634,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             <div
               className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                 t.role === "user"
-                  ? "bg-slate-100 text-slate-800"
-                  : "bg-gradient-to-br from-blue-500 to-purple-600 text-white shadow-sm"
+                  ? "border border-cyan-500/20 bg-cyan-500/10 text-cyan-50"
+                  : "bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-sm"
               }`}
             >
               {t.text}
@@ -1556,7 +1656,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       </div>
 
         {/* Composer */}
-        <div className="mt-2 border-t border-slate-200 pt-2.5">
+        <div className="mt-2 border-t border-cyan-500/20 pt-2.5">
         {/* Hands-free wake mode: call any agent by name, no button */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <button
@@ -1566,7 +1666,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:opacity-30 ${
               handsFree
                 ? "bg-emerald-500 text-white"
-                : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                : "border border-cyan-400/30 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
             }`}
             style={handsFree ? { boxShadow: "0 0 16px rgba(16,185,129,0.6)" } : undefined}
             aria-pressed={handsFree}
@@ -1577,7 +1677,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           {handsFree ? (
             <span className="truncate text-[11px] text-emerald-600">قل «ملاك» بأي وقت — وتقدر تقاطعها وهي تتكلم</span>
           ) : (
-            <span className="hidden truncate text-[11px] text-slate-400 sm:block">فعّلها مرّة وتبقى تنصت لـ«ملاك» كل زيارة</span>
+            <span className="hidden truncate text-[11px] text-cyan-300/50 sm:block">فعّلها مرّة وتبقى تنصت لـ«ملاك» كل زيارة</span>
           )}
         </div>
         {/* Quick prompts */}
@@ -1586,7 +1686,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             <button
               key={q}
               onClick={() => send(q)}
-              className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-100"
+              className="shrink-0 rounded-full border border-cyan-400/25 bg-cyan-500/5 px-3 py-1.5 text-xs text-cyan-200/80 transition hover:bg-cyan-500/15"
             >
               {q}
             </button>
@@ -1602,13 +1702,13 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               alt="مرفق"
               className="h-9 w-9 rounded-md object-cover"
             />
-            <span className="flex-1 truncate text-[12px] text-slate-600">📎 {pendingImage.name}</span>
-            <span className="text-[11px] text-slate-400">اكتب الـSKU وأرسل</span>
+            <span className="flex-1 truncate text-[12px] text-cyan-100/80">📎 {pendingImage.name}</span>
+            <span className="text-[11px] text-cyan-300/50">اكتب الـSKU وأرسل</span>
             <button
               type="button"
               onClick={() => setPendingImage(null)}
               aria-label="إزالة الصورة"
-              className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-slate-600 hover:bg-slate-300"
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30"
             >
               ×
             </button>
@@ -1639,7 +1739,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             onClick={() => fileInputRef.current?.click()}
             aria-label="إرفاق صورة"
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg transition ${
-              pendingImage ? "bg-pink-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              pendingImage ? "bg-pink-500 text-white" : "bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
             }`}
           >
             📎
@@ -1650,7 +1750,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             disabled={!micSupported}
             aria-label="ميكروفون"
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg transition disabled:opacity-30 ${
-              listening ? "bg-rose-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              listening ? "bg-rose-500 text-white" : "bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
             }`}
             style={listening ? { boxShadow: "0 0 18px rgba(244,63,94,0.6)" } : undefined}
           >
@@ -1661,7 +1761,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="اكتب لملاك… (أو استخدم الميكروفون)"
-            className="h-11 flex-1 rounded-full border border-slate-300 bg-slate-50 px-4 text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:outline-none"
+            className="h-11 flex-1 rounded-full border border-cyan-500/25 bg-cyan-500/5 px-4 text-sm text-cyan-50 placeholder:text-cyan-300/40 focus:border-cyan-400/60 focus:bg-cyan-500/10 focus:outline-none"
           />
           <button
             type="submit"
@@ -1672,7 +1772,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           </button>
         </form>
        </div>
-      </div>
+      </div>{/* chat card (full-width, below the HUD) */}
 
       {/* Holographic output overlay (JARVIS): structured results pop up here */}
       {panel ? (
