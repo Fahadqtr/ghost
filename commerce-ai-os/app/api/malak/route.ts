@@ -695,8 +695,24 @@ async function openLiveBrowser(
     // else: fall through to Hyperbeam (audio-capable) below.
   }
 
-  if (!liveConfigured())
+  // Audio browser (Hyperbeam) not configured → still open the fast no-audio
+  // browser so the page loads (muted) instead of a dead "not configured" reply.
+  if (!liveConfigured()) {
+    if (browserConfigured()) {
+      const lu = await openLiveURL(url || undefined);
+      if (lu.ok && lu.liveUrl) {
+        liveHolder.embedUrl = lu.liveUrl;
+        liveHolder.kind = "browserbase";
+        if (url) liveHolder.url = url;
+        return {
+          ok: true,
+          url: url || null,
+          note: "متصفح الصوت (Hyperbeam) غير مهيأ على الخادم، ففتحت المتصفح السريع **بدون صوت**. بلّغي فهد إنه يتأكد من HYPERBEAM_API_KEY للصوت، وإنه يقدر يفتح الرابط بنفسه بتطبيق يوتيوب للصوت. أرجعي panel نوعه live فيه item:{url,title}.",
+        };
+      }
+    }
     return { error: "خدمة المتصفح الحي غير مهيأة بعد على الخادم.", note: "أضيفي HYPERBEAM_API_KEY في إعدادات الخادم لتفعيل المتصفح الحي بالصوت." };
+  }
   liveHolder.kind = "hyperbeam";
 
   // Reuse the existing logged-in session if we still have one.
