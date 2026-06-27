@@ -764,6 +764,10 @@ function LiveBrowserPanel({ item }: { item: any }) {
   const embedUrl: string = typeof item?.embedUrl === "string" ? item.embedUrl : "";
   const url: string = txt(item?.url) || "";
   const title: string = txt(item?.title) || "متصفح حي";
+  // Backend: "browserbase" = lighter/snappier screencast, NO audio, needs a
+  // sandbox; "hyperbeam" = full WebRTC video WITH audio, no sandbox.
+  const bb = item?.kind === "browserbase";
+  const liveLabel = bb ? "🟢 مباشر" : "🔴 مباشر بصوت";
   // Maximize: prefer the real Fullscreen API on the wrapper (no remount, and it
   // escapes the popup window's CSS transform — a plain `fixed` overlay would be
   // trapped inside that transformed ancestor). Fall back to a viewport-fixed
@@ -812,7 +816,7 @@ function LiveBrowserPanel({ item }: { item: any }) {
     <div className="space-y-2 text-right">
       <div className="flex items-center gap-2 rounded-t-xl border border-emerald-400/30 bg-black/40 px-3 py-2">
         <span className="flex gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></span>
-        <span className="flex-1 truncate text-[11px] font-semibold text-emerald-300">🔴 مباشر بصوت{host ? ` · ${host}` : ""}</span>
+        <span className="flex-1 truncate text-[11px] font-semibold text-emerald-300">{liveLabel}{host ? ` · ${host}` : ""}</span>
         <button type="button" onClick={() => { setStarted(true); setReloadKey((k) => k + 1); }} title="إعادة تحميل" aria-label="إعادة تحميل" className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">⟳</button>
         <button type="button" onClick={toggleBig} title={big ? "تصغير" : "تكبير"} aria-label="تكبير الشاشة" className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">{big ? "✕" : "⛶"}</button>
       </div>
@@ -831,17 +835,28 @@ function LiveBrowserPanel({ item }: { item: any }) {
         {big ? (
           <button type="button" onClick={toggleBig} aria-label="تصغير" className="absolute left-3 top-3 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-emerald-400/50 bg-black/70 text-lg text-emerald-100">✕</button>
         ) : null}
-        <iframe
-          key={reloadKey}
-          src={embedUrl}
-          title={title}
-          className="h-full w-full"
-          // No sandbox: Hyperbeam's embed is a trusted origin and its WebRTC
-          // client can render black if sandboxed. Permissions via `allow`.
-          allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write; encrypted-media; display-capture; gamepad; web-share"
-          allowFullScreen
-        />
-        {!started ? (
+        {bb ? (
+          // Browserbase live view: needs a sandbox; interactive (no audio).
+          <iframe
+            key={reloadKey}
+            src={embedUrl}
+            title={title}
+            className="h-full w-full"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+            allow="clipboard-read; clipboard-write"
+          />
+        ) : (
+          // Hyperbeam: full WebRTC video WITH audio. No sandbox (it blacks out).
+          <iframe
+            key={reloadKey}
+            src={embedUrl}
+            title={title}
+            className="h-full w-full"
+            allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write; encrypted-media; display-capture; gamepad; web-share"
+            allowFullScreen
+          />
+        )}
+        {!bb && !started ? (
           <button
             type="button"
             onClick={() => setStarted(true)}
@@ -856,7 +871,7 @@ function LiveBrowserPanel({ item }: { item: any }) {
 
       {!big ? (
         <>
-          <p className="px-1 text-[12px] leading-relaxed text-white/70">متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. ⛶ تكبير · ⟳ لو صارت سوداء.</p>
+          <p className="px-1 text-[12px] leading-relaxed text-white/70">{bb ? "متصفح حي سريع تفاعلي — اضغط واكتب داخله. ⛶ تكبير · ⟳ تحديث." : "متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. ⛶ تكبير · ⟳ لو صارت سوداء."}</p>
           <div className="flex flex-wrap gap-2">
             {/* Opening the EMBED url in a top-level tab works even when the phone
                 blocks third-party cookies (which black out the iframe). */}
