@@ -9,7 +9,7 @@ const AiCoreOrb = dynamic(() => import("./AiCoreOrb"), {
   ssr: false,
   loading: () => <div className="h-full w-full" />,
 });
-import { HudLeft, HudRight, HudObjective, type ScanData } from "./HudParts";
+import { HudLeft, HudRight, HudObjective, FooterStatusBar, type ScanData } from "./HudParts";
 
 // In-app error boundary: instead of the white "Application error" screen, show
 // the actual error text (visible on mobile, no console needed) + a reload.
@@ -891,6 +891,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const closePanel = useCallback((idx: number) => setPanels((ps) => ps.filter((_, i) => i !== idx)), []);
   const [scanData, setScanData] = useState<ScanData | null>(null); // HUD side panels
   const [hudClock, setHudClock] = useState("--:--:--");
+  const [uptime, setUptime] = useState("0:00:00");
+  const mountRef = useRef(Date.now());
   const [input, setInput] = useState("");
   const [state, setState] = useState<OrbState>("idle");
   const [activeAgent, setActiveAgent] = useState<AgentId>("malak");
@@ -1311,7 +1313,12 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
 
   // Live HUD clock.
   useEffect(() => {
-    const tick = () => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); setHudClock(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`); };
+    const tick = () => {
+      const d = new Date(); const p = (n: number) => String(n).padStart(2, "0");
+      setHudClock(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`);
+      const u = Math.floor((Date.now() - mountRef.current) / 1000);
+      setUptime(`${Math.floor(u / 3600)}:${p(Math.floor((u % 3600) / 60))}:${p(u % 60)}`);
+    };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -1560,7 +1567,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             }`
           : "mx-auto w-full max-w-7xl space-y-3 pb-2"
       }
-      style={fsActive ? { background: "#040a14" } : undefined}
+      style={fsActive ? { background: "#020711" } : undefined}
     >
       {/* Mission-Control header */}
       {true ? (
@@ -1576,8 +1583,20 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               ))}
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-[22px] font-bold leading-none tracking-wider text-cyan-50" style={{ textShadow: "0 0 12px #4cc3ff88" }}>{hudClock}</p>
+          {/* state tabs (AUTO / IDLE / THINKING / TALKING) — active glows */}
+          <div className="order-3 flex items-center gap-1 self-center rounded-md border px-1 py-1 sm:order-2" style={{ borderColor: "rgba(0,217,255,0.2)", background: "rgba(4,17,31,0.5)" }}>
+            {(["AUTO", "IDLE", "THINKING", "TALKING"] as const).map((tab) => {
+              const on = (tab === "TALKING" && state === "speaking") || (tab === "THINKING" && state === "thinking") || (tab === "IDLE" && state === "listening") || (tab === "AUTO" && (state === "idle"));
+              return (
+                <span key={tab} className="rounded px-2.5 py-1 text-[9px] font-semibold tracking-widest transition"
+                  style={on ? { background: "rgba(0,217,255,0.16)", color: "#9ff0ff", boxShadow: "inset 0 0 12px rgba(0,217,255,0.4)" } : { color: "rgba(110,234,255,0.5)" }}>
+                  {tab}
+                </span>
+              );
+            })}
+          </div>
+          <div className="order-2 text-right sm:order-3">
+            <p className="text-[22px] font-bold leading-none tracking-wider text-cyan-50" style={{ textShadow: "0 0 14px rgba(0,217,255,0.6)" }}>{hudClock}</p>
             <p className="mt-1 text-[9px] tracking-widest text-cyan-300/50">منتجات: {scanData?.total ?? "—"} · معتمد: {scanData?.approved ?? "—"}</p>
             <p className="text-[9px] tracking-widest text-cyan-300/50">DOHA · QA</p>
           </div>
@@ -1862,6 +1881,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         </form>
        </div>
       </div>{/* chat card (full-width, below the HUD) */}
+
+      <FooterStatusBar scan={sd} uptime={uptime} stateLabel={state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY"} />
 
       {/* Holographic result windows — multiple can be open at once, each draggable. */}
       {panels.map((p, i) => (

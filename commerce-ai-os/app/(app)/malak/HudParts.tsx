@@ -5,12 +5,14 @@
 
 import { useEffect, useRef, type ReactNode, type MutableRefObject } from "react";
 
-export const CY = "#4cc3ff";
-export const CY_DIM = "rgba(76,195,255,0.55)";
-export const CY_FAINT = "rgba(76,195,255,0.25)";
-export const AMBER = "#ffb454";
+export const CY = "#00d9ff";        // primary cyan
+export const CY_SOFT = "#6eeaff";    // soft cyan
+export const CY_DIM = "rgba(110,234,255,0.6)";
+export const CY_FAINT = "rgba(0,217,255,0.22)";
+export const AMBER = "#ff9f1c";
 export const GREEN = "#3ddc97";
 export const ROSE = "#ff6b8a";
+export const MUTED = "#6f8fa3";
 
 export interface ScanData {
   total: number; approved: number; rejected: number; missingImages: number;
@@ -34,11 +36,20 @@ function timeArab(iso: string) {
 
 // Flat, borderless HUD section (matches the reference): a "{ TITLE }" header
 // with a thin underline, content floating on the dark background — no box.
+// Glassmorphism HUD card: translucent dark glass, thin cyan border, soft glow.
 function Panel({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
-    <div className="relative">
-      <div className="mb-1.5 flex items-center justify-between border-b pb-1" style={{ borderColor: "rgba(120,175,215,0.18)" }}>
-        <p className="font-mono text-[9px] tracking-[0.3em]" style={{ color: "rgba(150,195,230,0.7)" }}>{`{ ${title} }`}</p>
+    <div
+      className="relative rounded-lg border p-3 backdrop-blur-md"
+      style={{
+        borderColor: CY_FAINT,
+        background: "linear-gradient(160deg, rgba(0,217,255,0.05), rgba(4,17,31,0.55))",
+        boxShadow: "0 0 22px rgba(0,217,255,0.06), inset 0 0 22px rgba(0,217,255,0.03)",
+      }}
+    >
+      <span aria-hidden className="pointer-events-none absolute right-1.5 top-1.5 h-2.5 w-2.5 border-r border-t" style={{ borderColor: "rgba(0,217,255,0.45)" }} />
+      <div className="mb-2 flex items-center justify-between border-b pb-1.5" style={{ borderColor: CY_FAINT }}>
+        <p className="font-mono text-[9px] font-semibold tracking-[0.3em]" style={{ color: CY_SOFT }}>{`▮ ${title}`}</p>
         {right}
       </div>
       {children}
@@ -191,6 +202,27 @@ export function HudRight({ scan, levelRef }: { scan: ScanData; levelRef?: Mutabl
       <Panel title="DIAGNOSTICS" right={<a href="/malak/audit" className="text-[8px] underline" style={{ color: "rgba(120,175,215,0.5)" }}>الكل</a>}>
         <Feed rows={scan.recentActivity} />
       </Panel>
+    </div>
+  );
+}
+
+// Bottom status bar: UPTIME · VERSION · CURRENT TASK · LAST SYNC · PLATFORM.
+export function FooterStatusBar({ scan, stateLabel, uptime }: { scan: ScanData; stateLabel: string; uptime: string }) {
+  const synced = scan.channelMismatch === 0;
+  const lastSync = scan.recentActivity?.[0] ? timeArab(scan.recentActivity[0].created_at) : "—";
+  const cell = (label: string, value: string, tone = CY_SOFT) => (
+    <span className="flex items-center gap-1.5">
+      <span style={{ color: MUTED }}>{label}</span>
+      <span style={{ color: tone }}>{value}</span>
+    </span>
+  );
+  return (
+    <div dir="ltr" className="flex flex-wrap items-center justify-between gap-x-5 gap-y-1 border-t px-1 pt-2 font-mono text-[9px] tracking-widest" style={{ borderColor: CY_FAINT }}>
+      {cell("UPTIME", uptime)}
+      {cell("VERSION", "MALAK · 2.0")}
+      {cell("CURRENT TASK", scan.priority?.slice(0, 28) ?? stateLabel)}
+      {cell("LAST SYNC", lastSync)}
+      {cell("PLATFORM", synced ? "ALIGNED" : "MISMATCH", synced ? GREEN : ROSE)}
     </div>
   );
 }
