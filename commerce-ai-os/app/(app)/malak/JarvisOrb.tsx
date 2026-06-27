@@ -48,51 +48,87 @@ export default function JarvisOrb({
     const ro = new ResizeObserver(setup);
     ro.observe(canvas);
 
-    // Fibonacci sphere of unit points (generated once).
-    const N = 520;
-    const pts: { x: number; y: number; z: number }[] = [];
+    // Fibonacci sphere — but each point keeps its latitude (y, rLat) and an
+    // angle that advances at its OWN rate, so the cloud SWIRLS like a galaxy
+    // (differential rotation) instead of turning as a rigid ball.
+    const N = 620;
     const golden = Math.PI * (3 - Math.sqrt(5));
+    const pts: { y: number; rLat: number; phi0: number; spd: number; tw: number }[] = [];
     for (let i = 0; i < N; i++) {
       const y = 1 - (i / (N - 1)) * 2;
-      const r = Math.sqrt(1 - y * y);
-      const th = golden * i;
-      pts.push({ x: Math.cos(th) * r, y, z: Math.sin(th) * r });
+      const rLat = Math.sqrt(1 - y * y);
+      // equator faster than poles + a little per-point variance → swirl
+      const spd = 0.55 + 0.9 * rLat + (((i * 41) % 17) / 17) * 0.25;
+      pts.push({ y, rLat, phi0: golden * i, spd, tw: ((i * 7) % 31) / 31 });
     }
 
+    const stroke = (al: number) => `rgba(130,185,225,${al})`;
+
     function reticle(t: number, a: number) {
+      // concentric thin rings
       ctx.save();
       ctx.translate(cx, cy);
-      // concentric thin rings
-      for (const [rad, alpha] of [[R * 1.18, 0.30], [R * 1.42, 0.18]] as const) {
+      for (const [rad, alpha] of [[R * 1.12, 0.32], [R * 1.34, 0.20], [R * 1.62, 0.12]] as const) {
         ctx.beginPath();
         ctx.arc(0, 0, rad, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(120,180,225,${alpha * a})`;
+        ctx.strokeStyle = stroke(alpha * a);
         ctx.lineWidth = 1;
         ctx.stroke();
       }
-      // rotating dashed outer ring
-      ctx.rotate(t * 0.06);
-      ctx.beginPath();
-      ctx.setLineDash([2, 16]);
-      ctx.arc(0, 0, R * 1.6, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(120,180,225,${0.35 * a})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.setLineDash([]);
       ctx.restore();
-      // cardinal tick brackets (fixed)
+
+      // fine tick scale around the inner ring (36 ticks, every 9th longer)
       ctx.save();
       ctx.translate(cx, cy);
-      for (let k = 0; k < 12; k++) {
-        const ang = (k / 12) * Math.PI * 2;
-        const big = k % 3 === 0;
-        const r1 = R * 1.46, r2 = R * (big ? 1.36 : 1.42);
+      for (let k = 0; k < 36; k++) {
+        const ang = (k / 36) * Math.PI * 2;
+        const big = k % 9 === 0;
+        const r1 = R * 1.34, r2 = R * (big ? 1.22 : 1.29);
         ctx.beginPath();
         ctx.moveTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
         ctx.lineTo(Math.cos(ang) * r2, Math.sin(ang) * r2);
-        ctx.strokeStyle = `rgba(140,195,235,${(big ? 0.55 : 0.28) * a})`;
+        ctx.strokeStyle = stroke((big ? 0.5 : 0.2) * a);
         ctx.lineWidth = 1;
         ctx.stroke();
+      }
+      ctx.restore();
+
+      // cardinal chevron brackets at N/E/S/W (between the two outer rings)
+      ctx.save();
+      ctx.translate(cx, cy);
+      for (let q = 0; q < 4; q++) {
+        const ang = q * Math.PI / 2 - Math.PI / 2;
+        ctx.save();
+        ctx.rotate(ang);
+        const rr = R * 1.46, w = 0.13;
+        ctx.strokeStyle = stroke(0.6 * a);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(-w) * (rr - R * 0.07), Math.sin(-w) * (rr - R * 0.07));
+        ctx.lineTo(rr, 0);
+        ctx.lineTo(Math.cos(w) * (rr - R * 0.07), Math.sin(w) * (rr - R * 0.07));
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+
+      // slowly rotating dashed ring with small square markers riding it
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(t * 0.06);
+      ctx.beginPath();
+      ctx.setLineDash([2, 15]);
+      ctx.arc(0, 0, R * 1.62, 0, Math.PI * 2);
+      ctx.strokeStyle = stroke(0.3 * a);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      for (let m = 0; m < 3; m++) {
+        const ang = (m / 3) * Math.PI * 2;
+        const mx = Math.cos(ang) * R * 1.62, my = Math.sin(ang) * R * 1.62;
+        ctx.strokeStyle = stroke(0.55 * a);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(mx - 2, my - 2, 4, 4);
       }
       ctx.restore();
     }
@@ -124,27 +160,28 @@ export default function JarvisOrb({
 
       reticle(t, ringA);
 
-      // rotate + project the sphere
-      const ay = t * spin;
+      // view tilt (gentle bob)
       const ax = 0.42 + Math.sin(t * 0.12) * 0.05;
-      const cosY = Math.cos(ay), sinY = Math.sin(ay);
       const cosX = Math.cos(ax), sinX = Math.sin(ax);
       const rad = R * (1 + breathe);
       for (let i = 0; i < N; i++) {
         const p = pts[i];
-        // rotate Y then X
-        let x = p.x * cosY - p.z * sinY;
-        let z = p.x * sinY + p.z * cosY;
+        // each point swirls at its own angular rate (galaxy differential spin)
+        const phi = p.phi0 + t * spin * p.spd;
+        let x = Math.cos(phi) * p.rLat;
+        let z = Math.sin(phi) * p.rLat;
+        // tilt about X for a 3D read
         let y = p.y * cosX - z * sinX;
         z = p.y * sinX + z * cosX;
         const depth = (z + 1) / 2; // 0 back .. 1 front
-        const jx = jitter ? (Math.sin(i * 12.9 + t * 6) * jitter) : 0;
-        const px = cx + (x + jx * 0.02) * rad;
-        const py = cy + y * rad;
-        const dot = 0.5 + depth * 1.3;
+        const jr = jitter ? Math.sin(i * 12.9 + t * 6) * jitter * 0.04 : 0;
+        const px = cx + x * rad * (1 + jr);
+        const py = cy + y * rad * (1 + jr);
+        const tw = 0.75 + 0.25 * Math.sin(t * (1.5 + p.tw * 2) + i); // twinkle
+        const dot = 0.5 + depth * 1.4;
         ctx.beginPath();
         ctx.arc(px, py, dot, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(150,205,240,${(0.12 + depth * 0.6) * bright})`;
+        ctx.fillStyle = `rgba(150,205,240,${(0.1 + depth * 0.62) * bright * tw})`;
         ctx.fill();
       }
 
