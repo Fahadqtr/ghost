@@ -1545,13 +1545,20 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           const tot = scanData?.total ?? 0;
           const synced = !(scanData?.channelMismatch);
           const health = tot ? Math.round((tot - ((scanData?.outOfStock ?? 0) + (scanData?.missingImages ?? 0) + (scanData?.suspiciousPrice ?? 0))) / tot * 100) : 0;
+          const stLabel = state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY";
           const tags: { c: string; t: string }[] = [
-            { c: "left-[6%] top-[16%]", t: `SKU · ${tot}` },
-            { c: "right-[6%] top-[14%]", t: `معتمد · ${scanData?.approved ?? 0}` },
-            { c: "left-[3%] top-1/2 -translate-y-1/2", t: `نافد · ${scanData?.outOfStock ?? 0}` },
-            { c: "right-[3%] top-1/2 -translate-y-1/2", t: `HEALTH · ${health}%` },
-            { c: "left-[9%] bottom-[16%]", t: `صور ناقصة · ${scanData?.missingImages ?? 0}` },
-            { c: "right-[8%] bottom-[18%]", t: `SYNC · ${synced ? "OK" : (scanData?.channelMismatch ?? 0)}` },
+            { c: "left-1/2 -translate-x-1/2 top-[2%]", t: `STATE · ${stLabel}` },
+            { c: "left-[16%] top-[7%]", t: `SKU · ${tot}` },
+            { c: "right-[16%] top-[7%]", t: `معتمد · ${scanData?.approved ?? 0}` },
+            { c: "left-[5%] top-[26%]", t: `نافد · ${scanData?.outOfStock ?? 0}` },
+            { c: "right-[5%] top-[26%]", t: `HEALTH · ${health}%` },
+            { c: "left-[2%] top-1/2 -translate-y-1/2", t: `أسعار · ${scanData?.suspiciousPrice ?? 0}` },
+            { c: "right-[2%] top-1/2 -translate-y-1/2", t: `ستوك · ${scanData?.lowStock ?? 0}` },
+            { c: "left-[5%] bottom-[26%]", t: `صور ناقصة · ${scanData?.missingImages ?? 0}` },
+            { c: "right-[5%] bottom-[26%]", t: `مرفوض · ${scanData?.rejected ?? 0}` },
+            { c: "left-[16%] bottom-[7%]", t: `بنود · ${scanData?.issues?.length ?? 0}` },
+            { c: "right-[16%] bottom-[7%]", t: `SYNC · ${synced ? "OK" : (scanData?.channelMismatch ?? 0)}` },
+            { c: "left-1/2 -translate-x-1/2 bottom-[2%]", t: `PROD · ${tot}` },
           ];
           return tags.map((g, i) => (
             <span key={i} dir="ltr" className={`pointer-events-none absolute z-10 hidden font-mono text-[8px] tracking-widest sm:block ${g.c}`} style={{ color: "rgba(140,190,225,0.5)" }}>
