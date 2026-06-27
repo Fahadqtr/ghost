@@ -7,13 +7,19 @@ export function detectForcedTool(text: string): string | null {
   const t = (text || "").toLowerCase();
   const changeVerb = /(غيّر|غير|عدّل|عدل|حدّث|حدث|نزّل|نزل|ارفع|خفّض|خفض|اجعل|خلّي|خل|حط|عيّن|عين|إلى|الى|\bto\b)/;
 
-  // ---- Web browsing (open a real site / search the net) --------------------
-  // A bare URL is unambiguous. Otherwise require an explicit web/browser word
-  // paired with an open/search verb so we don't steal catalog reads.
+  // ---- Internet: search the net vs. open a specific page -------------------
+  // A bare URL → open it directly (browse_web). A search request that names the
+  // net/a search engine → web_search (search APIs avoid the CAPTCHA wall that
+  // scraping Google results hits). Both require explicit web words so we don't
+  // steal catalog reads like "دوّر على منتجات كورية" (search OUR catalog).
   const hasUrl = /https?:\/\/\S+|www\.\S+\.\w/.test(t);
-  const webNoun = /(موقع|المتصفح|متصفح|الإنترنت|الانترنت|النت|قوقل|جوجل|google|website|browser|الويب|رابط|لينك|\blink\b|\burl\b)/;
-  const browseVerb = /(افتح|افتحي|تصفّح|تصفح|ادخل|ادخلي|روح|روحي|زور|زوري|شوف|شوفي|ابحث|ابحثي|دوّر|دور|جيب|جيبي|open|browse|search|visit|go\s*to)/;
-  if (hasUrl || (webNoun.test(t) && browseVerb.test(t))) return "browse_web";
+  if (hasUrl) return "browse_web";
+  const netNoun = /(النت|الإنترنت|الانترنت|قوقل|جوجل|google|الويب|الشبكة|محرّك|محرك\s*البحث|online|web)/;
+  const searchVerb = /(ابحث|ابحثي|دوّر|دور|بحث|قارن|قارني|قارني?\s*أسعار|search|google\s+for|look\s*up)/;
+  if (searchVerb.test(t) && netNoun.test(t)) return "web_search";
+  const webNoun = /(موقع|المتصفح|متصفح|website|browser|رابط|لينك|\blink\b|\burl\b|قوقل|جوجل|google)/;
+  const browseVerb = /(افتح|افتحي|تصفّح|تصفح|ادخل|ادخلي|روح|روحي|زور|زوري|open|browse|visit|go\s*to)/;
+  if (webNoun.test(t) && browseVerb.test(t)) return "browse_web";
 
   // ---- Guards (prevent false image-generation matches) ---------------------
   // Reads ABOUT products that lack an image (e.g. "المنتجات بدون صورة").

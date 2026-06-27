@@ -102,7 +102,7 @@ const txt = (v: any): string =>
   : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser" | "search";
   items?: any[];
   item?: any;
 }
@@ -757,6 +757,29 @@ function ScanPanel({
 
 // A draggable holographic result window. Several can be open at once; drag by
 // the header, close with ✕.
+// Web-search results list (from a search API — no CAPTCHA). Each row links out.
+function SearchPanel({ items }: { items: any[] }) {
+  return (
+    <div className="space-y-2 text-right">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-cyan-200">🔎 نتائج البحث</span>
+      <ul className="space-y-2">
+        {items.map((r, i) => {
+          const url = txt(r?.url);
+          let host = "";
+          try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
+          return (
+            <li key={i} className="rounded-xl border border-white/10 bg-black/30 p-2.5">
+              <a href={url} target="_blank" rel="noopener noreferrer" className="text-[13px] font-bold text-cyan-300 hover:underline">{txt(r?.title) || host || url}</a>
+              {host ? <p dir="ltr" className="text-left font-mono text-[10px] text-emerald-300/70">{host}</p> : null}
+              {r?.snippet ? <p className="mt-1 text-[12px] leading-relaxed text-white/70">{txt(r.snippet)}</p> : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 // Popup "browser screen": Malak opened a real site server-side; we show a live
 // screenshot of it (loaded lazily from /api/malak/browse) plus her summary.
 function BrowserPanel({ item }: { item: any }) {
@@ -913,6 +936,7 @@ function Panel({
   if (data.type === "post" && data.item) return <PostPanel item={data.item} />;
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
   if (data.type === "browser" && data.item) return <BrowserPanel item={data.item} />;
+  if (data.type === "search" && Array.isArray(data.items)) return <SearchPanel items={data.items} />;
   if (data.type === "briefing" && data.item)
     return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
   if (data.type === "scan" && data.item)
