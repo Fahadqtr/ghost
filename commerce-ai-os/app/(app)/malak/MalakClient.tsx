@@ -1519,11 +1519,17 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
           In fullscreen it grows to fill the screen. */}
       <div
-        className={`relative flex flex-col items-center justify-center overflow-hidden rounded-3xl border border-cyan-500/20 shadow-sm ${
+        className={`relative flex flex-col items-center justify-center overflow-hidden border border-cyan-500/20 shadow-sm ${
           fsActive ? "min-h-0 flex-1" : "h-[36vh] sm:h-[46vh]"
         }`}
-        style={{ background: "#020510" }}
+        style={{ background: "#020510", clipPath: "polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px))" }}
       >
+        {/* targeting corner brackets + scan lines (Iron-Man reticle frame) */}
+        {["left-2 top-2 border-l border-t", "right-2 top-2 border-r border-t", "left-2 bottom-2 border-l border-b", "right-2 bottom-2 border-r border-b"].map((c) => (
+          <span key={c} aria-hidden className={`pointer-events-none absolute h-5 w-5 ${c}`} style={{ borderColor: "rgba(76,195,255,0.6)" }} />
+        ))}
+        <span aria-hidden className="pointer-events-none absolute left-3 top-1/2 font-mono text-[8px] tracking-widest" style={{ color: "rgba(76,195,255,0.45)" }}>TGT·LOCK</span>
+        <span aria-hidden className="pointer-events-none absolute right-3 top-1/2 font-mono text-[8px] tracking-widest" style={{ color: "rgba(76,195,255,0.45)" }}>SYS·OK</span>
         <button
           type="button"
           onClick={() => { unlockAudio(); inputRef.current?.focus(); }}
@@ -1581,7 +1587,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
           the rest of the space and nothing scrolls the page. */}
-      <div className={`rounded-3xl border border-cyan-500/15 p-2.5 shadow-sm sm:p-3 ${fsActive ? "shrink-0" : ""}`} style={{ background: "rgba(8,20,40,0.45)" }}>
+      <div className={`border border-cyan-500/15 p-2.5 shadow-sm sm:p-3 ${fsActive ? "shrink-0" : ""}`} style={{ background: "rgba(8,20,40,0.45)", clipPath: "polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px))" }}>
         {/* Transcript + panel. In fullscreen it gets a taller, comfortably
             scrollable area (the lab flexes to fill the rest, no page overflow). */}
         <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
