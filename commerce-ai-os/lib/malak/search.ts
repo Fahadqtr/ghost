@@ -17,11 +17,33 @@ export interface SearchOutput {
   error?: string;
 }
 
-function brave(): string { return (process.env.BRAVE_SEARCH_TOKEN || "").trim(); }
-function tavily(): string { return (process.env.TAVILY_API_KEY || "").trim(); }
+// Accept the common env-var names people actually use, not just one exact
+// spelling — a name mismatch is the #1 reason "I added the key" still fails.
+function pick(...names: string[]): string {
+  for (const n of names) {
+    const v = (process.env[n] || "").trim();
+    if (v) return v;
+  }
+  return "";
+}
+function brave(): string {
+  return pick("BRAVE_SEARCH_TOKEN", "BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY", "BRAVE_TOKEN", "BRAVE_SUBSCRIPTION_TOKEN");
+}
+function tavily(): string {
+  return pick("TAVILY_API_KEY", "TAVILY_KEY", "TAVILY_TOKEN");
+}
 
 export function searchConfigured(): boolean {
   return Boolean(brave() || tavily());
+}
+
+// Which search-related env names are actually present (names only, never
+// values) — logged once on a miss so a misnamed var is obvious in the logs.
+export function searchEnvNamesPresent(): string[] {
+  return [
+    "BRAVE_SEARCH_TOKEN", "BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY", "BRAVE_TOKEN", "BRAVE_SUBSCRIPTION_TOKEN",
+    "TAVILY_API_KEY", "TAVILY_KEY", "TAVILY_TOKEN",
+  ].filter((n) => (process.env[n] || "").trim());
 }
 
 async function withTimeout<T>(p: (signal: AbortSignal) => Promise<T>): Promise<T> {
