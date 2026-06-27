@@ -1470,15 +1470,15 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           ? // Fullscreen: full-width, full-height flex column so the lab fills the
             // screen. 100dvh accounts for mobile browser chrome; pseudoFs adds
             // fixed positioning since there's no native FS element (iOS Safari).
-            `flex h-[100dvh] w-full flex-col gap-3 overflow-hidden p-3 sm:p-4 ${
+            `h-[100dvh] w-full space-y-3 overflow-y-auto p-3 sm:p-4 ${
               pseudoFs ? "fixed inset-0 z-50" : ""
             }`
           : "mx-auto w-full max-w-7xl space-y-3 pb-2"
       }
       style={fsActive ? { background: "#040a14" } : undefined}
     >
-      {/* Mission-Control header (hidden in fullscreen) */}
-      {fsActive ? null : (
+      {/* Mission-Control header */}
+      {true ? (
         <div dir="ltr" className="flex flex-wrap items-start justify-between gap-3 font-mono">
           <div>
             <p className="text-[13px] font-bold tracking-[0.2em] text-cyan-50">MALIKA&apos;S UNIVERSE <span className="text-cyan-300/50">// COMMERCE CONTROL</span></p>
@@ -1497,7 +1497,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             <p className="text-[9px] tracking-widest text-cyan-300/50">DOHA · QA</p>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Professional error alert (raw technical details only when ?dev=1) */}
       {errorAlert ? (
@@ -1519,17 +1519,15 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
 
       {/* Unified Mission-Control HUD: side panels frame the orb + chat into one
           screen. display:contents in fullscreen keeps the orb full-screen. */}
-      <div className={fsActive ? "contents" : "grid grid-cols-1 gap-3 lg:grid-cols-12"}>
-        {!fsActive ? (
-          <div className="order-2 lg:order-1 lg:col-span-3"><HudLeft scan={sd} onAction={send} /></div>
-        ) : null}
-        <div className={fsActive ? "contents" : "order-1 lg:order-2 lg:col-span-6"}>
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
+        <div className="order-2 lg:order-1 lg:col-span-3"><HudLeft scan={sd} onAction={send} /></div>
+        <div className="order-1 lg:order-2 lg:col-span-6">
 
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
           In fullscreen it grows to fill the screen. */}
       <div
         className={`relative flex flex-col items-center justify-center overflow-hidden ${
-          fsActive ? "min-h-0 flex-1" : "h-[34vh] sm:h-[44vh]"
+          fsActive ? "h-[40vh]" : "h-[34vh] sm:h-[44vh]"
         }`}
         style={{ background: "transparent" }}
       >
@@ -1547,14 +1545,13 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           const tot = scanData?.total ?? 0;
           const synced = !(scanData?.channelMismatch);
           const health = tot ? Math.round((tot - ((scanData?.outOfStock ?? 0) + (scanData?.missingImages ?? 0) + (scanData?.suspiciousPrice ?? 0))) / tot * 100) : 0;
-          const stLabel = state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY";
           const tags: { c: string; t: string }[] = [
-            { c: "left-[6%] top-[16%]", t: "CORE · STABLE" },
-            { c: "right-[6%] top-[14%]", t: `LINK · ${synced ? "OK" : "SYNC"}` },
-            { c: "left-[3%] top-1/2 -translate-y-1/2", t: `SKU · ${tot}` },
+            { c: "left-[6%] top-[16%]", t: `SKU · ${tot}` },
+            { c: "right-[6%] top-[14%]", t: `معتمد · ${scanData?.approved ?? 0}` },
+            { c: "left-[3%] top-1/2 -translate-y-1/2", t: `نافد · ${scanData?.outOfStock ?? 0}` },
             { c: "right-[3%] top-1/2 -translate-y-1/2", t: `HEALTH · ${health}%` },
-            { c: "left-[9%] bottom-[16%]", t: `SCAN · ${stLabel}` },
-            { c: "right-[8%] bottom-[18%]", t: "PWR · 100%" },
+            { c: "left-[9%] bottom-[16%]", t: `صور ناقصة · ${scanData?.missingImages ?? 0}` },
+            { c: "right-[8%] bottom-[18%]", t: `SYNC · ${synced ? "OK" : (scanData?.channelMismatch ?? 0)}` },
           ];
           return tags.map((g, i) => (
             <span key={i} dir="ltr" className={`pointer-events-none absolute z-10 hidden font-mono text-[8px] tracking-widest sm:block ${g.c}`} style={{ color: "rgba(140,190,225,0.5)" }}>
@@ -1608,11 +1605,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         @keyframes eqbar { 0%,100%{transform:scaleY(0.35)} 50%{transform:scaleY(1)} }
       `}</style>
         </div>{/* center column = orb only */}
-        {!fsActive ? (
-          <div className="order-3 lg:col-span-3"><HudRight scan={sd} levelRef={levelRef} /></div>
-        ) : null}
+        <div className="order-3 lg:col-span-3"><HudRight scan={sd} levelRef={levelRef} /></div>
       </div>{/* HUD grid */}
-      {!fsActive ? <HudObjective scan={sd} /> : null}
+      <HudObjective scan={sd} />
 
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
