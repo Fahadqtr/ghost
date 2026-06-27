@@ -12,7 +12,12 @@ export function detectForcedTool(text: string): string | null {
   // net/a search engine → web_search (search APIs avoid the CAPTCHA wall that
   // scraping Google results hits). Both require explicit web words so we don't
   // steal catalog reads like "دوّر على منتجات كورية" (search OUR catalog).
+  // Interactive control (click/type/select/login) — needs browser_action, not a
+  // read-only open. Look for control verbs alongside a web/page context.
+  const controlVerb = /(اضغط|اضغطي|دوس|دوسي|اختر|اختاري|سجّل|سجل|سجّلي|سجلي|عبّي|عبي|املئي?|اكتبي?\s*في|شغّل|شغل|شغّلي|شغلي|نزّل|مرّري?|click|press|select|login|log\s*in|fill|submit|type\s*in)/;
+  const pageCtx = /(الصفحة|صفحة|الموقع|موقع|المتصفح|الزر|زرّ|زر |الرابط|رابط|يوتيوب|youtube|google|قوقل|button|\bpage\b|النتيجة|نتيجة\s|الحقل|form|نموذج)/;
   const hasUrl = /https?:\/\/\S+|www\.\S+\.\w/.test(t);
+  if (controlVerb.test(t) && (pageCtx.test(t) || hasUrl)) return "browser_action";
   if (hasUrl) return "browse_web";
   const netNoun = /(النت|الإنترنت|الانترنت|قوقل|جوجل|google|الويب|الشبكة|محرّك|محرك\s*البحث|online|web)/;
   const searchVerb = /(ابحث|ابحثي|دوّر|دور|بحث|قارن|قارني|قارني?\s*أسعار|search|google\s+for|look\s*up)/;

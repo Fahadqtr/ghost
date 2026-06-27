@@ -786,12 +786,15 @@ function BrowserPanel({ item }: { item: any }) {
   const url: string = txt(item?.url) || "";
   const title: string = txt(item?.title) || "";
   const summary: string = txt(item?.summary) || "";
+  // browser_action captures the RESULT screenshot server-side and passes it as a
+  // data URL — show it directly (re-fetching the URL would lose the actions).
+  const shot: string = typeof item?.shot === "string" && item.shot.startsWith("data:") ? item.shot : "";
   const [bust, setBust] = useState(0);
-  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ok" | "error">(shot ? "ok" : "loading");
   let host = "";
   try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
-  const shotSrc = url ? `/api/malak/browse?url=${encodeURIComponent(url)}${bust ? `&_=${bust}` : ""}` : "";
-  const reload = () => { setState("loading"); setBust((b) => b + 1); };
+  const shotSrc = shot || (url ? `/api/malak/browse?url=${encodeURIComponent(url)}${bust ? `&_=${bust}` : ""}` : "");
+  const reload = () => { if (shot) return; setState("loading"); setBust((b) => b + 1); };
 
   return (
     <div className="space-y-3 text-right">
@@ -799,7 +802,7 @@ function BrowserPanel({ item }: { item: any }) {
       <div className="flex items-center gap-2 rounded-t-xl border border-cyan-400/30 bg-black/40 px-3 py-2">
         <span className="flex gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></span>
         <span dir="ltr" className="flex-1 truncate rounded-md bg-white/5 px-2 py-1 text-left font-mono text-[11px] text-cyan-200/80">{host || "—"}</span>
-        <button type="button" onClick={reload} title="تحديث" className="flex h-6 w-6 items-center justify-center rounded-md border border-cyan-400/30 text-cyan-200 hover:bg-cyan-400/10">⟳</button>
+        {!shot ? <button type="button" onClick={reload} title="تحديث" className="flex h-6 w-6 items-center justify-center rounded-md border border-cyan-400/30 text-cyan-200 hover:bg-cyan-400/10">⟳</button> : null}
       </div>
 
       {title ? <p className="px-1 text-sm font-bold text-white">{title}</p> : null}
@@ -810,7 +813,7 @@ function BrowserPanel({ item }: { item: any }) {
             <span className="animate-pulse">يفتح الصفحة في المتصفح…</span>
           </div>
         ) : null}
-        {url ? (
+        {shotSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={shotSrc}
