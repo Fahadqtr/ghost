@@ -39,12 +39,20 @@ export async function webSearch(rawQuery: string, limit = 6): Promise<SearchOutp
       error: "خدمة البحث غير مهيأة على الخادم (BRAVE_SEARCH_TOKEN أو TAVILY_API_KEY).",
     };
 
+  const provider = brave() ? "brave" : "tavily";
   try {
-    if (brave()) return await searchBrave(query, limit);
-    return await searchTavily(query, limit);
+    const out = brave() ? await searchBrave(query, limit) : await searchTavily(query, limit);
+    console.log(`[malak][search] provider=${provider} q="${query.slice(0, 80)}" results=${out.results.length}`);
+    return out;
   } catch (e: any) {
-    const msg = e?.name === "AbortError" ? "انتهت مهلة البحث." : "تعذّر تنفيذ البحث.";
-    return { ok: false, query, provider: brave() ? "brave" : "tavily", results: [], error: msg };
+    // Surface the REAL reason (HTTP status / provider error) so it shows in the
+    // server log AND degrades into a message Malak can relay verbatim.
+    const detail = e?.name === "AbortError" ? "timeout" : (e?.message || "unknown");
+    console.error(`[malak][search] provider=${provider} FAILED q="${query.slice(0, 80)}" reason=${detail}`);
+    const msg = e?.name === "AbortError"
+      ? "انتهت مهلة البحث."
+      : `تعذّر تنفيذ البحث (${detail}).`;
+    return { ok: false, query, provider, results: [], error: msg };
   }
 }
 
@@ -57,7 +65,10 @@ async function searchBrave(query: string, limit: number): Promise<SearchOutput> 
       headers: { Accept: "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": brave() },
       signal,
     });
-    if (!res.ok) throw new Error(`brave ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`brave HTTP ${res.status}${body ? `: ${body.slice(0, 160)}` : ""}`);
+    }
     return res.json();
   });
   const results: SearchResult[] = (json?.web?.results ?? []).slice(0, limit).map((r: any) => ({
@@ -76,7 +87,10 @@ async function searchTavily(query: string, limit: number): Promise<SearchOutput>
       body: JSON.stringify({ api_key: tavily(), query, max_results: Math.min(Math.max(limit, 1), 20), search_depth: "basic" }),
       signal,
     });
-    if (!res.ok) throw new Error(`tavily ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`tavily HTTP ${res.status}${body ? `: ${body.slice(0, 160)}` : ""}`);
+    }
     return res.json();
   });
   const results: SearchResult[] = (json?.results ?? []).slice(0, limit).map((r: any) => ({
