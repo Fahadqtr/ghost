@@ -40,14 +40,18 @@ function timeArab(iso: string) {
 function Panel({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
     <div
-      className="relative rounded-lg border p-3 backdrop-blur-md"
+      className="relative rounded-md border p-3 backdrop-blur-sm"
       style={{
-        borderColor: CY_FAINT,
-        background: "linear-gradient(160deg, rgba(0,217,255,0.05), rgba(4,17,31,0.55))",
-        boxShadow: "0 0 22px rgba(0,217,255,0.06), inset 0 0 22px rgba(0,217,255,0.03)",
+        borderColor: "rgba(0,217,255,0.3)",
+        background: "linear-gradient(160deg, rgba(0,217,255,0.035), rgba(3,12,24,0.6))",
+        boxShadow: "0 0 14px rgba(0,217,255,0.05), inset 0 0 16px rgba(0,217,255,0.025)",
       }}
     >
-      <span aria-hidden className="pointer-events-none absolute right-1.5 top-1.5 h-2.5 w-2.5 border-r border-t" style={{ borderColor: "rgba(0,217,255,0.45)" }} />
+      {/* corner ticks (HUD frame) */}
+      <span aria-hidden className="pointer-events-none absolute left-1 top-1 h-2 w-2 border-l border-t" style={{ borderColor: "rgba(0,217,255,0.55)" }} />
+      <span aria-hidden className="pointer-events-none absolute right-1 top-1 h-2 w-2 border-r border-t" style={{ borderColor: "rgba(0,217,255,0.55)" }} />
+      <span aria-hidden className="pointer-events-none absolute left-1 bottom-1 h-2 w-2 border-b border-l" style={{ borderColor: "rgba(0,217,255,0.55)" }} />
+      <span aria-hidden className="pointer-events-none absolute right-1 bottom-1 h-2 w-2 border-b border-r" style={{ borderColor: "rgba(0,217,255,0.55)" }} />
       <div className="mb-2 flex items-center justify-between border-b pb-1.5" style={{ borderColor: CY_FAINT }}>
         <p className="font-mono text-[9px] font-semibold tracking-[0.3em]" style={{ color: CY_SOFT }}>{`▮ ${title}`}</p>
         {right}

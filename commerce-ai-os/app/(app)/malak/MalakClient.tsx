@@ -801,7 +801,7 @@ function ResultWindow({
       ref={winRef}
       data-win
       className="fixed z-50 w-[min(92vw,460px)]"
-      style={{ ...posStyle, maxHeight: "70vh", animation: "hudIn .4s ease-out both" }}
+      style={{ ...posStyle, maxHeight: "70vh", animation: "hudIn .22s ease-out both" }}
     >
       <div
         className="flex max-h-[70vh] flex-col overflow-hidden rounded-2xl"
@@ -1624,7 +1624,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Unified Mission-Control HUD: side panels frame the orb + chat into one
           screen. display:contents in fullscreen keeps the orb full-screen. */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
-        <div className="order-2 lg:order-1 lg:col-span-3" style={{ animation: "screenInL .5s ease-out both" }}><HudLeft scan={sd} onAction={send} /></div>
+        <div className="order-2 lg:order-1 lg:col-span-3" style={{ animation: "screenInL .26s ease-out both" }}><HudLeft scan={sd} onAction={send} /></div>
         <div className="order-1 lg:order-2 lg:col-span-6">
 
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
@@ -1720,9 +1720,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         @keyframes screenInB { 0%{opacity:0;transform:translateY(22px)} 100%{opacity:1;transform:none} }
       `}</style>
         </div>{/* center column = orb only */}
-        <div className="order-3 lg:col-span-3" style={{ animation: "screenInR .5s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} /></div>
+        <div className="order-3 lg:col-span-3" style={{ animation: "screenInR .26s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} /></div>
       </div>{/* HUD grid */}
-      <div style={{ animation: "screenInB .55s ease-out both" }}><HudObjective scan={sd} /></div>
+      <div style={{ animation: "screenInB .28s ease-out both" }}><HudObjective scan={sd} /></div>
 
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
