@@ -41,8 +41,9 @@ export async function GET() {
       head((b) => b.eq("approval", "Rejected")),
       head((b) => b.is("image_url", null)),
       head((b) => b.or("price.is.null,price.lte.0")),
-      sb.from("inventory").select("product_id").lte("stock_quantity", 0).limit(5000),
-      sb.from("inventory").select("product_id").lt("stock_quantity", 10).limit(1000),
+      sb.from("inventory").select("product_id").lte("stock_quantity", 0).limit(20000),
+      // Low stock = 1..9 ONLY. Out-of-stock (<=0) is its own category, not "low".
+      sb.from("inventory").select("product_id").gt("stock_quantity", 0).lt("stock_quantity", 10).limit(20000),
       // Recent Malak actions for the activity feed (best-effort; table may be empty).
       sb.from("malak_audit").select("created_at, action_type, sku, old_value, new_value, status").order("created_at", { ascending: false }).limit(10),
     ]);
@@ -62,10 +63,12 @@ export async function GET() {
     const issues: Issue[] = [];
     if (channelMismatch > 0)
       issues.push({ key: "sync", icon: "🔁", title: "نافد لا زال ظاهر على المنصّات", count: channelMismatch, prompt: "زامني التوفّر بين المنصّات", severity: "high" });
+    if (outOfStock > 0)
+      issues.push({ key: "oos", icon: "⛔", title: "نافد (مخزون صفر)", count: outOfStock, prompt: "اعرض المنتجات النافدة", severity: "high" });
     if (suspiciousPrice > 0)
       issues.push({ key: "price", icon: "💸", title: "سعر ناقص أو صفر", count: suspiciousPrice, prompt: "افحص مشاكل الأسعار", severity: "high" });
     if (lowStock > 0)
-      issues.push({ key: "low", icon: "📉", title: "ستوك منخفض قبل ما ينفد", count: lowStock, prompt: "اعرض المنتجات منخفضة المخزون", severity: "med" });
+      issues.push({ key: "low", icon: "📉", title: "ستوك منخفض (أقل من ١٠)", count: lowStock, prompt: "اعرض المنتجات منخفضة المخزون", severity: "med" });
     if (rejected > 0)
       issues.push({ key: "rejected", icon: "⛔", title: "منتج مرفوض يحتاج مراجعة", count: rejected, prompt: "اعرض المنتجات المرفوضة", severity: "med" });
     if (missingImages > 0)

@@ -136,7 +136,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "low_stock",
-    description: "المنتجات التي مخزونها أقل من threshold (افتراضي 10).",
+    description: "حالة المخزون: ترجع منفصلين — النافد (مخزون صفر) outOfStock/outOfStockCount، والمنخفض (1 إلى threshold-1) lowStock/lowStockCount. لا تخلطي بينهما: النافد غير المنخفض.",
     input_schema: {
       type: "object",
       properties: { threshold: { type: "integer", description: "حد المخزون المنخفض (افتراضي 10)" } },
@@ -446,23 +446,31 @@ async function priceIssues(sb: Sb) {
 
 async function lowStock(sb: Sb, input: any) {
   const threshold = Number(input?.threshold) || 10;
+  // Pull everything under the threshold, then SPLIT: out-of-stock (<=0) is a
+  // distinct category from low stock (1..threshold-1) — never conflate them.
   const { data, error } = await sb
     .from("inventory")
     .select("product_id, stock_quantity")
     .lt("stock_quantity", threshold)
-    .limit(50);
+    .limit(5000);
   if (error) return { error: error.message, threshold, items: [] };
-  const rows = data ?? [];
-  if (rows.length === 0) return { threshold, count: 0, items: [], note: "لا توجد منتجات تحت الحد حاليًا (المخزون قاعدي = 50)." };
-  const ids = rows.map((r: any) => r.product_id);
+  const rows = (data ?? []) as { product_id: string; stock_quantity: number }[];
+  const oosRows = rows.filter((r) => (r.stock_quantity ?? 0) <= 0);
+  const lowRows = rows.filter((r) => (r.stock_quantity ?? 0) > 0);
+  const ids = rows.slice(0, 200).map((r) => r.product_id);
   const { data: prods } = await sb.from("products").select("id, name_en, sku").in("id", ids);
   const byId = new Map((prods ?? []).map((p: any) => [p.id, p]));
-  const items = rows.map((r: any) => ({
-    name: byId.get(r.product_id)?.name_en ?? null,
-    sku: byId.get(r.product_id)?.sku ?? null,
-    stock: r.stock_quantity,
-  }));
-  return { threshold, count: items.length, items };
+  const map = (r: { product_id: string; stock_quantity: number }) => ({
+    name: byId.get(r.product_id)?.name_en ?? null, sku: byId.get(r.product_id)?.sku ?? null, stock: r.stock_quantity,
+  });
+  return {
+    threshold,
+    outOfStockCount: oosRows.length,   // مخزون صفر — نافد
+    lowStockCount: lowRows.length,     // 1..threshold-1 — منخفض فقط
+    outOfStock: oosRows.slice(0, 40).map(map),
+    lowStock: lowRows.slice(0, 40).map(map),
+    note: "نافد = مخزون صفر؛ منخفض = أقل من الحدّ وأكبر من صفر. لا تخلطيهم.",
+  };
 }
 
 async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, string>) {
