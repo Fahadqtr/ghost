@@ -49,6 +49,28 @@ export function encodeLive(data: LiveSessionData): string {
   const mac = b64url(crypto.createHmac("sha256", secret()).update(payload).digest());
   return `${payload}.${mac}`;
 }
+// The durable profile id lives in its own long-lived signed cookie (the login
+// state persists across sessions, far longer than a single 30-min VM).
+export const PROFILE_TTL_SEC = 90 * 24 * 3600; // 90 days
+export function encodeProfile(profileId: string): string {
+  const payload = b64url(Buffer.from(JSON.stringify({ p: profileId, ts: Date.now() })));
+  const mac = b64url(crypto.createHmac("sha256", secret()).update(payload).digest());
+  return `${payload}.${mac}`;
+}
+export function decodeProfile(token: unknown, maxAgeMs = PROFILE_TTL_SEC * 1000): string | null {
+  if (typeof token !== "string" || !token.includes(".")) return null;
+  const [payload, sig] = token.split(".");
+  if (!payload || !sig) return null;
+  const expected = b64url(crypto.createHmac("sha256", secret()).update(payload).digest());
+  const a = Buffer.from(sig), b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const d = JSON.parse(b64urlDecode(payload).toString("utf8")) as { p: string; ts: number };
+    if (!d?.p || typeof d.ts !== "number" || Date.now() - d.ts > maxAgeMs) return null;
+    return d.p;
+  } catch { return null; }
+}
+
 export function decodeLive(token: unknown, maxAgeMs = LIVE_TTL_SEC * 1000): LiveSessionData | null {
   if (typeof token !== "string" || !token.includes(".")) return null;
   const [payload, sig] = token.split(".");
@@ -65,7 +87,11 @@ export function decodeLive(token: unknown, maxAgeMs = LIVE_TTL_SEC * 1000): Live
 }
 
 /** Create a live virtual-browser session; returns an embeddable URL (with audio). */
-export async function createLiveSession(startUrl?: string): Promise<LiveSession> {
+// profileId: pass a saved profile id to RESUME a logged-in profile (cookies +
+// logins restored), or omit to start fresh AND save a new profile — the
+// returned sessionId becomes that profile id for next time. Profiles persist
+// the user's logins across sessions (Hyperbeam deletes them after 3 months idle).
+export async function createLiveSession(startUrl?: string, profileId?: string): Promise<LiveSession> {
   const key = (process.env.HYPERBEAM_API_KEY || "").trim();
   if (!key) return { ok: false, error: "خدمة المتصفح الحي غير مهيأة على الخادم (HYPERBEAM_API_KEY)." };
 
@@ -74,6 +100,8 @@ export async function createLiveSession(startUrl?: string): Promise<LiveSession>
     try { start = assertSafeBrowseUrl(startUrl); }
     catch (e: any) { return { ok: false, error: e?.message || "رابط غير صالح." }; }
   }
+  // profile: "<id>" loads+updates that saved profile; true creates a new one.
+  const profile: string | boolean = profileId && profileId.trim() ? profileId.trim() : true;
 
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -83,6 +111,7 @@ export async function createLiveSession(startUrl?: string): Promise<LiveSession>
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         ...(start ? { start_url: start } : {}),
+        profile,
         width: 1280,
         height: 720,
         fps: 24,
