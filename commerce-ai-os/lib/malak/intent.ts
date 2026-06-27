@@ -12,6 +12,13 @@ export function detectForcedTool(text: string): string | null {
   // net/a search engine → web_search (search APIs avoid the CAPTCHA wall that
   // scraping Google results hits). Both require explicit web words so we don't
   // steal catalog reads like "دوّر على منتجات كورية" (search OUR catalog).
+  // Shopping mode (Temu/Shein/any store): a real shopping site needs the live
+  // logged-in session, not a server-side screenshot. Route store/cart intents to
+  // open_live_browser (it reuses + navigates the persistent session).
+  const shopSite = /(تيمو|temu|شي\s*إن|شي\s*ان|شين|shein|amazon|أمازون|نون|noon|ايباي|ebay|عربة|العربة|cart|سلة|أضف\s*للعربة|اطلب|تسوّق|تسوق|متجر\s*online)/;
+  const shopVerb = /(افتح|افتحي|سوّ|سوي|دوّر|دور|ابحث|ابحثي|اطلب|اطلبي|اشتر|اشتري|أضف|اضف|قارن|قارني|shop|buy|order|add)/;
+  if (shopSite.test(t) && (shopVerb.test(t) || /(تريند|trend|منتج|product|سعر|price)/.test(t))) return "open_live_browser";
+
   // Live browser with audio (Hyperbeam) — anything about watching/hearing live
   // or playing sound. Must win over the screenshot tools (which are silent).
   const liveCue = /(لايف|مباشر|حي\b|حيّ|بصوت|صوت|أسمع|اسمع|اسمعي|سمّعي|نسمع|أشوف\s*مباشر|شوفه\s*مباشر|متصفح\s*حي|live\s*browser|with\s*sound|audio)/;
