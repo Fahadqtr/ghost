@@ -764,39 +764,75 @@ function LiveBrowserPanel({ item }: { item: any }) {
   const embedUrl: string = typeof item?.embedUrl === "string" ? item.embedUrl : "";
   const url: string = txt(item?.url) || "";
   const title: string = txt(item?.title) || "متصفح حي";
+  // Maximize: render the live browser as a full-viewport overlay (more reliable
+  // on mobile than the Fullscreen API inside an iframe).
+  const [big, setBig] = useState(false);
+  // The stream often shows black until the first tap (mobile media autoplay) /
+  // while the VM boots — show a one-tap "start" hint over the iframe.
+  const [started, setStarted] = useState(false);
   let host = "";
   try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
 
+  if (!embedUrl) {
+    return (
+      <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/30 px-4 text-center text-[12px] text-amber-200/90">
+        <span>ما قدرت أفتح المتصفح الحي.</span>
+        <span className="text-white/50">قد تحتاج خدمة المتصفح الحي تتفعّل على الخادم (HYPERBEAM_API_KEY).</span>
+      </div>
+    );
+  }
+
+  // The iframe lives in ONE place; maximizing just restyles its wrapper to a
+  // full-viewport overlay so the DOM node (and the live connection) is kept.
   return (
     <div className="space-y-2 text-right">
       <div className="flex items-center gap-2 rounded-t-xl border border-emerald-400/30 bg-black/40 px-3 py-2">
         <span className="flex gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></span>
         <span className="flex-1 truncate text-[11px] font-semibold text-emerald-300">🔴 مباشر بصوت{host ? ` · ${host}` : ""}</span>
+        <button type="button" onClick={() => setBig((v) => !v)} title={big ? "تصغير" : "تكبير"} aria-label="تكبير الشاشة" className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">{big ? "✕" : "⛶"}</button>
       </div>
 
-      {embedUrl ? (
-        <div className="relative overflow-hidden rounded-xl border border-emerald-400/20 bg-black" style={{ aspectRatio: "16 / 10" }}>
-          <iframe
-            src={embedUrl}
-            title={title}
-            className="h-full w-full"
-            allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write; encrypted-media; display-capture"
-            // Hyperbeam needs scripts + same-origin to run its WebRTC client.
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-            allowFullScreen
-          />
-        </div>
-      ) : (
-        <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/30 px-4 text-center text-[12px] text-amber-200/90">
-          <span>ما قدرت أفتح المتصفح الحي.</span>
-          <span className="text-white/50">قد تحتاج خدمة المتصفح الحي تتفعّل على الخادم (HYPERBEAM_API_KEY).</span>
-        </div>
-      )}
+      <div
+        className={
+          big
+            ? "fixed inset-0 z-[100] bg-black"
+            : "relative overflow-hidden rounded-xl border border-emerald-400/20 bg-black"
+        }
+        style={big ? undefined : { aspectRatio: "16 / 11" }}
+      >
+        {big ? (
+          <button type="button" onClick={() => setBig(false)} aria-label="تصغير" className="absolute left-3 top-3 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-emerald-400/50 bg-black/70 text-emerald-100">✕</button>
+        ) : null}
+        <iframe
+          src={embedUrl}
+          title={title}
+          className="h-full w-full"
+          // No sandbox: Hyperbeam's embed is a trusted origin and its WebRTC
+          // client can render black if sandboxed. Permissions via `allow`.
+          allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write; encrypted-media; display-capture; gamepad; web-share"
+          allowFullScreen
+        />
+        {!started ? (
+          <button
+            type="button"
+            onClick={() => setStarted(true)}
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/55 text-emerald-200 backdrop-blur-[1px]"
+          >
+            <span className="text-3xl">▶</span>
+            <span className="text-[13px] font-semibold">اضغط لبدء البث الحي بالصوت</span>
+            <span className="text-[11px] text-white/60">لو ظلّت سوداء انتظر ثانيتين — النافذة تشتغل</span>
+          </button>
+        ) : null}
+      </div>
 
-      <p className="px-1 text-[12px] leading-relaxed text-white/70">متصفح حي تفاعلي بصوت — اضغط بنفسك داخل النافذة، والصوت يطلع على جهازك.</p>
-      {url ? (
-        <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-[12px] text-emerald-200 hover:bg-emerald-400/10">↗ افتح في تبويب جديد</a>
+      {!big ? (
+        <>
+          <p className="px-1 text-[12px] leading-relaxed text-white/70">متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. اضغط ⛶ للتكبير.</p>
+          {url ? (
+            <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-[12px] text-emerald-200 hover:bg-emerald-400/10">↗ افتح في تبويب جديد</a>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
