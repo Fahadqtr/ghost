@@ -22,6 +22,7 @@ export interface LiveSession {
   embedUrl?: string;
   sessionId?: string;
   adminToken?: string;
+  profileUsed?: boolean; // false if profiles are plan-gated and we fell back
   error?: string;
 }
 
@@ -101,40 +102,54 @@ export async function createLiveSession(startUrl?: string, profileId?: string): 
     catch (e: any) { return { ok: false, error: e?.message || "رابط غير صالح." }; }
   }
   // profile: "<id>" loads+updates that saved profile; true creates a new one.
+  // Profiles may be a paid Hyperbeam feature — if the request fails WITH a
+  // profile, we retry once WITHOUT it so the live browser still opens (login
+  // just won't persist). profileUsed tells the caller whether to save the id.
   const profile: string | boolean = profileId && profileId.trim() ? profileId.trim() : true;
 
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(HB_ENGINE, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...(start ? { start_url: start } : {}),
-        profile,
-        width: 1280,
-        height: 720,
-        fps: 24,
-        ublock: true,
-        // Reclaim idle/forgotten sessions so the free tier isn't burned.
-        timeout: { absolute: 1800, inactive: 180, warning: 30, offline: 60 },
-      }),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      return { ok: false, error: `تعذّر إنشاء الجلسة (Hyperbeam HTTP ${res.status}${body ? `: ${body.slice(0, 140)}` : ""}).` };
+  const attempt = async (withProfile: boolean): Promise<{ res: Response; body: string } | { err: string }> => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(HB_ENGINE, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(start ? { start_url: start } : {}),
+          ...(withProfile ? { profile } : {}),
+          width: 1280,
+          height: 720,
+          fps: 24,
+          ublock: true,
+          // Reclaim idle/forgotten sessions so the free tier isn't burned.
+          timeout: { absolute: 1800, inactive: 180, warning: 30, offline: 60 },
+        }),
+        signal: ctrl.signal,
+      });
+      const body = res.ok ? "" : await res.text().catch(() => "");
+      return { res, body };
+    } catch (e: any) {
+      return { err: e?.name === "AbortError" ? "انتهت مهلة إنشاء المتصفح الحي." : "تعذّر الاتصال بخدمة المتصفح الحي." };
+    } finally {
+      clearTimeout(t);
     }
-    const json: any = await res.json();
-    const embedUrl = json?.embed_url || json?.embedUrl;
-    if (!embedUrl) return { ok: false, error: "رد Hyperbeam بدون embed_url." };
-    return { ok: true, embedUrl, sessionId: json?.session_id || json?.sessionId, adminToken: json?.admin_token || json?.adminToken };
-  } catch (e: any) {
-    const msg = e?.name === "AbortError" ? "انتهت مهلة إنشاء المتصفح الحي." : "تعذّر الاتصال بخدمة المتصفح الحي.";
-    return { ok: false, error: msg };
-  } finally {
-    clearTimeout(t);
+  };
+
+  let profileUsed = true;
+  let out = await attempt(true);
+  // Retry without the profile if it failed — profiles may be plan-gated.
+  if ("res" in out && !out.res.ok) {
+    console.warn(`[malak][live] create with profile failed (HTTP ${out.res.status}: ${out.body.slice(0, 120)}) — retrying without profile`);
+    profileUsed = false;
+    out = await attempt(false);
   }
+  if ("err" in out) return { ok: false, error: out.err };
+  if (!out.res.ok)
+    return { ok: false, error: `تعذّر إنشاء الجلسة (Hyperbeam HTTP ${out.res.status}${out.body ? `: ${out.body.slice(0, 140)}` : ""}).` };
+  const json: any = await out.res.json().catch(() => ({}));
+  const embedUrl = json?.embed_url || json?.embedUrl;
+  if (!embedUrl) return { ok: false, error: "رد Hyperbeam بدون embed_url." };
+  return { ok: true, embedUrl, sessionId: json?.session_id || json?.sessionId, adminToken: json?.admin_token || json?.adminToken, profileUsed };
 }
 
 // Drive an existing (logged-in) session to a new URL via Hyperbeam's
