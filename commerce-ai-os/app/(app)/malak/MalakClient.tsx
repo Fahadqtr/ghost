@@ -1737,7 +1737,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       </div>
         </div>{/* center column */}
         {!fsActive && scanData ? (
-          <div className="order-3 lg:col-span-3"><HudRight scan={scanData} /></div>
+          <div className="order-3 lg:col-span-3"><HudRight scan={scanData} levelRef={levelRef} /></div>
         ) : null}
       </div>{/* HUD grid */}
       {!fsActive && scanData ? <HudObjective scan={scanData} /> : null}
