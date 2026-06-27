@@ -1425,8 +1425,17 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         const ag: AgentId = (AGENTS.some((a) => a.id === data?.agent) ? data.agent : "malak") as AgentId;
         const speakText = typeof data?.speak === "string" ? data.speak : "تم.";
         // Technical/config errors → professional alert (raw hidden unless ?dev=1).
-        if (/ANTHROPIC_API_KEY|SUPABASE_SERVICE_ROLE_KEY|Service role|صار خطأ تقني|غير مهيأ|not configured/i.test(speakText)) {
-          setErrorAlert({ pretty: "تعذّر تنفيذ الطلب — إعدادات قاعدة البيانات غير مكتملة", raw: speakText });
+        // Pick an ACCURATE headline: billing/credit vs config vs generic, so a
+        // depleted Anthropic balance isn't mislabeled as a database problem.
+        const isBilling = /رصيد|Anthropic|credit|billing|Plans & Billing/i.test(speakText);
+        const isConfig = /SUPABASE|Service role|Supabase|قاعدة|الكتالوج مو مربوط|not configured/i.test(speakText);
+        if (isBilling || isConfig || /ANTHROPIC_API_KEY|صار خطأ تقني|غير مهيأ/i.test(speakText)) {
+          const pretty = isBilling
+            ? "رصيد Anthropic (عقل ملاك) خلص — جدّد الرصيد من console.anthropic.com ← Plans & Billing"
+            : isConfig
+              ? "تعذّر تنفيذ الطلب — إعدادات الخادم/قاعدة البيانات غير مكتملة"
+              : "تعذّر تنفيذ الطلب — صار خطأ تقني مؤقّت";
+          setErrorAlert({ pretty, raw: speakText });
           setState("idle");
           resumeHandsFree();
         } else {

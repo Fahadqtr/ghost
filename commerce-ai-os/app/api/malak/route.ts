@@ -1367,11 +1367,17 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     // F6: keep the real error in the server log only; the client gets a generic
-    // message (no internal schema/SQL/provider details).
-    console.error("[malak] error:", e?.message || e);
-    return Response.json(
-      { agent: "malak", speak: "صار خطأ تقني مؤقّت عندي، جرّب مرة ثانية بعد شوي." },
-      { status: 200 }
-    );
+    // message (no internal schema/SQL/provider details). EXCEPTION: surface a
+    // clear, accurate message for Anthropic billing/credit + rate-limit errors —
+    // these are actionable by the owner and a generic "technical error" hides
+    // the real cause (and the UI used to mislabel it "database settings").
+    const raw = String(e?.message || e || "");
+    console.error("[malak] error:", raw);
+    let speak = "صار خطأ تقني مؤقّت عندي، جرّب مرة ثانية بعد شوي.";
+    if (/credit balance|billing|insufficient.*quota|payment/i.test(raw))
+      speak = "رصيد Anthropic (عقل ملاك) خلص. جدّد الرصيد من console.anthropic.com → Plans & Billing وأرجع لي.";
+    else if (/rate.?limit|overloaded|429/i.test(raw))
+      speak = "ضغط مؤقّت على عقل ملاك (rate limit). جرّب بعد دقيقة.";
+    return Response.json({ agent: "malak", speak }, { status: 200 });
   }
 }
