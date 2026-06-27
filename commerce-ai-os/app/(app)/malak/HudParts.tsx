@@ -32,37 +32,31 @@ function timeArab(iso: string) {
   catch { return ""; }
 }
 
-// Angular Iron-Man HUD plate: cut top-right + bottom-left corners, thin cyan
-// edge (drawn as a 1px under-layer showing through the clip), header tab.
-const CLIP = "polygon(0 0, calc(100% - 11px) 0, 100% 11px, 100% 100%, 11px 100%, 0 calc(100% - 11px))";
+// Flat, borderless HUD section (matches the reference): a "{ TITLE }" header
+// with a thin underline, content floating on the dark background — no box.
 function Panel({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
-    <div style={{ clipPath: CLIP, background: "rgba(76,195,255,0.30)", padding: 1 }}>
-      <div className="relative p-2.5" style={{ clipPath: CLIP, background: "rgba(4,12,26,0.92)" }}>
-        <div className="mb-2 flex items-center justify-between border-b pb-1" style={{ borderColor: CY_FAINT }}>
-          <p className="font-mono text-[9px] tracking-[0.3em]" style={{ color: CY }}>◢ {title}</p>
-          {right}
-        </div>
-        {children}
+    <div className="relative">
+      <div className="mb-1.5 flex items-center justify-between border-b pb-1" style={{ borderColor: "rgba(120,175,215,0.18)" }}>
+        <p className="font-mono text-[9px] tracking-[0.3em]" style={{ color: "rgba(150,195,230,0.7)" }}>{`{ ${title} }`}</p>
+        {right}
       </div>
+      {children}
     </div>
   );
 }
 
-// Radial gauge (Iron-Man style): arc ring + center value + label.
-function Gauge({ label, p, sub, tone = CY }: { label: string; p: number; sub: string; tone?: string }) {
-  const r = 17, c = 2 * Math.PI * r;
-  const off = c * (1 - Math.max(0, Math.min(100, p)) / 100);
+// Thin horizontal vital bar (label · value · 1px track) — like the reference.
+function VitalBar({ label, p, note, tone = "rgba(130,185,225,0.85)" }: { label: string; p: number; note: string; tone?: string }) {
   return (
-    <div className="flex flex-col items-center gap-0.5">
-      <svg width="46" height="46" viewBox="0 0 46 46">
-        <circle cx="23" cy="23" r={r} fill="none" stroke="rgba(76,195,255,0.12)" strokeWidth="3" />
-        <circle cx="23" cy="23" r={r} fill="none" stroke={tone} strokeWidth="3" strokeLinecap="round"
-          strokeDasharray={c} strokeDashoffset={off} transform="rotate(-90 23 23)" style={{ filter: `drop-shadow(0 0 3px ${tone})` }} />
-        <text x="23" y="26" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="#cfeeff">{p}</text>
-      </svg>
-      <span className="text-[8px] tracking-wider" style={{ color: CY_DIM }}>{label}</span>
-      <span className="text-[7px]" style={{ color: "rgba(174,230,255,0.45)" }}>{sub}</span>
+    <div className="mb-1.5">
+      <div className="mb-0.5 flex items-center justify-between font-mono text-[9px]">
+        <span style={{ color: "rgba(150,195,230,0.7)" }}>{label}</span>
+        <span style={{ color: "rgba(180,210,235,0.85)" }}>{note}</span>
+      </div>
+      <div className="h-[3px] w-full overflow-hidden" style={{ background: "rgba(120,170,210,0.12)" }}>
+        <div className="h-full" style={{ width: `${Math.max(2, Math.min(100, p))}%`, background: tone }} />
+      </div>
     </div>
   );
 }
@@ -72,14 +66,12 @@ export function HudLeft({ scan, onAction }: { scan: ScanData; onAction: (prompt:
   return (
     <div dir="ltr" className="space-y-3 font-mono">
       <Panel title="STORE VITALS">
-        <div className="grid grid-cols-3 gap-y-2 pt-1">
-          <Gauge label="CATALOG" p={pct(scan.approved, t)} sub={`${scan.approved}/${t}`} tone={GREEN} />
-          <Gauge label="IN-STOCK" p={pct(t - scan.outOfStock, t)} sub={`نافد ${scan.outOfStock}`} tone={scan.outOfStock ? AMBER : GREEN} />
-          <Gauge label="IMAGES" p={pct(t - scan.missingImages, t)} sub={`ناقص ${scan.missingImages}`} tone={scan.missingImages ? CY : GREEN} />
-          <Gauge label="PRICING" p={pct(t - scan.suspiciousPrice, t)} sub={`مشكلة ${scan.suspiciousPrice}`} tone={scan.suspiciousPrice ? AMBER : GREEN} />
-          <Gauge label="SYNC" p={scan.channelMismatch ? 60 : 100} sub={scan.channelMismatch ? `${scan.channelMismatch}⚠` : "متطابق"} tone={scan.channelMismatch ? ROSE : GREEN} />
-          <Gauge label="HEALTH" p={pct(t - (scan.outOfStock + scan.missingImages + scan.suspiciousPrice), t)} sub="عام" tone={CY} />
-        </div>
+        <VitalBar label="CATALOG معتمد" p={pct(scan.approved, t)} note={`${scan.approved}/${t}`} tone={GREEN} />
+        <VitalBar label="IN-STOCK متوفّر" p={pct(t - scan.outOfStock, t)} note={`نافد ${scan.outOfStock}`} tone={scan.outOfStock ? AMBER : GREEN} />
+        <VitalBar label="IMAGES صور" p={pct(t - scan.missingImages, t)} note={`ناقص ${scan.missingImages}`} />
+        <VitalBar label="PRICING تسعير" p={pct(t - scan.suspiciousPrice, t)} note={`مشكلة ${scan.suspiciousPrice}`} tone={scan.suspiciousPrice ? AMBER : "rgba(130,185,225,0.85)"} />
+        <VitalBar label="SYNC مزامنة" p={scan.channelMismatch ? 60 : 100} note={scan.channelMismatch ? `${scan.channelMismatch} تعارض` : "متطابق"} tone={scan.channelMismatch ? ROSE : GREEN} />
+        <VitalBar label="HEALTH صحّة" p={pct(t - (scan.outOfStock + scan.missingImages + scan.suspiciousPrice), t)} note="عام" />
       </Panel>
       <Panel title="ACTION QUEUE" right={<span className="text-[8.5px]" style={{ color: CY_DIM }}>{scan.issues?.length ?? 0}</span>}>
         {scan.allClear ? (
@@ -142,10 +134,9 @@ export function HudObjective({ scan }: { scan: ScanData }) {
   const t = scan.total || 0;
   const health = pct(t - (scan.outOfStock + scan.missingImages + scan.suspiciousPrice), t);
   return (
-    <div dir="ltr" style={{ clipPath: CLIP, background: "rgba(76,195,255,0.3)", padding: 1 }}>
-    <div className="p-3 font-mono" style={{ clipPath: CLIP, background: "rgba(4,12,26,0.92)" }}>
+    <div dir="ltr" className="border-t p-3 pt-2 font-mono" style={{ borderColor: "rgba(120,175,215,0.18)" }}>
       <div className="flex items-center justify-between">
-        <p className="text-[9px] tracking-[0.3em]" style={{ color: AMBER }}>■ أولوية اليوم</p>
+        <p className="text-[9px] tracking-[0.3em]" style={{ color: AMBER }}>■ PRIMARY OBJECTIVE · أولوية اليوم</p>
         <p className="text-[9px] tracking-widest" style={{ color: CY_DIM }}>{scan.issues?.length ?? 0} بند يحتاج تصرّف</p>
       </div>
       <p dir="rtl" className="mt-2 text-sm font-bold" style={{ color: "#cfeeff" }}>{scan.priority}</p>
@@ -153,7 +144,6 @@ export function HudObjective({ scan }: { scan: ScanData }) {
         <div className="h-full rounded-full" style={{ width: `${health}%`, background: GREEN, boxShadow: `0 0 8px ${GREEN}` }} />
       </div>
       <p className="mt-1 text-[8.5px] tracking-widest" style={{ color: CY_FAINT }}>HEALTH {health}% · صحّة الكتالوج</p>
-    </div>
     </div>
   );
 }
