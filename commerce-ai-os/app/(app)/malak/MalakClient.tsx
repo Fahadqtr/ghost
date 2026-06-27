@@ -749,6 +749,83 @@ function ScanPanel({
   );
 }
 
+// A draggable holographic result window. Several can be open at once; drag by
+// the header, close with ✕.
+function ResultWindow({
+  data, index, onClose, onConfirmDone, onConfirmCancel, onGenerated, onQuick, onListen,
+}: {
+  data: PanelData;
+  index: number;
+  onClose: () => void;
+  onConfirmDone?: (message: string) => void;
+  onConfirmCancel?: () => void;
+  onGenerated?: (panel: PanelData) => void;
+  onQuick?: (q: string) => void;
+  onListen?: (text: string) => void;
+}) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const winRef = useRef<HTMLDivElement>(null);
+
+  const onDown = (e: React.PointerEvent) => {
+    const r = winRef.current?.getBoundingClientRect();
+    if (!r) return;
+    drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onMove = (e: React.PointerEvent) => {
+    if (!drag.current) return;
+    setPos({ x: e.clientX - drag.current.dx, y: e.clientY - drag.current.dy });
+  };
+  const onUp = () => { drag.current = null; };
+
+  // Each window flies out to a different anchor around the orb (right / left /
+  // bottom corners), then is draggable anywhere.
+  const ANCHORS: React.CSSProperties[] = [
+    { right: "4%", top: "22%" },
+    { left: "4%", top: "22%" },
+    { right: "6%", bottom: "10%" },
+    { left: "6%", bottom: "10%" },
+    { left: "50%", top: "18%", transform: "translateX(-50%)" },
+  ];
+  const posStyle: React.CSSProperties = pos ? { left: pos.x, top: pos.y } : ANCHORS[index % ANCHORS.length];
+
+  return (
+    <div
+      ref={winRef}
+      data-win
+      className="fixed z-50 w-[min(92vw,460px)]"
+      style={{ ...posStyle, maxHeight: "70vh", animation: "hudIn .4s ease-out both" }}
+    >
+      <div
+        className="flex max-h-[70vh] flex-col overflow-hidden rounded-2xl"
+        style={{
+          border: "1px solid #22d3ee66",
+          background: "linear-gradient(160deg, rgba(34,211,238,0.10), rgba(11,16,32,0.97))",
+          boxShadow: "0 0 44px rgba(34,211,238,0.35), inset 0 0 30px rgba(34,211,238,0.08)",
+        }}
+      >
+        <span aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.10]" style={{ backgroundImage: "repeating-linear-gradient(0deg, #22d3ee 0px, #22d3ee 1px, transparent 1px, transparent 4px)" }} />
+        <span aria-hidden className="absolute left-2 top-2 h-4 w-4 border-l-2 border-t-2 border-cyan-400/70" />
+        <span aria-hidden className="absolute right-2 top-2 h-4 w-4 border-r-2 border-t-2 border-cyan-400/70" />
+        {/* header = drag handle */}
+        <div
+          onPointerDown={onDown}
+          onPointerMove={onMove}
+          onPointerUp={onUp}
+          className="relative flex cursor-move touch-none items-center justify-between border-b border-cyan-400/30 px-4 py-2.5 select-none"
+        >
+          <span className="font-mono text-[11px] tracking-[0.25em] text-cyan-300">◢ MALAK · النتيجة</span>
+          <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={onClose} aria-label="إغلاق" className="flex h-7 w-7 items-center justify-center rounded-full border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/10">✕</button>
+        </div>
+        <div className="relative min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+          <Panel data={data} onConfirmDone={onConfirmDone} onConfirmCancel={onConfirmCancel} onGenerated={onGenerated} onQuick={onQuick} onListen={onListen} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Panel({
   data,
   onConfirmDone,
@@ -802,7 +879,10 @@ export default function MalakPage({ kpis }: { kpis?: MalakKpis }) {
 
 function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [panel, setPanel] = useState<PanelData | null>(null);
+  // Multiple result windows can be open at once (one per request).
+  const [panels, setPanels] = useState<PanelData[]>([]);
+  const pushPanel = useCallback((p: PanelData) => setPanels((ps) => [...ps.slice(-3), p]), []); // keep last 4
+  const closePanel = useCallback((idx: number) => setPanels((ps) => ps.filter((_, i) => i !== idx)), []);
   const [scanData, setScanData] = useState<ScanData | null>(null); // HUD side panels
   const [hudClock, setHudClock] = useState("--:--:--");
   const [input, setInput] = useState("");
@@ -956,7 +1036,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   // Auto-scroll transcript.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [turns, typed, panel]);
+  }, [turns, typed, panels]);
 
   // ---- TTS ----
   // Stop any in-flight audio / browser speech before starting something new.
@@ -1166,7 +1246,6 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       setTurns(nextTurns);
       setInput("");
       setPendingImage(null);
-      setPanel(null);
       setState("thinking");
 
       // Build API message history from committed turns.
@@ -1209,7 +1288,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           resumeHandsFree();
         } else {
           setActiveAgent(ag);
-          if (data?.panel?.type) setPanel(data.panel as PanelData);
+          if (data?.panel?.type) pushPanel(data.panel as PanelData);
           typewriter(speakText);
           speak(speakText, ag);
         }
@@ -1520,7 +1599,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Unified Mission-Control HUD: side panels frame the orb + chat into one
           screen. display:contents in fullscreen keeps the orb full-screen. */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
-        <div className="order-2 lg:order-1 lg:col-span-3"><HudLeft scan={sd} onAction={send} /></div>
+        <div className="order-2 lg:order-1 lg:col-span-3" style={{ animation: "screenInL .5s ease-out both" }}><HudLeft scan={sd} onAction={send} /></div>
         <div className="order-1 lg:order-2 lg:col-span-6">
 
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
@@ -1610,9 +1689,11 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       <style>{`
         @keyframes hudIn { 0%{opacity:0;transform:translateY(12px) scale(.94);filter:blur(6px)} 100%{opacity:1;transform:none;filter:none} }
         @keyframes eqbar { 0%,100%{transform:scaleY(0.35)} 50%{transform:scaleY(1)} }
+        @keyframes screenInL { 0%{opacity:0;transform:translateX(-26px)} 100%{opacity:1;transform:none} }
+        @keyframes screenInR { 0%{opacity:0;transform:translateX(26px)} 100%{opacity:1;transform:none} }
       `}</style>
         </div>{/* center column = orb only */}
-        <div className="order-3 lg:col-span-3"><HudRight scan={sd} levelRef={levelRef} /></div>
+        <div className="order-3 lg:col-span-3" style={{ animation: "screenInR .5s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} /></div>
       </div>{/* HUD grid */}
       <HudObjective scan={sd} />
 
@@ -1623,7 +1704,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         {/* Transcript + panel. In fullscreen it gets a taller, comfortably
             scrollable area (the lab flexes to fill the rest, no page overflow). */}
         <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
-        {turns.length === 0 && !typed && panel?.type !== "briefing" && panel?.type !== "scan" ? (
+        {turns.length === 0 && !typed ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-cyan-300/60">
             أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.
           </div>
@@ -1774,62 +1855,20 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
        </div>
       </div>{/* chat card (full-width, below the HUD) */}
 
-      {/* Holographic output overlay (JARVIS): structured results pop up here */}
-      {panel ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
-          <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={() => setPanel(null)} />
-          <div
-            className="relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl"
-            style={{
-              border: "1px solid #22d3ee66",
-              background: "linear-gradient(160deg, rgba(34,211,238,0.10), rgba(11,16,32,0.97))",
-              boxShadow: "0 0 44px rgba(34,211,238,0.35), inset 0 0 30px rgba(34,211,238,0.08)",
-              animation: "hudIn .4s ease-out both",
-            }}
-          >
-            {/* scanlines */}
-            <span
-              aria-hidden
-              className="pointer-events-none absolute inset-0 opacity-[0.12]"
-              style={{ backgroundImage: "repeating-linear-gradient(0deg, #22d3ee 0px, #22d3ee 1px, transparent 1px, transparent 4px)" }}
-            />
-            {/* corner brackets */}
-            <span aria-hidden className="absolute left-2 top-2 h-4 w-4 border-l-2 border-t-2 border-cyan-400/70" />
-            <span aria-hidden className="absolute right-2 top-2 h-4 w-4 border-r-2 border-t-2 border-cyan-400/70" />
-            <span aria-hidden className="absolute bottom-2 left-2 h-4 w-4 border-b-2 border-l-2 border-cyan-400/70" />
-            <span aria-hidden className="absolute bottom-2 right-2 h-4 w-4 border-b-2 border-r-2 border-cyan-400/70" />
-            {/* header */}
-            <div className="relative flex items-center justify-between border-b border-cyan-400/30 px-4 py-2.5">
-              <span className="font-mono text-[11px] tracking-[0.25em] text-cyan-300">◢ MALAK · النتيجة</span>
-              <button
-                type="button"
-                onClick={() => setPanel(null)}
-                aria-label="إغلاق"
-                className="flex h-7 w-7 items-center justify-center rounded-full border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/10"
-              >
-                ✕
-              </button>
-            </div>
-            {/* content */}
-            <div className="relative min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
-              <Panel
-                data={panel}
-                onConfirmDone={(m) => {
-                  setTurns((prev) => [...prev, { role: "malak", text: m }]);
-                  speak(m, activeAgent);
-                }}
-                onConfirmCancel={() => {
-                  setPanel(null);
-                  setTurns((prev) => [...prev, { role: "malak", text: "تمام، ألغيت العملية." }]);
-                }}
-                onGenerated={(p) => setPanel(p)}
-                onQuick={(q) => { setPanel(null); send(q); }}
-                onListen={(text) => { unlockAudio(); speak(text, "malak"); }}
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {/* Holographic result windows — multiple can be open at once, each draggable. */}
+      {panels.map((p, i) => (
+        <ResultWindow
+          key={i}
+          data={p}
+          index={i}
+          onClose={() => closePanel(i)}
+          onConfirmDone={(m) => { setTurns((prev) => [...prev, { role: "malak", text: m }]); speak(m, activeAgent); closePanel(i); }}
+          onConfirmCancel={() => { closePanel(i); setTurns((prev) => [...prev, { role: "malak", text: "تمام، ألغيت العملية." }]); }}
+          onGenerated={(np) => setPanels((ps) => ps.map((x, k) => (k === i ? np : x)))}
+          onQuick={(q) => { closePanel(i); send(q); }}
+          onListen={(text) => { unlockAudio(); speak(text, "malak"); }}
+        />
+      ))}
     </div>
   );
 }
