@@ -102,7 +102,7 @@ const txt = (v: any): string =>
   : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser" | "search";
+  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser" | "search" | "live";
   items?: any[];
   item?: any;
 }
@@ -757,6 +757,51 @@ function ScanPanel({
 
 // A draggable holographic result window. Several can be open at once; drag by
 // the header, close with ✕.
+// LIVE virtual browser (Hyperbeam) — a real interactive browser with AUDIO,
+// embedded straight into the popup. Unlike BrowserPanel (static screenshots),
+// this streams live and plays sound on the user's device.
+function LiveBrowserPanel({ item }: { item: any }) {
+  const embedUrl: string = typeof item?.embedUrl === "string" ? item.embedUrl : "";
+  const url: string = txt(item?.url) || "";
+  const title: string = txt(item?.title) || "متصفح حي";
+  let host = "";
+  try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
+
+  return (
+    <div className="space-y-2 text-right">
+      <div className="flex items-center gap-2 rounded-t-xl border border-emerald-400/30 bg-black/40 px-3 py-2">
+        <span className="flex gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></span>
+        <span className="flex-1 truncate text-[11px] font-semibold text-emerald-300">🔴 مباشر بصوت{host ? ` · ${host}` : ""}</span>
+      </div>
+
+      {embedUrl ? (
+        <div className="relative overflow-hidden rounded-xl border border-emerald-400/20 bg-black" style={{ aspectRatio: "16 / 10" }}>
+          <iframe
+            src={embedUrl}
+            title={title}
+            className="h-full w-full"
+            allow="autoplay; fullscreen; microphone; camera; clipboard-read; clipboard-write; encrypted-media; display-capture"
+            // Hyperbeam needs scripts + same-origin to run its WebRTC client.
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+            allowFullScreen
+          />
+        </div>
+      ) : (
+        <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/30 px-4 text-center text-[12px] text-amber-200/90">
+          <span>ما قدرت أفتح المتصفح الحي.</span>
+          <span className="text-white/50">قد تحتاج خدمة المتصفح الحي تتفعّل على الخادم (HYPERBEAM_API_KEY).</span>
+        </div>
+      )}
+
+      <p className="px-1 text-[12px] leading-relaxed text-white/70">متصفح حي تفاعلي بصوت — اضغط بنفسك داخل النافذة، والصوت يطلع على جهازك.</p>
+      {url ? (
+        <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-[12px] text-emerald-200 hover:bg-emerald-400/10">↗ افتح في تبويب جديد</a>
+      ) : null}
+    </div>
+  );
+}
+
 // Web-search results list (from a search API — no CAPTCHA). Each row links out.
 function SearchPanel({ items }: { items: any[] }) {
   return (
@@ -940,6 +985,7 @@ function Panel({
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
   if (data.type === "browser" && data.item) return <BrowserPanel item={data.item} />;
   if (data.type === "search" && Array.isArray(data.items)) return <SearchPanel items={data.items} />;
+  if (data.type === "live" && data.item) return <LiveBrowserPanel item={data.item} />;
   if (data.type === "briefing" && data.item)
     return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
   if (data.type === "scan" && data.item)
