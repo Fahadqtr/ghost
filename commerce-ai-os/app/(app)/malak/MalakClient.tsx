@@ -764,14 +764,37 @@ function LiveBrowserPanel({ item }: { item: any }) {
   const embedUrl: string = typeof item?.embedUrl === "string" ? item.embedUrl : "";
   const url: string = txt(item?.url) || "";
   const title: string = txt(item?.title) || "متصفح حي";
-  // Maximize: render the live browser as a full-viewport overlay (more reliable
-  // on mobile than the Fullscreen API inside an iframe).
-  const [big, setBig] = useState(false);
+  // Maximize: prefer the real Fullscreen API on the wrapper (no remount, and it
+  // escapes the popup window's CSS transform — a plain `fixed` overlay would be
+  // trapped inside that transformed ancestor). Fall back to a viewport-fixed
+  // overlay only if Fullscreen isn't available.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [fs, setFs] = useState(false);
+  const [manualBig, setManualBig] = useState(false);
   // The stream often shows black until the first tap (mobile media autoplay) /
   // while the VM boots — show a one-tap "start" hint over the iframe.
   const [started, setStarted] = useState(false);
   let host = "";
   try { host = url ? new URL(url).hostname.replace(/^www\./, "") : ""; } catch { host = ""; }
+
+  useEffect(() => {
+    const onFs = () => setFs(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  const big = fs || manualBig;
+  const toggleBig = () => {
+    if (big) {
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+      setManualBig(false);
+      return;
+    }
+    const el = wrapRef.current;
+    const req = el?.requestFullscreen?.bind(el);
+    if (req) req().catch(() => setManualBig(true));
+    else setManualBig(true);
+  };
 
   if (!embedUrl) {
     return (
@@ -782,26 +805,27 @@ function LiveBrowserPanel({ item }: { item: any }) {
     );
   }
 
-  // The iframe lives in ONE place; maximizing just restyles its wrapper to a
-  // full-viewport overlay so the DOM node (and the live connection) is kept.
   return (
     <div className="space-y-2 text-right">
       <div className="flex items-center gap-2 rounded-t-xl border border-emerald-400/30 bg-black/40 px-3 py-2">
         <span className="flex gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></span>
         <span className="flex-1 truncate text-[11px] font-semibold text-emerald-300">🔴 مباشر بصوت{host ? ` · ${host}` : ""}</span>
-        <button type="button" onClick={() => setBig((v) => !v)} title={big ? "تصغير" : "تكبير"} aria-label="تكبير الشاشة" className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">{big ? "✕" : "⛶"}</button>
+        <button type="button" onClick={toggleBig} title={big ? "تصغير" : "تكبير"} aria-label="تكبير الشاشة" className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">{big ? "✕" : "⛶"}</button>
       </div>
 
       <div
+        ref={wrapRef}
         className={
-          big
+          // manualBig (no Fullscreen API) → a viewport-fixed overlay. In native
+          // fullscreen the browser sizes wrapRef itself, so just fill it black.
+          manualBig
             ? "fixed inset-0 z-[100] bg-black"
-            : "relative overflow-hidden rounded-xl border border-emerald-400/20 bg-black"
+            : `relative overflow-hidden bg-black ${fs ? "h-full w-full" : "rounded-xl border border-emerald-400/20"}`
         }
-        style={big ? undefined : { aspectRatio: "16 / 11" }}
+        style={big ? { height: manualBig ? undefined : "100%" } : { aspectRatio: "16 / 11" }}
       >
         {big ? (
-          <button type="button" onClick={() => setBig(false)} aria-label="تصغير" className="absolute left-3 top-3 z-20 flex h-9 w-9 items-center justify-center rounded-full border border-emerald-400/50 bg-black/70 text-emerald-100">✕</button>
+          <button type="button" onClick={toggleBig} aria-label="تصغير" className="absolute left-3 top-3 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-emerald-400/50 bg-black/70 text-lg text-emerald-100">✕</button>
         ) : null}
         <iframe
           src={embedUrl}
@@ -827,7 +851,7 @@ function LiveBrowserPanel({ item }: { item: any }) {
 
       {!big ? (
         <>
-          <p className="px-1 text-[12px] leading-relaxed text-white/70">متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. اضغط ⛶ للتكبير.</p>
+          <p className="px-1 text-[12px] leading-relaxed text-white/70">متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. اضغط ⛶ للتكبير لملء الشاشة.</p>
           {url ? (
             <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
               className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-[12px] text-emerald-200 hover:bg-emerald-400/10">↗ افتح في تبويب جديد</a>
@@ -1455,7 +1479,14 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         const res = await fetch("/api/malak", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: apiMessages, imageUrl, targetAgent: directAgentRef.current }),
+          body: JSON.stringify({
+            messages: apiMessages,
+            imageUrl,
+            targetAgent: directAgentRef.current,
+            // Device viewport → the live browser opens at the user's size (so a
+            // phone gets the usable mobile site, not a squished desktop one).
+            viewport: typeof window !== "undefined" ? { w: Math.round(window.innerWidth), h: Math.round(window.innerHeight) } : undefined,
+          }),
         });
         const data = await res.json();
         const ag: AgentId = (AGENTS.some((a) => a.id === data?.agent) ? data.agent : "malak") as AgentId;

@@ -659,7 +659,7 @@ async function webSearchTool(input: any) {
 async function openLiveBrowser(
   input: any,
   liveHolder: { embedUrl?: string; url?: string },
-  liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[] },
+  liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[]; viewport?: { w: number; h: number } },
 ) {
   const url = typeof input?.url === "string" ? input.url.trim() : "";
   if (!liveConfigured())
@@ -689,7 +689,7 @@ async function openLiveBrowser(
   // have one so the user stays signed in; otherwise start fresh + save a new
   // profile (its session id becomes the durable profile id for next time).
   const profileId = liveCtx.profileId || undefined;
-  const s = await createLiveSession(url || undefined, profileId);
+  const s = await createLiveSession(url || undefined, profileId, liveCtx.viewport);
   if (!s.ok || !s.embedUrl || !s.adminToken) return { error: s.error ?? "تعذّر فتح المتصفح الحي.", url };
   liveHolder.embedUrl = s.embedUrl;
   if (url) liveHolder.url = url;
@@ -759,7 +759,7 @@ async function browseWeb(input: any) {
   };
 }
 
-async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, string>, shotHolder: { dataUrl?: string; url?: string }, liveHolder: { embedUrl?: string; url?: string }, liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[] }) {
+async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, string>, shotHolder: { dataUrl?: string; url?: string }, liveHolder: { embedUrl?: string; url?: string }, liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[]; viewport?: { w: number; h: number } }) {
   let result: any;
   switch (name) {
     case "search_products":
@@ -1221,10 +1221,13 @@ export async function POST(req: Request) {
   const cookieHeader = req.headers.get("cookie") || "";
   const liveCookie = cookieHeader.match(/(?:^|;\s*)malak_live=([^;]+)/)?.[1];
   const profCookie = cookieHeader.match(/(?:^|;\s*)malak_profile=([^;]+)/)?.[1];
-  const liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[] } = {
+  const vpRaw = body?.viewport;
+  const viewport = vpRaw && Number(vpRaw.w) > 0 && Number(vpRaw.h) > 0 ? { w: Number(vpRaw.w), h: Number(vpRaw.h) } : undefined;
+  const liveCtx: { existing?: LiveSessionData | null; profileId?: string | null; cookies: string[]; viewport?: { w: number; h: number } } = {
     existing: liveCookie ? decodeLive(decodeURIComponent(liveCookie)) : null,
     profileId: profCookie ? decodeProfile(decodeURIComponent(profCookie)) : null,
     cookies: [],
+    viewport,
   };
   // Helper: send JSON and set any live/profile cookies that were (re)created.
   const reply = (body: any) => {
