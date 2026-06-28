@@ -227,7 +227,7 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
             <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
               {matches.map((it) => (
                 <button
-                  key={it.inventoryId}
+                  key={uidOf(it)}
                   className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
                   onClick={() => addOrInc(it)}
                 >

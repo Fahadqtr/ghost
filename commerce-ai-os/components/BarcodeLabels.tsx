@@ -27,18 +27,16 @@ const SIZE_PRESETS: { id: string; label: string; w?: number; h?: number }[] = [
 function Barcode({ value, height }: { value: string; height: number }) {
   const ref = useRef<SVGSVGElement>(null);
   useEffect(() => {
-    if (ref.current && value) {
-      try {
-        JsBarcode(ref.current, value, {
-          format: "CODE128",
-          width: 1.4,
-          height,
-          displayValue: false,
-          margin: 0,
-        });
-      } catch {
-        /* ignore invalid values */
-      }
+    const svg = ref.current;
+    if (!svg) return;
+    // Clear first so a failed/empty encode can never leave a PREVIOUS product's
+    // barcode rendered in a reused SVG node (would print the wrong scan code).
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    if (!value) return;
+    try {
+      JsBarcode(svg, value, { format: "CODE128", width: 1.4, height, displayValue: false, margin: 0 });
+    } catch {
+      /* invalid value → leave the SVG cleared */
     }
   }, [value, height]);
   return <svg ref={ref} className="h-auto w-full" />;
@@ -256,7 +254,7 @@ export default function BarcodeLabels({ products }: { products: LabelProduct[] }
         >
           {labels.map((p, i) => (
             <div
-              key={i}
+              key={`${p.barcode}|${p.sku ?? ""}|${i}`}
               className="label-cell flex flex-col items-center justify-center gap-0.5 overflow-hidden rounded border border-slate-200 bg-white p-2 text-center"
               style={size ? { width: `${size.w}mm`, height: `${size.h}mm`, breakInside: "avoid" } : { breakInside: "avoid" }}
             >

@@ -128,11 +128,14 @@ export async function applyStocktake(counts: StocktakeCount[]) {
   const errors: string[] = [];
 
   for (const c of counts) {
-    const counted = Math.max(0, Math.floor(Number(c.counted)));
-    if (!c.inventoryId || Number.isNaN(counted)) {
+    // Validate the RAW value first — Math.max/floor turn NaN into 0, so a
+    // garbage count would otherwise be silently SET as zero stock.
+    const rawCounted = Number(c.counted);
+    if (!c.inventoryId || Number.isNaN(rawCounted)) {
       errors.push(`${c.sku ?? c.inventoryId}: invalid count`);
       continue;
     }
+    const counted = Math.max(0, Math.floor(rawCounted));
     const { data: inv, error: readErr } = await admin
       .from("inventory")
       .select("id, stock_quantity, product_id, location")
@@ -200,11 +203,12 @@ export async function applyVariantStocktake(counts: VariantCount[]) {
   const parents = new Set<string>();
 
   for (const c of counts) {
-    const counted = Math.max(0, Math.floor(Number(c.counted)));
-    if (!c.variantId || Number.isNaN(counted)) {
+    const rawCounted = Number(c.counted);
+    if (!c.variantId || Number.isNaN(rawCounted)) {
       errors.push(`${c.sku ?? c.variantId}: invalid count`);
       continue;
     }
+    const counted = Math.max(0, Math.floor(rawCounted));
     const { data: v, error: readErr } = await admin
       .from("product_variants")
       .select("id, stock_quantity, parent_product_id")
@@ -265,12 +269,26 @@ export async function setLocation(inventoryId: string, location: string) {
   if (!inventoryId) return { error: "Missing inventory row." };
   const admin = writableClient();
   const value = location.trim().toUpperCase() || null;
-  const { data: prev } = await admin.from("inventory").select("location, products(sku)").eq("id", inventoryId).single();
+  const { data: prev } = await admin.from("inventory").select("location, stock_quantity, products(sku)").eq("id", inventoryId).single();
   const { error } = await admin
     .from("inventory")
     .update({ location: value, updated_at: new Date().toISOString() })
     .eq("id", inventoryId);
   if (error) return { error: error.message };
+
+  // Keep shelf_stock in sync. The shelves page reads slot counts AND "Shelf
+  // contents" from shelf_stock (when that table exists), so assigning a slot via
+  // the inventory Location field MUST place a shelf_stock row — otherwise the
+  // product is invisible on the shelf even though inventory.location is set.
+  const hasShelfStock = !(await admin.from("shelf_stock").select("inventory_id").limit(1)).error;
+  if (hasShelfStock) {
+    await admin.from("shelf_stock").delete().eq("inventory_id", inventoryId);
+    if (value) {
+      const qty = Math.max(0, Math.floor(Number((prev as any)?.stock_quantity) || 0));
+      await admin.from("shelf_stock").insert({ inventory_id: inventoryId, location: value, quantity: qty, updated_at: new Date().toISOString() });
+    }
+  }
+
   await logAudit(admin, {
     action: "shelf_move",
     sku: (prev as any)?.products?.sku ?? null,
@@ -777,25 +795,41 @@ export async function addSlot(code: string) {
   return { ok: true };
 }
 
-/** Delete one slot. Products sitting there keep their (now free-text) location. */
+/** Delete one slot. Any products placed there are unplaced (shelf_stock rows
+ *  removed + their location pointer cleared) so no stock is stranded at a slot
+ *  that no longer exists. Their total stock is kept. */
 export async function deleteSlot(code: string) {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const admin = writableClient();
+  const slot = code.trim().toUpperCase();
+  // Unplace products at this slot (best-effort; ignores missing shelf_stock table).
+  await admin.from("shelf_stock").delete().eq("location", slot);
+  await admin.from("inventory").update({ location: null }).eq("location", slot);
   const { error } = await admin.from("shelf_slots").delete().eq("code", code);
   if (error) return { error: error.message };
+  revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
   revalidatePath("/inventory/shelves/labels");
   return { ok: true };
 }
 
-/** Delete a whole shelf (all its slots). */
+/** Delete a whole shelf (all its slots) + unplace any products on it. */
 export async function deleteShelf(shelf: string) {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const admin = writableClient();
-  const { error } = await admin.from("shelf_slots").delete().eq("shelf", shelf.trim().toUpperCase());
+  const sh = shelf.trim().toUpperCase();
+  // Resolve this shelf's slot codes, then unplace products at any of them.
+  const { data: slots } = await admin.from("shelf_slots").select("code").eq("shelf", sh);
+  const codes = ((slots ?? []) as any[]).map((s) => String(s.code).toUpperCase());
+  if (codes.length) {
+    await admin.from("shelf_stock").delete().in("location", codes);
+    await admin.from("inventory").update({ location: null }).in("location", codes);
+  }
+  const { error } = await admin.from("shelf_slots").delete().eq("shelf", sh);
   if (error) return { error: error.message };
+  revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
   revalidatePath("/inventory/shelves/labels");
   return { ok: true };
