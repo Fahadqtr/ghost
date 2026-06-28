@@ -19,12 +19,14 @@ export type LabelItem = {
 function Barcode({ value, height }: { value: string; height: number }) {
   const ref = useRef<SVGSVGElement>(null);
   useEffect(() => {
-    if (ref.current && value) {
-      try {
-        JsBarcode(ref.current, value, { format: "CODE128", width: 1.4, height, displayValue: false, margin: 0 });
-      } catch {
-        /* ignore invalid values */
-      }
+    const svg = ref.current;
+    if (!svg) return;
+    while (svg.firstChild) svg.removeChild(svg.firstChild); // never leave a stale barcode
+    if (!value) return;
+    try {
+      JsBarcode(svg, value, { format: "CODE128", width: 1.4, height, displayValue: false, margin: 0 });
+    } catch {
+      /* invalid value → leave cleared */
     }
   }, [value, height]);
   return <svg ref={ref} className="h-auto w-full" />;
