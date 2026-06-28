@@ -111,6 +111,8 @@ const SYSTEM_PROMPT =
   'platforms: ["Instagram","TikTok","Snapchat","Snoonu","Talabat","Rafeeq"]. ' +
   'لا تخترعي مكوّنات أو أرقامًا غير موجودة — استندي لوصف المنتج الحقيقي؛ ولو الوصف ناقص استخدمي فوائد عامة معقولة للفئة بدون مبالغة ولا ادّعاءات طبية. ' +
   'النشر الفعلي يحتاج Meta/TikTok API — وضّحي ذلك في speak. ' +
+  'تصدير ملف للمنصّات (Excel/CSV): النظام عنده تصدير جاهز. لما يطلب فهد ملف تصدير لسنونو/شوبيفاي/طلبات/رفيق، أعطيه رابط تحميل عبر panel نوعه links فيه زر يفتح /api/export/<channel> (القنوات: snoonu, shopify, talabat, rafeeq) — يحمّل الملف الجاهز مباشرة. مثال label: «⬇️ نزّل ملف سنونو» url: /api/export/snoonu. لا تقولي إنكِ ما تقدرين تصدّرين ملف. ' +
+  'حقول معرّفات المنصّات: snoonu_id (معرّف سنونو) و rafeeq_product_id حقول **مستقلة** عن الـSKU، وتظهر في product_detail. سنونو آيدي ≠ SKU. ' +
   'مهم: في لوحة products أدرجي sku دائمًا لكل منتج، ولا تُدرجي image_url إطلاقًا — ' +
   'الخادم يضيف صورة كل منتج تلقائيًا حسب الـsku (هذا يوفّر المساحة ويضمن ظهور الصور الحقيقية). ' +
   'قدّمي ردّكِ النهائي دائمًا عبر استدعاء أداة respond (وليس كنص عادي). ' +
@@ -590,6 +592,7 @@ async function productDetail(sb: Sb, input: any) {
 
   return {
     name: p.name_en, name_ar: p.name_ar, sku: p.sku, barcode: p.barcode, brand,
+    snoonu_id: p.snoonu_id ?? null, rafeeq_product_id: p.rafeeq_product_id ?? null,
     category: p.main_category, sub_category: p.sub_category, type: p.product_type,
     color: p.color, size: p.size, price: p.price, discount_price: p.discount_price, cost: p.cost,
     approval: p.approval ?? "—", stock, stock_status: p.stock_status, location: inv?.location ?? null,
