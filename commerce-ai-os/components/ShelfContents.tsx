@@ -12,6 +12,9 @@ export type ShelfItem = {
   name_ar: string | null;
   sku: string | null;
   barcode: string | null;
+  image?: string | null;       // product thumbnail
+  variant?: string | null;     // option name (for variant placements)
+  isVariant?: boolean;         // a product OPTION, not the parent product
   quantity: number; // units in THIS shelf
   total: number; // product's total stock (all shelves)
 };
@@ -132,38 +135,54 @@ export default function ShelfContents({ items, slotCodes = [] }: { items: ShelfI
                       {s.prods.map((p, i) => {
                         const busy = pending && busyKey === `${p.inventory_id}:${p.location}`;
                         return (
-                          <div key={`${p.sku ?? p.barcode ?? i}`} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2.5">
+                          <div key={`${p.inventory_id}|${p.sku ?? p.barcode ?? i}`} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2.5">
+                            {/* thumbnail */}
+                            <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-50">
+                              {p.image ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={p.image} alt={p.name ?? ""} className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-slate-300">📦</div>
+                              )}
+                            </div>
                             <div className="min-w-0 flex-1">
                               <div className="line-clamp-2 text-sm font-medium leading-snug text-ink">{p.name ?? p.sku ?? "—"}</div>
-                              {p.name_ar && <div className="line-clamp-1 text-xs text-muted">{p.name_ar}</div>}
+                              {p.isVariant && p.variant ? (
+                                <div className="mt-0.5 inline-block rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">خيار: {p.variant}</div>
+                              ) : p.name_ar ? (
+                                <div className="line-clamp-1 text-xs text-muted">{p.name_ar}</div>
+                              ) : null}
                               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
                                 <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-ink">هنا {p.quantity}</span>
                                 <span>إجمالي {p.total}</span>
                                 {p.sku && <span className="font-mono">{p.sku}</span>}
                               </div>
                             </div>
-                            <div className="flex shrink-0 flex-col items-stretch gap-1 print:hidden">
-                              <select
-                                className="input h-8 w-[72px] py-0 text-xs"
-                                value={p.location}
-                                disabled={busy}
-                                onChange={(e) => onMove(p, e.target.value)}
-                                title="نقل لرفّ آخر"
-                              >
-                                {!allSlots.includes(p.location) && <option value={p.location}>{p.location}</option>}
-                                {allSlots.map((c) => (
-                                  <option key={c} value={c}>{c}</option>
-                                ))}
-                              </select>
-                              <button
-                                className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                                disabled={busy}
-                                onClick={() => onRemove(p)}
-                                title="شيل من الرفّ"
-                              >
-                                ✕ شيل
-                              </button>
-                            </div>
+                            {/* edit controls — product placements only (variant moves use the variant editor) */}
+                            {p.isVariant ? null : (
+                              <div className="flex shrink-0 flex-col items-stretch gap-1 print:hidden">
+                                <select
+                                  className="input h-8 w-[72px] py-0 text-xs"
+                                  value={p.location}
+                                  disabled={busy}
+                                  onChange={(e) => onMove(p, e.target.value)}
+                                  title="نقل لرفّ آخر"
+                                >
+                                  {!allSlots.includes(p.location) && <option value={p.location}>{p.location}</option>}
+                                  {allSlots.map((c) => (
+                                    <option key={c} value={c}>{c}</option>
+                                  ))}
+                                </select>
+                                <button
+                                  className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                  disabled={busy}
+                                  onClick={() => onRemove(p)}
+                                  title="شيل من الرفّ"
+                                >
+                                  ✕ شيل
+                                </button>
+                              </div>
+                            )}
                           </div>
                         );
                       })}

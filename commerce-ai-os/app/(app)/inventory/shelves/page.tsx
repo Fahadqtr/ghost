@@ -25,11 +25,11 @@ export default async function ShelvesPage() {
 
     // Product details by inventory id (name, barcode, total stock).
     const PAGE = 1000;
-    const prodById = new Map<string, { name: string | null; name_ar: string | null; sku: string | null; barcode: string | null; total: number }>();
+    const prodById = new Map<string, { name: string | null; name_ar: string | null; sku: string | null; barcode: string | null; image: string | null; total: number }>();
     for (let from = 0; ; from += PAGE) {
       const { data: inv, error } = await supabase
         .from("inventory")
-        .select("id, stock_quantity, location, products(name_en, name_ar, sku, barcode)")
+        .select("id, stock_quantity, location, products(name_en, name_ar, sku, barcode, image_url)")
         .range(from, from + PAGE - 1);
       if (error) break;
       for (const r of (inv ?? []) as any[]) {
@@ -38,6 +38,7 @@ export default async function ShelvesPage() {
           name_ar: r.products?.name_ar ?? null,
           sku: r.products?.sku ?? null,
           barcode: r.products?.barcode ?? null,
+          image: r.products?.image_url ?? null,
           total: r.stock_quantity ?? 0,
         });
       }
@@ -66,17 +67,77 @@ export default async function ShelvesPage() {
             name_ar: p?.name_ar ?? null,
             sku: p?.sku ?? null,
             barcode: p?.barcode ?? null,
+            image: p?.image ?? null,
             quantity: r.quantity ?? 0,
             total: p?.total ?? 0,
           });
         }
         if (!ss || ss.length < PAGE) break;
       }
+
+      // Variants placed on shelves (the product "options"). These live in
+      // variant_shelf_stock and were previously invisible on the shelf map.
+      const hasVarShelf = !(await supabase.from("variant_shelf_stock").select("variant_id").limit(1)).error;
+      if (hasVarShelf) {
+        // Collect variant placements, then resolve variant + parent product.
+        const vsRows: { variant_id: string; location: string; quantity: number }[] = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data: vs, error } = await supabase
+            .from("variant_shelf_stock")
+            .select("variant_id, location, quantity")
+            .range(from, from + PAGE - 1);
+          if (error) break;
+          for (const r of (vs ?? []) as any[]) vsRows.push({ variant_id: String(r.variant_id), location: String(r.location), quantity: r.quantity ?? 0 });
+          if (!vs || vs.length < PAGE) break;
+        }
+        if (vsRows.length) {
+          const vIds = Array.from(new Set(vsRows.map((r) => r.variant_id)));
+          // Resolve variants, then their parent products separately (no reliance
+          // on a nested FK embed, which can vary by relationship name).
+          const varById = new Map<string, any>();
+          for (let i = 0; i < vIds.length; i += 200) {
+            const { data: vs } = await supabase
+              .from("product_variants")
+              .select("id, variant_name, barcode, sku, stock_quantity, parent_product_id")
+              .in("id", vIds.slice(i, i + 200));
+            for (const v of (vs ?? []) as any[]) varById.set(String(v.id), v);
+          }
+          const pIds = Array.from(new Set(Array.from(varById.values()).map((v) => String(v.parent_product_id)).filter(Boolean)));
+          const parentById = new Map<string, any>();
+          for (let i = 0; i < pIds.length; i += 200) {
+            const { data: ps } = await supabase
+              .from("products")
+              .select("id, name_en, name_ar, sku, image_url")
+              .in("id", pIds.slice(i, i + 200));
+            for (const pr of (ps ?? []) as any[]) parentById.set(String(pr.id), pr);
+          }
+          for (const r of vsRows) {
+            const v = varById.get(r.variant_id);
+            const parent = v ? parentById.get(String(v.parent_product_id)) : null;
+            const code = r.location.toUpperCase();
+            (slotProducts[code] ??= new Set()).add(`v:${r.variant_id}`);
+            counts[code] = slotProducts[code].size;
+            contents.push({
+              inventory_id: `v:${r.variant_id}`,
+              location: code,
+              name: parent?.name_en ?? parent?.name_ar ?? v?.variant_name ?? null,
+              name_ar: parent?.name_ar ?? null,
+              sku: v?.sku ?? parent?.sku ?? null,
+              barcode: v?.barcode ?? null,
+              image: parent?.image_url ?? null,
+              variant: v?.variant_name ?? null,
+              isVariant: true,
+              quantity: r.quantity ?? 0,
+              total: v?.stock_quantity ?? 0,
+            });
+          }
+        }
+      }
     } else {
       for (let from = 0; ; from += PAGE) {
         const { data: inv, error } = await supabase
           .from("inventory")
-          .select("id, stock_quantity, location, products(name_en, name_ar, sku, barcode)")
+          .select("id, stock_quantity, location, products(name_en, name_ar, sku, barcode, image_url)")
           .not("location", "is", null)
           .range(from, from + PAGE - 1);
         if (error) break;
@@ -91,6 +152,7 @@ export default async function ShelvesPage() {
             name_ar: r.products?.name_ar ?? null,
             sku: r.products?.sku ?? null,
             barcode: r.products?.barcode ?? null,
+            image: r.products?.image_url ?? null,
             quantity: r.stock_quantity ?? 0,
             total: r.stock_quantity ?? 0,
           });
