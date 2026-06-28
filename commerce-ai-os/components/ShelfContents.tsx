@@ -126,59 +126,47 @@ export default function ShelfContents({ items, slotCodes = [] }: { items: ShelfI
                         · {s.prods.length} products · {s.prods.reduce((a, p) => a + p.quantity, 0)} units
                       </span>
                     </div>
-                    <div className="overflow-x-auto rounded-lg border border-slate-200">
-                      <table className="w-full text-sm">
-                        <thead className="bg-slate-50 text-left text-xs uppercase text-muted">
-                          <tr>
-                            <th className="px-3 py-2">Product</th>
-                            <th className="hidden px-3 py-2 sm:table-cell">SKU</th>
-                            <th className="hidden px-3 py-2 sm:table-cell">Barcode</th>
-                            <th className="px-3 py-2 text-right">Here</th>
-                            <th className="px-3 py-2 text-right">Total</th>
-                            <th className="px-3 py-2 text-right print:hidden">إجراءات</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {s.prods.map((p, i) => (
-                            <tr key={`${p.sku ?? p.barcode ?? i}`}>
-                              <td className="px-3 py-2">
-                                <div className="font-medium text-ink">{p.name ?? p.sku ?? "—"}</div>
-                                {p.name_ar && <div className="text-xs text-muted">{p.name_ar}</div>}
-                              </td>
-                              <td className="hidden px-3 py-2 text-slate-600 sm:table-cell">{p.sku ?? "—"}</td>
-                              <td className="hidden px-3 py-2 font-mono text-slate-600 sm:table-cell">{p.barcode ?? "—"}</td>
-                              <td className="px-3 py-2 text-right font-semibold text-ink">{p.quantity}</td>
-                              <td className="px-3 py-2 text-right text-slate-500">{p.total}</td>
-                              <td className="px-3 py-2 text-right print:hidden">
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <select
-                                    className="input h-7 w-auto py-0 text-xs"
-                                    value={p.location}
-                                    disabled={pending && busyKey === `${p.inventory_id}:${p.location}`}
-                                    onChange={(e) => onMove(p, e.target.value)}
-                                    title="نقل لرفّ آخر"
-                                  >
-                                    {!allSlots.includes(p.location) && <option value={p.location}>{p.location}</option>}
-                                    {allSlots.map((c) => (
-                                      <option key={c} value={c}>
-                                        {c}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <button
-                                    className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                                    disabled={pending && busyKey === `${p.inventory_id}:${p.location}`}
-                                    onClick={() => onRemove(p)}
-                                    title="شيل من الرفّ"
-                                  >
-                                    ✕ شيل
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    {/* Card list — readable on mobile (no horizontal scroll, no
+                        one-word-per-line wrapping like the old table). */}
+                    <div className="space-y-1.5">
+                      {s.prods.map((p, i) => {
+                        const busy = pending && busyKey === `${p.inventory_id}:${p.location}`;
+                        return (
+                          <div key={`${p.sku ?? p.barcode ?? i}`} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2.5">
+                            <div className="min-w-0 flex-1">
+                              <div className="line-clamp-2 text-sm font-medium leading-snug text-ink">{p.name ?? p.sku ?? "—"}</div>
+                              {p.name_ar && <div className="line-clamp-1 text-xs text-muted">{p.name_ar}</div>}
+                              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
+                                <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-ink">هنا {p.quantity}</span>
+                                <span>إجمالي {p.total}</span>
+                                {p.sku && <span className="font-mono">{p.sku}</span>}
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 flex-col items-stretch gap-1 print:hidden">
+                              <select
+                                className="input h-8 w-[72px] py-0 text-xs"
+                                value={p.location}
+                                disabled={busy}
+                                onChange={(e) => onMove(p, e.target.value)}
+                                title="نقل لرفّ آخر"
+                              >
+                                {!allSlots.includes(p.location) && <option value={p.location}>{p.location}</option>}
+                                {allSlots.map((c) => (
+                                  <option key={c} value={c}>{c}</option>
+                                ))}
+                              </select>
+                              <button
+                                className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                disabled={busy}
+                                onClick={() => onRemove(p)}
+                                title="شيل من الرفّ"
+                              >
+                                ✕ شيل
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
