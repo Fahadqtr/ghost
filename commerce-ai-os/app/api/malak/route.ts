@@ -11,6 +11,7 @@ import { fetchPageContent, browserConfigured, runBrowserActions, openLiveURL, ty
 import { webSearch, searchConfigured, searchEnvNamesPresent } from "@/lib/malak/search";
 import { createLiveSession, liveConfigured, liveNavigate, encodeLive, decodeLive, encodeProfile, decodeProfile, LIVE_TTL_SEC, PROFILE_TTL_SEC, type LiveSessionData } from "@/lib/malak/live";
 import { openBrowserbase, browserbaseConfigured } from "@/lib/malak/browserbase";
+import { youtubeSearchId } from "@/lib/malak/youtube";
 
 // Malak AI — server brain. Holds all secrets (ANTHROPIC_API_KEY +
 // Supabase service role); the browser only ever sees the final structured JSON.
@@ -652,20 +653,28 @@ async function lowStock(sb: Sb, input: any) {
 async function playSong(input: any) {
   const query = typeof input?.query === "string" ? input.query.trim() : "";
   if (!query) return { error: "أي أغنية تبي أشغّل؟" };
-  if (!searchConfigured())
-    return { error: "خدمة البحث غير مهيأة على الخادم.", note: "أضيفي BRAVE_SEARCH_TOKEN لتشغيل الأغاني." };
-  const out = await webSearch(`${query} يوتيوب`, 10);
-  if (!out.ok) return { error: out.error ?? "تعذّر البحث عن الأغنية.", query };
+
   let videoId = "", title = "";
-  for (const r of out.results) {
-    const m = String(r.url || "").match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/);
-    if (m) { videoId = m[1]; title = r.title || query; break; }
+  // Primary: resolve directly from YouTube search HTML (no key, very reliable).
+  const yt = await youtubeSearchId(query);
+  if (yt?.id) { videoId = yt.id; title = yt.title || query; }
+
+  // Fallback: scan web-search results for a /watch URL.
+  if (!videoId && searchConfigured()) {
+    const out = await webSearch(`${query} يوتيوب`, 10);
+    if (out.ok) {
+      for (const r of out.results) {
+        const m = String(r.url || "").match(/(?:youtube\.com\/watch\?v=|music\.youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/);
+        if (m) { videoId = m[1]; title = r.title || query; break; }
+      }
+    }
   }
+
   if (!videoId)
-    return { error: "ما لقيت الأغنية على يوتيوب بصيغة قابلة للتشغيل.", query, note: "أرجعي links panel فيه زر بحث يوتيوب https://www.youtube.com/results?search_query=الكلمات بدلًا." };
+    return { error: "ما لقيت الأغنية للتشغيل المباشر.", query, note: "أرجعي links panel فيه زر https://music.youtube.com/search?q=الكلمات بدلًا." };
   return {
     videoId, title, query,
-    note: "أرجعي panel نوعه player فيه item:{videoId, title}. هذا يضمّن مشغّل يوتيوب داخل ملاك ويشغّل الأغنية بصوت على جهاز فهد. speak جملة قصيرة فقط.",
+    note: "أرجعي panel نوعه player فيه item:{videoId, title}. هذا يضمّن مشغّل داخل ملاك ويشغّل الأغنية بصوت على جهاز فهد مباشرة. speak جملة قصيرة فقط.",
   };
 }
 
