@@ -891,6 +891,9 @@ function LiveBrowserPanel({ item }: { item: any }) {
 // In-app music/video player — embeds the YouTube IFrame player, which runs in
 // the USER's browser (their IP), so playback works WITH SOUND and isn't blocked
 // by YouTube's datacenter bot wall (unlike the server-side live browser).
+// Compact "now playing" music card — album art + title + animated equalizer.
+// The YouTube embed plays the AUDIO from a hidden (opacity-0) iframe, so it
+// feels like a music player, not a video.
 function PlayerPanel({ item }: { item: any }) {
   const raw = txt(item?.videoId);
   const videoId = /^[A-Za-z0-9_-]{11}$/.test(raw) ? raw : "";
@@ -899,25 +902,51 @@ function PlayerPanel({ item }: { item: any }) {
   if (!videoId) return null;
   return (
     <div className="space-y-2 text-right">
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-rose-200">🎵 تشغيل بصوت</span>
-      {title ? <p className="px-1 text-sm font-bold text-white">{title}</p> : null}
-      <div className="relative overflow-hidden rounded-xl border border-rose-400/20 bg-black" style={{ aspectRatio: "16 / 9" }}>
+      <div className="relative overflow-hidden rounded-2xl border border-rose-400/30">
+        {/* Full-size audio source (reliable autoplay), hidden behind the opaque
+            card overlay so only the music is heard, not the video. */}
         {play ? (
           <iframe
             src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1`}
             title={title || "player"}
-            className="h-full w-full"
-            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-            allowFullScreen
+            className="pointer-events-none absolute inset-0 h-full w-full"
+            allow="autoplay; encrypted-media"
           />
-        ) : (
-          <button type="button" onClick={() => setPlay(true)} className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-rose-100">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`} alt={title} className="absolute inset-0 h-full w-full object-cover opacity-50" />
-            <span className="z-10 text-5xl drop-shadow">▶</span>
-            <span className="z-10 text-[13px] font-semibold drop-shadow">اضغط للتشغيل بصوت</span>
-          </button>
-        )}
+        ) : null}
+        <div className="relative z-10 flex items-center gap-3 bg-[#160a12]/95 p-2.5">
+        {/* album art */}
+        <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-black">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`} alt={title} className="h-full w-full object-cover" />
+        </span>
+        {/* title + state */}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-bold text-white">{title || "أغنية"}</p>
+          <div className="mt-1 flex items-center gap-2 text-[11px] text-rose-200">
+            {play ? (
+              <>
+                <span className="flex h-3 items-end gap-[2px]">
+                  {[0, 1, 2, 3].map((i) => (
+                    <i key={i} className="w-[3px] animate-pulse rounded-sm bg-rose-300" style={{ height: `${[10, 6, 12, 8][i]}px`, animationDelay: `${i * 120}ms`, animationDuration: "700ms" }} />
+                  ))}
+                </span>
+                <span>جارٍ التشغيل…</span>
+              </>
+            ) : (
+              <span className="text-white/55">🎵 جاهزة للتشغيل بصوت</span>
+            )}
+          </div>
+        </div>
+        {/* play / stop */}
+        <button
+          type="button"
+          onClick={() => setPlay((p) => !p)}
+          aria-label={play ? "إيقاف" : "تشغيل"}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-rose-500 text-lg text-white shadow-lg shadow-rose-500/30 hover:bg-rose-400"
+        >
+          {play ? "⏹" : "▶"}
+        </button>
+        </div>
       </div>
       <a href={`https://music.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer"
         className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 px-3 py-1.5 text-[12px] text-rose-200 hover:bg-rose-400/10">🎵 افتح في يوتيوب ميوزك</a>
