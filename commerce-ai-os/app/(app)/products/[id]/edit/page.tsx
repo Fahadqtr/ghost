@@ -14,16 +14,17 @@ const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 export default async function EditProductPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
   const supabase = createClient();
 
   const [{ data: product }, { data: variants }, { data: brands }, { data: imageRows }] =
     await Promise.all([
-      supabase.from("products").select("*").eq("id", params.id).single(),
-      supabase.from("product_variants").select("*").eq("parent_product_id", params.id),
+      supabase.from("products").select("*").eq("id", id).single(),
+      supabase.from("product_variants").select("*").eq("parent_product_id", id),
       supabase.from("brands").select("id, name").order("name"),
-      supabase.from("product_images").select("url, is_primary").eq("product_id", params.id).order("is_primary", { ascending: false }).order("sort_order", { ascending: true }),
+      supabase.from("product_images").select("url, is_primary").eq("product_id", id).order("is_primary", { ascending: false }).order("sort_order", { ascending: true }),
     ]);
 
   if (!product) notFound();

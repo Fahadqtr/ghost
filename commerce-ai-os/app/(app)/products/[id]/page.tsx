@@ -22,18 +22,19 @@ const STATUS_CLS: Record<string, string> = {
   "Not Listed": "bg-slate-100 text-slate-500",
 };
 
-export default async function ProductDetailPage({ params }: { params: { id: string } }) {
+export default async function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = createClient();
 
   const [{ data: product }, { data: variants }, { data: brands }, { data: inv }, { data: channels }, { data: links }, { data: images }] =
     await Promise.all([
-      supabase.from("products").select("*").eq("id", params.id).single(),
-      supabase.from("product_variants").select("*").eq("parent_product_id", params.id),
+      supabase.from("products").select("*").eq("id", id).single(),
+      supabase.from("product_variants").select("*").eq("parent_product_id", id),
       supabase.from("brands").select("id, name"),
-      supabase.from("inventory").select("stock_quantity, low_stock_threshold, sold_quantity, updated_at").eq("product_id", params.id).maybeSingle(),
+      supabase.from("inventory").select("stock_quantity, low_stock_threshold, sold_quantity, updated_at").eq("product_id", id).maybeSingle(),
       supabase.from("channels").select("id, name").order("name"),
-      supabase.from("channel_products").select("channel_id, channel_status, channel_price").eq("product_id", params.id),
-      supabase.from("product_images").select("url, is_primary, sort_order").eq("product_id", params.id).order("is_primary", { ascending: false }).order("sort_order", { ascending: true }),
+      supabase.from("channel_products").select("channel_id, channel_status, channel_price").eq("product_id", id),
+      supabase.from("product_images").select("url, is_primary, sort_order").eq("product_id", id).order("is_primary", { ascending: false }).order("sort_order", { ascending: true }),
     ]);
 
   if (!product) notFound();
