@@ -925,7 +925,8 @@ export async function pushStockToShopify(items: { sku: string; quantity: number 
     try {
       const q = await gql(
         `query($q:String!){ productVariants(first:1, query:$q){ edges { node { inventoryItem { id } } } } }`,
-        { q: `sku:${it.sku}` }
+        // Quote + strip quotes/backslashes so the SKU can't alter the search filter.
+        { q: `sku:"${String(it.sku).replace(/["\\]/g, "")}"` }
       );
       const invItem = q?.data?.productVariants?.edges?.[0]?.node?.inventoryItem?.id;
       if (!invItem) {

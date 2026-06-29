@@ -1256,11 +1256,9 @@ function findRespond(content: Anthropic.ContentBlock[]): Anthropic.ToolUseBlock 
 function buildResponse(
   out: any,
   skuImages: Map<string, string>,
-  fallbackAgent: string = "malak",
   shotHolder?: { dataUrl?: string; url?: string },
   liveHolder?: { embedUrl?: string; url?: string; kind?: "hyperbeam" | "browserbase" },
 ) {
-  void fallbackAgent;
   const agent = "malak"; // single-persona: Malak does everything
   const speak = typeof out?.speak === "string" && out.speak.trim() ? out.speak : "تم.";
   const panel = out?.panel ? enrichPanel(out.panel, skuImages, shotHolder, liveHolder) : undefined;
@@ -1437,7 +1435,7 @@ export async function POST(req: Request) {
       const respondBlock = findRespond(resp.content);
       if (respondBlock) {
         console.log("[malak] respond via tool call");
-        return reply(buildResponse(respondBlock.input, skuImages, "malak", shotHolder, liveHolder));
+        return reply(buildResponse(respondBlock.input, skuImages, shotHolder, liveHolder));
       }
 
       // No respond yet. If the model isn't asking for a data tool, stop looping.
@@ -1474,7 +1472,7 @@ export async function POST(req: Request) {
       try {
         const parsed = JSON.parse(jsonMatch[0]);
         console.log("[malak] respond via parsed JSON text");
-        return reply(buildResponse(parsed, skuImages, "malak", shotHolder, liveHolder));
+        return reply(buildResponse(parsed, skuImages, shotHolder, liveHolder));
       } catch {
         console.log("[malak] JSON parse of final text failed");
       }
@@ -1498,7 +1496,7 @@ export async function POST(req: Request) {
     const forcedBlock = findRespond(forced.content);
     if (forcedBlock) {
       console.log("[malak] respond via forced tool_choice");
-      return reply(buildResponse(forcedBlock.input, skuImages, "malak", shotHolder, liveHolder));
+      return reply(buildResponse(forcedBlock.input, skuImages, shotHolder, liveHolder));
     }
 
     console.log("[malak] no structured answer produced");
