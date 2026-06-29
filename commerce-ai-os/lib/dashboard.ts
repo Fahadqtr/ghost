@@ -2,6 +2,7 @@
 // client — every value is COMPUTED from the DB, nothing invented. Each query is
 // defensive: failures degrade to safe zeros so the page never crashes.
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
+import { fetchAll } from "@/lib/supabase/paginate";
 
 export interface NameCount { name: string; count: number }
 export interface ChannelBreak { channel: string; active: number; draft: number; notListed: number; total: number }
@@ -35,20 +36,8 @@ export interface CeoKpis {
   generatedAt: string;       // ISO timestamp this snapshot was computed
 }
 
-const PAGE = 1000;
-
 async function countOf(builder: () => PromiseLike<{ count: number | null; error: unknown }>): Promise<number> {
   try { const { count, error } = await builder(); return error ? 0 : (count ?? 0); } catch { return 0; }
-}
-async function fetchAll(client: any, table: string, cols: string): Promise<any[]> {
-  const out: any[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await client.from(table).select(cols).range(from, from + PAGE - 1);
-    if (error) break;
-    out.push(...(data ?? []));
-    if ((data ?? []).length < PAGE) break;
-  }
-  return out;
 }
 
 export async function getCeoKpis(): Promise<CeoKpis> {
