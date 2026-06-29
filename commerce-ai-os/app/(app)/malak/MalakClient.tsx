@@ -948,8 +948,15 @@ function PlayerPanel({ item }: { item: any }) {
         </button>
         </div>
       </div>
-      <a href={`https://music.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 px-3 py-1.5 text-[12px] text-rose-200 hover:bg-rose-400/10">🎵 افتح في يوتيوب ميوزك</a>
+      <div className="flex flex-wrap items-center gap-2">
+        <a href={`https://music.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 px-3 py-1.5 text-[12px] text-rose-200 hover:bg-rose-400/10">🎵 افتح في يوتيوب ميوزك</a>
+        {/* Cast to TV — opens the track on YouTube where the native Cast button
+            (📡) sends it to a Chromecast / smart TV on the same Wi-Fi. */}
+        <a href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer"
+          title="يفتح في يوتيوب — اضغط أيقونة البثّ 📡 لإرساله للتلفزيون"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/40 px-3 py-1.5 text-[12px] text-cyan-200 hover:bg-cyan-400/10">📺 بثّ للتلفزيون</a>
+      </div>
     </div>
   );
 }
@@ -1907,13 +1914,16 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             `h-[100dvh] w-full space-y-3 overflow-y-auto p-3 sm:p-4 ${
               pseudoFs ? "fixed inset-0 z-50" : ""
             }`
-          : "mx-auto w-full max-w-7xl space-y-3 pb-2"
+          : // Mobile: fill the available screen exactly (no page bounce) — a flex
+            // column where the chat takes the leftover height and scrolls inside.
+            // Desktop (md+): the full mission-control dashboard, natural height.
+            "mx-auto flex h-full min-h-0 w-full max-w-7xl flex-col gap-3 pb-2 md:block md:h-auto md:min-h-0 md:gap-0 md:space-y-3"
       }
       style={fsActive ? { background: "#020711" } : undefined}
     >
       {/* Mission-Control header */}
       {true ? (
-        <div dir="ltr" className="flex flex-wrap items-start justify-between gap-3 font-mono">
+        <div dir="ltr" className="flex shrink-0 flex-wrap items-start justify-between gap-3 font-mono">
           <div>
             <p className="text-[13px] font-bold tracking-[0.2em] text-cyan-50">MALIKA&apos;S UNIVERSE <span className="text-cyan-300/50">// COMMERCE CONTROL</span></p>
             <p dir="rtl" className="text-[10px] tracking-[0.15em] text-cyan-300/50">ملاك · المديرة العامة الذكية</p>
@@ -1965,15 +1975,15 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
 
       {/* Unified Mission-Control HUD: side panels frame the orb + chat into one
           screen. display:contents in fullscreen keeps the orb full-screen. */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-        <div className="order-2 md:order-1 md:col-span-3" style={{ animation: "screenInL .26s ease-out both" }}><HudLeft scan={sd} onAction={send} /></div>
+      <div className="grid shrink-0 grid-cols-1 gap-3 md:grid-cols-12">
+        <div className="hidden md:order-1 md:col-span-3 md:block" style={{ animation: "screenInL .26s ease-out both" }}><HudLeft scan={sd} onAction={send} /></div>
         <div className="order-1 md:order-2 md:col-span-6">
 
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
           In fullscreen it grows to fill the screen. */}
       <div
         className={`relative flex flex-col items-center justify-center overflow-hidden ${
-          fsActive ? "h-[60vh]" : "h-[36vh] sm:h-[44vh] md:h-[60vh]"
+          fsActive ? "h-[60vh]" : "h-[30vh] sm:h-[40vh] md:h-[60vh]"
         }`}
         style={{ background: "transparent" }}
       >
@@ -2061,17 +2071,17 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         @keyframes screenInB { 0%{opacity:0;transform:translateY(22px)} 100%{opacity:1;transform:none} }
       `}</style>
         </div>{/* center column = orb only */}
-        <div className="order-3 md:col-span-3" style={{ animation: "screenInR .26s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} /></div>
+        <div className="hidden md:col-span-3 md:block" style={{ animation: "screenInR .26s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} /></div>
       </div>{/* HUD grid */}
-      <div style={{ animation: "screenInB .28s ease-out both" }}><HudObjective scan={sd} /></div>
+      <div className="hidden md:block" style={{ animation: "screenInB .28s ease-out both" }}><HudObjective scan={sd} /></div>
 
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
           the rest of the space and nothing scrolls the page. */}
-      <div className={`border-t p-2.5 sm:p-3 ${fsActive ? "shrink-0" : ""}`} style={{ borderColor: "rgba(120,175,215,0.18)" }}>
+      <div className={`flex min-h-0 flex-1 flex-col border-t p-2.5 sm:p-3 md:block md:flex-none ${fsActive ? "shrink-0" : ""}`} style={{ borderColor: "rgba(120,175,215,0.18)" }}>
         {/* Transcript + panel. In fullscreen it gets a taller, comfortably
             scrollable area (the lab flexes to fill the rest, no page overflow). */}
-        <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "max-h-[44vh] min-h-[140px]"}`}>
+        <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "min-h-0 flex-1 md:max-h-[44vh] md:min-h-[140px] md:flex-none"}`}>
         {turns.length === 0 && !typed ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-cyan-300/60">
             أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.
@@ -2105,7 +2115,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       </div>
 
         {/* Composer */}
-        <div className="mt-2 border-t border-cyan-500/20 pt-2.5">
+        <div className="mt-2 shrink-0 border-t border-cyan-500/20 pt-2.5">
         {/* Hands-free wake mode: call any agent by name, no button */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <button
@@ -2223,7 +2233,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
        </div>
       </div>{/* chat card (full-width, below the HUD) */}
 
-      <FooterStatusBar scan={sd} uptime={uptime} stateLabel={state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY"} />
+      <div className="hidden shrink-0 md:block">
+        <FooterStatusBar scan={sd} uptime={uptime} stateLabel={state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY"} />
+      </div>
 
       {/* Holographic result windows — multiple can be open at once, each draggable. */}
       {panels.map((p, i) => (
