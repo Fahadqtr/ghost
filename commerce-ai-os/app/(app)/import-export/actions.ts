@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/auth/requireUser";
 import { CATEGORIES } from "@/lib/constants";
 import { clean } from "@/lib/malak/talabat-export.mjs";
 
@@ -38,6 +39,9 @@ const NUMERIC = new Set(["price", "discount_price", "cost", "stock_quantity"]);
 // Commit previewed rows. Behind a confirm in the UI. Resolves brand by name,
 // skips invalid categories (flags them) instead of force-fitting.
 export async function importProducts(rows: ImportRow[]) {
+  const unauth = await requireUser();
+  if (unauth) return { error: unauth.error };
+
   if (!rows || rows.length === 0) return { error: "Nothing to import." };
 
   const supabase = createClient();

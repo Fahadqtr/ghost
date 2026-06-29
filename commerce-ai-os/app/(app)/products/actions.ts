@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
 import { clean } from "@/lib/malak/talabat-export.mjs";
 
@@ -401,8 +402,15 @@ export async function describeProductFromImage(
   if (!user) return { error: "Not signed in." };
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { error: "ميزة الذكاء غير مفعّلة (ANTHROPIC_API_KEY)." };
-  const url = (imageUrl ?? "").trim();
-  if (!url) return { error: "أضف صورة (Image URL) أولاً." };
+  const rawUrl = (imageUrl ?? "").trim();
+  if (!rawUrl) return { error: "أضف صورة (Image URL) أولاً." };
+  // SSRF guard: only fetch public https URLs, never internal/metadata hosts.
+  let url: string;
+  try {
+    url = assertSafeImageUrl(rawUrl);
+  } catch (e: any) {
+    return { error: e?.message || "رابط الصورة غير مسموح به." };
+  }
 
   let media_type = "image/jpeg";
   let b64 = "";

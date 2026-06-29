@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/auth/requireUser";
 import { CHANNEL_STATUSES } from "@/lib/constants";
 
 export async function setChannelStatus(
@@ -9,6 +10,9 @@ export async function setChannelStatus(
   channelId: string,
   status: string
 ) {
+  const unauth = await requireUser();
+  if (unauth) return { error: unauth.error };
+
   if (!CHANNEL_STATUSES.includes(status as (typeof CHANNEL_STATUSES)[number])) {
     return { error: `Invalid status "${status}".` };
   }
