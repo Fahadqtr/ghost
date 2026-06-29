@@ -46,18 +46,22 @@ export interface MalakAction {
 }
 
 function secret(): string {
-  // Server-only; never exposed to the client. Prefer the dedicated signing
-  // secret; fall back to the service-role key only when it isn't set (so existing
-  // deploys keep working). Keeping the dedicated secret first means rotating the
-  // database master key doesn't silently invalidate in-flight confirm tokens.
+  // Server-only; never exposed to the client.
   const dedicated = process.env.MALAK_SIGNING_SECRET;
+  // True production REQUIRES a dedicated secret so the token-signing key is not
+  // coupled to the database master key (rotation + blast-radius isolation). We
+  // use VERCEL_ENV when present so this applies only to the real production
+  // deploy — preview/dev keep the fallback below and stay testable.
+  const inProd = (process.env.VERCEL_ENV ?? process.env.NODE_ENV) === "production";
+  if (inProd && !dedicated) {
+    throw new Error(
+      "MALAK_SIGNING_SECRET is required in production. Set a long, random, server-only secret in the environment."
+    );
+  }
+  // Dedicated secret first (so rotating the DB key doesn't invalidate in-flight
+  // confirm tokens); fall back to the service-role key only outside production.
   const s = dedicated || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!s) throw new Error("Missing signing secret (set MALAK_SIGNING_SECRET).");
-  // F7: in production the dedicated secret should be set so the signing key is
-  // not coupled to the database master key (rotation + blast-radius isolation).
-  if (!dedicated && process.env.NODE_ENV === "production") {
-    console.warn("[malak] MALAK_SIGNING_SECRET not set — falling back to service-role key. Set a dedicated secret.");
-  }
   return s;
 }
 
