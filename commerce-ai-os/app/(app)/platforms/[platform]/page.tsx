@@ -6,11 +6,12 @@ import PlatformHub from "@/components/PlatformHub";
 
 export const dynamic = "force-dynamic";
 
-export default async function PlatformHubPage({ params }: { params: { platform: string } }) {
-  const meta = platformBy(params.platform);
+export default async function PlatformHubPage({ params }: { params: Promise<{ platform: string }> }) {
+  const { platform } = await params;
+  const meta = platformBy(platform);
   if (!meta) notFound();
 
-  const { error, products } = await getPlatformProducts(params.platform);
+  const { error, products } = await getPlatformProducts(platform);
 
   return (
     <div className="space-y-4">

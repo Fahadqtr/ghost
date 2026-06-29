@@ -42,9 +42,9 @@ async function fetchAll(q: (from: number, to: number) => any): Promise<any[]> {
 
 export async function GET(
   req: Request,
-  { params }: { params: { channel: string } }
+  { params }: { params: Promise<{ channel: string }> }
 ) {
-  const channel = params.channel as ChannelKey;
+  const channel = (await params).channel as ChannelKey;
   if (!CHANNEL_KEYS.includes(channel)) {
     return new Response("Unknown channel", { status: 400 });
   }
