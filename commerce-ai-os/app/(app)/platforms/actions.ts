@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAll } from "@/lib/supabase/paginate";
 import { PLATFORM_KEYS, platformBy, type PlatformKey } from "@/lib/constants";
 
 // Per-platform Product Hub backend.
@@ -66,20 +67,12 @@ async function fetchAllProducts(sb: ReturnType<typeof createClient>): Promise<an
 async function fetchVariantBarcodes(sb: ReturnType<typeof createClient>): Promise<Map<string, string[]>> {
   const map = new Map<string, string[]>();
   try {
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await sb
-        .from("product_variants")
-        .select("parent_product_id, barcode")
-        .range(from, from + PAGE - 1);
-      if (error) break;
-      for (const r of (data ?? []) as any[]) {
-        const bc = r.barcode ? String(r.barcode).trim() : "";
-        if (!r.parent_product_id || !bc) continue;
-        const arr = map.get(r.parent_product_id) ?? [];
-        arr.push(bc);
-        map.set(r.parent_product_id, arr);
-      }
-      if ((data ?? []).length < PAGE) break;
+    for (const r of await fetchAll(sb, "product_variants", "parent_product_id, barcode") as any[]) {
+      const bc = r.barcode ? String(r.barcode).trim() : "";
+      if (!r.parent_product_id || !bc) continue;
+      const arr = map.get(r.parent_product_id) ?? [];
+      arr.push(bc);
+      map.set(r.parent_product_id, arr);
     }
   } catch {
     /* variants optional */

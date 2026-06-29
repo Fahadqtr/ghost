@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAll } from "@/lib/supabase/paginate";
 import { signAction } from "@/lib/malak/confirm";
 import { detectForcedTool } from "@/lib/malak/intent";
 import { CATEGORIES, PLATFORMS } from "@/lib/constants";
@@ -477,17 +478,9 @@ async function catalogStats(sb: Sb) {
 
   // Top categories — page through products (1000-row cap).
   const catMap = new Map<string, number>();
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb
-      .from("products")
-      .select("main_category")
-      .range(from, from + 999);
-    if (error) break;
-    for (const r of data ?? []) {
-      const k = r.main_category || "Uncategorized";
-      catMap.set(k, (catMap.get(k) || 0) + 1);
-    }
-    if ((data ?? []).length < 1000) break;
+  for (const r of await fetchAll(sb, "products", "main_category")) {
+    const k = r.main_category || "Uncategorized";
+    catMap.set(k, (catMap.get(k) || 0) + 1);
   }
   const topCategories = [...catMap.entries()]
     .map(([name, count]) => ({ name, count }))

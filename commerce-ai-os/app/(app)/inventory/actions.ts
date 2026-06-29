@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAll } from "@/lib/supabase/paginate";
 import { requireUser } from "@/lib/auth/requireUser";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -1463,14 +1464,9 @@ export async function matchChannelsToMalika(apply = false): Promise<{
   {
     const probe = await admin.from("product_variants").select("id").limit(1);
     if (!probe.error) {
-      for (let from = 0; ; from += PAGE) {
-        const { data, error } = await admin.from("product_variants").select("parent_product_id, stock_quantity").range(from, from + PAGE - 1);
-        if (error) break;
-        for (const v of (data ?? []) as any[]) {
-          if (!v.parent_product_id) continue;
-          variantSum.set(v.parent_product_id, (variantSum.get(v.parent_product_id) ?? 0) + (v.stock_quantity ?? 0));
-        }
-        if (!data || data.length < PAGE) break;
+      for (const v of await fetchAll(admin, "product_variants", "parent_product_id, stock_quantity") as any[]) {
+        if (!v.parent_product_id) continue;
+        variantSum.set(v.parent_product_id, (variantSum.get(v.parent_product_id) ?? 0) + (v.stock_quantity ?? 0));
       }
     }
   }
