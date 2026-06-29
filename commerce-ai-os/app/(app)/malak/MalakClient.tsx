@@ -1249,6 +1249,8 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   // doesn't support requestFullscreen on elements). Fills the viewport via fixed
   // positioning instead.
   const [pseudoFs, setPseudoFs] = useState(false);
+  // "عرض على التلفزيون" help sheet (Smart View / screen-mirroring steps).
+  const [tvHelp, setTvHelp] = useState(false);
   // وضع النداء: استماع متواصل بدون زر — نادِ أي وكيل باسمه فيرد عليك.
   const [handsFree, setHandsFree] = useState(false);
   const handsFreeRef = useRef(false);
@@ -1892,6 +1894,19 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
     }
   };
 
+  // "Show Malak on the TV": a browser CANNOT start Smart View / screen mirroring
+  // from a button (it's an OS-level action), so we do the two things the web CAN
+  // do — put Malak into the big, clean full-screen layout, then show the user the
+  // exact steps to start mirroring from their phone's quick panel.
+  const startTvMode = () => {
+    const el = rootRef.current;
+    if (el && !(isFs || pseudoFs)) {
+      if (el.requestFullscreen) el.requestFullscreen().catch(() => setPseudoFs(true));
+      else setPseudoFs(true);
+    }
+    setTvHelp(true);
+  };
+
   // Combined flag: native fullscreen OR the CSS fallback.
   const fsActive = isFs || pseudoFs;
 
@@ -2028,6 +2043,14 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           className="absolute left-3 top-3 z-10 rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-white/90 shadow backdrop-blur-sm hover:bg-black/60"
         >
           {fsActive ? "↙ تصغير" : "⛶ ملء الشاشة"}
+        </button>
+        {/* Show Malak on a Smart TV (via the phone's Smart View / screen cast) */}
+        <button
+          type="button"
+          onClick={startTvMode}
+          className="absolute right-3 top-3 z-10 rounded-full border border-cyan-300/30 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-cyan-100 shadow backdrop-blur-sm hover:bg-black/60"
+        >
+          📺 التلفزيون
         </button>
 
         {/* "يتكلم الآن" badge: shows the active agent's avatar + name while
@@ -2236,6 +2259,29 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       <div className="hidden shrink-0 md:block">
         <FooterStatusBar scan={sd} uptime={uptime} stateLabel={state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY"} />
       </div>
+
+      {/* "Show Malak on the TV" — Smart View / screen-mirroring steps. The web
+          can't start mirroring itself; this readies the big-screen view and tells
+          the user how to cast from their phone. */}
+      {tvHelp ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4" onClick={() => setTvHelp(false)}>
+          <div dir="rtl" className="w-full max-w-sm rounded-2xl border border-cyan-400/30 bg-[#0a1422] p-5 text-right text-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-base font-bold">📺 عرض ملاك على التلفزيون</p>
+              <button onClick={() => setTvHelp(false)} aria-label="إغلاق" className="text-xl leading-none text-white/50 hover:text-white">×</button>
+            </div>
+            <p className="mb-3 text-[13px] leading-relaxed text-cyan-100/80">ملاك دخلت وضع العرض الكبير ✅ — الحين شغّل مرآة الشاشة من جوالك:</p>
+            <ol className="space-y-2 text-[13px] leading-relaxed text-white/90">
+              <li>1️⃣ اسحب من <b>أعلى الشاشة</b> لتفتح لوحة الإعدادات السريعة.</li>
+              <li>2️⃣ اضغط <b>Smart View</b> (سامسونج) أو <b>Screen Cast / بث الشاشة</b> (LG/أندرويد).</li>
+              <li>3️⃣ اختر <b>تلفزيونك</b> — لازم على نفس شبكة الواي‌فاي.</li>
+              <li>4️⃣ بتطلع ملاك على التلفزيون 🎉 وتتحكّم بكل شي من جوالك.</li>
+            </ol>
+            <p className="mt-3 text-[11px] leading-relaxed text-white/45">ملاحظة: مرآة الشاشة خاصية النظام، ما نقدر نشغّلها من داخل التطبيق — بس جهّزنا لك العرض الكبير النظيف.</p>
+            <button onClick={() => setTvHelp(false)} className="mt-4 w-full rounded-xl bg-cyan-500 py-2.5 text-sm font-bold text-[#06121f] hover:bg-cyan-400">تمام، فهمت</button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Holographic result windows — multiple can be open at once, each draggable. */}
       {panels.map((p, i) => (
