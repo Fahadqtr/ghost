@@ -28,11 +28,23 @@ async function adminEmail(): Promise<string | null> {
   }
 }
 
+// Service-role client, or null if it isn't configured on this deploy (e.g. a
+// preview without the key) — so callers degrade to a message, not a crash.
+function adminClient(): any | null {
+  try {
+    return createAdminClient();
+  } catch {
+    return null;
+  }
+}
+const NO_DB = "الخادم غير مهيأ (SUPABASE_SERVICE_ROLE_KEY غير مضبوط على هذه النسخة).";
+
 // All staff (PIN-page) movements, newest first, with product name/image resolved.
 export async function getStaffMovements(limit = 100): Promise<{ rows: StaffMove[]; pending: number; error?: string }> {
   const unauth = await requireUser();
   if (unauth) return { rows: [], pending: 0, error: unauth.error };
-  const admin = createAdminClient();
+  const admin = adminClient();
+  if (!admin) return { rows: [], pending: 0, error: NO_DB };
 
   const { data, error } = await admin
     .from("malak_audit")
@@ -76,7 +88,8 @@ export async function approveMovements(ids: number[]) {
   const unauth = await requireUser();
   if (unauth) return unauth;
   if (!ids?.length) return { ok: true as const, updated: 0 };
-  const admin = createAdminClient();
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
   const email = await adminEmail();
   const now = new Date().toISOString();
   let updated = 0;
@@ -96,7 +109,8 @@ export async function approveMovements(ids: number[]) {
 export async function reverseMovement(id: number) {
   const unauth = await requireUser();
   if (unauth) return unauth;
-  const admin = createAdminClient();
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
   const { data: row } = await admin.from("malak_audit").select("sku, action_type, details").eq("id", id).single();
   if (!row) return { error: "الحركة غير موجودة." };
   if (row.details?.review === "reversed") return { error: "هذه الحركة معكوسة مسبقًا." };

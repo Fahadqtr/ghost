@@ -5,7 +5,14 @@ import ApprovalsClient from "./ApprovalsClient";
 export const dynamic = "force-dynamic";
 
 export default async function ApprovalsPage() {
-  const { rows, pending, error } = await getStaffMovements();
+  let rows: Awaited<ReturnType<typeof getStaffMovements>>["rows"] = [];
+  let pending = 0;
+  let error: string | undefined;
+  try {
+    ({ rows, pending, error } = await getStaffMovements());
+  } catch (e: any) {
+    error = e?.message || "تعذّر تحميل الحركات.";
+  }
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
