@@ -95,7 +95,7 @@ export const NAV_ITEMS = [
 export const NAV_GROUPS = [
   { title: "الرئيسية", items: [{ href: "/dashboard", label: "لوحة المدير", icon: "📊" }] },
   {
-    title: "ملاك والفريق",
+    title: "ملاك والوكلاء",
     items: [
       { href: "/malak", label: "ملاك · Malak AI", icon: "✨" },
       { href: "/agents", label: "الوكلاء", icon: "🤖" },
@@ -105,6 +105,25 @@ export const NAV_GROUPS = [
     { href: "/products", label: "الكتالوج", icon: "📦" },
     { href: "/catalog/health", label: "صحّة الكتالوج", icon: "🩺" },
   ] },
+  {
+    title: "المخزون",
+    items: [
+      { href: "/inventory", label: "الكميات", icon: "🏷️" },
+      { href: "/inventory/shelves", label: "الأرفف", icon: "🗄️" },
+      { href: "/inventory/stocktake", label: "الجرد", icon: "🔢" },
+      { href: "/inventory/movements", label: "حركات الدخول/الخروج", icon: "🔄" },
+      { href: "/inventory/out-of-stock", label: "النافد", icon: "⚠️" },
+      { href: "/inventory/labels", label: "الباركود", icon: "🖨️" },
+    ],
+  },
+  {
+    title: "الموظفون",
+    items: [
+      { href: "/team", label: "الموظفون", icon: "👥" },
+      { href: "/inventory/approvals", label: "اعتماد الحركات", icon: "✅" },
+      { href: "/staff", label: "صفحة الموظفين", icon: "📲" },
+    ],
+  },
   { title: "التسويق", items: [
     { href: "/content", label: "مولّد المحتوى", icon: "🎬" },
   ] },
@@ -115,7 +134,6 @@ export const NAV_GROUPS = [
       { href: "/channels", label: "القنوات", icon: "🛒" },
     ],
   },
-  { title: "المخزون", items: [{ href: "/inventory", label: "الكميات والتنبيهات", icon: "🏷️" }] },
   { title: "الاستيراد والتصدير", items: [{ href: "/import-export", label: "Excel استيراد/تصدير", icon: "📤" }] },
 ] as const;
 
