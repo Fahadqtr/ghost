@@ -1,3 +1,4 @@
+import Link from "next/link";
 import LoginForm from "@/components/LoginForm";
 import { APP_NAME, APP_OWNER } from "@/lib/constants";
 
@@ -19,6 +20,17 @@ export default function LoginPage() {
           <p className="mt-4 text-center text-xs text-muted">
             Internal tool · accounts are created in Supabase by the owner.
           </p>
+        </div>
+
+        {/* Employees use the shared-PIN stock page, not a Supabase account. */}
+        <div className="mt-4 text-center">
+          <Link
+            href="/staff"
+            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50"
+          >
+            📦 دخول الموظفين · إدخال/إخراج المنتجات
+          </Link>
+          <p className="mt-1.5 text-[11px] text-muted">للموظفين — بدون حساب، بالرمز فقط</p>
         </div>
       </div>
     </main>
