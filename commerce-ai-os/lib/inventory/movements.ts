@@ -63,6 +63,7 @@ export async function applyMovement(admin: any, input: MovementInput): Promise<M
     status: "done",
     details: {
       productId: inv.product_id ?? null,
+      inventoryId: inv.id, // lets the approvals dashboard reverse precisely
       quantity: qty,
       direction: input.type,
       reason: input.reason ?? null,
