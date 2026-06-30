@@ -26,7 +26,10 @@ export default function Topbar({
   const title = current ? (en ? current.en : current.label) : "Commerce AI OS";
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 sm:px-6">
+    // Force LTR layout for the bar so the ☰ menu button stays on the LEFT — the
+    // same side the drawer slides from — in both Arabic and English (the drawer
+    // is always physically left). Text inside still renders bidi-correctly.
+    <header dir="ltr" className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 sm:px-6">
       <div className="flex min-w-0 items-center gap-2">
         {/* Hamburger — shown whenever the static sidebar is hidden */}
         {showMenu ? (
