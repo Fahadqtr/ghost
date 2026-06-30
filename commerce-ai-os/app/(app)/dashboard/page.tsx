@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { getCeoKpis, type NameCount, type ChannelBreak } from "@/lib/dashboard";
+import { getStaffStats } from "@/lib/staff/stats";
 import { recordAndDiffSnapshot } from "@/lib/kpiSnapshots";
 import DashboardRefresh from "@/components/DashboardRefresh";
 
@@ -8,6 +10,7 @@ const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 export default async function DashboardPage() {
   const k = await getCeoKpis();
+  const staff = await getStaffStats();
   const trends = k.configured ? await recordAndDiffSnapshot(k) : null;
   const healthIssues = k.missingPrice + k.missingImage + k.missingBarcode + k.missingCategory;
 
@@ -27,6 +30,52 @@ export default async function DashboardPage() {
 
       {trends?.asOf ? (
         <p className="-mt-2 text-xs text-muted">▲▼ change since {trends.asOf}</p>
+      ) : null}
+
+      {/* Staff stock movements (employees' IN/OUT + approval indicators) */}
+      {staff.configured && (staff.week.in + staff.week.out > 0 || staff.review.pending > 0) ? (
+        <section dir="rtl" className="space-y-3 text-right">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-ink">📦 حركات الموظفين (دخول/خروج)</h3>
+            <Link href="/inventory/approvals" className="text-xs text-brand hover:underline">الاعتماد ←</Link>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="card text-center">
+              <p className="text-xs text-muted">إدخال اليوم</p>
+              <p className="text-2xl font-bold text-emerald-600">{nf(staff.today.in)}</p>
+              <p className="text-[11px] text-muted">{nf(staff.today.inUnits)} قطعة</p>
+            </div>
+            <div className="card text-center">
+              <p className="text-xs text-muted">إخراج اليوم</p>
+              <p className="text-2xl font-bold text-amber-600">{nf(staff.today.out)}</p>
+              <p className="text-[11px] text-muted">{nf(staff.today.outUnits)} قطعة</p>
+            </div>
+            <div className={`card text-center ${staff.review.pending > 0 ? "border-amber-300 bg-amber-50" : ""}`}>
+              <p className="text-xs text-muted">بانتظار الاعتماد</p>
+              <p className="text-2xl font-bold text-amber-700">{nf(staff.review.pending)}</p>
+            </div>
+            <div className="card text-center">
+              <p className="text-xs text-muted">معتمدة / معكوسة (الأسبوع)</p>
+              <p className="text-2xl font-bold text-emerald-700">{nf(staff.review.approved)} <span className="text-base text-red-500">/ {nf(staff.review.reversed)}</span></p>
+            </div>
+          </div>
+          {staff.byEmployeeToday.length ? (
+            <div className="card">
+              <p className="mb-2 text-xs font-semibold text-muted">حركات اليوم حسب الموظف</p>
+              <div className="space-y-1.5">
+                {staff.byEmployeeToday.map((e) => (
+                  <div key={e.name} className="flex items-center justify-between text-sm">
+                    <span className="font-medium text-ink">👤 {e.name}</span>
+                    <span className="flex gap-2 text-xs">
+                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-bold text-emerald-700">➕ {e.in}</span>
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 font-bold text-amber-700">➖ {e.out}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </section>
       ) : null}
 
       {/* KPI cards */}

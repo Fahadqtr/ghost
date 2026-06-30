@@ -200,6 +200,9 @@ export default async function InventoryPage() {
               </span>
             ) : null}
           </Link>
+          <Link href="/team" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+            👥 الموظفون
+          </Link>
           <Link href="/inventory/out-of-stock" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
             ⚠ النافدة · Out of stock
           </Link>

@@ -32,21 +32,41 @@ function adminClient(): any | null {
 const NO_DB = "الخادم غير مهيأ للمخزون (SUPABASE_SERVICE_ROLE_KEY غير مضبوط على هذه النسخة).";
 
 export async function staffLogin(name: string, pin: string): Promise<{ error: string } | { ok: true; name: string }> {
-  if (!process.env.STAFF_PIN) {
-    return { error: "صفحة الموظفين غير مهيأة بعد (لم يُضبط STAFF_PIN على الخادم)." };
+  const code = String(pin || "").trim();
+  if (!code) return { error: "أدخل الرمز." };
+
+  // 1) Per-employee code (staff_members table). The code identifies WHO — the
+  // name comes from the record, so attribution can't be spoofed.
+  let resolved: string | null = null;
+  const admin = adminClient();
+  if (admin) {
+    const { data } = await admin.from("staff_members").select("name, active").eq("pin", code).limit(1);
+    const m = (data ?? [])[0];
+    if (m) {
+      if (!m.active) return { error: "هذا الحساب معطّل — راجع المدير." };
+      resolved = String(m.name);
+    }
   }
-  const nm = String(name || "").trim().slice(0, 40);
-  if (!nm) return { error: "اكتب اسمك أولاً." };
-  if (!pinOk(pin)) return { error: "الرمز غير صحيح." };
+
+  // 2) Fall back to the shared STAFF_PIN (with a typed name) for backward compat
+  // / a quick setup before any employees are registered.
+  if (!resolved && process.env.STAFF_PIN && pinOk(code)) {
+    const nm = String(name || "").trim().slice(0, 40);
+    if (!nm) return { error: "اكتب اسمك أولاً." };
+    resolved = nm;
+  }
+
+  if (!resolved) return { error: "الرمز غير صحيح." };
+
   const c = await cookies();
-  c.set(STAFF_COOKIE, signStaff(nm), {
+  c.set(STAFF_COOKIE, signStaff(resolved), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/staff",
     maxAge: 12 * 60 * 60,
   });
-  return { ok: true as const, name: nm };
+  return { ok: true as const, name: resolved };
 }
 
 export async function staffLogout() {
