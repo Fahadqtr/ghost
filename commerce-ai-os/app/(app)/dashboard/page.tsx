@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCeoKpis, type NameCount, type ChannelBreak } from "@/lib/dashboard";
 import { getStaffStats } from "@/lib/staff/stats";
+import { getT } from "@/lib/i18n-server";
 import { recordAndDiffSnapshot } from "@/lib/kpiSnapshots";
 import DashboardRefresh from "@/components/DashboardRefresh";
 
@@ -11,6 +12,9 @@ const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 export default async function DashboardPage() {
   const k = await getCeoKpis();
   const staff = await getStaffStats();
+  const { locale } = await getT();
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
   const trends = k.configured ? await recordAndDiffSnapshot(k) : null;
   const healthIssues = k.missingPrice + k.missingImage + k.missingBarcode + k.missingCategory;
 
@@ -18,7 +22,7 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       {/* Header + live freshness indicator */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-ink">Manager dashboard</h2>
+        <h2 className="text-lg font-semibold text-ink">{L("لوحة المدير", "Manager dashboard")}</h2>
         {k.configured ? <DashboardRefresh generatedAt={k.generatedAt} /> : null}
       </div>
 
@@ -34,34 +38,34 @@ export default async function DashboardPage() {
 
       {/* Staff stock movements (employees' IN/OUT + approval indicators) */}
       {staff.configured && (staff.week.in + staff.week.out > 0 || staff.review.pending > 0) ? (
-        <section dir="rtl" className="space-y-3 text-right">
+        <section dir={en ? "ltr" : "rtl"} className={en ? "space-y-3" : "space-y-3 text-right"}>
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-ink">📦 حركات الموظفين (دخول/خروج)</h3>
-            <Link href="/inventory/approvals" className="text-xs text-brand hover:underline">الاعتماد ←</Link>
+            <h3 className="text-sm font-semibold text-ink">{L("📦 حركات الموظفين (دخول/خروج)", "📦 Staff movements (in/out)")}</h3>
+            <Link href="/inventory/approvals" className="text-xs text-brand hover:underline">{L("الاعتماد ←", "Approvals →")}</Link>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="card text-center">
-              <p className="text-xs text-muted">إدخال اليوم</p>
+              <p className="text-xs text-muted">{L("إدخال اليوم", "In today")}</p>
               <p className="text-2xl font-bold text-emerald-600">{nf(staff.today.in)}</p>
-              <p className="text-[11px] text-muted">{nf(staff.today.inUnits)} قطعة</p>
+              <p className="text-[11px] text-muted">{nf(staff.today.inUnits)} {L("قطعة", "units")}</p>
             </div>
             <div className="card text-center">
-              <p className="text-xs text-muted">إخراج اليوم</p>
+              <p className="text-xs text-muted">{L("إخراج اليوم", "Out today")}</p>
               <p className="text-2xl font-bold text-amber-600">{nf(staff.today.out)}</p>
-              <p className="text-[11px] text-muted">{nf(staff.today.outUnits)} قطعة</p>
+              <p className="text-[11px] text-muted">{nf(staff.today.outUnits)} {L("قطعة", "units")}</p>
             </div>
             <div className={`card text-center ${staff.review.pending > 0 ? "border-amber-300 bg-amber-50" : ""}`}>
-              <p className="text-xs text-muted">بانتظار الاعتماد</p>
+              <p className="text-xs text-muted">{L("بانتظار الاعتماد", "Pending approval")}</p>
               <p className="text-2xl font-bold text-amber-700">{nf(staff.review.pending)}</p>
             </div>
             <div className="card text-center">
-              <p className="text-xs text-muted">معتمدة / معكوسة (الأسبوع)</p>
+              <p className="text-xs text-muted">{L("معتمدة / معكوسة (الأسبوع)", "Approved / reversed (week)")}</p>
               <p className="text-2xl font-bold text-emerald-700">{nf(staff.review.approved)} <span className="text-base text-red-500">/ {nf(staff.review.reversed)}</span></p>
             </div>
           </div>
           {staff.byEmployeeToday.length ? (
             <div className="card">
-              <p className="mb-2 text-xs font-semibold text-muted">حركات اليوم حسب الموظف</p>
+              <p className="mb-2 text-xs font-semibold text-muted">{L("حركات اليوم حسب الموظف", "Today by employee")}</p>
               <div className="space-y-1.5">
                 {staff.byEmployeeToday.map((e) => (
                   <div key={e.name} className="flex items-center justify-between text-sm">

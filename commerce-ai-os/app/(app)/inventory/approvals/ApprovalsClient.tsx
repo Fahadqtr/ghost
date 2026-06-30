@@ -3,14 +3,17 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { approveMovements, reverseMovement, type StaffMove } from "../approvals-actions";
+import type { Locale } from "@/lib/i18n";
 
-function fmt(s: string | null) {
+function fmt(s: string | null, locale: Locale) {
   if (!s) return "";
   const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("ar", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString(locale, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-export default function ApprovalsClient({ initialRows, initialPending }: { initialRows: StaffMove[]; initialPending: number }) {
+export default function ApprovalsClient({ initialRows, initialPending, locale = "ar" }: { initialRows: StaffMove[]; initialPending: number; locale?: Locale }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
   const router = useRouter();
   const [rows, setRows] = useState(initialRows);
   const [tab, setTab] = useState<"pending" | "all">("pending");
@@ -28,18 +31,19 @@ export default function ApprovalsClient({ initialRows, initialPending }: { initi
       const r = await approveMovements(ids);
       if (r && "error" in r && r.error) { setNote(r.error); return; }
       setRows((rs) => rs.map((x) => (ids.includes(x.id) ? { ...x, review: "approved" } : x)));
-      setNote(`✓ اعتمدت ${ids.length} حركة`);
+      setNote(L(`✓ اعتمدت ${ids.length} حركة`, `✓ Approved ${ids.length} movement(s)`));
       setTimeout(refresh, 600);
     });
   };
 
   const reverse = (m: StaffMove) => {
-    if (!confirm(`عكس الحركة؟ راح ترجّع المخزون: ${m.dir === "in" ? "إخراج" : "إدخال"} ${m.qty} من «${m.name ?? m.sku}».`)) return;
+    const undo = m.dir === "in" ? L("إخراج", "out") : L("إدخال", "in");
+    if (!confirm(L(`عكس الحركة؟ راح ترجّع المخزون: ${undo} ${m.qty} من «${m.name ?? m.sku}».`, `Reverse this movement? Stock will be ${undo} ${m.qty} of "${m.name ?? m.sku}".`))) return;
     start(async () => {
       const r = await reverseMovement(m.id);
       if (r && "error" in r && r.error) { setNote(r.error); return; }
       setRows((rs) => rs.map((x) => (x.id === m.id ? { ...x, review: "reversed" } : x)));
-      setNote("↩︎ تم عكس الحركة وإرجاع المخزون");
+      setNote(L("↩︎ تم عكس الحركة وإرجاع المخزون", "↩︎ Movement reversed, stock restored"));
       setTimeout(refresh, 600);
     });
   };
@@ -50,19 +54,19 @@ export default function ApprovalsClient({ initialRows, initialPending }: { initi
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5">
           <button onClick={() => setTab("pending")} className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "pending" ? "bg-violet-600 text-white" : "text-slate-600"}`}>
-            بانتظار المراجعة {pending.length > 0 && <span className="ml-1 rounded-full bg-amber-400 px-1.5 text-[11px] text-amber-900">{pending.length}</span>}
+            {L("بانتظار المراجعة", "Pending review")} {pending.length > 0 && <span className="ml-1 rounded-full bg-amber-400 px-1.5 text-[11px] text-amber-900">{pending.length}</span>}
           </button>
-          <button onClick={() => setTab("all")} className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "all" ? "bg-violet-600 text-white" : "text-slate-600"}`}>الكل ({rows.length})</button>
+          <button onClick={() => setTab("all")} className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === "all" ? "bg-violet-600 text-white" : "text-slate-600"}`}>{L("الكل", "All")} ({rows.length})</button>
         </div>
         {tab === "pending" && pending.length > 0 ? (
-          <button disabled={busy} onClick={() => approve(pending.map((p) => p.id))} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-bold text-white disabled:opacity-50">✓ اعتماد الكل ({pending.length})</button>
+          <button disabled={busy} onClick={() => approve(pending.map((p) => p.id))} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-bold text-white disabled:opacity-50">{L("✓ اعتماد الكل", "✓ Approve all")} ({pending.length})</button>
         ) : null}
       </div>
 
       {note ? <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{note}</div> : null}
 
       {shown.length === 0 ? (
-        <div className="card py-10 text-center text-sm text-slate-400">{tab === "pending" ? "ما فيه حركات بانتظار المراجعة 🎉" : "ما فيه حركات بعد."}</div>
+        <div className="card py-10 text-center text-sm text-slate-400">{tab === "pending" ? L("ما فيه حركات بانتظار المراجعة 🎉", "Nothing awaiting review 🎉") : L("ما فيه حركات بعد.", "No movements yet.")}</div>
       ) : (
         <div className="space-y-2">
           {shown.map((m) => (
@@ -79,21 +83,21 @@ export default function ApprovalsClient({ initialRows, initialPending }: { initi
                 <p className="truncate text-sm font-medium text-ink">{m.name ?? m.sku ?? "—"}</p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
                   <span className={`rounded px-1.5 py-0.5 font-bold ${m.dir === "in" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                    {m.dir === "in" ? "➕ إدخال" : "➖ إخراج"} {m.qty}
+                    {m.dir === "in" ? L("➕ إدخال", "➕ In") : L("➖ إخراج", "➖ Out")} {m.qty}
                   </span>
                   <span>👤 {m.by || "—"}</span>
                   {m.reason ? <span>· {m.reason}</span> : null}
-                  <span className="text-slate-400">· {fmt(m.at)}</span>
+                  <span className="text-slate-400">· {fmt(m.at, locale)}</span>
                 </div>
               </div>
               {m.review === "pending" ? (
                 <div className="flex shrink-0 flex-col gap-1">
-                  <button disabled={busy} onClick={() => approve([m.id])} className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">✓ اعتمدت</button>
-                  <button disabled={busy} onClick={() => reverse(m)} className="rounded-md border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">↩︎ عكس</button>
+                  <button disabled={busy} onClick={() => approve([m.id])} className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">{L("✓ اعتمدت", "✓ Approve")}</button>
+                  <button disabled={busy} onClick={() => reverse(m)} className="rounded-md border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">{L("↩︎ عكس", "↩︎ Reverse")}</button>
                 </div>
               ) : (
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${m.review === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>
-                  {m.review === "approved" ? "✓ معتمدة" : "↩︎ معكوسة"}
+                  {m.review === "approved" ? L("✓ معتمدة", "✓ Approved") : L("↩︎ معكوسة", "↩︎ Reversed")}
                 </span>
               )}
             </div>
