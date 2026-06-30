@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, type StaffItem, type StaffLogRow } from "./actions";
 import { dirOf, type Locale } from "@/lib/i18n";
+import LanguageToggle from "@/components/LanguageToggle";
 
 // Reason chips. The Arabic value is what gets stored (so existing data + the
 // approvals page stay consistent); only the label is shown per locale.
@@ -54,7 +55,8 @@ function Gate({ onIn, locale }: { onIn: (name: string) => void; locale: Locale }
     });
   };
   return (
-    <div dir={dirOf(locale)} className="mx-auto flex min-h-[100dvh] max-w-sm flex-col justify-center gap-4 p-6">
+    <div dir={dirOf(locale)} className="relative mx-auto flex min-h-[100dvh] max-w-sm flex-col justify-center gap-4 p-6">
+      <div className="absolute end-4 top-4"><LanguageToggle locale={locale} /></div>
       <div className="text-center">
         <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600 text-2xl text-white">📦</div>
         <h1 className="text-xl font-bold text-ink">{L("دخول وخروج المنتجات", "Stock in / out")}</h1>
@@ -117,7 +119,10 @@ function Desk({ name, initialToday, onLogout, locale }: { name: string; initialT
           <p className="text-base font-bold text-ink">📦 {L("دخول/خروج المنتجات", "Stock in / out")}</p>
           <p className="text-xs text-muted">{L("مرحبا", "Hi")} {name}</p>
         </div>
-        <button onClick={logout} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">{L("خروج", "Sign out")}</button>
+        <div className="flex items-center gap-2">
+          <LanguageToggle locale={locale} />
+          <button onClick={logout} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">{L("خروج", "Sign out")}</button>
+        </div>
       </div>
 
       {/* scan / search */}
