@@ -179,34 +179,16 @@ export default async function InventoryPage() {
         <p className="text-sm text-muted">
           Single source of stock truth. Edit inline, bulk-update, import/export CSV, and push to Shopify.
         </p>
-        <div className="flex flex-wrap gap-2 sm:flex-nowrap">
-          <Link href="/inventory/shelves" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
-            🗄️ Shelves
+        {/* Sub-pages now live in the sidebar (المخزون / الموظفون groups). Keep
+            only a one-tap alert when staff movements are awaiting approval. */}
+        {pendingApprovals > 0 ? (
+          <Link
+            href="/inventory/approvals"
+            className="inline-flex items-center gap-1.5 self-start rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 whitespace-nowrap hover:bg-amber-100"
+          >
+            ✅ {pendingApprovals} بانتظار الاعتماد
           </Link>
-          <Link href="/inventory/stocktake" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
-            📦 Count shelf
-          </Link>
-          <Link href="/inventory/labels" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
-            🖨️ Barcodes
-          </Link>
-          <Link href="/inventory/movements" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
-            Stock IN / OUT →
-          </Link>
-          <Link href="/inventory/approvals" className="btn-ghost relative px-3 py-1 text-xs whitespace-nowrap">
-            ✅ اعتماد الحركات
-            {pendingApprovals > 0 ? (
-              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
-                {pendingApprovals}
-              </span>
-            ) : null}
-          </Link>
-          <Link href="/team" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
-            👥 الموظفون
-          </Link>
-          <Link href="/inventory/out-of-stock" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
-            ⚠ النافدة · Out of stock
-          </Link>
-        </div>
+        ) : null}
       </div>
 
       {loadError ? (
