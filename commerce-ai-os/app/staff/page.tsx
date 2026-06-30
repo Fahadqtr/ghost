@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { verifyStaff, STAFF_COOKIE } from "@/lib/staff/session";
+import { getLocale } from "@/lib/i18n-server";
 import StaffClient from "./StaffClient";
 import { staffToday } from "./actions";
 
@@ -19,5 +20,5 @@ export default async function StaffPage() {
     who = who ?? null;
     today = [];
   }
-  return <StaffClient initialName={who?.name ?? null} initialToday={today} />;
+  return <StaffClient initialName={who?.name ?? null} initialToday={today} locale={await getLocale()} />;
 }
