@@ -14,9 +14,11 @@ import BottomNav from "./BottomNav";
 // get the slide-in drawer regardless of the reported width.
 export default function AppShell({
   userEmail,
+  locale = "ar",
   children,
 }: {
   userEmail?: string | null;
+  locale?: import("@/lib/i18n").Locale;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -61,7 +63,7 @@ export default function AppShell({
       {/* Desktop sidebar (static) — only on a real wide, mouse-driven screen. */}
       {desktop ? (
         <div className="flex">
-          <Sidebar />
+          <Sidebar locale={locale} />
         </div>
       ) : null}
 
@@ -84,7 +86,7 @@ export default function AppShell({
               open ? "translate-x-0" : "-translate-x-full"
             }`}
           >
-            <Sidebar onNavigate={close} />
+            <Sidebar onNavigate={close} locale={locale} />
           </div>
         </div>
       ) : null}
@@ -95,10 +97,10 @@ export default function AppShell({
           plain overflow-y-auto otherwise allows (overflow-x computes to auto).
           Wide tables keep their own inner overflow-x-auto scroll. */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Topbar userEmail={userEmail} onMenuClick={() => setOpen(true)} showMenu={!desktop} />
+        <Topbar userEmail={userEmail} locale={locale} onMenuClick={() => setOpen(true)} showMenu={!desktop} />
         <main className={`min-w-0 flex-1 overflow-x-hidden overflow-y-auto ${isMalak ? "" : "p-4 sm:p-6"}`}>{children}</main>
         {/* Native-app-style bottom tabs (mobile/tablet only) */}
-        {!desktop ? <BottomNav /> : null}
+        {!desktop ? <BottomNav locale={locale} /> : null}
       </div>
     </div>
   );

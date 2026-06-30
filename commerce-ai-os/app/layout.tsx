@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { APP_NAME, APP_OWNER } from "@/lib/constants";
+import { getLocale } from "@/lib/i18n-server";
+import { dirOf } from "@/lib/i18n";
 
 export const metadata: Metadata = {
   title: `${APP_NAME} — ${APP_OWNER}`,
@@ -25,13 +27,14 @@ export const viewport: Viewport = {
   themeColor: "#ffffff",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const locale = await getLocale();
   return (
-    <html lang="en">
+    <html lang={locale} dir={dirOf(locale)}>
       <body>{children}</body>
     </html>
   );

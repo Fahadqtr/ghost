@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { NAV_GROUPS, APP_NAME, APP_OWNER } from "@/lib/constants";
+import type { Locale } from "@/lib/i18n";
 
-export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+export default function Sidebar({ onNavigate, locale = "ar" }: { onNavigate?: () => void; locale?: Locale }) {
   const pathname = usePathname();
+  const en = locale === "en";
 
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
@@ -23,7 +25,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         {NAV_GROUPS.map((group) => (
           <div key={group.title} className="space-y-1">
             <p className="px-3 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              {group.title}
+              {en ? group.titleEn : group.title}
             </p>
             {group.items.map((item) => {
               const active =
@@ -40,7 +42,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                   }`}
                 >
                   <span className="text-base">{item.icon}</span>
-                  {item.label}
+                  {en ? item.en : item.label}
                 </Link>
               );
             })}
