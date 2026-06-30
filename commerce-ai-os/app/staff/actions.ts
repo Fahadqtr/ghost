@@ -20,6 +20,17 @@ async function currentStaff(): Promise<{ name: string } | null> {
   return verifyStaff(c.get(STAFF_COOKIE)?.value);
 }
 
+// Service-role client, or null if it isn't configured on this deploy (e.g. a
+// preview without the key) — so callers degrade to a message instead of a crash.
+function adminClient(): any | null {
+  try {
+    return createAdminClient();
+  } catch {
+    return null;
+  }
+}
+const NO_DB = "الخادم غير مهيأ للمخزون (SUPABASE_SERVICE_ROLE_KEY غير مضبوط على هذه النسخة).";
+
 export async function staffLogin(name: string, pin: string): Promise<{ error: string } | { ok: true; name: string }> {
   if (!process.env.STAFF_PIN) {
     return { error: "صفحة الموظفين غير مهيأة بعد (لم يُضبط STAFF_PIN على الخادم)." };
@@ -61,7 +72,8 @@ export async function staffLookup(query: string): Promise<{ items: StaffItem[]; 
   if (!who) return { items: [], error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
   const q = String(query || "").trim();
   if (!q) return { items: [] };
-  const admin = createAdminClient();
+  const admin = adminClient();
+  if (!admin) return { items: [], error: NO_DB };
 
   const cols = "id, sku, name_en, name_ar, barcode, image_url";
   let prods: any[] = (await admin.from("products").select(cols).eq("barcode", q).limit(5)).data ?? [];
@@ -106,7 +118,8 @@ export async function recordStaffMovement(input: {
 }) {
   const who = await currentStaff();
   if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
-  const admin = createAdminClient();
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
   return applyMovement(admin, {
     inventoryId: input.inventoryId,
     sku: input.sku ?? null,
@@ -124,7 +137,8 @@ export type StaffLogRow = { at: string | null; sku: string | null; dir: "in" | "
 export async function staffToday(): Promise<{ rows: StaffLogRow[]; error?: string }> {
   const who = await currentStaff();
   if (!who) return { rows: [], error: "انتهت الجلسة." };
-  const admin = createAdminClient();
+  const admin = adminClient();
+  if (!admin) return { rows: [], error: NO_DB };
   const since = new Date();
   since.setHours(0, 0, 0, 0);
   const { data } = await admin

@@ -9,11 +9,15 @@ export const dynamic = "force-dynamic";
 // (app) route group so it never shows the admin shell (no prices, no Malak).
 export default async function StaffPage() {
   let who: { name: string } | null = null;
+  let today: Awaited<ReturnType<typeof staffToday>>["rows"] = [];
   try {
     who = verifyStaff((await cookies()).get(STAFF_COOKIE)?.value);
+    if (who) today = (await staffToday()).rows;
   } catch {
-    who = null; // signing secret not set → treat as logged out
+    // signing secret / service-role not set on this deploy → render the gate
+    // (or an empty desk) instead of crashing the page.
+    who = who ?? null;
+    today = [];
   }
-  const today = who ? (await staffToday()).rows : [];
   return <StaffClient initialName={who?.name ?? null} initialToday={today} />;
 }
