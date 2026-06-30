@@ -93,48 +93,48 @@ export const NAV_ITEMS = [
 // Grouped navigation (Commerce AI OS). Groups only EXISTING routes under
 // Arabic section headers — no invented pages.
 export const NAV_GROUPS = [
-  { title: "الرئيسية", items: [{ href: "/dashboard", label: "لوحة المدير", icon: "📊" }] },
+  { title: "الرئيسية", titleEn: "Home", items: [{ href: "/dashboard", label: "لوحة المدير", en: "Dashboard", icon: "📊" }] },
   {
-    title: "ملاك والوكلاء",
+    title: "ملاك والوكلاء", titleEn: "Malak & agents",
     items: [
-      { href: "/malak", label: "ملاك · Malak AI", icon: "✨" },
-      { href: "/agents", label: "الوكلاء", icon: "🤖" },
+      { href: "/malak", label: "ملاك · Malak AI", en: "Malak AI", icon: "✨" },
+      { href: "/agents", label: "الوكلاء", en: "Agents", icon: "🤖" },
     ],
   },
-  { title: "المنتجات", items: [
-    { href: "/products", label: "الكتالوج", icon: "📦" },
-    { href: "/catalog/health", label: "صحّة الكتالوج", icon: "🩺" },
+  { title: "المنتجات", titleEn: "Products", items: [
+    { href: "/products", label: "الكتالوج", en: "Catalog", icon: "📦" },
+    { href: "/catalog/health", label: "صحّة الكتالوج", en: "Catalog health", icon: "🩺" },
   ] },
   {
-    title: "المخزون",
+    title: "المخزون", titleEn: "Inventory",
     items: [
-      { href: "/inventory", label: "الكميات", icon: "🏷️" },
-      { href: "/inventory/shelves", label: "الأرفف", icon: "🗄️" },
-      { href: "/inventory/stocktake", label: "الجرد", icon: "🔢" },
-      { href: "/inventory/movements", label: "حركات الدخول/الخروج", icon: "🔄" },
-      { href: "/inventory/out-of-stock", label: "النافد", icon: "⚠️" },
-      { href: "/inventory/labels", label: "الباركود", icon: "🖨️" },
+      { href: "/inventory", label: "الكميات", en: "Quantities", icon: "🏷️" },
+      { href: "/inventory/shelves", label: "الأرفف", en: "Shelves", icon: "🗄️" },
+      { href: "/inventory/stocktake", label: "الجرد", en: "Stocktake", icon: "🔢" },
+      { href: "/inventory/movements", label: "حركات الدخول/الخروج", en: "Stock IN / OUT", icon: "🔄" },
+      { href: "/inventory/out-of-stock", label: "النافد", en: "Out of stock", icon: "⚠️" },
+      { href: "/inventory/labels", label: "الباركود", en: "Barcodes", icon: "🖨️" },
     ],
   },
   {
-    title: "الموظفون",
+    title: "الموظفون", titleEn: "Staff",
     items: [
-      { href: "/team", label: "الموظفون", icon: "👥" },
-      { href: "/inventory/approvals", label: "اعتماد الحركات", icon: "✅" },
-      { href: "/staff", label: "صفحة الموظفين", icon: "📲" },
+      { href: "/team", label: "الموظفون", en: "Employees", icon: "👥" },
+      { href: "/inventory/approvals", label: "اعتماد الحركات", en: "Approve movements", icon: "✅" },
+      { href: "/staff", label: "صفحة الموظفين", en: "Staff page", icon: "📲" },
     ],
   },
-  { title: "التسويق", items: [
-    { href: "/content", label: "مولّد المحتوى", icon: "🎬" },
+  { title: "التسويق", titleEn: "Marketing", items: [
+    { href: "/content", label: "مولّد المحتوى", en: "Content generator", icon: "🎬" },
   ] },
   {
-    title: "المنصات",
+    title: "المنصات", titleEn: "Channels",
     items: [
-      { href: "/platforms", label: "المنصات", icon: "🏬" },
-      { href: "/channels", label: "القنوات", icon: "🛒" },
+      { href: "/platforms", label: "المنصات", en: "Platforms", icon: "🏬" },
+      { href: "/channels", label: "القنوات", en: "Channels", icon: "🛒" },
     ],
   },
-  { title: "الاستيراد والتصدير", items: [{ href: "/import-export", label: "Excel استيراد/تصدير", icon: "📤" }] },
+  { title: "الاستيراد والتصدير", titleEn: "Import / Export", items: [{ href: "/import-export", label: "Excel استيراد/تصدير", en: "Excel import/export", icon: "📤" }] },
 ] as const;
 
 export const APP_NAME = "Commerce AI OS";

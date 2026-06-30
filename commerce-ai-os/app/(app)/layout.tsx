@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import StaleDeploymentBanner from "@/components/StaleDeploymentBanner";
 import { createClient } from "@/lib/supabase/server";
+import { getLocale } from "@/lib/i18n-server";
 
 // Authenticated app shell: responsive sidebar/drawer + topbar.
 // Middleware already gates routes; this is a belt-and-suspenders guard that also
@@ -18,8 +19,10 @@ export default async function AppLayout({
 
   if (!user) redirect("/login");
 
+  const locale = await getLocale();
+
   return (
-    <AppShell userEmail={user.email}>
+    <AppShell userEmail={user.email} locale={locale}>
       <StaleDeploymentBanner />
       {children}
     </AppShell>

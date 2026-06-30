@@ -1,23 +1,29 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { NAV_ITEMS } from "@/lib/constants";
+import { NAV_GROUPS } from "@/lib/constants";
 import { signOut } from "@/app/(app)/actions";
+import { makeT, type Locale } from "@/lib/i18n";
+import LanguageToggle from "./LanguageToggle";
 
 export default function Topbar({
   userEmail,
+  locale = "ar",
   onMenuClick,
   showMenu = true,
 }: {
   userEmail?: string | null;
+  locale?: Locale;
   onMenuClick?: () => void;
   showMenu?: boolean;
 }) {
   const pathname = usePathname();
-  const current = NAV_ITEMS.find(
-    (i) => pathname === i.href || pathname.startsWith(i.href + "/")
-  );
-  const title = current?.label ?? "Commerce AI OS";
+  const t = makeT(locale);
+  const en = locale === "en";
+  type NavItem = { href: string; label: string; en: string; icon: string };
+  const items: NavItem[] = NAV_GROUPS.flatMap((g) => g.items as readonly NavItem[]);
+  const current = items.find((i) => pathname === i.href || pathname.startsWith(i.href + "/"));
+  const title = current ? (en ? current.en : current.label) : "Commerce AI OS";
 
   return (
     <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 sm:px-6">
@@ -27,7 +33,7 @@ export default function Topbar({
           <button
             type="button"
             onClick={onMenuClick}
-            aria-label="Open menu"
+            aria-label={t("app.openMenu")}
             className="-ml-1 inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
           >
             <span className="text-xl leading-none">☰</span>
@@ -36,6 +42,7 @@ export default function Topbar({
         <h1 className="truncate text-base font-semibold text-ink sm:text-lg">{title}</h1>
       </div>
       <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+        <LanguageToggle locale={locale} />
         {userEmail ? (
           <span className="hidden text-sm text-muted lg:inline">{userEmail}</span>
         ) : null}
@@ -45,7 +52,7 @@ export default function Topbar({
         {userEmail ? (
           <form action={signOut}>
             <button type="submit" className="btn-ghost px-3 py-1.5 text-xs">
-              Sign out
+              {t("app.signOut")}
             </button>
           </form>
         ) : null}

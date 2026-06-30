@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { Locale } from "@/lib/i18n";
 
 // Native-app-style bottom tab bar (mobile only). Quick access to the main
 // destinations; the full menu stays in the hamburger drawer.
 const TABS = [
-  { href: "/dashboard", label: "الرئيسية", icon: "📊" },
-  { href: "/products", label: "الكتالوج", icon: "📦" },
-  { href: "/malak", label: "ملاك", icon: "✨" },
-  { href: "/platforms", label: "المنصات", icon: "🏬" },
-  { href: "/inventory", label: "المخزون", icon: "🏷️" },
+  { href: "/dashboard", label: "الرئيسية", en: "Home", icon: "📊" },
+  { href: "/products", label: "الكتالوج", en: "Catalog", icon: "📦" },
+  { href: "/malak", label: "ملاك", en: "Malak", icon: "✨" },
+  { href: "/platforms", label: "المنصات", en: "Channels", icon: "🏬" },
+  { href: "/inventory", label: "المخزون", en: "Inventory", icon: "🏷️" },
 ] as const;
 
-export default function BottomNav() {
+export default function BottomNav({ locale = "ar" }: { locale?: Locale }) {
   const pathname = usePathname();
+  const en = locale === "en";
   return (
     <nav
       className="flex shrink-0 items-stretch justify-around border-t border-slate-200 bg-white/95 backdrop-blur"
@@ -42,7 +44,7 @@ export default function BottomNav() {
             >
               {t.icon}
             </span>
-            {t.label}
+            {en ? t.en : t.label}
           </Link>
         );
       })}
