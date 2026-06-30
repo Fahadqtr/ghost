@@ -46,12 +46,12 @@ function Gate({ onIn }: { onIn: (name: string) => void }) {
         <h1 className="text-xl font-bold text-ink">دخول وخروج المنتجات</h1>
         <p className="text-sm text-muted">صفحة الموظفين — Malika&apos;s Universe</p>
       </div>
-      <label className="block text-sm font-medium text-ink">اسمك
-        <input className="input mt-1 w-full" value={nm} onChange={(e) => setNm(e.target.value)} placeholder="مثال: أحمد" />
-      </label>
-      <label className="block text-sm font-medium text-ink">رمز الموظفين
+      <label className="block text-sm font-medium text-ink">رمزك
         <input className="input mt-1 w-full tracking-[0.4em]" value={pin} onChange={(e) => setPin(e.target.value)}
-          type="password" inputMode="numeric" placeholder="••••" onKeyDown={(e) => e.key === "Enter" && submit()} />
+          type="password" inputMode="numeric" placeholder="••••" autoFocus onKeyDown={(e) => e.key === "Enter" && submit()} />
+      </label>
+      <label className="block text-sm font-medium text-ink">اسمك <span className="font-normal text-muted">(اختياري — يُملأ من رمزك)</span>
+        <input className="input mt-1 w-full" value={nm} onChange={(e) => setNm(e.target.value)} placeholder="مثال: أحمد" />
       </label>
       {err ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p> : null}
       <button className="btn-primary w-full py-3 text-base disabled:opacity-50" disabled={busy || !pin} onClick={submit}>
