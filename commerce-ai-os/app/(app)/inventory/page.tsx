@@ -1,7 +1,23 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import KpiCard from "@/components/KpiCard";
 import InventoryTable, { type InventoryRow } from "@/components/InventoryTable";
+
+// Count staff movements still awaiting the owner's review (details.review unset).
+async function pendingApprovalsCount(): Promise<number> {
+  try {
+    const { count } = await createAdminClient()
+      .from("malak_audit")
+      .select("id", { count: "exact", head: true })
+      .like("agent", "staff:%")
+      .in("action_type", ["stock_in", "stock_out"])
+      .filter("details->>review", "is", null);
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +25,7 @@ const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 export default async function InventoryPage() {
   const supabase = createClient();
+  const pendingApprovals = await pendingApprovalsCount();
 
   // Is the `location` column present yet? (degrade gracefully pre-migration.)
   const probe = await supabase.from("inventory").select("location").limit(1);
@@ -174,6 +191,14 @@ export default async function InventoryPage() {
           </Link>
           <Link href="/inventory/movements" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
             Stock IN / OUT →
+          </Link>
+          <Link href="/inventory/approvals" className="btn-ghost relative px-3 py-1 text-xs whitespace-nowrap">
+            ✅ اعتماد الحركات
+            {pendingApprovals > 0 ? (
+              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                {pendingApprovals}
+              </span>
+            ) : null}
           </Link>
           <Link href="/inventory/out-of-stock" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
             ⚠ النافدة · Out of stock
