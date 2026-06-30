@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { generateCaption, generateMedia, saveGeneratedContent, type CaptionResult } from "@/app/(app)/content/actions";
+import type { Locale } from "@/lib/i18n";
 
 export type PickProduct = {
   sku: string;
@@ -12,7 +13,9 @@ export type PickProduct = {
   image_url: string | null;
 };
 
-export default function ContentGenerator({ items }: { items: PickProduct[] }) {
+export default function ContentGenerator({ items, locale = "ar" }: { items: PickProduct[]; locale?: Locale }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<PickProduct | null>(null);
   const [caption, setCaption] = useState<CaptionResult | null>(null);
@@ -68,8 +71,8 @@ export default function ContentGenerator({ items }: { items: PickProduct[] }) {
 
   function copy(text: string) {
     navigator.clipboard?.writeText(text).then(
-      () => setMsg({ kind: "ok", text: "Copied ✓" }),
-      () => setMsg({ kind: "err", text: "Copy failed" })
+      () => setMsg({ kind: "ok", text: L("تم النسخ ✓", "Copied ✓") }),
+      () => setMsg({ kind: "err", text: L("فشل النسخ", "Copy failed") })
     );
   }
 
@@ -86,8 +89,8 @@ export default function ContentGenerator({ items }: { items: PickProduct[] }) {
       setBusy("");
       setMsg(
         res && "error" in res
-          ? { kind: "err", text: `Save failed: ${res.error}` }
-          : { kind: "ok", text: "Saved to generated_content ✓" }
+          ? { kind: "err", text: L(`فشل الحفظ: ${res.error}`, `Save failed: ${res.error}`) }
+          : { kind: "ok", text: L("تم الحفظ في generated_content ✓", "Saved to generated_content ✓") }
       );
     });
   }
@@ -104,7 +107,7 @@ export default function ContentGenerator({ items }: { items: PickProduct[] }) {
           <div className="relative">
             <input
               className="input"
-              placeholder="ابحث بالاسم أو SKU…"
+              placeholder={L("ابحث بالاسم أو SKU…", "Search by name or SKU…")}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
@@ -139,7 +142,7 @@ export default function ContentGenerator({ items }: { items: PickProduct[] }) {
               </div>
             </div>
             <button className="btn-ghost flex-none px-3 py-1 text-xs" onClick={() => { setSelected(null); setCaption(null); }}>
-              Change
+              {L("تغيير", "Change")}
             </button>
           </div>
         )}
@@ -147,17 +150,17 @@ export default function ContentGenerator({ items }: { items: PickProduct[] }) {
         {selected && (
           <div className="flex flex-wrap gap-2">
             <button className="btn-primary px-4 py-1.5 text-sm disabled:opacity-50" disabled={pending} onClick={doCaption}>
-              {busy === "caption" ? "جاري التوليد…" : caption ? "↻ إعادة توليد الكابشن" : "✨ توليد الكابشن"}
+              {busy === "caption" ? L("جاري التوليد…", "Generating…") : caption ? L("↻ إعادة توليد الكابشن", "↻ Regenerate caption") : L("✨ توليد الكابشن", "✨ Generate caption")}
             </button>
             <button className="btn-ghost px-4 py-1.5 text-sm disabled:opacity-50" disabled={pending} onClick={() => doMedia("image")}>
-              {busy === "image" ? "…" : "🖼️ صورة"}
+              {busy === "image" ? "…" : L("🖼️ صورة", "🖼️ Image")}
             </button>
             <button className="btn-ghost px-4 py-1.5 text-sm disabled:opacity-50" disabled={pending} onClick={() => doMedia("video")}>
-              {busy === "video" ? "…" : "🎬 فيديو"}
+              {busy === "video" ? "…" : L("🎬 فيديو", "🎬 Video")}
             </button>
             {caption && (
               <button className="btn-ghost px-4 py-1.5 text-sm disabled:opacity-50" disabled={pending} onClick={save}>
-                {busy === "save" ? "…" : "💾 حفظ"}
+                {busy === "save" ? "…" : L("💾 حفظ", "💾 Save")}
               </button>
             )}
           </div>
@@ -174,12 +177,12 @@ export default function ContentGenerator({ items }: { items: PickProduct[] }) {
       {/* Caption output */}
       {caption && (
         <div className="grid gap-4 lg:grid-cols-2">
-          <CaptionCard title="الكابشن العربي" dir="rtl" text={caption.caption_ar} onCopy={() => copy(fullAr)} />
-          <CaptionCard title="English caption" dir="ltr" text={caption.caption_en} onCopy={() => copy(fullEn)} />
+          <CaptionCard title={L("الكابشن العربي", "Arabic caption")} copyLabel={L("نسخ مع الهاشتاقات", "Copy with hashtags")} dir="rtl" text={caption.caption_ar} onCopy={() => copy(fullAr)} />
+          <CaptionCard title={L("الكابشن الإنجليزي", "English caption")} copyLabel={L("نسخ مع الهاشتاقات", "Copy with hashtags")} dir="ltr" text={caption.caption_en} onCopy={() => copy(fullEn)} />
           <div className="card lg:col-span-2">
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-ink">Hashtags ({caption.hashtags.length})</h3>
-              <button className="btn-ghost px-3 py-1 text-xs" onClick={() => copy(hashtagText)}>نسخ</button>
+              <h3 className="text-sm font-semibold text-ink">{L("الهاشتاقات", "Hashtags")} ({caption.hashtags.length})</h3>
+              <button className="btn-ghost px-3 py-1 text-xs" onClick={() => copy(hashtagText)}>{L("نسخ", "Copy")}</button>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {caption.hashtags.map((h) => (
@@ -193,12 +196,12 @@ export default function ContentGenerator({ items }: { items: PickProduct[] }) {
   );
 }
 
-function CaptionCard({ title, text, dir, onCopy }: { title: string; text: string; dir: "rtl" | "ltr"; onCopy: () => void }) {
+function CaptionCard({ title, text, dir, onCopy, copyLabel }: { title: string; text: string; dir: "rtl" | "ltr"; onCopy: () => void; copyLabel: string }) {
   return (
     <div className="card">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-ink">{title}</h3>
-        <button className="btn-ghost px-3 py-1 text-xs" onClick={onCopy}>نسخ مع الهاشتاقات</button>
+        <button className="btn-ghost px-3 py-1 text-xs" onClick={onCopy}>{copyLabel}</button>
       </div>
       <pre dir={dir} className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-slate-700">{text}</pre>
     </div>

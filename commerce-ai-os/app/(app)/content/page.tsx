@@ -1,10 +1,14 @@
 import { createClient } from "@/lib/supabase/server";
+import { getT } from "@/lib/i18n-server";
 import ContentGenerator, { type PickProduct } from "@/components/ContentGenerator";
 
 export const dynamic = "force-dynamic";
 
 export default async function ContentPage() {
   const supabase = createClient();
+  const { locale } = await getT();
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
 
   // Lightweight product list for the SKU search (read-only on products).
   const items: PickProduct[] = [];
@@ -37,18 +41,21 @@ export default async function ContentPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold text-ink">مولّد المحتوى · Content generator</h2>
+        <h2 className="text-lg font-semibold text-ink">{L("مولّد المحتوى", "Content generator")}</h2>
         <p className="text-sm text-muted">
-          اختر منتج → يولّد كابشن إنستجرام (عربي + إنجليزي + هاشتاقات)، ثم انسخه. الصورة والفيديو قريبًا عبر Higgsfield.
+          {L(
+            "اختر منتج → يولّد كابشن إنستجرام (عربي + إنجليزي + هاشتاقات)، ثم انسخه. الصورة والفيديو قريبًا عبر Higgsfield.",
+            "Pick a product → it generates an Instagram caption (Arabic + English + hashtags), then copy it. Image and video coming soon via Higgsfield."
+          )}
         </p>
       </div>
 
       {loadError ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
-          Couldn’t load products: {loadError}.
+          {L("تعذّر تحميل المنتجات:", "Couldn’t load products:")} {loadError}.
         </div>
       ) : (
-        <ContentGenerator items={items} />
+        <ContentGenerator items={items} locale={locale} />
       )}
     </div>
   );

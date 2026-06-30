@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import ProductTable, { type ProductRow } from "@/components/ProductTable";
 import Link from "next/link";
+import { getT } from "@/lib/i18n-server";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,9 @@ async function fetchAll(q: (from: number, to: number) => any): Promise<any[]> {
 
 export default async function ProductsPage() {
   const supabase = createClient();
+  const { locale } = await getT();
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
 
   let products: ProductRow[] = [];
   let errMsg: string | null = null;
@@ -85,22 +89,22 @@ export default async function ProductsPage() {
       channels: statusByProduct.get(p.id) ?? {},
     }));
   } catch (e) {
-    errMsg = e instanceof Error ? e.message : "Failed to load products.";
+    errMsg = e instanceof Error ? e.message : L("تعذّر تحميل المنتجات.", "Failed to load products.");
   }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted">Manage your product catalog (mirror of the 28-column master sheet).</p>
-        <Link href="/products/new" className="btn-primary w-full sm:w-auto">+ New product</Link>
+        <p className="text-sm text-muted">{L("أدِر كتالوج منتجاتك (نسخة من ملف الـ 28 عمود الرئيسي).", "Manage your product catalog (mirror of the 28-column master sheet).")}</p>
+        <Link href="/products/new" className="btn-primary w-full sm:w-auto">{L("+ منتج جديد", "+ New product")}</Link>
       </div>
 
       {errMsg ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
-          Couldn’t load products: {errMsg}. Make sure you’re signed in (RLS).
+          {L(`تعذّر تحميل المنتجات: ${errMsg}. تأكّد أنك مسجّل الدخول (RLS).`, `Couldn’t load products: ${errMsg}. Make sure you’re signed in (RLS).`)}
         </div>
       ) : (
-        <ProductTable products={products} />
+        <ProductTable products={products} locale={locale} />
       )}
     </div>
   );

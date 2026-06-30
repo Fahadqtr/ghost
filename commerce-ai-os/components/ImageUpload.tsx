@@ -2,14 +2,19 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import type { Locale } from "@/lib/i18n";
 
 const BUCKET = "product-images";
 
 export default function ImageUpload({
   products,
+  locale = "ar",
 }: {
   products: { id: string; name_en: string | null }[];
+  locale?: Locale;
 }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
   const [productId, setProductId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +35,10 @@ export default function ImageUpload({
 
       if (upErr) {
         setError(
-          `${upErr.message}. If the bucket is missing, create a public Storage bucket named "${BUCKET}" in Supabase.`
+          L(
+            `${upErr.message}. إذا كان المخزن غير موجود، أنشئ مخزن Storage عامًّا باسم "${BUCKET}" في Supabase.`,
+            `${upErr.message}. If the bucket is missing, create a public Storage bucket named "${BUCKET}" in Supabase.`
+          )
         );
         setBusy(false);
         return;
@@ -56,7 +64,7 @@ export default function ImageUpload({
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed.");
+      setError(err instanceof Error ? err.message : L("فشل الرفع.", "Upload failed."));
     } finally {
       setBusy(false);
       e.target.value = "";
@@ -66,34 +74,34 @@ export default function ImageUpload({
   return (
     <div className="card space-y-3">
       <div>
-        <h3 className="text-sm font-semibold text-ink">Upload Images</h3>
+        <h3 className="text-sm font-semibold text-ink">{L("رفع الصور", "Upload Images")}</h3>
         <p className="text-xs text-muted">
-          Stored in Supabase Storage (bucket <code>{BUCKET}</code>) and linked to <code>product_images</code> when a product is selected.
+          {L("تُخزَّن في Supabase Storage (مخزن", "Stored in Supabase Storage (bucket")} <code>{BUCKET}</code>{L(") وتُربَط بـ", ") and linked to")} <code>product_images</code> {L("عند اختيار منتج.", "when a product is selected.")}
         </p>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <label className="label">Attach to product (optional)</label>
+          <label className="label">{L("الربط بمنتج (اختياري)", "Attach to product (optional)")}</label>
           <select className="input" value={productId} onChange={(e) => setProductId(e.target.value)}>
-            <option value="">— Don’t link, just upload —</option>
+            <option value="">{L("— بدون ربط، رفع فقط —", "— Don’t link, just upload —")}</option>
             {products.map((p) => (
               <option key={p.id} value={p.id}>{p.name_en ?? p.id}</option>
             ))}
           </select>
         </div>
         <div>
-          <label className="label">Image file</label>
+          <label className="label">{L("ملف الصورة", "Image file")}</label>
           <input type="file" accept="image/*" onChange={onUpload} disabled={busy} className="block text-sm" />
         </div>
       </div>
 
-      {busy ? <p className="text-sm text-muted">Uploading…</p> : null}
+      {busy ? <p className="text-sm text-muted">{L("جارٍ الرفع…", "Uploading…")}</p> : null}
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p> : null}
       {uploadedUrl ? (
         <div className="flex items-center gap-3 rounded-lg bg-green-50 px-3 py-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={uploadedUrl} alt="uploaded" className="h-12 w-12 rounded object-cover" />
+          <img src={uploadedUrl} alt={L("الصورة المرفوعة", "uploaded")} className="h-12 w-12 rounded object-cover" />
           <a href={uploadedUrl} target="_blank" rel="noreferrer" className="break-all text-xs text-green-700 underline">
             {uploadedUrl}
           </a>

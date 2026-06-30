@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { getT } from "@/lib/i18n-server";
 import ExcelImport from "@/components/ExcelImport";
 import ImageUpload from "@/components/ImageUpload";
 import ExportButtons from "@/components/ExportButtons";
@@ -9,6 +10,9 @@ export const dynamic = "force-dynamic";
 
 export default async function ImportExportPage() {
   const supabase = createClient();
+  const { locale } = await getT();
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
 
   // Product list for the image-attach dropdown only; exports pull live data
   // server-side via /api/export/[channel].
@@ -51,33 +55,36 @@ export default async function ImportExportPage() {
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted">
-        Import and per-channel export. Exports pull the live database; no real marketplace API is called.
+        {L(
+          "استيراد وتصدير لكل منصة. التصدير يسحب قاعدة البيانات الحية؛ لا يتم استدعاء أي واجهة برمجة حقيقية لأي سوق.",
+          "Import and per-channel export. Exports pull the live database; no real marketplace API is called."
+        )}
       </p>
       <Link href="/import-export/availability" className="card flex items-center justify-between border-brand/30 bg-brand/5 hover:bg-brand/10">
         <div>
-          <h3 className="text-sm font-semibold text-ink">🔁 مطابقة التوفّر بين المنصّات</h3>
-          <p className="text-xs text-muted">ارفع قوائم مليكاس · Pure Seoul · Talabat · Rafeeq → وحّد النافد على الكل وادفعه لـ Shopify.</p>
+          <h3 className="text-sm font-semibold text-ink">🔁 {L("مطابقة التوفّر بين المنصّات", "Match availability across platforms")}</h3>
+          <p className="text-xs text-muted">{L("ارفع قوائم مليكاس · Pure Seoul · Talabat · Rafeeq → وحّد النافد على الكل وادفعه لـ Shopify.", "Upload Malika · Pure Seoul · Talabat · Rafeeq lists → unify out-of-stock across all and push to Shopify.")}</p>
         </div>
         <span className="text-brand">→</span>
       </Link>
       <Link href="/import-export/snoonu-sync" className="card flex items-center justify-between hover:bg-slate-50">
         <div>
           <h3 className="text-sm font-semibold text-ink">🔄 Snoonu Sync</h3>
-          <p className="text-xs text-muted">Upload a Snoonu export and reconcile by snoonu_id (diff before apply).</p>
+          <p className="text-xs text-muted">{L("ارفع تصدير سنونو وطابقه عبر snoonu_id (راجع الفروق قبل التطبيق).", "Upload a Snoonu export and reconcile by snoonu_id (diff before apply).")}</p>
         </div>
         <span className="text-brand">→</span>
       </Link>
       <Link href="/import-export/pure-seoul" className="card flex items-center justify-between hover:bg-slate-50">
         <div>
-          <h3 className="text-sm font-semibold text-ink">🏬 Pure Seoul — مطابقة مليكاس</h3>
-          <p className="text-xs text-muted">ارفع تصدير Pure Seoul → شوف الناقص/الزائد/فروق الأسعار مقابل مليكاس.</p>
+          <h3 className="text-sm font-semibold text-ink">🏬 {L("Pure Seoul — مطابقة مليكاس", "Pure Seoul — match Malika")}</h3>
+          <p className="text-xs text-muted">{L("ارفع تصدير Pure Seoul → شوف الناقص/الزائد/فروق الأسعار مقابل مليكاس.", "Upload the Pure Seoul export → see what's missing/extra and price differences vs Malika.")}</p>
         </div>
         <span className="text-brand">→</span>
       </Link>
-      <ExcelImport />
-      <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} />
-      <TalabatExport categories={categories} newCount={newCount ?? 0} />
-      <ExportButtons imageCount={imageCount ?? 0} />
+      <ExcelImport locale={locale} />
+      <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} locale={locale} />
+      <TalabatExport categories={categories} newCount={newCount ?? 0} locale={locale} />
+      <ExportButtons imageCount={imageCount ?? 0} locale={locale} />
     </div>
   );
 }

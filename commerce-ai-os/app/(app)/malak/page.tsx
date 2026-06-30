@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Tajawal } from "next/font/google";
 import MalakClient from "./MalakClient";
 import { getMalakKpis } from "@/lib/dashboard";
+import { getLocale } from "@/lib/i18n-server";
 
 const tajawal = Tajawal({ subsets: ["arabic", "latin"], weight: ["400", "500", "700", "800"], display: "swap" });
 
@@ -10,9 +11,9 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "ملاك — Mission Control" };
 
 export default async function Page() {
-  const kpis = await getMalakKpis();
+  const [kpis, locale] = await Promise.all([getMalakKpis(), getLocale()]);
   return (
-    <div dir="rtl" className={`${tajawal.className} relative min-h-full w-full overflow-x-hidden p-3 text-slate-100 sm:p-5`} style={{ background: "radial-gradient(120% 120% at 50% 0%, #04111f 0%, #020711 70%)" }}>
+    <div dir={locale === "en" ? "ltr" : "rtl"} className={`${tajawal.className} relative min-h-full w-full overflow-x-hidden p-3 text-slate-100 sm:p-5`} style={{ background: "radial-gradient(120% 120% at 50% 0%, #04111f 0%, #020711 70%)" }}>
       {/* faint grid */}
       <div className="pointer-events-none absolute inset-0 opacity-[0.05]" style={{
         backgroundImage: "linear-gradient(rgba(0,217,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(0,217,255,0.5) 1px, transparent 1px)",
@@ -23,7 +24,7 @@ export default async function Page() {
         <span key={c} aria-hidden className={`pointer-events-none absolute z-10 h-6 w-6 ${c}`} style={{ borderColor: "rgba(0,217,255,0.4)" }} />
       ))}
       <div className="relative z-10">
-        <MalakClient kpis={kpis} />
+        <MalakClient kpis={kpis} locale={locale} />
       </div>
     </div>
   );

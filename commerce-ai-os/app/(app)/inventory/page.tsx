@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import KpiCard from "@/components/KpiCard";
 import InventoryTable, { type InventoryRow } from "@/components/InventoryTable";
+import { getT } from "@/lib/i18n-server";
 
 // Count staff movements still awaiting the owner's review (details.review unset).
 async function pendingApprovalsCount(): Promise<number> {
@@ -25,6 +26,9 @@ const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 
 export default async function InventoryPage() {
   const supabase = createClient();
+  const { locale } = await getT();
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
   const pendingApprovals = await pendingApprovalsCount();
 
   // Is the `location` column present yet? (degrade gracefully pre-migration.)
@@ -177,7 +181,7 @@ export default async function InventoryPage() {
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">
-          Single source of stock truth. Edit inline, bulk-update, import/export CSV, and push to Shopify.
+          {L("مصدر الحقيقة الوحيد للمخزون. عدّل مباشرةً، حدّث دفعة واحدة، استورد/صدّر CSV، وادفع إلى Shopify.", "Single source of stock truth. Edit inline, bulk-update, import/export CSV, and push to Shopify.")}
         </p>
         {/* Sub-pages now live in the sidebar (المخزون / الموظفون groups). Keep
             only a one-tap alert when staff movements are awaiting approval. */}
@@ -186,23 +190,23 @@ export default async function InventoryPage() {
             href="/inventory/approvals"
             className="inline-flex items-center gap-1.5 self-start rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 whitespace-nowrap hover:bg-amber-100"
           >
-            ✅ {pendingApprovals} بانتظار الاعتماد
+            ✅ {pendingApprovals} {L("بانتظار الاعتماد", "pending approval")}
           </Link>
         ) : null}
       </div>
 
       {loadError ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
-          Couldn’t load inventory: {loadError}. Make sure you’re signed in (RLS).
+          {L(`تعذّر تحميل المخزون: ${loadError}. تأكّد أنك مسجّل الدخول (RLS).`, `Couldn’t load inventory: ${loadError}. Make sure you’re signed in (RLS).`)}
         </div>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            <KpiCard title="Tracked SKUs" value={nf(total)} icon="🏷️" />
-            <KpiCard title="Out of stock" value={nf(out)} icon="⛔" hint="Quantity 0 or empty" />
-            <KpiCard title="Low stock" value={nf(low)} icon="⚠️" hint="At or below threshold" />
-            <KpiCard title="Total units" value={nf(units)} icon="📦" />
-            <KpiCard title="Units sold" value={nf(sold)} icon="🧾" />
+            <KpiCard title={L("أصناف متتبَّعة", "Tracked SKUs")} value={nf(total)} icon="🏷️" />
+            <KpiCard title={L("نافد", "Out of stock")} value={nf(out)} icon="⛔" hint={L("الكمية 0 أو فارغة", "Quantity 0 or empty")} />
+            <KpiCard title={L("مخزون منخفض", "Low stock")} value={nf(low)} icon="⚠️" hint={L("عند الحد أو أقل", "At or below threshold")} />
+            <KpiCard title={L("إجمالي القطع", "Total units")} value={nf(units)} icon="📦" />
+            <KpiCard title={L("القطع المباعة", "Units sold")} value={nf(sold)} icon="🧾" />
           </div>
 
           <InventoryTable
@@ -215,6 +219,7 @@ export default async function InventoryPage() {
             variantsByProduct={variantsByProduct}
             variantPlacements={variantPlacements}
             hasVariantShelf={hasVariantShelf}
+            locale={locale}
           />
         </>
       )}
