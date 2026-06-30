@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAll } from "@/lib/supabase/paginate";
+import { applyMovement } from "@/lib/inventory/movements";
 import { requireUser } from "@/lib/auth/requireUser";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -974,62 +975,9 @@ export type MovementInput = {
 export async function recordMovement(input: MovementInput) {
   const unauth = await requireUser();
   if (unauth) return unauth;
-  const admin = writableClient();
-  const qty = Math.floor(Math.abs(Number(input.quantity)));
-  if (!input.inventoryId || !qty || Number.isNaN(qty)) {
-    return { error: "Pick a product and a quantity greater than 0." };
-  }
-  if (input.type !== "in" && input.type !== "out") return { error: "Invalid movement type." };
-
-  const { data: inv, error: readErr } = await admin
-    .from("inventory")
-    .select("id, stock_quantity, sold_quantity, product_id")
-    .eq("id", input.inventoryId)
-    .single();
-  if (readErr || !inv) return { error: "Inventory row not found." };
-
-  const before = inv.stock_quantity ?? 0;
-  const delta = input.type === "in" ? qty : -qty;
-  const after = before + delta;
-  if (after < 0) {
-    return { error: `Not enough stock: have ${before}, tried to remove ${qty}.` };
-  }
-
-  const patch: Record<string, unknown> = { stock_quantity: after, updated_at: new Date().toISOString() };
-  if (input.type === "out" && (input.reason ?? "").toLowerCase() === "sale") {
-    patch.sold_quantity = (inv.sold_quantity ?? 0) + qty;
-  }
-
-  const { error: upErr } = await admin.from("inventory").update(patch).eq("id", inv.id);
-  if (upErr) return { error: upErr.message };
-
-  // Ledger insert is best-effort: the stock change above already succeeded.
-  // NOTE: malak_audit.product_id is legacy bigint while products.id is uuid, so
-  // we keep the uuid inside `details` rather than the product_id column (writing
-  // it there errors and silently drops the whole ledger row).
-  const { error: logErr } = await admin.from("malak_audit").insert({
-    agent: input.by || "inventory",
-    action: input.type === "in" ? "stock_in" : "stock_out",
-    action_type: input.type === "in" ? "stock_in" : "stock_out",
-    sku: input.sku ?? null,
-    field: "stock_quantity",
-    old_value: String(before),
-    new_value: String(after),
-    status: "done",
-    details: {
-      productId: inv.product_id ?? null,
-      quantity: qty,
-      direction: input.type,
-      reason: input.reason ?? null,
-      note: input.note ?? null,
-    },
-  });
-  if (logErr) console.error("[recordMovement] audit insert failed:", logErr.message);
-
-  revalidatePath("/inventory");
-  revalidatePath("/inventory/movements");
-  revalidatePath("/dashboard");
-  return { ok: true, before, after, logged: !logErr };
+  // Stock mutation + audit ledger live in the shared engine so the admin and
+  // staff (/staff) entry points can never diverge.
+  return applyMovement(writableClient(), input);
 }
 
 export type VariantMovementInput = {

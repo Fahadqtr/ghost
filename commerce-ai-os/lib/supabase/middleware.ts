@@ -6,8 +6,9 @@ import {
 } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// Paths that are reachable WITHOUT being logged in.
-const PUBLIC_PATHS = ["/login", "/auth"];
+// Paths that are reachable WITHOUT being logged in. `/staff` is the employees'
+// stock IN/OUT page — it has its own shared-PIN gate (no Supabase account).
+const PUBLIC_PATHS = ["/login", "/auth", "/staff"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
