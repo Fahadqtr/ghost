@@ -3,6 +3,11 @@
 import { Component, useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { MalakKpis } from "@/lib/dashboard";
+import type { Locale } from "@/lib/i18n";
+
+// Tiny bilingual helper used across this file's sub-components (threaded via an
+// `en: boolean` prop since they're defined outside the main component).
+const tr = (en: boolean, ar: string, e: string) => (en ? e : ar);
 
 // Real 3D AI core (R3F) — browser-only, so load it without SSR.
 const AiCoreOrb = dynamic(() => import("./AiCoreOrb"), {
@@ -13,7 +18,7 @@ import { HudLeft, HudRight, HudObjective, FooterStatusBar, type ScanData } from 
 
 // In-app error boundary: instead of the white "Application error" screen, show
 // the actual error text (visible on mobile, no console needed) + a reload.
-class UIErrorBoundary extends Component<{ children: React.ReactNode }, { err: Error | null }> {
+class UIErrorBoundary extends Component<{ children: React.ReactNode; en?: boolean }, { err: Error | null }> {
   state: { err: Error | null } = { err: null };
   static getDerivedStateFromError(err: Error) {
     return { err };
@@ -22,10 +27,11 @@ class UIErrorBoundary extends Component<{ children: React.ReactNode }, { err: Er
     console.error("[malak-ui] crash:", err, info);
   }
   render() {
+    const en = !!this.props.en;
     if (this.state.err) {
       return (
-        <div dir="rtl" className="min-h-screen overflow-auto bg-[#060814] p-5 text-right text-white">
-          <p className="mb-2 text-sm font-bold text-rose-300">خطأ في الواجهة (تشخيص):</p>
+        <div dir={en ? "ltr" : "rtl"} className={`min-h-screen overflow-auto bg-[#060814] p-5 text-white ${en ? "text-left" : "text-right"}`}>
+          <p className="mb-2 text-sm font-bold text-rose-300">{tr(en, "خطأ في الواجهة (تشخيص):", "UI error (diagnostics):")}</p>
           <pre className="mb-3 whitespace-pre-wrap break-words rounded-lg bg-black/40 p-3 text-[12px] text-amber-200">
             {String(this.state.err?.message || this.state.err)}
           </pre>
@@ -36,7 +42,7 @@ class UIErrorBoundary extends Component<{ children: React.ReactNode }, { err: Er
             onClick={() => location.reload()}
             className="rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 px-5 py-2.5 text-sm font-bold"
           >
-            إعادة التحميل
+            {tr(en, "إعادة التحميل", "Reload")}
           </button>
         </div>
       );
@@ -58,6 +64,9 @@ interface AgentDef {
 const AGENTS: AgentDef[] = [
   { id: "malak", name: "ملاك", role: "المديرة العامة — تسوّي كل شي", color: "#4f8bff" },
 ];
+// Localized display name/role for the assistant (the data above stays Arabic so
+// existing logic that matches on id/name is untouched).
+const agentName = (en: boolean) => (en ? "Malak" : "ملاك");
 
 const RAIL: AgentDef[] = []; // no team rail anymore
 const agentById = (_id: string): AgentDef => AGENTS[0];
@@ -112,12 +121,19 @@ interface Turn {
   text: string;
 }
 
-const QUICK_PROMPTS = [
+const QUICK_PROMPTS_AR = [
   "تقرير حالة الكتالوج",
   "اعرض منتجات Medicube",
   "كم منتج مرفوض؟",
   "اكتب وصف عربي وإنجليزي لـ Anua Toner",
   "اعمل محتوى تيك توك لمنتج كوري",
+];
+const QUICK_PROMPTS_EN = [
+  "Catalog status report",
+  "Show Medicube products",
+  "How many products are rejected?",
+  "Write an Arabic and English description for Anua Toner",
+  "Make TikTok content for a Korean product",
 ];
 
 // ---- Energy orb (canvas) ---------------------------------------------------
@@ -226,7 +242,7 @@ function Orb({ state, color, size = 200 }: { state: OrbState; color: string; siz
 }
 
 // ---- Panels ----------------------------------------------------------------
-function ProductsPanel({ items }: { items: any[] }) {
+function ProductsPanel({ items, en = false }: { items: any[]; en?: boolean }) {
   return (
     <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
       {items.map((p, i) => (
@@ -247,11 +263,11 @@ function ProductsPanel({ items }: { items: any[] }) {
               <div className="flex h-full w-full items-center justify-center text-3xl opacity-40">🧴</div>
             )}
           </div>
-          <div className="space-y-1 p-2.5 text-right">
+          <div className={`space-y-1 p-2.5 ${en ? "text-left" : "text-right"}`}>
             <p className="line-clamp-2 text-[13px] font-medium leading-snug text-white/90">{txt(p.name)}</p>
             {p.brand ? <p className="text-[11px] text-white/50">{txt(p.brand)}</p> : null}
             <div className="flex items-center justify-between pt-1">
-              <span className="text-sm font-bold text-cyan-300">{p.price != null ? `${p.price} ر.ق` : "—"}</span>
+              <span className="text-sm font-bold text-cyan-300">{p.price != null ? `${p.price} ${tr(en, "ر.ق", "QAR")}` : "—"}</span>
               {p.status ? (
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] ${
@@ -274,11 +290,11 @@ function ProductsPanel({ items }: { items: any[] }) {
   );
 }
 
-function StatsPanel({ items }: { items: any[] }) {
+function StatsPanel({ items, en = false }: { items: any[]; en?: boolean }) {
   return (
     <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
       {items.map((s, i) => (
-        <div key={i} className="rounded-2xl border border-white/10 bg-white/5 p-4 text-right backdrop-blur">
+        <div key={i} className={`rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur ${en ? "text-left" : "text-right"}`}>
           <p className="text-2xl font-extrabold text-white">{txt(s.value)}</p>
           <p className="mt-1 text-sm text-white/70">{txt(s.label)}</p>
           {s.sub ? <p className="mt-0.5 text-[11px] text-white/40">{txt(s.sub)}</p> : null}
@@ -288,13 +304,13 @@ function StatsPanel({ items }: { items: any[] }) {
   );
 }
 
-function PostPanel({ item }: { item: any }) {
+function PostPanel({ item, en = false }: { item: any; en?: boolean }) {
   return (
-    <div className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-right backdrop-blur sm:p-4">
+    <div className={`space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
       {item.product ? <p className="text-sm font-semibold text-cyan-300">{item.product}</p> : null}
       {item.caption_ar ? (
         <div>
-          <p className="mb-1 text-[11px] text-white/40">عربي</p>
+          <p className="mb-1 text-[11px] text-white/40">{tr(en, "عربي", "Arabic")}</p>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-white/90">{item.caption_ar}</p>
         </div>
       ) : null}
@@ -314,19 +330,19 @@ function PostPanel({ item }: { item: any }) {
         </div>
       ) : null}
       <div className="flex flex-wrap gap-3 text-[11px] text-white/50">
-        {Array.isArray(item.platforms) && item.platforms.length ? <span>📱 {item.platforms.join("، ")}</span> : null}
+        {Array.isArray(item.platforms) && item.platforms.length ? <span>📱 {item.platforms.join(tr(en, "، ", ", "))}</span> : null}
         {item.schedule ? <span>🗓️ {item.schedule}</span> : null}
       </div>
     </div>
   );
 }
 
-function TiktokPanel({ item }: { item: any }) {
+function TiktokPanel({ item, en = false }: { item: any; en?: boolean }) {
   return (
-    <div className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-right backdrop-blur sm:p-4">
+    <div className={`space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
       {item.hook ? (
         <div className="rounded-xl bg-pink-500/15 p-3">
-          <p className="text-[11px] text-pink-300">الخطّاف (Hook)</p>
+          <p className="text-[11px] text-pink-300">{tr(en, "الخطّاف (Hook)", "Hook")}</p>
           <p className="text-sm font-semibold text-white/90">{item.hook}</p>
         </div>
       ) : null}
@@ -369,10 +385,12 @@ function ConfirmPanel({
   item,
   onDone,
   onCancel,
+  en = false,
 }: {
   item: any;
   onDone: (message: string) => void;
   onCancel: () => void;
+  en?: boolean;
 }) {
   const [status, setStatus] = useState<"idle" | "working" | "done" | "error">("idle");
   const [msg, setMsg] = useState("");
@@ -396,17 +414,17 @@ function ConfirmPanel({
         // audit is best-effort on the server; surface the literal failure text.
         setAuditWarn(typeof data.audit === "string" && data.audit.startsWith("failed") ? data.audit : "");
         setStatus("done");
-        setMsg(txt(data.message) || "تم التنفيذ.");
-        onDone(txt(data.message) || "تم التنفيذ.");
+        setMsg(txt(data.message) || tr(en, "تم التنفيذ.", "Done."));
+        onDone(txt(data.message) || tr(en, "تم التنفيذ.", "Done."));
         // leave busyRef true on success → no further submits for this card.
       } else {
         setStatus("error");
-        setMsg(txt(data?.error) || "تعذّر التنفيذ.");
+        setMsg(txt(data?.error) || tr(en, "تعذّر التنفيذ.", "Couldn't complete the action."));
         busyRef.current = false; // allow retry
       }
     } catch {
       setStatus("error");
-      setMsg("تعذّر الاتصال بالخادم.");
+      setMsg(tr(en, "تعذّر الاتصال بالخادم.", "Couldn't reach the server."));
       busyRef.current = false; // allow retry
     }
   };
@@ -414,10 +432,10 @@ function ConfirmPanel({
   const changes: { label: string; old?: any; new: any }[] = Array.isArray(item.changes) ? item.changes : [];
 
   return (
-    <div className="space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 text-right backdrop-blur sm:p-4">
+    <div className={`space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
       <div className="flex items-center justify-between">
         <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
-          ⚠️ تأكيد مطلوب
+          {tr(en, "⚠️ تأكيد مطلوب", "⚠️ Confirmation required")}
         </span>
         <p className="text-sm font-bold text-white">{txt(item.title)}</p>
       </div>
@@ -443,7 +461,7 @@ function ConfirmPanel({
       {item.imageUrl ? (
         <div className="overflow-hidden rounded-xl border border-white/10 bg-black/30">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={item.imageUrl} alt="معاينة" className="mx-auto max-h-48 w-auto object-contain" />
+          <img src={item.imageUrl} alt={tr(en, "معاينة", "Preview")} className="mx-auto max-h-48 w-auto object-contain" />
         </div>
       ) : null}
 
@@ -469,7 +487,7 @@ function ConfirmPanel({
           <p className="rounded-xl bg-emerald-500/15 px-3 py-2 text-sm text-emerald-200">✅ {msg}</p>
           {auditWarn ? (
             <p className="rounded-xl bg-amber-500/15 px-3 py-2 text-[12px] text-amber-200">
-              ⚠️ تم التنفيذ لكن لم يُسجَّل في malak_audit.
+              {tr(en, "⚠️ تم التنفيذ لكن لم يُسجَّل في malak_audit.", "⚠️ Done, but it wasn't logged in malak_audit.")}
               <br />
               <span className="break-words font-mono text-[11px] text-amber-300/80">{auditWarn}</span>
             </p>
@@ -482,7 +500,7 @@ function ConfirmPanel({
             onClick={confirm}
             className="w-full rounded-xl bg-white/10 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/20"
           >
-            إعادة المحاولة
+            {tr(en, "إعادة المحاولة", "Retry")}
           </button>
         </div>
       ) : (
@@ -492,14 +510,14 @@ function ConfirmPanel({
             disabled={status === "working"}
             className="flex-1 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
           >
-            {status === "working" ? "جارٍ التنفيذ…" : item.confirmLabel || "أكّد"}
+            {status === "working" ? tr(en, "جارٍ التنفيذ…", "Working…") : item.confirmLabel || tr(en, "أكّد", "Confirm")}
           </button>
           <button
             onClick={onCancel}
             disabled={status === "working"}
             className="flex-1 rounded-xl border border-white/15 bg-white/5 py-2.5 text-sm font-semibold text-white/70 transition hover:bg-white/10 disabled:opacity-50"
           >
-            {item.cancelLabel || "إلغاء"}
+            {item.cancelLabel || tr(en, "إلغاء", "Cancel")}
           </button>
         </div>
       )}
@@ -514,10 +532,12 @@ function ImageRequestPanel({
   item,
   onGenerated,
   onCancel,
+  en = false,
 }: {
   item: any;
   onGenerated: (panel: PanelData) => void;
   onCancel: () => void;
+  en?: boolean;
 }) {
   const [status, setStatus] = useState<"idle" | "working" | "error">("idle");
   const [msg, setMsg] = useState("");
@@ -538,21 +558,21 @@ function ImageRequestPanel({
         onGenerated(data.panel as PanelData);
       } else {
         setStatus("error");
-        setMsg(txt(data?.error) || "تعذّر توليد الصورة.");
+        setMsg(txt(data?.error) || tr(en, "تعذّر توليد الصورة.", "Couldn't generate the image."));
         busyRef.current = false;
       }
     } catch {
       setStatus("error");
-      setMsg("تعذّر الاتصال بالخادم.");
+      setMsg(tr(en, "تعذّر الاتصال بالخادم.", "Couldn't reach the server."));
       busyRef.current = false;
     }
   };
 
   return (
-    <div className="space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 text-right backdrop-blur sm:p-4">
+    <div className={`space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
       <div className="flex items-center justify-between">
         <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
-          ✨ توليد صورة
+          {tr(en, "✨ توليد صورة", "✨ Generate image")}
         </span>
         <p className="text-sm font-bold text-white">{txt(item.title)}</p>
       </div>
@@ -561,15 +581,15 @@ function ImageRequestPanel({
         {item.name ? <p className="text-sm font-semibold text-cyan-300">{txt(item.name)}</p> : null}
         {item.sku ? <p className="font-mono text-[11px] text-white/40">{txt(item.sku)}</p> : null}
         <p className="mt-1 text-[13px] text-white/70">
-          النمط: {item.style === "lifestyle" ? "لايف ستايل" : "هيرو (خلفية نظيفة)"}
-          {item.currentImage ? " · تحسين الصورة الحالية مع الحفاظ على العلبة" : " · توليد من اسم المنتج"}
+          {tr(en, "النمط: ", "Style: ")}{item.style === "lifestyle" ? tr(en, "لايف ستايل", "Lifestyle") : tr(en, "هيرو (خلفية نظيفة)", "Hero (clean background)")}
+          {item.currentImage ? tr(en, " · تحسين الصورة الحالية مع الحفاظ على العلبة", " · Enhance the current image while keeping the packaging") : tr(en, " · توليد من اسم المنتج", " · Generate from the product name")}
         </p>
       </div>
 
       {item.currentImage ? (
         <div className="overflow-hidden rounded-xl border border-white/10 bg-black/30">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={item.currentImage} alt="الحالية" className="mx-auto max-h-40 w-auto object-contain opacity-80" />
+          <img src={item.currentImage} alt={tr(en, "الحالية", "Current")} className="mx-auto max-h-40 w-auto object-contain opacity-80" />
         </div>
       ) : null}
 
@@ -583,14 +603,14 @@ function ImageRequestPanel({
           disabled={status === "working"}
           className="flex-1 rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
         >
-          {status === "working" ? "جارٍ التوليد… (قد يأخذ نصف دقيقة)" : "✨ ولّد الصورة"}
+          {status === "working" ? tr(en, "جارٍ التوليد… (قد يأخذ نصف دقيقة)", "Generating… (may take half a minute)") : tr(en, "✨ ولّد الصورة", "✨ Generate image")}
         </button>
         <button
           onClick={onCancel}
           disabled={status === "working"}
           className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white/70 transition hover:bg-white/10 disabled:opacity-50"
         >
-          إلغاء
+          {tr(en, "إلغاء", "Cancel")}
         </button>
       </div>
     </div>
@@ -598,8 +618,16 @@ function ImageRequestPanel({
 }
 
 // Spoken summary text for the briefing (shared by auto-speak + the listen button).
-function briefSummary(d: any): string {
-  const greet = new Date().getHours() < 12 ? "صباح الخير" : "مساء الخير";
+function briefSummary(d: any, en = false): string {
+  const morning = new Date().getHours() < 12;
+  if (en) {
+    const greet = morning ? "Good morning" : "Good evening";
+    return (
+      `${greet} Fahad. You have ${d.total} products, ${d.rejected} rejected, ${d.lowStock} low stock, and ${d.missingImages} without an image. ` +
+      `Today's priority is ${d.priority}.`
+    );
+  }
+  const greet = morning ? "صباح الخير" : "مساء الخير";
   return (
     `${greet} فهد. عندك ${d.total} منتج، ${d.rejected} مرفوض و ${d.lowStock} ستوك منخفض و ${d.missingImages} بدون صورة. ` +
     `الأولوية اليوم ${d.priority}.`
@@ -611,32 +639,34 @@ function BriefingPanel({
   item,
   onQuick,
   onListen,
+  en = false,
 }: {
   item: any;
   onQuick: (q: string) => void;
   onListen: (text: string) => void;
+  en?: boolean;
 }) {
   const hr = new Date().getHours();
-  const greet = hr < 12 ? "صباح الخير" : "مساء الخير";
+  const greet = hr < 12 ? tr(en, "صباح الخير", "Good morning") : tr(en, "مساء الخير", "Good evening");
   const rows: { icon: string; label: string; value: number; tone?: string }[] = [
-    { icon: "📦", label: "منتج إجمالي", value: item.total ?? 0 },
-    { icon: "🖼️", label: "بدون صور", value: item.missingImages ?? 0, tone: "text-sky-300" },
-    { icon: "📉", label: "ستوك منخفض", value: item.lowStock ?? 0, tone: "text-amber-300" },
-    { icon: "⛔", label: "مرفوض", value: item.rejected ?? 0, tone: "text-rose-300" },
+    { icon: "📦", label: tr(en, "منتج إجمالي", "Total products"), value: item.total ?? 0 },
+    { icon: "🖼️", label: tr(en, "بدون صور", "No image"), value: item.missingImages ?? 0, tone: "text-sky-300" },
+    { icon: "📉", label: tr(en, "ستوك منخفض", "Low stock"), value: item.lowStock ?? 0, tone: "text-amber-300" },
+    { icon: "⛔", label: tr(en, "مرفوض", "Rejected"), value: item.rejected ?? 0, tone: "text-rose-300" },
   ];
   if ((item.suspiciousPrice ?? 0) > 0)
-    rows.push({ icon: "💸", label: "سعر ناقص/صفر", value: item.suspiciousPrice, tone: "text-orange-300" });
+    rows.push({ icon: "💸", label: tr(en, "سعر ناقص/صفر", "Missing/zero price"), value: item.suspiciousPrice, tone: "text-orange-300" });
 
   return (
-    <div className="space-y-3 rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/10 to-purple-500/10 p-3 text-right backdrop-blur sm:p-4">
+    <div className={`space-y-3 rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/10 to-purple-500/10 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
       <div className="flex items-center justify-between gap-2">
         <button
-          onClick={() => onListen(briefSummary(item))}
+          onClick={() => onListen(briefSummary(item, en))}
           className="shrink-0 rounded-full border border-amber-400/40 bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200 transition hover:bg-amber-500/25"
         >
-          ▶ استمع
+          {tr(en, "▶ استمع", "▶ Listen")}
         </button>
-        <p className="text-base font-extrabold text-white">{greet} فهد</p>
+        <p className="text-base font-extrabold text-white">{greet} {tr(en, "فهد", "Fahad")}</p>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -652,34 +682,34 @@ function BriefingPanel({
 
       {item.priority ? (
         <p className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[13px] font-medium text-amber-100">
-          ← الأولوية اليوم: {item.priority}
+          {tr(en, "← الأولوية اليوم: ", "← Today's priority: ")}{item.priority}
         </p>
       ) : null}
 
       <div className="flex flex-wrap gap-2">
         <button
-          onClick={() => onQuick("اعرض المنتجات المرفوضة")}
+          onClick={() => onQuick(tr(en, "اعرض المنتجات المرفوضة", "Show rejected products"))}
           className="rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-1.5 text-[12px] text-rose-200 transition hover:bg-rose-500/20"
         >
-          اعرض المرفوضين
+          {tr(en, "اعرض المرفوضين", "Show rejected")}
         </button>
         <button
-          onClick={() => onQuick("اعرض المنتجات بدون صورة")}
+          onClick={() => onQuick(tr(en, "اعرض المنتجات بدون صورة", "Show products without an image"))}
           className="rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1.5 text-[12px] text-sky-200 transition hover:bg-sky-500/20"
         >
-          اعرض بدون صور
+          {tr(en, "اعرض بدون صور", "Show no-image")}
         </button>
         <button
-          onClick={() => onQuick("اعرض المنتجات منخفضة المخزون")}
+          onClick={() => onQuick(tr(en, "اعرض المنتجات منخفضة المخزون", "Show low-stock products"))}
           className="rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-200 transition hover:bg-amber-500/20"
         >
-          اعرض ستوك منخفض
+          {tr(en, "اعرض ستوك منخفض", "Show low stock")}
         </button>
         <a
           href="/malak/audit"
           className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-[12px] text-white/80 transition hover:bg-white/10"
         >
-          📋 سجل ملاك
+          {tr(en, "📋 سجل ملاك", "📋 Malak log")}
         </a>
       </div>
     </div>
@@ -692,13 +722,15 @@ function ScanPanel({
   item,
   onQuick,
   onListen,
+  en = false,
 }: {
   item: any;
   onQuick: (q: string) => void;
   onListen: (text: string) => void;
+  en?: boolean;
 }) {
   const hr = new Date().getHours();
-  const greet = hr < 12 ? "صباح الخير" : "مساء الخير";
+  const greet = hr < 12 ? tr(en, "صباح الخير", "Good morning") : tr(en, "مساء الخير", "Good evening");
   const issues: { key: string; icon: string; title: string; count: number; prompt: string; severity: string }[] = item.issues ?? [];
   const sevTone: Record<string, string> = {
     high: "border-rose-400/30 bg-rose-500/10",
@@ -707,24 +739,24 @@ function ScanPanel({
   };
 
   return (
-    <div className="space-y-3 rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/10 to-purple-500/10 p-3 text-right backdrop-blur sm:p-4">
+    <div className={`space-y-3 rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/10 to-purple-500/10 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
       <div className="flex items-center justify-between gap-2">
         <button
-          onClick={() => onListen(briefSummary(item))}
+          onClick={() => onListen(briefSummary(item, en))}
           className="shrink-0 rounded-full border border-amber-400/40 bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200 transition hover:bg-amber-500/25"
         >
-          ▶ استمع
+          {tr(en, "▶ استمع", "▶ Listen")}
         </button>
-        <p className="text-base font-extrabold text-white">{greet} فهد</p>
+        <p className="text-base font-extrabold text-white">{greet} {tr(en, "فهد", "Fahad")}</p>
       </div>
 
       {item.allClear ? (
         <p className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-3 text-center text-[13px] font-medium text-emerald-100">
-          ✅ كل شي تمام — ما في بند عاجل اليوم. عندك {item.total ?? 0} منتج، الوضع نظيف.
+          {tr(en, `✅ كل شي تمام — ما في بند عاجل اليوم. عندك ${item.total ?? 0} منتج، الوضع نظيف.`, `✅ All clear — nothing urgent today. You have ${item.total ?? 0} products, all in good shape.`)}
         </p>
       ) : (
         <>
-          <p className="text-[12px] text-white/70">🔍 اللي يحتاج تصرّف — مرتّب بالأهم:</p>
+          <p className="text-[12px] text-white/70">{tr(en, "🔍 اللي يحتاج تصرّف — مرتّب بالأهم:", "🔍 What needs action — sorted by priority:")}</p>
           <div className="space-y-2">
             {issues.map((is) => (
               <div key={is.key} className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 ${sevTone[is.severity] ?? "border-white/15 bg-white/5"}`}>
@@ -732,7 +764,7 @@ function ScanPanel({
                   onClick={() => onQuick(is.prompt)}
                   className="shrink-0 rounded-full bg-white/15 px-3 py-1 text-[12px] font-semibold text-white transition hover:bg-white/25"
                 >
-                  عالجها ←
+                  {tr(en, "عالجها ←", "Fix it ←")}
                 </button>
                 <span className="text-[13px] text-white/85">
                   {is.icon} {is.title} <span className="font-extrabold text-white">({is.count})</span>
@@ -748,7 +780,7 @@ function ScanPanel({
           href="/malak/audit"
           className="rounded-full border border-white/20 bg-white/5 px-3 py-1.5 text-[12px] text-white/80 transition hover:bg-white/10"
         >
-          📋 سجل ملاك
+          {tr(en, "📋 سجل ملاك", "📋 Malak log")}
         </a>
       </div>
     </div>
@@ -760,14 +792,14 @@ function ScanPanel({
 // LIVE virtual browser (Hyperbeam) — a real interactive browser with AUDIO,
 // embedded straight into the popup. Unlike BrowserPanel (static screenshots),
 // this streams live and plays sound on the user's device.
-function LiveBrowserPanel({ item }: { item: any }) {
+function LiveBrowserPanel({ item, en = false }: { item: any; en?: boolean }) {
   const embedUrl: string = typeof item?.embedUrl === "string" ? item.embedUrl : "";
   const url: string = txt(item?.url) || "";
-  const title: string = txt(item?.title) || "متصفح حي";
+  const title: string = txt(item?.title) || tr(en, "متصفح حي", "Live browser");
   // Backend: "browserbase" = lighter/snappier screencast, NO audio, needs a
   // sandbox; "hyperbeam" = full WebRTC video WITH audio, no sandbox.
   const bb = item?.kind === "browserbase";
-  const liveLabel = bb ? "🟢 مباشر" : "🔴 مباشر بصوت";
+  const liveLabel = bb ? tr(en, "🟢 مباشر", "🟢 Live") : tr(en, "🔴 مباشر بصوت", "🔴 Live with audio");
   // Maximize: prefer the real Fullscreen API on the wrapper (no remount, and it
   // escapes the popup window's CSS transform — a plain `fixed` overlay would be
   // trapped inside that transformed ancestor). Fall back to a viewport-fixed
@@ -806,19 +838,19 @@ function LiveBrowserPanel({ item }: { item: any }) {
   if (!embedUrl) {
     return (
       <div className="flex h-44 flex-col items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/30 px-4 text-center text-[12px] text-amber-200/90">
-        <span>ما قدرت أفتح المتصفح الحي.</span>
-        <span className="text-white/50">قد تحتاج خدمة المتصفح الحي تتفعّل على الخادم (HYPERBEAM_API_KEY).</span>
+        <span>{tr(en, "ما قدرت أفتح المتصفح الحي.", "I couldn't open the live browser.")}</span>
+        <span className="text-white/50">{tr(en, "قد تحتاج خدمة المتصفح الحي تتفعّل على الخادم (HYPERBEAM_API_KEY).", "The live browser service may need to be enabled on the server (HYPERBEAM_API_KEY).")}</span>
       </div>
     );
   }
 
   return (
-    <div className="space-y-2 text-right">
+    <div className={`space-y-2 ${en ? "text-left" : "text-right"}`}>
       <div className="flex items-center gap-2 rounded-t-xl border border-emerald-400/30 bg-black/40 px-3 py-2">
         <span className="flex gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></span>
         <span className="flex-1 truncate text-[11px] font-semibold text-emerald-300">{liveLabel}{host ? ` · ${host}` : ""}</span>
-        <button type="button" onClick={() => { setStarted(true); setReloadKey((k) => k + 1); }} title="إعادة تحميل" aria-label="إعادة تحميل" className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">⟳</button>
-        <button type="button" onClick={toggleBig} title={big ? "تصغير" : "تكبير"} aria-label="تكبير الشاشة" className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">{big ? "✕" : "⛶"}</button>
+        <button type="button" onClick={() => { setStarted(true); setReloadKey((k) => k + 1); }} title={tr(en, "إعادة تحميل", "Reload")} aria-label={tr(en, "إعادة تحميل", "Reload")} className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">⟳</button>
+        <button type="button" onClick={toggleBig} title={big ? tr(en, "تصغير", "Minimize") : tr(en, "تكبير", "Maximize")} aria-label={tr(en, "تكبير الشاشة", "Maximize screen")} className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-400/40 text-emerald-200 hover:bg-emerald-400/10">{big ? "✕" : "⛶"}</button>
       </div>
 
       <div
@@ -833,7 +865,7 @@ function LiveBrowserPanel({ item }: { item: any }) {
         style={big ? { height: manualBig ? undefined : "100%" } : { aspectRatio: "16 / 11" }}
       >
         {big ? (
-          <button type="button" onClick={toggleBig} aria-label="تصغير" className="absolute left-3 top-3 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-emerald-400/50 bg-black/70 text-lg text-emerald-100">✕</button>
+          <button type="button" onClick={toggleBig} aria-label={tr(en, "تصغير", "Minimize")} className="absolute left-3 top-3 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-emerald-400/50 bg-black/70 text-lg text-emerald-100">✕</button>
         ) : null}
         {bb ? (
           // Browserbase live view: needs a sandbox; interactive (no audio).
@@ -863,23 +895,23 @@ function LiveBrowserPanel({ item }: { item: any }) {
             className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/55 text-emerald-200 backdrop-blur-[1px]"
           >
             <span className="text-3xl">▶</span>
-            <span className="text-[13px] font-semibold">اضغط لبدء البث الحي بالصوت</span>
-            <span className="text-[11px] text-white/60">لو ظلّت سوداء انتظر ثانيتين — النافذة تشتغل</span>
+            <span className="text-[13px] font-semibold">{tr(en, "اضغط لبدء البث الحي بالصوت", "Tap to start the live stream with audio")}</span>
+            <span className="text-[11px] text-white/60">{tr(en, "لو ظلّت سوداء انتظر ثانيتين — النافذة تشتغل", "If it stays black, wait a couple seconds — it's starting up")}</span>
           </button>
         ) : null}
       </div>
 
       {!big ? (
         <>
-          <p className="px-1 text-[12px] leading-relaxed text-white/70">{bb ? "متصفح حي سريع تفاعلي — اضغط واكتب داخله. ⛶ تكبير · ⟳ تحديث." : "متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. ⛶ تكبير · ⟳ لو صارت سوداء."}</p>
+          <p className="px-1 text-[12px] leading-relaxed text-white/70">{bb ? tr(en, "متصفح حي سريع تفاعلي — اضغط واكتب داخله. ⛶ تكبير · ⟳ تحديث.", "Fast interactive live browser — click and type inside it. ⛶ Maximize · ⟳ Refresh.") : tr(en, "متصفح حي تفاعلي بصوت — اضغط داخل النافذة، والصوت يطلع على جهازك. ⛶ تكبير · ⟳ لو صارت سوداء.", "Interactive live browser with audio — click inside the window, and the sound plays on your device. ⛶ Maximize · ⟳ if it goes black.")}</p>
           <div className="flex flex-wrap gap-2">
             {/* Opening the EMBED url in a top-level tab works even when the phone
                 blocks third-party cookies (which black out the iframe). */}
             <a href={embedUrl} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/60 bg-emerald-400/10 px-3 py-1.5 text-[12px] font-semibold text-emerald-200 hover:bg-emerald-400/20">🖥️ افتح البث في تبويب (لو الشاشة سوداء)</a>
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/60 bg-emerald-400/10 px-3 py-1.5 text-[12px] font-semibold text-emerald-200 hover:bg-emerald-400/20">{tr(en, "🖥️ افتح البث في تبويب (لو الشاشة سوداء)", "🖥️ Open the stream in a tab (if the screen is black)")}</a>
             {url ? (
               <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-[12px] text-emerald-200 hover:bg-emerald-400/10">↗ الموقع مباشرة</a>
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-[12px] text-emerald-200 hover:bg-emerald-400/10">{tr(en, "↗ الموقع مباشرة", "↗ Open the site directly")}</a>
             ) : null}
           </div>
         </>
@@ -894,14 +926,14 @@ function LiveBrowserPanel({ item }: { item: any }) {
 // Compact "now playing" music card — album art + title + animated equalizer.
 // The YouTube embed plays the AUDIO from a hidden (opacity-0) iframe, so it
 // feels like a music player, not a video.
-function PlayerPanel({ item }: { item: any }) {
+function PlayerPanel({ item, en = false }: { item: any; en?: boolean }) {
   const raw = txt(item?.videoId);
   const videoId = /^[A-Za-z0-9_-]{11}$/.test(raw) ? raw : "";
   const title = txt(item?.title);
   const [play, setPlay] = useState(false);
   if (!videoId) return null;
   return (
-    <div className="space-y-2 text-right">
+    <div className={`space-y-2 ${en ? "text-left" : "text-right"}`}>
       <div className="relative overflow-hidden rounded-2xl border border-rose-400/30">
         {/* Full-size audio source (reliable autoplay), hidden behind the opaque
             card overlay so only the music is heard, not the video. */}
@@ -921,7 +953,7 @@ function PlayerPanel({ item }: { item: any }) {
         </span>
         {/* title + state */}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-bold text-white">{title || "أغنية"}</p>
+          <p className="truncate text-[13px] font-bold text-white">{title || tr(en, "أغنية", "Track")}</p>
           <div className="mt-1 flex items-center gap-2 text-[11px] text-rose-200">
             {play ? (
               <>
@@ -930,10 +962,10 @@ function PlayerPanel({ item }: { item: any }) {
                     <i key={i} className="w-[3px] animate-pulse rounded-sm bg-rose-300" style={{ height: `${[10, 6, 12, 8][i]}px`, animationDelay: `${i * 120}ms`, animationDuration: "700ms" }} />
                   ))}
                 </span>
-                <span>جارٍ التشغيل…</span>
+                <span>{tr(en, "جارٍ التشغيل…", "Playing…")}</span>
               </>
             ) : (
-              <span className="text-white/55">🎵 جاهزة للتشغيل بصوت</span>
+              <span className="text-white/55">{tr(en, "🎵 جاهزة للتشغيل بصوت", "🎵 Ready to play with audio")}</span>
             )}
           </div>
         </div>
@@ -941,7 +973,7 @@ function PlayerPanel({ item }: { item: any }) {
         <button
           type="button"
           onClick={() => setPlay((p) => !p)}
-          aria-label={play ? "إيقاف" : "تشغيل"}
+          aria-label={play ? tr(en, "إيقاف", "Stop") : tr(en, "تشغيل", "Play")}
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-rose-500 text-lg text-white shadow-lg shadow-rose-500/30 hover:bg-rose-400"
         >
           {play ? "⏹" : "▶"}
@@ -950,12 +982,12 @@ function PlayerPanel({ item }: { item: any }) {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <a href={`https://music.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 px-3 py-1.5 text-[12px] text-rose-200 hover:bg-rose-400/10">🎵 افتح في يوتيوب ميوزك</a>
+          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 px-3 py-1.5 text-[12px] text-rose-200 hover:bg-rose-400/10">{tr(en, "🎵 افتح في يوتيوب ميوزك", "🎵 Open in YouTube Music")}</a>
         {/* Cast to TV — opens the track on YouTube where the native Cast button
             (📡) sends it to a Chromecast / smart TV on the same Wi-Fi. */}
         <a href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer"
-          title="يفتح في يوتيوب — اضغط أيقونة البثّ 📡 لإرساله للتلفزيون"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/40 px-3 py-1.5 text-[12px] text-cyan-200 hover:bg-cyan-400/10">📺 بثّ للتلفزيون</a>
+          title={tr(en, "يفتح في يوتيوب — اضغط أيقونة البثّ 📡 لإرساله للتلفزيون", "Opens in YouTube — tap the Cast icon 📡 to send it to your TV")}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/40 px-3 py-1.5 text-[12px] text-cyan-200 hover:bg-cyan-400/10">{tr(en, "📺 بثّ للتلفزيون", "📺 Cast to TV")}</a>
       </div>
     </div>
   );
@@ -963,7 +995,7 @@ function PlayerPanel({ item }: { item: any }) {
 
 // Big tappable action links — open straight in the user's native apps (YouTube,
 // Temu, Shein…) with full speed + sound, instead of a flaky embedded browser.
-function LinksPanel({ items }: { items: any[] }) {
+function LinksPanel({ items, en = false }: { items: any[]; en?: boolean }) {
   const icon = (host: string) => {
     if (/music\.youtube/.test(host)) return "🎵";
     if (/youtu/.test(host)) return "▶";
@@ -973,8 +1005,8 @@ function LinksPanel({ items }: { items: any[] }) {
     return "↗";
   };
   return (
-    <div className="space-y-2 text-right">
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-cyan-200">🔗 افتح بتطبيقك</span>
+    <div className={`space-y-2 ${en ? "text-left" : "text-right"}`}>
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-cyan-200">{tr(en, "🔗 افتح بتطبيقك", "🔗 Open in your app")}</span>
       <div className="space-y-2">
         {items.map((it, i) => {
           const url = txt(it?.url);
@@ -999,10 +1031,10 @@ function LinksPanel({ items }: { items: any[] }) {
 }
 
 // Web-search results list (from a search API — no CAPTCHA). Each row links out.
-function SearchPanel({ items }: { items: any[] }) {
+function SearchPanel({ items, en = false }: { items: any[]; en?: boolean }) {
   return (
-    <div className="space-y-2 text-right">
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-cyan-200">🔎 نتائج البحث</span>
+    <div className={`space-y-2 ${en ? "text-left" : "text-right"}`}>
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-cyan-200">{tr(en, "🔎 نتائج البحث", "🔎 Search results")}</span>
       <ul className="space-y-2">
         {items.map((r, i) => {
           const url = txt(r?.url);
@@ -1023,7 +1055,7 @@ function SearchPanel({ items }: { items: any[] }) {
 
 // Popup "browser screen": Malak opened a real site server-side; we show a live
 // screenshot of it (loaded lazily from /api/malak/browse) plus her summary.
-function BrowserPanel({ item }: { item: any }) {
+function BrowserPanel({ item, en = false }: { item: any; en?: boolean }) {
   const url: string = txt(item?.url) || "";
   const title: string = txt(item?.title) || "";
   const summary: string = txt(item?.summary) || "";
@@ -1038,12 +1070,12 @@ function BrowserPanel({ item }: { item: any }) {
   const reload = () => { if (shot) return; setState("loading"); setBust((b) => b + 1); };
 
   return (
-    <div className="space-y-3 text-right">
+    <div className={`space-y-3 ${en ? "text-left" : "text-right"}`}>
       {/* faux browser chrome */}
       <div className="flex items-center gap-2 rounded-t-xl border border-cyan-400/30 bg-black/40 px-3 py-2">
         <span className="flex gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-rose-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-amber-400/70" /><i className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" /></span>
         <span dir="ltr" className="flex-1 truncate rounded-md bg-white/5 px-2 py-1 text-left font-mono text-[11px] text-cyan-200/80">{host || "—"}</span>
-        {!shot ? <button type="button" onClick={reload} title="تحديث" className="flex h-6 w-6 items-center justify-center rounded-md border border-cyan-400/30 text-cyan-200 hover:bg-cyan-400/10">⟳</button> : null}
+        {!shot ? <button type="button" onClick={reload} title={tr(en, "تحديث", "Refresh")} className="flex h-6 w-6 items-center justify-center rounded-md border border-cyan-400/30 text-cyan-200 hover:bg-cyan-400/10">⟳</button> : null}
       </div>
 
       {title ? <p className="px-1 text-sm font-bold text-white">{title}</p> : null}
@@ -1051,7 +1083,7 @@ function BrowserPanel({ item }: { item: any }) {
       <div className="relative overflow-hidden rounded-xl border border-white/10 bg-black/30">
         {state === "loading" ? (
           <div className="flex h-44 items-center justify-center text-[12px] text-cyan-200/70">
-            <span className="animate-pulse">يفتح الصفحة في المتصفح…</span>
+            <span className="animate-pulse">{tr(en, "يفتح الصفحة في المتصفح…", "Opening the page in the browser…")}</span>
           </div>
         ) : null}
         {shotSrc ? (
@@ -1066,9 +1098,9 @@ function BrowserPanel({ item }: { item: any }) {
         ) : null}
         {state === "error" ? (
           <div className="flex h-44 flex-col items-center justify-center gap-2 px-4 text-center text-[12px] text-amber-200/90">
-            <span>ما قدرت ألتقط صورة الصفحة الحين.</span>
-            <span className="text-white/50">قد تحتاج خدمة المتصفح تتفعّل على الخادم (BROWSERLESS_URL / BROWSERLESS_TOKEN)، أو الموقع رفض الفتح.</span>
-            <button type="button" onClick={reload} className="rounded-md border border-cyan-400/40 px-3 py-1 text-cyan-200 hover:bg-cyan-400/10">جرّب مرة ثانية</button>
+            <span>{tr(en, "ما قدرت ألتقط صورة الصفحة الحين.", "I couldn't capture the page right now.")}</span>
+            <span className="text-white/50">{tr(en, "قد تحتاج خدمة المتصفح تتفعّل على الخادم (BROWSERLESS_URL / BROWSERLESS_TOKEN)، أو الموقع رفض الفتح.", "The browser service may need to be enabled on the server (BROWSERLESS_URL / BROWSERLESS_TOKEN), or the site refused to open.")}</span>
+            <button type="button" onClick={reload} className="rounded-md border border-cyan-400/40 px-3 py-1 text-cyan-200 hover:bg-cyan-400/10">{tr(en, "جرّب مرة ثانية", "Try again")}</button>
           </div>
         ) : null}
       </div>
@@ -1078,7 +1110,7 @@ function BrowserPanel({ item }: { item: any }) {
       {url ? (
         <a href={url} target="_blank" rel="noopener noreferrer" dir="ltr"
           className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/40 px-3 py-1.5 text-[12px] text-cyan-200 hover:bg-cyan-400/10">
-          ↗ افتح في تبويب جديد
+          {tr(en, "↗ افتح في تبويب جديد", "↗ Open in a new tab")}
         </a>
       ) : null}
     </div>
@@ -1086,7 +1118,7 @@ function BrowserPanel({ item }: { item: any }) {
 }
 
 function ResultWindow({
-  data, index, onClose, onConfirmDone, onConfirmCancel, onGenerated, onQuick, onListen,
+  data, index, onClose, onConfirmDone, onConfirmCancel, onGenerated, onQuick, onListen, en = false,
 }: {
   data: PanelData;
   index: number;
@@ -1096,6 +1128,7 @@ function ResultWindow({
   onGenerated?: (panel: PanelData) => void;
   onQuick?: (q: string) => void;
   onListen?: (text: string) => void;
+  en?: boolean;
 }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const drag = useRef<{ dx: number; dy: number } | null>(null);
@@ -1149,11 +1182,11 @@ function ResultWindow({
           onPointerUp={onUp}
           className="relative flex cursor-move touch-none items-center justify-between border-b border-cyan-400/30 px-4 py-2.5 select-none"
         >
-          <span className="font-mono text-[11px] tracking-[0.25em] text-cyan-300">◢ MALAK · النتيجة</span>
-          <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={onClose} aria-label="إغلاق" className="flex h-7 w-7 items-center justify-center rounded-full border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/10">✕</button>
+          <span className="font-mono text-[11px] tracking-[0.25em] text-cyan-300">{tr(en, "◢ MALAK · النتيجة", "◢ MALAK · Result")}</span>
+          <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={onClose} aria-label={tr(en, "إغلاق", "Close")} className="flex h-7 w-7 items-center justify-center rounded-full border border-cyan-400/40 text-cyan-200 hover:bg-cyan-400/10">✕</button>
         </div>
         <div className="relative min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
-          <Panel data={data} onConfirmDone={onConfirmDone} onConfirmCancel={onConfirmCancel} onGenerated={onGenerated} onQuick={onQuick} onListen={onListen} />
+          <Panel data={data} onConfirmDone={onConfirmDone} onConfirmCancel={onConfirmCancel} onGenerated={onGenerated} onQuick={onQuick} onListen={onListen} en={en} />
         </div>
       </div>
     </div>
@@ -1167,6 +1200,7 @@ function Panel({
   onGenerated,
   onQuick,
   onListen,
+  en = false,
 }: {
   data: PanelData;
   onConfirmDone?: (message: string) => void;
@@ -1174,26 +1208,28 @@ function Panel({
   onGenerated?: (panel: PanelData) => void;
   onQuick?: (q: string) => void;
   onListen?: (text: string) => void;
+  en?: boolean;
 }) {
-  if (data.type === "products" && Array.isArray(data.items)) return <ProductsPanel items={data.items} />;
-  if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} />;
-  if (data.type === "post" && data.item) return <PostPanel item={data.item} />;
-  if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} />;
-  if (data.type === "browser" && data.item) return <BrowserPanel item={data.item} />;
-  if (data.type === "search" && Array.isArray(data.items)) return <SearchPanel items={data.items} />;
-  if (data.type === "links" && Array.isArray(data.items)) return <LinksPanel items={data.items} />;
-  if (data.type === "player" && data.item) return <PlayerPanel item={data.item} />;
-  if (data.type === "live" && data.item) return <LiveBrowserPanel item={data.item} />;
+  if (data.type === "products" && Array.isArray(data.items)) return <ProductsPanel items={data.items} en={en} />;
+  if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} en={en} />;
+  if (data.type === "post" && data.item) return <PostPanel item={data.item} en={en} />;
+  if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} en={en} />;
+  if (data.type === "browser" && data.item) return <BrowserPanel item={data.item} en={en} />;
+  if (data.type === "search" && Array.isArray(data.items)) return <SearchPanel items={data.items} en={en} />;
+  if (data.type === "links" && Array.isArray(data.items)) return <LinksPanel items={data.items} en={en} />;
+  if (data.type === "player" && data.item) return <PlayerPanel item={data.item} en={en} />;
+  if (data.type === "live" && data.item) return <LiveBrowserPanel item={data.item} en={en} />;
   if (data.type === "briefing" && data.item)
-    return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
+    return <BriefingPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} en={en} />;
   if (data.type === "scan" && data.item)
-    return <ScanPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} />;
+    return <ScanPanel item={data.item} onQuick={(q) => onQuick?.(q)} onListen={(t) => onListen?.(t)} en={en} />;
   if (data.type === "image_request" && data.item)
     return (
       <ImageRequestPanel
         item={data.item}
         onGenerated={(p) => onGenerated?.(p)}
         onCancel={() => onConfirmCancel?.()}
+        en={en}
       />
     );
   if (data.type === "confirm" && data.item)
@@ -1202,21 +1238,24 @@ function Panel({
         item={data.item}
         onDone={(m) => onConfirmDone?.(m)}
         onCancel={() => onConfirmCancel?.()}
+        en={en}
       />
     );
   return null;
 }
 
 // ---- Main page -------------------------------------------------------------
-export default function MalakPage({ kpis }: { kpis?: MalakKpis }) {
+export default function MalakPage({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale }) {
   return (
-    <UIErrorBoundary>
-      <MalakInner kpis={kpis} />
+    <UIErrorBoundary en={locale === "en"}>
+      <MalakInner kpis={kpis} locale={locale} />
     </UIErrorBoundary>
   );
 }
 
-function MalakInner({ kpis }: { kpis?: MalakKpis }) {
+function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
   const [turns, setTurns] = useState<Turn[]>([]);
   // Multiple result windows can be open at once (one per request).
   const [panels, setPanels] = useState<PanelData[]>([]);
@@ -1584,7 +1623,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       busyRef.current = true;
       stopAudio();
 
-      const userText = clean || "أرفقت صورة لمنتج.";
+      const userText = clean || L("أرفقت صورة لمنتج.", "I attached a product image.");
       const nextTurns: Turn[] = [...turns, { role: "user", text: img ? `📎 ${userText}` : userText }];
       setTurns(nextTurns);
       setInput("");
@@ -1609,7 +1648,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           if (upData?.ok && upData.url) {
             imageUrl = upData.url;
           } else {
-            typewriter(upData?.error || "فشل رفع الصورة.");
+            typewriter(upData?.error || L("فشل رفع الصورة.", "Image upload failed."));
             setState("idle");
             busyRef.current = false;
             resumeHandsFree();
@@ -1630,7 +1669,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         });
         const data = await res.json();
         const ag: AgentId = (AGENTS.some((a) => a.id === data?.agent) ? data.agent : "malak") as AgentId;
-        const speakText = typeof data?.speak === "string" ? data.speak : "تم.";
+        const speakText = typeof data?.speak === "string" ? data.speak : L("تم.", "Done.");
         // Technical/config errors → professional alert (raw hidden unless ?dev=1).
         // Pick an ACCURATE headline: billing/credit vs config vs generic, so a
         // depleted Anthropic balance isn't mislabeled as a database problem.
@@ -1638,10 +1677,10 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         const isConfig = /SUPABASE|Service role|Supabase|قاعدة|الكتالوج مو مربوط|not configured/i.test(speakText);
         if (isBilling || isConfig || /ANTHROPIC_API_KEY|صار خطأ تقني|غير مهيأ/i.test(speakText)) {
           const pretty = isBilling
-            ? "رصيد Anthropic (عقل ملاك) خلص — جدّد الرصيد من console.anthropic.com ← Plans & Billing"
+            ? L("رصيد Anthropic (عقل ملاك) خلص — جدّد الرصيد من console.anthropic.com ← Plans & Billing", "Anthropic credit (Malak's brain) is depleted — top up at console.anthropic.com ← Plans & Billing")
             : isConfig
-              ? "تعذّر تنفيذ الطلب — إعدادات الخادم/قاعدة البيانات غير مكتملة"
-              : "تعذّر تنفيذ الطلب — صار خطأ تقني مؤقّت";
+              ? L("تعذّر تنفيذ الطلب — إعدادات الخادم/قاعدة البيانات غير مكتملة", "Couldn't complete the request — server/database configuration is incomplete")
+              : L("تعذّر تنفيذ الطلب — صار خطأ تقني مؤقّت", "Couldn't complete the request — a temporary technical error occurred");
           setErrorAlert({ pretty, raw: speakText });
           setState("idle");
           resumeHandsFree();
@@ -1652,14 +1691,15 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           speak(speakText, ag);
         }
       } catch (e) {
-        setErrorAlert({ pretty: "تعذّر الاتصال بالخادم — حاول مرة ثانية", raw: String((e as Error)?.message || e) });
+        setErrorAlert({ pretty: L("تعذّر الاتصال بالخادم — حاول مرة ثانية", "Couldn't reach the server — try again"), raw: String((e as Error)?.message || e) });
         setState("idle");
         resumeHandsFree();
       } finally {
         busyRef.current = false;
       }
     },
-    [turns, typewriter, speak, stopAudio, unlockAudio, pendingImage, resumeHandsFree]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [turns, typewriter, speak, stopAudio, unlockAudio, pendingImage, resumeHandsFree, en]
   );
 
   // Live HUD clock.
@@ -1691,13 +1731,14 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         setScanData(d as ScanData); // feeds the HUD side panels (every load)
         if (!sessionStorage.getItem("malak_briefed")) {
           sessionStorage.setItem("malak_briefed", "1");
-          speak(briefSummary(d), "malak"); // voice brief once per session
+          speak(briefSummary(d, en), "malak"); // voice brief once per session
         }
       } catch {
         /* scan is best-effort */
       }
     })();
-  }, [speak]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speak, en]);
 
   // ---- Mic (Web Speech) — push-to-talk button AND hands-free wake mode ----
   useEffect(() => {
@@ -1748,7 +1789,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         awakeUntilRef.current = Date.now() + AWAKE_MS;
         // Bare wake word with no command → acknowledge and keep listening.
         if (called && commandAfterWake(transcript).length < 2) {
-          const greet = "نعم فهد، تأمر؟";
+          const greet = L("نعم فهد، تأمر؟", "Yes Fahad, how can I help?");
           setTyped("");
           setTurns((prev) => [...prev, { role: "malak", text: greet }]);
           speak(greet, called);
@@ -1915,7 +1956,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
   const sd: ScanData = scanData ?? {
     total: 0, approved: 0, rejected: 0, missingImages: 0, lowStock: 0, outOfStock: 0,
     suspiciousPrice: 0, channelMismatch: 0, issues: [], recentActivity: [],
-    priority: "…يفحص الوضع", allClear: true,
+    priority: L("…يفحص الوضع", "…checking status"), allClear: true,
   };
 
   return (
@@ -1941,7 +1982,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         <div dir="ltr" className="flex shrink-0 flex-wrap items-start justify-between gap-3 font-mono">
           <div>
             <p className="text-[13px] font-bold tracking-[0.2em] text-cyan-50">MALIKA&apos;S UNIVERSE <span className="text-cyan-300/50">// COMMERCE CONTROL</span></p>
-            <p dir="rtl" className="text-[10px] tracking-[0.15em] text-cyan-300/50">ملاك · المديرة العامة الذكية</p>
+            <p dir={en ? "ltr" : "rtl"} className="text-[10px] tracking-[0.15em] text-cyan-300/50">{L("ملاك · المديرة العامة الذكية", "Malak · AI general manager")}</p>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {["ONLINE", "SECURE", scanData ? (scanData.channelMismatch ? "SYNC NEEDED" : "SYNCED") : "…", "AUTH-LVL9"].map((c, i) => (
                 <span key={i} className="inline-flex items-center gap-1 rounded-sm border border-cyan-500/25 px-2 py-0.5 text-[8.5px] tracking-widest text-cyan-300/60">
@@ -1964,7 +2005,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           </div>
           <div className="order-2 text-right sm:order-3">
             <p className="text-[22px] font-bold leading-none tracking-wider text-cyan-50" style={{ textShadow: "0 0 14px rgba(0,217,255,0.6)" }}>{hudClock}</p>
-            <p className="mt-1 text-[9px] tracking-widest text-cyan-300/50">منتجات: {scanData?.total ?? "—"} · معتمد: {scanData?.approved ?? "—"}</p>
+            <p className="mt-1 text-[9px] tracking-widest text-cyan-300/50">{L("منتجات", "Products")}: {scanData?.total ?? "—"} · {L("معتمد", "Approved")}: {scanData?.approved ?? "—"}</p>
             <p className="text-[9px] tracking-widest text-cyan-300/50">DOHA · QA</p>
           </div>
         </div>
@@ -1982,7 +2023,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               </pre>
             ) : null}
           </div>
-          <button onClick={() => setErrorAlert(null)} aria-label="إغلاق" className="shrink-0 text-slate-400 hover:text-slate-700">
+          <button onClick={() => setErrorAlert(null)} aria-label={L("إغلاق", "Close")} className="shrink-0 text-slate-400 hover:text-slate-700">
             ×
           </button>
         </div>
@@ -1991,7 +2032,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       {/* Unified Mission-Control HUD: side panels frame the orb + chat into one
           screen. display:contents in fullscreen keeps the orb full-screen. */}
       <div className="grid shrink-0 grid-cols-1 gap-3 md:grid-cols-12">
-        <div className="hidden md:order-1 md:col-span-3 md:block" style={{ animation: "screenInL .26s ease-out both" }}><HudLeft scan={sd} onAction={send} /></div>
+        <div className="hidden md:order-1 md:col-span-3 md:block" style={{ animation: "screenInL .26s ease-out both" }}><HudLeft scan={sd} onAction={send} locale={locale} /></div>
         <div className="order-1 md:order-2 md:col-span-6">
 
       {/* Hero: Malak's JARVIS-style atom orb. Tap it to focus the input.
@@ -2005,7 +2046,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         <button
           type="button"
           onClick={() => { if (micSupported) { toggleMic(); } else { unlockAudio(); inputRef.current?.focus(); } }}
-          aria-label={listening ? "إيقاف المايك" : "تكلّم مع ملاك"}
+          aria-label={listening ? L("إيقاف المايك", "Stop the mic") : L("تكلّم مع ملاك", "Talk to Malak")}
           className="flex h-full w-full items-center justify-center"
         >
           <AiCoreOrb state={state} levelRef={levelRef} />
@@ -2020,14 +2061,14 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           const tags: { c: string; t: string }[] = [
             { c: "left-1/2 -translate-x-1/2 top-[2%]", t: `STATE · ${stLabel}` },
             { c: "left-[16%] top-[7%]", t: `SKU · ${tot}` },
-            { c: "right-[16%] top-[7%]", t: `معتمد · ${scanData?.approved ?? 0}` },
-            { c: "left-[5%] top-[26%]", t: `نافد · ${scanData?.outOfStock ?? 0}` },
+            { c: "right-[16%] top-[7%]", t: `${L("معتمد", "APPROVED")} · ${scanData?.approved ?? 0}` },
+            { c: "left-[5%] top-[26%]", t: `${L("نافد", "OUT")} · ${scanData?.outOfStock ?? 0}` },
             { c: "right-[5%] top-[26%]", t: `HEALTH · ${health}%` },
-            { c: "left-[2%] top-1/2 -translate-y-1/2", t: `أسعار · ${scanData?.suspiciousPrice ?? 0}` },
-            { c: "right-[2%] top-1/2 -translate-y-1/2", t: `ستوك · ${scanData?.lowStock ?? 0}` },
-            { c: "left-[5%] bottom-[26%]", t: `صور ناقصة · ${scanData?.missingImages ?? 0}` },
-            { c: "right-[5%] bottom-[26%]", t: `مرفوض · ${scanData?.rejected ?? 0}` },
-            { c: "left-[16%] bottom-[7%]", t: `بنود · ${scanData?.issues?.length ?? 0}` },
+            { c: "left-[2%] top-1/2 -translate-y-1/2", t: `${L("أسعار", "PRICES")} · ${scanData?.suspiciousPrice ?? 0}` },
+            { c: "right-[2%] top-1/2 -translate-y-1/2", t: `${L("ستوك", "STOCK")} · ${scanData?.lowStock ?? 0}` },
+            { c: "left-[5%] bottom-[26%]", t: `${L("صور ناقصة", "NO IMAGE")} · ${scanData?.missingImages ?? 0}` },
+            { c: "right-[5%] bottom-[26%]", t: `${L("مرفوض", "REJECTED")} · ${scanData?.rejected ?? 0}` },
+            { c: "left-[16%] bottom-[7%]", t: `${L("بنود", "ITEMS")} · ${scanData?.issues?.length ?? 0}` },
             { c: "right-[16%] bottom-[7%]", t: `SYNC · ${synced ? "OK" : (scanData?.channelMismatch ?? 0)}` },
             { c: "left-1/2 -translate-x-1/2 bottom-[2%]", t: `PROD · ${tot}` },
           ];
@@ -2042,7 +2083,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           onClick={toggleFullscreen}
           className="absolute left-3 top-3 z-10 rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-white/90 shadow backdrop-blur-sm hover:bg-black/60"
         >
-          {fsActive ? "↙ تصغير" : "⛶ ملء الشاشة"}
+          {fsActive ? L("↙ تصغير", "↙ Minimize") : L("⛶ ملء الشاشة", "⛶ Fullscreen")}
         </button>
         {/* Show Malak on a Smart TV (via the phone's Smart View / screen cast) */}
         <button
@@ -2050,7 +2091,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           onClick={startTvMode}
           className="absolute right-3 top-3 z-10 rounded-full border border-cyan-300/30 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-cyan-100 shadow backdrop-blur-sm hover:bg-black/60"
         >
-          📺 التلفزيون
+          {L("📺 التلفزيون", "📺 TV")}
         </button>
 
         {/* "يتكلم الآن" badge: shows the active agent's avatar + name while
@@ -2064,11 +2105,11 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold"
               style={{ background: activeDef.color, color: "#0b1020" }}
             >
-              {activeDef.name.slice(0, 1)}
+              {agentName(en).slice(0, 1)}
             </span>
-            <div className="text-right leading-tight">
-              <p className="text-[12px] font-bold text-white">{activeDef.name}</p>
-              <p className="text-[10px] text-white/60">{state === "speaking" ? "يتكلّم الآن…" : "يفكّر…"}</p>
+            <div className={`leading-tight ${en ? "text-left" : "text-right"}`}>
+              <p className="text-[12px] font-bold text-white">{agentName(en)}</p>
+              <p className="text-[10px] text-white/60">{state === "speaking" ? L("يتكلّم الآن…", "Speaking now…") : L("يفكّر…", "Thinking…")}</p>
             </div>
             {state === "speaking" ? (
               <span className="flex h-4 items-end gap-0.5">
@@ -2094,9 +2135,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         @keyframes screenInB { 0%{opacity:0;transform:translateY(22px)} 100%{opacity:1;transform:none} }
       `}</style>
         </div>{/* center column = orb only */}
-        <div className="hidden md:col-span-3 md:block" style={{ animation: "screenInR .26s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} /></div>
+        <div className="hidden md:col-span-3 md:block" style={{ animation: "screenInR .26s ease-out both" }}><HudRight scan={sd} levelRef={levelRef} locale={locale} /></div>
       </div>{/* HUD grid */}
-      <div className="hidden md:block" style={{ animation: "screenInB .28s ease-out both" }}><HudObjective scan={sd} /></div>
+      <div className="hidden md:block" style={{ animation: "screenInB .28s ease-out both" }}><HudObjective scan={sd} locale={locale} /></div>
 
       {/* Chat card. In fullscreen it stays a fixed, compact height (shrink-0) so
           it never grows and pushes the layout past the screen — the lab keeps
@@ -2107,7 +2148,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
         <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "min-h-0 flex-1 md:max-h-[44vh] md:min-h-[140px] md:flex-none"}`}>
         {turns.length === 0 && !typed ? (
           <div className="mx-auto max-w-md pt-4 text-center text-sm text-cyan-300/60">
-            أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.
+            {L("أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.", "Hi Fahad 👋 I'm Malak, ready to handle everything for you — the catalog, prices, images, reports, or writing content.")}
           </div>
         ) : null}
 
@@ -2154,17 +2195,17 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             aria-pressed={handsFree}
           >
             <span className={handsFree ? "animate-pulse" : ""}>{handsFree ? "🟢" : "🛎️"}</span>
-            {handsFree ? "ينصت دائمًا · قل «ملاك»" : "تفعيل الاستماع الدائم"}
+            {handsFree ? L("ينصت دائمًا · قل «ملاك»", "Always listening · say “Malak”") : L("تفعيل الاستماع الدائم", "Enable always-on listening")}
           </button>
           {handsFree ? (
-            <span className="truncate text-[11px] text-emerald-600">قل «ملاك» بأي وقت — وتقدر تقاطعها وهي تتكلم</span>
+            <span className="truncate text-[11px] text-emerald-600">{L("قل «ملاك» بأي وقت — وتقدر تقاطعها وهي تتكلم", "Say “Malak” anytime — and you can interrupt her while she's talking")}</span>
           ) : (
-            <span className="hidden truncate text-[11px] text-cyan-300/50 sm:block">فعّلها مرّة وتبقى تنصت لـ«ملاك» كل زيارة</span>
+            <span className="hidden truncate text-[11px] text-cyan-300/50 sm:block">{L("فعّلها مرّة وتبقى تنصت لـ«ملاك» كل زيارة", "Enable it once and she keeps listening for “Malak” every visit")}</span>
           )}
         </div>
         {/* Quick prompts */}
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
-          {QUICK_PROMPTS.map((q) => (
+          {(en ? QUICK_PROMPTS_EN : QUICK_PROMPTS_AR).map((q) => (
             <button
               key={q}
               onClick={() => send(q)}
@@ -2181,15 +2222,15 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={URL.createObjectURL(pendingImage)}
-              alt="مرفق"
+              alt={L("مرفق", "Attachment")}
               className="h-9 w-9 rounded-md object-cover"
             />
             <span className="flex-1 truncate text-[12px] text-cyan-100/80">📎 {pendingImage.name}</span>
-            <span className="text-[11px] text-cyan-300/50">اكتب الـSKU وأرسل</span>
+            <span className="text-[11px] text-cyan-300/50">{L("اكتب الـSKU وأرسل", "Type the SKU and send")}</span>
             <button
               type="button"
               onClick={() => setPendingImage(null)}
-              aria-label="إزالة الصورة"
+              aria-label={L("إزالة الصورة", "Remove image")}
               className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/30"
             >
               ×
@@ -2219,7 +2260,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            aria-label="إرفاق صورة"
+            aria-label={L("إرفاق صورة", "Attach image")}
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg transition ${
               pendingImage ? "bg-pink-500 text-white" : "bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
             }`}
@@ -2230,7 +2271,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             type="button"
             onClick={toggleMic}
             disabled={!micSupported}
-            aria-label="ميكروفون"
+            aria-label={L("ميكروفون", "Microphone")}
             className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-lg transition disabled:opacity-30 ${
               listening ? "bg-rose-500 text-white" : "bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20"
             }`}
@@ -2242,7 +2283,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="اكتب لملاك… (أو استخدم الميكروفون)"
+            placeholder={L("اكتب لملاك… (أو استخدم الميكروفون)", "Type to Malak… (or use the microphone)")}
             className="h-11 flex-1 rounded-full border border-cyan-500/25 bg-cyan-500/5 px-4 text-sm text-cyan-50 placeholder:text-cyan-300/40 focus:border-cyan-400/60 focus:bg-cyan-500/10 focus:outline-none"
           />
           <button
@@ -2257,7 +2298,7 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
       </div>{/* chat card (full-width, below the HUD) */}
 
       <div className="hidden shrink-0 md:block">
-        <FooterStatusBar scan={sd} uptime={uptime} stateLabel={state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY"} />
+        <FooterStatusBar scan={sd} uptime={uptime} stateLabel={state === "speaking" ? "RESPONDING" : state === "thinking" ? "PROCESSING" : state === "listening" ? "LISTENING" : "STANDBY"} locale={locale} />
       </div>
 
       {/* "Show Malak on the TV" — Smart View / screen-mirroring steps. The web
@@ -2265,20 +2306,20 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           the user how to cast from their phone. */}
       {tvHelp ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4" onClick={() => setTvHelp(false)}>
-          <div dir="rtl" className="w-full max-w-sm rounded-2xl border border-cyan-400/30 bg-[#0a1422] p-5 text-right text-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div dir={en ? "ltr" : "rtl"} className={`w-full max-w-sm rounded-2xl border border-cyan-400/30 bg-[#0a1422] p-5 text-white shadow-2xl ${en ? "text-left" : "text-right"}`} onClick={(e) => e.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-base font-bold">📺 عرض ملاك على التلفزيون</p>
-              <button onClick={() => setTvHelp(false)} aria-label="إغلاق" className="text-xl leading-none text-white/50 hover:text-white">×</button>
+              <p className="text-base font-bold">{L("📺 عرض ملاك على التلفزيون", "📺 Show Malak on the TV")}</p>
+              <button onClick={() => setTvHelp(false)} aria-label={L("إغلاق", "Close")} className="text-xl leading-none text-white/50 hover:text-white">×</button>
             </div>
-            <p className="mb-3 text-[13px] leading-relaxed text-cyan-100/80">ملاك دخلت وضع العرض الكبير ✅ — الحين شغّل مرآة الشاشة من جوالك:</p>
+            <p className="mb-3 text-[13px] leading-relaxed text-cyan-100/80">{L("ملاك دخلت وضع العرض الكبير ✅ — الحين شغّل مرآة الشاشة من جوالك:", "Malak is now in big-screen mode ✅ — now start screen mirroring from your phone:")}</p>
             <ol className="space-y-2 text-[13px] leading-relaxed text-white/90">
-              <li>1️⃣ اسحب من <b>أعلى الشاشة</b> لتفتح لوحة الإعدادات السريعة.</li>
-              <li>2️⃣ اضغط <b>Smart View</b> (سامسونج) أو <b>Screen Cast / بث الشاشة</b> (LG/أندرويد).</li>
-              <li>3️⃣ اختر <b>تلفزيونك</b> — لازم على نفس شبكة الواي‌فاي.</li>
-              <li>4️⃣ بتطلع ملاك على التلفزيون 🎉 وتتحكّم بكل شي من جوالك.</li>
+              <li>{en ? <>1️⃣ Swipe down from the <b>top of the screen</b> to open the quick settings panel.</> : <>1️⃣ اسحب من <b>أعلى الشاشة</b> لتفتح لوحة الإعدادات السريعة.</>}</li>
+              <li>{en ? <>2️⃣ Tap <b>Smart View</b> (Samsung) or <b>Screen Cast</b> (LG/Android).</> : <>2️⃣ اضغط <b>Smart View</b> (سامسونج) أو <b>Screen Cast / بث الشاشة</b> (LG/أندرويد).</>}</li>
+              <li>{en ? <>3️⃣ Pick <b>your TV</b> — it must be on the same Wi-Fi network.</> : <>3️⃣ اختر <b>تلفزيونك</b> — لازم على نفس شبكة الواي‌فاي.</>}</li>
+              <li>{en ? <>4️⃣ Malak appears on the TV 🎉 and you control everything from your phone.</> : <>4️⃣ بتطلع ملاك على التلفزيون 🎉 وتتحكّم بكل شي من جوالك.</>}</li>
             </ol>
-            <p className="mt-3 text-[11px] leading-relaxed text-white/45">ملاحظة: مرآة الشاشة خاصية النظام، ما نقدر نشغّلها من داخل التطبيق — بس جهّزنا لك العرض الكبير النظيف.</p>
-            <button onClick={() => setTvHelp(false)} className="mt-4 w-full rounded-xl bg-cyan-500 py-2.5 text-sm font-bold text-[#06121f] hover:bg-cyan-400">تمام، فهمت</button>
+            <p className="mt-3 text-[11px] leading-relaxed text-white/45">{L("ملاحظة: مرآة الشاشة خاصية النظام، ما نقدر نشغّلها من داخل التطبيق — بس جهّزنا لك العرض الكبير النظيف.", "Note: screen mirroring is a system feature we can't start from inside the app — we just set up the clean big-screen view for you.")}</p>
+            <button onClick={() => setTvHelp(false)} className="mt-4 w-full rounded-xl bg-cyan-500 py-2.5 text-sm font-bold text-[#06121f] hover:bg-cyan-400">{L("تمام، فهمت", "Got it")}</button>
           </div>
         </div>
       ) : null}
@@ -2290,8 +2331,9 @@ function MalakInner({ kpis }: { kpis?: MalakKpis }) {
           data={p}
           index={i}
           onClose={() => closePanel(i)}
+          en={en}
           onConfirmDone={(m) => { setTurns((prev) => [...prev, { role: "malak", text: m }]); speak(m, activeAgent); closePanel(i); }}
-          onConfirmCancel={() => { closePanel(i); setTurns((prev) => [...prev, { role: "malak", text: "تمام، ألغيت العملية." }]); }}
+          onConfirmCancel={() => { closePanel(i); setTurns((prev) => [...prev, { role: "malak", text: L("تمام، ألغيت العملية.", "OK, I cancelled the action.") }]); }}
           onGenerated={(np) => setPanels((ps) => ps.map((x, k) => (k === i ? np : x)))}
           onQuick={(q) => { closePanel(i); send(q); }}
           onListen={(text) => { unlockAudio(); speak(text, "malak"); }}

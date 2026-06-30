@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { CHANNEL_STATUSES } from "@/lib/constants";
 import { setChannelStatus } from "@/app/(app)/channels/actions";
+import type { Locale } from "@/lib/i18n";
 
 const PAGE_SIZE = 50;
 
@@ -27,12 +28,16 @@ export default function ChannelMatrix({
   products,
   channels,
   initialStatuses,
+  locale = "ar",
 }: {
   products: MatrixProduct[];
   channels: MatrixChannel[];
   // key = `${productId}:${channelId}` -> status
   initialStatuses: Record<string, string>;
+  locale?: Locale;
 }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
   const [statuses, setStatuses] = useState(initialStatuses);
   const [pending, startTransition] = useTransition();
   const [q, setQ] = useState("");
@@ -79,7 +84,7 @@ export default function ChannelMatrix({
   const visible = filtered.slice(start, start + PAGE_SIZE);
 
   if (products.length === 0) {
-    return <p className="text-sm text-slate-400">No products yet. Add products to publish them to channels.</p>;
+    return <p className="text-sm text-slate-400">{L("لا توجد منتجات بعد. أضف منتجات لنشرها على القنوات.", "No products yet. Add products to publish them to channels.")}</p>;
   }
 
   return (
@@ -87,14 +92,14 @@ export default function ChannelMatrix({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <input
           className="input sm:max-w-xs"
-          placeholder="Search by name or SKU…"
+          placeholder={L("ابحث بالاسم أو الـ SKU…", "Search by name or SKU…")}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
         <span className="text-sm text-muted sm:ml-auto">
           {filtered.length === products.length
-            ? `${products.length} products`
-            : `${filtered.length} of ${products.length}`}
+            ? L(`${products.length} منتج`, `${products.length} products`)
+            : L(`${filtered.length} من ${products.length}`, `${filtered.length} of ${products.length}`)}
         </span>
       </div>
 
@@ -114,7 +119,7 @@ export default function ChannelMatrix({
                   <div key={c.id} className="flex items-center justify-between gap-2">
                     <span className="text-sm text-slate-600">
                       {channelLabels[i]}
-                      {c.supports_variants === false ? <span className="ml-1 text-[10px] text-slate-400">(no variants)</span> : null}
+                      {c.supports_variants === false ? <span className="ml-1 text-[10px] text-slate-400">{L("(بدون خيارات)", "(no variants)")}</span> : null}
                     </span>
                     <select
                       disabled={pending}
@@ -139,12 +144,12 @@ export default function ChannelMatrix({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
-              <th className="px-4 py-3 font-medium">Product</th>
+              <th className="px-4 py-3 font-medium">{L("المنتج", "Product")}</th>
               {channels.map((c, i) => (
                 <th key={c.id} className="px-4 py-3 font-medium">
                   {channelLabels[i]}
                   {c.supports_variants === false ? (
-                    <span className="ml-1 font-normal text-[10px] lowercase text-slate-400">(no variants)</span>
+                    <span className="ml-1 font-normal text-[10px] lowercase text-slate-400">{L("(بدون خيارات)", "(no variants)")}</span>
                   ) : null}
                 </th>
               ))}
@@ -184,12 +189,15 @@ export default function ChannelMatrix({
       {filtered.length > PAGE_SIZE ? (
         <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
           <span className="text-sm text-muted">
-            Showing {start + 1}–{Math.min(start + PAGE_SIZE, filtered.length)} of {filtered.length}
+            {L(
+              `عرض ${start + 1}–${Math.min(start + PAGE_SIZE, filtered.length)} من ${filtered.length}`,
+              `Showing ${start + 1}–${Math.min(start + PAGE_SIZE, filtered.length)} of ${filtered.length}`
+            )}
           </span>
           <div className="flex items-center gap-2">
-            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={current <= 1}>← Prev</button>
-            <span className="text-sm text-slate-600">Page {current} / {totalPages}</span>
-            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={current >= totalPages}>Next →</button>
+            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={current <= 1}>{L("→ السابق", "← Prev")}</button>
+            <span className="text-sm text-slate-600">{L(`صفحة ${current} / ${totalPages}`, `Page ${current} / ${totalPages}`)}</span>
+            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={current >= totalPages}>{L("التالي ←", "Next →")}</button>
           </div>
         </div>
       ) : null}

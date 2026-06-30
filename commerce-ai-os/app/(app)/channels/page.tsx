@@ -3,6 +3,7 @@ import ChannelMatrix, {
   type MatrixChannel,
   type MatrixProduct,
 } from "@/components/ChannelMatrix";
+import { getT } from "@/lib/i18n-server";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,9 @@ async function fetchAll(
 
 export default async function ChannelsPage() {
   const supabase = createClient();
+  const { locale } = await getT();
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
 
   const { data: channels } = await supabase
     .from("channels")
@@ -52,17 +56,24 @@ export default async function ChannelsPage() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted">
-        Per-channel publishing status. Each cell is independent — toggle Active / Draft / Not Listed.
+        {L(
+          "حالة النشر لكل قناة. كل خانة مستقلة — بدّل بين مفعّل / مسودة / غير مُدرَج.",
+          "Per-channel publishing status. Each cell is independent — toggle Active / Draft / Not Listed."
+        )}
       </p>
       {error ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
-          Couldn’t load channel data: {error.message}. Make sure you’re signed in (RLS).
+          {L(
+            `تعذّر تحميل بيانات القنوات: ${error.message}. تأكّد من تسجيل الدخول (RLS).`,
+            `Couldn’t load channel data: ${error.message}. Make sure you’re signed in (RLS).`
+          )}
         </div>
       ) : (
         <ChannelMatrix
           products={(products ?? []) as MatrixProduct[]}
           channels={(channels ?? []) as MatrixChannel[]}
           initialStatuses={initialStatuses}
+          locale={locale}
         />
       )}
     </div>

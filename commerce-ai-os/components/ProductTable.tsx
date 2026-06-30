@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import { CATEGORIES } from "@/lib/constants";
 import { setProductApproval } from "@/app/(app)/products/actions";
+import type { Locale } from "@/lib/i18n";
 
 const PAGE_SIZE = 50;
 const CHANNELS = ["Shopify", "Snoonu", "Talabat", "Rafeeq"] as const;
@@ -64,7 +65,8 @@ const apprCls = (s: string) =>
 
 // Inline approve/reject straight from the list — no need to open the product.
 // stopPropagation keeps the row-click (navigate to detail) from firing.
-function RowApproval({ id, value }: { id: string; value: string | null }) {
+function RowApproval({ id, value, en }: { id: string; value: string | null; en: boolean }) {
+  const L = (ar: string, e: string) => (en ? e : ar);
   const [val, setVal] = useState(value ?? "");
   const [busy, start] = useTransition();
   return (
@@ -83,17 +85,19 @@ function RowApproval({ id, value }: { id: string; value: string | null }) {
         });
       }}
       className={`badge cursor-pointer border-0 outline-none ${apprCls(val)} ${busy ? "opacity-50" : ""}`}
-      title="غيّر حالة الاعتماد"
+      title={L("غيّر حالة الاعتماد", "Change approval status")}
     >
-      <option value="">بدون</option>
-      <option value="Approved">معتمد</option>
-      <option value="Rejected">مرفوض</option>
+      <option value="">{L("بدون", "None")}</option>
+      <option value="Approved">{L("معتمد", "Approved")}</option>
+      <option value="Rejected">{L("مرفوض", "Rejected")}</option>
       <option value="SentAI">SentAI</option>
     </select>
   );
 }
 
-export default function ProductTable({ products }: { products: ProductRow[] }) {
+export default function ProductTable({ products, locale = "ar" }: { products: ProductRow[]; locale?: Locale }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
   const router = useRouter();
   const [q, setQ] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -162,7 +166,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
       <div className="mt-1 flex flex-wrap gap-1">
         {hits.map((v, i) => (
           <span key={i} className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
-            🎯 خيار: {v.name || "—"} · <span className="font-mono">{v.barcode}</span>
+            🎯 {L("خيار", "Option")}: {v.name || "—"} · <span className="font-mono">{v.barcode}</span>
           </span>
         ))}
       </div>
@@ -175,7 +179,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
   const VariantList = ({ p }: { p: ProductRow }) => {
     const n = q.trim().toLowerCase();
     const vs = p.variants ?? [];
-    if (vs.length === 0) return <div className="px-2 py-1 text-xs text-slate-400">لا توجد خيارات لهذا المنتج.</div>;
+    if (vs.length === 0) return <div className="px-2 py-1 text-xs text-slate-400">{L("لا توجد خيارات لهذا المنتج.", "No options for this product.")}</div>;
     return (
       <div className="space-y-1">
         {vs.map((v, i) => {
@@ -185,7 +189,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
               key={i}
               className={`flex items-center justify-between gap-3 rounded px-2 py-1 text-xs ${hit ? "bg-emerald-100 font-medium text-emerald-800" : "text-slate-600"}`}
             >
-              <span className="truncate">{hit ? "🎯 " : ""}{v.name || `خيار ${i + 1}`}</span>
+              <span className="truncate">{hit ? "🎯 " : ""}{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
               <span className="flex-none font-mono">{v.barcode || "—"}</span>
             </div>
           );
@@ -209,58 +213,58 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
         <div className="relative flex w-full sm:max-w-xs">
           <input
             className="input w-full pr-9"
-            placeholder="Search name (EN/AR), SKU, barcode (incl. variants)…"
+            placeholder={L("ابحث بالاسم (عربي/إنجليزي) أو SKU أو الباركود (شامل الخيارات)…", "Search name (EN/AR), SKU, barcode (incl. variants)…")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
           <button
             type="button"
             className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-base leading-none hover:bg-slate-100"
-            title="Scan barcode with camera"
-            aria-label="Scan barcode"
+            title={L("امسح الباركود بالكاميرا", "Scan barcode with camera")}
+            aria-label={L("مسح الباركود", "Scan barcode")}
             onClick={() => setScanning(true)}
           >
             📷
           </button>
         </div>
         <select className="input sm:max-w-xs" value={cat} onChange={(e) => setCat(e.target.value)}>
-          <option value="">All categories</option>
+          <option value="">{L("كل الفئات", "All categories")}</option>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
         </select>
         <select className="input sm:max-w-[12rem]" value={appr} onChange={(e) => setAppr(e.target.value)}>
-          <option value="">كل الحالات</option>
-          <option value="Approved">Approved · معتمد</option>
-          <option value="Rejected">Rejected · مرفوض</option>
+          <option value="">{L("كل الحالات", "All statuses")}</option>
+          <option value="Approved">{L("معتمد", "Approved")}</option>
+          <option value="Rejected">{L("مرفوض", "Rejected")}</option>
           <option value="SentAI">SentAI</option>
-          <option value="none">بدون حالة</option>
+          <option value="none">{L("بدون حالة", "No status")}</option>
         </select>
         <select className="input sm:max-w-[14rem]" value={grp} onChange={(e) => setGrp(e.target.value)}>
-          <option value="">كل المجموعات</option>
-          <option value="variants">🎚️ له خيارات · variants</option>
-          <option value="new">🆕 جديد · من سنونو</option>
-          <option value="image">🚫 مرفوض · بسبب الصورة</option>
-          <option value="unavail">⛔ مرفوض · غير متاح على سنونو</option>
+          <option value="">{L("كل المجموعات", "All groups")}</option>
+          <option value="variants">{L("🎚️ له خيارات", "🎚️ Has variants")}</option>
+          <option value="new">{L("🆕 جديد · من سنونو", "🆕 New · from Snoonu")}</option>
+          <option value="image">{L("🚫 مرفوض · بسبب الصورة", "🚫 Rejected · image issue")}</option>
+          <option value="unavail">{L("⛔ مرفوض · غير متاح على سنونو", "⛔ Rejected · unavailable on Snoonu")}</option>
         </select>
         <select className="input sm:max-w-[12rem]" value={stk} onChange={(e) => setStk(e.target.value)}>
-          <option value="">كل المخزون</option>
-          <option value="out">Out of stock · نافد</option>
-          <option value="low">Low · منخفض (1-9)</option>
-          <option value="in">In stock · متوفّر (10+)</option>
+          <option value="">{L("كل المخزون", "All stock")}</option>
+          <option value="out">{L("نافد", "Out of stock")}</option>
+          <option value="low">{L("منخفض (1-9)", "Low (1-9)")}</option>
+          <option value="in">{L("متوفّر (10+)", "In stock (10+)")}</option>
         </select>
         <select className="input sm:max-w-[12rem]" value={plat} onChange={(e) => setPlat(e.target.value)}>
-          <option value="">مفعّل + غير مفعّل</option>
-          <option value="active">مفعّل · Active</option>
-          <option value="inactive">غير مفعّل · Draft</option>
+          <option value="">{L("مفعّل + غير مفعّل", "Active + inactive")}</option>
+          <option value="active">{L("مفعّل", "Active")}</option>
+          <option value="inactive">{L("غير مفعّل", "Draft")}</option>
         </select>
         <span className="text-sm text-muted sm:ml-auto">
-          {filtered.length === products.length ? `${products.length} products` : `${filtered.length} of ${products.length}`}
+          {filtered.length === products.length ? L(`${products.length} منتج`, `${products.length} products`) : L(`${filtered.length} من ${products.length}`, `${filtered.length} of ${products.length}`)}
         </span>
       </div>
 
       {/* Cards (mobile) */}
       <div className="space-y-3 md:hidden">
         {filtered.length === 0 ? (
-          <div className="card text-center text-sm text-slate-400">No products found.</div>
+          <div className="card text-center text-sm text-slate-400">{L("لا توجد منتجات.", "No products found.")}</div>
         ) : (
           visible.map((p) => (
             <div
@@ -277,7 +281,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                     {p.name_ar ? <div className="truncate text-xs text-muted" dir="rtl">{p.name_ar}</div> : null}
                     <VariantHits p={p} />
                   </div>
-                  <RowApproval id={p.id} value={p.approval} />
+                  <RowApproval id={p.id} value={p.approval} en={en} />
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
                   {p.sku ? <span>SKU {p.sku}</span> : null}
@@ -287,7 +291,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                       onClick={(e) => { e.stopPropagation(); toggleExpand(p.id); }}
                       className="font-medium text-brand"
                     >
-                      {p.variant_count} options {isOpen(p) ? "▴" : "▾"}
+                      {p.variant_count} {L("خيار", "options")} {isOpen(p) ? "▴" : "▾"}
                     </button>
                   ) : null}
                 </div>
@@ -302,9 +306,9 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                     {p.discount_price != null ? <span className="ml-1 text-green-700">→ {p.discount_price}</span> : null}
                   </span>
                   {p.stock == null ? null
-                    : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">نافد</span>
-                    : Number(p.stock) < 10 ? <span className="text-amber-700">stock {p.stock}</span>
-                    : <span className="text-slate-600">stock {p.stock}</span>}
+                    : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
+                    : Number(p.stock) < 10 ? <span className="text-amber-700">{L("مخزون", "stock")} {p.stock}</span>
+                    : <span className="text-slate-600">{L("مخزون", "stock")} {p.stock}</span>}
                 </div>
                 <div className="flex flex-wrap gap-1 pt-0.5">
                   {CHANNELS.map((c) => (
@@ -325,23 +329,23 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
               <th className="px-3 py-3 font-medium"></th>
-              <th className="px-3 py-3 font-medium">Name EN</th>
-              <th className="px-3 py-3 font-medium">Name AR</th>
+              <th className="px-3 py-3 font-medium">{L("الاسم (EN)", "Name EN")}</th>
+              <th className="px-3 py-3 font-medium">{L("الاسم (AR)", "Name AR")}</th>
               <th className="px-3 py-3 font-medium">SKU</th>
-              <th className="px-3 py-3 font-medium">Snoonu ID</th>
-              <th className="px-3 py-3 font-medium">Barcode</th>
-              <th className="px-3 py-3 font-medium">Category</th>
-              <th className="px-3 py-3 font-medium">Approval</th>
-              <th className="px-3 py-3 font-medium">Price</th>
-              <th className="px-3 py-3 font-medium">Disc.</th>
-              <th className="px-3 py-3 font-medium">Stock</th>
-              <th className="px-3 py-3 font-medium">Var.</th>
+              <th className="px-3 py-3 font-medium">{L("معرّف سنونو", "Snoonu ID")}</th>
+              <th className="px-3 py-3 font-medium">{L("الباركود", "Barcode")}</th>
+              <th className="px-3 py-3 font-medium">{L("الفئة", "Category")}</th>
+              <th className="px-3 py-3 font-medium">{L("الاعتماد", "Approval")}</th>
+              <th className="px-3 py-3 font-medium">{L("السعر", "Price")}</th>
+              <th className="px-3 py-3 font-medium">{L("خصم", "Disc.")}</th>
+              <th className="px-3 py-3 font-medium">{L("المخزون", "Stock")}</th>
+              <th className="px-3 py-3 font-medium">{L("خيارات", "Var.")}</th>
               {CHANNELS.map((c) => (<th key={c} className="px-3 py-3 font-medium">{c}</th>))}
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={16} className="px-4 py-8 text-center text-slate-400">No products found.</td></tr>
+              <tr><td colSpan={16} className="px-4 py-8 text-center text-slate-400">{L("لا توجد منتجات.", "No products found.")}</td></tr>
             ) : (
               visible.map((p) => (
                 <Fragment key={p.id}>
@@ -359,12 +363,12 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                   </td>
                   <td className="px-3 py-3 text-slate-600">{p.barcode ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.main_category ?? "—"}</td>
-                  <td className="px-3 py-3"><RowApproval id={p.id} value={p.approval} /></td>
+                  <td className="px-3 py-3"><RowApproval id={p.id} value={p.approval} en={en} /></td>
                   <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.discount_price ?? "—"}</td>
                   <td className="px-3 py-3">
                     {p.stock == null ? <span className="text-slate-400">—</span>
-                      : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">نافد</span>
+                      : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
                       : Number(p.stock) < 10 ? <span className="text-amber-700">{p.stock}</span>
                       : <span className="text-slate-600">{p.stock}</span>}
                   </td>
@@ -373,7 +377,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleExpand(p.id); }}
                         className="font-medium text-brand hover:underline"
-                        title="عرض الخيارات"
+                        title={L("عرض الخيارات", "Show options")}
                       >
                         {p.variant_count} {isOpen(p) ? "▴" : "▾"}
                       </button>
@@ -386,7 +390,7 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
                 {isOpen(p) && (p.variants?.length ?? 0) > 0 ? (
                   <tr className="border-b border-slate-100 bg-slate-50/60">
                     <td colSpan={16} className="px-6 py-2">
-                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">خيارات المنتج</div>
+                      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{L("خيارات المنتج", "Product options")}</div>
                       <VariantList p={p} />
                     </td>
                   </tr>
@@ -401,12 +405,12 @@ export default function ProductTable({ products }: { products: ProductRow[] }) {
       {filtered.length > PAGE_SIZE ? (
         <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
           <span className="text-sm text-muted">
-            Showing {start + 1}–{Math.min(start + PAGE_SIZE, filtered.length)} of {filtered.length}
+            {L(`عرض ${start + 1}–${Math.min(start + PAGE_SIZE, filtered.length)} من ${filtered.length}`, `Showing ${start + 1}–${Math.min(start + PAGE_SIZE, filtered.length)} of ${filtered.length}`)}
           </span>
           <div className="flex items-center gap-2">
-            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={current <= 1}>← Prev</button>
-            <span className="text-sm text-slate-600">Page {current} / {totalPages}</span>
-            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={current >= totalPages}>Next →</button>
+            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={current <= 1}>{L("السابق →", "← Prev")}</button>
+            <span className="text-sm text-slate-600">{L(`صفحة ${current} / ${totalPages}`, `Page ${current} / ${totalPages}`)}</span>
+            <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={current >= totalPages}>{L("← التالي", "Next →")}</button>
           </div>
         </div>
       ) : null}

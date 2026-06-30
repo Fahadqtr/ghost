@@ -28,12 +28,12 @@ export default async function DashboardPage() {
 
       {!k.configured ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
-          Supabase isn’t configured — add your keys to see live KPIs.
+          {L("لم يتم إعداد Supabase — أضِف المفاتيح لرؤية المؤشرات الحيّة.", "Supabase isn’t configured — add your keys to see live KPIs.")}
         </div>
       ) : null}
 
       {trends?.asOf ? (
-        <p className="-mt-2 text-xs text-muted">▲▼ change since {trends.asOf}</p>
+        <p className="-mt-2 text-xs text-muted">{L(`▲▼ التغيّر منذ ${trends.asOf}`, `▲▼ change since ${trends.asOf}`)}</p>
       ) : null}
 
       {/* Staff stock movements (employees' IN/OUT + approval indicators) */}
@@ -84,65 +84,65 @@ export default async function DashboardPage() {
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Kpi title="Total products" value={nf(k.totalProducts)} icon="📦" hint="In the catalog"
+        <Kpi title={L("إجمالي المنتجات", "Total products")} value={nf(k.totalProducts)} icon="📦" hint={L("في الكتالوج", "In the catalog")}
           delta={trends?.totalProducts ?? undefined} goodWhen="up" />
-        <Kpi title="Published across channels" value={nf(k.publishedActive)} icon="🚀"
-          hint={`Active listings on ${k.publishedChannels} channel${k.publishedChannels === 1 ? "" : "s"}`} accent="green"
+        <Kpi title={L("منشور عبر القنوات", "Published across channels")} value={nf(k.publishedActive)} icon="🚀"
+          hint={L(`إعلانات فعّالة على ${k.publishedChannels} قناة`, `Active listings on ${k.publishedChannels} channel${k.publishedChannels === 1 ? "" : "s"}`)} accent="green"
           delta={trends?.publishedActive ?? undefined} goodWhen="up" />
-        <Kpi title="Categories · Brands" value={`${k.categoriesCount} · ${k.brandsCount}`} icon="🗂️"
-          hint={`${nf(k.productsWithBrand)} products have a brand assigned`} />
-        <Kpi title="Featured · Promoted" value={`${nf(k.featuredCount)} · ${nf(k.promotedCount)}`} icon="⭐"
+        <Kpi title={L("الفئات · العلامات", "Categories · Brands")} value={`${k.categoriesCount} · ${k.brandsCount}`} icon="🗂️"
+          hint={L(`${nf(k.productsWithBrand)} منتج له علامة تجارية`, `${nf(k.productsWithBrand)} products have a brand assigned`)} />
+        <Kpi title={L("مميّز · مروّج", "Featured · Promoted")} value={`${nf(k.featuredCount)} · ${nf(k.promotedCount)}`} icon="⭐"
           hint="is_featured · is_promoted" />
         {k.inventoryTracked ? (
-          <Kpi title="Inventory units" value={nf(k.inventoryUnits)} icon="🏷️"
-            hint={`across ${nf(k.inventoryRows)} tracked products`} />
+          <Kpi title={L("وحدات المخزون", "Inventory units")} value={nf(k.inventoryUnits)} icon="🏷️"
+            hint={L(`عبر ${nf(k.inventoryRows)} منتج متتبَّع`, `across ${nf(k.inventoryRows)} tracked products`)} />
         ) : (
-          <Kpi title="Inventory" value="—" icon="🏷️"
-            hint={`${nf(k.inventoryRows)} products seeded at 50 · pending stocktake`} accent="muted" />
+          <Kpi title={L("المخزون", "Inventory")} value="—" icon="🏷️"
+            hint={L(`${nf(k.inventoryRows)} منتج مبدئيًا 50 · بانتظار الجرد`, `${nf(k.inventoryRows)} products seeded at 50 · pending stocktake`)} accent="muted" />
         )}
       </div>
 
       {/* Catalog health strip — data quality at a glance */}
-      <Section title="Catalog health">
+      <Section title={L("جودة الكتالوج", "Catalog health")}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <HealthChip label="Missing price" value={k.missingPrice} />
-          <HealthChip label="Missing image" value={k.missingImage} />
-          <HealthChip label="Missing barcode" value={k.missingBarcode} />
-          <HealthChip label="Missing category" value={k.missingCategory} />
+          <HealthChip label={L("بدون سعر", "Missing price")} value={k.missingPrice} />
+          <HealthChip label={L("بدون صورة", "Missing image")} value={k.missingImage} />
+          <HealthChip label={L("بدون باركود", "Missing barcode")} value={k.missingBarcode} />
+          <HealthChip label={L("بدون فئة", "Missing category")} value={k.missingCategory} />
         </div>
         {healthIssues === 0 ? (
-          <p className="mt-3 text-sm text-green-600">All products have a price, image, barcode, and category 🎉</p>
+          <p className="mt-3 text-sm text-green-600">{L("كل المنتجات لها سعر وصورة وباركود وفئة 🎉", "All products have a price, image, barcode, and category 🎉")}</p>
         ) : (
-          <p className="mt-3 text-sm text-amber-700">{nf(healthIssues)} field gap{healthIssues === 1 ? "" : "s"} to fix.</p>
+          <p className="mt-3 text-sm text-amber-700">{L(`${nf(healthIssues)} حقل ناقص للإصلاح.`, `${nf(healthIssues)} field gap${healthIssues === 1 ? "" : "s"} to fix.`)}</p>
         )}
       </Section>
 
       {/* Breakdowns */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Section title={`Products per category (${k.categoryBreakdown.length})`}>
+        <Section title={L(`المنتجات لكل فئة (${k.categoryBreakdown.length})`, `Products per category (${k.categoryBreakdown.length})`)}>
           <Bars items={k.categoryBreakdown} color="bg-brand" />
         </Section>
 
-        <Section title="Brands by product count (top 10)">
+        <Section title={L("العلامات حسب عدد المنتجات (أعلى 10)", "Brands by product count (top 10)")}>
           {k.brandBreakdown.length === 0 ? (
-            <Empty text="No products have a brand assigned yet." />
+            <Empty text={L("لا يوجد منتجات لها علامة تجارية بعد.", "No products have a brand assigned yet.")} />
           ) : (
             <Bars items={k.brandBreakdown} color="bg-indigo-500" />
           )}
         </Section>
       </div>
 
-      <Section title="Channel listing status (per channel)">
+      <Section title={L("حالة الإدراج لكل قناة", "Channel listing status (per channel)")}>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[520px] text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
-                <th className="px-3 py-2 font-medium">Channel</th>
-                <th className="px-3 py-2 font-medium">Active</th>
-                <th className="px-3 py-2 font-medium">Draft</th>
-                <th className="px-3 py-2 font-medium">Not Listed</th>
-                <th className="px-3 py-2 font-medium">Total</th>
-                <th className="px-3 py-2 font-medium">Active share</th>
+                <th className="px-3 py-2 font-medium">{L("القناة", "Channel")}</th>
+                <th className="px-3 py-2 font-medium">{L("فعّال", "Active")}</th>
+                <th className="px-3 py-2 font-medium">{L("مسودة", "Draft")}</th>
+                <th className="px-3 py-2 font-medium">{L("غير مُدرَج", "Not Listed")}</th>
+                <th className="px-3 py-2 font-medium">{L("الإجمالي", "Total")}</th>
+                <th className="px-3 py-2 font-medium">{L("نسبة الفعّال", "Active share")}</th>
               </tr>
             </thead>
             <tbody>
