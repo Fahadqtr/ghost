@@ -355,7 +355,7 @@ function AddProductTab({ locale }: { locale: Locale }) {
             <span className="text-xs text-muted">{L("يتولّد العنوان والوصف تلقائيًا", "Title & description auto-generate")}</span>
           </>
         )}
-        <input type="file" accept="image/*" capture="environment" className="hidden"
+        <input type="file" accept="image/*" className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
       </label>
 
