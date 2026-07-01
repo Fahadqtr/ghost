@@ -465,6 +465,42 @@ function ProductsTab({ locale }: { locale: Locale }) {
   );
 }
 
+// Downscale + re-encode any photo to a modest JPEG in the browser. Keeps the
+// upload small/fast and normalizes odd formats (e.g. HEIC) to JPEG. Falls back
+// to a plain read if the canvas path fails.
+async function prepareImage(file: File): Promise<{ dataUrl: string; base64: string; mediaType: string }> {
+  const readRaw = () => new Promise<{ dataUrl: string; base64: string; mediaType: string }>((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => { const d = String(r.result || ""); res({ dataUrl: d, base64: d.replace(/^data:[^,]+,/, ""), mediaType: file.type || "image/jpeg" }); };
+    r.onerror = () => rej(new Error("read failed"));
+    r.readAsDataURL(file);
+  });
+  const objUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = () => rej(new Error("decode failed"));
+      im.src = objUrl;
+    });
+    const maxDim = 1600;
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no ctx");
+    ctx.drawImage(img, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+    return { dataUrl, base64: dataUrl.replace(/^data:[^,]+,/, ""), mediaType: "image/jpeg" };
+  } catch {
+    return readRaw(); // canvas unsupported / decode failed → send as-is
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
 /* ── Add-product tab (photo → AI draft → submit → copy fields) ─────────── */
 function AddProductTab({ locale }: { locale: Locale }) {
   const en = locale === "en";
@@ -481,29 +517,34 @@ function AddProductTab({ locale }: { locale: Locale }) {
 
   const onFile = (file: File) => {
     setErr("");
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || "");
-      setPreview(dataUrl);
-      const b64 = dataUrl.replace(/^data:[^,]+,/, "");
-      start(async () => {
-        const r = await staffGenerateProductDraft(b64, file.type);
+    // Everything is inside the transition + try/catch so a bad photo or a failed
+    // upload can NEVER crash the page (was white-screening on some phone photos).
+    start(async () => {
+      try {
+        const payload = await prepareImage(file);
+        setPreview(payload.dataUrl);
+        const r = await staffGenerateProductDraft(payload.base64, payload.mediaType);
         if ("error" in r) { setErr(r.error); return; }
         setImageUrl(r.imageUrl);
         setDraft(r.draft);
         setPhase("form");
-      });
-    };
-    reader.readAsDataURL(file);
+      } catch {
+        setErr(L("تعذّر معالجة الصورة — جرّب صورة ثانية أو أصغر.", "Couldn't process the image — try another or smaller photo."));
+      }
+    });
   };
 
   const submit = () => {
     setErr("");
     start(async () => {
-      const r = await staffAddProduct({ ...draft, price, stock_quantity: stock, image_url: imageUrl });
-      if ("error" in r) { setErr(r.error); return; }
-      setCreated(r.product);
-      setPhase("done");
+      try {
+        const r = await staffAddProduct({ ...draft, price, stock_quantity: stock, image_url: imageUrl });
+        if ("error" in r) { setErr(r.error); return; }
+        setCreated(r.product);
+        setPhase("done");
+      } catch {
+        setErr(L("تعذّر حفظ المنتج — حاول مرة ثانية.", "Couldn't save the product — try again."));
+      }
     });
   };
 
