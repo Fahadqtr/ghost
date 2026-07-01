@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
 import { hashPin, isLegacyPlaintextPin } from "@/lib/staff/pin";
+import { parsePermissions, type StaffPermission } from "@/lib/staff/permissions";
 
 // The PIN is never returned to the client — it's stored hashed and shown to the
 // manager only once, at create/reset time. `hasCode` just tells the UI a code
@@ -13,6 +14,7 @@ export type StaffMember = {
   name: string;
   hasCode: boolean;
   active: boolean;
+  permissions: StaffPermission[];
   created_at: string | null;
 };
 
@@ -28,16 +30,17 @@ export async function listStaff(): Promise<{ members: StaffMember[]; ready: bool
   if (unauth) return { members: [], ready: true, error: unauth.error };
   const admin = adminClient();
   if (!admin) return { members: [], ready: true, error: NO_DB };
+  // select("*") so a missing permissions column (pre-migration) doesn't fail.
   const { data, error } = await admin
     .from("staff_members")
-    .select("id, name, pin, active, created_at")
+    .select("*")
     .order("created_at", { ascending: true });
   if (error) {
     // 42P01 = undefined_table → migration not run yet.
     if ((error as any).code === "42P01" || /staff_members/.test(error.message)) return { members: [], ready: false };
     return { members: [], ready: true, error: error.message };
   }
-  const rows = (data ?? []) as { id: string; name: string; pin: string | null; active: boolean; created_at: string | null }[];
+  const rows = (data ?? []) as { id: string; name: string; pin: string | null; active: boolean; permissions?: unknown; created_at: string | null }[];
 
   // Upgrade any employee still on a legacy plaintext PIN to its hash so codes
   // never linger in the DB as cleartext once the owner has opened this page.
@@ -51,9 +54,29 @@ export async function listStaff(): Promise<{ members: StaffMember[]; ready: bool
     name: r.name,
     hasCode: !!r.pin,
     active: r.active,
+    permissions: parsePermissions(r.permissions),
     created_at: r.created_at,
   }));
   return { members, ready: true };
+}
+
+// Set the granted capabilities for one employee. Takes effect on their /staff
+// page immediately (permissions are re-read live per action).
+export async function setStaffPermissions(id: string, permissions: string[]) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const clean = parsePermissions(permissions);
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const { error } = await admin.from("staff_members").update({ permissions: clean }).eq("id", id);
+  if (error) {
+    if ((error as any).code === "42703" || /permissions/.test(error.message)) {
+      return { error: "عمود الصلاحيات غير موجود — شغّل supabase/staff_permissions.sql أولاً." };
+    }
+    return { error: error.message };
+  }
+  revalidatePath("/team");
+  return { ok: true as const, permissions: clean };
 }
 
 export async function addStaff(name: string, pin: string) {

@@ -1,24 +1,28 @@
-import { cookies } from "next/headers";
-import { verifyStaff, STAFF_COOKIE } from "@/lib/staff/session";
 import { getLocale } from "@/lib/i18n-server";
 import StaffClient from "./StaffClient";
-import { staffToday } from "./actions";
+import { staffToday, staffMe } from "./actions";
+import { DEFAULT_PERMISSIONS, type StaffPermission } from "@/lib/staff/permissions";
 
 export const dynamic = "force-dynamic";
 
-// Public, PIN-gated stock IN/OUT page for store employees. Lives OUTSIDE the
-// (app) route group so it never shows the admin shell (no prices, no Malak).
+// Public, PIN-gated employee page. Lives OUTSIDE the (app) route group so it
+// never shows the admin shell. What each employee sees is driven by the
+// permissions the owner granted them on /team.
 export default async function StaffPage() {
-  let who: { name: string } | null = null;
+  let name: string | null = null;
+  let perms: StaffPermission[] = [...DEFAULT_PERMISSIONS];
   let today: Awaited<ReturnType<typeof staffToday>>["rows"] = [];
   try {
-    who = verifyStaff((await cookies()).get(STAFF_COOKIE)?.value);
-    if (who) today = (await staffToday()).rows;
+    const me = await staffMe();
+    if (me) {
+      name = me.name;
+      perms = me.perms;
+      today = (await staffToday()).rows;
+    }
   } catch {
     // signing secret / service-role not set on this deploy → render the gate
     // (or an empty desk) instead of crashing the page.
-    who = who ?? null;
     today = [];
   }
-  return <StaffClient initialName={who?.name ?? null} initialToday={today} locale={await getLocale()} />;
+  return <StaffClient initialName={name} initialPerms={perms} initialToday={today} locale={await getLocale()} />;
 }

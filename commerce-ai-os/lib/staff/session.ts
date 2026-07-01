@@ -24,13 +24,19 @@ function b64urlDecode(s: string): Buffer {
   return Buffer.from(t, "base64");
 }
 
-export function signStaff(name: string): string {
-  const payload = b64url(Buffer.from(JSON.stringify({ name, ts: Date.now() })));
+export type StaffSession = { name: string; id?: string | null; perms?: string[] };
+
+export function signStaff(input: string | StaffSession): string {
+  const s: StaffSession = typeof input === "string" ? { name: input } : input;
+  const body: Record<string, unknown> = { name: s.name, ts: Date.now() };
+  if (s.id) body.id = s.id;
+  if (Array.isArray(s.perms)) body.perms = s.perms;
+  const payload = b64url(Buffer.from(JSON.stringify(body)));
   const mac = b64url(crypto.createHmac("sha256", secret()).update(payload).digest());
   return `${payload}.${mac}`;
 }
 
-export function verifyStaff(token: string | undefined, maxAgeMs = MAX_AGE_MS): { name: string } | null {
+export function verifyStaff(token: string | undefined, maxAgeMs = MAX_AGE_MS): StaffSession | null {
   if (!token) return null;
   const [payload, mac] = token.split(".");
   if (!payload || !mac) return null;
@@ -42,7 +48,11 @@ export function verifyStaff(token: string | undefined, maxAgeMs = MAX_AGE_MS): {
     const obj = JSON.parse(b64urlDecode(payload).toString("utf8"));
     if (typeof obj?.ts !== "number" || Date.now() - obj.ts > maxAgeMs) return null;
     if (typeof obj?.name !== "string" || !obj.name) return null;
-    return { name: obj.name };
+    return {
+      name: obj.name,
+      id: typeof obj.id === "string" ? obj.id : null,
+      perms: Array.isArray(obj.perms) ? obj.perms.map(String) : undefined,
+    };
   } catch {
     return null;
   }
