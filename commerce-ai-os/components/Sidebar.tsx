@@ -10,9 +10,9 @@ export default function Sidebar({ onNavigate, locale = "ar" }: { onNavigate?: ()
   const en = locale === "en";
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
+    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-[#efe3d6] bg-white">
       <div className="flex items-center gap-2 px-5 py-5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-lg font-bold text-white">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-lg font-bold text-white">
           M
         </div>
         <div className="leading-tight">
@@ -38,7 +38,7 @@ export default function Sidebar({ onNavigate, locale = "ar" }: { onNavigate?: ()
                   className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                     active
                       ? "bg-brand-light text-brand-dark"
-                      : "text-slate-600 hover:bg-slate-50"
+                      : "text-[#6b5344] hover:bg-[#faf3ec]"
                   }`}
                 >
                   <span className="text-base">{item.icon}</span>
@@ -50,7 +50,7 @@ export default function Sidebar({ onNavigate, locale = "ar" }: { onNavigate?: ()
         ))}
       </nav>
 
-      <div className="border-t border-slate-200 px-5 py-3">
+      <div className="border-t border-[#efe3d6] px-5 py-3">
         <p className="text-xs text-muted">Phase 1 · MVP</p>
       </div>
     </aside>
