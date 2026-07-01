@@ -343,6 +343,25 @@ export async function staffAskMalak(history: StaffChatMsg[]): Promise<{ text: st
 
 /* ── Add product (staff) — gated by "add_product"; lands as PENDING ──────── */
 const PRODUCT_BUCKET = "product-images";
+
+// Canonical house-style example (from the owner) that anchors the vision draft:
+// Arabic title = "<arabic> - <english>", descriptions open with a sentence then
+// 🔸 / ✔️ bullets and end with Color + Includes lines.
+const HOUSE_STYLE_EXAMPLE = JSON.stringify({
+  name_ar: "طقم رود ليب تينت جوافا سبرتز مع كفر الهاتف - Rhode Guava Spritz Set",
+  name_en: "Rhode Guava Spritz Lip Tint & Phone Case Set",
+  description_ar:
+    "احصلي على إطلالة عصرية مع طقم رود جوافا سبرتز الذي يجمع بين ليب تينت رود الشهير وكفر الهاتف المخصص لحمل المنتج بسهولة وأناقة طوال اليوم.\n" +
+    "🔸 ليب تينت رود لون جوافا سبرتز\n🔸 كفر رود بتصميم حامل للمنتج\n🔸 لون منعش مستوحى من الجوافة الوردية\n🔸 يمنح الشفاه مظهراً لامعاً وطبيعياً\n🔸 تصميم أنيق ومثالي للاستخدام اليومي\n🔸 هدية رائعة لعشاق منتجات Rhode\n" +
+    "اللون: Guava Spritz\nالمحتويات: ليب تينت + كفر هاتف رود",
+  description_en:
+    "Enjoy the perfect combination of style and convenience with the Rhode Guava Spritz Set, featuring the iconic Rhode Lip Tint and the signature phone case designed to hold your lip product on the go.\n" +
+    "✔️ Rhode Lip Tint in Guava Spritz shade\n✔️ Signature Rhode phone case holder\n✔️ Fresh pink guava-inspired color\n✔️ Gives lips a glossy natural look\n✔️ Stylish and practical everyday accessory\n✔️ Perfect gift for Rhode lovers\n" +
+    "Color: Guava Spritz\nIncludes: Rhode Lip Tint + Rhode Phone Case",
+  keywords_ar: "رود, ليب تينت, جوافا سبرتز, كفر هاتف, مكياج شفاه, هدية",
+  keywords_en: "Rhode, lip tint, guava spritz, phone case, lip makeup, gift set",
+  main_category: "Rhode Products Section",
+}, null, 0);
 const IMG_EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
 
 // Next mk<N> SKU using the service-role client (staff aren't Supabase users).
@@ -406,28 +425,19 @@ export async function staffGenerateProductDraft(base64: string, mediaType: strin
   const empty: ProductDraft = { name_en: "", name_ar: "", description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", main_category: "" };
   if (!process.env.ANTHROPIC_API_KEY) return { imageUrl, draft: empty };
 
-  // House-style few-shot: a handful of real catalog entries so the model mirrors
-  // the store's existing tone/length.
-  let style = "";
-  try {
-    const { data } = await admin
-      .from("products")
-      .select("name_en, name_ar, description_en, description_ar")
-      .not("description_en", "is", null)
-      .limit(6);
-    const rows = (data ?? []).filter((r: any) => r.name_en || r.name_ar);
-    if (rows.length) {
-      style = "\nأمثلة من كتالوجنا (قلّد نفس الأسلوب والطول واللهجة):\n" +
-        rows.map((r: any) => JSON.stringify({ name_en: r.name_en, name_ar: r.name_ar, description_en: r.description_en, description_ar: r.description_ar })).join("\n");
-    }
-  } catch { /* style is optional */ }
-
   const prompt =
-    "أنت مساعد كتالوج تجارة إلكترونية لمتجر Malika's Universe (جمال وكورية، قطر). حلّل صورة المنتج وأرجِع JSON فقط بهذه الحقول بالضبط:\n" +
-    '{"name_en":"","name_ar":"","description_en":"","description_ar":"","keywords_en":"","keywords_ar":"","main_category":""}\n' +
-    "- name: عنوان موجز وجذّاب (≤ 70 حرفاً).\n- description: جملتين إلى ثلاث تسويقية.\n- keywords: 5 إلى 8 كلمات مفصولة بفواصل.\n" +
-    `- main_category: اختر الأنسب من هذه القائمة فقط: ${CATEGORIES.join(", ")}.\n` +
-    "العربية بالعربية والإنجليزية بالإنجليزية. أجب بـ JSON فقط." + style;
+    "أنت مساعد كتالوج لمتجر Malika's Universe (جمال وكورية، قطر). حلّل صورة المنتج وأرجِع JSON فقط بهذه الحقول بالضبط:\n" +
+    '{"name_en":"","name_ar":"","description_en":"","description_ar":"","keywords_en":"","keywords_ar":"","main_category":""}\n\n' +
+    "اتبع أسلوب متجرنا بدقة:\n" +
+    "• name_ar = الاسم بالعربية ثم مسافة وشرطة ثم الاسم بالإنجليزية (مثل: «... - Rhode Guava Spritz Set»).\n" +
+    "• name_en = اسم إنجليزي واضح ومختصر.\n" +
+    "• description_ar = جملة تسويقية افتتاحية، ثم من 4 إلى 6 نقاط تبدأ كل واحدة بـ 🔸 وسطر جديد، ثم سطر «اللون: ...»، ثم سطر «المحتويات: ...».\n" +
+    "• description_en = جملة افتتاحية، ثم نقاط تبدأ كل واحدة بـ ✔️ وسطر جديد، ثم «Color: ...»، ثم «Includes: ...».\n" +
+    "• استخدم أسطر جديدة فعلية (\\n) داخل الوصف.\n" +
+    "• keywords = 5 إلى 8 كلمات مفصولة بفواصل.\n" +
+    `• main_category = الأنسب من هذه القائمة فقط: ${CATEGORIES.join(", ")}.\n\n` +
+    "مثال كامل بالأسلوب المطلوب بالضبط:\n" + HOUSE_STYLE_EXAMPLE + "\n\n" +
+    "أجب بـ JSON صحيح فقط بدون أي نص إضافي.";
 
   try {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
