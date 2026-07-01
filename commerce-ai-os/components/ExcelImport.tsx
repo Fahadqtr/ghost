@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import * as XLSX from "xlsx";
 import { importProducts, type ImportRow } from "@/app/(app)/import-export/actions";
 import type { Locale } from "@/lib/i18n";
@@ -44,9 +45,10 @@ export default function ExcelImport({ locale = "ar" }: { locale?: Locale }) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [isSnoonu, setIsSnoonu] = useState(false);
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    setError(null); setResult(null); setRows([]); setUnmapped([]);
+    setError(null); setResult(null); setRows([]); setUnmapped([]); setIsSnoonu(false);
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
@@ -60,6 +62,9 @@ export default function ExcelImport({ locale = "ar" }: { locale?: Locale }) {
       if (raw.length === 0) { setError(L("الورقة الأولى لا تحتوي على أي صفوف.", "The first sheet has no rows.")); return; }
 
       const headers = Object.keys(raw[0]);
+      // A Snoonu "AllExportData" file → wrong importer. Route to Snoonu Sync
+      // instead of mangling it here (it matches by SPI id, not by SKU).
+      if (headers.some((h) => normalize(h) === "spiuniqueidentifier")) { setIsSnoonu(true); return; }
       const mapping: Record<string, string> = {};
       const notMapped: string[] = [];
       for (const h of headers) {
@@ -109,6 +114,14 @@ export default function ExcelImport({ locale = "ar" }: { locale?: Locale }) {
 
       {error ? <pre className="whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</pre> : null}
       {result ? <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{result}</p> : null}
+
+      {isSnoonu ? (
+        <div className="space-y-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-3 text-sm">
+          <p className="font-semibold text-violet-900">{L("هذا ملف تصدير من سنونو 🔄", "This is a Snoonu export 🔄")}</p>
+          <p className="text-xs text-violet-800">{L("هذا الملف يُطابَق عبر معرّف سنونو (SPI) مب عبر SKU — استخدم صفحة «مزامنة سنونو»: تطابق بالـ id، تعرض الفروق، وتضيف المنتجات الجديدة ببياناتها.", "This file is matched by Snoonu ID (SPI), not by SKU — use the Snoonu Sync page: it matches by id, shows a diff, and adds new products with their data.")}</p>
+          <Link href="/import-export/snoonu-sync" className="inline-flex rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white">{L("← افتح مزامنة سنونو", "Open Snoonu Sync →")}</Link>
+        </div>
+      ) : null}
 
       {rows.length > 0 ? (
         <>
