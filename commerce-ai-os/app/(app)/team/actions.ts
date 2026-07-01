@@ -3,11 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
+import { hashPin, isLegacyPlaintextPin } from "@/lib/staff/pin";
 
+// The PIN is never returned to the client — it's stored hashed and shown to the
+// manager only once, at create/reset time. `hasCode` just tells the UI a code
+// is set so it can render a masked placeholder.
 export type StaffMember = {
   id: string;
   name: string;
-  pin: string;
+  hasCode: boolean;
   active: boolean;
   created_at: string | null;
 };
@@ -33,7 +37,23 @@ export async function listStaff(): Promise<{ members: StaffMember[]; ready: bool
     if ((error as any).code === "42P01" || /staff_members/.test(error.message)) return { members: [], ready: false };
     return { members: [], ready: true, error: error.message };
   }
-  return { members: (data ?? []) as StaffMember[], ready: true };
+  const rows = (data ?? []) as { id: string; name: string; pin: string | null; active: boolean; created_at: string | null }[];
+
+  // Upgrade any employee still on a legacy plaintext PIN to its hash so codes
+  // never linger in the DB as cleartext once the owner has opened this page.
+  const legacy = rows.filter((r) => isLegacyPlaintextPin(r.pin));
+  for (const r of legacy) {
+    await admin.from("staff_members").update({ pin: hashPin(r.pin as string) }).eq("id", r.id);
+  }
+
+  const members: StaffMember[] = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    hasCode: !!r.pin,
+    active: r.active,
+    created_at: r.created_at,
+  }));
+  return { members, ready: true };
 }
 
 export async function addStaff(name: string, pin: string) {
@@ -45,10 +65,28 @@ export async function addStaff(name: string, pin: string) {
   if (!/^\d{4,8}$/.test(code)) return { error: "الرمز لازم 4–8 أرقام." };
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
-  const { error } = await admin.from("staff_members").insert({ name: nm, pin: code, active: true });
+  const { error } = await admin.from("staff_members").insert({ name: nm, pin: hashPin(code), active: true });
   if (error) {
     if ((error as any).code === "23505" || /duplicate|unique/i.test(error.message)) return { error: "هذا الرمز مستخدم لموظف آخر — اختر رمزًا غيره." };
     if ((error as any).code === "42P01") return { error: "الجدول غير موجود — شغّل supabase/staff_members.sql أولاً." };
+    return { error: error.message };
+  }
+  revalidatePath("/team");
+  return { ok: true as const };
+}
+
+// Set a new code for an existing employee. The manager sees it once (in the
+// caller's flash message); only the hash is stored.
+export async function resetStaffPin(id: string, pin: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const code = String(pin || "").trim();
+  if (!/^\d{4,8}$/.test(code)) return { error: "الرمز لازم 4–8 أرقام." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const { error } = await admin.from("staff_members").update({ pin: hashPin(code) }).eq("id", id);
+  if (error) {
+    if ((error as any).code === "23505" || /duplicate|unique/i.test(error.message)) return { error: "هذا الرمز مستخدم لموظف آخر — اختر رمزًا غيره." };
     return { error: error.message };
   }
   revalidatePath("/team");

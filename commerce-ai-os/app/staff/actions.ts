@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { applyMovement } from "@/lib/inventory/movements";
 import { signStaff, verifyStaff, STAFF_COOKIE } from "@/lib/staff/session";
+import { hashPin } from "@/lib/staff/pin";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
 function pinOk(pin: string): boolean {
@@ -36,12 +37,21 @@ export async function staffLogin(name: string, pin: string): Promise<{ error: st
   if (!code) return { error: "أدخل الرمز." };
 
   // 1) Per-employee code (staff_members table). The code identifies WHO — the
-  // name comes from the record, so attribution can't be spoofed.
+  // name comes from the record, so attribution can't be spoofed. PINs are stored
+  // as a keyed hash, so we look up by hash first; any employee still on a legacy
+  // plaintext PIN is matched by raw code and upgraded to a hash on the spot.
   let resolved: string | null = null;
   const admin = adminClient();
   if (admin) {
-    const { data } = await admin.from("staff_members").select("name, active").eq("pin", code).limit(1);
-    const m = (data ?? [])[0];
+    const codeHash = hashPin(code);
+    let { data } = await admin.from("staff_members").select("id, name, active").eq("pin", codeHash).limit(1);
+    let m = (data ?? [])[0];
+    if (!m) {
+      ({ data } = await admin.from("staff_members").select("id, name, active").eq("pin", code).limit(1));
+      m = (data ?? [])[0];
+      // Lazy migration: rewrite the matched legacy plaintext row to its hash.
+      if (m) await admin.from("staff_members").update({ pin: codeHash }).eq("id", m.id);
+    }
     if (m) {
       if (!m.active) return { error: "هذا الحساب معطّل — راجع المدير." };
       resolved = String(m.name);

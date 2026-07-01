@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCeoKpis, type NameCount, type ChannelBreak } from "@/lib/dashboard";
 import { getStaffStats } from "@/lib/staff/stats";
+import { getLowStockAlerts, type LowStockItem } from "@/lib/inventory/lowStock";
 import { getT } from "@/lib/i18n-server";
 import { recordAndDiffSnapshot } from "@/lib/kpiSnapshots";
 import DashboardRefresh from "@/components/DashboardRefresh";
@@ -12,6 +13,7 @@ const nf = (n: number) => new Intl.NumberFormat("en-US").format(n);
 export default async function DashboardPage() {
   const k = await getCeoKpis();
   const staff = await getStaffStats();
+  const alerts = await getLowStockAlerts();
   const { locale } = await getT();
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
@@ -34,6 +36,51 @@ export default async function DashboardPage() {
 
       {trends?.asOf ? (
         <p className="-mt-2 text-xs text-muted">{L(`▲▼ التغيّر منذ ${trends.asOf}`, `▲▼ change since ${trends.asOf}`)}</p>
+      ) : null}
+
+      {/* Low-stock alerts — the products that need restocking, front and centre */}
+      {alerts.configured && alerts.items.length > 0 ? (
+        <section dir={en ? "ltr" : "rtl"} className={`card border-amber-200 bg-amber-50/60 ${en ? "" : "text-right"}`}>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-amber-900">
+              ⚠️ {L("تنبيهات المخزون المنخفض", "Low-stock alerts")}
+              <span className="ms-2 text-xs font-normal text-amber-700">
+                {alerts.outCount > 0 ? L(`${alerts.outCount} نافد`, `${alerts.outCount} out`) : null}
+                {alerts.outCount > 0 && alerts.lowCount > 0 ? " · " : null}
+                {alerts.lowCount > 0 ? L(`${alerts.lowCount} منخفض`, `${alerts.lowCount} low`) : null}
+              </span>
+            </h3>
+            <Link href="/inventory/out-of-stock" className="text-xs text-brand hover:underline whitespace-nowrap">{L("عرض الكل ←", "View all →")}</Link>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {alerts.items.map((it: LowStockItem, i: number) => {
+              const body = (
+                <>
+                  <span className="h-9 w-9 shrink-0 overflow-hidden rounded-md border border-amber-200 bg-white">
+                    {it.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={it.image} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="flex h-full w-full items-center justify-center text-amber-300">📦</span>
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-ink">{(en ? it.name : it.nameAr) || it.name || it.sku || "—"}</span>
+                    <span className="block text-[11px] text-amber-700">
+                      {it.out ? L("نافد", "Out of stock") : L(`متبقّي ${nf(it.stock)} · الحد ${nf(it.threshold)}`, `${nf(it.stock)} left · limit ${nf(it.threshold)}`)}
+                    </span>
+                  </span>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold ${it.out ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"}`}>{it.out ? "0" : nf(it.stock)}</span>
+                </>
+              );
+              return it.productId ? (
+                <Link key={it.productId} href={`/products/${it.productId}`} className="flex items-center gap-2 rounded-lg border border-amber-200 bg-white p-2 hover:bg-amber-50">{body}</Link>
+              ) : (
+                <div key={`row-${i}`} className="flex items-center gap-2 rounded-lg border border-amber-200 bg-white p-2">{body}</div>
+              );
+            })}
+          </div>
+        </section>
       ) : null}
 
       {/* Staff stock movements (employees' IN/OUT + approval indicators) */}
