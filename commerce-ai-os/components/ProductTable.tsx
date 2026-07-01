@@ -95,7 +95,7 @@ function RowApproval({ id, value, en }: { id: string; value: string | null; en: 
   );
 }
 
-export default function ProductTable({ products, locale = "ar" }: { products: ProductRow[]; locale?: Locale }) {
+export default function ProductTable({ products, locale = "ar", initialGroup = "" }: { products: ProductRow[]; locale?: Locale; initialGroup?: string }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const router = useRouter();
@@ -105,7 +105,7 @@ export default function ProductTable({ products, locale = "ar" }: { products: Pr
   const [appr, setAppr] = useState("");
   const [stk, setStk] = useState("");
   const [plat, setPlat] = useState("");
-  const [grp, setGrp] = useState("");
+  const [grp, setGrp] = useState(initialGroup);
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggleExpand = (id: string) =>
@@ -138,6 +138,7 @@ export default function ProductTable({ products, locale = "ar" }: { products: Pr
       const rr = p.rejection_reason ?? "";
       const matchesGrp = !grp || (
         grp === "new" ? (p.notes ?? "").startsWith("Imported from Snoonu sync")
+        : grp === "staff_pending" ? (!p.approval && (p.notes ?? "").startsWith("staff-new"))
         : grp === "image" ? rr.includes("صورة")
         : grp === "unavail" ? rr.includes("غير متاح")
         : grp === "variants" ? p.variant_count > 0
@@ -240,6 +241,7 @@ export default function ProductTable({ products, locale = "ar" }: { products: Pr
         </select>
         <select className="input sm:max-w-[14rem]" value={grp} onChange={(e) => setGrp(e.target.value)}>
           <option value="">{L("كل المجموعات", "All groups")}</option>
+          <option value="staff_pending">{L("🆕 من الموظفين · بانتظار الاعتماد", "🆕 From staff · pending approval")}</option>
           <option value="variants">{L("🎚️ له خيارات", "🎚️ Has variants")}</option>
           <option value="new">{L("🆕 جديد · من سنونو", "🆕 New · from Snoonu")}</option>
           <option value="image">{L("🚫 مرفوض · بسبب الصورة", "🚫 Rejected · image issue")}</option>

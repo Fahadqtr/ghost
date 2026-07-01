@@ -17,11 +17,12 @@ async function fetchAll(q: (from: number, to: number) => any): Promise<any[]> {
   return out;
 }
 
-export default async function ProductsPage() {
+export default async function ProductsPage({ searchParams }: { searchParams: Promise<{ review?: string }> }) {
   const supabase = createClient();
   const { locale } = await getT();
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
+  const initialGroup = (await searchParams).review === "staff" ? "staff_pending" : "";
 
   let products: ProductRow[] = [];
   let errMsg: string | null = null;
@@ -104,7 +105,7 @@ export default async function ProductsPage() {
           {L(`تعذّر تحميل المنتجات: ${errMsg}. تأكّد أنك مسجّل الدخول (RLS).`, `Couldn’t load products: ${errMsg}. Make sure you’re signed in (RLS).`)}
         </div>
       ) : (
-        <ProductTable products={products} locale={locale} />
+        <ProductTable products={products} locale={locale} initialGroup={initialGroup} />
       )}
     </div>
   );

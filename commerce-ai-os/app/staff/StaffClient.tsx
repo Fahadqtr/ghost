@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffProducts, staffAskMalak,
-  type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg,
+  staffGenerateProductDraft, staffAddProduct,
+  type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct,
 } from "./actions";
 import { dirOf, type Locale } from "@/lib/i18n";
 import { type StaffPermission } from "@/lib/staff/permissions";
+import { CATEGORIES } from "@/lib/constants";
 import LanguageToggle from "@/components/LanguageToggle";
 
 // Reason chips. The Arabic value is what gets stored (so existing data + the
@@ -86,12 +88,13 @@ function Gate({ onIn, locale }: { onIn: (name: string, perms: StaffPermission[])
 }
 
 /* ── Main desk (tabbed by permission) ──────────────────────────────────── */
-type TabKey = "stock" | "products" | "malak" | "reports";
+type TabKey = "stock" | "add_product" | "products" | "malak" | "reports";
 const TABS: { key: TabKey; perm: StaffPermission; ar: string; en: string; icon: string }[] = [
-  { key: "stock",    perm: "stock",    ar: "المخزون",  en: "Stock",    icon: "📦" },
-  { key: "products", perm: "products", ar: "المنتجات", en: "Products", icon: "🔎" },
-  { key: "malak",    perm: "malak",    ar: "ملاك",     en: "Malak",    icon: "✨" },
-  { key: "reports",  perm: "reports",  ar: "تقاريري",  en: "My reports", icon: "📊" },
+  { key: "stock",       perm: "stock",       ar: "المخزون",  en: "Stock",    icon: "📦" },
+  { key: "add_product", perm: "add_product", ar: "منتج جديد", en: "Add",      icon: "➕" },
+  { key: "products",    perm: "products",    ar: "المنتجات", en: "Products", icon: "🔎" },
+  { key: "malak",       perm: "malak",       ar: "ملاك",     en: "Malak",    icon: "✨" },
+  { key: "reports",     perm: "reports",     ar: "تقاريري",  en: "My reports", icon: "📊" },
 ];
 
 function Desk({ name, perms, initialToday, onLogout, locale }: {
@@ -137,6 +140,7 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
           ) : null}
 
           {tab === "stock" && perms.includes("stock") ? <StockTab initialToday={initialToday} locale={locale} /> : null}
+          {tab === "add_product" && perms.includes("add_product") ? <AddProductTab locale={locale} /> : null}
           {tab === "products" && perms.includes("products") ? <ProductsTab locale={locale} /> : null}
           {tab === "malak" && perms.includes("malak") ? <MalakTab name={name} locale={locale} /> : null}
           {tab === "reports" && perms.includes("reports") ? <ReportsTab locale={locale} /> : null}
@@ -282,6 +286,181 @@ function ProductsTab({ locale }: { locale: Locale }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ── Add-product tab (photo → AI draft → submit → copy fields) ─────────── */
+function AddProductTab({ locale }: { locale: Locale }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
+  const [phase, setPhase] = useState<"upload" | "form" | "done">("upload");
+  const [preview, setPreview] = useState<string>("");
+  const [imageUrl, setImageUrl] = useState<string>("");
+  const [draft, setDraft] = useState<ProductDraft>({ name_en: "", name_ar: "", description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", main_category: "" });
+  const [price, setPrice] = useState("");
+  const [stock, setStock] = useState("0");
+  const [created, setCreated] = useState<CreatedProduct | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, start] = useTransition();
+
+  const onFile = (file: File) => {
+    setErr("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      setPreview(dataUrl);
+      const b64 = dataUrl.replace(/^data:[^,]+,/, "");
+      start(async () => {
+        const r = await staffGenerateProductDraft(b64, file.type);
+        if ("error" in r) { setErr(r.error); return; }
+        setImageUrl(r.imageUrl);
+        setDraft(r.draft);
+        setPhase("form");
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const submit = () => {
+    setErr("");
+    start(async () => {
+      const r = await staffAddProduct({ ...draft, price, stock_quantity: stock, image_url: imageUrl });
+      if ("error" in r) { setErr(r.error); return; }
+      setCreated(r.product);
+      setPhase("done");
+    });
+  };
+
+  const reset = () => {
+    setPhase("upload"); setPreview(""); setImageUrl(""); setCreated(null); setPrice(""); setStock("0");
+    setDraft({ name_en: "", name_ar: "", description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", main_category: "" });
+  };
+
+  const setD = (k: keyof ProductDraft, v: string) => setDraft((d) => ({ ...d, [k]: v }));
+
+  if (phase === "done" && created) return <CopyFieldsPanel product={created} locale={locale} onAgain={reset} />;
+
+  return (
+    <div className="space-y-3">
+      {/* image */}
+      <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/50 p-4 text-center">
+        {preview ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={preview} alt="" className="max-h-40 rounded-lg object-contain" />
+        ) : (
+          <>
+            <span className="text-3xl">📸</span>
+            <span className="text-sm font-medium text-violet-700">{L("صوّر المنتج أو ارفع صورة", "Photograph the product or upload")}</span>
+            <span className="text-xs text-muted">{L("يتولّد العنوان والوصف تلقائيًا", "Title & description auto-generate")}</span>
+          </>
+        )}
+        <input type="file" accept="image/*" capture="environment" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
+      </label>
+
+      {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
+      {busy && phase === "upload" ? <p className="text-center text-sm text-violet-600">{L("جاري تحليل الصورة وكتابة العنوان والوصف…", "Analyzing the photo & drafting title/description…")}</p> : null}
+
+      {phase === "form" ? (
+        <div className="space-y-2.5">
+          <p className="text-xs text-emerald-700">{L("✓ جاهز — راجع وعدّل ثم أضِف. الكود والباركود يتولّدان تلقائيًا.", "✓ Ready — review, edit, then add. SKU & barcode auto-generate.")}</p>
+          <Field label={L("الاسم (عربي)", "Name (AR)")} value={draft.name_ar} onChange={(v) => setD("name_ar", v)} dir="rtl" />
+          <Field label={L("الاسم (إنجليزي)", "Name (EN)")} value={draft.name_en} onChange={(v) => setD("name_en", v)} dir="ltr" />
+          <Field label={L("الوصف (عربي)", "Description (AR)")} value={draft.description_ar} onChange={(v) => setD("description_ar", v)} dir="rtl" area />
+          <Field label={L("الوصف (إنجليزي)", "Description (EN)")} value={draft.description_en} onChange={(v) => setD("description_en", v)} dir="ltr" area />
+          <label className="block text-xs font-medium text-muted">{L("الفئة", "Category")}
+            <select className="input mt-1 w-full" value={draft.main_category} onChange={(e) => setD("main_category", e.target.value)}>
+              <option value="">{L("— اختر —", "— choose —")}</option>
+              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-xs font-medium text-muted">{L("السعر (ر.ق)", "Price (QAR)")}
+              <input className="input mt-1 w-full" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0" />
+            </label>
+            <label className="block text-xs font-medium text-muted">{L("المخزون", "Stock")}
+              <input className="input mt-1 w-full" inputMode="numeric" value={stock} onChange={(e) => setStock(e.target.value)} />
+            </label>
+          </div>
+          <Field label={L("كلمات مفتاحية (عربي)", "Keywords (AR)")} value={draft.keywords_ar} onChange={(v) => setD("keywords_ar", v)} dir="rtl" />
+          <Field label={L("كلمات مفتاحية (إنجليزي)", "Keywords (EN)")} value={draft.keywords_en} onChange={(v) => setD("keywords_en", v)} dir="ltr" />
+          <button disabled={busy} onClick={submit} className="btn-primary w-full py-3 text-base disabled:opacity-50">
+            {busy ? "..." : L("أضِف (بانتظار اعتماد المدير)", "Add (pending manager approval)")}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, dir, area }: { label: string; value: string; onChange: (v: string) => void; dir: "rtl" | "ltr"; area?: boolean }) {
+  return (
+    <label className="block text-xs font-medium text-muted">{label}
+      {area ? (
+        <textarea className="input mt-1 w-full" rows={2} dir={dir} value={value} onChange={(e) => onChange(e.target.value)} />
+      ) : (
+        <input className="input mt-1 w-full" dir={dir} value={value} onChange={(e) => onChange(e.target.value)} />
+      )}
+    </label>
+  );
+}
+
+function CopyFieldsPanel({ product, locale, onAgain }: { product: CreatedProduct; locale: Locale; onAgain: () => void }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
+  const [copied, setCopied] = useState<string>("");
+  const copy = (key: string, text: string) => {
+    try { navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(""), 1200); } catch { /* ignore */ }
+  };
+  const fields: { key: string; label: string; value: string }[] = [
+    { key: "name_ar", label: L("الاسم (عربي)", "Name (AR)"), value: product.name_ar },
+    { key: "name_en", label: L("الاسم (إنجليزي)", "Name (EN)"), value: product.name_en },
+    { key: "desc_ar", label: L("الوصف (عربي)", "Description (AR)"), value: product.description_ar },
+    { key: "desc_en", label: L("الوصف (إنجليزي)", "Description (EN)"), value: product.description_en },
+    { key: "sku", label: "SKU", value: product.sku },
+    { key: "barcode", label: L("الباركود", "Barcode"), value: product.barcode },
+    { key: "cat", label: L("الفئة", "Category"), value: product.main_category },
+    { key: "price", label: L("السعر", "Price"), value: product.price != null ? String(product.price) : "" },
+    { key: "kw_ar", label: L("كلمات مفتاحية (عربي)", "Keywords (AR)"), value: product.keywords_ar },
+    { key: "kw_en", label: L("كلمات مفتاحية (إنجليزي)", "Keywords (EN)"), value: product.keywords_en },
+  ].filter((f) => f.value);
+
+  const allText = fields.map((f) => `${f.label}: ${f.value}`).join("\n");
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-center">
+        <p className="text-sm font-bold text-emerald-800">✓ {L("تمت الإضافة — بانتظار اعتماد المدير", "Added — pending manager approval")}</p>
+        <p className="mt-0.5 text-xs text-emerald-700">{L("انسخ الخانات وأضِفها يدويًا في المنصّات.", "Copy the fields to add them manually on the platforms.")}</p>
+      </div>
+
+      {product.image_url ? (
+        <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2.5">
+          <Thumb src={product.image_url} />
+          <button onClick={() => copy("img", product.image_url)} className="btn-ghost flex-1 py-2 text-xs">
+            {copied === "img" ? L("✓ نُسخ رابط الصورة", "✓ Image link copied") : L("📋 انسخ رابط الصورة", "📋 Copy image link")}
+          </button>
+        </div>
+      ) : null}
+
+      <div className="space-y-1.5">
+        {fields.map((f) => (
+          <button key={f.key} onClick={() => copy(f.key, f.value)}
+            className="flex w-full items-start gap-2 rounded-lg border border-slate-200 bg-white p-2 text-start hover:bg-slate-50">
+            <span className="min-w-0 flex-1">
+              <span className="block text-[11px] font-semibold text-muted">{f.label}</span>
+              <span className="block truncate text-sm text-ink">{f.value}</span>
+            </span>
+            <span className="shrink-0 text-xs text-violet-600">{copied === f.key ? L("✓ نُسخ", "✓ Copied") : "📋"}</span>
+          </button>
+        ))}
+      </div>
+
+      <button onClick={() => copy("all", allText)} className="btn-ghost w-full py-2 text-sm">
+        {copied === "all" ? L("✓ نُسخ الكل", "✓ All copied") : L("📋 انسخ كل الخانات", "📋 Copy all fields")}
+      </button>
+      <button onClick={onAgain} className="btn-primary w-full py-2.5 text-sm">{L("➕ أضِف منتج ثاني", "➕ Add another product")}</button>
     </div>
   );
 }

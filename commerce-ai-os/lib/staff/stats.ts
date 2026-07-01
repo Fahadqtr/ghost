@@ -10,6 +10,7 @@ export type StaffStats = {
   week: { in: number; out: number };
   review: { pending: number; approved: number; reversed: number };
   byEmployeeToday: { name: string; in: number; out: number }[];
+  pendingProducts: number; // new products submitted by staff, awaiting approval
 };
 
 const EMPTY: StaffStats = {
@@ -18,6 +19,7 @@ const EMPTY: StaffStats = {
   week: { in: 0, out: 0 },
   review: { pending: 0, approved: 0, reversed: 0 },
   byEmployeeToday: [],
+  pendingProducts: 0,
 };
 
 export async function getStaffStats(): Promise<StaffStats> {
@@ -44,12 +46,24 @@ export async function getStaffStats(): Promise<StaffStats> {
     .limit(3000);
   if (error) return EMPTY;
 
+  // Staff-submitted products awaiting approval (approval null + origin tag).
+  let pendingProducts = 0;
+  try {
+    const { count } = await admin
+      .from("products")
+      .select("id", { count: "exact", head: true })
+      .is("approval", null)
+      .like("notes", "staff-new:%");
+    pendingProducts = count ?? 0;
+  } catch { /* best-effort */ }
+
   const s: StaffStats = {
     configured: true,
     today: { in: 0, out: 0, inUnits: 0, outUnits: 0 },
     week: { in: 0, out: 0 },
     review: { pending: 0, approved: 0, reversed: 0 },
     byEmployeeToday: [],
+    pendingProducts,
   };
   const byEmp = new Map<string, { in: number; out: number }>();
 
