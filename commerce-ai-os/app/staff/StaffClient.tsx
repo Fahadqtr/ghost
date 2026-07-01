@@ -296,7 +296,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const [stk, setStk] = useState("");
   const [onlyVar, setOnlyVar] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [zoom, setZoom] = useState<string | null>(null);
+  const [detail, setDetail] = useState<StaffProduct | null>(null);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -373,7 +373,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
           return (
             <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-2.5">
               <div className="flex items-center gap-3">
-                <button type="button" onClick={() => p.image && setZoom(p.image)} className="shrink-0" title={L("تكبير الصورة", "Zoom image")}>
+                <button type="button" onClick={() => setDetail(p)} className="shrink-0" title={L("عرض البطاقة", "Open card")}>
                   <Thumb src={p.image} />
                 </button>
                 <div className="min-w-0 flex-1">
@@ -418,11 +418,47 @@ function ProductsTab({ locale }: { locale: Locale }) {
         </div>
       ) : null}
 
-      {zoom ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setZoom(null)}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={zoom} alt="" className="max-h-[85vh] max-w-full rounded-xl object-contain" onClick={(e) => e.stopPropagation()} />
-          <button onClick={() => setZoom(null)} className="absolute end-4 top-4 rounded-full bg-white/90 px-3 py-1 text-sm font-bold text-slate-800">✕</button>
+      {detail ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setDetail(null)}>
+          <div className="max-h-[90vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="relative aspect-square w-full overflow-hidden rounded-t-2xl bg-slate-50">
+              {detail.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={detail.image} alt="" className="h-full w-full object-contain" />
+              ) : <span className="flex h-full w-full items-center justify-center text-5xl text-slate-300">📦</span>}
+              <button onClick={() => setDetail(null)} className="absolute end-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm font-bold text-slate-800 shadow">✕</button>
+            </div>
+            <div className="space-y-2 p-4">
+              <p className="text-base font-bold text-ink">{(en ? detail.name : detail.nameAr) || detail.name || detail.sku || "—"}</p>
+              {(en ? detail.nameAr : detail.name) && (en ? detail.nameAr : detail.name) !== ((en ? detail.name : detail.nameAr)) ? (
+                <p className="text-sm text-muted" dir={en ? "rtl" : "ltr"}>{en ? detail.nameAr : detail.name}</p>
+              ) : null}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                {detail.sku ? <span className="font-mono">{detail.sku}</span> : null}
+                {detail.barcode ? <span className="font-mono">· {detail.barcode}</span> : null}
+                {detail.category ? <span>· {detail.category}</span> : null}
+              </div>
+              <div className="flex items-center gap-2">
+                {stockBadge(detail.stock)}
+                <span className={`text-lg font-bold ${detail.stock != null && detail.stock <= 0 ? "text-red-600" : "text-ink"}`}>{detail.stock != null ? detail.stock : "—"} <span className="text-xs font-normal text-muted">{L("مخزون", "stock")}</span></span>
+                {showPrices && detail.price != null ? <span className="ms-auto text-base font-bold text-emerald-700">{detail.price} {L("ر.ق", "QAR")}</span> : null}
+              </div>
+              {(detail.variants?.length ?? 0) > 0 ? (
+                <div className="rounded-lg bg-slate-50 p-2">
+                  <p className="mb-1 text-[11px] font-semibold text-muted">🎚️ {L("الخيارات", "Options")} ({detail.variants!.length})</p>
+                  <div className="space-y-1">
+                    {detail.variants!.map((v, i) => (
+                      <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="min-w-0 flex-1 truncate text-slate-700">{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
+                        {v.barcode ? <span className="font-mono text-[11px] text-slate-500">{v.barcode}</span> : null}
+                        <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{v.stock != null ? v.stock : "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
