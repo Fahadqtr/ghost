@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { approveMovements, reverseMovement, type StaffMove } from "../approvals-actions";
+import { approveMovements, reverseMovement, editMovement, deleteMovement, type StaffMove } from "../approvals-actions";
 import type { Locale } from "@/lib/i18n";
 
 function fmt(s: string | null, locale: Locale) {
@@ -48,6 +48,32 @@ export default function ApprovalsClient({ initialRows, initialPending, locale = 
     });
   };
 
+  const edit = (m: StaffMove) => {
+    const entered = prompt(L(`الكمية الجديدة لـ «${m.name ?? m.sku}» (الحالية ${m.qty}):`, `New quantity for "${m.name ?? m.sku}" (current ${m.qty}):`), String(m.qty));
+    if (entered == null) return;
+    const q = Math.floor(Number(entered));
+    if (!q || q < 1) { setNote(L("كمية غير صحيحة.", "Invalid quantity.")); return; }
+    if (q === m.qty) return;
+    start(async () => {
+      const r = await editMovement(m.id, q);
+      if (r && "error" in r && r.error) { setNote(r.error); return; }
+      setRows((rs) => rs.map((x) => (x.id === m.id ? { ...x, qty: q, edited: { from: m.qty, to: q, by: L("المدير", "manager") } } : x)));
+      setNote(L(`✏️ عُدّلت الكمية إلى ${q}`, `✏️ Quantity changed to ${q}`));
+      setTimeout(refresh, 600);
+    });
+  };
+
+  const del = (m: StaffMove) => {
+    if (!confirm(L(`حذف الحركة؟ راح يُرجَّع المخزون وتُعلَّم كمحذوفة.`, `Delete this movement? Stock will be restored and it will be marked deleted.`))) return;
+    start(async () => {
+      const r = await deleteMovement(m.id);
+      if (r && "error" in r && r.error) { setNote(r.error); return; }
+      setRows((rs) => rs.map((x) => (x.id === m.id ? { ...x, review: "deleted" } : x)));
+      setNote(L("🗑 تم حذف الحركة وإرجاع المخزون", "🗑 Movement deleted, stock restored"));
+      setTimeout(refresh, 600);
+    });
+  };
+
   return (
     <div className="space-y-3">
       {/* tabs + bulk approve */}
@@ -88,16 +114,20 @@ export default function ApprovalsClient({ initialRows, initialPending, locale = 
                   <span>👤 {m.by || "—"}</span>
                   {m.reason ? <span>· {m.reason}</span> : null}
                   <span className="text-slate-400">· {fmt(m.at, locale)}</span>
+                  {m.edited ? <span className="rounded bg-blue-50 px-1.5 py-0.5 font-medium text-blue-600">{L(`✏️ عُدّلت ${m.edited.from}→${m.edited.to} (${m.edited.by})`, `✏️ edited ${m.edited.from}→${m.edited.to} (${m.edited.by})`)}</span> : null}
                 </div>
               </div>
               {m.review === "pending" ? (
                 <div className="flex shrink-0 flex-col gap-1">
                   <button disabled={busy} onClick={() => approve([m.id])} className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">{L("✓ اعتمدت", "✓ Approve")}</button>
-                  <button disabled={busy} onClick={() => reverse(m)} className="rounded-md border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">{L("↩︎ عكس", "↩︎ Reverse")}</button>
+                  <div className="flex gap-1">
+                    <button disabled={busy} onClick={() => edit(m)} className="flex-1 rounded-md border border-blue-200 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50">{L("✏️ تعديل", "✏️ Edit")}</button>
+                    <button disabled={busy} onClick={() => del(m)} className="flex-1 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">{L("🗑 حذف", "🗑 Delete")}</button>
+                  </div>
                 </div>
               ) : (
-                <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${m.review === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>
-                  {m.review === "approved" ? L("✓ معتمدة", "✓ Approved") : L("↩︎ معكوسة", "↩︎ Reversed")}
+                <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${m.review === "approved" ? "bg-emerald-50 text-emerald-700" : m.review === "deleted" ? "bg-slate-100 text-slate-500" : "bg-red-50 text-red-600"}`}>
+                  {m.review === "approved" ? L("✓ معتمدة", "✓ Approved") : m.review === "deleted" ? L("🗑 محذوفة", "🗑 Deleted") : L("↩︎ معكوسة", "↩︎ Reversed")}
                 </span>
               )}
             </div>

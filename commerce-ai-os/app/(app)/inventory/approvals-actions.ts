@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
-import { applyMovement } from "@/lib/inventory/movements";
+import { applyMovement, editMovementQty, deleteMovement as deleteMovementCore } from "@/lib/inventory/movements";
 
 export type StaffMove = {
   id: number;
@@ -16,7 +16,8 @@ export type StaffMove = {
   name: string | null;
   image: string | null;
   reason: string | null;
-  review: "pending" | "approved" | "reversed";
+  review: "pending" | "approved" | "reversed" | "deleted";
+  edited: { from: number; to: number; by: string } | null; // set if the qty was changed
 };
 
 async function adminEmail(): Promise<string | null> {
@@ -65,7 +66,9 @@ export async function getStaffMovements(limit = 100): Promise<{ rows: StaffMove[
 
   const rows: StaffMove[] = (data ?? []).map((r: any) => {
     const prod = r.sku ? bySku.get(r.sku) : null;
-    const review = r.details?.review === "approved" ? "approved" : r.details?.review === "reversed" ? "reversed" : "pending";
+    const rv = r.details?.review;
+    const review = rv === "approved" ? "approved" : rv === "reversed" ? "reversed" : rv === "deleted" ? "deleted" : "pending";
+    const e = r.details?.edited;
     return {
       id: r.id,
       at: r.created_at ?? null,
@@ -77,6 +80,7 @@ export async function getStaffMovements(limit = 100): Promise<{ rows: StaffMove[
       image: prod?.image ?? null,
       reason: r.details?.reason ?? null,
       review,
+      edited: e && typeof e.from === "number" ? { from: Number(e.from), to: Number(e.to), by: String(e.by ?? "").replace(/^staff:/, "") } : null,
     };
   });
   const pending = rows.filter((r) => r.review === "pending").length;
@@ -136,4 +140,24 @@ export async function reverseMovement(id: number) {
   revalidatePath("/inventory/approvals");
   revalidatePath("/inventory");
   return { ok: true as const };
+}
+
+// Manager: change a movement's quantity (adjusts stock by the delta).
+export async function editMovement(id: number, newQty: number) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const email = await adminEmail();
+  return editMovementQty(admin, id, newQty, `admin:${email ?? "manager"}`);
+}
+
+// Manager: delete a movement (undo its stock effect + mark it deleted).
+export async function deleteMovement(id: number) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const email = await adminEmail();
+  return deleteMovementCore(admin, id, `admin:${email ?? "manager"}`);
 }

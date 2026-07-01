@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffProducts, staffAskMalak,
-  staffGenerateProductDraft, staffAddProduct,
+  staffGenerateProductDraft, staffAddProduct, staffEditMovement, staffDeleteMovement,
   type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct,
 } from "./actions";
 import { dirOf, type Locale } from "@/lib/i18n";
@@ -29,6 +29,52 @@ function fmtTime(s: string | null, locale: Locale) {
   if (!s) return "";
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+}
+
+// One movement line. The employee can edit/delete their OWN row while it's still
+// pending; once the manager approves it locks with a status badge.
+function LogRow({ r, locale, showBy, onChanged }: { r: StaffLogRow; locale: Locale; showBy?: boolean; onChanged: () => void }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
+  const [busy, start] = useTransition();
+  const edit = () => {
+    const v = prompt(L(`الكمية الجديدة (الحالية ${r.qty}):`, `New quantity (current ${r.qty}):`), String(r.qty));
+    if (v == null) return;
+    const q = Math.floor(Number(v));
+    if (!q || q < 1 || q === r.qty) return;
+    start(async () => { const res: any = await staffEditMovement(r.id, q); if (res?.error) alert(res.error); onChanged(); });
+  };
+  const del = () => {
+    if (!confirm(L("حذف الحركة؟ راح يُرجَّع المخزون.", "Delete this movement? Stock will be restored."))) return;
+    start(async () => { const res: any = await staffDeleteMovement(r.id); if (res?.error) alert(res.error); onChanged(); });
+  };
+  const badge =
+    r.review === "approved" ? { cls: "bg-emerald-50 text-emerald-700", t: L("✓ معتمدة", "✓ Approved") }
+    : r.review === "deleted" ? { cls: "bg-slate-100 text-slate-500", t: L("🗑 محذوفة", "🗑 Deleted") }
+    : r.review === "reversed" ? { cls: "bg-red-50 text-red-600", t: L("↩︎ معكوسة", "↩︎ Reversed") }
+    : null;
+  return (
+    <div className={`rounded-lg border border-slate-100 bg-white px-2.5 py-1.5 text-xs ${r.review === "deleted" ? "opacity-60" : ""}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={`rounded px-1.5 py-0.5 font-bold ${r.dir === "in" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+          {r.dir === "in" ? "➕" : "➖"} {r.qty}
+        </span>
+        <span className="min-w-0 flex-1 px-2 font-mono text-slate-600 truncate">{r.sku ?? "—"}</span>
+        <span className="text-slate-400">{showBy ? `${(r.by ?? "").replace(/^staff:/, "")} · ` : ""}{fmtTime(r.at, locale)}</span>
+      </div>
+      {(badge || r.editable) ? (
+        <div className="mt-1 flex items-center justify-end gap-1">
+          {badge ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${badge.cls}`}>{badge.t}</span> : null}
+          {r.editable ? (
+            <>
+              <button disabled={busy} onClick={edit} className="rounded border border-blue-200 px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 disabled:opacity-50">{L("✏️ تعديل", "✏️ Edit")}</button>
+              <button disabled={busy} onClick={del} className="rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">{L("🗑 حذف", "🗑 Delete")}</button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 type Session = { name: string; perms: StaffPermission[] };
@@ -226,14 +272,8 @@ function StockTab({ initialToday, locale }: { initialToday: StaffLogRow[]; local
         <p className="mb-1 text-xs font-semibold text-muted">{L("حركات اليوم", "Today's movements")} ({today.length})</p>
         <div className="space-y-1">
           {today.length === 0 ? <p className="text-xs text-slate-400">{L("ما فيه حركات اليوم بعد.", "No movements today yet.")}</p> : null}
-          {today.slice(0, 20).map((r, i) => (
-            <div key={i} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-2.5 py-1.5 text-xs">
-              <span className={`rounded px-1.5 py-0.5 font-bold ${r.dir === "in" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                {r.dir === "in" ? "➕" : "➖"} {r.qty}
-              </span>
-              <span className="min-w-0 flex-1 px-2 font-mono text-slate-600 truncate">{r.sku ?? "—"}</span>
-              <span className="text-slate-400">{(r.by ?? "").replace(/^staff:/, "")} · {fmtTime(r.at, locale)}</span>
-            </div>
+          {today.slice(0, 20).map((r) => (
+            <LogRow key={r.id} r={r} locale={locale} showBy onChanged={refreshToday} />
           ))}
         </div>
       </div>
@@ -520,7 +560,8 @@ function ReportsTab({ locale }: { locale: Locale }) {
   const L = (ar: string, e: string) => (en ? e : ar);
   const [rows, setRows] = useState<StaffLogRow[]>([]);
   const [busy, start] = useTransition();
-  useEffect(() => { start(async () => { const r = await staffToday(); if (!r.error) setRows(r.rows); }); }, []);
+  const reload = () => start(async () => { const r = await staffToday(); if (!r.error) setRows(r.rows); });
+  useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inUnits = rows.filter((r) => r.dir === "in").reduce((s, r) => s + r.qty, 0);
   const outUnits = rows.filter((r) => r.dir === "out").reduce((s, r) => s + r.qty, 0);
@@ -541,14 +582,8 @@ function ReportsTab({ locale }: { locale: Locale }) {
       {busy && rows.length === 0 ? <p className="text-xs text-slate-400">…</p> : null}
       {!busy && rows.length === 0 ? <p className="text-xs text-slate-400">{L("ما فيه حركات اليوم بعد.", "No movements today yet.")}</p> : null}
       <div className="space-y-1">
-        {rows.slice(0, 30).map((r, i) => (
-          <div key={i} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white px-2.5 py-1.5 text-xs">
-            <span className={`rounded px-1.5 py-0.5 font-bold ${r.dir === "in" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-              {r.dir === "in" ? "➕" : "➖"} {r.qty}
-            </span>
-            <span className="min-w-0 flex-1 px-2 font-mono text-slate-600 truncate">{r.sku ?? "—"}</span>
-            <span className="text-slate-400">{fmtTime(r.at, locale)}</span>
-          </div>
+        {rows.slice(0, 30).map((r) => (
+          <LogRow key={r.id} r={r} locale={locale} onChanged={reload} />
         ))}
       </div>
     </div>
