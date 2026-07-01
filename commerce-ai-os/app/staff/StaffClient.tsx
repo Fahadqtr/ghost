@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
-  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffProducts, staffAskMalak,
+  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
   staffGenerateProductDraft, staffAddProduct, staffEditMovement, staffDeleteMovement,
   type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct,
 } from "./actions";
+import { useMemo } from "react";
 import { dirOf, type Locale } from "@/lib/i18n";
 import { type StaffPermission } from "@/lib/staff/permissions";
 import { CATEGORIES } from "@/lib/constants";
@@ -281,51 +282,104 @@ function StockTab({ initialToday, locale }: { initialToday: StaffLogRow[]; local
   );
 }
 
-/* ── Products tab (read-only browse) ───────────────────────────────────── */
+/* ── Products tab (read-only browse — full catalog + filters) ──────────── */
+const PROD_PAGE = 40;
 function ProductsTab({ locale }: { locale: Locale }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
-  const [query, setQuery] = useState("");
-  const [items, setItems] = useState<StaffProduct[]>([]);
+  const [all, setAll] = useState<StaffProduct[]>([]);
   const [showPrices, setShowPrices] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [busy, start] = useTransition();
+  const [query, setQuery] = useState("");
+  const [cat, setCat] = useState("");
+  const [stk, setStk] = useState("");
+  const [page, setPage] = useState(1);
 
-  const search = (q: string) => start(async () => {
-    setErr("");
-    const r = await staffProducts(q);
-    if (r.error) { setErr(r.error); setItems([]); return; }
-    setItems(r.items); setShowPrices(r.showPrices);
-  });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await staffAllProducts();
+      if (!alive) return;
+      if (r.error) setErr(r.error);
+      setAll(r.items); setShowPrices(r.showPrices); setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, []);
 
-  useEffect(() => { search(""); /* initial list */ }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const cats = useMemo(() => Array.from(new Set(all.map((p) => p.category).filter(Boolean))).sort() as string[], [all]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return all.filter((p) => {
+      const matchQ = !q || (p.name ?? "").toLowerCase().includes(q) || (p.nameAr ?? "").toLowerCase().includes(q)
+        || (p.sku ?? "").toLowerCase().includes(q) || (p.barcode ?? "").toLowerCase().includes(q);
+      const matchCat = !cat || p.category === cat;
+      const n = Number(p.stock);
+      const matchStk = !stk || (stk === "out" ? !(n > 0) : stk === "low" ? (n > 0 && n < 10) : stk === "in" ? n >= 10 : true);
+      return matchQ && matchCat && matchStk;
+    });
+  }, [all, query, cat, stk]);
+
+  useEffect(() => { setPage(1); }, [query, cat, stk]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PROD_PAGE));
+  const cur = Math.min(page, totalPages);
+  const visible = filtered.slice((cur - 1) * PROD_PAGE, cur * PROD_PAGE);
+
+  const stockBadge = (n: number | null) => {
+    if (n == null) return null;
+    if (n <= 0) return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{L("نافد", "Out")}</span>;
+    if (n < 10) return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{L("منخفض", "Low")}</span>;
+    return <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{L("متوفّر", "In")}</span>;
+  };
 
   return (
     <div className="space-y-3">
-      <form onSubmit={(e) => { e.preventDefault(); search(query); }} className="flex gap-2">
-        <input value={query} onChange={(e) => setQuery(e.target.value)} className="input flex-1"
-          placeholder={L("ابحث بالاسم أو الباركود أو الكود…", "Search name / barcode / SKU…")} />
-        <button type="submit" className="btn-primary px-4" disabled={busy}>{L("بحث", "Search")}</button>
-      </form>
+      <input value={query} onChange={(e) => setQuery(e.target.value)} className="input w-full"
+        placeholder={L("ابحث بالاسم أو الباركود أو الكود…", "Search name / barcode / SKU…")} />
+      <div className="flex gap-2">
+        <select value={cat} onChange={(e) => setCat(e.target.value)} className="input flex-1 text-sm">
+          <option value="">{L("كل الفئات", "All categories")}</option>
+          {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={stk} onChange={(e) => setStk(e.target.value)} className="input flex-1 text-sm">
+          <option value="">{L("كل الحالات", "All statuses")}</option>
+          <option value="in">{L("متوفّر (10+)", "In stock (10+)")}</option>
+          <option value="low">{L("منخفض (1-9)", "Low (1-9)")}</option>
+          <option value="out">{L("نافد", "Out of stock")}</option>
+        </select>
+      </div>
+
       {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
-      {items.length === 0 && !err ? <p className="py-6 text-center text-sm text-slate-400">{L("ما فيه منتجات.", "No products.")}</p> : null}
+      <p className="text-xs text-muted">{loading ? L("جاري التحميل…", "Loading…") : L(`${filtered.length} من ${all.length} منتج`, `${filtered.length} of ${all.length} products`)}</p>
+
       <div className="space-y-2">
-        {items.map((p) => (
+        {visible.map((p) => (
           <div key={p.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2.5">
             <Thumb src={p.image} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-ink">{(en ? p.name : p.nameAr) || p.name || p.sku || "—"}</p>
               <p className="text-xs text-muted">{p.sku ?? "—"}{p.category ? ` · ${p.category}` : ""}</p>
             </div>
-            <div className="shrink-0 text-end">
-              <p className={`text-sm font-bold ${p.stock != null && p.stock <= 0 ? "text-red-600" : "text-ink"}`}>
-                {p.stock != null ? `${p.stock}` : "—"} <span className="text-[11px] font-normal text-muted">{L("مخزون", "stock")}</span>
-              </p>
-              {showPrices && p.price != null ? <p className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</p> : null}
+            <div className="flex shrink-0 flex-col items-end gap-0.5 text-end">
+              <span className="flex items-center gap-1">
+                {stockBadge(p.stock)}
+                <span className={`text-sm font-bold ${p.stock != null && p.stock <= 0 ? "text-red-600" : "text-ink"}`}>{p.stock != null ? p.stock : "—"}</span>
+              </span>
+              {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
             </div>
           </div>
         ))}
+        {!loading && filtered.length === 0 ? <p className="py-6 text-center text-sm text-slate-400">{L("ما فيه منتجات مطابقة.", "No matching products.")}</p> : null}
       </div>
+
+      {filtered.length > PROD_PAGE ? (
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={cur <= 1} className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40">{L("السابق →", "← Prev")}</button>
+          <span className="text-xs text-muted">{L(`صفحة ${cur} / ${totalPages}`, `Page ${cur} / ${totalPages}`)}</span>
+          <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={cur >= totalPages} className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40">{L("← التالي", "Next →")}</button>
+        </div>
+      ) : null}
     </div>
   );
 }
