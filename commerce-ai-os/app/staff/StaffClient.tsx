@@ -156,7 +156,7 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
   const logout = () => start(async () => { await staffLogout(); onLogout(); });
 
   return (
-    <div dir={dirOf(locale)} className="mx-auto max-w-md space-y-3 p-3">
+    <div dir={dirOf(locale)} className="mx-auto w-full max-w-md space-y-3 p-3 md:max-w-4xl md:p-5">
       {/* header */}
       <div className="flex items-center justify-between">
         <div>
@@ -230,7 +230,7 @@ function StockTab({ initialToday, locale }: { initialToday: StaffLogRow[]; local
   const refreshToday = () => start(async () => { const r = await staffToday(); if (!r.error) setToday(r.rows); });
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto w-full max-w-2xl space-y-3">
       <form onSubmit={(e) => { e.preventDefault(); lookup(query); }} className="flex gap-2">
         <input ref={scanRef} autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
           className="input flex-1" placeholder={L("امسح الباركود أو اكتب الاسم/الكود…", "Scan barcode or type name / SKU…")} />
@@ -366,7 +366,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
       {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
       <p className="text-xs text-muted">{loading ? L("جاري التحميل…", "Loading…") : L(`${filtered.length} من ${all.length} منتج`, `${filtered.length} of ${all.length} products`)}</p>
 
-      <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
         {visible.map((p) => {
           const vs = p.variants ?? [];
           const open = expanded.has(p.id);
@@ -558,7 +558,7 @@ function AddProductTab({ locale }: { locale: Locale }) {
   if (phase === "done" && created) return <CopyFieldsPanel product={created} locale={locale} onAgain={reset} />;
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto w-full max-w-xl space-y-3">
       {/* image */}
       <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/50 p-4 text-center">
         {preview ? (
@@ -645,7 +645,7 @@ function CopyFieldsPanel({ product, locale, onAgain }: { product: CreatedProduct
   const allText = fields.map((f) => `${f.label}: ${f.value}`).join("\n");
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto w-full max-w-xl space-y-3">
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-center">
         <p className="text-sm font-bold text-emerald-800">✓ {L("تمت الإضافة — بانتظار اعتماد المدير", "Added — pending manager approval")}</p>
         <p className="mt-0.5 text-xs text-emerald-700">{L("انسخ الخانات وأضِفها يدويًا في المنصّات.", "Copy the fields to add them manually on the platforms.")}</p>
@@ -705,7 +705,7 @@ function MalakTab({ name, locale }: { name: string; locale: Locale }) {
   };
 
   return (
-    <div className="flex h-[calc(100dvh-11rem)] flex-col rounded-2xl border border-violet-200 bg-white">
+    <div className="mx-auto flex h-[calc(100dvh-11rem)] w-full max-w-2xl flex-col rounded-2xl border border-violet-200 bg-white">
       <div className="flex-1 space-y-2 overflow-y-auto p-3">
         {msgs.length === 0 ? (
           <div className="mt-6 text-center text-sm text-slate-400">
@@ -743,7 +743,7 @@ function ReportsTab({ locale }: { locale: Locale }) {
   const outUnits = rows.filter((r) => r.dir === "out").reduce((s, r) => s + r.qty, 0);
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto w-full max-w-2xl space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div className="card text-center">
           <p className="text-xs text-muted">{L("أدخلت اليوم", "In today")}</p>
