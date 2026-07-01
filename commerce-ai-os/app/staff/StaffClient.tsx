@@ -4,7 +4,8 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
   staffGenerateProductDraft, staffAddProduct, staffEditMovement, staffDeleteMovement,
-  type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct,
+  staffMyTasks, staffSetTaskStatus,
+  type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct, type StaffTaskRow,
 } from "./actions";
 import { useMemo } from "react";
 import { dirOf, type Locale } from "@/lib/i18n";
@@ -135,11 +136,12 @@ function Gate({ onIn, locale }: { onIn: (name: string, perms: StaffPermission[])
 }
 
 /* ── Main desk (tabbed by permission) ──────────────────────────────────── */
-type TabKey = "stock" | "add_product" | "products" | "malak" | "reports";
+type TabKey = "stock" | "add_product" | "products" | "tasks" | "malak" | "reports";
 const TABS: { key: TabKey; perm: StaffPermission; ar: string; en: string; icon: string }[] = [
   { key: "stock",       perm: "stock",       ar: "المخزون",  en: "Stock",    icon: "📦" },
   { key: "add_product", perm: "add_product", ar: "منتج جديد", en: "Add",      icon: "➕" },
   { key: "products",    perm: "products",    ar: "المنتجات", en: "Products", icon: "🔎" },
+  { key: "tasks",       perm: "tasks",       ar: "المهام",   en: "Tasks",    icon: "📋" },
   { key: "malak",       perm: "malak",       ar: "ملاك",     en: "Malak",    icon: "✨" },
   { key: "reports",     perm: "reports",     ar: "تقاريري",  en: "My reports", icon: "📊" },
 ];
@@ -189,6 +191,7 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
           {tab === "stock" && perms.includes("stock") ? <StockTab initialToday={initialToday} locale={locale} /> : null}
           {tab === "add_product" && perms.includes("add_product") ? <AddProductTab locale={locale} /> : null}
           {tab === "products" && perms.includes("products") ? <ProductsTab locale={locale} /> : null}
+          {tab === "tasks" && perms.includes("tasks") ? <TasksTab locale={locale} /> : null}
           {tab === "malak" && perms.includes("malak") ? <MalakTab name={name} locale={locale} /> : null}
           {tab === "reports" && perms.includes("reports") ? <ReportsTab locale={locale} /> : null}
         </>
@@ -677,6 +680,90 @@ function CopyFieldsPanel({ product, locale, onAgain }: { product: CreatedProduct
         {copied === "all" ? L("✓ نُسخ الكل", "✓ All copied") : L("📋 انسخ كل الخانات", "📋 Copy all fields")}
       </button>
       <button onClick={onAgain} className="btn-primary w-full py-2.5 text-sm">{L("➕ أضِف منتج ثاني", "➕ Add another product")}</button>
+    </div>
+  );
+}
+
+/* ── Tasks tab (my assigned tasks) ─────────────────────────────────────── */
+function TasksTab({ locale }: { locale: Locale }) {
+  const en = locale === "en";
+  const L = (ar: string, e: string) => (en ? e : ar);
+  const [tasks, setTasks] = useState<StaffTaskRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [busy, start] = useTransition();
+
+  const reload = () => start(async () => {
+    const r = await staffMyTasks();
+    if (r.error) setErr(r.error);
+    setTasks(r.tasks); setLoading(false);
+  });
+  useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setStatus = (id: string, status: "open" | "in_progress" | "done") => start(async () => {
+    const r: any = await staffSetTaskStatus(id, status);
+    if (r?.error) { setErr(r.error); return; }
+    setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, status } : t)));
+  });
+
+  const dot = (p: string) => (p === "high" ? "🔴" : p === "low" ? "⚪" : "🟡");
+  const overdue = (t: StaffTaskRow) => {
+    if (!t.dueDate || t.status === "done") return false;
+    const d = new Date(t.dueDate + "T23:59:59");
+    return !Number.isNaN(d.getTime()) && d.getTime() < Date.now();
+  };
+  const fmt = (s: string | null) => {
+    if (!s) return "";
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(locale, { day: "2-digit", month: "short" });
+  };
+
+  const openT = tasks.filter((t) => t.status !== "done");
+  const doneT = tasks.filter((t) => t.status === "done");
+
+  return (
+    <div className="mx-auto w-full max-w-2xl space-y-3">
+      {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
+      <p className="text-xs font-semibold text-muted">{L("مهامي المفتوحة", "My open tasks")} ({openT.length})</p>
+      {loading ? <p className="text-xs text-slate-400">{L("جاري التحميل…", "Loading…")}</p> : null}
+      {!loading && openT.length === 0 ? <p className="py-4 text-center text-sm text-slate-400">{L("ما فيه مهام مفتوحة 🎉", "No open tasks 🎉")}</p> : null}
+
+      <div className="space-y-2">
+        {openT.map((t) => {
+          const od = overdue(t);
+          return (
+            <div key={t.id} className={`rounded-xl border p-3 ${od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
+              <p className="text-sm font-medium text-ink">{dot(t.priority)} {t.title}</p>
+              {t.description ? <p className="mt-0.5 text-xs text-muted">{t.description}</p> : null}
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted">
+                {t.forEveryone ? <span className="rounded bg-slate-100 px-1.5 py-0.5">👥 {L("للكل", "Everyone")}</span> : null}
+                {t.dueDate ? <span className={od ? "font-bold text-red-600" : ""}>⏰ {fmt(t.dueDate)}{od ? L(" (متأخّرة)", " (overdue)") : ""}</span> : null}
+                {t.status === "in_progress" ? <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700">{L("جاري", "In progress")}</span> : null}
+              </div>
+              <div className="mt-2 flex gap-2">
+                {t.status !== "in_progress" ? (
+                  <button disabled={busy} onClick={() => setStatus(t.id, "in_progress")} className="flex-1 rounded-lg border border-amber-300 py-2 text-sm font-medium text-amber-700 disabled:opacity-50">{L("▶ جاري", "▶ In progress")}</button>
+                ) : null}
+                <button disabled={busy} onClick={() => setStatus(t.id, "done")} className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-bold text-white disabled:opacity-50">{L("✓ تم", "✓ Done")}</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {doneT.length > 0 ? (
+        <>
+          <p className="pt-2 text-xs font-semibold text-muted">{L("منجزة", "Done")} ({doneT.length})</p>
+          <div className="space-y-1.5">
+            {doneT.slice(0, 20).map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
+                <span className="min-w-0 flex-1 truncate text-sm text-slate-400 line-through">✓ {t.title}</span>
+                <button disabled={busy} onClick={() => setStatus(t.id, "open")} className="shrink-0 text-[11px] text-slate-500 hover:underline">{L("↺ إعادة فتح", "↺ Reopen")}</button>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

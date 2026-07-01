@@ -11,6 +11,7 @@ export type StaffStats = {
   review: { pending: number; approved: number; reversed: number };
   byEmployeeToday: { name: string; in: number; out: number }[];
   pendingProducts: number; // new products submitted by staff, awaiting approval
+  tasks: { open: number; overdue: number };
 };
 
 const EMPTY: StaffStats = {
@@ -20,6 +21,7 @@ const EMPTY: StaffStats = {
   review: { pending: 0, approved: 0, reversed: 0 },
   byEmployeeToday: [],
   pendingProducts: 0,
+  tasks: { open: 0, overdue: 0 },
 };
 
 export async function getStaffStats(): Promise<StaffStats> {
@@ -57,6 +59,18 @@ export async function getStaffStats(): Promise<StaffStats> {
     pendingProducts = count ?? 0;
   } catch { /* best-effort */ }
 
+  // Open / overdue employee tasks.
+  let tasksOpen = 0, tasksOverdue = 0;
+  try {
+    const { count: openCount } = await admin
+      .from("staff_tasks").select("id", { count: "exact", head: true }).neq("status", "done");
+    tasksOpen = openCount ?? 0;
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const { count: odCount } = await admin
+      .from("staff_tasks").select("id", { count: "exact", head: true }).neq("status", "done").lt("due_date", todayISO);
+    tasksOverdue = odCount ?? 0;
+  } catch { /* table may not exist yet */ }
+
   const s: StaffStats = {
     configured: true,
     today: { in: 0, out: 0, inUnits: 0, outUnits: 0 },
@@ -64,6 +78,7 @@ export async function getStaffStats(): Promise<StaffStats> {
     review: { pending: 0, approved: 0, reversed: 0 },
     byEmployeeToday: [],
     pendingProducts,
+    tasks: { open: tasksOpen, overdue: tasksOverdue },
   };
   const byEmp = new Map<string, { in: number; out: number }>();
 
