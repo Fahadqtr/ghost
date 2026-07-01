@@ -38,6 +38,17 @@ export default async function DashboardPage() {
         <p className="-mt-2 text-xs text-muted">{L(`▲▼ التغيّر منذ ${trends.asOf}`, `▲▼ change since ${trends.asOf}`)}</p>
       ) : null}
 
+      {/* Open / overdue staff tasks */}
+      {staff.configured && staff.tasks.open > 0 ? (
+        <Link href="/tasks" className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 hover:bg-slate-50">
+          <span className="text-sm font-semibold text-ink">
+            📋 {L(`${staff.tasks.open} مهمة مفتوحة`, `${staff.tasks.open} open task${staff.tasks.open === 1 ? "" : "s"}`)}
+            {staff.tasks.overdue > 0 ? <span className="ms-2 rounded bg-red-100 px-1.5 py-0.5 text-xs font-bold text-red-700">🔴 {L(`${staff.tasks.overdue} متأخّرة`, `${staff.tasks.overdue} overdue`)}</span> : null}
+          </span>
+          <span className="text-xs font-medium text-brand">{L("المتابعة ←", "Manage →")}</span>
+        </Link>
+      ) : null}
+
       {/* New products submitted by staff, awaiting the owner's approval */}
       {staff.configured && staff.pendingProducts > 0 ? (
         <Link href="/products?review=staff" className="flex items-center justify-between gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 hover:bg-violet-100">

@@ -1,0 +1,136 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { requireUser } from "@/lib/auth/requireUser";
+
+export type TaskPriority = "low" | "normal" | "high";
+export type TaskStatus = "open" | "in_progress" | "done";
+
+export type StaffTask = {
+  id: string;
+  title: string;
+  description: string | null;
+  assignedTo: string | null;   // staff_members.id, or null = everyone
+  assignedName: string | null; // display name (or null = everyone)
+  priority: TaskPriority;
+  dueDate: string | null;
+  status: TaskStatus;
+  createdBy: string | null;
+  createdAt: string | null;
+  completedAt: string | null;
+  completedBy: string | null;
+};
+
+function adminClient(): any | null {
+  try { return createAdminClient(); } catch { return null; }
+}
+async function adminEmail(): Promise<string | null> {
+  try { const { data } = await createClient().auth.getUser(); return data.user?.email ?? null; } catch { return null; }
+}
+const NO_DB = "الخادم غير مهيأ (SUPABASE_SERVICE_ROLE_KEY غير مضبوط).";
+
+function mapRow(r: any): StaffTask {
+  return {
+    id: String(r.id),
+    title: r.title ?? "",
+    description: r.description ?? null,
+    assignedTo: r.assigned_to ?? null,
+    assignedName: r.assigned_name ?? null,
+    priority: (["low", "normal", "high"].includes(r.priority) ? r.priority : "normal") as TaskPriority,
+    dueDate: r.due_date ?? null,
+    status: (["open", "in_progress", "done"].includes(r.status) ? r.status : "open") as TaskStatus,
+    createdBy: r.created_by ?? null,
+    createdAt: r.created_at ?? null,
+    completedAt: r.completed_at ?? null,
+    completedBy: r.completed_by ?? null,
+  };
+}
+
+// All tasks for the manager view (newest first). ready=false → table missing.
+export async function listTasks(): Promise<{ tasks: StaffTask[]; ready: boolean; error?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { tasks: [], ready: true, error: unauth.error };
+  const admin = adminClient();
+  if (!admin) return { tasks: [], ready: true, error: NO_DB };
+  const { data, error } = await admin
+    .from("staff_tasks")
+    .select("*")
+    .order("status", { ascending: true })
+    .order("created_at", { ascending: false });
+  if (error) {
+    if ((error as any).code === "42P01" || /staff_tasks/.test(error.message)) return { tasks: [], ready: false };
+    return { tasks: [], ready: true, error: error.message };
+  }
+  return { tasks: (data ?? []).map(mapRow), ready: true };
+}
+
+export async function createTask(input: {
+  title: string; description?: string; assignedTo?: string | null; assignedName?: string | null;
+  priority?: TaskPriority; dueDate?: string | null;
+}) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const title = String(input.title || "").trim().slice(0, 200);
+  if (!title) return { error: "اكتب عنوان المهمة." };
+  const priority = (["low", "normal", "high"].includes(String(input.priority)) ? input.priority : "normal") as TaskPriority;
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const row = {
+    title,
+    description: String(input.description || "").trim() || null,
+    assigned_to: input.assignedTo || null,
+    assigned_name: input.assignedTo ? (input.assignedName || null) : null,
+    priority,
+    due_date: input.dueDate || null,
+    status: "open",
+    created_by: await adminEmail(),
+  };
+  const { error } = await admin.from("staff_tasks").insert(row);
+  if (error) {
+    if ((error as any).code === "42P01") return { error: "الجدول غير موجود — شغّل supabase/staff_tasks.sql أولاً." };
+    return { error: error.message };
+  }
+  revalidatePath("/tasks");
+  revalidatePath("/dashboard");
+  return { ok: true as const };
+}
+
+export async function updateTask(id: string, patch: {
+  title?: string; description?: string | null; assignedTo?: string | null; assignedName?: string | null;
+  priority?: TaskPriority; dueDate?: string | null; status?: TaskStatus;
+}) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const p: Record<string, unknown> = {};
+  if (patch.title != null) p.title = String(patch.title).trim().slice(0, 200);
+  if (patch.description !== undefined) p.description = patch.description ? String(patch.description).trim() : null;
+  if (patch.assignedTo !== undefined) { p.assigned_to = patch.assignedTo || null; p.assigned_name = patch.assignedTo ? (patch.assignedName || null) : null; }
+  if (patch.priority) p.priority = patch.priority;
+  if (patch.dueDate !== undefined) p.due_date = patch.dueDate || null;
+  if (patch.status) {
+    p.status = patch.status;
+    if (patch.status === "done") { p.completed_at = new Date().toISOString(); p.completed_by = await adminEmail(); }
+    else { p.completed_at = null; p.completed_by = null; }
+  }
+  const { error } = await admin.from("staff_tasks").update(p).eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/tasks");
+  revalidatePath("/dashboard");
+  return { ok: true as const };
+}
+
+export async function deleteTask(id: string) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const { error } = await admin.from("staff_tasks").delete().eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/tasks");
+  revalidatePath("/dashboard");
+  return { ok: true as const };
+}

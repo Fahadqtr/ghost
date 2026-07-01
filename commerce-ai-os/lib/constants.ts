@@ -122,6 +122,7 @@ export const NAV_GROUPS = [
     title: "الموظفون", titleEn: "Staff",
     items: [
       { href: "/team", label: "الموظفون", en: "Employees", icon: "👥" },
+      { href: "/tasks", label: "المهام", en: "Tasks", icon: "📋" },
       { href: "/inventory/approvals", label: "اعتماد الحركات", en: "Approve movements", icon: "✅" },
       { href: "/staff", label: "صفحة الموظفين", en: "Staff page", icon: "📲" },
     ],

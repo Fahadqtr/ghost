@@ -655,3 +655,62 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
     main_category: cat, price, stock, image_url: row.image_url ?? "",
   } };
 }
+
+/* ── Employee tasks (gated by "tasks") ─────────────────────────────────── */
+export type StaffTaskRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  priority: "low" | "normal" | "high";
+  dueDate: string | null;
+  status: "open" | "in_progress" | "done";
+  forEveryone: boolean;
+  createdAt: string | null;
+};
+
+export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: string }> {
+  const who = await currentStaff();
+  if (!who) return { tasks: [], error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "tasks")) return { tasks: [], error: "ما عندك صلاحية المهام." };
+  const admin = adminClient();
+  if (!admin) return { tasks: [], error: NO_DB };
+
+  let query = admin.from("staff_tasks").select("id, title, description, priority, due_date, status, created_at, assigned_to");
+  // Tasks assigned to me, plus tasks for everyone (assigned_to null).
+  query = who.id ? query.or(`assigned_to.eq.${who.id},assigned_to.is.null`) : query.is("assigned_to", null);
+  const { data, error } = await query.order("created_at", { ascending: false }).limit(300);
+  if (error) {
+    if ((error as any).code === "42P01" || /staff_tasks/.test(error.message)) return { tasks: [] };
+    return { tasks: [], error: error.message };
+  }
+  const tasks: StaffTaskRow[] = (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    title: r.title ?? "",
+    description: r.description ?? null,
+    priority: (["low", "normal", "high"].includes(r.priority) ? r.priority : "normal"),
+    dueDate: r.due_date ?? null,
+    status: (["open", "in_progress", "done"].includes(r.status) ? r.status : "open"),
+    forEveryone: r.assigned_to == null,
+    createdAt: r.created_at ?? null,
+  }));
+  return { tasks };
+}
+
+export async function staffSetTaskStatus(id: string, status: "open" | "in_progress" | "done") {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "tasks")) return { error: "ما عندك صلاحية المهام." };
+  if (!["open", "in_progress", "done"].includes(status)) return { error: "حالة غير صالحة." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const { data: row } = await admin.from("staff_tasks").select("assigned_to").eq("id", id).single();
+  if (!row) return { error: "المهمة غير موجودة." };
+  // Only the assignee (or anyone, for an "everyone" task) can change it.
+  if (row.assigned_to && row.assigned_to !== who.id) return { error: "هذه المهمة مب مكلّف فيها." };
+  const patch: Record<string, unknown> = { status };
+  if (status === "done") { patch.completed_at = new Date().toISOString(); patch.completed_by = `staff:${who.name}`; }
+  else { patch.completed_at = null; patch.completed_by = null; }
+  const { error } = await admin.from("staff_tasks").update(patch).eq("id", id);
+  if (error) return { error: error.message };
+  return { ok: true as const };
+}
