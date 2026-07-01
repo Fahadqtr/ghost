@@ -29,7 +29,7 @@ export default function Topbar({
     // Force LTR layout for the bar so the ☰ menu button stays on the LEFT — the
     // same side the drawer slides from — in both Arabic and English (the drawer
     // is always physically left). Text inside still renders bidi-correctly.
-    <header dir="ltr" className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 sm:px-6">
+    <header dir="ltr" className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-[#efe3d6] bg-white px-4 sm:px-6">
       <div className="flex min-w-0 items-center gap-2">
         {/* Hamburger — shown whenever the static sidebar is hidden */}
         {showMenu ? (
@@ -37,7 +37,7 @@ export default function Topbar({
             type="button"
             onClick={onMenuClick}
             aria-label={t("app.openMenu")}
-            className="-ml-1 inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
+            className="-ml-1 inline-flex h-10 w-10 items-center justify-center rounded-lg text-[#6b5344] hover:bg-[#faf3ec]"
           >
             <span className="text-xl leading-none">☰</span>
           </button>
