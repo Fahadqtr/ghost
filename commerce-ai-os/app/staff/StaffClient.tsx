@@ -156,7 +156,7 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
   const logout = () => start(async () => { await staffLogout(); onLogout(); });
 
   return (
-    <div dir={dirOf(locale)} className="mx-auto max-w-md space-y-3 p-3">
+    <div dir={dirOf(locale)} className="mx-auto w-full max-w-md space-y-3 p-3 md:max-w-4xl md:p-5">
       {/* header */}
       <div className="flex items-center justify-between">
         <div>
@@ -230,7 +230,7 @@ function StockTab({ initialToday, locale }: { initialToday: StaffLogRow[]; local
   const refreshToday = () => start(async () => { const r = await staffToday(); if (!r.error) setToday(r.rows); });
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto w-full max-w-2xl space-y-3">
       <form onSubmit={(e) => { e.preventDefault(); lookup(query); }} className="flex gap-2">
         <input ref={scanRef} autoFocus value={query} onChange={(e) => setQuery(e.target.value)}
           className="input flex-1" placeholder={L("امسح الباركود أو اكتب الاسم/الكود…", "Scan barcode or type name / SKU…")} />
@@ -366,7 +366,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
       {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
       <p className="text-xs text-muted">{loading ? L("جاري التحميل…", "Loading…") : L(`${filtered.length} من ${all.length} منتج`, `${filtered.length} of ${all.length} products`)}</p>
 
-      <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
         {visible.map((p) => {
           const vs = p.variants ?? [];
           const open = expanded.has(p.id);
@@ -465,6 +465,42 @@ function ProductsTab({ locale }: { locale: Locale }) {
   );
 }
 
+// Downscale + re-encode any photo to a modest JPEG in the browser. Keeps the
+// upload small/fast and normalizes odd formats (e.g. HEIC) to JPEG. Falls back
+// to a plain read if the canvas path fails.
+async function prepareImage(file: File): Promise<{ dataUrl: string; base64: string; mediaType: string }> {
+  const readRaw = () => new Promise<{ dataUrl: string; base64: string; mediaType: string }>((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => { const d = String(r.result || ""); res({ dataUrl: d, base64: d.replace(/^data:[^,]+,/, ""), mediaType: file.type || "image/jpeg" }); };
+    r.onerror = () => rej(new Error("read failed"));
+    r.readAsDataURL(file);
+  });
+  const objUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = () => rej(new Error("decode failed"));
+      im.src = objUrl;
+    });
+    const maxDim = 1600;
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("no ctx");
+    ctx.drawImage(img, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+    return { dataUrl, base64: dataUrl.replace(/^data:[^,]+,/, ""), mediaType: "image/jpeg" };
+  } catch {
+    return readRaw(); // canvas unsupported / decode failed → send as-is
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
 /* ── Add-product tab (photo → AI draft → submit → copy fields) ─────────── */
 function AddProductTab({ locale }: { locale: Locale }) {
   const en = locale === "en";
@@ -481,29 +517,34 @@ function AddProductTab({ locale }: { locale: Locale }) {
 
   const onFile = (file: File) => {
     setErr("");
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || "");
-      setPreview(dataUrl);
-      const b64 = dataUrl.replace(/^data:[^,]+,/, "");
-      start(async () => {
-        const r = await staffGenerateProductDraft(b64, file.type);
+    // Everything is inside the transition + try/catch so a bad photo or a failed
+    // upload can NEVER crash the page (was white-screening on some phone photos).
+    start(async () => {
+      try {
+        const payload = await prepareImage(file);
+        setPreview(payload.dataUrl);
+        const r = await staffGenerateProductDraft(payload.base64, payload.mediaType);
         if ("error" in r) { setErr(r.error); return; }
         setImageUrl(r.imageUrl);
         setDraft(r.draft);
         setPhase("form");
-      });
-    };
-    reader.readAsDataURL(file);
+      } catch {
+        setErr(L("تعذّر معالجة الصورة — جرّب صورة ثانية أو أصغر.", "Couldn't process the image — try another or smaller photo."));
+      }
+    });
   };
 
   const submit = () => {
     setErr("");
     start(async () => {
-      const r = await staffAddProduct({ ...draft, price, stock_quantity: stock, image_url: imageUrl });
-      if ("error" in r) { setErr(r.error); return; }
-      setCreated(r.product);
-      setPhase("done");
+      try {
+        const r = await staffAddProduct({ ...draft, price, stock_quantity: stock, image_url: imageUrl });
+        if ("error" in r) { setErr(r.error); return; }
+        setCreated(r.product);
+        setPhase("done");
+      } catch {
+        setErr(L("تعذّر حفظ المنتج — حاول مرة ثانية.", "Couldn't save the product — try again."));
+      }
     });
   };
 
@@ -517,7 +558,7 @@ function AddProductTab({ locale }: { locale: Locale }) {
   if (phase === "done" && created) return <CopyFieldsPanel product={created} locale={locale} onAgain={reset} />;
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto w-full max-w-xl space-y-3">
       {/* image */}
       <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/50 p-4 text-center">
         {preview ? (
@@ -604,7 +645,7 @@ function CopyFieldsPanel({ product, locale, onAgain }: { product: CreatedProduct
   const allText = fields.map((f) => `${f.label}: ${f.value}`).join("\n");
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto w-full max-w-xl space-y-3">
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-center">
         <p className="text-sm font-bold text-emerald-800">✓ {L("تمت الإضافة — بانتظار اعتماد المدير", "Added — pending manager approval")}</p>
         <p className="mt-0.5 text-xs text-emerald-700">{L("انسخ الخانات وأضِفها يدويًا في المنصّات.", "Copy the fields to add them manually on the platforms.")}</p>
@@ -664,7 +705,7 @@ function MalakTab({ name, locale }: { name: string; locale: Locale }) {
   };
 
   return (
-    <div className="flex h-[calc(100dvh-11rem)] flex-col rounded-2xl border border-violet-200 bg-white">
+    <div className="mx-auto flex h-[calc(100dvh-11rem)] w-full max-w-2xl flex-col rounded-2xl border border-violet-200 bg-white">
       <div className="flex-1 space-y-2 overflow-y-auto p-3">
         {msgs.length === 0 ? (
           <div className="mt-6 text-center text-sm text-slate-400">
@@ -702,7 +743,7 @@ function ReportsTab({ locale }: { locale: Locale }) {
   const outUnits = rows.filter((r) => r.dir === "out").reduce((s, r) => s + r.qty, 0);
 
   return (
-    <div className="space-y-3">
+    <div className="mx-auto w-full max-w-2xl space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div className="card text-center">
           <p className="text-xs text-muted">{L("أدخلت اليوم", "In today")}</p>
