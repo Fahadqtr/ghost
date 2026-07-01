@@ -294,6 +294,8 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const [query, setQuery] = useState("");
   const [cat, setCat] = useState("");
   const [stk, setStk] = useState("");
+  const [onlyVar, setOnlyVar] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -308,20 +310,24 @@ function ProductsTab({ locale }: { locale: Locale }) {
   }, []);
 
   const cats = useMemo(() => Array.from(new Set(all.map((p) => p.category).filter(Boolean))).sort() as string[], [all]);
+  const withVarsCount = useMemo(() => all.filter((p) => (p.variants?.length ?? 0) > 0).length, [all]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return all.filter((p) => {
       const matchQ = !q || (p.name ?? "").toLowerCase().includes(q) || (p.nameAr ?? "").toLowerCase().includes(q)
-        || (p.sku ?? "").toLowerCase().includes(q) || (p.barcode ?? "").toLowerCase().includes(q);
+        || (p.sku ?? "").toLowerCase().includes(q) || (p.barcode ?? "").toLowerCase().includes(q)
+        || (p.variants ?? []).some((v) => (v.barcode ?? "").toLowerCase().includes(q) || (v.name ?? "").toLowerCase().includes(q));
       const matchCat = !cat || p.category === cat;
       const n = Number(p.stock);
       const matchStk = !stk || (stk === "out" ? !(n > 0) : stk === "low" ? (n > 0 && n < 10) : stk === "in" ? n >= 10 : true);
-      return matchQ && matchCat && matchStk;
+      const matchVar = !onlyVar || (p.variants?.length ?? 0) > 0;
+      return matchQ && matchCat && matchStk && matchVar;
     });
-  }, [all, query, cat, stk]);
+  }, [all, query, cat, stk, onlyVar]);
 
-  useEffect(() => { setPage(1); }, [query, cat, stk]);
+  const toggleExpand = (id: string) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  useEffect(() => { setPage(1); }, [query, cat, stk, onlyVar]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PROD_PAGE));
   const cur = Math.min(page, totalPages);
   const visible = filtered.slice((cur - 1) * PROD_PAGE, cur * PROD_PAGE);
@@ -349,27 +355,55 @@ function ProductsTab({ locale }: { locale: Locale }) {
           <option value="out">{L("نافد", "Out of stock")}</option>
         </select>
       </div>
+      {withVarsCount > 0 ? (
+        <button onClick={() => setOnlyVar((v) => !v)}
+          className={`rounded-full px-3 py-1 text-xs font-medium ${onlyVar ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+          🎚️ {L("له خيارات", "Has options")} ({withVarsCount})
+        </button>
+      ) : null}
 
       {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
       <p className="text-xs text-muted">{loading ? L("جاري التحميل…", "Loading…") : L(`${filtered.length} من ${all.length} منتج`, `${filtered.length} of ${all.length} products`)}</p>
 
       <div className="space-y-2">
-        {visible.map((p) => (
-          <div key={p.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-2.5">
-            <Thumb src={p.image} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-ink">{(en ? p.name : p.nameAr) || p.name || p.sku || "—"}</p>
-              <p className="text-xs text-muted">{p.sku ?? "—"}{p.category ? ` · ${p.category}` : ""}</p>
+        {visible.map((p) => {
+          const vs = p.variants ?? [];
+          const open = expanded.has(p.id);
+          return (
+            <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-2.5">
+              <div className="flex items-center gap-3">
+                <Thumb src={p.image} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-ink">{(en ? p.name : p.nameAr) || p.name || p.sku || "—"}</p>
+                  <p className="text-xs text-muted">{p.sku ?? "—"}{p.category ? ` · ${p.category}` : ""}</p>
+                  {vs.length > 0 ? (
+                    <button onClick={() => toggleExpand(p.id)} className="mt-0.5 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700">
+                      🎚️ {vs.length} {L("خيار", "options")} {open ? "▴" : "▾"}
+                    </button>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-0.5 text-end">
+                  <span className="flex items-center gap-1">
+                    {stockBadge(p.stock)}
+                    <span className={`text-sm font-bold ${p.stock != null && p.stock <= 0 ? "text-red-600" : "text-ink"}`}>{p.stock != null ? p.stock : "—"}</span>
+                  </span>
+                  {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
+                </div>
+              </div>
+              {open && vs.length > 0 ? (
+                <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-2">
+                  {vs.map((v, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 flex-1 truncate text-slate-700">{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
+                      {v.barcode ? <span className="font-mono text-[11px] text-slate-500">{v.barcode}</span> : null}
+                      <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{v.stock != null ? v.stock : "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-0.5 text-end">
-              <span className="flex items-center gap-1">
-                {stockBadge(p.stock)}
-                <span className={`text-sm font-bold ${p.stock != null && p.stock <= 0 ? "text-red-600" : "text-ink"}`}>{p.stock != null ? p.stock : "—"}</span>
-              </span>
-              {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {!loading && filtered.length === 0 ? <p className="py-6 text-center text-sm text-slate-400">{L("ما فيه منتجات مطابقة.", "No matching products.")}</p> : null}
       </div>
 
