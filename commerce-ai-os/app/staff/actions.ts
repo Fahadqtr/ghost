@@ -327,6 +327,39 @@ export async function staffProducts(query: string): Promise<{ items: StaffProduc
   return { items, showPrices };
 }
 
+// The WHOLE catalog for the staff browse tab (paged through Supabase's 1000-row
+// cap). The tab does search + category/stock filtering client-side.
+export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showPrices: boolean; error?: string }> {
+  const who = await currentStaff();
+  if (!who) return { items: [], showPrices: false, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "products")) return { items: [], showPrices: false, error: "ما عندك صلاحية عرض المنتجات." };
+  const showPrices = hasPerm(who.perms, "prices");
+  const admin = adminClient();
+  if (!admin) return { items: [], showPrices, error: NO_DB };
+
+  const cols = "id, sku, name_en, name_ar, barcode, image_url, main_category, price, discount_price, inventory(stock_quantity)";
+  const items: StaffProduct[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await admin.from("products").select(cols).order("name_en", { ascending: true }).range(from, from + 999);
+    if (error) return { items, showPrices, error: error.message };
+    for (const p of (data ?? []) as any[]) {
+      items.push({
+        id: String(p.id),
+        sku: p.sku ?? null,
+        name: p.name_en ?? p.name_ar ?? null,
+        nameAr: p.name_ar ?? null,
+        barcode: p.barcode ?? null,
+        image: p.image_url ?? null,
+        category: p.main_category ?? null,
+        stock: p.inventory?.[0]?.stock_quantity ?? null,
+        price: showPrices ? (p.discount_price ?? p.price ?? null) : null,
+      });
+    }
+    if (!data || data.length < 1000) break;
+  }
+  return { items, showPrices };
+}
+
 /* ── Staff Malak — an ISOLATED, read-only assistant (gated by "malak") ─────
    Deliberately NOT the admin brain: no write/confirm/commit tools, no browser,
    no admin data. One read tool (product search) and plain conversation. */
