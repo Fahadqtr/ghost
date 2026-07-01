@@ -339,16 +339,34 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
   const admin = adminClient();
   if (!admin) return { items: [], showPrices, error: NO_DB };
 
+  // Per-variant shelf stock (summed) — a fallback when the variant row itself
+  // has no stock_quantity. Optional table; degrades silently.
+  const shelfByVariant = new Map<string, number>();
+  try {
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await admin.from("variant_shelf_stock").select("variant_id, quantity").range(from, from + 999);
+      if (error) break;
+      for (const r of (data ?? []) as any[]) {
+        if (!r.variant_id) continue;
+        shelfByVariant.set(String(r.variant_id), (shelfByVariant.get(String(r.variant_id)) ?? 0) + (Number(r.quantity) || 0));
+      }
+      if (!data || data.length < 1000) break;
+    }
+  } catch { /* optional */ }
+
   // Variants (options) grouped by parent product, paged. Degrades to none.
   const varsByParent = new Map<string, StaffVariant[]>();
   try {
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await admin.from("product_variants").select("parent_product_id, variant_name, barcode, stock_quantity").range(from, from + 999);
+      const { data, error } = await admin.from("product_variants").select("id, parent_product_id, variant_name, barcode, stock_quantity").range(from, from + 999);
       if (error) break;
       for (const v of (data ?? []) as any[]) {
         if (!v.parent_product_id) continue;
+        const own = v.stock_quantity;
+        const shelf = shelfByVariant.get(String(v.id));
+        const stock = own != null ? Number(own) : (shelf != null ? shelf : null);
         const arr = varsByParent.get(v.parent_product_id) ?? [];
-        arr.push({ name: v.variant_name ?? null, barcode: v.barcode ?? null, stock: v.stock_quantity ?? null });
+        arr.push({ name: v.variant_name ?? null, barcode: v.barcode ?? null, stock });
         varsByParent.set(v.parent_product_id, arr);
       }
       if (!data || data.length < 1000) break;
