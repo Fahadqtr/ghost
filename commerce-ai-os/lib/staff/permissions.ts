@@ -2,16 +2,17 @@
 // renders only the granted tabs, and every staff server action re-checks them.
 // Pure data + helpers (no server-only imports) so both client and server can use it.
 
-export type StaffPermission = "stock" | "products" | "prices" | "malak" | "reports";
+export type StaffPermission = "stock" | "add_product" | "products" | "prices" | "malak" | "reports";
 
-export const STAFF_PERMISSION_KEYS: StaffPermission[] = ["stock", "products", "prices", "malak", "reports"];
+export const STAFF_PERMISSION_KEYS: StaffPermission[] = ["stock", "add_product", "products", "prices", "malak", "reports"];
 
 // Existing employees (before the permissions column) keep exactly what they had:
 // stock in/out only.
 export const DEFAULT_PERMISSIONS: StaffPermission[] = ["stock"];
 
 export const STAFF_PERMISSIONS: { key: StaffPermission; ar: string; en: string; icon: string; needs?: StaffPermission }[] = [
-  { key: "stock",    ar: "إدخال/إخراج المخزون", en: "Stock in / out",  icon: "📦" },
+  { key: "stock",       ar: "إدخال/إخراج المخزون", en: "Stock in / out",  icon: "📦" },
+  { key: "add_product", ar: "إضافة منتج جديد",     en: "Add new product", icon: "➕" },
   { key: "products", ar: "عرض المنتجات",         en: "View products",   icon: "👁️" },
   { key: "prices",   ar: "عرض الأسعار",          en: "View prices",     icon: "💵", needs: "products" },
   { key: "malak",    ar: "استخدام ملاك AI",       en: "Use Malak AI",    icon: "✨" },

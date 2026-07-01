@@ -38,6 +38,14 @@ export default async function DashboardPage() {
         <p className="-mt-2 text-xs text-muted">{L(`▲▼ التغيّر منذ ${trends.asOf}`, `▲▼ change since ${trends.asOf}`)}</p>
       ) : null}
 
+      {/* New products submitted by staff, awaiting the owner's approval */}
+      {staff.configured && staff.pendingProducts > 0 ? (
+        <Link href="/products?review=staff" className="flex items-center justify-between gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 hover:bg-violet-100">
+          <span className="text-sm font-semibold text-violet-900">🆕 {L(`${staff.pendingProducts} منتج جديد من الموظفين بانتظار اعتمادك`, `${staff.pendingProducts} new staff product${staff.pendingProducts === 1 ? "" : "s"} awaiting your approval`)}</span>
+          <span className="text-xs font-medium text-violet-700">{L("مراجعة ←", "Review →")}</span>
+        </Link>
+      ) : null}
+
       {/* Low-stock alerts — the products that need restocking, front and centre */}
       {alerts.configured && alerts.items.length > 0 ? (
         <section dir={en ? "ltr" : "rtl"} className={`card border-amber-200 bg-amber-50/60 ${en ? "" : "text-right"}`}>

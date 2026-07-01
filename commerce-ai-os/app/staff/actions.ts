@@ -7,6 +7,7 @@ import { applyMovement } from "@/lib/inventory/movements";
 import { signStaff, verifyStaff, STAFF_COOKIE } from "@/lib/staff/session";
 import { hashPin } from "@/lib/staff/pin";
 import { parsePermissions, hasPerm, DEFAULT_PERMISSIONS, type StaffPermission } from "@/lib/staff/permissions";
+import { CATEGORIES } from "@/lib/constants";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
 function pinOk(pin: string): boolean {
@@ -338,4 +339,190 @@ export async function staffAskMalak(history: StaffChatMsg[]): Promise<{ text: st
   } catch (e: any) {
     return { error: e?.message || "تعذّر الاتصال بملاك الآن." };
   }
+}
+
+/* ── Add product (staff) — gated by "add_product"; lands as PENDING ──────── */
+const PRODUCT_BUCKET = "product-images";
+const IMG_EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+
+// Next mk<N> SKU using the service-role client (staff aren't Supabase users).
+async function nextStaffSku(admin: any): Promise<string> {
+  let maxMk = 0;
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await admin.from("products").select("sku").range(from, from + 999);
+    if (error) break;
+    for (const p of data ?? []) {
+      const m = /^mk(\d+)$/i.exec(String((p as any).sku ?? "").trim());
+      if (m) maxMk = Math.max(maxMk, parseInt(m[1], 10));
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+  return `mk${maxMk + 1}`;
+}
+
+// A unique 13-digit internal barcode (200-prefixed = in-store range), checked
+// for collisions against existing products.
+async function genUniqueBarcode(admin: any): Promise<string> {
+  for (let i = 0; i < 6; i++) {
+    const body = "200" + Array.from({ length: 10 }, () => Math.floor(Math.random() * 10)).join("");
+    const { data } = await admin.from("products").select("id").eq("barcode", body).limit(1);
+    if (!(data ?? []).length) return body;
+  }
+  return "200" + Date.now().toString().slice(-10);
+}
+
+export type ProductDraft = {
+  name_en: string; name_ar: string;
+  description_en: string; description_ar: string;
+  keywords_en: string; keywords_ar: string;
+  main_category: string;
+};
+
+// Upload the photo + draft its title/description/keywords with vision, matching
+// the house style learned from a few existing catalog entries.
+export async function staffGenerateProductDraft(base64: string, mediaType: string): Promise<{ imageUrl: string; draft: ProductDraft } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "add_product")) return { error: "ما عندك صلاحية إضافة منتج." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  const mt = String(mediaType || "").toLowerCase();
+  const ext = IMG_EXT[mt];
+  if (!ext) return { error: "نوع الصورة غير مدعوم — استخدم JPG أو PNG أو WebP." };
+  const raw = String(base64 || "").replace(/^data:[^,]+,/, "");
+  if (!raw) return { error: "أضف صورة أولاً." };
+  let buf: Buffer;
+  try { buf = Buffer.from(raw, "base64"); } catch { return { error: "الصورة غير صالحة." }; }
+  if (!buf.length) return { error: "الصورة فارغة." };
+  if (buf.length > 10 * 1024 * 1024) return { error: "الصورة كبيرة جدًا (الحد 10 ميغابايت)." };
+
+  // Store under a temporary staff path; the product will point at this URL.
+  const path = `staff/${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
+  const up = await admin.storage.from(PRODUCT_BUCKET).upload(path, buf, { contentType: mt, upsert: false, cacheControl: "3600" });
+  if (up.error) return { error: `تعذّر رفع الصورة: ${up.error.message}` };
+  const imageUrl = admin.storage.from(PRODUCT_BUCKET).getPublicUrl(path).data.publicUrl;
+
+  const empty: ProductDraft = { name_en: "", name_ar: "", description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", main_category: "" };
+  if (!process.env.ANTHROPIC_API_KEY) return { imageUrl, draft: empty };
+
+  // House-style few-shot: a handful of real catalog entries so the model mirrors
+  // the store's existing tone/length.
+  let style = "";
+  try {
+    const { data } = await admin
+      .from("products")
+      .select("name_en, name_ar, description_en, description_ar")
+      .not("description_en", "is", null)
+      .limit(6);
+    const rows = (data ?? []).filter((r: any) => r.name_en || r.name_ar);
+    if (rows.length) {
+      style = "\nأمثلة من كتالوجنا (قلّد نفس الأسلوب والطول واللهجة):\n" +
+        rows.map((r: any) => JSON.stringify({ name_en: r.name_en, name_ar: r.name_ar, description_en: r.description_en, description_ar: r.description_ar })).join("\n");
+    }
+  } catch { /* style is optional */ }
+
+  const prompt =
+    "أنت مساعد كتالوج تجارة إلكترونية لمتجر Malika's Universe (جمال وكورية، قطر). حلّل صورة المنتج وأرجِع JSON فقط بهذه الحقول بالضبط:\n" +
+    '{"name_en":"","name_ar":"","description_en":"","description_ar":"","keywords_en":"","keywords_ar":"","main_category":""}\n' +
+    "- name: عنوان موجز وجذّاب (≤ 70 حرفاً).\n- description: جملتين إلى ثلاث تسويقية.\n- keywords: 5 إلى 8 كلمات مفصولة بفواصل.\n" +
+    `- main_category: اختر الأنسب من هذه القائمة فقط: ${CATEGORIES.join(", ")}.\n` +
+    "العربية بالعربية والإنجليزية بالإنجليزية. أجب بـ JSON فقط." + style;
+
+  try {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic();
+    const model = process.env.STAFF_MALAK_MODEL || "claude-sonnet-5";
+    const resp: any = await client.messages.create({
+      model, max_tokens: 1200,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: mt, data: raw } } as any,
+        { type: "text", text: prompt },
+      ] }],
+    });
+    const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return { imageUrl, draft: empty };
+    const j = JSON.parse(m[0]);
+    const s = (x: any) => (x == null ? "" : String(x).trim());
+    const cat = s(j.main_category);
+    return { imageUrl, draft: {
+      name_en: s(j.name_en), name_ar: s(j.name_ar),
+      description_en: s(j.description_en), description_ar: s(j.description_ar),
+      keywords_en: s(j.keywords_en), keywords_ar: s(j.keywords_ar),
+      main_category: (CATEGORIES as readonly string[]).includes(cat) ? cat : "",
+    } };
+  } catch {
+    return { imageUrl, draft: empty }; // upload succeeded; let staff fill fields
+  }
+}
+
+export type AddProductInput = {
+  name_en: string; name_ar: string;
+  description_en: string; description_ar: string;
+  keywords_en: string; keywords_ar: string;
+  main_category: string;
+  price: string | number;
+  stock_quantity: string | number;
+  image_url: string;
+};
+
+export type CreatedProduct = {
+  id: string; sku: string; barcode: string;
+  name_en: string; name_ar: string;
+  description_en: string; description_ar: string;
+  keywords_en: string; keywords_ar: string;
+  main_category: string; price: number | null; stock: number; image_url: string;
+};
+
+export async function staffAddProduct(input: AddProductInput): Promise<{ product: CreatedProduct } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "add_product")) return { error: "ما عندك صلاحية إضافة منتج." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  const nameEn = String(input.name_en || "").trim();
+  const nameAr = String(input.name_ar || "").trim();
+  if (!nameEn && !nameAr) return { error: "اكتب اسم المنتج (عربي أو إنجليزي)." };
+  const cat = String(input.main_category || "").trim();
+  if (cat && !(CATEGORIES as readonly string[]).includes(cat)) return { error: "الفئة غير صحيحة." };
+  const price = input.price === "" || input.price == null ? null : Number(input.price);
+  if (price != null && (Number.isNaN(price) || price < 0)) return { error: "السعر غير صحيح." };
+  const stock = Math.max(0, Math.floor(Number(input.stock_quantity) || 0));
+
+  const sku = await nextStaffSku(admin);
+  const barcode = await genUniqueBarcode(admin);
+
+  const row = {
+    sku, barcode,
+    name_en: nameEn || null, name_ar: nameAr || null,
+    description_en: String(input.description_en || "").trim() || null,
+    description_ar: String(input.description_ar || "").trim() || null,
+    keywords_en: String(input.keywords_en || "").trim() || null,
+    keywords_ar: String(input.keywords_ar || "").trim() || null,
+    main_category: cat || null,
+    price,
+    image_url: String(input.image_url || "").trim() || null,
+    platform_status: "Draft",     // never live until the owner approves
+    approval: null,               // PENDING review
+    notes: `staff-new:${who.name}`, // marks origin for the approval queue
+  };
+
+  const ins = await admin.from("products").insert(row).select("id").single();
+  if (ins.error) {
+    if ((ins.error as any).code === "23505") return { error: "تعارض في الكود/الباركود — حاول مرة ثانية." };
+    return { error: ins.error.message };
+  }
+  const id = String(ins.data.id);
+  // Inventory row so it's stock-trackable immediately.
+  await admin.from("inventory").insert({ product_id: id, stock_quantity: stock, sold_quantity: 0 });
+
+  return { product: {
+    id, sku, barcode,
+    name_en: nameEn, name_ar: nameAr,
+    description_en: row.description_en ?? "", description_ar: row.description_ar ?? "",
+    keywords_en: row.keywords_en ?? "", keywords_ar: row.keywords_ar ?? "",
+    main_category: cat, price, stock, image_url: row.image_url ?? "",
+  } };
 }
