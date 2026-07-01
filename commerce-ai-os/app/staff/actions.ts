@@ -3,7 +3,7 @@
 import crypto from "crypto";
 import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { applyMovement } from "@/lib/inventory/movements";
+import { applyMovement, editMovementQty, deleteMovement } from "@/lib/inventory/movements";
 import { signStaff, verifyStaff, STAFF_COOKIE } from "@/lib/staff/session";
 import { hashPin } from "@/lib/staff/pin";
 import { parsePermissions, hasPerm, DEFAULT_PERMISSIONS, type StaffPermission } from "@/lib/staff/permissions";
@@ -199,7 +199,13 @@ export async function recordStaffMovement(input: {
   });
 }
 
-export type StaffLogRow = { at: string | null; sku: string | null; dir: "in" | "out"; qty: number; by: string | null };
+export type StaffLogRow = {
+  id: number;
+  at: string | null; sku: string | null; dir: "in" | "out"; qty: number; by: string | null;
+  review: "pending" | "approved" | "reversed" | "deleted";
+  mine: boolean;    // logged by the current employee
+  editable: boolean; // mine AND still pending
+};
 
 // Today's stock movements (newest first) for the on-screen confirmation list.
 export async function staffToday(): Promise<{ rows: StaffLogRow[]; error?: string }> {
@@ -211,19 +217,62 @@ export async function staffToday(): Promise<{ rows: StaffLogRow[]; error?: strin
   since.setHours(0, 0, 0, 0);
   const { data } = await admin
     .from("malak_audit")
-    .select("created_at, action_type, sku, new_value, old_value, details")
+    .select("id, created_at, action_type, sku, new_value, old_value, details")
     .in("action_type", ["stock_in", "stock_out"])
     .gte("created_at", since.toISOString())
     .order("created_at", { ascending: false })
     .limit(40);
-  const rows: StaffLogRow[] = (data ?? []).map((r: any) => ({
-    at: r.created_at ?? null,
-    sku: r.sku ?? null,
-    dir: r.action_type === "stock_in" ? "in" : "out",
-    qty: Number(r?.details?.quantity ?? (Math.abs(Number(r.new_value) - Number(r.old_value)) || 0)),
-    by: r?.details?.by ?? null,
-  }));
+  const mineTag = `staff:${who.name}`;
+  const rows: StaffLogRow[] = (data ?? []).map((r: any) => {
+    const rv = r?.details?.review;
+    const review = rv === "approved" ? "approved" : rv === "reversed" ? "reversed" : rv === "deleted" ? "deleted" : "pending";
+    const mine = String(r?.details?.by ?? "") === mineTag;
+    return {
+      id: Number(r.id),
+      at: r.created_at ?? null,
+      sku: r.sku ?? null,
+      dir: r.action_type === "stock_in" ? "in" : "out",
+      qty: Number(r?.details?.quantity ?? (Math.abs(Number(r.new_value) - Number(r.old_value)) || 0)),
+      by: r?.details?.by ?? null,
+      review,
+      mine,
+      editable: mine && review === "pending",
+    };
+  });
   return { rows };
+}
+
+// An employee can edit/delete their OWN movement only while it's still pending
+// (before the manager approves). Ownership + pending are enforced here.
+async function ownPendingMovement(id: number, who: CurrentStaff, admin: any): Promise<{ error: string } | { ok: true }> {
+  const { data: row } = await admin.from("malak_audit").select("details").eq("id", id).single();
+  if (!row) return { error: "الحركة غير موجودة." };
+  if (String(row.details?.by ?? "") !== `staff:${who.name}`) return { error: "تقدر تعدّل حركاتك أنت فقط." };
+  const rv = row.details?.review;
+  if (rv && rv !== "pending") return { error: "تم اعتماد/معالجة الحركة — ما تقدر تعدّلها." };
+  return { ok: true };
+}
+
+export async function staffEditMovement(id: number, newQty: number | string) {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية إدخال/إخراج المخزون." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const guard = await ownPendingMovement(Number(id), who, admin);
+  if ("error" in guard) return guard;
+  return editMovementQty(admin, Number(id), Number(newQty), `staff:${who.name}`);
+}
+
+export async function staffDeleteMovement(id: number) {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية إدخال/إخراج المخزون." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const guard = await ownPendingMovement(Number(id), who, admin);
+  if ("error" in guard) return guard;
+  return deleteMovement(admin, Number(id), `staff:${who.name}`);
 }
 
 /* ── Products browse (read-only; gated by "products", prices by "prices") ── */
