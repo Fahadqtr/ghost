@@ -296,6 +296,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const [stk, setStk] = useState("");
   const [onlyVar, setOnlyVar] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [zoom, setZoom] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -372,7 +373,9 @@ function ProductsTab({ locale }: { locale: Locale }) {
           return (
             <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-2.5">
               <div className="flex items-center gap-3">
-                <Thumb src={p.image} />
+                <button type="button" onClick={() => p.image && setZoom(p.image)} className="shrink-0" title={L("تكبير الصورة", "Zoom image")}>
+                  <Thumb src={p.image} />
+                </button>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-ink">{(en ? p.name : p.nameAr) || p.name || p.sku || "—"}</p>
                   <p className="text-xs text-muted">{p.sku ?? "—"}{p.category ? ` · ${p.category}` : ""}</p>
@@ -412,6 +415,14 @@ function ProductsTab({ locale }: { locale: Locale }) {
           <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={cur <= 1} className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40">{L("السابق →", "← Prev")}</button>
           <span className="text-xs text-muted">{L(`صفحة ${cur} / ${totalPages}`, `Page ${cur} / ${totalPages}`)}</span>
           <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={cur >= totalPages} className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40">{L("← التالي", "Next →")}</button>
+        </div>
+      ) : null}
+
+      {zoom ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setZoom(null)}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={zoom} alt="" className="max-h-[85vh] max-w-full rounded-xl object-contain" onClick={(e) => e.stopPropagation()} />
+          <button onClick={() => setZoom(null)} className="absolute end-4 top-4 rounded-full bg-white/90 px-3 py-1 text-sm font-bold text-slate-800">✕</button>
         </div>
       ) : null}
     </div>
