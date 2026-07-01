@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import { CATEGORIES } from "@/lib/constants";
 import { setProductApproval } from "@/app/(app)/products/actions";
+import { archiveAndDeleteProducts } from "@/app/(app)/products/archive/actions";
 import type { Locale } from "@/lib/i18n";
 
 const PAGE_SIZE = 50;
@@ -108,8 +109,18 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   const [grp, setGrp] = useState(initialGroup);
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  const [busyDel, startDel] = useTransition();
+  const [delNote, setDelNote] = useState("");
   const toggleExpand = (id: string) =>
     setExpanded((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  const toggleSel = (id: string) =>
+    setSel((s) => {
       const n = new Set(s);
       n.has(id) ? n.delete(id) : n.add(id);
       return n;
@@ -143,9 +154,9 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         : grp === "unavail" ? rr.includes("غير متاح")
         : grp === "variants" ? p.variant_count > 0
         : true);
-      return matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
+      return !removed.has(p.id) && matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
     });
-  }, [products, q, cat, appr, stk, plat, grp]);
+  }, [products, q, cat, appr, stk, plat, grp, removed]);
 
   useEffect(() => { setPage(1); }, [q, cat, appr, stk, plat, grp]);
 
@@ -153,6 +164,33 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   const current = Math.min(page, totalPages);
   const start = (current - 1) * PAGE_SIZE;
   const visible = filtered.slice(start, start + PAGE_SIZE);
+
+  // Select-all toggles the current page's rows.
+  const pageIds = visible.map((p) => p.id);
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => sel.has(id));
+  const toggleSelPage = () =>
+    setSel((s) => {
+      const n = new Set(s);
+      if (allOnPageSelected) pageIds.forEach((id) => n.delete(id));
+      else pageIds.forEach((id) => n.add(id));
+      return n;
+    });
+
+  const deleteSelected = () => {
+    const ids = Array.from(sel);
+    if (!ids.length) return;
+    if (!confirm(L(`أرشفة وحذف ${ids.length} منتج من الكتالوج؟ تنحفظ نسخة في الأرشيف وتقدر تسترجعها.`, `Archive & delete ${ids.length} product(s)? A copy is kept in the archive and can be restored.`))) return;
+    setDelNote("");
+    startDel(async () => {
+      const r = await archiveAndDeleteProducts(ids);
+      if (r && "error" in r) { setDelNote(r.error); return; }
+      const done = ids.filter((id) => !r.failed.includes(id));
+      setRemoved((s) => { const n = new Set(s); done.forEach((id) => n.add(id)); return n; });
+      setSel(new Set());
+      setDelNote(L(`🗑 حُذف ${r.archived} منتج${r.failed.length ? ` · فشل ${r.failed.length}` : ""} (محفوظ في الأرشيف)`, `🗑 Deleted ${r.archived}${r.failed.length ? ` · ${r.failed.length} failed` : ""} (kept in archive)`));
+      router.refresh();
+    });
+  };
 
   // الخيار(ات) اللي باركودها يطابق نص البحث الحالي — لإظهار أي خيار «ضربت» عليه
   const matchedVariants = (p: ProductRow) => {
@@ -263,6 +301,18 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         </span>
       </div>
 
+      {/* Bulk action bar (appears when rows are selected) */}
+      {sel.size > 0 ? (
+        <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2">
+          <span className="text-sm font-semibold text-violet-900">{L(`${sel.size} محدّد`, `${sel.size} selected`)}</span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSel(new Set())} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">{L("إلغاء التحديد", "Clear")}</button>
+            <button disabled={busyDel} onClick={deleteSelected} className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">{busyDel ? "…" : L(`🗑 حذف المحدّد (${sel.size})`, `🗑 Delete selected (${sel.size})`)}</button>
+          </div>
+        </div>
+      ) : null}
+      {delNote ? <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{delNote}</div> : null}
+
       {/* Cards (mobile) */}
       <div className="space-y-3 md:hidden">
         {filtered.length === 0 ? (
@@ -275,6 +325,14 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
               onMouseEnter={() => router.prefetch(`/products/${p.id}`)}
               className="card flex cursor-pointer gap-3 p-3"
             >
+              <input
+                type="checkbox"
+                checked={sel.has(p.id)}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => { e.stopPropagation(); toggleSel(p.id); }}
+                className="mt-1 h-4 w-4 shrink-0"
+                aria-label={L("تحديد", "Select")}
+              />
               <Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} />
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-start justify-between gap-2">
@@ -330,6 +388,9 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         <table className="w-full min-w-[1200px] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
+              <th className="px-3 py-3 font-medium">
+                <input type="checkbox" checked={allOnPageSelected} onChange={toggleSelPage} className="h-4 w-4" aria-label={L("تحديد الكل", "Select all")} />
+              </th>
               <th className="px-3 py-3 font-medium"></th>
               <th className="px-3 py-3 font-medium">{L("الاسم (EN)", "Name EN")}</th>
               <th className="px-3 py-3 font-medium">{L("الاسم (AR)", "Name AR")}</th>
@@ -347,7 +408,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={16} className="px-4 py-8 text-center text-slate-400">{L("لا توجد منتجات.", "No products found.")}</td></tr>
+              <tr><td colSpan={17} className="px-4 py-8 text-center text-slate-400">{L("لا توجد منتجات.", "No products found.")}</td></tr>
             ) : (
               visible.map((p) => (
                 <Fragment key={p.id}>
@@ -356,6 +417,9 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   onMouseEnter={() => router.prefetch(`/products/${p.id}`)}
                   className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                 >
+                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={sel.has(p.id)} onChange={() => toggleSel(p.id)} className="h-4 w-4" aria-label={L("تحديد", "Select")} />
+                  </td>
                   <td className="px-3 py-2"><Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} /></td>
                   <td className="px-3 py-3 font-medium text-ink">{p.name_en ?? "—"}<VariantHits p={p} /></td>
                   <td className="px-3 py-3 text-slate-600" dir="rtl">{p.name_ar ?? "—"}</td>
@@ -391,7 +455,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                 </tr>
                 {isOpen(p) && (p.variants?.length ?? 0) > 0 ? (
                   <tr className="border-b border-slate-100 bg-slate-50/60">
-                    <td colSpan={16} className="px-6 py-2">
+                    <td colSpan={17} className="px-6 py-2">
                       <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{L("خيارات المنتج", "Product options")}</div>
                       <VariantList p={p} />
                     </td>
