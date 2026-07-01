@@ -104,6 +104,7 @@ export const NAV_GROUPS = [
   { title: "المنتجات", titleEn: "Products", items: [
     { href: "/products", label: "الكتالوج", en: "Catalog", icon: "📦" },
     { href: "/catalog/health", label: "صحّة الكتالوج", en: "Catalog health", icon: "🩺" },
+    { href: "/products/archive", label: "أرشفة وحذف", en: "Archive & delete", icon: "🗄️" },
   ] },
   {
     title: "المخزون", titleEn: "Inventory",
