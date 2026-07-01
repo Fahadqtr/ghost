@@ -720,27 +720,46 @@ function TasksTab({ locale }: { locale: Locale }) {
 
   const openT = tasks.filter((t) => t.status !== "done");
   const doneT = tasks.filter((t) => t.status === "done");
+  const overdueN = openT.filter(overdue).length;
+  const bar = (p: string) => (p === "high" ? "bg-red-500" : p === "low" ? "bg-slate-300" : "bg-amber-400");
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-3">
       {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
-      <p className="text-xs font-semibold text-muted">{L("مهامي المفتوحة", "My open tasks")} ({openT.length})</p>
-      {loading ? <p className="text-xs text-slate-400">{L("جاري التحميل…", "Loading…")}</p> : null}
-      {!loading && openT.length === 0 ? <p className="py-4 text-center text-sm text-slate-400">{L("ما فيه مهام مفتوحة 🎉", "No open tasks 🎉")}</p> : null}
 
-      <div className="space-y-2">
+      {/* summary */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-xl border border-slate-200 bg-white p-2.5 text-center">
+          <p className="text-[11px] text-muted">{L("مفتوحة", "Open")}</p>
+          <p className="text-xl font-extrabold text-brand">{openT.length}</p>
+        </div>
+        <div className={`rounded-xl border p-2.5 text-center ${overdueN > 0 ? "border-red-100 bg-red-50" : "border-slate-200 bg-white"}`}>
+          <p className="text-[11px] text-muted">{L("متأخّرة", "Overdue")}</p>
+          <p className="text-xl font-extrabold text-red-600">{overdueN}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-2.5 text-center">
+          <p className="text-[11px] text-muted">{L("منجزة", "Done")}</p>
+          <p className="text-xl font-extrabold text-emerald-600">{doneT.length}</p>
+        </div>
+      </div>
+
+      {loading ? <p className="text-center text-xs text-slate-400">{L("جاري التحميل…", "Loading…")}</p> : null}
+      {!loading && openT.length === 0 ? <p className="py-6 text-center text-sm text-slate-400">{L("ما فيه مهام مفتوحة 🎉", "No open tasks 🎉")}</p> : null}
+
+      <div className="space-y-2.5">
         {openT.map((t) => {
           const od = overdue(t);
           return (
-            <div key={t.id} className={`rounded-xl border p-3 ${od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
-              <p className="text-sm font-medium text-ink">{dot(t.priority)} {t.title}</p>
+            <div key={t.id} className={`relative overflow-hidden rounded-xl border p-3 ps-4 ${od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
+              <span className={`absolute inset-y-0 start-0 w-1.5 ${bar(t.priority)}`} />
+              <p className="text-sm font-semibold text-ink">{dot(t.priority)} {t.title}</p>
               {t.description ? <p className="mt-0.5 text-xs text-muted">{t.description}</p> : null}
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted">
-                {t.forEveryone ? <span className="rounded bg-slate-100 px-1.5 py-0.5">👥 {L("للكل", "Everyone")}</span> : null}
-                {t.dueDate ? <span className={od ? "font-bold text-red-600" : ""}>⏰ {fmt(t.dueDate)}{od ? L(" (متأخّرة)", " (overdue)") : ""}</span> : null}
-                {t.status === "in_progress" ? <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700">{L("جاري", "In progress")}</span> : null}
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {t.forEveryone ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">👥 {L("للكل", "Everyone")}</span> : null}
+                {t.dueDate ? <span className={`rounded-full px-2 py-0.5 text-[11px] ${od ? "bg-red-100 font-bold text-red-700" : "border border-slate-200 bg-white text-muted"}`}>⏰ {fmt(t.dueDate)}{od ? L(" · متأخّرة", " · overdue") : ""}</span> : null}
+                {t.status === "in_progress" ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">⏳ {L("جاري", "In progress")}</span> : null}
               </div>
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2.5 flex gap-2">
                 {t.status !== "in_progress" ? (
                   <button disabled={busy} onClick={() => setStatus(t.id, "in_progress")} className="flex-1 rounded-lg border border-amber-300 py-2 text-sm font-medium text-amber-700 disabled:opacity-50">{L("▶ جاري", "▶ In progress")}</button>
                 ) : null}
