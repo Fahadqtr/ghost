@@ -276,6 +276,7 @@ export async function staffDeleteMovement(id: number) {
 }
 
 /* ── Products browse (read-only; gated by "products", prices by "prices") ── */
+export type StaffVariant = { name: string | null; barcode: string | null; stock: number | null };
 export type StaffProduct = {
   id: string;
   sku: string | null;
@@ -286,6 +287,7 @@ export type StaffProduct = {
   category: string | null;
   stock: number | null;
   price: number | null; // null unless the employee has the "prices" permission
+  variants?: StaffVariant[]; // options, populated by staffAllProducts
 };
 
 export async function staffProducts(query: string): Promise<{ items: StaffProduct[]; showPrices: boolean; error?: string }> {
@@ -337,6 +339,22 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
   const admin = adminClient();
   if (!admin) return { items: [], showPrices, error: NO_DB };
 
+  // Variants (options) grouped by parent product, paged. Degrades to none.
+  const varsByParent = new Map<string, StaffVariant[]>();
+  try {
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await admin.from("product_variants").select("parent_product_id, variant_name, barcode, stock_quantity").range(from, from + 999);
+      if (error) break;
+      for (const v of (data ?? []) as any[]) {
+        if (!v.parent_product_id) continue;
+        const arr = varsByParent.get(v.parent_product_id) ?? [];
+        arr.push({ name: v.variant_name ?? null, barcode: v.barcode ?? null, stock: v.stock_quantity ?? null });
+        varsByParent.set(v.parent_product_id, arr);
+      }
+      if (!data || data.length < 1000) break;
+    }
+  } catch { /* variants optional */ }
+
   const cols = "id, sku, name_en, name_ar, barcode, image_url, main_category, price, discount_price, inventory(stock_quantity)";
   const items: StaffProduct[] = [];
   for (let from = 0; ; from += 1000) {
@@ -353,6 +371,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
         category: p.main_category ?? null,
         stock: p.inventory?.[0]?.stock_quantity ?? null,
         price: showPrices ? (p.discount_price ?? p.price ?? null) : null,
+        variants: varsByParent.get(String(p.id)) ?? [],
       });
     }
     if (!data || data.length < 1000) break;
