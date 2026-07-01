@@ -113,6 +113,7 @@ export const NAV_GROUPS = [
       { href: "/inventory/stocktake", label: "الجرد", en: "Stocktake", icon: "🔢" },
       { href: "/inventory/movements", label: "حركات الدخول/الخروج", en: "Stock IN / OUT", icon: "🔄" },
       { href: "/inventory/out-of-stock", label: "النافد", en: "Out of stock", icon: "⚠️" },
+      { href: "/inventory/reports", label: "التقارير", en: "Reports", icon: "📈" },
       { href: "/inventory/labels", label: "الباركود", en: "Barcodes", icon: "🖨️" },
     ],
   },
