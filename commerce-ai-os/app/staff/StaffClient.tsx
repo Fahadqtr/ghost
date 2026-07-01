@@ -727,10 +727,11 @@ function ReportsTab({ locale }: { locale: Locale }) {
 
 function Thumb({ src }: { src: string | null }) {
   return (
-    <span className="h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+    <span className="block h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
       {src ? (
+        // width/height prevent the image flashing at natural (huge) size before CSS applies.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt="" className="h-full w-full object-cover" />
+        <img src={src} alt="" width={44} height={44} loading="lazy" className="block h-11 w-11 object-cover" />
       ) : (
         <span className="flex h-full w-full items-center justify-center text-slate-300">📦</span>
       )}
