@@ -4,7 +4,7 @@ import type { Locale } from "@/lib/i18n";
 import GuideDemo from "./GuideDemo";
 
 // Employee how-to guide, shown as a tab on /staff. Bilingual, printable to PDF,
-// and shows a walkthrough video if NEXT_PUBLIC_STAFF_GUIDE_VIDEO_URL is set.
+// with a self-running demo up top and a small illustration for every step.
 
 const VIDEO_URL = process.env.NEXT_PUBLIC_STAFF_GUIDE_VIDEO_URL || "";
 
@@ -20,22 +20,49 @@ function VideoEmbed({ url }: { url: string }) {
       </div>
     );
   }
-  // Direct video file
   // eslint-disable-next-line jsx-a11y/media-has-caption
   return <video src={u} controls className="w-full rounded-xl border border-[#efe3d6]" />;
+}
+
+/* ── tiny illustration primitives ─────────────────────────────────────── */
+function Illo({ children }: { children: React.ReactNode }) {
+  return <div className="shrink-0 space-y-1.5 rounded-xl border border-[#efe3d6] bg-[#fffdfb] p-2.5 sm:w-[190px]">{children}</div>;
+}
+function Fld({ children }: { children: React.ReactNode }) {
+  return <div className="rounded-lg border border-[#e7d9c9] px-2 py-1.5 text-[10px] text-muted">{children}</div>;
+}
+function Btn({ children, tone = "gold" }: { children: React.ReactNode; tone?: "gold" | "green" | "amber" }) {
+  const c = tone === "green" ? "bg-emerald-600" : tone === "amber" ? "bg-amber-500" : "bg-brand";
+  return <div className={`rounded-lg ${c} py-1.5 text-center text-[10px] font-bold text-white`}>{children}</div>;
+}
+function Row({ icon, title, sub, chip }: { icon: string; title: string; sub?: string; chip?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-[#efe3d6] bg-white p-1.5">
+      <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand-light text-xs">{icon}</span>
+      <span className="min-w-0 flex-1"><span className="block truncate text-[10px] font-semibold text-ink">{title}</span>{sub ? <span className="block text-[8px] text-muted">{sub}</span> : null}</span>
+      {chip}
+    </div>
+  );
+}
+function Chip({ children, tone }: { children: React.ReactNode; tone: "g" | "a" | "r" }) {
+  const c = tone === "g" ? "bg-emerald-50 text-emerald-700" : tone === "a" ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-600";
+  return <span className={`rounded-full px-1.5 py-0.5 text-[8px] font-bold ${c}`}>{children}</span>;
 }
 
 export default function StaffGuide({ locale = "ar" }: { locale?: Locale }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
 
-  const Section = ({ n, title, children }: { n: number; title: string; children: React.ReactNode }) => (
+  const Section = ({ n, title, illo, children }: { n: number; title: string; illo: React.ReactNode; children: React.ReactNode }) => (
     <div className="rounded-2xl border border-[#efe3d6] bg-white p-4">
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-3 flex items-center gap-2">
         <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand text-sm font-bold text-white">{n}</span>
         <h3 className="font-serif text-base font-bold text-ink">{title}</h3>
       </div>
-      <div className="space-y-1.5 text-sm text-ink">{children}</div>
+      <div className="grid gap-3 sm:grid-cols-[190px_1fr] sm:items-start">
+        <Illo>{illo}</Illo>
+        <div className="space-y-1.5 text-sm text-ink">{children}</div>
+      </div>
     </div>
   );
   const Tip = ({ children }: { children: React.ReactNode }) => (
@@ -50,7 +77,6 @@ export default function StaffGuide({ locale = "ar" }: { locale?: Locale }) {
 
   return (
     <div className="staff-guide mx-auto w-full max-w-2xl space-y-4">
-      {/* header + actions */}
       <div className="flex items-center justify-between gap-2" data-no-print>
         <div>
           <h2 className="font-serif text-lg font-bold text-ink">{L("دليل استخدام صفحة الموظفين", "Employee page — how-to guide")}</h2>
@@ -59,90 +85,90 @@ export default function StaffGuide({ locale = "ar" }: { locale?: Locale }) {
         <button onClick={() => window.print()} className="btn-primary px-3 py-2 text-xs">🖨️ {L("تنزيل PDF", "Download PDF")}</button>
       </div>
 
-      {/* Walkthrough: an uploaded video if provided, else the built-in demo. */}
+      {/* walkthrough */}
       <div className="rounded-2xl border border-[#efe3d6] bg-white p-4">
         <h3 className="mb-3 font-serif text-base font-bold text-ink">🎬 {L("شاهد الطريقة", "See how it works")}</h3>
         {VIDEO_URL ? <VideoEmbed url={VIDEO_URL} /> : <GuideDemo locale={locale} />}
       </div>
 
-      <Section n={1} title={L("الدخول وتثبيت التطبيق", "Open & install the app")}>
+      <Section n={1} title={L("الدخول وتثبيت التطبيق", "Open & install the app")}
+        illo={<><Row icon="📦" title={L("ثبّت تطبيق الموظفين", "Install the app")} sub={L("على الشاشة الرئيسية", "to home screen")} /><Btn>{L("تثبيت", "Install")}</Btn></>}>
         <Steps items={[
           L("افتح رابط النظام على جوالك ثم اذهب لصفحة /staff.", "Open the system link on your phone and go to /staff."),
-          L("أندرويد (كروم): يطلع بانر «تثبيت» — اضغطه فتصير أيقونة على شاشتك.", "Android (Chrome): tap the “Install” banner — it becomes an icon on your home screen."),
-          L("آيفون (سفاري): زر المشاركة ⬆️ ← «أضف إلى الشاشة الرئيسية».", "iPhone (Safari): Share ⬆️ → “Add to Home Screen”."),
+          L("أندرويد (كروم): اضغط بانر «تثبيت».", "Android (Chrome): tap the “Install” banner."),
+          L("آيفون (سفاري): مشاركة ⬆️ ← «أضف إلى الشاشة الرئيسية».", "iPhone (Safari): Share ⬆️ → “Add to Home Screen”."),
         ]} />
-        <Tip>{L("التطبيق منفصل عن تطبيق المدير — يفتح على صفحتك فقط.", "The app is separate from the admin app — it opens to your page only.")}</Tip>
+        <Tip>{L("التطبيق منفصل عن تطبيق المدير — يفتح على صفحتك فقط.", "Separate from the admin app — opens to your page only.")}</Tip>
       </Section>
 
-      <Section n={2} title={L("تسجيل الدخول بالرمز", "Sign in with your code")}>
+      <Section n={2} title={L("تسجيل الدخول بالرمز", "Sign in with your code")}
+        illo={<><div className="text-center text-lg">📦</div><Fld>{L("رمزك", "Your code")} ••••</Fld><Fld>{L("اسمك (اختياري)", "Name (optional)")}</Fld><Btn>{L("دخول", "Sign in")}</Btn></>}>
         <Steps items={[
-          L("اكتب رمزك (4–8 أرقام) اللي أعطاك إياه المدير.", "Enter your code (4–8 digits) given by the manager."),
-          L("الاسم يُملأ تلقائيًا من رمزك.", "Your name is filled automatically from your code."),
-          L("اضغط «دخول» — تفتح صفحتك حسب صلاحياتك.", "Tap “Sign in” — your page opens per your permissions."),
+          L("اكتب رمزك (4–8 أرقام) من المدير.", "Enter your 4–8 digit code from the manager."),
+          L("الاسم يُملأ تلقائيًا من رمزك.", "Your name is filled automatically."),
+          L("اضغط «دخول».", "Tap “Sign in”."),
         ]} />
-        <Warn>{L("إذا طلع «الرمز غير صحيح» أو «الحساب معطّل» راجِع المدير.", "If you see “wrong code” or “account disabled”, check with the manager.")}</Warn>
+        <Warn>{L("«الرمز غير صحيح» أو «معطّل»؟ راجِع المدير.", "“Wrong code” or “disabled”? Check with the manager.")}</Warn>
       </Section>
 
-      <Section n={3} title={L("التبويبات — حسب صلاحياتك", "Tabs — based on your permissions")}>
-        <p>{L("تظهر لك فقط التبويبات اللي أعطاك إياها المدير:", "You only see the tabs the manager granted you:")}</p>
-        <div className="flex flex-wrap gap-1.5 pt-1 text-xs">
-          {["📦 " + L("المخزون", "Stock"), "➕ " + L("منتج جديد", "Add"), "🔎 " + L("المنتجات", "Products"), "📋 " + L("المهام", "Tasks"), "✨ " + L("ملاك", "Malak"), "📊 " + L("تقاريري", "Reports")].map((t) => (
-            <span key={t} className="rounded-full bg-brand-light px-2.5 py-1 text-brand-dark">{t}</span>
-          ))}
-        </div>
+      <Section n={3} title={L("التبويبات — حسب صلاحياتك", "Tabs — per your permissions")}
+        illo={<div className="flex flex-wrap gap-1">{["📦","➕","🔎","📋","✨","📊"].map((c)=><span key={c} className="rounded-md bg-brand-light px-1.5 py-1 text-[11px]">{c}</span>)}</div>}>
+        <p>{L("تظهر لك فقط التبويبات اللي أعطاك إياها المدير: المخزون، منتج جديد، المنتجات، المهام، ملاك، تقاريري.", "You only see the tabs the manager granted: Stock, Add, Products, Tasks, Malak, Reports.")}</p>
       </Section>
 
-      <Section n={4} title={"📦 " + L("المخزون — إدخال/إخراج", "Stock — in / out")}>
+      <Section n={4} title={"📦 " + L("المخزون — إدخال/إخراج", "Stock — in / out")}
+        illo={<><Fld>{L("امسح الباركود… 📷", "Scan barcode… 📷")}</Fld><Row icon="🧴" title={L("سيروم جلو", "Glow serum")} sub="mk1204 · 12" /><div className="grid grid-cols-2 gap-1.5"><Btn tone="green">➕ {L("إدخال","In")}</Btn><Btn tone="amber">➖ {L("إخراج","Out")}</Btn></div><Btn tone="green">✓ {L("تأكيد", "Confirm")}</Btn></>}>
         <Steps items={[
-          L("امسح الباركود بماسح USB، أو اضغط 📷 للكاميرا، أو اكتب الاسم/الكود ثم بحث.", "Scan with a USB scanner, tap 📷 for the camera, or type the name/SKU then Search."),
-          L("اختر ➕ إدخال أو ➖ إخراج.", "Choose ➕ In or ➖ Out."),
-          L("حدّد الكمية بالأزرار − / +.", "Set the quantity with − / +."),
-          L("اختر السبب (بيع/تالف/مرتجع…) ثم «تأكيد».", "Pick a reason (sale/damaged/return…) then Confirm."),
+          L("امسح الباركود (USB أو 📷) أو اكتب الاسم/الكود.", "Scan (USB or 📷) or type name/SKU."),
+          L("اختر ➕ إدخال أو ➖ إخراج، وحدّد الكمية.", "Choose ➕ In or ➖ Out, set quantity."),
+          L("اختر السبب ثم «تأكيد».", "Pick a reason then Confirm."),
         ]} />
-        <Tip>{L("تقدر تعدّل الكمية أو تحذف حركتك ما دامت «قيد المراجعة» (قبل اعتماد المدير).", "You can edit the quantity or delete your movement while it’s still pending (before the manager approves).")}</Tip>
+        <Tip>{L("تقدر تعدّل أو تحذف حركتك ما دامت «قيد المراجعة».", "You can edit/delete your movement while it’s pending.")}</Tip>
       </Section>
 
-      <Section n={5} title={"➕ " + L("منتج جديد — بالصورة", "Add a product — from a photo")}>
+      <Section n={5} title={"➕ " + L("منتج جديد — بالصورة", "Add a product — from a photo")}
+        illo={<><div className="rounded-lg border-2 border-dashed border-brand/40 bg-brand-light/40 py-3 text-center text-[10px] text-brand-dark">📸 {L("صوّر المنتج", "Photograph")}</div><Fld>{L("الاسم ✨", "Name ✨")}</Fld><Fld>{L("الوصف ✨", "Description ✨")}</Fld><Btn>{L("أضِف", "Add")}</Btn></>}>
         <Steps items={[
-          L("اضغط منطقة الصورة → التقاط صورة / المعرض / الملفات.", "Tap the image area → Take Photo / Gallery / Files."),
-          L("ينتظر لحظات ويكتب العنوان والوصف والكلمات المفتاحية بأسلوب المتجر.", "It drafts the title, description and keywords in the store’s style."),
-          L("راجِع وعدّل، اختر الفئة واكتب السعر والمخزون.", "Review/edit, choose the category, enter price and stock."),
-          L("اضغط «أضِف» — الكود والباركود يتولّدان تلقائيًا.", "Tap Add — the SKU and barcode are generated automatically."),
-          L("بعد الإضافة تطلع لوحة نسخ الخانات لإضافتها يدويًا في المنصّات.", "After adding, a copy panel lets you copy each field for the platforms."),
+          L("اضغط منطقة الصورة → التقاط/معرض/ملفات.", "Tap the image area → Take/Gallery/Files."),
+          L("يتولّد العنوان والوصف بأسلوب المتجر.", "Title & description are drafted in the store style."),
+          L("راجِع، اختر الفئة، اكتب السعر والمخزون، ثم «أضِف».", "Review, pick category, price & stock, then Add."),
+          L("بعدها لوحة نسخ الخانات للمنصّات.", "Then a copy panel for the platforms."),
         ]} />
-        <Warn>{L("المنتج الجديد يظهر عند المدير بانتظار الاعتماد — ما ينشر إلا بموافقته.", "New products land pending the manager’s approval — nothing goes live until approved.")}</Warn>
+        <Warn>{L("المنتج الجديد بانتظار اعتماد المدير قبل النشر.", "New products await the manager’s approval.")}</Warn>
       </Section>
 
-      <Section n={6} title={"🔎 " + L("المنتجات — بحث وتفاصيل", "Products — search & details")}>
+      <Section n={6} title={"🔎 " + L("المنتجات — بحث وتفاصيل", "Products — search & details")}
+        illo={<><Fld>{L("ابحث…", "Search…")}</Fld><Row icon="💄" title={L("تينت شفاه","Lip tint")} sub="mk1004" chip={<Chip tone="g">10</Chip>} /><Row icon="🧴" title={L("مزيل طلاء","Remover")} sub="mk1386" chip={<Chip tone="r">{L("نافد","Out")}</Chip>} /></>}>
         <Steps items={[
-          L("ابحث بالاسم أو الباركود أو الكود (يلقى حتى بباركود الخيار).", "Search by name, barcode or SKU (finds by option barcode too)."),
-          L("فلتر حسب الفئة والحالة (متوفّر/منخفض/نافد).", "Filter by category and status (in stock / low / out)."),
-          L("المنتج اللي له خيارات فيه شارة 🎚️ — اضغطها تشوف القائمة.", "Products with variants show a 🎚️ chip — tap it to see the options."),
-          L("اضغط صورة المنتج → تفتح بطاقة كبيرة بالتفاصيل والمخزون.", "Tap the product image → a big detail card opens."),
+          L("ابحث بالاسم/الباركود/الكود، وفلتر بالفئة والحالة.", "Search by name/barcode/SKU; filter by category & status."),
+          L("المنتج اللي له خيارات فيه شارة 🎚️ — اضغطها.", "Products with variants show a 🎚️ chip — tap it."),
+          L("اضغط صورة المنتج → بطاقة تفاصيل كبيرة.", "Tap the image → a big detail card."),
         ]} />
-        <Tip>{L("الأسعار تظهر فقط إذا أعطاك المدير صلاحية «عرض الأسعار».", "Prices show only if the manager granted you the “View prices” permission.")}</Tip>
+        <Tip>{L("الأسعار تظهر فقط بصلاحية «عرض الأسعار».", "Prices show only with the “View prices” permission.")}</Tip>
       </Section>
 
-      <Section n={7} title={"📋 " + L("المهام", "Tasks")}>
+      <Section n={7} title={"📋 " + L("المهام", "Tasks")}
+        illo={<><div className="relative overflow-hidden rounded-lg border border-red-200 bg-red-50 p-1.5 ps-2.5"><span className="absolute inset-y-0 start-0 w-1 bg-red-500" /><span className="block text-[10px] font-bold text-ink">🔴 {L("رتّبي الرف","Tidy shelf")}</span><span className="text-[8px] text-red-600">⏰ {L("متأخّرة","overdue")}</span></div><div className="grid grid-cols-2 gap-1.5"><Btn tone="amber">▶ {L("جاري","Doing")}</Btn><Btn tone="green">✓ {L("تم","Done")}</Btn></div></>}>
         <Steps items={[
-          L("فوق: ملخّص مهامك (مفتوحة/متأخّرة/منجزة).", "Top: your task summary (open / overdue / done)."),
-          L("كل مهمة فيها الأولوية (🔴🟡⚪) وتاريخ الاستحقاق.", "Each task shows priority (🔴🟡⚪) and a due date."),
-          L("اضغط ▶ جاري لما تبدأ، و✓ تم لما تخلص.", "Tap ▶ In progress when you start, ✓ Done when finished."),
+          L("فوق: ملخّص مهامك (مفتوحة/متأخّرة/منجزة).", "Top: summary (open/overdue/done)."),
+          L("اضغط ▶ جاري لما تبدأ، و✓ تم لما تخلص.", "Tap ▶ when you start, ✓ when done."),
         ]} />
       </Section>
 
-      <Section n={8} title={"✨ " + L("ملاك — المساعد الذكي", "Malak — the assistant")}>
+      <Section n={8} title={"✨ " + L("ملاك — المساعد", "Malak — the assistant")}
+        illo={<><div className="text-center text-lg">✨</div><div className="rounded-xl bg-brand-light px-2 py-1.5 text-[9px] text-brand-dark">{L("هلا! عندنا 10 من تينت الشفاه 👍","Hi! we have 10 lip tints 👍")}</div><Fld>{L("اكتب رسالتك…","Type…")}</Fld></>}>
         <ul className="list-disc space-y-1 ps-5 text-sm">
-          <li>{L("اسأله عن منتج، مخزون، أو أي سؤال عام — يناديك باسمك.", "Ask about a product, stock, or anything — it greets you by name.")}</li>
-          <li>{L("للقراءة والمساعدة فقط — ما يعدّل بيانات ولا أسعار.", "Read-only help — it never changes data or prices.")}</li>
+          <li>{L("اسأله عن منتج أو مخزون أو أي سؤال — يناديك باسمك.", "Ask about a product, stock, or anything — greets you by name.")}</li>
+          <li>{L("للمساعدة فقط — ما يعدّل بيانات ولا أسعار.", "Read-only help — never changes data or prices.")}</li>
         </ul>
       </Section>
 
-      <Section n={9} title={"📊 " + L("تقاريري", "My reports")}>
+      <Section n={9} title={"📊 " + L("تقاريري", "My reports")}
+        illo={<><div className="grid grid-cols-2 gap-1.5 text-center"><div className="rounded-lg border border-[#efe3d6] py-1.5 text-[9px] text-muted">{L("أدخلت","In")}<b className="block text-emerald-600">18</b></div><div className="rounded-lg border border-[#efe3d6] py-1.5 text-[9px] text-muted">{L("أخرجت","Out")}<b className="block text-amber-600">7</b></div></div><Row icon="➕" title="mk1204" sub="10:22" /></>}>
         <ul className="list-disc space-y-1 ps-5 text-sm">
-          <li>{L("ملخّص إدخالك وإخراجك لليوم + قائمة حركاتك بالوقت.", "Your in/out totals for today + a timed list of your movements.")}</li>
+          <li>{L("ملخّص إدخالك وإخراجك اليوم + قائمة حركاتك بالوقت.", "Your in/out totals today + a timed list of movements.")}</li>
         </ul>
-        <Tip>{L("كل حركاتك يراجعها المدير في لوحة الاعتماد — احرص على الدقّة.", "The manager reviews all your movements — please be accurate.")}</Tip>
+        <Tip>{L("كل حركاتك يراجعها المدير — احرص على الدقّة.", "The manager reviews everything — be accurate.")}</Tip>
       </Section>
 
       <p className="pb-4 text-center text-xs text-muted">Malika&apos;s Universe · Commerce AI OS</p>
