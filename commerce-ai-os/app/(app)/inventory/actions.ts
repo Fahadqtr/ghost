@@ -1266,7 +1266,7 @@ export async function markOutOfStockByNames(text: string, apply = false): Promis
     /^(ml|g|kg|l|cm|mm|pcs|pc|pieces?|pack|set|pro|max|models?|colou?rs?|size|sizes?|and|with|the|for)$/.test(w) ||
     w.length <= 2;
   const stripVariant = (s: string) => {
-    let x = String(s ?? "").toLowerCase().replace(/\([^)]*\)/g, " ");
+    const x = String(s ?? "").toLowerCase().replace(/\([^)]*\)/g, " ");
     const parts = x.split(/[–—-]/);
     while (parts.length > 1) {
       const tail = parts[parts.length - 1].trim().split(/\s+/).filter(Boolean);

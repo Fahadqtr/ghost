@@ -85,6 +85,26 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role
           MALAK_SIGNING_SECRET: placeholder-signing-secret-ci
 
+  # Lint. Deliberately NOT in the ruleset's required checks (yet): the config
+  # relaxes deliberate-pattern rules to warnings, so this stays green today and
+  # acts as a floor — it fails only on genuine new errors. Promote to required
+  # once the warning backlog is worked down.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: commerce-ai-os/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+
   # Dependency advisories. Deliberately NOT in the ruleset's required checks:
   # a new upstream advisory can turn this red on a PR that didn't touch deps,
   # and that shouldn't block unrelated work — red here means "look at deps",

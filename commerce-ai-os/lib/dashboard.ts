@@ -55,7 +55,7 @@ export async function getCeoKpis(): Promise<CeoKpis> {
 
   const sb = createClient();
   const c = (q: string, apply?: (b: any) => any) => countOf(() => {
-    let b = sb.from(q).select("*", { count: "exact", head: true });
+    const b = sb.from(q).select("*", { count: "exact", head: true });
     return apply ? apply(b) : b;
   });
 
