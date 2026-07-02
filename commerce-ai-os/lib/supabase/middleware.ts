@@ -8,7 +8,10 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // Paths that are reachable WITHOUT being logged in. `/staff` is the employees'
 // stock IN/OUT page — it has its own shared-PIN gate (no Supabase account).
-const PUBLIC_PATHS = ["/login", "/auth", "/staff"];
+// `/api/cron` runs on a schedule with no user cookie — redirecting it to /login
+// would 307 the job away from its handler; it authenticates itself with the
+// CRON_SECRET bearer token instead.
+const PUBLIC_PATHS = ["/login", "/auth", "/staff", "/api/cron"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
