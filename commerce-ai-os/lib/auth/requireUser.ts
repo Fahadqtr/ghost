@@ -12,3 +12,15 @@ export async function requireUser(): Promise<{ error: string } | null> {
   if (!user) return { error: "غير مسجّل الدخول." };
   return null;
 }
+
+// Boolean form of the same gate, for actions whose "not signed in" branch needs
+// a bespoke result shape/message (so they keep returning it verbatim instead of
+// adopting requireUser's fixed one). Collapses the repeated
+// `const { data: { user } } = await createClient().auth.getUser(); if (!user) …`
+// idiom into one greppable call so a new action is less likely to omit it.
+export async function isSignedIn(): Promise<boolean> {
+  const {
+    data: { user },
+  } = await createClient().auth.getUser();
+  return Boolean(user);
+}
