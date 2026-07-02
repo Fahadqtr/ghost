@@ -44,8 +44,11 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
   };
   if (!rows?.length) return { ...empty, error: "No rows parsed from the export." };
 
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ...empty, error: "Not signed in." };
+
   try {
-    const supabase = createClient();
     const { fields, existing: existingOptionalCols, missing: missingOptionalCols } = await detectFields(supabase);
     const products = await readAllProducts(supabase, readColumns(fields));
 

@@ -1,7 +1,7 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -22,10 +22,7 @@ function revalidate(productId: string) {
 
 // Upload a new image, make it primary, point products.image_url at it.
 export async function uploadProductImage(formData: FormData) {
-  const {
-    data: { user },
-  } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in." };
+  if (!(await isSignedIn())) return { error: "Not signed in." };
 
   const file = formData.get("file");
   const productId = String(formData.get("productId") || "");
@@ -81,10 +78,7 @@ export async function uploadProductImage(formData: FormData) {
 // the form can set image_url/image_filename; the product is created afterwards
 // with createProduct. No product_images row is written (there's no product id).
 export async function uploadNewProductImage(formData: FormData) {
-  const {
-    data: { user },
-  } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in." };
+  if (!(await isSignedIn())) return { error: "Not signed in." };
 
   const file = formData.get("file");
   const skuRaw = String(formData.get("sku") || "").replace(/[^a-zA-Z0-9_-]/g, "");
@@ -120,10 +114,7 @@ export async function uploadNewProductImage(formData: FormData) {
 // Remove an image (by url). If it was the primary, repoint products.image_url
 // to another image (or null). Storage object is left in place (harmless).
 export async function removeProductImage(productId: string, url: string) {
-  const {
-    data: { user },
-  } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in." };
+  if (!(await isSignedIn())) return { error: "Not signed in." };
   if (!productId || !url) return { error: "Missing arguments." };
 
   let admin;

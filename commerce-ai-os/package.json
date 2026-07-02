@@ -7,7 +7,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --test \"lib/**/*.test.ts\""
+    "test": "node --conditions=react-server --experimental-strip-types --test \"lib/**/*.test.ts\""
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss@<8.5.10": ">=8.5.10"
+    }
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.107.0",
@@ -28,6 +33,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.169.0",
     "postcss": "^8.5.16",
+    "server-only": "^0.0.1",
     "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3"
   }

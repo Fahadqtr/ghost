@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { isSignedIn } from "@/lib/auth/requireUser";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
 import { clean } from "@/lib/malak/talabat-export.mjs";
@@ -136,8 +137,7 @@ function toVariantRows(parentId: string, variants: VariantInput[]) {
 // --- actions --------------------------------------------------------------
 
 export async function createProduct(input: ProductInput) {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in." };
+  if (!(await isSignedIn())) return { error: "Not signed in." };
   const supabase = createClient();
 
   let productRow;
@@ -187,8 +187,7 @@ export async function createProduct(input: ProductInput) {
 }
 
 export async function updateProduct(id: string, input: ProductInput) {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in." };
+  if (!(await isSignedIn())) return { error: "Not signed in." };
   const supabase = createClient();
 
   let productRow;
@@ -249,8 +248,7 @@ export async function updateProduct(id: string, input: ProductInput) {
 // Optional reason (written to rejection_reason) records WHY.
 const APPROVAL_OPTS = new Set(["Approved", "Rejected", "SentAI", ""]);
 export async function setProductApproval(id: string, approval: string, reason?: string) {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in." };
+  if (!(await isSignedIn())) return { error: "Not signed in." };
   if (!id) return { error: "Missing product id." };
   if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".` };
   const supabase = createClient();
@@ -267,8 +265,7 @@ export async function setProductApproval(id: string, approval: string, reason?: 
 // Bulk approve/reject (e.g. reject everything Snoonu marked unavailable).
 // Optional `reason` records WHY (written to notes), e.g. "بسبب الصورة".
 export async function setProductsApproval(ids: string[], approval: string, reason?: string) {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in.", updated: 0 };
+  if (!(await isSignedIn())) return { error: "Not signed in.", updated: 0 };
   const list = (ids ?? []).filter(Boolean);
   if (list.length === 0) return { error: "No products selected.", updated: 0 };
   if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".`, updated: 0 };
@@ -294,8 +291,7 @@ export interface MatchedProduct { id: string; sku: string | null; name_en: strin
 // Match pasted lines (Snoonu names or SKUs) to catalog products, so the user can
 // bulk-reject the products Snoonu rejected (that status isn't in the export).
 export async function matchProductsByText(text: string): Promise<{ error?: string; matched: MatchedProduct[]; unmatched: string[] }> {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in.", matched: [], unmatched: [] };
+  if (!(await isSignedIn())) return { error: "Not signed in.", matched: [], unmatched: [] };
   const lines = [...new Set((text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean))];
   if (lines.length === 0) return { matched: [], unmatched: [] };
 
@@ -336,8 +332,7 @@ export async function matchProductsByText(text: string): Promise<{ error?: strin
 export async function extractRejectedFromImages(
   images: { media_type: string; data: string }[]
 ): Promise<{ error?: string; names: string[] }> {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in.", names: [] };
+  if (!(await isSignedIn())) return { error: "Not signed in.", names: [] };
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { error: "ميزة قراءة الصور غير مفعّلة (ANTHROPIC_API_KEY).", names: [] };
   const imgs = (images ?? []).filter((i) => i?.data && i?.media_type).slice(0, 8);
@@ -372,8 +367,7 @@ export async function extractRejectedFromImages(
 
 /** Next SKU in the catalog's mk#### scheme (max existing mk-number + 1). */
 export async function nextProductSku(): Promise<{ sku: string; error?: string }> {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { sku: "", error: "Not signed in." };
+  if (!(await isSignedIn())) return { sku: "", error: "Not signed in." };
   const supabase = createClient();
   let maxMk = 0;
   for (let from = 0; ; from += 1000) {
@@ -398,8 +392,7 @@ export async function describeProductFromImage(
   error?: string;
   data?: { name_en: string; name_ar: string; description_en: string; description_ar: string; keywords_en: string; keywords_ar: string };
 }> {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in." };
+  if (!(await isSignedIn())) return { error: "Not signed in." };
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { error: "ميزة الذكاء غير مفعّلة (ANTHROPIC_API_KEY)." };
   const rawUrl = (imageUrl ?? "").trim();
@@ -469,8 +462,7 @@ export async function describeProductFromImage(
 }
 
 export async function deleteProduct(id: string) {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { error: "Not signed in." };
+  if (!(await isSignedIn())) return { error: "Not signed in." };
   const supabase = createClient();
   // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).
   await supabase.from("product_variants").delete().eq("parent_product_id", id);
