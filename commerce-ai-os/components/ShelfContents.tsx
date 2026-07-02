@@ -148,12 +148,12 @@ export default function ShelfContents({ items, slotCodes = [] }: { items: ShelfI
                             <div className="min-w-0 flex-1">
                               <div className="line-clamp-2 text-sm font-medium leading-snug text-ink">{p.name ?? p.sku ?? "—"}</div>
                               {p.isVariant && p.variant ? (
-                                <div className="mt-0.5 inline-block rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">خيار: {p.variant}</div>
+                                <div className="mt-0.5 inline-block rounded-sm bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">خيار: {p.variant}</div>
                               ) : p.name_ar ? (
                                 <div className="line-clamp-1 text-xs text-muted">{p.name_ar}</div>
                               ) : null}
                               <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
-                                <span className="rounded bg-slate-100 px-1.5 py-0.5 font-medium text-ink">هنا {p.quantity}</span>
+                                <span className="rounded-sm bg-slate-100 px-1.5 py-0.5 font-medium text-ink">هنا {p.quantity}</span>
                                 <span>إجمالي {p.total}</span>
                                 {p.sku && <span className="font-mono">{p.sku}</span>}
                               </div>

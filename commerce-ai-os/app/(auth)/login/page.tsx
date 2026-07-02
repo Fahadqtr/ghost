@@ -30,7 +30,7 @@ export default async function LoginPage() {
         <div className="mt-4 text-center">
           <Link
             href="/staff"
-            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50"
+            className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-700 shadow-xs hover:bg-violet-50"
           >
             📦 {t("login.staffEntry")}
           </Link>

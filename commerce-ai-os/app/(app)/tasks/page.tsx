@@ -25,13 +25,13 @@ export default async function TasksPage() {
     <div className="space-y-4">
       <div>
         <h2 className="text-base font-semibold text-ink">{L("مهام الموظفين", "Staff tasks")}</h2>
-        <p className="text-sm text-muted">{L("كلّف موظفيك بمهام وتابِع إنجازها. تظهر لهم في صفحة", "Assign tasks and track completion. They appear on the employee page")} <code className="rounded bg-slate-100 px-1">/staff</code>.</p>
+        <p className="text-sm text-muted">{L("كلّف موظفيك بمهام وتابِع إنجازها. تظهر لهم في صفحة", "Assign tasks and track completion. They appear on the employee page")} <code className="rounded-sm bg-slate-100 px-1">/staff</code>.</p>
       </div>
 
       {!ready ? (
         <div className="card space-y-2 border-amber-200 bg-amber-50 text-sm text-amber-800">
           <div className="font-medium">{L("إعداد لمرة واحدة", "One-time setup")}</div>
-          <p>{L("شغّل", "Run")} <code className="rounded bg-white px-1">supabase/staff_tasks.sql</code> {L("مرة وحدة في Supabase، ثم حدّث الصفحة.", "once in Supabase, then refresh.")}</p>
+          <p>{L("شغّل", "Run")} <code className="rounded-sm bg-white px-1">supabase/staff_tasks.sql</code> {L("مرة وحدة في Supabase، ثم حدّث الصفحة.", "once in Supabase, then refresh.")}</p>
         </div>
       ) : error ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">{error}</div>

@@ -22,7 +22,7 @@ export default function GuideDemo({ locale = "ar" }: { locale?: Locale }) {
     return (
       <div className="mb-2 flex gap-0.5 rounded-lg bg-[#f3ece1] p-0.5">
         {items.map((ic, i) => (
-          <span key={i} className={`flex-1 rounded-md py-1 text-center text-[11px] ${i === active ? "bg-white shadow-sm" : "opacity-45"}`}>{ic}</span>
+          <span key={i} className={`flex-1 rounded-md py-1 text-center text-[11px] ${i === active ? "bg-white shadow-xs" : "opacity-45"}`}>{ic}</span>
         ))}
       </div>
     );
@@ -72,7 +72,7 @@ export default function GuideDemo({ locale = "ar" }: { locale?: Locale }) {
               <div className="flex h-full flex-col gap-2 p-3">
                 <Tabs active={0} />
                 <div className="flex items-center gap-2 rounded-xl border border-[#e4d6c5] bg-white px-2.5 py-2 text-[11px] text-muted">{L("امسح الباركود…", "Scan barcode…")} <span className="ms-auto">📷</span></div>
-                <div className="flex items-center gap-2 rounded-xl border border-[#efe3d6] bg-white p-2 shadow-sm">
+                <div className="flex items-center gap-2 rounded-xl border border-[#efe3d6] bg-white p-2 shadow-xs">
                   <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-light">🧴</span>
                   <span><span className="block text-[11px] font-semibold text-ink">{L("سيروم جلو 30مل", "Glow serum 30ml")}</span><span className="block text-[9px] text-muted">mk1204 · {L("مخزون", "stock")} 12</span></span>
                 </div>
@@ -109,8 +109,8 @@ export default function GuideDemo({ locale = "ar" }: { locale?: Locale }) {
                   <div className="rounded-lg border border-red-100 bg-red-50 py-1.5 text-[9px] text-muted">{L("متأخّرة", "Overdue")}<b className="block text-sm text-red-600">1</b></div>
                   <div className="rounded-lg border border-[#efe3d6] bg-white py-1.5 text-[9px] text-muted">{L("منجزة", "Done")}<b className="block text-sm text-emerald-600">4</b></div>
                 </div>
-                <div className="relative overflow-hidden rounded-xl border border-red-200 bg-red-50 p-2.5 ps-3.5 shadow-sm">
-                  <span className="absolute inset-y-0 start-0 w-1.5 bg-red-500" />
+                <div className="relative overflow-hidden rounded-xl border border-red-200 bg-red-50 p-2.5 ps-3.5 shadow-xs">
+                  <span className="absolute inset-y-0 inset-s-0 w-1.5 bg-red-500" />
                   <p className="text-[11px] font-bold text-ink">🔴 {L("رتّبي رف رود", "Tidy the Rhode shelf")}</p>
                   <p className="text-[9px] text-red-600">⏰ {L("متأخّرة", "overdue")}</p>
                 </div>

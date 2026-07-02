@@ -140,7 +140,7 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
           </select>
         </label>
         <input
-          className="input w-auto sm:max-w-[14rem]"
+          className="input w-auto sm:max-w-56"
           placeholder="Search name / SKU / barcode…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -201,10 +201,10 @@ export default function ShelfLabels({ items }: { items: LabelItem[] }) {
                         aria-label="Pick this label"
                       />
                       <div className="flex w-full items-center justify-between">
-                        <span className="rounded bg-slate-900 px-1 py-0.5 font-mono text-[10px] font-bold text-white">
+                        <span className="rounded-sm bg-slate-900 px-1 py-0.5 font-mono text-[10px] font-bold text-white">
                           {p.location}
                         </span>
-                        <span className="rounded bg-blue-600 px-1 py-0.5 text-[10px] font-bold text-white">
+                        <span className="rounded-sm bg-blue-600 px-1 py-0.5 text-[10px] font-bold text-white">
                           ×{p.quantity}
                         </span>
                       </div>

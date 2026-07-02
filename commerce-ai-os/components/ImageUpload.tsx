@@ -101,7 +101,7 @@ export default function ImageUpload({
       {uploadedUrl ? (
         <div className="flex items-center gap-3 rounded-lg bg-green-50 px-3 py-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={uploadedUrl} alt={L("الصورة المرفوعة", "uploaded")} className="h-12 w-12 rounded object-cover" />
+          <img src={uploadedUrl} alt={L("الصورة المرفوعة", "uploaded")} className="h-12 w-12 rounded-sm object-cover" />
           <a href={uploadedUrl} target="_blank" rel="noreferrer" className="break-all text-xs text-green-700 underline">
             {uploadedUrl}
           </a>

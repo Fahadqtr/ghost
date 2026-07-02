@@ -108,13 +108,13 @@ export default function ApprovalsClient({ initialRows, initialPending, locale = 
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-ink">{m.name ?? m.sku ?? "—"}</p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
-                  <span className={`rounded px-1.5 py-0.5 font-bold ${m.dir === "in" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                  <span className={`rounded-sm px-1.5 py-0.5 font-bold ${m.dir === "in" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
                     {m.dir === "in" ? L("➕ إدخال", "➕ In") : L("➖ إخراج", "➖ Out")} {m.qty}
                   </span>
                   <span>👤 {m.by || "—"}</span>
                   {m.reason ? <span>· {m.reason}</span> : null}
                   <span className="text-slate-400">· {fmt(m.at, locale)}</span>
-                  {m.edited ? <span className="rounded bg-blue-50 px-1.5 py-0.5 font-medium text-blue-600">{L(`✏️ عُدّلت ${m.edited.from}→${m.edited.to} (${m.edited.by})`, `✏️ edited ${m.edited.from}→${m.edited.to} (${m.edited.by})`)}</span> : null}
+                  {m.edited ? <span className="rounded-sm bg-blue-50 px-1.5 py-0.5 font-medium text-blue-600">{L(`✏️ عُدّلت ${m.edited.from}→${m.edited.to} (${m.edited.by})`, `✏️ edited ${m.edited.from}→${m.edited.to} (${m.edited.by})`)}</span> : null}
                 </div>
               </div>
               {m.review === "pending" ? (

@@ -149,7 +149,7 @@ export default function StaffGuide({ locale = "ar" }: { locale?: Locale }) {
       </Section>
 
       <Section n={7} title={"📋 " + L("المهام", "Tasks")}
-        illo={<><div className="relative overflow-hidden rounded-lg border border-red-200 bg-red-50 p-1.5 ps-2.5"><span className="absolute inset-y-0 start-0 w-1 bg-red-500" /><span className="block text-[10px] font-bold text-ink">🔴 {L("رتّبي الرف","Tidy shelf")}</span><span className="text-[8px] text-red-600">⏰ {L("متأخّرة","overdue")}</span></div><div className="grid grid-cols-2 gap-1.5"><Btn tone="amber">▶ {L("جاري","Doing")}</Btn><Btn tone="green">✓ {L("تم","Done")}</Btn></div></>}>
+        illo={<><div className="relative overflow-hidden rounded-lg border border-red-200 bg-red-50 p-1.5 ps-2.5"><span className="absolute inset-y-0 inset-s-0 w-1 bg-red-500" /><span className="block text-[10px] font-bold text-ink">🔴 {L("رتّبي الرف","Tidy shelf")}</span><span className="text-[8px] text-red-600">⏰ {L("متأخّرة","overdue")}</span></div><div className="grid grid-cols-2 gap-1.5"><Btn tone="amber">▶ {L("جاري","Doing")}</Btn><Btn tone="green">✓ {L("تم","Done")}</Btn></div></>}>
         <Steps items={[
           L("فوق: ملخّص مهامك (مفتوحة/متأخّرة/منجزة).", "Top: summary (open/overdue/done)."),
           L("اضغط ▶ جاري لما تبدأ، و✓ تم لما تخلص.", "Tap ▶ when you start, ✓ when done."),

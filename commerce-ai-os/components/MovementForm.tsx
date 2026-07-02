@@ -259,7 +259,7 @@ export default function MovementForm({ items }: { items: PickItem[] }) {
             return (
               <div
                 key={uidOf(l.item)}
-                className={`flex gap-3 rounded-xl border bg-white p-3 shadow-sm ${bad ? "border-red-200" : "border-slate-200"}`}
+                className={`flex gap-3 rounded-xl border bg-white p-3 shadow-xs ${bad ? "border-red-200" : "border-slate-200"}`}
               >
                 <div className="h-16 w-16 flex-none overflow-hidden rounded-lg bg-slate-100">
                   {l.item.image_url ? (

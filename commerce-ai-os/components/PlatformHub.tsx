@@ -15,7 +15,7 @@ const apprCls = (s: string) =>
 
 function Thumb({ url, alt }: { url: string | null; alt: string }) {
   return (
-    <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-slate-100 ring-1 ring-slate-200">
+    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-sm bg-slate-100 ring-1 ring-slate-200">
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={url} alt={alt} width={48} height={48} loading="lazy" className="block h-full w-full object-cover" />
@@ -43,7 +43,7 @@ function RowApproval({ id, platform, value }: { id: string; platform: string; va
           if (res?.error) { setVal(prev); alert(res.error); }
         });
       }}
-      className={`badge cursor-pointer border-0 outline-none ${apprCls(val)} ${busy ? "opacity-50" : ""}`}
+      className={`badge cursor-pointer border-0 outline-hidden ${apprCls(val)} ${busy ? "opacity-50" : ""}`}
       title="غيّر حالة الاعتماد لهذه المنصة"
     >
       <option value="">بدون</option>
@@ -119,7 +119,7 @@ export default function PlatformHub({ platform, products }: { platform: string; 
           <option value="">كل الفئات</option>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
         </select>
-        <select className="input sm:max-w-[12rem]" value={appr} onChange={(e) => setAppr(e.target.value)}>
+        <select className="input sm:max-w-48" value={appr} onChange={(e) => setAppr(e.target.value)}>
           <option value="">كل الحالات</option>
           <option value="Approved">Approved · معتمد</option>
           <option value="Rejected">Rejected · مرفوض</option>
@@ -127,7 +127,7 @@ export default function PlatformHub({ platform, products }: { platform: string; 
           <option value="none">بدون حالة</option>
         </select>
         {showAvail ? (
-          <select className="input sm:max-w-[12rem]" value={avl} onChange={(e) => setAvl(e.target.value)}>
+          <select className="input sm:max-w-48" value={avl} onChange={(e) => setAvl(e.target.value)}>
             <option value="">كل التوفّر</option>
             <option value="out">نافد · مخلّص (مخفي)</option>
             <option value="in">متوفّر · ظاهر</option>

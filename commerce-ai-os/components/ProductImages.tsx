@@ -80,14 +80,14 @@ export default function ProductImages({
                 <img src={u} alt={`image ${i + 1}`} loading="lazy" className="block h-full w-full object-cover" />
               </div>
               {i === 0 ? (
-                <span className="absolute left-1 top-1 rounded bg-brand px-1.5 py-0.5 text-[10px] font-medium text-white">Primary</span>
+                <span className="absolute left-1 top-1 rounded-sm bg-brand px-1.5 py-0.5 text-[10px] font-medium text-white">Primary</span>
               ) : null}
               <button
                 type="button"
                 onClick={() => onRemove(u)}
                 disabled={busy}
                 title="Remove"
-                className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-white text-red-600 shadow ring-1 ring-slate-200 hover:bg-red-50 disabled:opacity-50"
+                className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-white text-red-600 shadow-sm ring-1 ring-slate-200 hover:bg-red-50 disabled:opacity-50"
               >
                 ✕
               </button>

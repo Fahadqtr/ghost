@@ -1,47 +1,87 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
 
-:root {
-  --background: #faf5f0; /* warm cream */
-  --foreground: #3f2a1d; /* warm espresso */
+@theme {
+  --color-brand: #a8683a;
+  --color-brand-dark: #8a5528;
+  --color-brand-light: #f7ece1;
+
+  --color-ink: #3f2a1d;
+  --color-muted: #9c8171;
+
+  --color-violet-50: #faf3ec;
+  --color-violet-100: #f4e3d2;
+  --color-violet-200: #e9c9a9;
+  --color-violet-300: #dcae7f;
+  --color-violet-400: #ca9057;
+  --color-violet-500: #b5763f;
+  --color-violet-600: #a8683a;
+  --color-violet-700: #8a5528;
+  --color-violet-800: #6f4420;
+  --color-violet-900: #5b3819;
+  --color-violet-950: #3f2a1d;
+
+  --font-serif: Georgia, Cambria, 'Times New Roman', serif;
 }
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  -webkit-font-smoothing: antialiased;
+@utility card {
+  @apply rounded-2xl border border-[#efe3d6] bg-white p-5 shadow-xs;
+}
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors;
+}
+@utility btn-primary {
+  @apply btn bg-brand text-white hover:bg-brand-dark;
+}
+@utility btn-ghost {
+  @apply btn border border-[#e7d9c9] bg-white text-[#6b5344] hover:bg-[#faf3ec];
+}
+@utility input {
+  @apply w-full rounded-xl border border-[#e4d6c5] bg-white px-3 py-2 text-sm outline-hidden focus:border-brand focus:ring-2 focus:ring-brand/20;
+}
+@utility label {
+  @apply mb-1 block text-xs font-medium text-[#8a7461];
+}
+@utility badge {
+  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
 }
 
-/* Small reusable UI primitives used across pages. */
-@layer components {
-  .card {
-    @apply rounded-2xl border border-[#efe3d6] bg-white p-5 shadow-sm;
+@layer utilities {
+  :root {
+    --background: #faf5f0; /* warm cream */
+    --foreground: #3f2a1d; /* warm espresso */
   }
-  .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors;
+
+  html,
+  body {
+    max-width: 100vw;
+    overflow-x: hidden;
   }
-  .btn-primary {
-    @apply btn bg-brand text-white hover:bg-brand-dark;
+
+  body {
+    color: var(--foreground);
+    background: var(--background);
+    -webkit-font-smoothing: antialiased;
   }
-  .btn-ghost {
-    @apply btn border border-[#e7d9c9] bg-white text-[#6b5344] hover:bg-[#faf3ec];
-  }
-  .input {
-    @apply w-full rounded-xl border border-[#e4d6c5] bg-white px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20;
-  }
-  .label {
-    @apply mb-1 block text-xs font-medium text-[#8a7461];
-  }
-  .badge {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
-  }
+
+  /* Small reusable UI primitives used across pages. */
 }
 
 /* Elegant serif for the biggest headings gives the luxury feel. */

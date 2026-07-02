@@ -22,7 +22,7 @@ export default async function ApprovalsPage() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-ink">{L("اعتماد حركات الموظفين", "Approve staff movements")}</h2>
-          <p className="text-sm text-muted">{L("راجِع كل دخول/خروج سجّله الموظفون من صفحة", "Review every stock in/out the employees logged on")} <code className="rounded bg-slate-100 px-1">/staff</code>.</p>
+          <p className="text-sm text-muted">{L("راجِع كل دخول/خروج سجّله الموظفون من صفحة", "Review every stock in/out the employees logged on")} <code className="rounded-sm bg-slate-100 px-1">/staff</code>.</p>
         </div>
         <Link href="/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">{L("← المخزون", "Inventory →")}</Link>
       </div>

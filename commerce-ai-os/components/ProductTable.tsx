@@ -36,7 +36,7 @@ function Thumb({ url, alt }: { url: string | null; alt: string }) {
   // Fixed-size BOX owns the dimensions; the img fills it at 100% (never relies
   // on intrinsic size or height:auto, so a 1:1 image fills the 48x48 square).
   return (
-    <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-slate-100 ring-1 ring-slate-200">
+    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-sm bg-slate-100 ring-1 ring-slate-200">
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={url} alt={alt} width={48} height={48} loading="lazy"
@@ -85,7 +85,7 @@ function RowApproval({ id, value, en }: { id: string; value: string | null; en: 
           if (res?.error) { setVal(prev); alert(res.error); }
         });
       }}
-      className={`badge cursor-pointer border-0 outline-none ${apprCls(val)} ${busy ? "opacity-50" : ""}`}
+      className={`badge cursor-pointer border-0 outline-hidden ${apprCls(val)} ${busy ? "opacity-50" : ""}`}
       title={L("غيّر حالة الاعتماد", "Change approval status")}
     >
       <option value="">{L("بدون", "None")}</option>
@@ -204,7 +204,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
     return (
       <div className="mt-1 flex flex-wrap gap-1">
         {hits.map((v, i) => (
-          <span key={i} className="inline-block rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
+          <span key={i} className="inline-block rounded-sm bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800">
             🎯 {L("خيار", "Option")}: {v.name || "—"} · <span className="font-mono">{v.barcode}</span>
           </span>
         ))}
@@ -226,7 +226,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           return (
             <div
               key={i}
-              className={`flex items-center justify-between gap-3 rounded px-2 py-1 text-xs ${hit ? "bg-emerald-100 font-medium text-emerald-800" : "text-slate-600"}`}
+              className={`flex items-center justify-between gap-3 rounded-sm px-2 py-1 text-xs ${hit ? "bg-emerald-100 font-medium text-emerald-800" : "text-slate-600"}`}
             >
               <span className="truncate">{hit ? "🎯 " : ""}{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
               <span className="flex-none font-mono">{v.barcode || "—"}</span>
@@ -258,7 +258,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           />
           <button
             type="button"
-            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-base leading-none hover:bg-slate-100"
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded-sm p-1 text-base leading-none hover:bg-slate-100"
             title={L("امسح الباركود بالكاميرا", "Scan barcode with camera")}
             aria-label={L("مسح الباركود", "Scan barcode")}
             onClick={() => setScanning(true)}
@@ -270,14 +270,14 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           <option value="">{L("كل الفئات", "All categories")}</option>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
         </select>
-        <select className="input sm:max-w-[12rem]" value={appr} onChange={(e) => setAppr(e.target.value)}>
+        <select className="input sm:max-w-48" value={appr} onChange={(e) => setAppr(e.target.value)}>
           <option value="">{L("كل الحالات", "All statuses")}</option>
           <option value="Approved">{L("معتمد", "Approved")}</option>
           <option value="Rejected">{L("مرفوض", "Rejected")}</option>
           <option value="SentAI">SentAI</option>
           <option value="none">{L("بدون حالة", "No status")}</option>
         </select>
-        <select className="input sm:max-w-[14rem]" value={grp} onChange={(e) => setGrp(e.target.value)}>
+        <select className="input sm:max-w-56" value={grp} onChange={(e) => setGrp(e.target.value)}>
           <option value="">{L("كل المجموعات", "All groups")}</option>
           <option value="staff_pending">{L("🆕 من الموظفين · بانتظار الاعتماد", "🆕 From staff · pending approval")}</option>
           <option value="variants">{L("🎚️ له خيارات", "🎚️ Has variants")}</option>
@@ -285,13 +285,13 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           <option value="image">{L("🚫 مرفوض · بسبب الصورة", "🚫 Rejected · image issue")}</option>
           <option value="unavail">{L("⛔ مرفوض · غير متاح على سنونو", "⛔ Rejected · unavailable on Snoonu")}</option>
         </select>
-        <select className="input sm:max-w-[12rem]" value={stk} onChange={(e) => setStk(e.target.value)}>
+        <select className="input sm:max-w-48" value={stk} onChange={(e) => setStk(e.target.value)}>
           <option value="">{L("كل المخزون", "All stock")}</option>
           <option value="out">{L("نافد", "Out of stock")}</option>
           <option value="low">{L("منخفض (1-9)", "Low (1-9)")}</option>
           <option value="in">{L("متوفّر (10+)", "In stock (10+)")}</option>
         </select>
-        <select className="input sm:max-w-[12rem]" value={plat} onChange={(e) => setPlat(e.target.value)}>
+        <select className="input sm:max-w-48" value={plat} onChange={(e) => setPlat(e.target.value)}>
           <option value="">{L("مفعّل + غير مفعّل", "Active + inactive")}</option>
           <option value="active">{L("مفعّل", "Active")}</option>
           <option value="inactive">{L("غير مفعّل", "Draft")}</option>

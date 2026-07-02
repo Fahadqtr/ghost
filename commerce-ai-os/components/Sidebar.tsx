@@ -38,7 +38,7 @@ export default function Sidebar({ onNavigate, locale = "ar" }: { onNavigate?: ()
                   className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                     active
                       ? "bg-brand-light text-brand-dark"
-                      : "text-[#6b5344] hover:bg-[#faf3ec]"
+                      : "text-[#6b5344] hover:bg-violet-50"
                   }`}
                 >
                   <span className="text-base">{item.icon}</span>

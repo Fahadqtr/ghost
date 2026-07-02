@@ -101,19 +101,19 @@ export default function PhotoIdentify({
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 p-4">
       <div className="w-full max-w-md overflow-hidden rounded-xl bg-black">
         {phase === "camera" && (
-          <div className="relative aspect-[4/3] w-full">
+          <div className="relative aspect-4/3 w-full">
             <video ref={videoRef} className="h-full w-full object-cover" playsInline muted />
           </div>
         )}
 
         {phase === "loading" && (
-          <div className="flex aspect-[4/3] w-full items-center justify-center text-sm text-white">
+          <div className="flex aspect-4/3 w-full items-center justify-center text-sm text-white">
             Identifying the product…
           </div>
         )}
 
         {phase === "error" && (
-          <div className="flex aspect-[4/3] w-full items-center justify-center p-6 text-center text-sm text-white">
+          <div className="flex aspect-4/3 w-full items-center justify-center p-6 text-center text-sm text-white">
             {error}
           </div>
         )}
@@ -146,9 +146,9 @@ export default function PhotoIdentify({
               >
                 {c.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={c.image_url} alt="" className="h-12 w-12 flex-none rounded object-cover" loading="lazy" />
+                  <img src={c.image_url} alt="" className="h-12 w-12 flex-none rounded-sm object-cover" loading="lazy" />
                 ) : (
-                  <div className="h-12 w-12 flex-none rounded bg-slate-100" />
+                  <div className="h-12 w-12 flex-none rounded-sm bg-slate-100" />
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-ink">{c.name ?? c.sku}</div>

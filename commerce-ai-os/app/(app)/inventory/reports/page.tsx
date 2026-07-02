@@ -128,7 +128,7 @@ function ProductList({ items, metric, en, money }: { items: SoldProduct[]; metri
         const row = (
           <>
             <span className="w-4 shrink-0 text-[11px] text-slate-400">{i + 1}</span>
-            <span className="h-8 w-8 shrink-0 overflow-hidden rounded border border-slate-200 bg-slate-50">
+            <span className="h-8 w-8 shrink-0 overflow-hidden rounded-sm border border-slate-200 bg-slate-50">
               {it.image ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={it.image} alt="" className="h-full w-full object-cover" />

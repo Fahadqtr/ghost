@@ -32,15 +32,15 @@ class UIErrorBoundary extends Component<{ children: React.ReactNode; en?: boolea
       return (
         <div dir={en ? "ltr" : "rtl"} className={`min-h-screen overflow-auto bg-[#060814] p-5 text-white ${en ? "text-left" : "text-right"}`}>
           <p className="mb-2 text-sm font-bold text-rose-300">{tr(en, "خطأ في الواجهة (تشخيص):", "UI error (diagnostics):")}</p>
-          <pre className="mb-3 whitespace-pre-wrap break-words rounded-lg bg-black/40 p-3 text-[12px] text-amber-200">
+          <pre className="mb-3 whitespace-pre-wrap wrap-break-word rounded-lg bg-black/40 p-3 text-[12px] text-amber-200">
             {String(this.state.err?.message || this.state.err)}
           </pre>
-          <pre className="mb-4 whitespace-pre-wrap break-words rounded-lg bg-black/40 p-3 text-[10px] text-white/50">
+          <pre className="mb-4 whitespace-pre-wrap wrap-break-word rounded-lg bg-black/40 p-3 text-[10px] text-white/50">
             {String(this.state.err?.stack || "").slice(0, 1000)}
           </pre>
           <button
             onClick={() => location.reload()}
-            className="rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 px-5 py-2.5 text-sm font-bold"
+            className="rounded-xl bg-linear-to-br from-blue-500 to-purple-600 px-5 py-2.5 text-sm font-bold"
           >
             {tr(en, "إعادة التحميل", "Reload")}
           </button>
@@ -248,7 +248,7 @@ function ProductsPanel({ items, en = false }: { items: any[]; en?: boolean }) {
       {items.map((p, i) => (
         <div
           key={p.sku ?? i}
-          className="overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur"
+          className="overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm"
         >
           <div className="aspect-square w-full overflow-hidden bg-black/30">
             {p.image_url ? (
@@ -294,7 +294,7 @@ function StatsPanel({ items, en = false }: { items: any[]; en?: boolean }) {
   return (
     <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3">
       {items.map((s, i) => (
-        <div key={i} className={`rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur ${en ? "text-left" : "text-right"}`}>
+        <div key={i} className={`rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-sm ${en ? "text-left" : "text-right"}`}>
           <p className="text-2xl font-extrabold text-white">{txt(s.value)}</p>
           <p className="mt-1 text-sm text-white/70">{txt(s.label)}</p>
           {s.sub ? <p className="mt-0.5 text-[11px] text-white/40">{txt(s.sub)}</p> : null}
@@ -306,7 +306,7 @@ function StatsPanel({ items, en = false }: { items: any[]; en?: boolean }) {
 
 function PostPanel({ item, en = false }: { item: any; en?: boolean }) {
   return (
-    <div className={`space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
+    <div className={`space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur-sm sm:p-4 ${en ? "text-left" : "text-right"}`}>
       {item.product ? <p className="text-sm font-semibold text-cyan-300">{item.product}</p> : null}
       {item.caption_ar ? (
         <div>
@@ -339,7 +339,7 @@ function PostPanel({ item, en = false }: { item: any; en?: boolean }) {
 
 function TiktokPanel({ item, en = false }: { item: any; en?: boolean }) {
   return (
-    <div className={`space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
+    <div className={`space-y-3 rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur-sm sm:p-4 ${en ? "text-left" : "text-right"}`}>
       {item.hook ? (
         <div className="rounded-xl bg-pink-500/15 p-3">
           <p className="text-[11px] text-pink-300">{tr(en, "الخطّاف (Hook)", "Hook")}</p>
@@ -432,7 +432,7 @@ function ConfirmPanel({
   const changes: { label: string; old?: any; new: any }[] = Array.isArray(item.changes) ? item.changes : [];
 
   return (
-    <div className={`space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
+    <div className={`space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 backdrop-blur-sm sm:p-4 ${en ? "text-left" : "text-right"}`}>
       <div className="flex items-center justify-between">
         <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
           {tr(en, "⚠️ تأكيد مطلوب", "⚠️ Confirmation required")}
@@ -489,7 +489,7 @@ function ConfirmPanel({
             <p className="rounded-xl bg-amber-500/15 px-3 py-2 text-[12px] text-amber-200">
               {tr(en, "⚠️ تم التنفيذ لكن لم يُسجَّل في malak_audit.", "⚠️ Done, but it wasn't logged in malak_audit.")}
               <br />
-              <span className="break-words font-mono text-[11px] text-amber-300/80">{auditWarn}</span>
+              <span className="wrap-break-word font-mono text-[11px] text-amber-300/80">{auditWarn}</span>
             </p>
           ) : null}
         </div>
@@ -508,7 +508,7 @@ function ConfirmPanel({
           <button
             onClick={confirm}
             disabled={status === "working"}
-            className="flex-1 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
+            className="flex-1 rounded-xl bg-linear-to-br from-emerald-500 to-green-600 py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
           >
             {status === "working" ? tr(en, "جارٍ التنفيذ…", "Working…") : item.confirmLabel || tr(en, "أكّد", "Confirm")}
           </button>
@@ -569,7 +569,7 @@ function ImageRequestPanel({
   };
 
   return (
-    <div className={`space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
+    <div className={`space-y-3 rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 backdrop-blur-sm sm:p-4 ${en ? "text-left" : "text-right"}`}>
       <div className="flex items-center justify-between">
         <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200">
           {tr(en, "✨ توليد صورة", "✨ Generate image")}
@@ -601,7 +601,7 @@ function ImageRequestPanel({
         <button
           onClick={generate}
           disabled={status === "working"}
-          className="flex-1 rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
+          className="flex-1 rounded-xl bg-linear-to-br from-fuchsia-500 to-purple-600 py-2.5 text-sm font-bold text-white transition disabled:opacity-50"
         >
           {status === "working" ? tr(en, "جارٍ التوليد… (قد يأخذ نصف دقيقة)", "Generating… (may take half a minute)") : tr(en, "✨ ولّد الصورة", "✨ Generate image")}
         </button>
@@ -658,7 +658,7 @@ function BriefingPanel({
     rows.push({ icon: "💸", label: tr(en, "سعر ناقص/صفر", "Missing/zero price"), value: item.suspiciousPrice, tone: "text-orange-300" });
 
   return (
-    <div className={`space-y-3 rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/10 to-purple-500/10 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
+    <div className={`space-y-3 rounded-2xl border border-amber-400/25 bg-linear-to-br from-amber-500/10 to-purple-500/10 p-3 backdrop-blur-sm sm:p-4 ${en ? "text-left" : "text-right"}`}>
       <div className="flex items-center justify-between gap-2">
         <button
           onClick={() => onListen(briefSummary(item, en))}
@@ -739,7 +739,7 @@ function ScanPanel({
   };
 
   return (
-    <div className={`space-y-3 rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/10 to-purple-500/10 p-3 backdrop-blur sm:p-4 ${en ? "text-left" : "text-right"}`}>
+    <div className={`space-y-3 rounded-2xl border border-amber-400/25 bg-linear-to-br from-amber-500/10 to-purple-500/10 p-3 backdrop-blur-sm sm:p-4 ${en ? "text-left" : "text-right"}`}>
       <div className="flex items-center justify-between gap-2">
         <button
           onClick={() => onListen(briefSummary(item, en))}
@@ -859,7 +859,7 @@ function LiveBrowserPanel({ item, en = false }: { item: any; en?: boolean }) {
           // manualBig (no Fullscreen API) → a viewport-fixed overlay. In native
           // fullscreen the browser sizes wrapRef itself, so just fill it black.
           manualBig
-            ? "fixed inset-0 z-[100] bg-black"
+            ? "fixed inset-0 z-100 bg-black"
             : `relative overflow-hidden bg-black ${fs ? "h-full w-full" : "rounded-xl border border-emerald-400/20"}`
         }
         style={big ? { height: manualBig ? undefined : "100%" } : { aspectRatio: "16 / 11" }}
@@ -959,7 +959,7 @@ function PlayerPanel({ item, en = false }: { item: any; en?: boolean }) {
               <>
                 <span className="flex h-3 items-end gap-[2px]">
                   {[0, 1, 2, 3].map((i) => (
-                    <i key={i} className="w-[3px] animate-pulse rounded-sm bg-rose-300" style={{ height: `${[10, 6, 12, 8][i]}px`, animationDelay: `${i * 120}ms`, animationDuration: "700ms" }} />
+                    <i key={i} className="w-[3px] animate-pulse rounded-xs bg-rose-300" style={{ height: `${[10, 6, 12, 8][i]}px`, animationDelay: `${i * 120}ms`, animationDuration: "700ms" }} />
                   ))}
                 </span>
                 <span>{tr(en, "جارٍ التشغيل…", "Playing…")}</span>
@@ -1967,7 +1967,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
           ? // Fullscreen: full-width, full-height flex column so the lab fills the
             // screen. 100dvh accounts for mobile browser chrome; pseudoFs adds
             // fixed positioning since there's no native FS element (iOS Safari).
-            `h-[100dvh] w-full space-y-3 overflow-y-auto p-3 sm:p-4 ${
+            `h-dvh w-full space-y-3 overflow-y-auto p-3 sm:p-4 ${
               pseudoFs ? "fixed inset-0 z-50" : ""
             }`
           : // Mobile: fill the available screen exactly (no page bounce) — a flex
@@ -1985,7 +1985,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
             <p dir={en ? "ltr" : "rtl"} className="text-[10px] tracking-[0.15em] text-cyan-300/50">{L("ملاك · المديرة العامة الذكية", "Malak · AI general manager")}</p>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
               {["ONLINE", "SECURE", scanData ? (scanData.channelMismatch ? "SYNC NEEDED" : "SYNCED") : "…", "AUTH-LVL9"].map((c, i) => (
-                <span key={i} className="inline-flex items-center gap-1 rounded-sm border border-cyan-500/25 px-2 py-0.5 text-[8.5px] tracking-widest text-cyan-300/60">
+                <span key={i} className="inline-flex items-center gap-1 rounded-xs border border-cyan-500/25 px-2 py-0.5 text-[8.5px] tracking-widest text-cyan-300/60">
                   <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" style={{ boxShadow: "0 0 6px #4cc3ff" }} />{c}
                 </span>
               ))}
@@ -1996,7 +1996,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
             {(["AUTO", "IDLE", "THINKING", "TALKING"] as const).map((tab) => {
               const on = (tab === "TALKING" && state === "speaking") || (tab === "THINKING" && state === "thinking") || (tab === "IDLE" && state === "listening") || (tab === "AUTO" && (state === "idle"));
               return (
-                <span key={tab} className="rounded px-2.5 py-1 text-[9px] font-semibold tracking-widest transition"
+                <span key={tab} className="rounded-sm px-2.5 py-1 text-[9px] font-semibold tracking-widest transition"
                   style={on ? { background: "rgba(0,217,255,0.16)", color: "#9ff0ff", boxShadow: "inset 0 0 12px rgba(0,217,255,0.4)" } : { color: "rgba(110,234,255,0.5)" }}>
                   {tab}
                 </span>
@@ -2081,7 +2081,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
         <button
           type="button"
           onClick={toggleFullscreen}
-          className="absolute left-3 top-3 z-10 rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-white/90 shadow backdrop-blur-sm hover:bg-black/60"
+          className="absolute left-3 top-3 z-10 rounded-full border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-white/90 shadow-sm backdrop-blur-xs hover:bg-black/60"
         >
           {fsActive ? L("↙ تصغير", "↙ Minimize") : L("⛶ ملء الشاشة", "⛶ Fullscreen")}
         </button>
@@ -2089,7 +2089,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
         <button
           type="button"
           onClick={startTvMode}
-          className="absolute right-3 top-3 z-10 rounded-full border border-cyan-300/30 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-cyan-100 shadow backdrop-blur-sm hover:bg-black/60"
+          className="absolute right-3 top-3 z-10 rounded-full border border-cyan-300/30 bg-black/45 px-3 py-1.5 text-[11px] font-bold text-cyan-100 shadow-sm backdrop-blur-xs hover:bg-black/60"
         >
           {L("📺 التلفزيون", "📺 TV")}
         </button>
@@ -2158,7 +2158,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
               className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                 t.role === "user"
                   ? "border border-cyan-500/20 bg-cyan-500/10 text-cyan-50"
-                  : "bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-sm"
+                  : "bg-linear-to-br from-cyan-500 to-blue-600 text-white shadow-xs"
               }`}
             >
               {t.text}
@@ -2168,7 +2168,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
 
         {typed ? (
           <div className="flex justify-end">
-            <div className="max-w-[85%] rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 px-4 py-2.5 text-sm leading-relaxed text-white shadow-sm">
+            <div className="max-w-[85%] rounded-2xl bg-linear-to-br from-blue-500 to-purple-600 px-4 py-2.5 text-sm leading-relaxed text-white shadow-xs">
               {typed}
               <span className="ml-0.5 inline-block h-3 w-1 animate-pulse bg-white/70 align-middle" />
             </div>
@@ -2284,12 +2284,12 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={L("اكتب لملاك… (أو استخدم الميكروفون)", "Type to Malak… (or use the microphone)")}
-            className="h-11 flex-1 rounded-full border border-cyan-500/25 bg-cyan-500/5 px-4 text-sm text-cyan-50 placeholder:text-cyan-300/40 focus:border-cyan-400/60 focus:bg-cyan-500/10 focus:outline-none"
+            className="h-11 flex-1 rounded-full border border-cyan-500/25 bg-cyan-500/5 px-4 text-sm text-cyan-50 placeholder:text-cyan-300/40 focus:border-cyan-400/60 focus:bg-cyan-500/10 focus:outline-hidden"
           />
           <button
             type="submit"
             disabled={!input.trim()}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-600 text-lg text-white transition disabled:opacity-30"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-blue-500 to-purple-600 text-lg text-white transition disabled:opacity-30"
           >
             ↑
           </button>
@@ -2305,7 +2305,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
           can't start mirroring itself; this readies the big-screen view and tells
           the user how to cast from their phone. */}
       {tvHelp ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4" onClick={() => setTvHelp(false)}>
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/75 p-4" onClick={() => setTvHelp(false)}>
           <div dir={en ? "ltr" : "rtl"} className={`w-full max-w-sm rounded-2xl border border-cyan-400/30 bg-[#0a1422] p-5 text-white shadow-2xl ${en ? "text-left" : "text-right"}`} onClick={(e) => e.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between">
               <p className="text-base font-bold">{L("📺 عرض ملاك على التلفزيون", "📺 Show Malak on the TV")}</p>

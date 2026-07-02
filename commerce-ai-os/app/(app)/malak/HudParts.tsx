@@ -45,7 +45,7 @@ function timeArab(iso: string, locale: Locale = "ar") {
 function Panel({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
     <div
-      className="relative rounded-md border p-3 backdrop-blur-sm"
+      className="relative rounded-md border p-3 backdrop-blur-xs"
       style={{
         borderColor: "rgba(0,217,255,0.3)",
         background: "linear-gradient(160deg, rgba(0,217,255,0.035), rgba(3,12,24,0.6))",
@@ -171,7 +171,7 @@ export function HudLeft({ scan, onAction, locale = "ar" }: { scan: ScanData; onA
           <div className="space-y-1.5">
             {scan.issues.map((is) => (
               <button key={is.key} onClick={() => onAction(is.prompt)}
-                className={`flex w-full items-center justify-between gap-2 rounded border px-2 py-1.5 transition hover:bg-white/5 ${en ? "text-left" : "text-right"}`}
+                className={`flex w-full items-center justify-between gap-2 rounded-sm border px-2 py-1.5 transition hover:bg-white/5 ${en ? "text-left" : "text-right"}`}
                 style={{ borderColor: is.severity === "high" ? "rgba(255,107,138,0.4)" : is.severity === "med" ? "rgba(255,180,84,0.35)" : CY_FAINT }}>
                 <span className="text-[9px]" style={{ color: "rgba(174,230,255,0.85)" }}>{is.icon} {is.title}</span>
                 <span className="text-[11px] font-bold" style={{ color: is.severity === "high" ? ROSE : is.severity === "med" ? AMBER : CY }}>{is.count}</span>

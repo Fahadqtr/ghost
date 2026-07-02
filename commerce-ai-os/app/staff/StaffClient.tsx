@@ -60,7 +60,7 @@ function LogRow({ r, locale, showBy, onChanged }: { r: StaffLogRow; locale: Loca
   return (
     <div className={`rounded-lg border border-slate-100 bg-white px-2.5 py-1.5 text-xs ${r.review === "deleted" ? "opacity-60" : ""}`}>
       <div className="flex items-center justify-between gap-2">
-        <span className={`rounded px-1.5 py-0.5 font-bold ${r.dir === "in" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+        <span className={`rounded-sm px-1.5 py-0.5 font-bold ${r.dir === "in" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
           {r.dir === "in" ? "➕" : "➖"} {r.qty}
         </span>
         <span className="min-w-0 flex-1 px-2 font-mono text-slate-600 truncate">{r.sku ?? "—"}</span>
@@ -71,8 +71,8 @@ function LogRow({ r, locale, showBy, onChanged }: { r: StaffLogRow; locale: Loca
           {badge ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${badge.cls}`}>{badge.t}</span> : null}
           {r.editable ? (
             <>
-              <button disabled={busy} onClick={edit} className="rounded border border-blue-200 px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 disabled:opacity-50">{L("✏️ تعديل", "✏️ Edit")}</button>
-              <button disabled={busy} onClick={del} className="rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">{L("🗑 حذف", "🗑 Delete")}</button>
+              <button disabled={busy} onClick={edit} className="rounded-sm border border-blue-200 px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 disabled:opacity-50">{L("✏️ تعديل", "✏️ Edit")}</button>
+              <button disabled={busy} onClick={del} className="rounded-sm border border-red-200 px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">{L("🗑 حذف", "🗑 Delete")}</button>
             </>
           ) : null}
         </div>
@@ -115,8 +115,8 @@ function Gate({ onIn, locale }: { onIn: (name: string, perms: StaffPermission[])
     });
   };
   return (
-    <div dir={dirOf(locale)} className="relative mx-auto flex min-h-[100dvh] max-w-sm flex-col justify-center gap-4 p-6">
-      <div className="absolute end-4 top-4"><LanguageToggle locale={locale} /></div>
+    <div dir={dirOf(locale)} className="relative mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-4 p-6">
+      <div className="absolute inset-e-4 top-4"><LanguageToggle locale={locale} /></div>
       <div className="text-center">
         <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600 text-2xl text-white">📦</div>
         <h1 className="text-xl font-bold text-ink">{L("صفحة الموظفين", "Employee page")}</h1>
@@ -172,16 +172,16 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
         </div>
         <div className="flex items-center gap-2">
           <LanguageToggle locale={locale} />
-          <button onClick={logout} className="rounded-lg border border-[#e7d9c9] px-3 py-1.5 text-xs text-[#8a7461] hover:bg-[#faf3ec]">{L("خروج", "Sign out")}</button>
+          <button onClick={logout} className="rounded-lg border border-[#e7d9c9] px-3 py-1.5 text-xs text-[#8a7461] hover:bg-violet-50">{L("خروج", "Sign out")}</button>
         </div>
       </div>
 
       <>
         {tabs.length > 1 ? (
-          <div data-no-print className="flex flex-nowrap gap-1 overflow-x-auto rounded-xl bg-[#f3ece1] p-1 [scrollbar-width:none] md:flex-wrap md:justify-center">
+          <div data-no-print className="flex flex-nowrap gap-1 overflow-x-auto rounded-xl bg-[#f3ece1] p-1 scrollbar-none md:flex-wrap md:justify-center">
             {tabs.map((t) => (
               <button key={t.key} onClick={() => setTab(t.key)}
-                className={`shrink-0 whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition ${tab === t.key ? "bg-white text-ink shadow-sm" : "text-[#8a7461] hover:text-ink"}`}>
+                className={`shrink-0 whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition ${tab === t.key ? "bg-white text-ink shadow-xs" : "text-[#8a7461] hover:text-ink"}`}>
                 {t.icon} {en ? t.en : t.ar}
               </button>
             ))}
@@ -338,9 +338,9 @@ function ProductsTab({ locale }: { locale: Locale }) {
 
   const stockBadge = (n: number | null) => {
     if (n == null) return null;
-    if (n <= 0) return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{L("نافد", "Out")}</span>;
-    if (n < 10) return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{L("منخفض", "Low")}</span>;
-    return <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{L("متوفّر", "In")}</span>;
+    if (n <= 0) return <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{L("نافد", "Out")}</span>;
+    if (n < 10) return <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{L("منخفض", "Low")}</span>;
+    return <span className="rounded-sm bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{L("متوفّر", "In")}</span>;
   };
 
   return (
@@ -429,7 +429,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={detail.image} alt="" className="h-full w-full object-contain" />
               ) : <span className="flex h-full w-full items-center justify-center text-5xl text-slate-300">📦</span>}
-              <button onClick={() => setDetail(null)} className="absolute end-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm font-bold text-slate-800 shadow">✕</button>
+              <button onClick={() => setDetail(null)} className="absolute inset-e-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm font-bold text-slate-800 shadow-sm">✕</button>
             </div>
             <div className="space-y-2 p-4">
               <p className="text-base font-bold text-ink">{(en ? detail.name : detail.nameAr) || detail.name || detail.sku || "—"}</p>
@@ -778,7 +778,7 @@ function TasksTab({ locale }: { locale: Locale }) {
           const od = overdue(t);
           return (
             <div key={t.id} className={`relative overflow-hidden rounded-xl border p-3 ps-4 ${od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
-              <span className={`absolute inset-y-0 start-0 w-1.5 ${bar(t.priority)}`} />
+              <span className={`absolute inset-y-0 inset-s-0 w-1.5 ${bar(t.priority)}`} />
               <p className="text-sm font-semibold text-ink">{dot(t.priority)} {t.title}</p>
               {t.description ? <p className="mt-0.5 text-xs text-muted">{t.description}</p> : null}
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -929,7 +929,7 @@ function MovePanel({ item, busy, onDone, onCancel, locale }: {
   useEffect(() => { setReason(dir === "in" ? REASONS_IN[0].v : "بيع"); }, [dir]);
 
   return (
-    <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-3 shadow-sm">
+    <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-3 shadow-xs">
       <div className="flex items-center gap-3">
         <Thumb src={item.image} />
         <div className="min-w-0 flex-1">

@@ -43,7 +43,7 @@ export default async function DashboardPage() {
         <Link href="/tasks" className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 hover:bg-slate-50">
           <span className="text-sm font-semibold text-ink">
             📋 {L(`${staff.tasks.open} مهمة مفتوحة`, `${staff.tasks.open} open task${staff.tasks.open === 1 ? "" : "s"}`)}
-            {staff.tasks.overdue > 0 ? <span className="ms-2 rounded bg-red-100 px-1.5 py-0.5 text-xs font-bold text-red-700">🔴 {L(`${staff.tasks.overdue} متأخّرة`, `${staff.tasks.overdue} overdue`)}</span> : null}
+            {staff.tasks.overdue > 0 ? <span className="ms-2 rounded-sm bg-red-100 px-1.5 py-0.5 text-xs font-bold text-red-700">🔴 {L(`${staff.tasks.overdue} متأخّرة`, `${staff.tasks.overdue} overdue`)}</span> : null}
           </span>
           <span className="text-xs font-medium text-brand">{L("المتابعة ←", "Manage →")}</span>
         </Link>
@@ -89,7 +89,7 @@ export default async function DashboardPage() {
                       {it.out ? L("نافد", "Out of stock") : L(`متبقّي ${nf(it.stock)} · الحد ${nf(it.threshold)}`, `${nf(it.stock)} left · limit ${nf(it.threshold)}`)}
                     </span>
                   </span>
-                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold ${it.out ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"}`}>{it.out ? "0" : nf(it.stock)}</span>
+                  <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[11px] font-bold ${it.out ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"}`}>{it.out ? "0" : nf(it.stock)}</span>
                 </>
               );
               return it.productId ? (
@@ -137,8 +137,8 @@ export default async function DashboardPage() {
                   <div key={e.name} className="flex items-center justify-between text-sm">
                     <span className="font-medium text-ink">👤 {e.name}</span>
                     <span className="flex gap-2 text-xs">
-                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-bold text-emerald-700">➕ {e.in}</span>
-                      <span className="rounded bg-amber-100 px-1.5 py-0.5 font-bold text-amber-700">➖ {e.out}</span>
+                      <span className="rounded-sm bg-emerald-100 px-1.5 py-0.5 font-bold text-emerald-700">➕ {e.in}</span>
+                      <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 font-bold text-amber-700">➖ {e.out}</span>
                     </span>
                   </div>
                 ))}
@@ -295,7 +295,7 @@ function Bars({ items, color }: { items: NameCount[]; color: string }) {
       {items.map((it) => (
         <div key={it.name} className="flex items-center gap-2 text-sm">
           <span className="w-40 shrink-0 truncate text-slate-600" title={it.name}>{it.name}</span>
-          <div className="h-4 flex-1 overflow-hidden rounded bg-slate-100">
+          <div className="h-4 flex-1 overflow-hidden rounded-sm bg-slate-100">
             <div className={`h-full ${color}`} style={{ width: `${(it.count / max) * 100}%` }} />
           </div>
           <span className="w-10 shrink-0 text-right font-medium text-ink">{it.count}</span>
