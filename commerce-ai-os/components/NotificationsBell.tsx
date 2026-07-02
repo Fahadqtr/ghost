@@ -84,7 +84,7 @@ export default function NotificationsBell({ locale = "ar" }: { locale?: Locale }
       </button>
 
       {open ? (
-        <div dir={en ? "ltr" : "rtl"} className="absolute right-0 z-50 mt-2 w-80 max-w-[85vw] overflow-hidden rounded-2xl border border-[#efe3d6] bg-white shadow-xl">
+        <div dir={en ? "ltr" : "rtl"} className="fixed inset-x-3 top-16 z-50 overflow-hidden rounded-2xl border border-[#efe3d6] bg-white shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-80">
           <div className="flex items-center justify-between border-b border-[#efe3d6] px-3 py-2.5">
             <p className="font-serif text-sm font-bold text-ink">🔔 {L("الإشعارات", "Notifications")}</p>
             <span className="text-[11px] text-muted">{items.length ? L(`${items.length} تنبيه`, `${items.length} alert${items.length === 1 ? "" : "s"}`) : ""}</span>
