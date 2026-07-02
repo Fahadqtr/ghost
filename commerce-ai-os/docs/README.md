@@ -1,21 +1,27 @@
-# Commerce AI OS — Phase 1
+# Commerce AI OS
 
-A local-first MVP dashboard for **Malika's Universe Trading** to manage multiple
-brands and channels from one place, backed by Supabase.
+A dashboard for **Malika's Universe Trading** to manage its catalog across
+multiple channels (Snoonu · Talabat · Shopify · Rafeeq · Pure Seoul) from one
+place, backed by Supabase, with an AI store manager (**Malak**).
 
-> **Scope (Phase 1):** UI + schema + placeholders only. **No** real commerce APIs
-> (Shopify/Snoonu/Talabat/Rafeeq), **no** agent AI logic, **no** paid services.
+> **⚠️ Historical note:** this file described the original *Phase 1* MVP (UI +
+> schema + placeholders, no AI, no real exports). The project has since grown far
+> beyond that — Malak AI, real per-channel exports, staff app, compliance gate,
+> etc. For the **current** picture see **`docs/PROJECT_OVERVIEW_AR.md`** (full
+> narrative) and **`UPDATES.md`** (latest changes). The setup/auth/data-model
+> notes below are still accurate.
 
-Current location: `ghost/commerce-ai-os/` (the `package.json` is in this folder).
-Planned: relocate to its own repo `malikas-commerce-os` with the app at the root.
+Location: `ghost/commerce-ai-os/` (the `package.json` is in this folder).
 
 ---
 
 ## Tech stack
-- **Next.js 14** (App Router) + **TypeScript**
-- **Tailwind CSS v3**
+- **Next.js 16** (App Router) + **React 19** + **TypeScript 6**
+- **Tailwind CSS 4** (CSS-first config)
 - **Supabase** (Postgres + Auth + Storage) via `@supabase/ssr`
-- **xlsx** (SheetJS) for in-browser Excel parsing (no external API)
+- **Anthropic Claude** (Opus 4.8) — the Malak assistant brain
+- **ElevenLabs** (TTS) · **Three.js** (procedural 3D lab)
+- **xlsx** (SheetJS) for in-browser Excel parsing
 
 ## Run it locally
 ```bash
@@ -90,9 +96,13 @@ To use the image uploader, create a **public** Storage bucket named
 uploads. Without it, the rest of the app works; the uploader shows a clear
 "bucket missing" message.
 
-## What's NOT here (by design)
-Real Shopify/Snoonu/Talabat/Rafeeq API calls, Claude/AI agent logic, Telegram/n8n/
-WhatsApp, payments/order ingestion, any paid service. Exports produce local
-placeholder CSVs only. These belong to later phases.
+## Built since Phase 1 (not in this file's original scope)
+Malak AI (Claude Opus 4.8, voice via ElevenLabs, 3D lab), real per-channel export
+builders (Shopify/Snoonu/Talabat/Rafeeq), Pure Seoul + Snoonu sync, a staff PWA
+(PIN login, stock in/out, add-product-from-photo, tasks), per-employee
+permissions, a compliance publish-gate, notifications, and a loop-state agent
+layer. Still NOT here: live marketplace-API pushes for every channel (exports are
+still file-based for most), payments/order ingestion, WhatsApp/Telegram.
 
-See `docs/MILESTONES.md` for the full M0–M6 build log and verification details.
+See `docs/MILESTONES.md` for the original M0–M6 Phase-1 build log, and
+`docs/PROJECT_OVERVIEW_AR.md` + `UPDATES.md` for everything after.

@@ -1,5 +1,17 @@
 # Source of Truth — Malak Commerce OS
 
+> **⚠️ NEEDS VERIFICATION (2026-07-02): the project IDs below may be stale.**
+> The connected Supabase account (`fahadshiping@gmail.com`) currently lists ONLY
+> the project **`awlevukqqsaxvifrfteb`** (named "malikas-universe"), which this
+> file labels as the *frozen v2*. It responds to the live `public` schema
+> (`products`, `platform_status`, `channel_products`) and has RLS enabled on all
+> tables — i.e. it behaves like production, contradicting the "frozen" label
+> below. Meanwhile `vqstcmattiarhblqshvb` was not visible under that account.
+> **Before any DB work, confirm the real production project from the deployed
+> `NEXT_PUBLIC_SUPABASE_URL` (Vercel → project `ghost` → Environment Variables).**
+> The `ref` in that URL is the canonical production project. Update this file once
+> confirmed.
+
 ## Canonical database (THE ONLY ONE)
 - Supabase project: **vqstcmattiarhblqshvb**  (production, live store)
 - Supabase account that owns it: **fahadshiping@gmail.com**
