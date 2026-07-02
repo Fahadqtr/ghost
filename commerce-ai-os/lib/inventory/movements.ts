@@ -1,5 +1,6 @@
 import "server-only";
 import { revalidatePath } from "next/cache";
+import { insertAuditRow } from "@/lib/audit";
 
 // Shared stock IN/OUT engine, used by BOTH the admin movements action
 // (recordMovement) and the staff page (recordStaffMovement). Auth is the
@@ -50,13 +51,15 @@ export async function applyMovement(admin: any, input: MovementInput): Promise<M
   const { error: upErr } = await admin.from("inventory").update(patch).eq("id", inv.id);
   if (upErr) return { error: upErr.message };
 
-  // Best-effort ledger row (the stock change already succeeded). Keep the uuid in
-  // `details` — malak_audit.product_id is a legacy bigint, not the products uuid.
-  const { error: logErr } = await admin.from("malak_audit").insert({
+  // Best-effort ledger row (the stock change already succeeded). product_id is
+  // written directly (uuid after the malak_audit_product_id_uuid.sql migration;
+  // insertAuditRow falls back to the legacy details-only shape before it).
+  const { error: logErr } = await insertAuditRow(admin, {
     agent: input.by || "inventory",
     action: input.type === "in" ? "stock_in" : "stock_out",
     action_type: input.type === "in" ? "stock_in" : "stock_out",
     sku: input.sku ?? null,
+    product_id: inv.product_id ?? null,
     field: "stock_quantity",
     old_value: String(before),
     new_value: String(after),

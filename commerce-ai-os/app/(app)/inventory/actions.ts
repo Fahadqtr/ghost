@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAll } from "@/lib/supabase/paginate";
 import { applyMovement } from "@/lib/inventory/movements";
 import { requireUser } from "@/lib/auth/requireUser";
+import { insertAuditRow } from "@/lib/audit";
 import Anthropic from "@anthropic-ai/sdk";
 
 function toNum(v: string | number | null | undefined): number | null {
@@ -28,18 +29,19 @@ function writableClient(): any {
 }
 
 // Best-effort audit ledger write (malak_audit). Never throws — the underlying
-// data change has already succeeded by the time we log. Mirrors recordMovement's
-// pattern: product uuid goes inside `details`, not the legacy bigint column.
+// data change has already succeeded by the time we log. Routed through
+// insertAuditRow so product_id lands in the (post-migration) uuid column.
 async function logAudit(
   admin: any,
-  entry: { action: string; sku?: string | null; field?: string; oldVal?: string | null; newVal?: string | null; details?: Record<string, unknown> }
+  entry: { action: string; sku?: string | null; productId?: string | null; field?: string; oldVal?: string | null; newVal?: string | null; details?: Record<string, unknown> }
 ) {
   try {
-    await admin.from("malak_audit").insert({
+    await insertAuditRow(admin, {
       agent: "inventory",
       action: entry.action,
       action_type: entry.action,
       sku: entry.sku ?? null,
+      product_id: entry.productId ?? null,
       field: entry.field ?? null,
       old_value: entry.oldVal ?? null,
       new_value: entry.newVal ?? null,
@@ -162,14 +164,14 @@ export async function applyStocktake(counts: StocktakeCount[]) {
       continue;
     }
     ok++;
-    // Best-effort ledger entry recording the variance. (product_id is a legacy
-    // bigint column — the uuid goes in details, not product_id, or the insert
-    // would error and drop the row.)
-    await admin.from("malak_audit").insert({
+    // Best-effort ledger entry recording the variance (insertAuditRow degrades
+    // to the legacy details-only shape on an unmigrated malak_audit).
+    await insertAuditRow(admin, {
       agent: "stocktake",
       action: "stocktake",
       action_type: "stocktake",
       sku: c.sku ?? null,
+      product_id: inv.product_id ?? null,
       field: "stock_quantity",
       old_value: String(before),
       new_value: String(counted),
@@ -230,12 +232,13 @@ export async function applyVariantStocktake(counts: VariantCount[]) {
         errors.push(`${c.sku ?? c.variantId}: ${upErr.message}`);
         continue;
       }
-      // Best-effort variance ledger (uuid kept in details, see note in applyStocktake).
-      await admin.from("malak_audit").insert({
+      // Best-effort variance ledger (see note in applyStocktake).
+      await insertAuditRow(admin, {
         agent: "stocktake",
         action: "stocktake",
         action_type: "stocktake",
         sku: c.sku ?? null,
+        product_id: v.parent_product_id ?? null,
         field: "variant_stock_quantity",
         old_value: String(before),
         new_value: String(counted),
@@ -1048,12 +1051,13 @@ export async function recordVariantMovement(input: VariantMovementInput) {
     await admin.from("inventory").update(patch).eq("product_id", parentId);
   }
 
-  // Best-effort ledger row (uuid kept in details — see note in recordMovement).
-  const { error: logErr } = await admin.from("malak_audit").insert({
+  // Best-effort ledger row (see note in recordMovement).
+  const { error: logErr } = await insertAuditRow(admin, {
     agent: input.by || "inventory",
     action: input.type === "in" ? "stock_in" : "stock_out",
     action_type: input.type === "in" ? "stock_in" : "stock_out",
     sku: input.sku ?? null,
+    product_id: parentId ?? null,
     field: "variant_stock_quantity",
     old_value: String(before),
     new_value: String(after),
