@@ -619,6 +619,11 @@ function ImageRequestPanel({
 
 // Spoken summary text for the briefing (shared by auto-speak + the listen button).
 function briefSummary(d: any, en = false): string {
+  // Prefer the server-composed, TTS-safe Arabic briefing (greeting + the day's
+  // priority + sales) when the API provides it; fall back to the raw counts.
+  if (!en && typeof d?.briefing?.speak === "string" && d.briefing.speak.trim()) {
+    return d.briefing.speak;
+  }
   const morning = new Date().getHours() < 12;
   if (en) {
     const greet = morning ? "Good morning" : "Good evening";
@@ -1716,7 +1721,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
   }, []);
 
   // ---- Proactive scan: ALWAYS load the data on open (it feeds the HUD side
-  // panels every visit). Only the spoken briefing is throttled to once/session.
+  // panels every visit). Only the spoken briefing is throttled to once/day.
   const briefedRef = useRef(false);
   useEffect(() => {
     if (briefedRef.current) return;
@@ -1729,9 +1734,12 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
         if (!d || d.error) return;
         setActiveAgent("malak");
         setScanData(d as ScanData); // feeds the HUD side panels (every load)
-        if (!sessionStorage.getItem("malak_briefed")) {
-          sessionStorage.setItem("malak_briefed", "1");
-          speak(briefSummary(d, en), "malak"); // voice brief once per session
+        // Speak the briefing once per DAY (a morning briefing), not every
+        // session — watermarked by calendar date in localStorage.
+        const todayKey = new Date().toISOString().slice(0, 10);
+        if (localStorage.getItem("malak_briefed_day") !== todayKey) {
+          localStorage.setItem("malak_briefed_day", todayKey);
+          speak(briefSummary(d, en), "malak");
         }
       } catch {
         /* scan is best-effort */
@@ -2147,8 +2155,35 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
             scrollable area (the lab flexes to fill the rest, no page overflow). */}
         <div ref={scrollRef} className={`space-y-2.5 overflow-y-auto px-1 py-1 ${fsActive ? "h-[38vh]" : "min-h-0 flex-1 md:max-h-[44vh] md:min-h-[140px] md:flex-none"}`}>
         {turns.length === 0 && !typed ? (
-          <div className="mx-auto max-w-md pt-4 text-center text-sm text-cyan-300/60">
-            {L("أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.", "Hi Fahad 👋 I'm Malak, ready to handle everything for you — the catalog, prices, images, reports, or writing content.")}
+          <div className="pt-2">
+            {/* Visible morning briefing — greeting + today's priorities + a listen
+                button. Appears once the proactive scan returns (scanData.briefing). */}
+            {scanData?.briefing ? (
+              <div
+                className="mx-auto mb-3 max-w-md rounded-2xl border border-amber-400/25 bg-linear-to-br from-amber-500/10 to-cyan-500/10 p-3 text-right"
+                style={{ animation: "screenInB .28s ease-out both" }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    onClick={() => { const t = scanData?.briefing?.speak; if (t) speak(t, "malak"); }}
+                    className="shrink-0 rounded-full border border-amber-400/40 bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-amber-200 transition hover:bg-amber-500/25"
+                  >
+                    {L("▶ استمع", "▶ Listen")}
+                  </button>
+                  <p className="text-sm font-extrabold text-white">{scanData.briefing.greetingAr} 🌸</p>
+                </div>
+                <p className="mt-1.5 text-[13px] font-medium text-amber-100">{scanData.briefing.headlineAr}</p>
+                {scanData.briefing.linesAr.slice(0, 4).map((line, i) => (
+                  <p key={i} className="mt-1 text-[12px] text-white/75">• {line}</p>
+                ))}
+                {scanData.briefing.salesLineAr ? (
+                  <p className="mt-1.5 text-[12px] font-medium text-emerald-300">{scanData.briefing.salesLineAr}</p>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="mx-auto max-w-md pt-1 text-center text-sm text-cyan-300/60">
+              {L("أهلًا فهد 👋 أنا ملاك، جاهزة أسوّي لك كل شي — الكتالوج، الأسعار، الصور، التقارير، أو أكتب لك محتوى.", "Hi Fahad 👋 I'm Malak, ready to handle everything for you — the catalog, prices, images, reports, or writing content.")}
+            </div>
           </div>
         ) : null}
 

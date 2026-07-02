@@ -21,6 +21,10 @@ export interface ScanData {
   issues: { key: string; icon: string; title: string; count: number; prompt: string; severity: string }[];
   recentActivity: { created_at: string; action_type: string; sku: string | null; old_value: string | null; new_value: string | null; status: string | null }[];
   priority: string; allClear: boolean;
+  briefing?: {
+    greetingAr: string; headlineAr: string; priorityAr: string | null;
+    linesAr: string[]; salesLineAr: string | null; speak: string; allClear: boolean;
+  };
 }
 
 const ACTION_AR: Record<string, string> = {
