@@ -10,6 +10,7 @@ import { parsePermissions, hasPerm, DEFAULT_PERMISSIONS, type StaffPermission } 
 import { CATEGORIES } from "@/lib/constants";
 import { listComments, insertComment, uploadCommentAttachment } from "@/lib/tasks/commentStore";
 import type { TaskComment, CommentAttachment } from "@/lib/tasks/comments";
+import { materializeRoutines } from "@/lib/tasks/routines";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
 function pinOk(pin: string): boolean {
@@ -676,6 +677,7 @@ export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: s
   if (!hasPerm(who.perms, "tasks")) return { tasks: [], error: "ما عندك صلاحية المهام." };
   const admin = adminClient();
   if (!admin) return { tasks: [], error: NO_DB };
+  await materializeRoutines(admin); // generate today's routine instances first
 
   let query = admin.from("staff_tasks").select("id, title, description, priority, due_date, status, created_at, assigned_to");
   // Tasks assigned to me, plus tasks for everyone (assigned_to null).

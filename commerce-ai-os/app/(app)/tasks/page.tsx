@@ -1,4 +1,4 @@
-import { listTasks } from "./actions";
+import { listTasks, listRoutines } from "./actions";
 import { listStaff } from "../team/actions";
 import TasksClient from "./TasksClient";
 import { getT } from "@/lib/i18n-server";
@@ -19,6 +19,7 @@ export default async function TasksPage() {
     error = e?.message || L("تعذّر تحميل المهام.", "Couldn't load tasks.");
   }
   const staff = (await listStaff().catch(() => ({ members: [] }))).members.map((m) => ({ id: m.id, name: m.name }));
+  const routinesRes = await listRoutines().catch(() => ({ routines: [], ready: true as boolean }));
 
   return (
     <div className="space-y-4">
@@ -35,7 +36,7 @@ export default async function TasksPage() {
       ) : error ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">{error}</div>
       ) : (
-        <TasksClient initialTasks={tasks} staff={staff} locale={locale} />
+        <TasksClient initialTasks={tasks} staff={staff} locale={locale} initialRoutines={routinesRes.routines} routinesReady={routinesRes.ready} />
       )}
     </div>
   );

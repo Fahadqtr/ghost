@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createTask, updateTask, deleteTask, managerListComments, managerAddComment, type StaffTask, type TaskPriority, type TaskStatus } from "./actions";
+import { createTask, updateTask, deleteTask, managerListComments, managerAddComment, createRoutine, setRoutineActive, deleteRoutine, type StaffTask, type TaskPriority, type TaskStatus } from "./actions";
+import type { Routine } from "@/lib/tasks/routines";
 import TaskThread from "@/components/TaskThread";
 import type { Locale } from "@/lib/i18n";
 
@@ -18,8 +19,9 @@ function isOverdue(t: StaffTask) {
   return !Number.isNaN(d.getTime()) && d.getTime() < Date.now();
 }
 
-export default function TasksClient({ initialTasks, staff, locale = "ar" }: {
+export default function TasksClient({ initialTasks, staff, locale = "ar", initialRoutines = [], routinesReady = true }: {
   initialTasks: StaffTask[]; staff: { id: string; name: string }[]; locale?: Locale;
+  initialRoutines?: Routine[]; routinesReady?: boolean;
 }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
@@ -29,6 +31,8 @@ export default function TasksClient({ initialTasks, staff, locale = "ar" }: {
   const [fAssignee, setFAssignee] = useState("");
   const [fPriority, setFPriority] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [showRoutines, setShowRoutines] = useState(false);
+  const [routines, setRoutines] = useState<Routine[]>(initialRoutines);
   const [busy, start] = useTransition();
   const [note, setNote] = useState("");
 
@@ -66,6 +70,46 @@ export default function TasksClient({ initialTasks, staff, locale = "ar" }: {
       const r = await deleteTask(t.id);
       if (r && "error" in r && r.error) { flash(r.error); return; }
       setTasks((ts) => ts.filter((x) => x.id !== t.id));
+    });
+  };
+
+  // routines
+  const [rTitle, setRTitle] = useState("");
+  const [rAssignee, setRAssignee] = useState("");
+  const [rPriority, setRPriority] = useState<TaskPriority>("normal");
+  const [rFreq, setRFreq] = useState<"daily" | "weekly">("daily");
+  const [rWeekday, setRWeekday] = useState(0);
+
+  const WEEKDAYS = [
+    L("الأحد", "Sunday"), L("الاثنين", "Monday"), L("الثلاثاء", "Tuesday"), L("الأربعاء", "Wednesday"),
+    L("الخميس", "Thursday"), L("الجمعة", "Friday"), L("السبت", "Saturday"),
+  ];
+
+  const addRoutine = () => {
+    if (!rTitle.trim()) { flash(L("اكتب عنوان الروتين.", "Enter a routine title.")); return; }
+    const name = staff.find((s) => s.id === rAssignee)?.name ?? null;
+    start(async () => {
+      const r = await createRoutine({ title: rTitle, assignedTo: rAssignee || null, assignedName: name, priority: rPriority, frequency: rFreq, weekday: rFreq === "weekly" ? rWeekday : null });
+      if (r && "error" in r && r.error) { flash(r.error); return; }
+      flash(L("✓ أُنشئ الروتين — مهمة اليوم تولّدت", "✓ Routine created — today's task generated"));
+      setRTitle(""); setRAssignee(""); setRPriority("normal"); setRFreq("daily"); setRWeekday(0);
+      refresh();
+    });
+  };
+
+  const toggleRoutine = (r: Routine) => start(async () => {
+    const res = await setRoutineActive(r.id, !r.active);
+    if (res && "error" in res && res.error) { flash(res.error); return; }
+    setRoutines((rs) => rs.map((x) => (x.id === r.id ? { ...x, active: !x.active } : x)));
+  });
+
+  const removeRoutine = (r: Routine) => {
+    if (!confirm(L(`حذف الروتين «${r.title}»؟ (تنحذف مهامه المولّدة أيضًا)`, `Delete routine "${r.title}"? (its generated tasks are removed too)`))) return;
+    start(async () => {
+      const res = await deleteRoutine(r.id);
+      if (res && "error" in res && res.error) { flash(res.error); return; }
+      setRoutines((rs) => rs.filter((x) => x.id !== r.id));
+      refresh();
     });
   };
 
@@ -114,8 +158,68 @@ export default function TasksClient({ initialTasks, staff, locale = "ar" }: {
           <option value="normal">🟡 {L("عادية", "Normal")}</option>
           <option value="low">⚪ {L("منخفضة", "Low")}</option>
         </select>
-        <button onClick={() => setShowForm((v) => !v)} className="btn-primary ms-auto px-4 py-2 text-sm">{showForm ? L("× إغلاق", "× Close") : L("+ مهمة جديدة", "+ New task")}</button>
+        <div className="ms-auto flex items-center gap-2">
+          <button onClick={() => setShowRoutines((v) => !v)} className="btn-ghost px-3 py-2 text-sm">🔁 {L("الروتين", "Routines")} ({routines.filter((r) => r.active).length})</button>
+          <button onClick={() => setShowForm((v) => !v)} className="btn-primary px-4 py-2 text-sm">{showForm ? L("× إغلاق", "× Close") : L("+ مهمة جديدة", "+ New task")}</button>
+        </div>
       </div>
+
+      {/* routines panel */}
+      {showRoutines ? (
+        <div className="card space-y-3 border-brand/30">
+          <p className="font-serif text-sm font-bold text-ink">🔁 {L("الروتين المتكرّر", "Recurring routines")}</p>
+          {!routinesReady ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {L("شغّل", "Run")} <code className="rounded bg-white px-1">supabase/task_routines.sql</code> {L("مرة وحدة في Supabase ثم حدّث.", "once in Supabase, then refresh.")}
+            </div>
+          ) : (
+            <>
+              <p className="text-xs text-muted">{L("مهمة تتولّد تلقائيًا كل يوم أو كل أسبوع (مثل تشيك-ليست الافتتاح).", "A task auto-generates every day or week (e.g. an opening checklist).")}</p>
+              <div className="flex flex-wrap items-end gap-2">
+                <input className="input flex-1 min-w-[12rem]" value={rTitle} onChange={(e) => setRTitle(e.target.value)} placeholder={L("مثال: ترتيب الرفوف وفتح المتجر", "e.g. Tidy shelves & open the store")} />
+                <select className="input max-w-[10rem]" value={rAssignee} onChange={(e) => setRAssignee(e.target.value)}>
+                  <option value="">{L("👥 الكل", "👥 Everyone")}</option>
+                  {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <select className="input" value={rPriority} onChange={(e) => setRPriority(e.target.value as TaskPriority)}>
+                  <option value="high">🔴 {L("عالية", "High")}</option>
+                  <option value="normal">🟡 {L("عادية", "Normal")}</option>
+                  <option value="low">⚪ {L("منخفضة", "Low")}</option>
+                </select>
+                <select className="input" value={rFreq} onChange={(e) => setRFreq(e.target.value as "daily" | "weekly")}>
+                  <option value="daily">{L("يوميًا", "Daily")}</option>
+                  <option value="weekly">{L("أسبوعيًا", "Weekly")}</option>
+                </select>
+                {rFreq === "weekly" ? (
+                  <select className="input" value={rWeekday} onChange={(e) => setRWeekday(Number(e.target.value))}>
+                    {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                  </select>
+                ) : null}
+                <button onClick={addRoutine} disabled={busy || !rTitle.trim()} className="btn-primary px-4 py-2 text-sm disabled:opacity-50">{L("إضافة", "Add")}</button>
+              </div>
+              {routines.length === 0 ? (
+                <p className="text-xs text-slate-400">{L("ما فيه روتين بعد.", "No routines yet.")}</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {routines.map((r) => (
+                    <div key={r.id} className={`flex items-center gap-2 rounded-lg border border-[#efe3d6] bg-white px-3 py-2 ${r.active ? "" : "opacity-60"}`}>
+                      <span className="text-sm">🔁</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-ink">{r.title}</span>
+                        <span className="block text-[11px] text-muted">
+                          {r.frequency === "daily" ? L("يوميًا", "Daily") : `${L("أسبوعيًا —", "Weekly —")} ${WEEKDAYS[r.weekday ?? 0]}`} · {r.assignedName ?? L("الكل", "Everyone")}
+                        </span>
+                      </span>
+                      <button disabled={busy} onClick={() => toggleRoutine(r)} className="shrink-0 rounded-md border border-[#e7d9c9] px-2 py-1 text-[11px] text-[#8a7461] hover:bg-[#faf3ec] disabled:opacity-50">{r.active ? L("إيقاف", "Pause") : L("تفعيل", "Resume")}</button>
+                      <button disabled={busy} onClick={() => removeRoutine(r)} className="shrink-0 rounded-md border border-red-200 px-2 py-1 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">{L("حذف", "Delete")}</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      ) : null}
 
       {note ? <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{note}</div> : null}
 
@@ -180,6 +284,7 @@ export default function TasksClient({ initialTasks, staff, locale = "ar" }: {
                       <Chip cls={everyone ? "bg-slate-100 text-slate-500" : "bg-violet-50 text-violet-700"}>{everyone ? L("👥 للكل", "👥 Everyone") : `👤 ${t.assignedName}`}</Chip>
                       {t.dueDate ? <Chip cls={od ? "bg-red-100 font-bold text-red-700" : "border border-slate-200 bg-white text-muted"}>⏰ {fmt(t.dueDate)}{od ? L(" · متأخّرة", " · overdue") : ""}</Chip> : null}
                       {t.status === "in_progress" ? <Chip cls="bg-amber-100 font-bold text-amber-700">⏳ {L("جاري", "In progress")}</Chip> : null}
+                      {t.fromRoutine ? <Chip cls="bg-brand-light text-brand-dark">🔁 {L("روتين", "Routine")}</Chip> : null}
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-col items-end justify-center gap-1.5">
