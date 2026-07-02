@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getSalesSummary, type SoldProduct } from "@/lib/inventory/sales";
 import { getShrinkageReport, type NameUnits } from "@/lib/inventory/shrinkage";
+import { getInventoryAnalytics, type DeadStockItem, type MarginItem } from "@/lib/inventory/analytics";
 import { getT } from "@/lib/i18n-server";
 
 export const dynamic = "force-dynamic";
@@ -16,14 +17,18 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const days = [7, 30, 90].includes(Number(sp.days)) ? Number(sp.days) : 30;
 
-  const [sales, shrink] = await Promise.all([getSalesSummary(), getShrinkageReport(days)]);
+  const [sales, shrink, analytics] = await Promise.all([
+    getSalesSummary(),
+    getShrinkageReport(days),
+    getInventoryAnalytics(),
+  ]);
 
   return (
     <div className="space-y-6" dir={en ? "ltr" : "rtl"}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-ink">{L("التقارير", "Reports")}</h2>
-          <p className="text-sm text-muted">{L("المبيعات والأكثر مبيعًا + تقرير الفاقد.", "Sales & best-sellers + loss (shrinkage) report.")}</p>
+          <p className="text-sm text-muted">{L("المبيعات + الهوامش + المخزون الميت + قيمة المخزون + الفاقد.", "Sales + margins + dead stock + valuation + shrinkage.")}</p>
         </div>
         <Link href="/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">{L("← المخزون", "Inventory →")}</Link>
       </div>
@@ -55,6 +60,70 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
             </div>
           </>
         )}
+      </section>
+
+      {/* ── Margins & profitability ──────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-ink">📊 {L("الهوامش والربحية", "Margins & profitability")}</h3>
+        {analytics.margins.withCost === 0 ? (
+          <div className="card py-8 text-center text-sm text-slate-400">
+            {L("ما فيه تكلفة (cost) مسجّلة على المنتجات بعد — عبّئ التكلفة عشان تشوف الهوامش والأرباح.", "No product costs recorded yet — fill the cost column to unlock margins & profit.")}
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <Kpi title={L("الربح التقديري (من المبيعات)", "Estimated profit (sales)")} value={money(analytics.margins.estProfit)} icon="💵" accent="green" />
+              <Kpi title={L("هامش الربح", "Profit margin")} value={`${analytics.margins.profitMarginPct}%`} icon="📈" accent={analytics.margins.profitMarginPct < 0 ? "amber" : "green"} />
+              <Kpi title={L("تحت التكلفة", "Below cost")} value={nf(analytics.margins.belowCost.length)} icon="🚨" accent={analytics.margins.belowCost.length > 0 ? "amber" : undefined} />
+              <Kpi title={L("تغطية التكلفة", "Cost coverage")} value={`${Math.round(analytics.margins.costCoveragePct)}%`} icon="🏷️" />
+            </div>
+            <p className="text-[11px] text-muted">{L("الربح = المباع × (السعر الفعلي − التكلفة) للمنتجات اللي لها تكلفة فقط.", "Profit = sold × (effective price − cost), cost-known products only.")}</p>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {analytics.margins.belowCost.length > 0 ? (
+                <div className="card border-rose-200 bg-rose-50/50">
+                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-rose-700">🚨 {L("سعر البيع أقل من التكلفة — يحتاج تصحيح", "Selling below cost — fix these")}</h4>
+                  <MarginList items={analytics.margins.belowCost} en={en} money={money} />
+                </div>
+              ) : null}
+              <div className="card">
+                <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">{L("أضعف الهوامش", "Thinnest margins")}</h4>
+                <MarginList items={analytics.margins.lowest} en={en} money={money} />
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* ── Dead stock ───────────────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-ink">🧊 {L("المخزون الميت", "Dead stock")}</h3>
+        <p className="text-[11px] text-muted">{L("منتجات في المخزون وما انباع منها ولا قطعة — فلوس واقفة على الرف.", "In stock but never sold a single unit — money sitting on the shelf.")}</p>
+        {analytics.deadStock.count === 0 ? (
+          <div className="card py-8 text-center text-sm text-emerald-600">{L("ما فيه مخزون ميت 🎉 كل اللي بالمخزون له مبيعات.", "No dead stock 🎉 everything in stock has sold.")}</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <Kpi title={L("منتجات ميتة", "Dead products")} value={nf(analytics.deadStock.count)} icon="🧊" accent="amber" />
+              <Kpi title={L("قطع واقفة", "Units sitting")} value={nf(analytics.deadStock.units)} icon="📦" />
+              <Kpi title={L("قيمتها بسعر البيع", "Value at price")} value={money(analytics.deadStock.tiedUpAtPrice)} icon="💸" accent="amber" />
+            </div>
+            <div className="card">
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">{L("الأعلى قيمة واقفة (تكلفة إن وُجدت، وإلا سعر)", "Most money tied up (cost when known, else price)")}</h4>
+              <DeadList items={analytics.deadStock.items} en={en} money={money} />
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* ── Inventory valuation ──────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-ink">🏦 {L("قيمة المخزون", "Inventory valuation")}</h3>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Kpi title={L("منتجات", "SKUs")} value={nf(analytics.valuation.skus)} icon="🏷️" />
+          <Kpi title={L("إجمالي القطع", "Total units")} value={nf(analytics.valuation.units)} icon="📦" />
+          <Kpi title={L("القيمة بسعر البيع", "Value at price")} value={money(analytics.valuation.atPrice)} icon="💰" accent="green" />
+          <Kpi title={L("القيمة بالتكلفة", "Value at cost")} value={analytics.margins.withCost > 0 ? money(analytics.valuation.atCost) : L("— (بدون تكلفة)", "— (no costs)")} icon="🧾" />
+        </div>
       </section>
 
       {/* ── Shrinkage / loss ─────────────────────────────────────────────── */}
@@ -147,6 +216,73 @@ function ProductList({ items, metric, en, money }: { items: SoldProduct[]; metri
           <Link key={it.productId} href={`/products/${it.productId}`} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-slate-50">{row}</Link>
         ) : (
           <div key={`r-${i}`} className="flex items-center gap-2 px-1 py-1">{row}</div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DeadList({ items, en, money }: { items: DeadStockItem[]; en: boolean; money: (n: number) => string }) {
+  if (items.length === 0) return <p className="text-sm text-slate-400">—</p>;
+  const max = Math.max(1, ...items.map((i) => i.tiedUp));
+  return (
+    <div className="space-y-2">
+      {items.map((it, i) => {
+        const label = (en ? it.name : it.nameAr) || it.name || it.sku || "—";
+        const row = (
+          <>
+            <span className="w-4 shrink-0 text-[11px] text-slate-400">{i + 1}</span>
+            <span className="h-8 w-8 shrink-0 overflow-hidden rounded-sm border border-slate-200 bg-slate-50">
+              {it.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={it.image} alt="" className="h-full w-full object-cover" />
+              ) : <span className="flex h-full w-full items-center justify-center text-slate-300">📦</span>}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-ink">{label}</span>
+              <span className="mt-0.5 block h-1.5 overflow-hidden rounded-full bg-slate-100">
+                <span className="block h-full bg-sky-500" style={{ width: `${(it.tiedUp / max) * 100}%` }} />
+              </span>
+            </span>
+            <span className="shrink-0 text-[11px] text-slate-400">×{it.stock}</span>
+            <span className="shrink-0 text-xs font-semibold text-ink">{money(it.tiedUp)}</span>
+          </>
+        );
+        return it.productId ? (
+          <Link key={it.productId} href={`/products/${it.productId}`} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-slate-50">{row}</Link>
+        ) : (
+          <div key={`d-${i}`} className="flex items-center gap-2 px-1 py-1">{row}</div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MarginList({ items, en, money }: { items: MarginItem[]; en: boolean; money: (n: number) => string }) {
+  if (items.length === 0) return <p className="text-sm text-slate-400">—</p>;
+  return (
+    <div className="space-y-2">
+      {items.map((it, i) => {
+        const label = (en ? it.name : it.nameAr) || it.name || it.sku || "—";
+        const neg = it.margin < 0;
+        const row = (
+          <>
+            <span className="w-4 shrink-0 text-[11px] text-slate-400">{i + 1}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-ink">{label}</span>
+              <span className="block text-[11px] text-slate-400">
+                {money(it.price)} − {money(it.cost)}
+              </span>
+            </span>
+            <span className={`shrink-0 text-xs font-semibold ${neg ? "text-rose-600" : it.marginPct < 15 ? "text-amber-700" : "text-emerald-700"}`}>
+              {money(it.margin)} · {it.marginPct}%
+            </span>
+          </>
+        );
+        return it.productId ? (
+          <Link key={it.productId} href={`/products/${it.productId}`} className="flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-slate-50">{row}</Link>
+        ) : (
+          <div key={`m-${i}`} className="flex items-center gap-2 px-1 py-1">{row}</div>
         );
       })}
     </div>
