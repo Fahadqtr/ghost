@@ -619,6 +619,11 @@ function ImageRequestPanel({
 
 // Spoken summary text for the briefing (shared by auto-speak + the listen button).
 function briefSummary(d: any, en = false): string {
+  // Prefer the server-composed, TTS-safe Arabic briefing (greeting + the day's
+  // priority + sales) when the API provides it; fall back to the raw counts.
+  if (!en && typeof d?.briefing?.speak === "string" && d.briefing.speak.trim()) {
+    return d.briefing.speak;
+  }
   const morning = new Date().getHours() < 12;
   if (en) {
     const greet = morning ? "Good morning" : "Good evening";
