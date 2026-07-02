@@ -5,6 +5,7 @@ import { NAV_GROUPS } from "@/lib/constants";
 import { signOut } from "@/app/(app)/actions";
 import { makeT, type Locale } from "@/lib/i18n";
 import LanguageToggle from "./LanguageToggle";
+import NotificationsBell from "./NotificationsBell";
 
 export default function Topbar({
   userEmail,
@@ -45,6 +46,7 @@ export default function Topbar({
         <h1 className="truncate text-base font-semibold text-ink sm:text-lg">{title}</h1>
       </div>
       <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+        <NotificationsBell locale={locale} />
         <LanguageToggle locale={locale} />
         {userEmail ? (
           <span className="hidden text-sm text-muted lg:inline">{userEmail}</span>
