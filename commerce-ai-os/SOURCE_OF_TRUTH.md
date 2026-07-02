@@ -34,8 +34,13 @@
   Approved/Rejected/null), rafeeq_product_id, ...
 - Per-platform prices live in `channel_products` (channel_id, product_id,
   channel_price, channel_status), linked by `product_id`.
-- Audit log: `malak_audit`. NOTE: its `product_id` column is bigint but products.id
-  is uuid — known mismatch; until fixed, write the uuid into `details`.
+- Audit log: `malak_audit`. Its `product_id` was a legacy bigint (from the old
+  `audit_log` table) while products.id is uuid. FIX: run
+  `supabase/malak_audit_product_id_uuid.sql` once in production — it converts the
+  column to uuid (keeping the old values as `product_id_legacy`) and backfills
+  history from `details->>'productId'`. App code (`lib/audit.ts`) writes
+  `product_id` directly and degrades to the legacy details-only shape until the
+  migration runs, so deploy order doesn't matter.
 
 ## Frozen / DO NOT USE
 - Supabase project **awlevukqqsaxvifrfteb** ("v2", SKU format `MK-SKIN-0001`,

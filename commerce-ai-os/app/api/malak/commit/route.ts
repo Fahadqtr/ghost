@@ -7,6 +7,7 @@ import { verifyAction, type MalakAction } from "@/lib/malak/confirm";
 import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { consumeOnce } from "@/lib/malak/ratelimit";
+import { insertAuditRow } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -212,16 +213,17 @@ async function writeAudit(sb: Sb, a: MalakAction, out: CommitOutcome): Promise<s
       action: a.type, // legacy NOT NULL column (from audit_log)
       agent: a.agent,
       sku: a.sku ?? a.product?.sku ?? null,
-      // NOTE: malak_audit.product_id is legacy bigint while products.id is uuid,
-      // so we do NOT write the uuid into that column (it would error). The id is
-      // preserved inside `details` instead.
+      // product_id is uuid once supabase/malak_audit_product_id_uuid.sql has
+      // run; insertAuditRow falls back to the legacy shape (uuid only inside
+      // details) on an unmigrated table.
+      product_id: out.productId ?? a.productId ?? null,
       field: out.field ?? a.field ?? null,
       old_value: out.oldValue != null ? String(out.oldValue) : a.oldValue != null ? String(a.oldValue) : null,
       new_value: out.newValue != null ? String(out.newValue) : null,
       details: { ...a, productId: out.productId ?? a.productId ?? null, ...(out.overBand != null ? { overBand: out.overBand } : {}) },
       status: out.overBand != null ? "committed_over_band" : "committed",
     };
-    const { error } = await sb.from("malak_audit").insert(row);
+    const { error } = await insertAuditRow(sb, row);
     if (error) {
       // Surface the LITERAL Supabase error for diagnosis (logs + response).
       console.error(
