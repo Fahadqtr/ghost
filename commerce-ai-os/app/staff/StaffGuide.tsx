@@ -1,6 +1,7 @@
 "use client";
 
 import type { Locale } from "@/lib/i18n";
+import GuideDemo from "./GuideDemo";
 
 // Employee how-to guide, shown as a tab on /staff. Bilingual, printable to PDF,
 // and shows a walkthrough video if NEXT_PUBLIC_STAFF_GUIDE_VIDEO_URL is set.
@@ -58,12 +59,11 @@ export default function StaffGuide({ locale = "ar" }: { locale?: Locale }) {
         <button onClick={() => window.print()} className="btn-primary px-3 py-2 text-xs">🖨️ {L("تنزيل PDF", "Download PDF")}</button>
       </div>
 
-      {VIDEO_URL ? (
-        <div className="rounded-2xl border border-[#efe3d6] bg-white p-4">
-          <h3 className="mb-2 font-serif text-base font-bold text-ink">🎬 {L("فيديو توضيحي", "Walkthrough video")}</h3>
-          <VideoEmbed url={VIDEO_URL} />
-        </div>
-      ) : null}
+      {/* Walkthrough: an uploaded video if provided, else the built-in animation. */}
+      <div className="rounded-2xl border border-[#efe3d6] bg-white p-4">
+        <h3 className="mb-3 font-serif text-base font-bold text-ink">🎬 {L("عرض توضيحي متحرّك", "Animated walkthrough")}</h3>
+        {VIDEO_URL ? <VideoEmbed url={VIDEO_URL} /> : <GuideDemo locale={locale} />}
+      </div>
 
       <Section n={1} title={L("الدخول وتثبيت التطبيق", "Open & install the app")}>
         <Steps items={[
