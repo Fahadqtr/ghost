@@ -172,16 +172,16 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
         </div>
         <div className="flex items-center gap-2">
           <LanguageToggle locale={locale} />
-          <button onClick={logout} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">{L("خروج", "Sign out")}</button>
+          <button onClick={logout} className="rounded-lg border border-[#e7d9c9] px-3 py-1.5 text-xs text-[#8a7461] hover:bg-[#faf3ec]">{L("خروج", "Sign out")}</button>
         </div>
       </div>
 
       <>
         {tabs.length > 1 ? (
-          <div data-no-print className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">
+          <div data-no-print className="flex flex-nowrap gap-1 overflow-x-auto rounded-xl bg-[#f3ece1] p-1 [scrollbar-width:none] md:flex-wrap md:justify-center">
             {tabs.map((t) => (
               <button key={t.key} onClick={() => setTab(t.key)}
-                className={`flex-1 rounded-lg py-2 text-xs font-semibold transition ${tab === t.key ? "bg-white text-ink shadow-sm" : "text-slate-500"}`}>
+                className={`shrink-0 whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition ${tab === t.key ? "bg-white text-ink shadow-sm" : "text-[#8a7461] hover:text-ink"}`}>
                 {t.icon} {en ? t.en : t.ar}
               </button>
             ))}
