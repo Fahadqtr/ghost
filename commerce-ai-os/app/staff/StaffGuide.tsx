@@ -59,9 +59,9 @@ export default function StaffGuide({ locale = "ar" }: { locale?: Locale }) {
         <button onClick={() => window.print()} className="btn-primary px-3 py-2 text-xs">🖨️ {L("تنزيل PDF", "Download PDF")}</button>
       </div>
 
-      {/* Walkthrough: an uploaded video if provided, else the built-in animation. */}
+      {/* Walkthrough: an uploaded video if provided, else the built-in demo. */}
       <div className="rounded-2xl border border-[#efe3d6] bg-white p-4">
-        <h3 className="mb-3 font-serif text-base font-bold text-ink">🎬 {L("عرض توضيحي متحرّك", "Animated walkthrough")}</h3>
+        <h3 className="mb-3 font-serif text-base font-bold text-ink">🎬 {L("شاهد الطريقة", "See how it works")}</h3>
         {VIDEO_URL ? <VideoEmbed url={VIDEO_URL} /> : <GuideDemo locale={locale} />}
       </div>
 
