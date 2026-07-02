@@ -1,0 +1,33 @@
+# Automated dependency updates. Every Dependabot PR runs the full CI gate
+# (typecheck / test / build via the protect-master ruleset), so a bump that
+# breaks anything cannot merge. Merging stays manual.
+version: 2
+updates:
+  # commerce-ai-os npm deps (pnpm-lock.yaml).
+  - package-ecosystem: npm
+    directory: /commerce-ai-os
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Qatar
+    open-pull-requests-limit: 5
+    groups:
+      # One combined PR for routine minor+patch bumps (less noise); majors and
+      # security updates still arrive as their own PRs.
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+    ignore:
+      # xlsx is intentionally pinned to the SheetJS CDN tarball (not npm).
+      - dependency-name: xlsx
+
+  # Keep the GitHub Actions used by CI current too.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Qatar
+    open-pull-requests-limit: 3
