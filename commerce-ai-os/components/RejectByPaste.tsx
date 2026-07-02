@@ -165,7 +165,7 @@ export default function RejectByPaste({
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <label className="text-xs text-muted">سبب الرفض:</label>
               <input
-                className="input sm:max-w-[14rem]"
+                className="input sm:max-w-56"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="بسبب الصورة"

@@ -203,7 +203,7 @@ function CaptionCard({ title, text, dir, onCopy, copyLabel }: { title: string; t
         <h3 className="text-sm font-semibold text-ink">{title}</h3>
         <button className="btn-ghost px-3 py-1 text-xs" onClick={onCopy}>{copyLabel}</button>
       </div>
-      <pre dir={dir} className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-slate-700">{text}</pre>
+      <pre dir={dir} className="whitespace-pre-wrap wrap-break-word font-sans text-sm leading-relaxed text-slate-700">{text}</pre>
     </div>
   );
 }

@@ -19,7 +19,7 @@ export default function BottomNav({ locale = "ar" }: { locale?: Locale }) {
   const en = locale === "en";
   return (
     <nav
-      className="flex shrink-0 items-stretch justify-around border-t border-slate-200 bg-white/95 backdrop-blur"
+      className="flex shrink-0 items-stretch justify-around border-t border-slate-200 bg-white/95 backdrop-blur-sm"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       {TABS.map((t) => {
@@ -36,7 +36,7 @@ export default function BottomNav({ locale = "ar" }: { locale?: Locale }) {
             <span
               className={`flex h-9 w-9 items-center justify-center rounded-full text-lg transition ${
                 malak
-                  ? "bg-gradient-to-br from-blue-500 to-purple-600 text-white shadow"
+                  ? "bg-linear-to-br from-blue-500 to-purple-600 text-white shadow-sm"
                   : active
                   ? "bg-brand-light"
                   : ""

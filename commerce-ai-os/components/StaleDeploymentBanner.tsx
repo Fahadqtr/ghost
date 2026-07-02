@@ -29,7 +29,7 @@ export default function StaleDeploymentBanner() {
   if (!stale) return null;
 
   return (
-    <div dir="rtl" className="relative z-[200] flex flex-wrap items-center justify-center gap-2 bg-amber-500 px-3 py-2 text-center text-[12px] font-semibold text-black">
+    <div dir="rtl" className="relative z-200 flex flex-wrap items-center justify-center gap-2 bg-amber-500 px-3 py-2 text-center text-[12px] font-semibold text-black">
       <span>⚠️ أنت على نسخة قديمة مجمّدة — بعض الميزات الجديدة مو موجودة هنا.</span>
       <a href={href} className="rounded-md bg-black px-3 py-1 text-amber-300 hover:bg-black/80">افتح النسخة الحالية ↗</a>
     </div>

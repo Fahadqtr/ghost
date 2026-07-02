@@ -83,7 +83,7 @@ export default function BarcodeScanner({
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 p-4">
       <div className="w-full max-w-md overflow-hidden rounded-xl bg-black">
-        <div className="relative aspect-[4/3] w-full">
+        <div className="relative aspect-4/3 w-full">
           <video ref={videoRef} className="h-full w-full object-cover" playsInline muted />
           {/* aiming frame */}
           {ready && !error && (

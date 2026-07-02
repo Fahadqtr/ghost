@@ -255,7 +255,7 @@ export default function BarcodeLabels({ products }: { products: LabelProduct[] }
           {labels.map((p, i) => (
             <div
               key={`${p.barcode}|${p.sku ?? ""}|${i}`}
-              className="label-cell flex flex-col items-center justify-center gap-0.5 overflow-hidden rounded border border-slate-200 bg-white p-2 text-center"
+              className="label-cell flex flex-col items-center justify-center gap-0.5 overflow-hidden rounded-sm border border-slate-200 bg-white p-2 text-center"
               style={size ? { width: `${size.w}mm`, height: `${size.h}mm`, breakInside: "avoid" } : { breakInside: "avoid" }}
             >
               {showName && (

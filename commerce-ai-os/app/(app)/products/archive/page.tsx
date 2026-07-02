@@ -31,7 +31,7 @@ export default async function ArchivePage() {
       {!ready ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           {L("جدول الأرشيف غير موجود بعد — شغّل ", "The archive table isn't set up yet — run ")}
-          <code className="rounded bg-white px-1">supabase/product_archive.sql</code>
+          <code className="rounded-sm bg-white px-1">supabase/product_archive.sql</code>
           {L(" مرة واحدة في Supabase.", " once in Supabase.")}
         </div>
       ) : null}

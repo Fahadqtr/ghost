@@ -73,7 +73,7 @@ export default function NotificationsBell({ locale = "ar" }: { locale?: Locale }
         type="button"
         onClick={toggle}
         aria-label={L("الإشعارات", "Notifications")}
-        className="relative inline-flex h-10 w-10 items-center justify-center rounded-lg text-[#6b5344] hover:bg-[#faf3ec]"
+        className="relative inline-flex h-10 w-10 items-center justify-center rounded-lg text-[#6b5344] hover:bg-violet-50"
       >
         <span className="text-xl leading-none">🔔</span>
         {unseen > 0 ? (

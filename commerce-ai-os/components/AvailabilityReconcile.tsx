@@ -303,7 +303,7 @@ export default function AvailabilityReconcile() {
                     <select
                       value={b.availCol}
                       onChange={(e) => { setAvailChoice((m) => ({ ...m, [s.key]: e.target.value })); setRes(null); }}
-                      className={`mt-0.5 block w-full rounded border px-1 py-0.5 text-[11px] ${overridden ? "border-amber-400 bg-amber-50" : "border-slate-200"}`}>
+                      className={`mt-0.5 block w-full rounded-sm border px-1 py-0.5 text-[11px] ${overridden ? "border-amber-400 bg-amber-50" : "border-slate-200"}`}>
                       {p.headers.map((h) => (
                         <option key={h} value={h}>{h === p.availColAuto ? `${h} (تلقائي)` : h}</option>
                       ))}
@@ -312,7 +312,7 @@ export default function AvailabilityReconcile() {
                   {overridden ? <p className="text-[10px] text-amber-700">⚠ تجاوزت العمود التلقائي.</p> : null}
                 </>
               ) : null}
-              {err ? <pre className="whitespace-pre-wrap rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">{err}</pre> : null}
+              {err ? <pre className="whitespace-pre-wrap rounded-sm bg-red-50 px-2 py-1 text-[11px] text-red-700">{err}</pre> : null}
             </div>
           );
         })}
@@ -469,7 +469,7 @@ function Thumb({ src, size = 28 }: { src?: string | null; size?: number }) {
   if (!src) {
     return (
       <span
-        className="inline-flex shrink-0 items-center justify-center rounded bg-slate-100 text-[9px] text-slate-300"
+        className="inline-flex shrink-0 items-center justify-center rounded-sm bg-slate-100 text-[9px] text-slate-300"
         style={{ width: size, height: size }}
       >
         —
@@ -483,7 +483,7 @@ function Thumb({ src, size = 28 }: { src?: string | null; size?: number }) {
       alt=""
       loading="lazy"
       referrerPolicy="no-referrer"
-      className="shrink-0 rounded border border-slate-100 object-cover"
+      className="shrink-0 rounded-sm border border-slate-100 object-cover"
       style={{ width: size, height: size }}
     />
   );

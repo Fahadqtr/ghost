@@ -82,7 +82,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
                   // eslint-disable-next-line @next/next/no-img-element
                   <img key={i} src={u} alt={`image ${i + 1}`} loading="lazy"
                     width={64} height={64}
-                    className="block h-16 w-16 max-w-none shrink-0 rounded object-cover ring-1 ring-slate-200" />
+                    className="block h-16 w-16 max-w-none shrink-0 rounded-sm object-cover ring-1 ring-slate-200" />
                 ))}
               </div>
             ) : null}

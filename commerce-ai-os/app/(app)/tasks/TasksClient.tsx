@@ -144,15 +144,15 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
       {/* toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
-          <button onClick={() => setTab("open")} className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${tab === "open" ? "bg-white text-ink shadow-sm" : "text-slate-500"}`}>{L("مفتوحة", "Open")} ({open.length})</button>
-          <button onClick={() => setTab("done")} className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${tab === "done" ? "bg-white text-ink shadow-sm" : "text-slate-500"}`}>{L("منجزة", "Done")} ({done.length})</button>
+          <button onClick={() => setTab("open")} className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${tab === "open" ? "bg-white text-ink shadow-xs" : "text-slate-500"}`}>{L("مفتوحة", "Open")} ({open.length})</button>
+          <button onClick={() => setTab("done")} className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${tab === "done" ? "bg-white text-ink shadow-xs" : "text-slate-500"}`}>{L("منجزة", "Done")} ({done.length})</button>
         </div>
-        <select className="input max-w-[11rem] text-sm" value={fAssignee} onChange={(e) => setFAssignee(e.target.value)}>
+        <select className="input max-w-44 text-sm" value={fAssignee} onChange={(e) => setFAssignee(e.target.value)}>
           <option value="">{L("👥 كل الموظفين", "👥 All staff")}</option>
           <option value="__all">{L("👥 مهام للكل", "👥 Everyone tasks")}</option>
           {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <select className="input max-w-[10rem] text-sm" value={fPriority} onChange={(e) => setFPriority(e.target.value)}>
+        <select className="input max-w-40 text-sm" value={fPriority} onChange={(e) => setFPriority(e.target.value)}>
           <option value="">{L("كل الأولويات", "All priorities")}</option>
           <option value="high">🔴 {L("عالية", "High")}</option>
           <option value="normal">🟡 {L("عادية", "Normal")}</option>
@@ -170,14 +170,14 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
           <p className="font-serif text-sm font-bold text-ink">🔁 {L("الروتين المتكرّر", "Recurring routines")}</p>
           {!routinesReady ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              {L("شغّل", "Run")} <code className="rounded bg-white px-1">supabase/task_routines.sql</code> {L("مرة وحدة في Supabase ثم حدّث.", "once in Supabase, then refresh.")}
+              {L("شغّل", "Run")} <code className="rounded-sm bg-white px-1">supabase/task_routines.sql</code> {L("مرة وحدة في Supabase ثم حدّث.", "once in Supabase, then refresh.")}
             </div>
           ) : (
             <>
               <p className="text-xs text-muted">{L("مهمة تتولّد تلقائيًا كل يوم أو كل أسبوع (مثل تشيك-ليست الافتتاح).", "A task auto-generates every day or week (e.g. an opening checklist).")}</p>
               <div className="flex flex-wrap items-end gap-2">
-                <input className="input flex-1 min-w-[12rem]" value={rTitle} onChange={(e) => setRTitle(e.target.value)} placeholder={L("مثال: ترتيب الرفوف وفتح المتجر", "e.g. Tidy shelves & open the store")} />
-                <select className="input max-w-[10rem]" value={rAssignee} onChange={(e) => setRAssignee(e.target.value)}>
+                <input className="input flex-1 min-w-48" value={rTitle} onChange={(e) => setRTitle(e.target.value)} placeholder={L("مثال: ترتيب الرفوف وفتح المتجر", "e.g. Tidy shelves & open the store")} />
+                <select className="input max-w-40" value={rAssignee} onChange={(e) => setRAssignee(e.target.value)}>
                   <option value="">{L("👥 الكل", "👥 Everyone")}</option>
                   {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
@@ -210,7 +210,7 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
                           {r.frequency === "daily" ? L("يوميًا", "Daily") : `${L("أسبوعيًا —", "Weekly —")} ${WEEKDAYS[r.weekday ?? 0]}`} · {r.assignedName ?? L("الكل", "Everyone")}
                         </span>
                       </span>
-                      <button disabled={busy} onClick={() => toggleRoutine(r)} className="shrink-0 rounded-md border border-[#e7d9c9] px-2 py-1 text-[11px] text-[#8a7461] hover:bg-[#faf3ec] disabled:opacity-50">{r.active ? L("إيقاف", "Pause") : L("تفعيل", "Resume")}</button>
+                      <button disabled={busy} onClick={() => toggleRoutine(r)} className="shrink-0 rounded-md border border-[#e7d9c9] px-2 py-1 text-[11px] text-[#8a7461] hover:bg-violet-50 disabled:opacity-50">{r.active ? L("إيقاف", "Pause") : L("تفعيل", "Resume")}</button>
                       <button disabled={busy} onClick={() => removeRoutine(r)} className="shrink-0 rounded-md border border-red-200 px-2 py-1 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50">{L("حذف", "Delete")}</button>
                     </div>
                   ))}
@@ -272,7 +272,7 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
             const everyone = t.assignedTo == null;
             return (
               <div key={t.id} className={`relative overflow-hidden rounded-xl border p-3 ps-4 ${od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
-                <span className={`absolute inset-y-0 start-0 w-1.5 ${p.bar}`} />
+                <span className={`absolute inset-y-0 inset-s-0 w-1.5 ${p.bar}`} />
                 <div className="flex items-stretch gap-3">
                   <span className={`flex h-10 w-10 shrink-0 items-center justify-center self-center rounded-full text-sm font-bold ${everyone ? "bg-slate-100 text-slate-500" : "bg-violet-100 text-violet-700"}`}>
                     {everyone ? "👥" : initial(t.assignedName)}

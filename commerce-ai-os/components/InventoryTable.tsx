@@ -520,7 +520,7 @@ export default function InventoryTable({
           />
           <button
             type="button"
-            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-base leading-none hover:bg-slate-100"
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded-sm p-1 text-base leading-none hover:bg-slate-100"
             title={L("امسح الباركود بالكاميرا", "Scan barcode with camera")}
             aria-label={L("مسح الباركود", "Scan barcode")}
             onClick={() => setScanning(true)}
@@ -654,9 +654,9 @@ export default function InventoryTable({
                   />
                   {r.image_url ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={r.image_url} alt="" className="h-10 w-10 flex-none rounded object-cover" loading="lazy" />
+                    <img src={r.image_url} alt="" className="h-10 w-10 flex-none rounded-sm object-cover" loading="lazy" />
                   ) : (
-                    <div className="h-10 w-10 flex-none rounded bg-slate-100" />
+                    <div className="h-10 w-10 flex-none rounded-sm bg-slate-100" />
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="font-medium text-ink">{r.product_name ?? "—"}</div>
@@ -671,9 +671,9 @@ export default function InventoryTable({
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span className="text-muted">{L(`${variants.length} خيار`, `${variants.length} options`)}</span>
                     {vOut > 0 ? (
-                      <span className="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-700">⚠ {L(`${vOut} نافد`, `${vOut} out`)}</span>
+                      <span className="rounded-sm bg-red-100 px-1.5 py-0.5 font-medium text-red-700">⚠ {L(`${vOut} نافد`, `${vOut} out`)}</span>
                     ) : vLow > 0 ? (
-                      <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700">⚠ {L(`${vLow} منخفض`, `${vLow} low`)}</span>
+                      <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700">⚠ {L(`${vLow} منخفض`, `${vLow} low`)}</span>
                     ) : null}
                   </div>
                 )}
@@ -851,9 +851,9 @@ export default function InventoryTable({
                         )}
                         {r.image_url ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={r.image_url} alt="" className="h-8 w-8 flex-none rounded object-cover" loading="lazy" />
+                          <img src={r.image_url} alt="" className="h-8 w-8 flex-none rounded-sm object-cover" loading="lazy" />
                         ) : (
-                          <div className="h-8 w-8 flex-none rounded bg-slate-100" />
+                          <div className="h-8 w-8 flex-none rounded-sm bg-slate-100" />
                         )}
                         <div className="min-w-0">
                           <div className="truncate font-medium text-ink">
@@ -862,11 +862,11 @@ export default function InventoryTable({
                               <span className="ml-1 text-xs text-muted">· {L(`${variants.length} خيار`, `${variants.length} options`)}</span>
                             )}
                             {vOut > 0 ? (
-                              <span className="ml-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+                              <span className="ml-1 rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
                                 ⚠ {L(`${vOut} نافد`, `${vOut} out`)}
                               </span>
                             ) : vLow > 0 ? (
-                              <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                              <span className="ml-1 rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
                                 ⚠ {L(`${vLow} منخفض`, `${vLow} low`)}
                               </span>
                             ) : null}
@@ -1066,7 +1066,7 @@ function ShelfStockCell({
           <span className="text-slate-400">{L("— حدّد —", "— set —")}</span>
         ) : (
           sorted.map((p) => (
-            <span key={p.location} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">
+            <span key={p.location} className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-xs">
               <span className="font-mono font-medium">{p.location}</span>
               <span className="text-slate-500">·{p.quantity}</span>
             </span>
@@ -1076,7 +1076,7 @@ function ShelfStockCell({
       <button className="flex-none text-slate-400 hover:text-ink" onClick={onEdit} title={L("تعديل", "Edit")}>✎</button>
       {placed !== total && (
         <button
-          className="flex-none rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700 hover:bg-amber-200 disabled:opacity-50"
+          className="flex-none rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700 hover:bg-amber-200 disabled:opacity-50"
           title={L("اضغط لجعل إجمالي المخزون = القطع الموزّعة", "Tap to set total stock = placed units")}
           onClick={syncTotal}
           disabled={syncing}

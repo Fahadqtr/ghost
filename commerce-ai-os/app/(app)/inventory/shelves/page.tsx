@@ -183,7 +183,7 @@ export default async function ShelvesPage() {
         <div className="card space-y-2 border-amber-200 bg-amber-50 text-sm text-amber-800">
           <div className="font-medium">One-time setup needed</div>
           <p>
-            Run <code className="rounded bg-white px-1">supabase/shelf_locations.sql</code> once in your
+            Run <code className="rounded-sm bg-white px-1">supabase/shelf_locations.sql</code> once in your
             Supabase SQL editor to add the <code>location</code> column and the <code>shelf_slots</code> table,
             then refresh this page.
           </p>

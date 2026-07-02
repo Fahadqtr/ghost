@@ -286,7 +286,7 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
         <div id="oos-sheet" className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((p) => (
             <div key={p.id} className="oos-card flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2">
-              <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded bg-slate-50">
+              <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-sm bg-slate-50">
                 {p.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={p.image_url} alt="" className="max-h-full max-w-full object-contain" />
@@ -300,9 +300,9 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
                   {p.sku ? <span className="font-mono">{p.sku}</span> : null}
                   {p.category ? <span>· {p.category}</span> : null}
-                  <span className="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-700">Out · {p.stock}</span>
+                  <span className="rounded-sm bg-red-100 px-1.5 py-0.5 font-medium text-red-700">Out · {p.stock}</span>
                   {p.activeChannels.map((c) => (
-                    <span key={c} className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700" title="نافد لكن لا يزال مفعّلاً في هذه القناة">
+                    <span key={c} className="rounded-sm bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700" title="نافد لكن لا يزال مفعّلاً في هذه القناة">
                       مفعّل: {c}
                     </span>
                   ))}

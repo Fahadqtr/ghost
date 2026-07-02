@@ -376,7 +376,7 @@ export default function StocktakeCount({ items, slots = [] }: { items: CountItem
           <div className="mb-1 font-medium">Unrecognised barcodes (not in catalog):</div>
           <div className="flex flex-wrap gap-2">
             {unknown.map((u) => (
-              <span key={u.code} className="rounded bg-white px-2 py-0.5 font-mono text-xs">
+              <span key={u.code} className="rounded-sm bg-white px-2 py-0.5 font-mono text-xs">
                 {u.code}{u.count > 1 ? ` ×${u.count}` : ""}
               </span>
             ))}
