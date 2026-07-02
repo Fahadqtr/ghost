@@ -1,5 +1,9 @@
 # Commerce AI OS — Phase 1 Milestone Tracker
 
+> **Historical record.** This tracks the original Phase-1 MVP (M0–M6). The project
+> has since grown well beyond it — see `PROJECT_OVERVIEW_AR.md` and `../UPDATES.md`
+> for the current state.
+
 Build order: **M0 → M1 → (M2 skipped, schema already done) → M3 → M4 → M5 → M6**
 
 Scope guardrail: Phase 1 = UI + schema + placeholders ONLY. No real commerce APIs,

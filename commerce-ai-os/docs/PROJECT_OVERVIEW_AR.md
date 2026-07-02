@@ -24,8 +24,8 @@
 
 | الطبقة | التقنية |
 |---|---|
-| الإطار | **Next.js 14** (App Router) + **React 18** + **TypeScript** |
-| التنسيق | **Tailwind CSS** (واجهة RTL عربية) |
+| الإطار | **Next.js 16** (App Router) + **React 19** + **TypeScript 6** |
+| التنسيق | **Tailwind CSS 4** (تهيئة CSS-first، واجهة RTL عربية) |
 | قاعدة البيانات + المصادقة + التخزين | **Supabase** (Postgres + Auth + Storage) |
 | عقل ملاك | **Anthropic Claude** (Opus 4.8 افتراضيًا، عبر `@anthropic-ai/sdk`) |
 | الصوت (TTS) | **ElevenLabs** + Web Speech (fallback) |
