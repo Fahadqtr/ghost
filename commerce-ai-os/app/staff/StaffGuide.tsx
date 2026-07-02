@@ -131,6 +131,7 @@ export default function StaffGuide({ locale = "ar" }: { locale?: Locale }) {
         <Steps items={[
           L("اضغط منطقة الصورة → التقاط/معرض/ملفات.", "Tap the image area → Take/Gallery/Files."),
           L("يتولّد العنوان والوصف بأسلوب المتجر.", "Title & description are drafted in the store style."),
+          L("تقدر تعدّل الصورة بالذكاء: اكتب وصف التعديل (خلفية بيضاء…) واضغط «✨ عدّل».", "Optionally edit the photo with AI: type a change (white background…) and tap “✨ Edit”."),
           L("راجِع، اختر الفئة، اكتب السعر والمخزون، ثم «أضِف».", "Review, pick category, price & stock, then Add."),
           L("بعدها لوحة نسخ الخانات للمنصّات.", "Then a copy panel for the platforms."),
         ]} />
