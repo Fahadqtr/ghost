@@ -1721,7 +1721,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
   }, []);
 
   // ---- Proactive scan: ALWAYS load the data on open (it feeds the HUD side
-  // panels every visit). Only the spoken briefing is throttled to once/session.
+  // panels every visit). Only the spoken briefing is throttled to once/day.
   const briefedRef = useRef(false);
   useEffect(() => {
     if (briefedRef.current) return;
@@ -1734,9 +1734,12 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
         if (!d || d.error) return;
         setActiveAgent("malak");
         setScanData(d as ScanData); // feeds the HUD side panels (every load)
-        if (!sessionStorage.getItem("malak_briefed")) {
-          sessionStorage.setItem("malak_briefed", "1");
-          speak(briefSummary(d, en), "malak"); // voice brief once per session
+        // Speak the briefing once per DAY (a morning briefing), not every
+        // session — watermarked by calendar date in localStorage.
+        const todayKey = new Date().toISOString().slice(0, 10);
+        if (localStorage.getItem("malak_briefed_day") !== todayKey) {
+          localStorage.setItem("malak_briefed_day", todayKey);
+          speak(briefSummary(d, en), "malak");
         }
       } catch {
         /* scan is best-effort */

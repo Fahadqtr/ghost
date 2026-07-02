@@ -6,6 +6,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
+import { getSalesSummary } from "@/lib/inventory/sales";
+import { composeBriefing, partOfDayFromHour } from "@/lib/briefing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,6 +79,17 @@ export async function GET() {
     // One-line spoken/headline priority (the single most important thing).
     const priority = issues.length ? `${issues[0].title} (${issues[0].count})` : "الوضع ممتاز — ما فيه بند عاجل اليوم";
 
+    // Composed morning briefing (greeting + prioritized lines + TTS-safe speak),
+    // built from the prioritized issues + today's sales. Best-effort sales.
+    const sales = await getSalesSummary(1).catch(() => null);
+    const briefing = composeBriefing({
+      partOfDay: partOfDayFromHour((new Date().getUTCHours() + 3) % 24), // Qatar = UTC+3
+      alerts: issues.map((i) => ({ ar: `${i.title} (${i.count})`, severity: i.severity })),
+      sales: sales?.configured
+        ? { units: sales.totalUnits, revenue: sales.totalRevenue, topSeller: sales.topByUnits?.[0]?.name ?? null }
+        : null,
+    });
+
     return Response.json({
       agent: "malak",
       total, approved, rejected, missingImages, lowStock, outOfStock,
@@ -85,6 +98,7 @@ export async function GET() {
       recentActivity,
       allClear: issues.length === 0,
       priority,
+      briefing,
     });
   } catch (e: any) {
     return Response.json({ error: e?.message ?? "scan failed" }, { status: 200 });
