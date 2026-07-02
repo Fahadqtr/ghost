@@ -4,9 +4,10 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
   staffGenerateProductDraft, staffAddProduct, staffEditMovement, staffDeleteMovement,
-  staffMyTasks, staffSetTaskStatus,
+  staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment,
   type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct, type StaffTaskRow,
 } from "./actions";
+import TaskThread from "@/components/TaskThread";
 import { useMemo } from "react";
 import { dirOf, type Locale } from "@/lib/i18n";
 import { type StaffPermission } from "@/lib/staff/permissions";
@@ -764,6 +765,7 @@ function TasksTab({ locale }: { locale: Locale }) {
                 ) : null}
                 <button disabled={busy} onClick={() => setStatus(t.id, "done")} className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-bold text-white disabled:opacity-50">{L("✓ تم", "✓ Done")}</button>
               </div>
+              <TaskThread taskId={t.id} locale={locale} load={staffTaskComments} add={staffAddTaskComment} />
             </div>
           );
         })}

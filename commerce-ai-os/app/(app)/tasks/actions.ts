@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
+import { listComments, insertComment, uploadCommentAttachment } from "@/lib/tasks/commentStore";
+import type { TaskComment, CommentAttachment } from "@/lib/tasks/comments";
 
 export type TaskPriority = "low" | "normal" | "high";
 export type TaskStatus = "open" | "in_progress" | "done";
@@ -132,5 +134,31 @@ export async function deleteTask(id: string) {
   if (error) return { error: error.message };
   revalidatePath("/tasks");
   revalidatePath("/dashboard");
+  return { ok: true as const };
+}
+
+/* ── Task comment thread (manager side) ────────────────────────────────── */
+export async function managerListComments(taskId: string): Promise<{ comments: TaskComment[]; error?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { comments: [], error: unauth.error };
+  const admin = adminClient();
+  if (!admin) return { comments: [], error: NO_DB };
+  return { comments: await listComments(admin, String(taskId)) };
+}
+
+export async function managerAddComment(taskId: string, body: string, attachment?: CommentAttachment | null) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  let att: { url: string; type: "image" | "file"; name: string } | null = null;
+  if (attachment?.base64) {
+    const up = await uploadCommentAttachment(admin, String(taskId), attachment);
+    if ("error" in up) return { error: up.error };
+    att = up;
+  }
+  const r = await insertComment(admin, { taskId: String(taskId), role: "manager", author: (await adminEmail()) || "manager", body, attachment: att });
+  if ("error" in r) return r;
+  revalidatePath("/tasks");
   return { ok: true as const };
 }

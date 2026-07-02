@@ -152,6 +152,7 @@ export default function StaffGuide({ locale = "ar" }: { locale?: Locale }) {
         <Steps items={[
           L("فوق: ملخّص مهامك (مفتوحة/متأخّرة/منجزة).", "Top: summary (open/overdue/done)."),
           L("اضغط ▶ جاري لما تبدأ، و✓ تم لما تخلص.", "Tap ▶ when you start, ✓ when done."),
+          L("اضغط 💬 المحادثة على المهمة لتكتب تعليقًا أو ترفق صورة/ملف للمدير — والمدير يرد عليك.", "Tap 💬 Comments on a task to write a note or attach an image/file for the manager — and they reply back."),
         ]} />
       </Section>
 
