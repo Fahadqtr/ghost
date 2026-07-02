@@ -825,7 +825,6 @@ export default function InventoryTable({
                 const dirty = isDirty(r);
                 const variants = (r.product_id && variantsByProduct[r.product_id]) || [];
                 const isExpanded = expanded.has(r.id) || variantMatch(r, q.trim().toLowerCase());
-                const colCount = hasLocation ? 10 : 9;
                 // Variant-level low/out alerts (reuse the product's threshold per option).
                 const vThr = Number(curThreshold(r)) || 0;
                 const vOut = variants.filter((v) => (v.stock_quantity ?? 0) <= 0).length;

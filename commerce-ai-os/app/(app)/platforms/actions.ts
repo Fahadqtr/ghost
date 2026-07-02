@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAll } from "@/lib/supabase/paginate";
-import { PLATFORM_KEYS, platformBy, type PlatformKey } from "@/lib/constants";
+import { PLATFORM_KEYS, platformBy } from "@/lib/constants";
 
 // Per-platform Product Hub backend.
 //

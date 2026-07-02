@@ -6,7 +6,7 @@
 // the user approves. No product write happens here.
 import { createAdminClient } from "@/lib/supabase/admin";
 import { safeFetchImage } from "@/lib/net/safeImage";
-import { verifyAction, signAction, type MalakAction } from "@/lib/malak/confirm";
+import { verifyAction, signAction } from "@/lib/malak/confirm";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { rateLimit } from "@/lib/malak/ratelimit";
 

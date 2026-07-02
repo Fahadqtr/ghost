@@ -8,7 +8,6 @@ import type {
   ComplianceClient,
   ComplianceLogRow,
   RulesConfig,
-  Verdict,
 } from "./types";
 
 type RuleRow = { rule_key: string; rule_value: unknown; active: boolean };

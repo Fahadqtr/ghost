@@ -160,9 +160,7 @@ const S = (v: unknown) => String(v ?? "").trim();
 // digits (drops spaces, dashes, parens, apostrophes, units punctuation). This
 // matches name variants like "Body Cream" = "BodyCream", "(100g)" = "100g"
 // without hiding genuinely-missing products (it only matches when alnum-identical).
-const norm = (s: unknown) => S(s).toLowerCase().replace(/[^a-z0-9]/g, "");
-const tokens = (s: unknown) => new Set(S(s).toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2));
-// Token set that KEEPS numeric tokens (sizes/counts) even when short — numbers
+const norm = (s: unknown) => S(s).toLowerCase().replace(/[^a-z0-9]/g, "");// Token set that KEEPS numeric tokens (sizes/counts) even when short — numbers
 // are the discriminator between "6 Color" and "10 Color". Words must be ≥3 chars.
 const tokset = (s: unknown) => new Set(
   S(s).toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length >= 3 || /^[0-9]+$/.test(w))

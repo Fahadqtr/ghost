@@ -9,7 +9,7 @@ const PAGE = 1000;
 export default async function OutOfStockPage() {
   const supabase = createClient();
 
-  let items: OosItem[] = [];
+  const items: OosItem[] = [];
   let errMsg: string | null = null;
 
   try {

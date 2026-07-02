@@ -7,6 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "lint": "eslint . --max-warnings 74",
     "test": "node --conditions=react-server --experimental-strip-types --test \"lib/**/*.test.ts\""
   },
   "pnpm": {
@@ -27,11 +28,14 @@
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
     "@tailwindcss/postcss": "^4.3.2",
     "@types/node": "^22.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.169.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "16.2.10",
     "postcss": "^8.5.16",
     "server-only": "^0.0.1",
     "tailwindcss": "^4.3.2",

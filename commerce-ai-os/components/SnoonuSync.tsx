@@ -491,8 +491,6 @@ function DiffReport({ diff, rows }: { diff: SnoonuDiff; rows: SnoonuExportRow[] 
   );
 }
 
-const trunc = (s: string) => (s.length > 60 ? s.slice(0, 60) + "…" : s);
-
 // Show the region around the FIRST real difference so genuine (but deep) text
 // changes aren't hidden behind an identical-looking truncated prefix.
 function firstDiffIndex(a: string, b: string) {

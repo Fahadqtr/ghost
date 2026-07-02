@@ -168,10 +168,10 @@ export default function JarvisOrb({
         const p = pts[i];
         // each point swirls at its own angular rate (galaxy differential spin)
         const phi = p.phi0 + t * spin * p.spd;
-        let x = Math.cos(phi) * p.rLat;
+        const x = Math.cos(phi) * p.rLat;
         let z = Math.sin(phi) * p.rLat;
         // tilt about X for a 3D read
-        let y = p.y * cosX - z * sinX;
+        const y = p.y * cosX - z * sinX;
         z = p.y * sinX + z * cosX;
         const depth = (z + 1) / 2; // 0 back .. 1 front
         const jr = jitter ? Math.sin(i * 12.9 + t * 6) * jitter * 0.04 : 0;
