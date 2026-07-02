@@ -13,6 +13,13 @@
 > the account that owns `vqstcmattiarhblqshvb`, or run the checks in that
 > project's own SQL editor. (Note: `.env.local` here on disk is only placeholder
 > build values — the real production URL lives in Vercel + the owner's machine.)
+>
+> **✅ Production RLS verified directly (2026-07-02).** In the `vqstcmattiarhblqshvb`
+> SQL editor, `select tablename from pg_tables where schemaname='public' and
+> rowsecurity=false` returned **no rows** — every production `public` table has RLS
+> enabled, so the public anon key cannot reach them. Fingerprint confirmed it was
+> production: 1142 products, SKU format `mk####` (e.g. `mk1000`). Supabase
+> `get_advisors` on production is still pending (MCP can't see this project).
 
 ## Canonical database (THE ONLY ONE)
 - Supabase project: **vqstcmattiarhblqshvb**  (production, live store)
