@@ -1,16 +1,25 @@
 # Source of Truth — Malak Commerce OS
 
-> **⚠️ NEEDS VERIFICATION (2026-07-02): the project IDs below may be stale.**
-> The connected Supabase account (`fahadshiping@gmail.com`) currently lists ONLY
-> the project **`awlevukqqsaxvifrfteb`** (named "malikas-universe"), which this
-> file labels as the *frozen v2*. It responds to the live `public` schema
-> (`products`, `platform_status`, `channel_products`) and has RLS enabled on all
-> tables — i.e. it behaves like production, contradicting the "frozen" label
-> below. Meanwhile `vqstcmattiarhblqshvb` was not visible under that account.
-> **Before any DB work, confirm the real production project from the deployed
-> `NEXT_PUBLIC_SUPABASE_URL` (Vercel → project `ghost` → Environment Variables).**
-> The `ref` in that URL is the canonical production project. Update this file once
-> confirmed.
+> **✅ CONFIRMED (2026-07-02).** Production is **`vqstcmattiarhblqshvb`** —
+> verified from Vercel's deployed `NEXT_PUBLIC_SUPABASE_URL`
+> (`https://vqstcmattiarhblqshvb.supabase.co`, Production + Preview). This file
+> was correct; the IDs below stand.
+>
+> **⚠️ Supabase MCP caveat:** the MCP connector is currently logged into an
+> account/org that lists ONLY the **frozen v2** `awlevukqqsaxvifrfteb`, and CANNOT
+> see production `vqstcmattiarhblqshvb`. A "Supabase security check" run on
+> 2026-07-02 therefore hit the frozen v2 by mistake — **production RLS/advisors
+> were NOT verified via MCP.** To audit production, either reconnect the MCP to
+> the account that owns `vqstcmattiarhblqshvb`, or run the checks in that
+> project's own SQL editor. (Note: `.env.local` here on disk is only placeholder
+> build values — the real production URL lives in Vercel + the owner's machine.)
+>
+> **✅ Production RLS verified directly (2026-07-02).** In the `vqstcmattiarhblqshvb`
+> SQL editor, `select tablename from pg_tables where schemaname='public' and
+> rowsecurity=false` returned **no rows** — every production `public` table has RLS
+> enabled, so the public anon key cannot reach them. Fingerprint confirmed it was
+> production: 1142 products, SKU format `mk####` (e.g. `mk1000`). Supabase
+> `get_advisors` on production is still pending (MCP can't see this project).
 
 ## Canonical database (THE ONLY ONE)
 - Supabase project: **vqstcmattiarhblqshvb**  (production, live store)
