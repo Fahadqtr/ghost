@@ -11,7 +11,7 @@ function fmt(s: string | null, locale: Locale) {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString(locale, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-export default function ApprovalsClient({ initialRows, initialPending, locale = "ar" }: { initialRows: StaffMove[]; initialPending: number; locale?: Locale }) {
+export default function ApprovalsClient({ initialRows, locale = "ar" }: { initialRows: StaffMove[]; initialPending: number; locale?: Locale }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const router = useRouter();

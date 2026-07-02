@@ -155,7 +155,7 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
 }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
-  const [busy, start] = useTransition();
+  const [, start] = useTransition();
   // Permission tabs + the always-on Guide tab at the end.
   const tabs = [...TABS.filter((t) => perms.includes(t.perm)), GUIDE_TAB];
   const [tab, setTab] = useState<TabKey>(tabs[0]?.key ?? "guide");

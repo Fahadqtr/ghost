@@ -68,7 +68,6 @@ const AGENTS: AgentDef[] = [
 // existing logic that matches on id/name is untouched).
 const agentName = (en: boolean) => (en ? "Malak" : "ملاك");
 
-const RAIL: AgentDef[] = []; // no team rail anymore
 const agentById = (_id: string): AgentDef => AGENTS[0];
 
 // Wake-word for hands-free mode: only "ملاك" now (single assistant).
@@ -1258,7 +1257,7 @@ export default function MalakPage({ kpis, locale = "ar" }: { kpis?: MalakKpis; l
   );
 }
 
-function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale }) {
+function MalakInner({ locale = "ar" }: { kpis?: MalakKpis; locale?: Locale }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -1276,9 +1275,9 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
   const [listening, setListening] = useState(false);
   const [typed, setTyped] = useState(""); // typewriter buffer for latest malak turn
   const [micSupported, setMicSupported] = useState(true);
-  const [orbSize, setOrbSize] = useState(160); // responsive; set on mount
+  const [, setOrbSize] = useState(160); // responsive; set on mount
   // الوكيل المُخاطَب مباشرة عند النقر على غرفته في المكتب (يُمرَّر للعقل كـ targetAgent).
-  const [directAgent, setDirectAgent] = useState<AgentId | null>(null);
+  const [, setDirectAgent] = useState<AgentId | null>(null);
   // تنبيه خطأ احترافي (التفاصيل التقنية تظهر فقط في وضع المطوّر ?dev=1).
   const [errorAlert, setErrorAlert] = useState<{ pretty: string; raw: string } | null>(null);
   const [devMode] = useState(
@@ -1300,7 +1299,7 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
   const handsFreeRef = useRef(false);
   handsFreeRef.current = handsFree;
   // "استماع دائم": يُحفظ في localStorage فيشتغل تلقائيًا كل زيارة (من أول لمسة).
-  const [alwaysOn, setAlwaysOn] = useState(false);
+  const [, setAlwaysOn] = useState(false);
 
   const recognitionRef = useRef<any>(null);
   const directAgentRef = useRef<AgentId | null>(null); // mirror of directAgent for the memoized send()
@@ -1402,8 +1401,6 @@ function MalakInner({ kpis, locale = "ar" }: { kpis?: MalakKpis; locale?: Locale
       /* ignore */
     }
   }, []);
-
-  const accent = agentById(activeAgent).color;
 
   // Responsive orb: small on phones, larger on wide screens. Caps by viewport
   // height too so it never crowds out the transcript on short screens.

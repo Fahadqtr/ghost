@@ -11,10 +11,8 @@ import assert from "node:assert/strict";
 import {
   normalizeText, writeVal, computeChanges, diffSnoonu,
   mapExportRows, normHeader, readColumns, ALWAYS, OPTIONAL,
-  type Field, type SnoonuExportRow,
+  type SnoonuExportRow,
 } from "./snoonu-diff.ts";
-
-const FIELDS: Field[] = [...ALWAYS, ...OPTIONAL];
 
 // ---- normalizeText: cosmetic noise must vanish, real words must survive -----
 test("normalizeText strips emojis and decorative symbols", () => {
