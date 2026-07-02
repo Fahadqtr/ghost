@@ -8,6 +8,8 @@ import { signStaff, verifyStaff, STAFF_COOKIE } from "@/lib/staff/session";
 import { hashPin } from "@/lib/staff/pin";
 import { parsePermissions, hasPerm, DEFAULT_PERMISSIONS, type StaffPermission } from "@/lib/staff/permissions";
 import { CATEGORIES } from "@/lib/constants";
+import { listComments, insertComment, uploadCommentAttachment } from "@/lib/tasks/commentStore";
+import type { TaskComment, CommentAttachment } from "@/lib/tasks/comments";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
 function pinOk(pin: string): boolean {
@@ -713,4 +715,37 @@ export async function staffSetTaskStatus(id: string, status: "open" | "in_progre
   const { error } = await admin.from("staff_tasks").update(patch).eq("id", id);
   if (error) return { error: error.message };
   return { ok: true as const };
+}
+
+/* ── Task comments (staff side) — only on tasks assigned to me or everyone ── */
+async function myTaskGuard(taskId: string, who: CurrentStaff, admin: any): Promise<boolean> {
+  const { data } = await admin.from("staff_tasks").select("assigned_to").eq("id", taskId).single();
+  if (!data) return false;
+  return data.assigned_to == null || data.assigned_to === who.id;
+}
+
+export async function staffTaskComments(taskId: string): Promise<{ comments: TaskComment[]; error?: string }> {
+  const who = await currentStaff();
+  if (!who) return { comments: [], error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "tasks")) return { comments: [], error: "ما عندك صلاحية المهام." };
+  const admin = adminClient();
+  if (!admin) return { comments: [], error: NO_DB };
+  if (!(await myTaskGuard(String(taskId), who, admin))) return { comments: [], error: "هذه المهمة مب لك." };
+  return { comments: await listComments(admin, String(taskId)) };
+}
+
+export async function staffAddTaskComment(taskId: string, body: string, attachment?: CommentAttachment | null) {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "tasks")) return { error: "ما عندك صلاحية المهام." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  if (!(await myTaskGuard(String(taskId), who, admin))) return { error: "هذه المهمة مب لك." };
+  let att: { url: string; type: "image" | "file"; name: string } | null = null;
+  if (attachment?.base64) {
+    const up = await uploadCommentAttachment(admin, String(taskId), attachment);
+    if ("error" in up) return { error: up.error };
+    att = up;
+  }
+  return insertComment(admin, { taskId: String(taskId), role: "staff", author: `staff:${who.name}`, body, attachment: att });
 }

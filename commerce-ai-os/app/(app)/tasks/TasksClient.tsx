@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createTask, updateTask, deleteTask, type StaffTask, type TaskPriority, type TaskStatus } from "./actions";
+import { createTask, updateTask, deleteTask, managerListComments, managerAddComment, type StaffTask, type TaskPriority, type TaskStatus } from "./actions";
+import TaskThread from "@/components/TaskThread";
 import type { Locale } from "@/lib/i18n";
 
 const PRIO: Record<TaskPriority, { ar: string; en: string; dot: string; bar: string; chip: string }> = {
@@ -166,24 +167,27 @@ export default function TasksClient({ initialTasks, staff, locale = "ar" }: {
             const od = isOverdue(t);
             const everyone = t.assignedTo == null;
             return (
-              <div key={t.id} className={`relative flex items-stretch gap-3 overflow-hidden rounded-xl border p-3 ps-4 ${od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
+              <div key={t.id} className={`relative overflow-hidden rounded-xl border p-3 ps-4 ${od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
                 <span className={`absolute inset-y-0 start-0 w-1.5 ${p.bar}`} />
-                <span className={`flex h-10 w-10 shrink-0 items-center justify-center self-center rounded-full text-sm font-bold ${everyone ? "bg-slate-100 text-slate-500" : "bg-violet-100 text-violet-700"}`}>
-                  {everyone ? "👥" : initial(t.assignedName)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-ink">{p.dot} {t.title}</p>
-                  {t.description ? <p className="mt-0.5 text-xs text-muted">{t.description}</p> : null}
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <Chip cls={everyone ? "bg-slate-100 text-slate-500" : "bg-violet-50 text-violet-700"}>{everyone ? L("👥 للكل", "👥 Everyone") : `👤 ${t.assignedName}`}</Chip>
-                    {t.dueDate ? <Chip cls={od ? "bg-red-100 font-bold text-red-700" : "border border-slate-200 bg-white text-muted"}>⏰ {fmt(t.dueDate)}{od ? L(" · متأخّرة", " · overdue") : ""}</Chip> : null}
-                    {t.status === "in_progress" ? <Chip cls="bg-amber-100 font-bold text-amber-700">⏳ {L("جاري", "In progress")}</Chip> : null}
+                <div className="flex items-stretch gap-3">
+                  <span className={`flex h-10 w-10 shrink-0 items-center justify-center self-center rounded-full text-sm font-bold ${everyone ? "bg-slate-100 text-slate-500" : "bg-violet-100 text-violet-700"}`}>
+                    {everyone ? "👥" : initial(t.assignedName)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-ink">{p.dot} {t.title}</p>
+                    {t.description ? <p className="mt-0.5 text-xs text-muted">{t.description}</p> : null}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <Chip cls={everyone ? "bg-slate-100 text-slate-500" : "bg-violet-50 text-violet-700"}>{everyone ? L("👥 للكل", "👥 Everyone") : `👤 ${t.assignedName}`}</Chip>
+                      {t.dueDate ? <Chip cls={od ? "bg-red-100 font-bold text-red-700" : "border border-slate-200 bg-white text-muted"}>⏰ {fmt(t.dueDate)}{od ? L(" · متأخّرة", " · overdue") : ""}</Chip> : null}
+                      {t.status === "in_progress" ? <Chip cls="bg-amber-100 font-bold text-amber-700">⏳ {L("جاري", "In progress")}</Chip> : null}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end justify-center gap-1.5">
+                    <button disabled={busy} onClick={() => setStatus(t, "done")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">{L("✓ تم", "✓ Done")}</button>
+                    <button disabled={busy} onClick={() => remove(t)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">{L("حذف", "Delete")}</button>
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-col items-end justify-center gap-1.5">
-                  <button disabled={busy} onClick={() => setStatus(t, "done")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">{L("✓ تم", "✓ Done")}</button>
-                  <button disabled={busy} onClick={() => remove(t)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">{L("حذف", "Delete")}</button>
-                </div>
+                <TaskThread taskId={t.id} locale={locale} load={managerListComments} add={managerAddComment} />
               </div>
             );
           })}
