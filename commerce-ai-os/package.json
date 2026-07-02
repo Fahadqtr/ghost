@@ -9,11 +9,16 @@
     "start": "next start",
     "test": "node --experimental-strip-types --test \"lib/**/*.test.ts\""
   },
+  "pnpm": {
+    "overrides": {
+      "postcss@<8.5.10": ">=8.5.10"
+    }
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.107.0",
     "@react-three/fiber": "^9.6.1",
     "@supabase/ssr": "^0.5.2",
-    "@supabase/supabase-js": "^2.108.2",
+    "@supabase/supabase-js": "^2.110.0",
     "jsbarcode": "^3.12.3",
     "next": "15.5.19",
     "react": "^19.2.7",

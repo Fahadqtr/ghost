@@ -5,7 +5,7 @@
 // real product link still happens through the existing /api/malak/commit after
 // the user approves. No product write happens here.
 import { createAdminClient } from "@/lib/supabase/admin";
-import { assertSafeImageUrl } from "@/lib/net/safeImage";
+import { safeFetchImage } from "@/lib/net/safeImage";
 import { verifyAction, signAction, type MalakAction } from "@/lib/malak/confirm";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { rateLimit } from "@/lib/malak/ratelimit";
@@ -98,7 +98,7 @@ export async function POST(req: Request) {
   try {
     let r: Response;
     if (currentImage) {
-      const imgRes = await fetch(assertSafeImageUrl(currentImage));
+      const imgRes = await safeFetchImage(currentImage);
       if (!imgRes.ok) throw new Error("تعذّر تحميل الصورة الحالية للمرجع.");
       const buf = Buffer.from(await imgRes.arrayBuffer());
       const type = imgRes.headers.get("content-type") || "image/png";
@@ -137,7 +137,7 @@ export async function POST(req: Request) {
   let bytes: Buffer;
   try {
     if (b64) bytes = Buffer.from(b64, "base64");
-    else if (imgUrl) bytes = Buffer.from(await (await fetch(assertSafeImageUrl(imgUrl))).arrayBuffer()); // F4: SSRF guard
+    else if (imgUrl) bytes = Buffer.from(await (await safeFetchImage(imgUrl)).arrayBuffer()); // F4: SSRF guard
     else return Response.json({ error: "ما رجع أي صورة من المولّد." }, { status: 200 });
   } catch {
     return Response.json({ error: "تعذّرت قراءة الصورة المولّدة." }, { status: 200 });

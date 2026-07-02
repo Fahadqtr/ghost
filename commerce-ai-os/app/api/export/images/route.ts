@@ -9,7 +9,7 @@
 // EOCD) and a CRC-32 are implemented inline. Standard ZIP (no ZIP64) — fine for
 // < 4 GB total and < 65535 entries.
 import { createClient } from "@/lib/supabase/server";
-import { safeImageUrlOrNull } from "@/lib/net/safeImage";
+import { safeImageUrlOrNull, safeFetchImage } from "@/lib/net/safeImage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -140,7 +140,7 @@ export async function GET(req: Request) {
           try {
             const safe = safeImageUrlOrNull(p.image_url);
             if (!safe) return; // skip unsafe/internal URL — no entry
-            const res = await fetch(safe);
+            const res = await safeFetchImage(safe);
             if (!res.ok) return; // skip missing source — no entry
             const data = new Uint8Array(await res.arrayBuffer());
             const nameBytes = enc.encode(name);
