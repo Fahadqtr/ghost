@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
-  staffGenerateProductDraft, staffAddProduct, staffEditMovement, staffDeleteMovement,
+  staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
   staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment,
   type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct, type StaffTaskRow,
 } from "./actions";
@@ -516,7 +516,20 @@ function AddProductTab({ locale }: { locale: Locale }) {
   const [stock, setStock] = useState("0");
   const [created, setCreated] = useState<CreatedProduct | null>(null);
   const [err, setErr] = useState("");
+  const [editPrompt, setEditPrompt] = useState("");
   const [busy, start] = useTransition();
+
+  const editImage = () => {
+    if (!imageUrl || !editPrompt.trim()) return;
+    setErr("");
+    start(async () => {
+      const r = await staffEditProductImage(imageUrl, editPrompt);
+      if ("error" in r) { setErr(r.error); return; }
+      setImageUrl(r.imageUrl);
+      setPreview(r.imageUrl);
+      setEditPrompt("");
+    });
+  };
 
   const onFile = (file: File) => {
     setErr("");
@@ -578,8 +591,22 @@ function AddProductTab({ locale }: { locale: Locale }) {
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
       </label>
 
+      {/* AI image edit (only once an image is uploaded) */}
+      {phase === "form" && imageUrl ? (
+        <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-2.5">
+          <p className="mb-1.5 text-xs font-semibold text-brand-dark">✨ {L("عدّل الصورة بالذكاء", "Edit the photo with AI")}</p>
+          <div className="flex gap-2">
+            <input value={editPrompt} onChange={(e) => setEditPrompt(e.target.value)} className="input flex-1 text-sm"
+              placeholder={L("مثال: خلفية بيضاء نظيفة، إضاءة أنقى", "e.g. clean white background, brighter")} onKeyDown={(e) => e.key === "Enter" && editImage()} />
+            <button onClick={editImage} disabled={busy || !editPrompt.trim()} className="btn-primary px-3 py-2 text-xs disabled:opacity-50">{busy ? "…" : L("✨ عدّل", "✨ Edit")}</button>
+          </div>
+          <p className="mt-1 text-[11px] text-muted">{L("اكتب التعديل المطلوب وتنعدّل الصورة تلقائيًا (يبقى نفس المنتج).", "Describe the change; the same product is kept.")}</p>
+        </div>
+      ) : null}
+
       {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
       {busy && phase === "upload" ? <p className="text-center text-sm text-violet-600">{L("جاري تحليل الصورة وكتابة العنوان والوصف…", "Analyzing the photo & drafting title/description…")}</p> : null}
+      {busy && phase === "form" ? <p className="text-center text-xs text-violet-600">{L("جاري المعالجة…", "Working…")}</p> : null}
 
       {phase === "form" ? (
         <div className="space-y-2.5">

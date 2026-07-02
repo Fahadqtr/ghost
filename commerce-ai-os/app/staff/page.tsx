@@ -6,6 +6,7 @@ import { staffToday, staffMe } from "./actions";
 import { DEFAULT_PERMISSIONS, type StaffPermission } from "@/lib/staff/permissions";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // AI image edit can take 20–40s
 
 // Make /staff its own installable PWA (opens straight to the employee page,
 // standalone, with a distinct name/icon) — separate from the admin app.
