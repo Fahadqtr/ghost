@@ -46,3 +46,11 @@ body {
 
 /* Elegant serif for the biggest headings gives the luxury feel. */
 h1, h2 { font-family: Georgia, Cambria, "Times New Roman", serif; }
+
+/* Print → only the staff guide (the "Download PDF" button uses window.print). */
+@media print {
+  body * { visibility: hidden; }
+  .staff-guide, .staff-guide * { visibility: visible; }
+  .staff-guide { position: absolute; inset: 0; margin: 0; max-width: 100%; padding: 0 8mm; }
+  [data-no-print] { display: none !important; }
+}

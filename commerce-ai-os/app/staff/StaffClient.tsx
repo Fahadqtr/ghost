@@ -12,6 +12,7 @@ import { dirOf, type Locale } from "@/lib/i18n";
 import { type StaffPermission } from "@/lib/staff/permissions";
 import { CATEGORIES } from "@/lib/constants";
 import LanguageToggle from "@/components/LanguageToggle";
+import StaffGuide from "./StaffGuide";
 
 // Reason chips. The Arabic value is what gets stored (so existing data + the
 // approvals page stay consistent); only the label is shown per locale.
@@ -136,7 +137,7 @@ function Gate({ onIn, locale }: { onIn: (name: string, perms: StaffPermission[])
 }
 
 /* ── Main desk (tabbed by permission) ──────────────────────────────────── */
-type TabKey = "stock" | "add_product" | "products" | "tasks" | "malak" | "reports";
+type TabKey = "stock" | "add_product" | "products" | "tasks" | "malak" | "reports" | "guide";
 const TABS: { key: TabKey; perm: StaffPermission; ar: string; en: string; icon: string }[] = [
   { key: "stock",       perm: "stock",       ar: "المخزون",  en: "Stock",    icon: "📦" },
   { key: "add_product", perm: "add_product", ar: "منتج جديد", en: "Add",      icon: "➕" },
@@ -145,6 +146,8 @@ const TABS: { key: TabKey; perm: StaffPermission; ar: string; en: string; icon: 
   { key: "malak",       perm: "malak",       ar: "ملاك",     en: "Malak",    icon: "✨" },
   { key: "reports",     perm: "reports",     ar: "تقاريري",  en: "My reports", icon: "📊" },
 ];
+// The guide is always available (no permission needed).
+const GUIDE_TAB = { key: "guide" as TabKey, ar: "الدليل", en: "Guide", icon: "📖" };
 
 function Desk({ name, perms, initialToday, onLogout, locale }: {
   name: string; perms: StaffPermission[]; initialToday: StaffLogRow[]; onLogout: () => void; locale: Locale;
@@ -152,8 +155,9 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const [busy, start] = useTransition();
-  const tabs = TABS.filter((t) => perms.includes(t.perm));
-  const [tab, setTab] = useState<TabKey>(tabs[0]?.key ?? "stock");
+  // Permission tabs + the always-on Guide tab at the end.
+  const tabs = [...TABS.filter((t) => perms.includes(t.perm)), GUIDE_TAB];
+  const [tab, setTab] = useState<TabKey>(tabs[0]?.key ?? "guide");
 
   const logout = () => start(async () => { await staffLogout(); onLogout(); });
 
@@ -171,31 +175,26 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
         </div>
       </div>
 
-      {tabs.length === 0 ? (
-        <div className="card py-10 text-center text-sm text-slate-500">
-          {L("ما عندك أي صلاحية بعد — راجع المدير.", "You don’t have any access yet — please check with the manager.")}
-        </div>
-      ) : (
-        <>
-          {tabs.length > 1 ? (
-            <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
-              {tabs.map((t) => (
-                <button key={t.key} onClick={() => setTab(t.key)}
-                  className={`flex-1 rounded-lg py-2 text-xs font-semibold transition ${tab === t.key ? "bg-white text-ink shadow-sm" : "text-slate-500"}`}>
-                  {t.icon} {en ? t.en : t.ar}
-                </button>
-              ))}
-            </div>
-          ) : null}
+      <>
+        {tabs.length > 1 ? (
+          <div data-no-print className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">
+            {tabs.map((t) => (
+              <button key={t.key} onClick={() => setTab(t.key)}
+                className={`flex-1 rounded-lg py-2 text-xs font-semibold transition ${tab === t.key ? "bg-white text-ink shadow-sm" : "text-slate-500"}`}>
+                {t.icon} {en ? t.en : t.ar}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
-          {tab === "stock" && perms.includes("stock") ? <StockTab initialToday={initialToday} locale={locale} /> : null}
-          {tab === "add_product" && perms.includes("add_product") ? <AddProductTab locale={locale} /> : null}
-          {tab === "products" && perms.includes("products") ? <ProductsTab locale={locale} /> : null}
-          {tab === "tasks" && perms.includes("tasks") ? <TasksTab locale={locale} /> : null}
-          {tab === "malak" && perms.includes("malak") ? <MalakTab name={name} locale={locale} /> : null}
-          {tab === "reports" && perms.includes("reports") ? <ReportsTab locale={locale} /> : null}
-        </>
-      )}
+        {tab === "stock" && perms.includes("stock") ? <StockTab initialToday={initialToday} locale={locale} /> : null}
+        {tab === "add_product" && perms.includes("add_product") ? <AddProductTab locale={locale} /> : null}
+        {tab === "products" && perms.includes("products") ? <ProductsTab locale={locale} /> : null}
+        {tab === "tasks" && perms.includes("tasks") ? <TasksTab locale={locale} /> : null}
+        {tab === "malak" && perms.includes("malak") ? <MalakTab name={name} locale={locale} /> : null}
+        {tab === "reports" && perms.includes("reports") ? <ReportsTab locale={locale} /> : null}
+        {tab === "guide" ? <StaffGuide locale={locale} /> : null}
+      </>
     </div>
   );
 }
