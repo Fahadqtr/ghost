@@ -4,17 +4,21 @@ name: CI
 # Split into three jobs — typecheck / test / build — so each shows up as its own
 # status check. The `protect-master` ruleset requires all three to pass before a
 # PR can merge.
+#
+# NO path filters: the ruleset requires these checks on EVERY PR, and a
+# filtered-out workflow never reports its checks — which would leave a PR that
+# only touches files outside commerce-ai-os/ blocked on "Expected" forever.
+# The jobs are fast (~1 min total), so always running them is the safe trade.
+#
+# The weekly schedule re-runs everything on master — mainly so `audit` surfaces
+# NEW dependency advisories without waiting for the next PR.
 on:
   push:
     branches: [master]
-    paths:
-      - "commerce-ai-os/**"
-      - ".github/workflows/ci.yml"
   pull_request:
     branches: [master]
-    paths:
-      - "commerce-ai-os/**"
-      - ".github/workflows/ci.yml"
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 05:00 UTC (08:00 Qatar)
 
 # Cancel superseded runs on the same ref (a new push aborts the in-flight one).
 concurrency:
@@ -80,3 +84,23 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
           SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role
           MALAK_SIGNING_SECRET: placeholder-signing-secret-ci
+
+  # Dependency advisories. Deliberately NOT in the ruleset's required checks:
+  # a new upstream advisory can turn this red on a PR that didn't touch deps,
+  # and that shouldn't block unrelated work — red here means "look at deps",
+  # enforced by humans (and fixed by Dependabot PRs), not by the merge gate.
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: commerce-ai-os/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level high
