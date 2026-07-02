@@ -1,8 +1,9 @@
 name: CI
 
 # Runs the commerce-ai-os checks on every PR to master (and on master itself).
-# Vercel only builds the app; nothing was running the unit tests or the type
-# checker, so a PR could merge red. This gate closes that gap.
+# Split into three jobs — typecheck / test / build — so each shows up as its own
+# status check. The `protect-master` ruleset requires all three to pass before a
+# PR can merge.
 on:
   push:
     branches: [master]
@@ -20,39 +21,60 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    working-directory: commerce-ai-os
+
 jobs:
-  verify:
-    name: typecheck · test · build
+  typecheck:
+    name: typecheck
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: commerce-ai-os
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: commerce-ai-os/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: commerce-ai-os/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
 
-      - name: Typecheck
-        run: pnpm exec tsc --noEmit
-
-      - name: Unit tests
-        run: pnpm test
-
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: commerce-ai-os/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
       # Placeholder env only — the build prerenders pages that read Supabase env,
       # so it needs the vars PRESENT (not real). No secrets required in CI.
-      - name: Build
-        run: pnpm build
+      - run: pnpm build
         env:
           NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
