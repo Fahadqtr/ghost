@@ -1,15 +1,18 @@
-// Morning alert push (Vercel Cron, 05:00 UTC = 08:00 Qatar). Composes ONE
-// short notification from the same aggregated alerts the in-app bell shows
-// (high/med only) and sends it to every stored web-push subscription. Nothing
-// urgent → sends nothing. Dead endpoints (404/410) are pruned.
+// Morning alert (Vercel Cron, 05:00 UTC = 08:00 Qatar). Composes ONE short
+// summary from the same aggregated alerts the in-app bell shows (high/med
+// only) and fans it out to every configured channel:
+//   • Web push — every stored subscription (dead 404/410 endpoints pruned)
+//   • WhatsApp — the owner's number via Meta's Cloud API
+// Channels are independently env-gated; nothing urgent → nothing sent.
 //
 // Auth: same CRON_SECRET bearer scheme as availability-sync. The /api/cron
 // prefix is already public in the proxy middleware; this route authenticates
-// itself. Env-gated twice over: no VAPID keys → no-op; no subscriptions → no-op.
+// itself.
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getNotifications } from "@/lib/notifications";
 import { composeMorningPush } from "@/lib/push-compute";
 import { pushConfigured, sendPushToSubscriptions } from "@/lib/push";
+import { whatsappConfigured, sendWhatsAppAlert } from "@/lib/whatsapp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,8 +23,11 @@ export async function GET(req: Request) {
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
-  if (!pushConfigured()) {
-    return Response.json({ ok: true, configured: false, note: "VAPID keys not set — nothing sent" });
+
+  const wantsPush = pushConfigured();
+  const wantsWa = whatsappConfigured();
+  if (!wantsPush && !wantsWa) {
+    return Response.json({ ok: true, configured: false, note: "no channel configured (VAPID / WhatsApp env missing) — nothing sent" });
   }
 
   let admin;
@@ -29,35 +35,41 @@ export async function GET(req: Request) {
   catch (e: any) { return Response.json({ ok: false, error: e?.message ?? "service role unavailable" }, { status: 500 }); }
 
   try {
-    const { data: subs, error } = await admin
-      .from("push_subscriptions")
-      .select("endpoint, p256dh, auth")
-      .limit(500);
-    if (error) {
-      const hint = /push_subscriptions/.test(error.message)
-        ? " — run supabase/push_subscriptions.sql once in the SQL editor"
-        : "";
-      return Response.json({ ok: false, error: error.message + hint }, { status: 500 });
-    }
-    if (!subs?.length) return Response.json({ ok: true, configured: true, subscriptions: 0, sent: 0 });
-
     const { items } = await getNotifications();
     const payload = composeMorningPush(items);
-    if (!payload) return Response.json({ ok: true, configured: true, subscriptions: subs.length, sent: 0, allClear: true });
+    if (!payload) return Response.json({ ok: true, allClear: true, sent: 0 });
 
-    const res = await sendPushToSubscriptions(subs, payload);
-    if (res.pruned.length) {
-      await admin.from("push_subscriptions").delete().in("endpoint", res.pruned);
+    // Web push (independent of WhatsApp — a failure in one never blocks the other).
+    let push: Record<string, unknown> = { configured: false };
+    if (wantsPush) {
+      const { data: subs, error } = await admin
+        .from("push_subscriptions")
+        .select("endpoint, p256dh, auth")
+        .limit(500);
+      if (error) {
+        const hint = /push_subscriptions/.test(error.message)
+          ? " — run supabase/push_subscriptions.sql once in the SQL editor"
+          : "";
+        push = { configured: true, error: error.message + hint };
+      } else if (!subs?.length) {
+        push = { configured: true, subscriptions: 0, sent: 0 };
+      } else {
+        const res = await sendPushToSubscriptions(subs, payload);
+        if (res.pruned.length) {
+          await admin.from("push_subscriptions").delete().in("endpoint", res.pruned);
+        }
+        push = { configured: true, subscriptions: subs.length, sent: res.sent, failed: res.failed, pruned: res.pruned.length };
+      }
     }
-    return Response.json({
-      ok: true,
-      configured: true,
-      subscriptions: subs.length,
-      sent: res.sent,
-      failed: res.failed,
-      pruned: res.pruned.length,
-      body: payload.body,
-    });
+
+    // WhatsApp (template mode for the business-initiated daily send).
+    let whatsapp: Record<string, unknown> = { configured: false };
+    if (wantsWa) {
+      const r = await sendWhatsAppAlert(payload.body);
+      whatsapp = { configured: true, ok: r.ok, mode: r.mode, ...(r.error ? { error: r.error } : {}) };
+    }
+
+    return Response.json({ ok: true, body: payload.body, push, whatsapp });
   } catch (e: any) {
     return Response.json({ ok: false, error: e?.message ?? "notify failed" }, { status: 500 });
   }
