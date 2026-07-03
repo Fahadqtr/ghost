@@ -3,6 +3,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
+import { editProductImageCore } from "@/lib/products/imageEdit";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 const EXT: Record<string, string> = {
@@ -142,4 +143,15 @@ export async function removeProductImage(productId: string, url: string) {
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Unexpected error." };
   }
+}
+
+// AI photo edit for the New-product form (same engine as the staff tab — the
+// OpenAI edit + storage logic is shared in lib/products/imageEdit). Returns a
+// NEW stored image URL; the form swaps image_url to it.
+export async function editNewProductImage(imageUrl: string, prompt: string): Promise<{ imageUrl: string } | { error: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  let admin;
+  try { admin = createAdminClient(); }
+  catch (e) { return { error: e instanceof Error ? e.message : "Service role unavailable." }; }
+  return editProductImageCore(admin, imageUrl, prompt, "products-ai");
 }

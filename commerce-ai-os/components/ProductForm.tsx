@@ -13,7 +13,7 @@ import {
   type ProductInput,
   type VariantInput,
 } from "@/app/(app)/products/actions";
-import { uploadNewProductImage } from "@/app/(app)/products/image-actions";
+import { uploadNewProductImage, editNewProductImage } from "@/app/(app)/products/image-actions";
 
 const EMPTY_VARIANT: VariantInput = {
   variant_name: "",
@@ -213,8 +213,25 @@ export default function ProductForm({
       description_ar: f.description_ar.trim() || d.description_ar,
       keywords_en: f.keywords_en.trim() || d.keywords_en,
       keywords_ar: f.keywords_ar.trim() || d.keywords_ar,
+      main_category: f.main_category.trim() || d.main_category,
     }));
-    setAiMsg("تم توليد العنوان والوصف ✓");
+    setAiMsg("تم توليد العنوان والوصف والفئة ✓");
+  };
+
+  // --- AI: edit the product photo (same engine as the staff tab) -------------
+  const [editPrompt, setEditPrompt] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const editImage = async () => {
+    const src = form.image_url.trim();
+    if (!src || !editPrompt.trim() || editBusy) return;
+    setEditBusy(true);
+    setAiMsg(null);
+    const r = await editNewProductImage(src, editPrompt);
+    setEditBusy(false);
+    if ("error" in r) { setAiMsg(r.error); return; }
+    setForm((f) => ({ ...f, image_url: r.imageUrl, image_filename: r.imageUrl.split("/").pop() ?? f.image_filename }));
+    setEditPrompt("");
+    setAiMsg("تم تعديل الصورة ✓");
   };
 
   async function onSubmit(e: React.FormEvent) {
@@ -246,6 +263,33 @@ export default function ProductForm({
     <form onSubmit={onSubmit} className="space-y-6">
       {error ? (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+      ) : null}
+
+      {/* Photo-first hero (new products) — same flow as the staff tab: one
+          photo → AI drafts name/description/keywords/category into the form. */}
+      {!productId ? (
+        <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/50 p-4 text-center">
+          {form.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={form.image_url} alt="" className="max-h-40 rounded-lg object-contain" />
+          ) : (
+            <>
+              <span className="text-3xl">📸</span>
+              <span className="text-sm font-medium text-violet-700">صوّر المنتج أو ارفع صورة</span>
+              <span className="text-xs text-muted">يتولّد الاسم والوصف والفئة تلقائيًا</span>
+            </>
+          )}
+          {upBusy || aiBusy ? (
+            <span className="text-xs text-violet-600">{upBusy ? "…يرفع الصورة" : "…يحلّل الصورة ويكتب الحقول"}</span>
+          ) : null}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="hidden"
+            disabled={upBusy || aiBusy}
+            onChange={(e) => { void onUploadImage(e.target.files?.[0]); e.target.value = ""; }}
+          />
+        </label>
       ) : null}
 
       {/* Identity */}
@@ -373,6 +417,25 @@ export default function ProductForm({
             </button>
             {aiMsg ? <span className="text-xs text-muted">{aiMsg}</span> : null}
           </div>
+          {form.image_url.trim() ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                className="input flex-1 text-sm"
+                value={editPrompt}
+                onChange={(e) => setEditPrompt(e.target.value)}
+                placeholder="عدّل الصورة بالذكاء — مثال: خلفية بيضاء نظيفة، إضاءة أنقى"
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void editImage(); } }}
+              />
+              <button
+                type="button"
+                className="btn-ghost whitespace-nowrap disabled:opacity-50"
+                onClick={() => void editImage()}
+                disabled={editBusy || !editPrompt.trim()}
+              >
+                {editBusy ? "…يعدّل" : "✨ عدّل الصورة"}
+              </button>
+            </div>
+          ) : null}
         </Field>
       </Section>
 
