@@ -14,6 +14,7 @@ import {
   type VariantInput,
 } from "@/app/(app)/products/actions";
 import { uploadNewProductImage, editNewProductImage } from "@/app/(app)/products/image-actions";
+import { prepareImage, dataUrlToFile } from "@/lib/imagePrep";
 
 const EMPTY_VARIANT: VariantInput = {
   variant_name: "",
@@ -172,24 +173,33 @@ export default function ProductForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- Image upload from the computer ---------------------------------------
+  // --- Image upload (computer or phone camera) ------------------------------
   const [upBusy, setUpBusy] = useState(false);
   const onUploadImage = async (file: File | null | undefined) => {
     if (!file) return;
     setUpBusy(true);
     setAiMsg(null);
-    const fd = new FormData();
-    fd.append("file", file);
-    if (form.sku.trim()) fd.append("sku", form.sku.trim());
-    const res = await uploadNewProductImage(fd);
-    setUpBusy(false);
-    if ("error" in res && res.error) { setError(res.error); return; }
-    const url = (res as any).url as string;
-    const filename = (res as any).filename as string;
-    setForm((f) => ({ ...f, image_url: url, image_filename: filename }));
     setError(null);
-    // Auto-draft title/description from the freshly uploaded image when empty.
-    if (!form.name_en.trim() && !form.description_en.trim()) void describeFromImage(url);
+    try {
+      // Phone photos are 3–12 MB and server actions cap request bodies, so
+      // downscale in the browser FIRST (same pipeline as the staff tab). The
+      // try/finally also guarantees the busy state can never get stuck.
+      const prepped = await prepareImage(file);
+      const fd = new FormData();
+      fd.append("file", dataUrlToFile(prepped.dataUrl, file.name || "photo.jpg"));
+      if (form.sku.trim()) fd.append("sku", form.sku.trim());
+      const res = await uploadNewProductImage(fd);
+      if ("error" in res && res.error) { setError(res.error); return; }
+      const url = (res as any).url as string;
+      const filename = (res as any).filename as string;
+      setForm((f) => ({ ...f, image_url: url, image_filename: filename }));
+      // Auto-draft title/description from the freshly uploaded image when empty.
+      if (!form.name_en.trim() && !form.description_en.trim()) await describeFromImage(url);
+    } catch {
+      setError("تعذّر رفع الصورة — جرّب صورة أصغر أو أعد المحاولة.");
+    } finally {
+      setUpBusy(false);
+    }
   };
 
   // --- AI: title + description from the product image ------------------------
