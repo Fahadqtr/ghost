@@ -1,8 +1,9 @@
 "use server";
 
 import crypto from "crypto";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { rateLimit, clientIpFrom } from "@/lib/ratelimit";
 import { applyMovement, editMovementQty, deleteMovement } from "@/lib/inventory/movements";
 import { signStaff, verifyStaff, STAFF_COOKIE } from "@/lib/staff/session";
 import { hashPin } from "@/lib/staff/pin";
@@ -67,6 +68,21 @@ const NO_DB = "الخادم غير مهيأ للمخزون (SUPABASE_SERVICE_ROL
 export async function staffLogin(name: string, pin: string): Promise<{ error: string } | { ok: true; name: string; perms: StaffPermission[] }> {
   const code = String(pin || "").trim();
   if (!code) return { error: "أدخل الرمز." };
+
+  // Brute-force brake on the public PIN gate: per-IP fixed window via Upstash
+  // (env-gated no-op until UPSTASH_REDIS_REST_URL/TOKEN are set; fail-open so a
+  // Redis outage never locks staff out). Defaults: 10 attempts / 5 minutes.
+  {
+    const h = await headers();
+    const ip = clientIpFrom(h.get("x-forwarded-for"), h.get("x-real-ip"));
+    const limit = Number(process.env.STAFF_LOGIN_RATE_LIMIT) || 10;
+    const windowSec = Number(process.env.STAFF_LOGIN_RATE_WINDOW_SEC) || 300;
+    const rl = await rateLimit("staff-login", ip, { limit, windowSec });
+    if (!rl.allowed) {
+      const mins = Math.max(1, Math.ceil(rl.retryAfterSec / 60));
+      return { error: `محاولات كثيرة — جرّب بعد ${mins} ${mins === 1 ? "دقيقة" : "دقائق"}.` };
+    }
+  }
 
   // 1) Per-employee code (staff_members table). The code identifies WHO — the
   // name comes from the record, so attribution can't be spoofed. PINs are stored
