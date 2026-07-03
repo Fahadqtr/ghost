@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { aggregateStaffMovements, type StaffMovementRow } from "./stats-compute";
 
 // Staff stock-movement stats for the manager dashboard: today's IN/OUT, this
 // week's IN/OUT, the approval indicators, and a per-employee breakdown (today).
@@ -71,42 +72,12 @@ export async function getStaffStats(): Promise<StaffStats> {
     tasksOverdue = odCount ?? 0;
   } catch { /* table may not exist yet */ }
 
-  const s: StaffStats = {
+  const agg = aggregateStaffMovements((data ?? []) as StaffMovementRow[], todayStart.getTime());
+
+  return {
     configured: true,
-    today: { in: 0, out: 0, inUnits: 0, outUnits: 0 },
-    week: { in: 0, out: 0 },
-    review: { pending: 0, approved: 0, reversed: 0 },
-    byEmployeeToday: [],
+    ...agg,
     pendingProducts,
     tasks: { open: tasksOpen, overdue: tasksOverdue },
   };
-  const byEmp = new Map<string, { in: number; out: number }>();
-
-  for (const r of (data ?? []) as any[]) {
-    const isIn = r.action_type === "stock_in";
-    const qty = Number(r.details?.quantity ?? 0);
-    const at = new Date(r.created_at);
-    const name = String(r.details?.by ?? r.agent ?? "").replace(/^staff:/, "") || "—";
-
-    if (isIn) s.week.in++; else s.week.out++;
-
-    const rev = r.details?.review;
-    if (rev === "approved") s.review.approved++;
-    else if (rev === "reversed") s.review.reversed++;
-    else s.review.pending++;
-
-    if (at >= todayStart) {
-      if (isIn) { s.today.in++; s.today.inUnits += qty; } else { s.today.out++; s.today.outUnits += qty; }
-      const e = byEmp.get(name) ?? { in: 0, out: 0 };
-      if (isIn) e.in++; else e.out++;
-      byEmp.set(name, e);
-    }
-  }
-
-  s.byEmployeeToday = Array.from(byEmp.entries())
-    .map(([name, v]) => ({ name, ...v }))
-    .sort((a, b) => b.in + b.out - (a.in + a.out))
-    .slice(0, 6);
-
-  return s;
 }
