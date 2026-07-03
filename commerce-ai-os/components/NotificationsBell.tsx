@@ -5,6 +5,7 @@ import Link from "next/link";
 import { fetchNotifications } from "@/app/(app)/notifications-actions";
 import type { Notification } from "@/lib/notifications";
 import type { Locale } from "@/lib/i18n";
+import PushToggle from "@/components/PushToggle";
 
 const SEEN_KEY = "malak_notif_seen";
 const REFRESH_MS = 120_000; // refresh the feed every 2 minutes while the app is open
@@ -105,6 +106,7 @@ export default function NotificationsBell({ locale = "ar" }: { locale?: Locale }
               </div>
             )}
           </div>
+          <PushToggle locale={locale} />
         </div>
       ) : null}
     </div>

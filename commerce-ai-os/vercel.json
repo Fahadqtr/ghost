@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/availability-sync",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/notify",
+      "schedule": "0 5 * * *"
     }
   ]
 }
