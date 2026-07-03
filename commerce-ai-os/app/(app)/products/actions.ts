@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
+import { buildDraftPrompt, parseProductDraft } from "@/lib/products/draft-compute";
 import { clean } from "@/lib/malak/talabat-export.mjs";
 
 // --- input shapes (sent from the client form) -----------------------------
@@ -384,13 +385,15 @@ export async function nextProductSku(): Promise<{ sku: string; error?: string }>
 
 const ALLOWED_IMG = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
-/** Vision: look at a product image and draft a title + description + keywords
- *  (EN/AR). Returns the suggested fields; the form decides what to apply. */
+/** Vision: look at a product image and draft title + description + keywords +
+ *  category (EN/AR) in the SAME house style as the staff photo-first flow
+ *  (shared prompt/parser in lib/products/draft-compute). The form decides
+ *  what to apply. */
 export async function describeProductFromImage(
   imageUrl: string
 ): Promise<{
   error?: string;
-  data?: { name_en: string; name_ar: string; description_en: string; description_ar: string; keywords_en: string; keywords_ar: string };
+  data?: { name_en: string; name_ar: string; description_en: string; description_ar: string; keywords_en: string; keywords_ar: string; main_category: string };
 }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -418,44 +421,25 @@ export async function describeProductFromImage(
   }
   if (!b64) return { error: "الصورة فارغة." };
 
-  const PROMPT =
-    "أنت مساعد كتالوج تجارة إلكترونية. حلّل صورة المنتج وأرجِع JSON فقط بهذه الحقول بالضبط:\n" +
-    '{"name_en":"","name_ar":"","description_en":"","description_ar":"","keywords_en":"","keywords_ar":""}\n' +
-    "- name: عنوان منتج موجز وجذّاب (≤ 70 حرفاً).\n" +
-    "- description: وصف تسويقي من جملتين إلى ثلاث.\n" +
-    "- keywords: من 5 إلى 8 كلمات مفصولة بفواصل.\n" +
-    "العربية بالعربية والإنجليزية بالإنجليزية. أجب بـ JSON فقط بدون أي نص آخر.";
-
   try {
     const client = new Anthropic({ apiKey });
     const resp = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: process.env.STAFF_MALAK_MODEL || "claude-sonnet-5",
       max_tokens: 1200,
       messages: [
         {
           role: "user",
           content: [
             { type: "image", source: { type: "base64", media_type, data: b64 } } as any,
-            { type: "text", text: PROMPT },
+            { type: "text", text: buildDraftPrompt(CATEGORIES) },
           ],
         },
       ],
     });
     const text = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) return { error: "ما قدرت أحلّل الصورة." };
-    const j = JSON.parse(m[0]);
-    const s = (x: any) => (x == null ? "" : String(x).trim());
-    return {
-      data: {
-        name_en: s(j.name_en),
-        name_ar: s(j.name_ar),
-        description_en: s(j.description_en),
-        description_ar: s(j.description_ar),
-        keywords_en: s(j.keywords_en),
-        keywords_ar: s(j.keywords_ar),
-      },
-    };
+    const draft = parseProductDraft(text, CATEGORIES);
+    if (!draft) return { error: "ما قدرت أحلّل الصورة." };
+    return { data: draft };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "فشل تحليل الصورة." };
   }
