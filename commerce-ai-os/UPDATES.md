@@ -4,6 +4,32 @@
 
 ---
 
+## جلسة الميزات والتغطية (2026-07-02/03) — PRs #172–#187
+
+**ميزات جديدة (شغّالة بالإنتاج):**
+- **البريفينج الصباحي (#174):** ملاك يجهّز موجز أولويات يومي (كرت مرئي + قراءة صوتية مرة باليوم) من `/api/malak/scan` — مبيعات الأمس، النافد، المشاكل مرتّبة بالأهمية.
+- **تقارير أعمق (#177):** صفحة `/inventory/reports` — الهوامش والربحية، المخزون الميت، قيمة المخزون، والفاقد (shrinkage) من سجلّ الحركات.
+- **مزامنة التوفّر المجدولة (#179 + #180):** Vercel Cron يومي (٣:٠٠ UTC = ٦ صباحًا قطر) على `/api/cron/availability-sync` — يمشّي حقيقة مخزون ماليكاس لكل المنصّات (يكتب الفرق فقط). محمي بـ `CRON_SECRET` (Bearer). ⚠️ درسان: (١) مسار الكرون لازم يكون ضمن `PUBLIC_PATHS` في `lib/supabase/middleware.ts` وإلا يرجّع 307؛ (٢) زر Run اليدوي في Vercel ما يرسل السر — التشغيل المجدول فقط. **مفعّلة ومتحقَّق منها (200) في الإنتاج.**
+- **محدّد معدّل على بوابة PIN (#187):** `lib/ratelimit.ts` — نافذة ثابتة عبر Upstash Redis REST (بدون SDK). ١٠ محاولات/٥ دقائق لكل IP على `staffLogin`. **خامل** بدون `UPSTASH_REDIS_REST_URL/TOKEN`، وfail-open لو Redis واقع.
+
+**إصلاح الديون التقنية:**
+- **`malak_audit.product_id` (#175):** كان bigint قديم مقابل uuid — الترحيل `supabase/malak_audit_product_id_uuid.sql` **نُفّذ بالإنتاج بنجاح 2026-07-02** (uuid، 48 backfilled، 539 صف). `lib/audit.ts` يكتب `product_id` مباشرة.
+- **Dependabot (#176):** تحديثات أسبوعية (npm + GitHub Actions) تصل كل اثنين، ووظيفة `audit` أسبوعية على master.
+
+**ESLint (#178):**
+- flat config لـ ESLint 9 + eslint-config-next 16 (استيراد مباشر — FlatCompat يكسر مع next 16). قواعد الصحّة أخطاء؛ قواعد الأنماط المقصودة تحذيرات.
+- `pnpm lint` بمزلاج `--max-warnings 74` — أي تحذير جديد يفشّل الفحص.
+- **`lint` فحص مطلوب على master** (ضمن ruleset `protect-master` مع typecheck/test/build).
+
+**تغطية اختبارات — 156 → 228 (نمط compute/wrapper):**
+- المنطق النقي انفصل عن الـ I/O في وحدات `*-compute.ts` (بدون استيرادات `@/` أو server-only عشان تشتغل مع Node test runner) والغلاف صار رفيعًا:
+  `availability-sync` (10)، `shrinkage` (12)، `lowStock` (8)، `staff/stats` (5)، `sales` (8)، `tasks/routines` (8)، `movements` — محرّك كتابة الستوك نفسه (14)، `ratelimit` (7).
+- قاعدة موثّقة بالاختبارات: الحركة الجديدة تُحسب بيعًا **بدون حساسية أحرف**، بينما تعديل/حذف حركة يطابقان `"sale"` **حرفيًا** (السبب يتطبّع وقت التسجيل).
+
+**متغيّرات بيئة جديدة:** `CRON_SECRET` (مطلوب للكرون — مضاف بالإنتاج ✅)، `UPSTASH_REDIS_REST_URL/TOKEN` (اختياري)، `STAFF_LOGIN_RATE_LIMIT/WINDOW_SEC` (اختياري). راجع `.env.local.example`.
+
+---
+
 ## جلسة التحصين والترقية (2026-07-02) — PRs #164–#171
 
 **البنية التحتية والأمان (بدون تغيير سلوك المنتج):**

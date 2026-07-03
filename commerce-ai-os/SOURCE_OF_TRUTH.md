@@ -35,12 +35,12 @@
 - Per-platform prices live in `channel_products` (channel_id, product_id,
   channel_price, channel_status), linked by `product_id`.
 - Audit log: `malak_audit`. Its `product_id` was a legacy bigint (from the old
-  `audit_log` table) while products.id is uuid. FIX: run
-  `supabase/malak_audit_product_id_uuid.sql` once in production — it converts the
-  column to uuid (keeping the old values as `product_id_legacy`) and backfills
-  history from `details->>'productId'`. App code (`lib/audit.ts`) writes
-  `product_id` directly and degrades to the legacy details-only shape until the
-  migration runs, so deploy order doesn't matter.
+  `audit_log` table) while products.id is uuid. ✅ **FIXED (2026-07-02):**
+  `supabase/malak_audit_product_id_uuid.sql` was run in production — the column
+  is now uuid (old values kept as `product_id_legacy`), 48 rows backfilled from
+  `details->>'productId'`, 539 total rows at migration time. App code
+  (`lib/audit.ts`) writes `product_id` directly (its legacy fallback remains
+  harmless).
 
 ## Frozen / DO NOT USE
 - Supabase project **awlevukqqsaxvifrfteb** ("v2", SKU format `MK-SKIN-0001`,
@@ -48,10 +48,31 @@
   It is FROZEN. Do not connect the app, scripts, or the Supabase MCP connector to it.
   It has no representation in this repo.
 
+## Operational infrastructure (as of 2026-07-03)
+- **CI (`.github/workflows/ci.yml`):** jobs `typecheck` / `test` / `build` /
+  `lint` / `audit` on every PR. The `protect-master` ruleset REQUIRES
+  typecheck, test, build, and lint (audit is advisory). Names must match the
+  job names exactly — a required check that never reports blocks ALL merges.
+- **Lint:** ESLint 9 flat config (`eslint.config.mjs`), gated by
+  `pnpm lint` = `eslint . --max-warnings 74` — the warning ratchet only goes
+  down; new warnings fail the required check.
+- **Tests:** `pnpm test` (Node runner, `--conditions=react-server`). Pattern:
+  pure logic lives in `*-compute.ts` modules with NO `@/` or server-only
+  imports (so the runner can load them); DB wrappers stay thin.
+- **Scheduled availability sync:** `vercel.json` cron → GET
+  `/api/cron/availability-sync` daily 03:00 UTC, auth =
+  `Authorization: Bearer $CRON_SECRET` (set in Vercel ✅). The path must stay in
+  `PUBLIC_PATHS` (`lib/supabase/middleware.ts`) or the proxy 307s it to /login.
+- **Staff PIN rate limiter:** env-gated via `UPSTASH_REDIS_REST_URL/TOKEN`
+  (inactive until set; fail-open), defaults 10 attempts / 5 min per IP.
+- **Dependabot:** weekly npm + github-actions PRs land on Mondays.
+
 ## For any AI/automation session
 1. Verify `.env.local` URL = `vqstcmattiarhblqshvb` before any DB work.
 2. If using the Supabase MCP connector, it MUST be logged into fahadshiping@gmail.com
    (the production account). The other account holds only the frozen v2 DB.
 3. SKU format is lowercase `mk` + digits (e.g. `mk942`), NOT `MK-SKIN-0001`.
+4. Read `UPDATES.md` for the per-session change log (newest first).
 
-_Last reconciled: 2026-06-19. 73 product prices synced to channel-agreed values._
+_Last reconciled: 2026-07-03 (infrastructure); 2026-06-19 for prices (73 product
+prices synced to channel-agreed values)._
