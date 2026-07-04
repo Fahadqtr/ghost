@@ -30,7 +30,7 @@ export async function editProductImageCore(
     buf = Buffer.from(await r.arrayBuffer());
   } catch { return { error: "تعذّر تحميل الصورة." }; }
 
-  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1-mini";
+  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
   const fullPrompt =
     `Edit this product photo as instructed: ${instruction}. ` +
     `Keep it a realistic product photo of the SAME product (same shape, label and colors). ` +
