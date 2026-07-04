@@ -226,8 +226,9 @@ export async function generateAdCreative(id: string): Promise<{ error?: string; 
   }
 
   const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
-  // Always design over the CLEAN scene (never a previously composed ad → no nesting).
-  const sceneUrl = String(row.scene_url || p.image_url || "");
+  // Design over the ORIGINAL product photo (untouched) — never an AI scene, so
+  // the product is never altered. The template supplies the luxury background.
+  const sceneUrl = String(p.image_url || "");
   return { copy, price, title: String(p.name_ar || p.name_en || ""), sceneUrl };
 }
 
