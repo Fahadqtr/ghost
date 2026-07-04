@@ -58,18 +58,12 @@ export default function AdTemplate(p: AdTemplateProps) {
 
   return (
     <div style={root}>
-      {/* Designed luxury background — drawn in CSS (no AI), so the product photo
-          below is never altered. Warm cream gradient + soft top-right glow. */}
-      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg,#f7f0e5 0%,#efe3d1 55%,#e7d8c2 100%)" }} />
-      <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 74% 26%, rgba(255,251,244,0.85) 0%, rgba(255,251,244,0) 42%)" }} />
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 150, background: "linear-gradient(0deg, rgba(58,43,29,0.06) 0%, rgba(58,43,29,0) 100%)" }} />
-
-      {/* Soft podium glow behind the product, then the REAL product photo
-          (untouched). multiply blends a white/light photo background into the
-          cream; on other backgrounds it degrades gracefully. */}
-      <div style={{ position: "absolute", right: 40, top: 250, width: 500, height: 470, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,252,245,0.9) 0%, rgba(255,252,245,0) 68%)" }} />
+      {/* AI luxury scene (product on the right, empty cream on the left) */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={p.imageDataUrl} alt="" style={{ position: "absolute", right: 44, top: 208, width: 492, height: 560, objectFit: "contain", mixBlendMode: "multiply" }} />
+      <img src={p.imageDataUrl} alt="" style={{ position: "absolute", inset: 0, width: 1080, height: 1080, objectFit: "cover" }} />
+      {/* SOLID cream panel on the left (opaque) with a soft fade into the scene */}
+      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, rgb(${CREAM}) 0%, rgb(${CREAM}) 50%, rgba(${CREAM},0.55) 61%, rgba(${CREAM},0) 76%)` }} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 170, background: `linear-gradient(0deg, rgba(${CREAM},0.95) 0%, rgba(${CREAM},0) 100%)` }} />
 
       {/* Brand */}
       <div style={{ position: "absolute", top: 54, left: 64 }}>
