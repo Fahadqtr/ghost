@@ -30,9 +30,11 @@ export const IG_IMAGE_STYLE =
   "elegant minimalist luxury, soft flowing fabric, natural sunlight entering from one side, soft realistic shadows, " +
   "a marble or travertine natural-stone podium; a few dried flowers or leaves only if they complement the product. " +
   "Clean premium spa atmosphere, refined natural color grading. " +
-  "COMPOSITION: place the product toward the RIGHT side and keep the LEFT third as clean empty negative space " +
-  "(for text added later); generous breathing room, elegant balance, extremely clean, no clutter. " +
-  "Photorealistic. Do NOT add any text, letters, logos, watermark or graphics.";
+  "COMPOSITION: place the product toward the RIGHT side and keep the LEFT ~45% as clean EMPTY background " +
+  "(smooth beige/cream surface reserved for Arabic marketing text that is added later); generous breathing room, " +
+  "elegant balance, extremely clean, no clutter. Photorealistic. " +
+  "CRITICAL: do NOT add ANY new text, captions, headlines, labels, prices, buttons, icons, typography, UI or graphics " +
+  "anywhere in the image. Keep only the product's own real packaging and label unchanged; invent no lettering.";
 
 /**
  * Pick today's product: must have an image and stock, must not have been
