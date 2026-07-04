@@ -12,6 +12,7 @@ import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
 import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
+import { geminiConfigured, generateSceneWithGemini } from "@/lib/social/scene-gemini";
 import crypto from "crypto";
 
 // Review-first social queue: list pending/recent, publish one (routes to the
@@ -114,7 +115,12 @@ export async function improveSocialImage(id: string, hint?: string): Promise<{ o
     const { data: prod } = await sb.from("products").select("image_url").eq("id", row.product_id).single();
     if (prod?.image_url) base = prod.image_url;
   }
-  const res = await editProductImageCore(sb, base, String(hint ?? "").trim() || IG_IMAGE_STYLE, "social");
+  // Prefer Gemini 2.5 Flash Image (stronger product fidelity) when configured;
+  // otherwise fall back to the OpenAI image-edit path.
+  const scenePrompt = String(hint ?? "").trim() || IG_IMAGE_STYLE;
+  const res = geminiConfigured()
+    ? await generateSceneWithGemini(sb, base, scenePrompt, "social")
+    : await editProductImageCore(sb, base, scenePrompt, "social");
   if ("error" in res) return { error: res.error };
 
   // The same daily draft exists once per platform — restyle all of them together.
