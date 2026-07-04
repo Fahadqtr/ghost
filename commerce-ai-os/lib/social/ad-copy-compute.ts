@@ -1,9 +1,9 @@
 // Ad-copy core — pure, DOM- and network-free.
 //
-// Builds the prompt that turns a product into ad text (a short headline, 3
-// selling-point benefits, 3 tiny trust features) and parses the model reply
-// tolerantly. Kept pure so the shaping/trimming rules are unit-tested; the
-// Anthropic call lives in the /social action.
+// Derives the ad text (headline, subtitle, 5 benefit bullets, 3 footer
+// features) from a product. Each bullet is a bold title + a thin sub-line to
+// match the luxury reference layout. Kept pure so the shaping/trimming rules
+// are unit-tested; the Anthropic call lives in the /social action.
 
 export interface AdCopyInput {
   nameAr?: string | null;
@@ -11,39 +11,56 @@ export interface AdCopyInput {
   description?: string | null;
 }
 
+export interface AdBullet {
+  title: string;      // bold line (2–4 words)
+  sub?: string;       // thin explanatory line ("" when none)
+}
+
 export interface AdCopy {
-  headline: string;      // short product headline (falls back to the name)
-  benefits: string[];    // up to 3 medium selling points
-  features: string[];    // up to 3 very short trust chips
+  headline: string;   // large product headline
+  subtitle: string;   // short intro line under the headline
+  benefits: AdBullet[]; // up to 5
+  features: AdBullet[]; // up to 3 (footer bar)
 }
 
 const clip = (s: unknown, max: number): string =>
   String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
-/** Prompt: Malika tone, Arabic, strict JSON, no medical claims. */
+/** Prompt: Malika tone, Arabic, strict JSON, title+sub bullets, no claims. */
 export function buildAdCopyPrompt(input: AdCopyInput): string {
   const name = (input.nameAr || input.nameEn || "").trim();
   const en = input.nameEn && input.nameAr ? ` (${input.nameEn})` : "";
   const desc = clip(input.description, 600);
   return (
-    "أنت مصمّمة إعلانات لمتجر Malika's Universe (منتجات جمال، قطر). " +
-    "من بيانات المنتج، اكتبي نص إعلان عربي أنثوي راقٍ وأرجعي JSON فقط بهذا الشكل:\n" +
-    '{"headline":"...","benefits":["...","...","..."],"features":["...","...","..."]}\n\n' +
+    "أنت مصمّمة إعلانات فخمة لمتجر Malika's Universe (منتجات جمال، قطر). " +
+    "من بيانات المنتج، اكتبي نص إعلان عربي راقٍ وأرجعي JSON فقط بهذا الشكل بالضبط:\n" +
+    '{"headline":"...","subtitle":"...","benefits":[{"title":"...","sub":"..."}],"features":[{"title":"...","sub":"..."}]}\n\n' +
     `المنتج: ${name}${en}\n` +
     (desc ? `الوصف: ${desc}\n` : "") +
-    "\nالقواعد (أسلوب فخم راقٍ مثل علامات التجميل العالمية):\n" +
-    "• headline: جملة تسويقية فخمة قصيرة وموحية (٣–٦ كلمات)، ليست اسم المنتج.\n" +
-    "• benefits: ٤ فوائد بيعية أنيقة، كل وحدة ٢–٥ كلمات (مثال: «تحفّز الدورة الدموية»).\n" +
-    "• features: ٣ مميزات ثقة قصيرة جدًا، كلمة–كلمتان لكل وحدة (مثال: «جودة عالية»، «خشب طبيعي»).\n" +
-    "• عربي فصيح راقٍ، بدون ادعاءات طبية، بدون أسعار، بدون إيموجي.\n" +
+    "\nالقواعد:\n" +
+    "• headline: عنوان المنتج الرئيسي، بارز وجذّاب (٢–٤ كلمات).\n" +
+    "• subtitle: سطر تعريفي قصير تحت العنوان (٤–٧ كلمات).\n" +
+    "• benefits: ٥ مزايا، كل وحدة {title: ٢–٤ كلمات بارزة، sub: ٣–٦ كلمات توضيحية}.\n" +
+    "• features: ٣ مميزات ثقة، كل وحدة {title: كلمة–كلمتان، sub: ٢–٤ كلمات}.\n" +
+    "• عربي فصيح راقٍ، بدون أسعار، بدون إيموجي، بدون ادعاءات طبية.\n" +
     "أجيبي بـ JSON صحيح فقط."
   );
 }
 
+function bullets(v: unknown, max: number): AdBullet[] {
+  return (Array.isArray(v) ? v : [])
+    .map((x): AdBullet =>
+      typeof x === "string"
+        ? { title: clip(x, 32), sub: "" }
+        : { title: clip((x as any)?.title, 32), sub: clip((x as any)?.sub, 52) })
+    .filter((b) => b.title)
+    .slice(0, max);
+}
+
 /**
  * Read the reply: prefer JSON, tolerate prose around it. Missing pieces come
- * back empty (the template hides empty rows). Arrays are trimmed to 3 and each
- * string is length-capped so the layout never overflows.
+ * back empty (the template hides empty rows); the headline falls back to the
+ * product name.
  */
 export function parseAdCopy(text: string, fallbackName = ""): AdCopy {
   const raw = String(text ?? "");
@@ -51,16 +68,10 @@ export function parseAdCopy(text: string, fallbackName = ""): AdCopy {
   const m = raw.match(/\{[\s\S]*\}/);
   if (m) { try { obj = JSON.parse(m[0]); } catch { /* keep null */ } }
 
-  const arr = (v: unknown, max: number, cap: number): string[] =>
-    (Array.isArray(v) ? v : [])
-      .map((x) => clip(x, cap))
-      .filter(Boolean)
-      .slice(0, max);
-
-  const headline = clip(obj?.headline, 60) || clip(fallbackName, 60);
   return {
-    headline,
-    benefits: arr(obj?.benefits, 5, 42),  // 3–5 elegant lines
-    features: arr(obj?.features, 3, 22),
+    headline: clip(obj?.headline, 50) || clip(fallbackName, 50),
+    subtitle: clip(obj?.subtitle, 70),
+    benefits: bullets(obj?.benefits, 5),
+    features: bullets(obj?.features, 3),
   };
 }

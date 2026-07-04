@@ -1,39 +1,48 @@
 import type { CSSProperties } from "react";
+import type { AdBullet } from "@/lib/social/ad-copy-compute";
 
-// Fixed 1080×1080 LUXURY editorial ad creative, styled with INLINE styles only
-// (so nodeToJpeg's SVG foreignObject can rasterize it). Text is laid elegantly
-// over the photographic scene's left negative space — Rhode/Aesop style — not
-// in a separate boxed panel.
+// Fixed 1080×1080 luxury ad, styled with INLINE styles only (so nodeToJpeg's
+// SVG foreignObject can rasterize it). The AI scene (product on the right,
+// clean negative space on the left) is the background; the Arabic copy is
+// printed with real fonts over the left — matching the reference layout.
 
 export interface AdTemplateProps {
-  imageDataUrl: string;   // full-bleed product scene, inlined as a data: URL
+  imageDataUrl: string;   // AI scene, inlined as a data: URL
   brandTop: string;       // "MALIKA'S"
   brandSub: string;       // "UNIVERSE BEAUTY"
-  title: string;          // product name
-  headline: string;       // short luxury marketing line
-  benefits: string[];     // 3–5 elegant lines
-  features: string[];     // 3 tiny footer features
+  headline: string;
+  subtitle: string;
+  benefits: AdBullet[];   // up to 5 (title + optional sub)
+  features: AdBullet[];   // up to 3 footer chips
   priceLabel: string;     // "سعر خاص"
-  price: string;          // "48 ر.ق" ("" hides the badge)
-  website: string;
+  price: string;          // "128 ر.ق" ("" hides the badge)
 }
 
 const INK = "#3a2b1d";
-const MUTED = "#7d6b57";
+const MUTED = "#8c7a66";
 const GOLD = "#b0894f";
 const DARK = "#2c2013";
 const CREAM = "247,240,230";
 const FONT = '"Tajawal","Cairo","Segoe UI",Arial,sans-serif';
 
-const FEATURE_GLYPHS = [
-  "M12 21s-7-4.5-9.5-9C1 9 3 5 6.5 5 9.2 5 12 8 12 8s2.8-3 5.5-3C21 5 23 9 21.5 12 19 16.5 12 21 12 21z", // heart
-  "M12 2l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V5z",                                                          // shield
-  "M12 2a3 3 0 0 1 3 3 3 3 0 0 1 4 4 3 3 0 0 1 0 6 3 3 0 0 1-4 4 3 3 0 0 1-6 0 3 3 0 0 1-4-4 3 3 0 0 1 0-6 3 3 0 0 1 4-4 3 3 0 0 1 3-3z", // flower
+// Thin outline glyphs (elegant, matching the reference).
+const BENEFIT_ICONS = [
+  "M12 4l1.7 4.6L18 10l-4.3 1.4L12 16l-1.7-4.6L6 10l4.3-1.4z",                 // sparkle
+  "M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18z M8.5 12l2.2 2.2L15.5 9.5",            // check-circle
+  "M12 3s5 6 5 10a5 5 0 1 1-10 0c0-4 5-10 5-10z",                              // drop
+  "M20 5C11 5 6 10 5 19c9 0 14-5 15-14z M5 19c4-6 8-9 13-11",                  // leaf
+  "M12 20s-6.5-4-8.5-8A4.3 4.3 0 0 1 12 8a4.3 4.3 0 0 1 8.5 4c-2 4-8.5 8-8.5 8z", // heart
+];
+const FEATURE_ICONS = [
+  "M12 3l7 3v5c0 4.5-3 7.5-7 8.5-4-1-7-4-7-8.5V6z",                            // shield
+  "M6 8h12l-1 11H7z M9 8a3 3 0 0 1 6 0",                                        // bag
+  "M20 5C11 5 6 10 5 19c9 0 14-5 15-14z",                                       // leaf
 ];
 
-function Glyph({ d, size, color }: { d: string; size: number; color: string }) {
+function Glyph({ d, size, color, w = 1.6 }: { d: string; size: number; color: string; w?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} xmlns="http://www.w3.org/2000/svg">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+      strokeWidth={w} strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg">
       <path d={d} />
     </svg>
   );
@@ -45,71 +54,72 @@ export default function AdTemplate(p: AdTemplateProps) {
     fontFamily: FONT, color: INK, overflow: "hidden", background: "#f7f0e6",
   };
   const rtl: CSSProperties = { direction: "rtl", textAlign: "right" };
+  const benefits = p.benefits.slice(0, 5);
 
   return (
     <div style={root}>
-      {/* Full-bleed product scene */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={p.imageDataUrl} alt="" style={{ position: "absolute", inset: 0, width: 1080, height: 1080, objectFit: "cover" }} />
+      {/* Left wash for legibility over the scene's negative space */}
+      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(100deg, rgba(${CREAM},0.97) 0%, rgba(${CREAM},0.9) 42%, rgba(${CREAM},0.35) 60%, rgba(${CREAM},0) 76%)` }} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 170, background: `linear-gradient(0deg, rgba(${CREAM},0.95) 0%, rgba(${CREAM},0) 100%)` }} />
 
-      {/* Left wash so the copy reads over the scene's negative space */}
-      <div style={{
-        position: "absolute", inset: 0,
-        background: `linear-gradient(100deg, rgba(${CREAM},0.96) 0%, rgba(${CREAM},0.88) 40%, rgba(${CREAM},0.34) 60%, rgba(${CREAM},0) 76%)`,
-      }} />
-      {/* Faint bottom wash for the footer */}
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 150, background: `linear-gradient(0deg, rgba(${CREAM},0.9) 0%, rgba(${CREAM},0) 100%)` }} />
+      {/* Brand */}
+      <div style={{ position: "absolute", top: 54, left: 64 }}>
+        <div style={{ fontSize: 46, fontWeight: 800, letterSpacing: 2, lineHeight: 1, color: INK }}>{p.brandTop}</div>
+        <div style={{ fontSize: 16, letterSpacing: 8, color: MUTED, marginTop: 6 }}>{p.brandSub}</div>
+        <div style={{ width: 60, height: 3, background: GOLD, borderRadius: 2, marginTop: 14 }} />
+      </div>
 
-      {/* Copy column, over the left negative space */}
-      <div style={{ position: "absolute", top: 96, left: 84, width: 486, ...rtl }}>
-        <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: 2, lineHeight: 1, color: INK }}>{p.brandTop}</div>
-        <div style={{ fontSize: 15, letterSpacing: 7, color: MUTED, marginTop: 6 }}>{p.brandSub}</div>
+      {/* Headline + subtitle */}
+      <div style={{ position: "absolute", top: 176, left: 64, width: 486, ...rtl }}>
+        <div style={{ fontSize: 46, fontWeight: 800, lineHeight: 1.16, color: INK }}>{p.headline}</div>
+        {p.subtitle ? <div style={{ fontSize: 22, color: MUTED, marginTop: 12, lineHeight: 1.4 }}>{p.subtitle}</div> : null}
+      </div>
 
-        <div style={{ width: 66, height: 3, background: GOLD, borderRadius: 2, margin: "28px 0 0 auto" }} />
-
-        {p.title ? <div style={{ fontSize: 27, fontWeight: 600, color: MUTED, marginTop: 22 }}>{p.title}</div> : null}
-        <div style={{ fontSize: 50, fontWeight: 800, lineHeight: 1.18, color: INK, marginTop: 10 }}>{p.headline}</div>
-
-        <div style={{ marginTop: 30 }}>
-          {p.benefits.slice(0, 5).map((b, i) => (
-            <div key={i} style={{ ...rtl, fontSize: 25, fontWeight: 500, color: INK, marginBottom: 14, lineHeight: 1.35 }}>
-              <span style={{ color: GOLD, fontWeight: 700 }}>—</span>&nbsp;{b}
+      {/* Benefits */}
+      <div style={{ position: "absolute", top: 322, left: 64, width: 486 }}>
+        {benefits.map((b, i) => (
+          <div key={i} style={{
+            display: "flex", flexDirection: "row", alignItems: "center", gap: 16,
+            paddingBottom: 13, marginBottom: 13,
+            borderBottom: i < benefits.length - 1 ? "1px solid rgba(176,137,79,0.28)" : "none",
+          }}>
+            <div style={{ width: 50, height: 50, borderRadius: 25, flexShrink: 0, background: "rgba(176,137,79,0.14)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Glyph d={BENEFIT_ICONS[i % BENEFIT_ICONS.length]} size={26} color={GOLD} />
             </div>
-          ))}
+            <div style={{ flex: 1, ...rtl }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: INK, lineHeight: 1.25 }}>{b.title}</div>
+              {b.sub ? <div style={{ fontSize: 16, color: MUTED, marginTop: 2, lineHeight: 1.3 }}>{b.sub}</div> : null}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Price badge + CTA (bottom-left, above the footer) */}
+      <div style={{ position: "absolute", left: 64, bottom: 122, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 14 }}>
+        {p.price ? (
+          <div style={{ ...rtl, background: "rgba(255,255,255,0.72)", border: "1.5px solid rgba(176,137,79,0.55)", borderRadius: 18, padding: "12px 26px" }}>
+            <div style={{ fontSize: 18, color: GOLD, fontWeight: 600, letterSpacing: 1 }}>{p.priceLabel}</div>
+            <div style={{ fontSize: 40, fontWeight: 800, color: INK, lineHeight: 1.05 }}>{p.price}</div>
+          </div>
+        ) : null}
+        <div style={{ background: DARK, color: "#f7f0e6", borderRadius: 36, padding: "15px 40px", fontSize: 25, fontWeight: 700, letterSpacing: 2, direction: "rtl", display: "flex", alignItems: "center", gap: 12 }}>
+          <span>اطلبيه الآن</span>
+          <Glyph d="M6 8h12l-1 11H7z M9 8a3 3 0 0 1 6 0" size={22} color="#f7f0e6" />
         </div>
       </div>
 
-      {/* Price badge */}
-      {p.price ? (
-        <div style={{
-          position: "absolute", left: 84, bottom: 236, ...rtl,
-          background: "rgba(255,255,255,0.72)", border: `1.5px solid rgba(176,137,79,0.55)`,
-          borderRadius: 20, padding: "14px 28px", backdropFilter: "blur(2px)",
-        }}>
-          <div style={{ fontSize: 19, color: GOLD, fontWeight: 600, letterSpacing: 1 }}>{p.priceLabel}</div>
-          <div style={{ fontSize: 46, fontWeight: 800, color: INK, lineHeight: 1.05 }}>{p.price}</div>
-        </div>
-      ) : null}
-
-      {/* CTA button */}
-      <div style={{
-        position: "absolute", left: 84, bottom: 150,
-        background: DARK, color: "#f7f0e6", borderRadius: 40, padding: "18px 46px",
-        fontSize: 27, fontWeight: 700, letterSpacing: 2, direction: "rtl",
-      }}>
-        اطلبيه الآن
-      </div>
-
-      {/* Minimal footer — 3 feature chips */}
+      {/* Footer feature bar */}
       {p.features.length ? (
-        <div style={{
-          position: "absolute", left: 0, right: 0, bottom: 40, height: 54,
-          display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: 46,
-        }}>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 104, background: `rgba(${CREAM},0.75)`, display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-around", padding: "0 44px", borderTop: "1px solid rgba(176,137,79,0.2)" }}>
           {p.features.slice(0, 3).map((f, i) => (
-            <div key={i} style={{ display: "flex", flexDirection: "row-reverse", alignItems: "center", gap: 9 }}>
-              <Glyph d={FEATURE_GLYPHS[i % FEATURE_GLYPHS.length]} size={22} color={GOLD} />
-              <span style={{ fontSize: 21, fontWeight: 600, color: INK, direction: "rtl" }}>{f}</span>
+            <div key={i} style={{ display: "flex", flexDirection: "row-reverse", alignItems: "center", gap: 12 }}>
+              <Glyph d={FEATURE_ICONS[i % FEATURE_ICONS.length]} size={30} color={GOLD} />
+              <div style={{ ...rtl }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: INK, lineHeight: 1.2 }}>{f.title}</div>
+                {f.sub ? <div style={{ fontSize: 14, color: MUTED, lineHeight: 1.2 }}>{f.sub}</div> : null}
+              </div>
             </div>
           ))}
         </div>
