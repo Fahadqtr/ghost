@@ -1,45 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { createRoot } from "react-dom/client";
-import { flushSync } from "react-dom";
 import {
   publishSocialPost,
   dismissSocialPost,
   generateNowAction,
   improveSocialImage,
-  generateAdCreative,
-  saveSocialImage,
+  generateFullAd,
   type SocialPost,
 } from "./actions";
-import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
-import AdTemplate, { type AdTemplateProps } from "./AdTemplate";
-
-// Store-wide branding for the ad template (constants, not per-product).
-const BRAND_TOP = "MALIKA'S";
-const BRAND_SUB = "UNIVERSE BEAUTY";
-const WEBSITE = "www.malikasuniverse.com";
-const PRICE_LABEL = "سعر خاص";
-
-// Render the ad template off-screen, rasterize it, and clean up. flushSync
-// forces a synchronous mount so the node exists before we capture; two rAFs
-// let the browser lay it out first.
-async function captureAd(props: AdTemplateProps): Promise<string> {
-  const host = document.createElement("div");
-  host.style.cssText = "position:fixed;left:-99999px;top:0;width:1080px;height:1080px;pointer-events:none;";
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  try {
-    flushSync(() => root.render(<AdTemplate {...props} />));
-    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
-    const node = host.firstElementChild as HTMLElement | null;
-    if (!node) throw new Error("تعذّر تجهيز التصميم.");
-    return await nodeToJpeg(node, 1080, 1080);
-  } finally {
-    root.unmount();
-    host.remove();
-  }
-}
 
 // Review queue: today's AI-drafted post per platform — edit the caption if you
 // like, then one tap publishes for real. Nothing posts without this tap.
@@ -82,33 +51,17 @@ export default function SocialClient({
 
   const setNote = (id: string, m: string) => setMsg((s) => ({ ...s, [id]: m }));
 
-  // Full ad design: AI writes the copy, the browser lays it into the branded
-  // template over the current photo, then it's saved as the post image.
-  const designAd = (p: SocialPost) => {
+  // One-shot luxury ad: gpt-image-1 generates the entire creative (scene +
+  // product + Arabic typography + badge + CTA + footer) in a single pass.
+  const designFullAd = (p: SocialPost) => {
     setBusyId(p.id);
-    setNote(p.id, "…يصمّم إعلان كامل (يولّد النصوص ويركّب التصميم)");
+    setNote(p.id, "…يصمّم إعلان فخم كامل (٤٠–٦٠ ثانية، لا تسكّر الصفحة)");
     start(async () => {
-      try {
-        const info = await generateAdCreative(p.id);
-        if (info.error || !info.copy) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر توليد النصوص"}`); return; }
-        // Build on the CLEAN scene (never the current image, which may already be a composed ad).
-        const imageDataUrl = await fetchAsDataUrl(info.sceneUrl || images[p.id] || p.image_url);
-        const dataUrl = await captureAd({
-          imageDataUrl,
-          brandTop: BRAND_TOP, brandSub: BRAND_SUB, website: WEBSITE, priceLabel: PRICE_LABEL,
-          title: info.title ?? "",
-          headline: info.copy.headline, benefits: info.copy.benefits, features: info.copy.features,
-          price: info.price ?? "",
-        });
-        const saved = await saveSocialImage(p.id, dataUrl);
-        setBusyId(null);
-        if (saved.error) { setNote(p.id, `❌ ${saved.error}`); return; }
-        if (saved.imageUrl) setImages((s) => ({ ...s, [p.id]: saved.imageUrl! }));
-        setNote(p.id, "✅ التصميم الكامل جاهز");
-      } catch (e) {
-        setBusyId(null);
-        setNote(p.id, `❌ ${e instanceof Error ? e.message : "تعذّر التصميم"}`);
-      }
+      const r = await generateFullAd(p.id);
+      setBusyId(null);
+      if (r.error) { setNote(p.id, `❌ ${r.error}`); return; }
+      if (r.imageUrl) setImages((s) => ({ ...s, [p.id]: r.imageUrl! }));
+      setNote(p.id, "✅ الإعلان الفخم جاهز — اضغط مرة ثانية لو تبي تصميم مختلف");
     });
   };
 
@@ -179,19 +132,19 @@ export default function SocialClient({
             <img src={images[p.id] ?? p.image_url} alt="" className="max-h-64 w-full rounded-xl border border-[#efe3d6] object-contain bg-white" />
             <button
               type="button"
-              className="btn-ghost w-full text-sm disabled:opacity-50"
-              onClick={() => improve(p)}
+              className="btn w-full text-sm disabled:opacity-50"
+              onClick={() => designFullAd(p)}
               disabled={busy || busyId === p.id}
             >
-              {busyId === p.id ? "…يحسّن الصورة" : "✨ حوّلها لصورة إنستقرام احترافية"}
+              {busyId === p.id ? "…يصمّم الإعلان الفخم" : "🎨 صمّم إعلان فخم كامل (بضغطة)"}
             </button>
             <button
               type="button"
-              className="btn-ghost w-full text-sm disabled:opacity-50"
-              onClick={() => designAd(p)}
+              className="btn-ghost w-full text-xs disabled:opacity-50"
+              onClick={() => improve(p)}
               disabled={busy || busyId === p.id}
             >
-              🎨 صمّم إعلان كامل (لوقو + عنوان + مزايا + سعر)
+              ✨ أو حسّن الصورة فقط (بدون نص)
             </button>
 
             <textarea

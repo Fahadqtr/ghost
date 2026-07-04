@@ -13,11 +13,12 @@ export async function editProductImageCore(
   imageUrl: string,
   prompt: string,
   pathPrefix: string, // e.g. "staff" | "products-ai" — keeps origins separable
+  opts?: { raw?: boolean; quality?: string }, // raw = use the prompt verbatim (allows text/full ad)
 ): Promise<{ imageUrl: string } | { error: string }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return { error: "تعديل الصور غير مفعّل (OPENAI_API_KEY غير مضبوط)." };
   const src = String(imageUrl || "").trim();
-  const instruction = String(prompt || "").trim().slice(0, 500);
+  const instruction = String(prompt || "").trim().slice(0, opts?.raw ? 4000 : 500);
   if (!src) return { error: "ما فيه صورة لتعديلها." };
   if (!instruction) return { error: "اكتب وصف التعديل المطلوب." };
 
@@ -31,10 +32,13 @@ export async function editProductImageCore(
   } catch { return { error: "تعذّر تحميل الصورة." }; }
 
   const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-  const fullPrompt =
-    `Edit this product photo as instructed: ${instruction}. ` +
-    `Keep it a realistic product photo of the SAME product (same shape, label and colors). ` +
-    `Do NOT add any text, letters, watermark, logo or price. Clean, professional, well-lit result.`;
+  // raw mode (full ad): the caller's prompt is complete — it WANTS text. Default
+  // mode wraps the instruction and forbids any added text/logo/price.
+  const fullPrompt = opts?.raw
+    ? instruction
+    : `Edit this product photo as instructed: ${instruction}. ` +
+      `Keep it a realistic product photo of the SAME product (same shape, label and colors). ` +
+      `Do NOT add any text, letters, watermark, logo or price. Clean, professional, well-lit result.`;
 
   let bytes: Buffer;
   try {
@@ -43,13 +47,14 @@ export async function editProductImageCore(
     form.append("prompt", fullPrompt);
     form.append("size", "1024x1024");
     form.append("n", "1");
+    if (opts?.quality && model.startsWith("gpt-image")) form.append("quality", opts.quality);
     // gpt-image-* default to strict ("auto") moderation, which false-positives
     // on ordinary product/beauty photos. "low" relaxes it (still filtered).
     if (model.startsWith("gpt-image")) form.append("moderation", "low");
     form.append("image", new Blob([new Uint8Array(buf)], { type: ct }), `src.${ct.includes("png") ? "png" : "jpg"}`);
     const r = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form,
-      signal: AbortSignal.timeout(55_000), // OpenAI image edits run 20–40s
+      signal: AbortSignal.timeout(opts?.raw ? 58_000 : 55_000), // full ad renders slower
     });
     if (!r.ok) {
       const detail = (await r.text()).slice(0, 300);
