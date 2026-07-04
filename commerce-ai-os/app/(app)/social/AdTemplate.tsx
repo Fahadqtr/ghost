@@ -61,7 +61,9 @@ export default function AdTemplate(p: AdTemplateProps) {
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={p.imageDataUrl} alt="" style={{ position: "absolute", inset: 0, width: 1080, height: 1080, objectFit: "cover" }} />
       {/* Left wash for legibility over the scene's negative space */}
-      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(100deg, rgba(${CREAM},0.97) 0%, rgba(${CREAM},0.9) 42%, rgba(${CREAM},0.35) 60%, rgba(${CREAM},0) 76%)` }} />
+      {/* SOLID cream panel on the left (fully opaque so nothing bleeds through)
+          with a soft fade into the photo — matches the reference's clean panel. */}
+      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, rgb(${CREAM}) 0%, rgb(${CREAM}) 50%, rgba(${CREAM},0.55) 61%, rgba(${CREAM},0) 76%)` }} />
       <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 170, background: `linear-gradient(0deg, rgba(${CREAM},0.95) 0%, rgba(${CREAM},0) 100%)` }} />
 
       {/* Brand */}
@@ -72,13 +74,13 @@ export default function AdTemplate(p: AdTemplateProps) {
       </div>
 
       {/* Headline + subtitle */}
-      <div style={{ position: "absolute", top: 176, left: 64, width: 486, ...rtl }}>
+      <div style={{ position: "absolute", top: 176, left: 64, width: 466, ...rtl }}>
         <div style={{ fontSize: 46, fontWeight: 800, lineHeight: 1.16, color: INK }}>{p.headline}</div>
         {p.subtitle ? <div style={{ fontSize: 22, color: MUTED, marginTop: 12, lineHeight: 1.4 }}>{p.subtitle}</div> : null}
       </div>
 
       {/* Benefits */}
-      <div style={{ position: "absolute", top: 322, left: 64, width: 486 }}>
+      <div style={{ position: "absolute", top: 322, left: 64, width: 466 }}>
         {benefits.map((b, i) => (
           <div key={i} style={{
             display: "flex", flexDirection: "row", alignItems: "center", gap: 16,
