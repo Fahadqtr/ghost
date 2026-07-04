@@ -194,7 +194,7 @@ export async function generateFullAd(id: string): Promise<{ ok?: true; imageUrl?
 
 // AI ad copy (headline + 3 benefits + 3 trust features) + the formatted price,
 // for the browser to lay out in the full ad template.
-export async function generateAdCreative(id: string): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string; sceneUrl?: string }> {
+export async function generateAdCreative(id: string, sceneStyle?: string): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string; sceneUrl?: string }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const sb = admin();
   if (!sb) return { error: NO_DB };
@@ -229,12 +229,14 @@ export async function generateAdCreative(id: string): Promise<{ error?: string; 
 
   // Generate a photorealistic luxury SCENE (product placed in a premium
   // environment, NO text) for the ad background — Gemini when configured, else
-  // OpenAI. Falls back to the original photo if scene generation fails.
+  // OpenAI. The design-variant scene brief (per product) overrides the default.
+  // Falls back to the original photo if scene generation fails.
+  const style = String(sceneStyle ?? "").trim().slice(0, 4000) || IG_IMAGE_STYLE;
   let sceneUrl = String(p.image_url || "");
   if (p.image_url) {
     const scene = geminiConfigured()
-      ? await generateSceneWithGemini(sb, String(p.image_url), IG_IMAGE_STYLE, "social")
-      : await editProductImageCore(sb, String(p.image_url), IG_IMAGE_STYLE, "social");
+      ? await generateSceneWithGemini(sb, String(p.image_url), style, "social")
+      : await editProductImageCore(sb, String(p.image_url), style, "social");
     if ("imageUrl" in scene) sceneUrl = scene.imageUrl;
   }
   return { copy, price, title: String(p.name_ar || p.name_en || ""), sceneUrl };

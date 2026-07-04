@@ -13,6 +13,7 @@ import {
 } from "./actions";
 import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
 import { adFontCss } from "@/lib/social/ad-fonts";
+import { pickVariant } from "@/lib/social/ad-variants";
 import AdTemplate, { type AdTemplateProps } from "./AdTemplate";
 
 const BRAND_TOP = "MALIKA'S";
@@ -68,14 +69,22 @@ export default function SocialClient({
 
   const setNote = (id: string, m: string) => setMsg((s) => ({ ...s, [id]: m }));
 
-  // Luxury ad: AI writes the Arabic copy, then the browser composes the real
-  // product photo (untouched) on a designed background with real-font Arabic.
+  // Design taps per post: the variant is stable per product on the first tap
+  // and rotates to a fresh art direction on every re-tap.
+  const [taps, setTaps] = useState<Record<string, number>>({});
+
+  // Luxury ad: AI writes the Arabic copy, Gemini/OpenAI builds the scene in the
+  // variant's mood, and the browser prints the Arabic with real fonts. Each
+  // product gets its own design variant (palette + scene).
   const designAd = (p: SocialPost) => {
+    const tap = taps[p.id] ?? 0;
+    const variant = pickVariant(p.id, tap);
+    setTaps((s) => ({ ...s, [p.id]: tap + 1 }));
     setBusyId(p.id);
     setNote(p.id, "…يصمّم الإعلان الفخم (مشهد فخم + نص — ٤٠–٦٠ ثانية، لا تسكّر الصفحة)");
     start(async () => {
       try {
-        const info = await generateAdCreative(p.id);
+        const info = await generateAdCreative(p.id, variant.scene);
         if (info.error || !info.copy) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر توليد النصوص"}`); return; }
         const imageDataUrl = await fetchAsDataUrl(info.sceneUrl || p.image_url);
         const dataUrl = await captureAd({
@@ -84,12 +93,13 @@ export default function SocialClient({
           headline: info.copy.headline, subtitle: info.copy.subtitle,
           benefits: info.copy.benefits, features: info.copy.features,
           price: info.price ?? "",
+          palette: variant.palette,
         });
         const saved = await saveSocialImage(p.id, dataUrl);
         setBusyId(null);
         if (saved.error) { setNote(p.id, `❌ ${saved.error}`); return; }
         if (saved.imageUrl) setImages((s) => ({ ...s, [p.id]: saved.imageUrl! }));
-        setNote(p.id, "✅ الإعلان الفخم جاهز");
+        setNote(p.id, "✅ الإعلان الفخم جاهز — اضغط مرة ثانية لتصميم بستايل مختلف");
       } catch (e) {
         setBusyId(null);
         setNote(p.id, `❌ ${e instanceof Error ? e.message : "تعذّر التصميم"}`);

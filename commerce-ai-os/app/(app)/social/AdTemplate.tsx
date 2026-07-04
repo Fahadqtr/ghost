@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { AdBullet } from "@/lib/social/ad-copy-compute";
+import type { AdPalette } from "@/lib/social/ad-variants";
 import { AD_FONT_HEADLINE, AD_FONT_BODY, AD_FONT_LATIN } from "@/lib/social/ad-fonts";
 
 // Fixed 1080×1080 luxury ad, styled with INLINE styles only (so nodeToJpeg's
@@ -18,13 +19,13 @@ export interface AdTemplateProps {
   features: AdBullet[];   // up to 3 footer chips
   priceLabel: string;     // "سعر خاص"
   price: string;          // "128 ر.ق" ("" hides the badge)
+  palette?: AdPalette;    // per-product design variant colors
 }
 
-const INK = "#38291b";
-const MUTED = "#8c7a66";
-const GOLD = "#b0894f";
-const DARK = "#2c2013";
-const CREAM = "247,240,230";
+// Default palette (cream-gold) — overridden by the picked variant.
+const DEFAULT_PALETTE: AdPalette = {
+  ink: "#38291b", muted: "#8c7a66", gold: "#b0894f", dark: "#2c2013", panel: "247,240,230",
+};
 
 // Thin outline glyphs (elegant, matching the reference).
 const BENEFIT_ICONS = [
@@ -49,10 +50,19 @@ function Glyph({ d, size, color, w = 1.4 }: { d: string; size: number; color: st
   );
 }
 
+const hexRgb = (hex: string): string => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return "176,137,79";
+  const n = parseInt(m[1], 16);
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+};
+
 export default function AdTemplate(p: AdTemplateProps) {
+  const { ink: INK, muted: MUTED, gold: GOLD, dark: DARK, panel: CREAM } = p.palette ?? DEFAULT_PALETTE;
+  const GOLD_RGB = hexRgb(GOLD);
   const root: CSSProperties = {
     position: "absolute", top: 0, left: 0, width: 1080, height: 1080,
-    fontFamily: AD_FONT_BODY, color: INK, overflow: "hidden", background: "#f7f0e6",
+    fontFamily: AD_FONT_BODY, color: INK, overflow: "hidden", background: `rgb(${CREAM})`,
   };
   const rtl: CSSProperties = { direction: "rtl", textAlign: "right" };
   const benefits = p.benefits.slice(0, 5);
@@ -85,9 +95,9 @@ export default function AdTemplate(p: AdTemplateProps) {
           <div key={i} style={{
             display: "flex", flexDirection: "row", alignItems: "center", gap: 18,
             paddingBottom: 13, marginBottom: 13,
-            borderBottom: i < benefits.length - 1 ? "1px solid rgba(176,137,79,0.22)" : "none",
+            borderBottom: i < benefits.length - 1 ? `1px solid rgba(${GOLD_RGB},0.22)` : "none",
           }}>
-            <div style={{ width: 52, height: 52, borderRadius: 26, flexShrink: 0, border: "1.5px solid rgba(176,137,79,0.45)", background: "rgba(255,253,248,0.6)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 52, height: 52, borderRadius: 26, flexShrink: 0, border: `1.5px solid rgba(${GOLD_RGB},0.45)`, background: "rgba(255,253,248,0.6)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Glyph d={BENEFIT_ICONS[i % BENEFIT_ICONS.length]} size={25} color={GOLD} />
             </div>
             <div style={{ flex: 1, ...rtl }}>
@@ -101,7 +111,7 @@ export default function AdTemplate(p: AdTemplateProps) {
       {/* Price badge + CTA (bottom-left, above the footer) */}
       <div style={{ position: "absolute", left: 64, bottom: 124, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 15 }}>
         {p.price ? (
-          <div style={{ ...rtl, background: "rgba(255,253,248,0.82)", border: "1.5px solid rgba(176,137,79,0.5)", borderRadius: 20, padding: "13px 28px" }}>
+          <div style={{ ...rtl, background: "rgba(255,253,248,0.82)", border: `1.5px solid rgba(${GOLD_RGB},0.5)`, borderRadius: 20, padding: "13px 28px" }}>
             <div style={{ fontSize: 17, color: GOLD, fontWeight: 400, letterSpacing: 1 }}>{p.priceLabel}</div>
             <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 42, fontWeight: 700, color: INK, lineHeight: 1.1 }}>{p.price}</div>
           </div>
@@ -114,7 +124,7 @@ export default function AdTemplate(p: AdTemplateProps) {
 
       {/* Footer feature bar */}
       {p.features.length ? (
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 104, background: `rgba(${CREAM},0.78)`, display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-around", padding: "0 44px", borderTop: "1px solid rgba(176,137,79,0.2)" }}>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 104, background: `rgba(${CREAM},0.78)`, display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-around", padding: "0 44px", borderTop: `1px solid rgba(${GOLD_RGB},0.2)` }}>
           {p.features.slice(0, 3).map((f, i) => (
             <div key={i} style={{ display: "flex", flexDirection: "row-reverse", alignItems: "center", gap: 13 }}>
               <Glyph d={FEATURE_ICONS[i % FEATURE_ICONS.length]} size={29} color={GOLD} />

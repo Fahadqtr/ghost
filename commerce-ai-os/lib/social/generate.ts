@@ -3,10 +3,8 @@ import {
   pickSpotlightProduct,
   buildCaptionPrompt,
   parseCaptionReply,
-  IG_IMAGE_STYLE,
   type SpotlightCandidate,
 } from "./content-compute";
-import { editProductImageCore } from "@/lib/products/imageEdit";
 
 // Daily social-post generation (called from the morning cron). Env-gated on
 // SOCIAL_PLATFORMS ("instagram" / "instagram,tiktok"): unset → no-op, so the
@@ -113,23 +111,15 @@ export async function generateDailySocialPosts(admin: any): Promise<GenerateResu
   }
   if (!caption) return { enabled: true, created: 0, skipped: "empty caption" };
 
-  // Style the catalog photo into an Instagram-ready shot (env-gated on
-  // OPENAI_API_KEY; falls back to the original photo on any failure — the
-  // owner can retry from /social with «حسّن الصورة»).
-  let imageUrl = String(pick.image_url);
-  if (process.env.OPENAI_API_KEY) {
-    try {
-      const styled = await editProductImageCore(admin, imageUrl, IG_IMAGE_STYLE, "social");
-      if ("imageUrl" in styled) imageUrl = styled.imageUrl;
-    } catch { /* keep the original */ }
-  }
-
+  // Drafts carry the ORIGINAL catalog photo — the owner sees the real product
+  // first, and the ad designer (button on /social) builds the scene on demand.
+  const imageUrl = String(pick.image_url);
   const rows = platforms.map((platform) => ({
     product_id: pick.id,
     platform,
     caption,
     image_url: imageUrl,
-    scene_url: imageUrl, // clean styled scene — the ad designer always builds on THIS, never a composed ad
+    scene_url: imageUrl,
     status: "pending",
   }));
   const { error: insErr } = await admin.from("social_posts").insert(rows);
