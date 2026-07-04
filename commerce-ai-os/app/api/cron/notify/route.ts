@@ -13,6 +13,7 @@ import { getNotifications } from "@/lib/notifications";
 import { composeMorningPush } from "@/lib/push-compute";
 import { pushConfigured, sendPushToSubscriptions } from "@/lib/push";
 import { whatsappConfigured, sendWhatsAppAlert } from "@/lib/whatsapp";
+import { generateDailySocialPosts } from "@/lib/social/generate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,9 +36,20 @@ export async function GET(req: Request) {
   catch (e: any) { return Response.json({ ok: false, error: e?.message ?? "service role unavailable" }, { status: 500 }); }
 
   try {
+    // Draft today's social post FIRST (env-gated, idempotent) so the freshly
+    // created pending row shows up in the alerts below — the morning push then
+    // carries «منشور اليوم جاهز للمراجعة» pointing at /social.
+    let social: Record<string, unknown> = { enabled: false };
+    try {
+      const g = await generateDailySocialPosts(admin);
+      social = g as unknown as Record<string, unknown>;
+    } catch (e) {
+      social = { enabled: true, created: 0, skipped: e instanceof Error ? e.message : "generate failed" };
+    }
+
     const { items } = await getNotifications();
     const payload = composeMorningPush(items);
-    if (!payload) return Response.json({ ok: true, allClear: true, sent: 0 });
+    if (!payload) return Response.json({ ok: true, allClear: true, sent: 0, social });
 
     // Web push (independent of WhatsApp — a failure in one never blocks the other).
     let push: Record<string, unknown> = { configured: false };
@@ -69,7 +81,7 @@ export async function GET(req: Request) {
       whatsapp = { configured: true, ok: r.ok, mode: r.mode, ...(r.error ? { error: r.error } : {}) };
     }
 
-    return Response.json({ ok: true, body: payload.body, push, whatsapp });
+    return Response.json({ ok: true, body: payload.body, push, whatsapp, social });
   } catch (e: any) {
     return Response.json({ ok: false, error: e?.message ?? "notify failed" }, { status: 500 });
   }
