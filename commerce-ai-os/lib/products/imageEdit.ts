@@ -43,13 +43,21 @@ export async function editProductImageCore(
     form.append("prompt", fullPrompt);
     form.append("size", "1024x1024");
     form.append("n", "1");
+    // gpt-image-* default to strict ("auto") moderation, which false-positives
+    // on ordinary product/beauty photos. "low" relaxes it (still filtered).
+    if (model.startsWith("gpt-image")) form.append("moderation", "low");
     form.append("image", new Blob([new Uint8Array(buf)], { type: ct }), `src.${ct.includes("png") ? "png" : "jpg"}`);
     const r = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form,
+      signal: AbortSignal.timeout(55_000), // OpenAI image edits run 20–40s
     });
     if (!r.ok) {
-      console.error("[editProductImage] OpenAI", r.status, (await r.text()).slice(0, 200));
-      return { error: `تعذّر تعديل الصورة الآن (رمز ${r.status}). جرّب صياغة أبسط.` };
+      const detail = (await r.text()).slice(0, 300);
+      console.error("[editProductImage] OpenAI", r.status, detail);
+      const blocked = /moderation|safety|content_policy/i.test(detail);
+      return { error: blocked
+        ? "رفض مولّد الصور هذه الصورة (فلتر الأمان). جرّب صورة/منتج ثاني."
+        : `تعذّر تعديل الصورة الآن (رمز ${r.status}). جرّب صياغة أبسط.` };
     }
     const data: any = await r.json();
     const b64 = data?.data?.[0]?.b64_json ?? null;
