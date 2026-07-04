@@ -38,10 +38,10 @@ test("tolerates prose around the JSON", () => {
   assert.deepEqual(c.features, []);
 });
 
-test("caps arrays at 3 and drops empties", () => {
-  const c = parseAdCopy('{"headline":"H","benefits":["1","","2","3","4"],"features":["a","b"]}');
-  assert.deepEqual(c.benefits, ["1", "2", "3"]);
-  assert.deepEqual(c.features, ["a", "b"]);
+test("caps benefits at 5 / features at 3 and drops empties", () => {
+  const c = parseAdCopy('{"headline":"H","benefits":["1","","2","3","4","5","6"],"features":["a","b","c","d"]}');
+  assert.deepEqual(c.benefits, ["1", "2", "3", "4", "5"]);
+  assert.deepEqual(c.features, ["a", "b", "c"]);
 });
 
 test("falls back to the product name and empty arrays on garbage", () => {

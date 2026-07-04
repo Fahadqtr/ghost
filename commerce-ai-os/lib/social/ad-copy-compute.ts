@@ -31,11 +31,11 @@ export function buildAdCopyPrompt(input: AdCopyInput): string {
     '{"headline":"...","benefits":["...","...","..."],"features":["...","...","..."]}\n\n' +
     `المنتج: ${name}${en}\n` +
     (desc ? `الوصف: ${desc}\n` : "") +
-    "\nالقواعد:\n" +
-    "• headline: عنوان جذّاب سطر واحد (٣–٦ كلمات)، يصف المنتج بوضوح.\n" +
-    "• benefits: ٣ فوائد بيعية، كل وحدة ٣–٦ كلمات (مثال: «تحفّز الدورة الدموية»).\n" +
-    "• features: ٣ مميزات ثقة قصيرة جدًا، كلمتان لكل وحدة (مثال: «جودة عالية»، «سهلة الاستخدام»).\n" +
-    "• عربي سليم، بدون ادعاءات طبية، بدون أسعار، بدون إيموجي.\n" +
+    "\nالقواعد (أسلوب فخم راقٍ مثل علامات التجميل العالمية):\n" +
+    "• headline: جملة تسويقية فخمة قصيرة وموحية (٣–٦ كلمات)، ليست اسم المنتج.\n" +
+    "• benefits: ٤ فوائد بيعية أنيقة، كل وحدة ٢–٥ كلمات (مثال: «تحفّز الدورة الدموية»).\n" +
+    "• features: ٣ مميزات ثقة قصيرة جدًا، كلمة–كلمتان لكل وحدة (مثال: «جودة عالية»، «خشب طبيعي»).\n" +
+    "• عربي فصيح راقٍ، بدون ادعاءات طبية، بدون أسعار، بدون إيموجي.\n" +
     "أجيبي بـ JSON صحيح فقط."
   );
 }
@@ -60,7 +60,7 @@ export function parseAdCopy(text: string, fallbackName = ""): AdCopy {
   const headline = clip(obj?.headline, 60) || clip(fallbackName, 60);
   return {
     headline,
-    benefits: arr(obj?.benefits, 3, 42),
+    benefits: arr(obj?.benefits, 5, 42),  // 3–5 elegant lines
     features: arr(obj?.features, 3, 22),
   };
 }

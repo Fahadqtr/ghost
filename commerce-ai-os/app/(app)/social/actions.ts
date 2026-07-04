@@ -148,7 +148,7 @@ export async function getAdOverlayData(id: string): Promise<{ error?: string; da
 
 // AI ad copy (headline + 3 benefits + 3 trust features) + the formatted price,
 // for the browser to lay out in the full ad template.
-export async function generateAdCreative(id: string): Promise<{ error?: string; copy?: AdCopy; price?: string }> {
+export async function generateAdCreative(id: string): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const sb = admin();
   if (!sb) return { error: NO_DB };
@@ -180,7 +180,7 @@ export async function generateAdCreative(id: string): Promise<{ error?: string; 
   }
 
   const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
-  return { copy, price };
+  return { copy, price, title: String(p.name_ar || p.name_en || "") };
 }
 
 // Persist the browser-composed ad card (JPEG data URL) and point every pending
