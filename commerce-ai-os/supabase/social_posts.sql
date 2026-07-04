@@ -22,6 +22,9 @@ create table if not exists social_posts (
 -- Add scene_url to existing installs (idempotent).
 alter table social_posts add column if not exists scene_url text;
 
+-- Extra publish-ready assets (story text, reel script, alt text) — idempotent.
+alter table social_posts add column if not exists extras jsonb;
+
 create index if not exists social_posts_status_idx on social_posts (status, created_at desc);
 
 alter table social_posts enable row level security;
