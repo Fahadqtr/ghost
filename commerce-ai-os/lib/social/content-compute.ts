@@ -25,7 +25,9 @@ export interface SpotlightCandidate {
  */
 export const IG_IMAGE_STYLE =
   "Ultra-realistic LUXURY beauty campaign photo, editorial 8K quality, like Rhode, Aesop, Dior Beauty or Jo Malone. " +
-  "Keep the SAME product exactly (unchanged design, colors, labels, branding) as the hero, sharp focus with premium " +
+  "The uploaded product is the SOURCE OF TRUTH: do NOT redesign, recreate, replace or invent any part of it, its " +
+  "packaging, its label or any lettering on it — preserve every visible detail exactly; the ONLY allowed changes are " +
+  "lighting, shadows, background and camera angle. Keep it the hero, sharp focus with premium " +
   "reflections, occupying about 40–50% of the frame. Background: warm beige, ivory, cream and soft sand palette, " +
   "elegant minimalist luxury, soft flowing fabric, natural sunlight entering from one side, soft realistic shadows, " +
   "a marble or travertine natural-stone podium; a few dried flowers or leaves only if they complement the product. " +
