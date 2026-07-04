@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 // or home-screens one of those, it NEVER updates — they stay stuck on an old
 // build. This banner detects that case and points them to the stable
 // production URL (same path), so they stop landing on stale snapshots.
-const CANONICAL_HOST = "ghost-rho-two.vercel.app";
+const CANONICAL_HOST = "app.malikasuniverse.com";
 // Matches a deployment-hash host: ghost-<one alphanumeric token>-clanqtr-…
 // (the canonical `ghost-rho-two` and branch aliases `ghost-git-…` have a dash
 // inside the token, so they don't match and won't be flagged.)

@@ -6,8 +6,12 @@ import {
   dismissSocialPost,
   generateNowAction,
   improveSocialImage,
+  getAdOverlayData,
+  saveSocialImage,
   type SocialPost,
 } from "./actions";
+import { buildAdText } from "@/lib/social/ad-overlay-compute";
+import { composeAdImage } from "@/lib/social/ad-overlay-render";
 
 // Review queue: today's AI-drafted post per platform — edit the caption if you
 // like, then one tap publishes for real. Nothing posts without this tap.
@@ -49,6 +53,28 @@ export default function SocialClient({
   };
 
   const setNote = (id: string, m: string) => setMsg((s) => ({ ...s, [id]: m }));
+
+  // Paint the brand/name/price/CTA onto the current photo in the browser
+  // (crisp Arabic via system fonts), then persist it as the post image.
+  const addText = (p: SocialPost) => {
+    setBusyId(p.id);
+    setNote(p.id, "…يضيف نص الإعلان على الصورة");
+    start(async () => {
+      try {
+        const info = await getAdOverlayData(p.id);
+        if (info.error || !info.data) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر جلب بيانات المنتج"}`); return; }
+        const dataUrl = await composeAdImage(images[p.id] ?? p.image_url, buildAdText(info.data));
+        const saved = await saveSocialImage(p.id, dataUrl);
+        setBusyId(null);
+        if (saved.error) { setNote(p.id, `❌ ${saved.error}`); return; }
+        if (saved.imageUrl) setImages((s) => ({ ...s, [p.id]: saved.imageUrl! }));
+        setNote(p.id, "✅ انضاف نص الإعلان على الصورة");
+      } catch (e) {
+        setBusyId(null);
+        setNote(p.id, `❌ ${e instanceof Error ? e.message : "تعذّر إضافة النص"}`);
+      }
+    });
+  };
 
   const publish = (p: SocialPost) => {
     setBusyId(p.id);
@@ -122,6 +148,14 @@ export default function SocialClient({
               disabled={busy || busyId === p.id}
             >
               {busyId === p.id ? "…يحسّن الصورة" : "✨ حوّلها لصورة إنستقرام احترافية"}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost w-full text-sm disabled:opacity-50"
+              onClick={() => addText(p)}
+              disabled={busy || busyId === p.id}
+            >
+              🏷️ أضف نص الإعلان (البراند + الاسم + السعر)
             </button>
 
             <textarea
