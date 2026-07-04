@@ -106,7 +106,14 @@ export async function improveSocialImage(id: string, hint?: string): Promise<{ o
   const { data: row } = await sb.from("social_posts").select("id, image_url, product_id").eq("id", id).single();
   if (!row) return { error: "المنشور غير موجود." };
 
-  const res = await editProductImageCore(sb, row.image_url, String(hint ?? "").trim() || IG_IMAGE_STYLE, "social");
+  // Restyle from the ORIGINAL catalog photo (not the post's current image) so
+  // repeated styling — or a previously baked-in overlay — never compounds.
+  let base = row.image_url;
+  if (row.product_id) {
+    const { data: prod } = await sb.from("products").select("image_url").eq("id", row.product_id).single();
+    if (prod?.image_url) base = prod.image_url;
+  }
+  const res = await editProductImageCore(sb, base, String(hint ?? "").trim() || IG_IMAGE_STYLE, "social");
   if ("error" in res) return { error: res.error };
 
   // The same daily draft exists once per platform — restyle all of them together.

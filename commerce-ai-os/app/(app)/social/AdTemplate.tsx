@@ -51,13 +51,13 @@ export default function AdTemplate(p: AdTemplateProps) {
 
   return (
     <div style={root}>
-      {/* Product photo — rounded card, right side */}
+      {/* Product photo — rounded card, right side (kept clear of the text column) */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={p.imageDataUrl}
         alt=""
         style={{
-          position: "absolute", top: 150, right: 44, width: 596, height: 680,
+          position: "absolute", top: 190, right: 44, width: 516, height: 600,
           objectFit: "cover", borderRadius: 30, boxShadow: "0 24px 60px rgba(74,55,40,0.22)",
         }}
       />
@@ -69,15 +69,15 @@ export default function AdTemplate(p: AdTemplateProps) {
       </div>
 
       {/* Headline */}
-      <div style={{ position: "absolute", top: 212, left: 64, width: 470 }}>
-        <div style={{ width: 74, height: 5, background: ACCENT, borderRadius: 3, marginBottom: 22 }} />
-        <div style={{ fontSize: 58, fontWeight: 800, lineHeight: 1.16, textAlign: "right", direction: "rtl" }}>
+      <div style={{ position: "absolute", top: 205, left: 64, width: 396 }}>
+        <div style={{ width: 74, height: 5, background: ACCENT, borderRadius: 3, marginBottom: 20 }} />
+        <div style={{ fontSize: 50, fontWeight: 800, lineHeight: 1.18, textAlign: "right", direction: "rtl" }}>
           {p.headline}
         </div>
       </div>
 
       {/* Benefits */}
-      <div style={{ position: "absolute", top: 470, left: 64, width: 480 }}>
+      <div style={{ position: "absolute", top: 452, left: 64, width: 396 }}>
         {p.benefits.slice(0, 3).map((b, i) => (
           <div key={i} style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 18, marginBottom: 26 }}>
             <div style={{
