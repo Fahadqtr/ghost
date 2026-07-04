@@ -84,7 +84,24 @@ export async function getNotifications(): Promise<{ items: Notification[] }> {
       }
     } catch { /* skip */ }
 
-    // 4) Tasks: overdue (high) and open (low).
+    // 4) Social posts drafted by the daily engine, awaiting review at /social.
+    try {
+      const { count } = await admin
+        .from("social_posts")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending");
+      if ((count ?? 0) > 0) {
+        items.push({
+          key: `social-pending:${count}`,
+          icon: "📣", severity: "med",
+          ar: count === 1 ? "منشور اليوم جاهز للمراجعة والنشر" : `${count} منشورات جاهزة للمراجعة والنشر`,
+          en: count === 1 ? "Today's social post is ready to review" : `${count} social posts ready to review`,
+          href: "/social",
+        });
+      }
+    } catch { /* table may not exist yet */ }
+
+    // 5) Tasks: overdue (high) and open (low).
     try {
       const todayISO = new Date().toISOString().slice(0, 10);
       const { count: overdue } = await admin
