@@ -27,6 +27,7 @@ export type SocialPost = {
   error: string | null;
   created_at: string;
   posted_at: string | null;
+  extras?: { story?: string; reel?: string; alt?: string } | null;
 };
 
 function admin(): any | null {
@@ -40,11 +41,19 @@ export async function listSocialPosts(): Promise<{ error?: string; pending: Soci
   const sb = admin();
   if (!sb) return { error: NO_DB, pending: [], recent: [], configured };
 
-  const { data, error } = await sb
+  let { data, error } = await sb
     .from("social_posts")
-    .select("id, platform, caption, image_url, status, error, created_at, posted_at")
+    .select("id, platform, caption, image_url, status, error, created_at, posted_at, extras")
     .order("created_at", { ascending: false })
     .limit(40);
+  if (error && /extras/i.test(error.message)) {
+    // extras column not migrated yet — degrade gracefully without it.
+    ({ data, error } = await sb
+      .from("social_posts")
+      .select("id, platform, caption, image_url, status, error, created_at, posted_at")
+      .order("created_at", { ascending: false })
+      .limit(40));
+  }
   if (error) {
     const hint = /social_posts/.test(error.message) ? " — شغّل supabase/social_posts.sql مرة وحدة." : "";
     return { error: error.message + hint, pending: [], recent: [], configured };

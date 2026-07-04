@@ -188,6 +188,31 @@ export default function SocialClient({
               onChange={(e) => setCaptions((s) => ({ ...s, [p.id]: e.target.value }))}
             />
 
+            {p.extras && (p.extras.story || p.extras.reel || p.extras.alt) ? (
+              <details className="rounded-xl border border-[#efe3d6] bg-white/60 px-3 py-2">
+                <summary className="cursor-pointer text-xs font-semibold text-ink">📦 محتوى إضافي جاهز (ستوري + ريلز + Alt)</summary>
+                <div className="mt-2 space-y-2 text-xs">
+                  {([["📱 ستوري", p.extras.story], ["🎬 سكربت ريلز", p.extras.reel], ["🖼️ Alt Text", p.extras.alt]] as const)
+                    .filter(([, v]) => v)
+                    .map(([label, v]) => (
+                      <div key={label} className="rounded-lg bg-[#faf6f0] p-2" dir="rtl">
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="font-semibold text-ink">{label}</span>
+                          <button
+                            type="button"
+                            className="rounded-md border border-[#e5d5c0] px-2 py-0.5 text-[10px] text-muted"
+                            onClick={() => { navigator.clipboard?.writeText(String(v)); setNote(p.id, `✅ انتسخ: ${label}`); }}
+                          >
+                            نسخ
+                          </button>
+                        </div>
+                        <p className="whitespace-pre-wrap leading-5 text-ink/80">{v}</p>
+                      </div>
+                    ))}
+                </div>
+              </details>
+            ) : null}
+
             {notConfigured(p.platform) ? (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 {p.platform === "instagram"

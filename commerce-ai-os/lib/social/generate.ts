@@ -1,10 +1,12 @@
 import "server-only";
 import {
   pickSpotlightProduct,
-  buildCaptionPrompt,
-  parseCaptionReply,
+  buildPostPrompt,
+  parsePostReply,
+  type PostExtras,
   type SpotlightCandidate,
 } from "./content-compute";
+import { analyzeProductImageWithGemini } from "./scene-gemini";
 
 // Daily social-post generation (called from the morning cron). Env-gated on
 // SOCIAL_PLATFORMS ("instagram" / "instagram,tiktok"): unset → no-op, so the
@@ -94,18 +96,25 @@ export async function generateDailySocialPosts(admin: any): Promise<GenerateResu
   const pick = pickSpotlightProduct(candidates, exclude);
   if (!pick) return { enabled: true, created: 0, skipped: "no eligible product (image + stock + not recently featured)" };
 
-  // Caption via Claude (same key/model family as the product drafts).
+  // 1) Gemini reads the product photo (what's really on the packaging) so the
+  //    copywriter never invents details. Optional — null just omits the block.
+  const analysis = await analyzeProductImageWithGemini(String(pick.image_url));
+
+  // 2) Full post pack via Claude: caption + story + reel script + alt text.
   let caption = "";
+  let extras: PostExtras = { story: "", reel: "", alt: "" };
   try {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic();
     const model = process.env.STAFF_MALAK_MODEL || "claude-sonnet-5";
     const resp: any = await client.messages.create({
-      model, max_tokens: 700,
-      messages: [{ role: "user", content: buildCaptionPrompt(pick) }],
+      model, max_tokens: 1200,
+      messages: [{ role: "user", content: buildPostPrompt(pick, analysis ?? undefined) }],
     });
     const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-    caption = parseCaptionReply(text);
+    const parsed = parsePostReply(text);
+    caption = parsed.caption;
+    extras = parsed.extras;
   } catch (e) {
     return { enabled: true, created: 0, skipped: e instanceof Error ? e.message : "caption generation failed" };
   }
@@ -120,9 +129,15 @@ export async function generateDailySocialPosts(admin: any): Promise<GenerateResu
     caption,
     image_url: imageUrl,
     scene_url: imageUrl,
+    extras,
     status: "pending",
   }));
-  const { error: insErr } = await admin.from("social_posts").insert(rows);
+  let { error: insErr } = await admin.from("social_posts").insert(rows);
+  if (insErr && /extras/i.test(insErr.message)) {
+    // extras column not migrated yet — insert without it (graceful degrade).
+    const bare = rows.map(({ extras: _x, ...r }) => r);
+    ({ error: insErr } = await admin.from("social_posts").insert(bare));
+  }
   if (insErr) return { enabled: true, created: 0, skipped: insErr.message };
 
   return { enabled: true, created: rows.length };

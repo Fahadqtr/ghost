@@ -13,6 +13,46 @@ export function geminiConfigured(): boolean {
   return !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY);
 }
 
+/**
+ * Read the product photo with Gemini (text out): what's actually on the
+ * packaging — name, brand, type, colors, key printed words, visual mood — so
+ * the copywriter never invents details. Returns null on any failure (the
+ * caption prompt simply omits the analysis block).
+ */
+export async function analyzeProductImageWithGemini(imageUrl: string): Promise<string | null> {
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
+  const src = String(imageUrl || "").trim();
+  if (!key || !src) return null;
+  try {
+    const r0 = await fetch(src);
+    if (!r0.ok) return null;
+    const ct = (r0.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+    const buf = Buffer.from(await r0.arrayBuffer());
+    const model = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+    const body = {
+      contents: [{ parts: [
+        { text:
+          "حلّلي صورة المنتج هذه بدقة وأجيبي بالعربي في 5 أسطر قصيرة كحد أقصى:\n" +
+          "1) اسم المنتج الظاهر على العبوة  2) البراند  3) نوع المنتج  4) الألوان والشكل  " +
+          "5) أهم الكلمات المطبوعة على العبوة والإحساس البصري المناسب.\n" +
+          "لا تخترعي أي معلومة غير ظاهرة في الصورة." },
+        { inline_data: { mime_type: ct, data: buf.toString("base64") } },
+      ] }],
+    };
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    const parts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
+    const text = parts.map((p) => p?.text ?? "").join("").trim();
+    return text ? text.slice(0, 1200) : null;
+  } catch { return null; }
+}
+
 export async function generateSceneWithGemini(
   admin: any,
   imageUrl: string,

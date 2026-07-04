@@ -57,23 +57,46 @@ export function pickSpotlightProduct(
   return ok[0] ?? null;
 }
 
-/** The caption prompt: Malika's tone, Arabic-first, price + CTA + hashtags. */
-export function buildCaptionPrompt(p: SpotlightCandidate): string {
+/** Extra publish-ready assets generated alongside the caption. */
+export interface PostExtras {
+  story: string; // short story-version text
+  reel: string;  // 8–12s reel voiceover script
+  alt: string;   // image alt text
+}
+
+/**
+ * The full post prompt: Malika's Instagram content brief — Gulf luxury tone,
+ * hook-first caption, 3 safe benefits, CTA, Qatar/K-Beauty hashtags, plus a
+ * story version, a reel script and alt text. `imageAnalysis` (optional) is a
+ * Gemini read of the product photo so the copy sticks to what's really there.
+ */
+export function buildPostPrompt(p: SpotlightCandidate, imageAnalysis?: string): string {
   const price = p.discount_price ?? p.price;
   const priceLine = price != null && String(price).trim() !== "" ? `السعر: ${price} ر.ق` : "";
+  const analysis = String(imageAnalysis ?? "").trim().slice(0, 900);
   return (
-    "أنت مسؤولة سوشيال ميديا لمتجر Malika's Universe (منتجات جمال وكورية، قطر). " +
-    "اكتبي كابشن إنستقرام/تيك توك لمنتج اليوم وأرجعي JSON فقط: {\"caption\":\"...\"}\n\n" +
+    "أنتِ مسؤولة تسويق محتوى إنستقرام لبراند Malika's Universe Beauty في قطر، متخصصة في منتجات K-Beauty والعناية والجمال. " +
+    "أنشئي محتوى فاخرًا واقعيًا جاهزًا للنشر لمنتج اليوم، وأرجعي JSON فقط بهذا الشكل بالضبط:\n" +
+    '{"caption":"...","story":"...","reel":"...","alt":"..."}\n\n' +
+    "بيانات المنتج:\n" +
     `المنتج: ${p.name_ar || p.name_en || ""}${p.name_en && p.name_ar ? ` (${p.name_en})` : ""}\n` +
     (p.brand ? `البراند: ${p.brand}\n` : "") +
     (priceLine ? priceLine + "\n" : "") +
-    "\nقواعد الكابشن:\n" +
-    "• عربي أنثوي خفيف بأسلوب متاجر الجمال الخليجية، 3-5 أسطر قصيرة مع إيموجي مناسبة.\n" +
-    "• السطر الافتتاحي يذكر اسم البراند واسم المنتج بوضوح وبكتابة صحيحة (البراند بالإنجليزية كما هو + تعريبه المتعارف، مثل: «رود Rhode»). لا تحذفي البراند أبدًا.\n" +
-    "• بعدها ميزة أو اثنتان، ثم السعر إن وُجد.\n" +
-    "• اختمي بـ: «اطلبيه الآن — الرابط في البايو 🛍️».\n" +
-    "• ثم سطر هاشتاقات: 8-12 هاشتاق يمزج العربي والإنجليزي (#قطر #الدوحة #مكياج #skincare #qatar وما يناسب المنتج).\n" +
-    "• بدون أسعار مبالغ فيها أو ادعاءات طبية.\n" +
+    (analysis ? `\nتحليل صورة المنتج (اعتمدي عليه ولا تخترعي غيره):\n${analysis}\n` : "") +
+    "\nقواعد caption:\n" +
+    "• أول سطر Hook قوي يوقف المتابعة (بدون اسم المنتج إن لزم).\n" +
+    "• بعده سطر يذكر البراند واسم المنتج بوضوح وبكتابة صحيحة (البراند بالإنجليزية كما هو). لا تحذفي البراند أبدًا.\n" +
+    "• ثم 3 فوائد تسويقية قصيرة، ثم السعر إن وُجد.\n" +
+    "• اختمي بـ: «اطلبيه الآن من Malika's Universe — الرابط في البايو 🛍️».\n" +
+    "• ثم سطر هاشتاقات: 8-12 هاشتاق تناسب قطر والجمال وK-Beauty (#MalikasUniverse #QatarBeauty #KBeautyQatar #DohaBeauty وما يناسب المنتج).\n" +
+    "\nقواعد story: نسخة قصيرة جدًا (سطران) بنفس الروح، تنتهي بدعوة بسيطة.\n" +
+    "قواعد reel: سكربت تعليق صوتي 8-12 ثانية، جملة أو جملتان بصيغة مخاطبة أنثوية.\n" +
+    "قواعد alt: وصف موجز ودقيق لصورة المنتج بالعربي (سطر واحد).\n" +
+    "\nالأسلوب العام:\n" +
+    "• عربي خليجي فاخر نظيف أنثوي، بسيط مع لمسة إنجليزية خفيفة عند الحاجة، وغير مبالغ.\n" +
+    "• 1-3 إيموجي فقط في الكابشن كله.\n" +
+    "• ممنوع الادعاءات الطبية (يعالج، يشفي، يزيل نهائيًا، يوقف التساقط) — استخدمي: يساعد، يمنح إحساس، يدعم، يترك البشرة بمظهر.\n" +
+    "• لا تخترعي مكونات أو فوائد أو معلومات غير مذكورة، ولا تقولي «أصلي» إلا لو ذُكرت.\n" +
     "أجيبي بـ JSON صحيح فقط."
   );
 }
@@ -93,4 +116,21 @@ export function parseCaptionReply(text: string): string {
     } catch { /* fall through to raw */ }
   }
   return raw.slice(0, 2200);
+}
+
+/**
+ * Read the full-post reply: caption (falls back like parseCaptionReply) plus
+ * the story / reel / alt extras, each length-capped. Missing extras come back
+ * as empty strings (the UI hides empty sections).
+ */
+export function parsePostReply(text: string): { caption: string; extras: PostExtras } {
+  const raw = String(text ?? "").trim();
+  let j: any = null;
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (m) { try { j = JSON.parse(m[0]); } catch { /* fall through */ } }
+  const s = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);
+  return {
+    caption: s(j?.caption, 2200) || raw.slice(0, 2200),
+    extras: { story: s(j?.story, 500), reel: s(j?.reel, 700), alt: s(j?.alt, 300) },
+  };
 }
