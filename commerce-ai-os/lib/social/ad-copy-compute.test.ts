@@ -14,6 +14,7 @@ test("prompt carries the product name, description, and the JSON shape rule", ()
   assert.ok(p.includes("(Massager)"));
   assert.ok(p.includes("خشب طبيعي"));
   assert.ok(p.includes('"headline"'));
+  assert.ok(p.includes('"subtitle"'));
   assert.ok(p.includes('"benefits"'));
   assert.ok(p.includes('"features"'));
 });
@@ -24,24 +25,28 @@ test("omits the description line when absent", () => {
 
 // ---- parseAdCopy --------------------------------------------------------------
 
-test("parses well-formed JSON", () => {
-  const c = parseAdCopy('{"headline":"فرشاة السيلوليت","benefits":["تحفّز الدورة","تنعّم البشرة","سهلة"],"features":["جودة عالية","خشب طبيعي","صديقة للبيئة"]}');
-  assert.equal(c.headline, "فرشاة السيلوليت");
-  assert.deepEqual(c.benefits, ["تحفّز الدورة", "تنعّم البشرة", "سهلة"]);
-  assert.equal(c.features.length, 3);
+test("parses well-formed JSON with title/sub bullets", () => {
+  const c = parseAdCopy('{"headline":"فرش مكياج","subtitle":"6 قطع متعددة","benefits":[{"title":"شعيرات ناعمة","sub":"توزيع متساوٍ"},{"title":"سهلة التنظيف","sub":"تجف بسرعة"}],"features":[{"title":"جودة عالية","sub":"خامات فاخرة"}]}');
+  assert.equal(c.headline, "فرش مكياج");
+  assert.equal(c.subtitle, "6 قطع متعددة");
+  assert.equal(c.benefits.length, 2);
+  assert.equal(c.benefits[0].title, "شعيرات ناعمة");
+  assert.equal(c.benefits[0].sub, "توزيع متساوٍ");
+  assert.equal(c.features[0].title, "جودة عالية");
 });
 
-test("tolerates prose around the JSON", () => {
-  const c = parseAdCopy('أكيد! إليك النص:\n{"headline":"X","benefits":["a"],"features":[]}\nبالتوفيق');
+test("accepts plain-string bullets (sub empty) and tolerates surrounding prose", () => {
+  const c = parseAdCopy('أكيد:\n{"headline":"X","subtitle":"","benefits":["ميزة أولى","ميزة ثانية"],"features":[]}\nتم');
   assert.equal(c.headline, "X");
-  assert.deepEqual(c.benefits, ["a"]);
+  assert.equal(c.benefits[0].title, "ميزة أولى");
+  assert.equal(c.benefits[0].sub, "");
   assert.deepEqual(c.features, []);
 });
 
-test("caps benefits at 5 / features at 3 and drops empties", () => {
-  const c = parseAdCopy('{"headline":"H","benefits":["1","","2","3","4","5","6"],"features":["a","b","c","d"]}');
-  assert.deepEqual(c.benefits, ["1", "2", "3", "4", "5"]);
-  assert.deepEqual(c.features, ["a", "b", "c"]);
+test("caps benefits at 5 / features at 3 and drops title-less bullets", () => {
+  const c = parseAdCopy('{"headline":"H","benefits":[{"title":"1"},{"title":""},{"title":"2"},{"title":"3"},{"title":"4"},{"title":"5"},{"title":"6"}],"features":[{"title":"a"},{"title":"b"},{"title":"c"},{"title":"d"}]}');
+  assert.deepEqual(c.benefits.map((b) => b.title), ["1", "2", "3", "4", "5"]);
+  assert.deepEqual(c.features.map((f) => f.title), ["a", "b", "c"]);
 });
 
 test("falls back to the product name and empty arrays on garbage", () => {
