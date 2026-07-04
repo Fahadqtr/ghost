@@ -10,12 +10,23 @@ export interface SpotlightCandidate {
   id: string;
   name_en?: string | null;
   name_ar?: string | null;
+  brand?: string | null;        // resolved brand NAME (not the id)
   image_url?: string | null;
   price?: number | string | null;
   discount_price?: number | string | null;
   stock?: number | null;        // effective stock (inventory total)
   created_at?: string | null;
 }
+
+/**
+ * The instruction handed to the image-edit engine to turn a plain catalog
+ * photo into an Instagram-ready one. The engine itself already pins "same
+ * product, no added text/watermark" — this only styles the scene.
+ */
+export const IG_IMAGE_STYLE =
+  "Professional Instagram product photography: place the product on an elegant minimal studio backdrop " +
+  "(soft beige-to-blush gradient), soft diffused lighting with a gentle natural shadow, centered square " +
+  "composition with breathing room, high-end beauty-brand aesthetic";
 
 /**
  * Pick today's product: must have an image and stock, must not have been
@@ -44,10 +55,12 @@ export function buildCaptionPrompt(p: SpotlightCandidate): string {
     "أنت مسؤولة سوشيال ميديا لمتجر Malika's Universe (منتجات جمال وكورية، قطر). " +
     "اكتبي كابشن إنستقرام/تيك توك لمنتج اليوم وأرجعي JSON فقط: {\"caption\":\"...\"}\n\n" +
     `المنتج: ${p.name_ar || p.name_en || ""}${p.name_en && p.name_ar ? ` (${p.name_en})` : ""}\n` +
+    (p.brand ? `البراند: ${p.brand}\n` : "") +
     (priceLine ? priceLine + "\n" : "") +
     "\nقواعد الكابشن:\n" +
     "• عربي أنثوي خفيف بأسلوب متاجر الجمال الخليجية، 3-5 أسطر قصيرة مع إيموجي مناسبة.\n" +
-    "• سطر افتتاحي جذّاب، ثم ميزة أو اثنتين، ثم السعر إن وُجد.\n" +
+    "• السطر الافتتاحي يذكر اسم البراند واسم المنتج بوضوح وبكتابة صحيحة (البراند بالإنجليزية كما هو + تعريبه المتعارف، مثل: «رود Rhode»). لا تحذفي البراند أبدًا.\n" +
+    "• بعدها ميزة أو اثنتان، ثم السعر إن وُجد.\n" +
     "• اختمي بـ: «اطلبيه الآن — الرابط في البايو 🛍️».\n" +
     "• ثم سطر هاشتاقات: 8-12 هاشتاق يمزج العربي والإنجليزي (#قطر #الدوحة #مكياج #skincare #qatar وما يناسب المنتج).\n" +
     "• بدون أسعار مبالغ فيها أو ادعاءات طبية.\n" +

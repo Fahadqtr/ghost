@@ -36,13 +36,20 @@ test("nothing eligible → null", () => {
 
 // ---- buildCaptionPrompt --------------------------------------------------------
 
-test("prompt carries the product name, the discounted price, and the CTA", () => {
-  const p = buildCaptionPrompt(c({ name_ar: "سيروم التوهج", name_en: "Glow Serum", price: 100, discount_price: 79 }));
+test("prompt carries the product name, brand, discounted price, and the CTA", () => {
+  const p = buildCaptionPrompt(c({ name_ar: "سيروم التوهج", name_en: "Glow Serum", brand: "Rhode", price: 100, discount_price: 79 }));
   assert.ok(p.includes("سيروم التوهج"));
   assert.ok(p.includes("Glow Serum"));
+  assert.ok(p.includes("البراند: Rhode"));
+  assert.ok(p.includes("لا تحذفي البراند")); // the lead-with-brand rule
   assert.ok(p.includes("79"));          // discount wins over list price
   assert.ok(!p.includes("100 ر.ق"));
   assert.ok(p.includes("الرابط في البايو"));
+});
+
+test("prompt omits the brand line when the product has no brand", () => {
+  const p = buildCaptionPrompt(c({ brand: null }));
+  assert.ok(!p.includes("البراند:"));
 });
 
 test("prompt omits the price line when there is no price", () => {

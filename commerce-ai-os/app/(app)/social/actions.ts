@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import { publishToInstagram, instagramConfigured } from "@/lib/social/instagram";
 import { publishToTikTok, tiktokConfigured } from "@/lib/social/tiktok";
 import { generateDailySocialPosts } from "@/lib/social/generate";
+import { editProductImageCore } from "@/lib/products/imageEdit";
+import { IG_IMAGE_STYLE } from "@/lib/social/content-compute";
 
 // Review-first social queue: list pending/recent, publish one (routes to the
 // right platform), dismiss one. Owner session required; rows via service role.
@@ -89,6 +91,27 @@ export async function dismissSocialPost(id: string): Promise<{ ok?: true; error?
   await sb.from("social_posts").update({ status: "dismissed" }).eq("id", id);
   revalidatePath("/social");
   return { ok: true };
+}
+
+// Re-style the post photo with AI (same engine as the product form's photo
+// edit). Default = the Instagram studio look; a custom hint overrides it.
+export async function improveSocialImage(id: string, hint?: string): Promise<{ ok?: true; imageUrl?: string; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const { data: row } = await sb.from("social_posts").select("id, image_url, product_id").eq("id", id).single();
+  if (!row) return { error: "المنشور غير موجود." };
+
+  const res = await editProductImageCore(sb, row.image_url, String(hint ?? "").trim() || IG_IMAGE_STYLE, "social");
+  if ("error" in res) return { error: res.error };
+
+  // The same daily draft exists once per platform — restyle all of them together.
+  await sb.from("social_posts")
+    .update({ image_url: res.imageUrl })
+    .eq("product_id", row.product_id)
+    .in("status", ["pending", "failed"]);
+  revalidatePath("/social");
+  return { ok: true, imageUrl: res.imageUrl };
 }
 
 // Manual "generate now" for testing / a second post — same engine as the cron.
