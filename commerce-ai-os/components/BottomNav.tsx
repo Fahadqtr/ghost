@@ -10,7 +10,7 @@ const TABS = [
   { href: "/dashboard", label: "الرئيسية", en: "Home", icon: "📊" },
   { href: "/products", label: "الكتالوج", en: "Catalog", icon: "📦" },
   { href: "/malak", label: "ملاك", en: "Malak", icon: "✨" },
-  { href: "/platforms", label: "المنصات", en: "Channels", icon: "🏬" },
+  { href: "/social", label: "السوشيال", en: "Social", icon: "📣" },
   { href: "/inventory", label: "المخزون", en: "Inventory", icon: "🏷️" },
 ] as const;
 
