@@ -9,6 +9,7 @@ import {
   generateNowAction,
   improveSocialImage,
   generateAdCreative,
+  generateFullAd,
   saveSocialImage,
   type SocialPost,
 } from "./actions";
@@ -108,6 +109,19 @@ export default function SocialClient({
     });
   };
 
+  // One-shot integrated ad (Gemini renders scene + Arabic text together).
+  const designOneShot = (p: SocialPost) => {
+    setBusyId(p.id);
+    setNote(p.id, "…يصمّم إعلان متكامل بضغطة (٤٠–٦٠ ثانية، لا تسكّر الصفحة)");
+    start(async () => {
+      const r = await generateFullAd(p.id);
+      setBusyId(null);
+      if (r.error) { setNote(p.id, `❌ ${r.error}`); return; }
+      if (r.imageUrl) setImages((s) => ({ ...s, [p.id]: r.imageUrl! }));
+      setNote(p.id, "✅ الإعلان المتكامل جاهز — اضغط مرة ثانية لو تبي تصميم مختلف");
+    });
+  };
+
   const publish = (p: SocialPost) => {
     setBusyId(p.id);
     setNote(p.id, "");
@@ -188,6 +202,14 @@ export default function SocialClient({
               disabled={busy || busyId === p.id}
             >
               {busyId === p.id ? "…يصمّم الإعلان" : "🎨 ٢) صمّم الإعلان الفخم (نص + مزايا + سعر)"}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost w-full text-xs disabled:opacity-50"
+              onClick={() => designOneShot(p)}
+              disabled={busy || busyId === p.id}
+            >
+              🖼️ أو: إعلان متكامل بضغطة (Gemini — تجريبي)
             </button>
 
             <textarea
