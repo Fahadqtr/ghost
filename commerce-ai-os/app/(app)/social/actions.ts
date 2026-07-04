@@ -226,9 +226,17 @@ export async function generateAdCreative(id: string): Promise<{ error?: string; 
   }
 
   const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
-  // Design over the ORIGINAL product photo (untouched) — never an AI scene, so
-  // the product is never altered. The template supplies the luxury background.
-  const sceneUrl = String(p.image_url || "");
+
+  // Generate a photorealistic luxury SCENE (product placed in a premium
+  // environment, NO text) for the ad background — Gemini when configured, else
+  // OpenAI. Falls back to the original photo if scene generation fails.
+  let sceneUrl = String(p.image_url || "");
+  if (p.image_url) {
+    const scene = geminiConfigured()
+      ? await generateSceneWithGemini(sb, String(p.image_url), IG_IMAGE_STYLE, "social")
+      : await editProductImageCore(sb, String(p.image_url), IG_IMAGE_STYLE, "social");
+    if ("imageUrl" in scene) sceneUrl = scene.imageUrl;
+  }
   return { copy, price, title: String(p.name_ar || p.name_en || ""), sceneUrl };
 }
 

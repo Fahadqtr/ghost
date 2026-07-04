@@ -70,7 +70,7 @@ export default function SocialClient({
   // product photo (untouched) on a designed background with real-font Arabic.
   const designAd = (p: SocialPost) => {
     setBusyId(p.id);
-    setNote(p.id, "…يصمّم الإعلان الفخم (يولّد النصوص ويركّب التصميم)");
+    setNote(p.id, "…يصمّم الإعلان الفخم (مشهد فخم + نص — ٤٠–٦٠ ثانية، لا تسكّر الصفحة)");
     start(async () => {
       try {
         const info = await generateAdCreative(p.id);
