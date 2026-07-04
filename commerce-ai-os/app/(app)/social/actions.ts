@@ -177,7 +177,11 @@ export async function generateFullAd(id: string): Promise<{ ok?: true; imageUrl?
     nameAr: p.name_ar, nameEn: p.name_en,
     description: p.description_ar || p.description_en, price,
   });
-  const res = await editProductImageCore(sb, String(p.image_url), prompt, "social", { raw: true, quality: "high" });
+  // Gemini renders in-image text (incl. Arabic) far better than gpt-image-1, so
+  // when configured let it produce the fully-integrated ad; else OpenAI raw mode.
+  const res = geminiConfigured()
+    ? await generateSceneWithGemini(sb, String(p.image_url), prompt, "social")
+    : await editProductImageCore(sb, String(p.image_url), prompt, "social", { raw: true, quality: "high" });
   if ("error" in res) return { error: res.error };
 
   await sb.from("social_posts")
