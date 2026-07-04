@@ -7,9 +7,7 @@ import {
   publishSocialPost,
   dismissSocialPost,
   generateNowAction,
-  improveSocialImage,
   generateAdCreative,
-  generateFullAd,
   saveSocialImage,
   type SocialPost,
 } from "./actions";
@@ -66,22 +64,10 @@ export default function SocialClient({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [genMsg, setGenMsg] = useState("");
 
-  const improve = (p: SocialPost) => {
-    setBusyId(p.id);
-    setNote(p.id, "…يحوّلها لصورة إنستقرام احترافية (نصف دقيقة تقريبًا)");
-    start(async () => {
-      const r = await improveSocialImage(p.id);
-      setBusyId(null);
-      if (r.error) { setNote(p.id, `❌ ${r.error}`); return; }
-      if (r.imageUrl) setImages((s) => ({ ...s, [p.id]: r.imageUrl! }));
-      setNote(p.id, "✅ الصورة اتحسّنت — اضغط مرة ثانية لو تبي محاولة أخرى");
-    });
-  };
-
   const setNote = (id: string, m: string) => setMsg((s) => ({ ...s, [id]: m }));
 
-  // Hybrid ad: AI writes the Arabic copy, then the browser prints it with real
-  // fonts (perfect Arabic) over the AI scene in the luxury template.
+  // Luxury ad: AI writes the Arabic copy, then the browser composes the real
+  // product photo (untouched) on a designed background with real-font Arabic.
   const designAd = (p: SocialPost) => {
     setBusyId(p.id);
     setNote(p.id, "…يصمّم الإعلان الفخم (يولّد النصوص ويركّب التصميم)");
@@ -89,7 +75,7 @@ export default function SocialClient({
       try {
         const info = await generateAdCreative(p.id);
         if (info.error || !info.copy) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر توليد النصوص"}`); return; }
-        const imageDataUrl = await fetchAsDataUrl(info.sceneUrl || images[p.id] || p.image_url);
+        const imageDataUrl = await fetchAsDataUrl(info.sceneUrl || p.image_url);
         const dataUrl = await captureAd({
           imageDataUrl,
           brandTop: BRAND_TOP, brandSub: BRAND_SUB, priceLabel: PRICE_LABEL,
@@ -106,19 +92,6 @@ export default function SocialClient({
         setBusyId(null);
         setNote(p.id, `❌ ${e instanceof Error ? e.message : "تعذّر التصميم"}`);
       }
-    });
-  };
-
-  // One-shot integrated ad (Gemini renders scene + Arabic text together).
-  const designOneShot = (p: SocialPost) => {
-    setBusyId(p.id);
-    setNote(p.id, "…يصمّم إعلان متكامل بضغطة (٤٠–٦٠ ثانية، لا تسكّر الصفحة)");
-    start(async () => {
-      const r = await generateFullAd(p.id);
-      setBusyId(null);
-      if (r.error) { setNote(p.id, `❌ ${r.error}`); return; }
-      if (r.imageUrl) setImages((s) => ({ ...s, [p.id]: r.imageUrl! }));
-      setNote(p.id, "✅ الإعلان المتكامل جاهز — اضغط مرة ثانية لو تبي تصميم مختلف");
     });
   };
 
@@ -189,27 +162,11 @@ export default function SocialClient({
             <img src={images[p.id] ?? p.image_url} alt="" className="max-h-64 w-full rounded-xl border border-[#efe3d6] object-contain bg-white" />
             <button
               type="button"
-              className="btn-ghost w-full text-sm disabled:opacity-50"
-              onClick={() => improve(p)}
-              disabled={busy || busyId === p.id}
-            >
-              {busyId === p.id ? "…يجهّز المشهد" : "✨ ١) جهّز مشهد فخم للمنتج"}
-            </button>
-            <button
-              type="button"
               className="btn w-full text-sm disabled:opacity-50"
               onClick={() => designAd(p)}
               disabled={busy || busyId === p.id}
             >
-              {busyId === p.id ? "…يصمّم الإعلان" : "🎨 ٢) صمّم الإعلان الفخم (نص + مزايا + سعر)"}
-            </button>
-            <button
-              type="button"
-              className="btn-ghost w-full text-xs disabled:opacity-50"
-              onClick={() => designOneShot(p)}
-              disabled={busy || busyId === p.id}
-            >
-              🖼️ أو: إعلان متكامل بضغطة (Gemini — تجريبي)
+              {busyId === p.id ? "…يصمّم الإعلان الفخم" : "🎨 صمّم إعلان فخم (بضغطة)"}
             </button>
 
             <textarea
