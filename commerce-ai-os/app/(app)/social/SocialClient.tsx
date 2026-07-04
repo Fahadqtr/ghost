@@ -5,6 +5,7 @@ import {
   publishSocialPost,
   dismissSocialPost,
   generateNowAction,
+  improveSocialImage,
   type SocialPost,
 } from "./actions";
 
@@ -30,9 +31,22 @@ export default function SocialClient({
     Object.fromEntries(initialPending.map((p) => [p.id, p.caption])),
   );
   const [msg, setMsg] = useState<Record<string, string>>({});
+  const [images, setImages] = useState<Record<string, string>>({});
   const [busy, start] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [genMsg, setGenMsg] = useState("");
+
+  const improve = (p: SocialPost) => {
+    setBusyId(p.id);
+    setNote(p.id, "…يحوّلها لصورة إنستقرام احترافية (نصف دقيقة تقريبًا)");
+    start(async () => {
+      const r = await improveSocialImage(p.id);
+      setBusyId(null);
+      if (r.error) { setNote(p.id, `❌ ${r.error}`); return; }
+      if (r.imageUrl) setImages((s) => ({ ...s, [p.id]: r.imageUrl! }));
+      setNote(p.id, "✅ الصورة اتحسّنت — اضغط مرة ثانية لو تبي محاولة أخرى");
+    });
+  };
 
   const setNote = (id: string, m: string) => setMsg((s) => ({ ...s, [id]: m }));
 
@@ -100,7 +114,15 @@ export default function SocialClient({
             </div>
 
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={p.image_url} alt="" className="max-h-64 w-full rounded-xl border border-[#efe3d6] object-contain bg-white" />
+            <img src={images[p.id] ?? p.image_url} alt="" className="max-h-64 w-full rounded-xl border border-[#efe3d6] object-contain bg-white" />
+            <button
+              type="button"
+              className="btn-ghost w-full text-sm disabled:opacity-50"
+              onClick={() => improve(p)}
+              disabled={busy || busyId === p.id}
+            >
+              {busyId === p.id ? "…يحسّن الصورة" : "✨ حوّلها لصورة إنستقرام احترافية"}
+            </button>
 
             <textarea
               dir="rtl"
