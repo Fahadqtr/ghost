@@ -20,14 +20,19 @@ export async function fetchAsDataUrl(url: string): Promise<string> {
   });
 }
 
-/** Rasterize `node` (rendered at width×height) to a JPEG data URL. */
-export async function nodeToJpeg(node: HTMLElement, width: number, height: number, quality = 0.92): Promise<string> {
+/**
+ * Rasterize `node` (rendered at width×height) to a JPEG data URL.
+ * `fontCss` (optional): @font-face rules with data:-URI sources — the SVG
+ * renders in an isolated document, so any custom font must be inlined here.
+ */
+export async function nodeToJpeg(node: HTMLElement, width: number, height: number, quality = 0.92, fontCss = ""): Promise<string> {
   const clone = node.cloneNode(true) as HTMLElement;
   clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
   const xml = new XMLSerializer().serializeToString(clone);
+  const style = fontCss ? `<style>${fontCss}</style>` : "";
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
-    `<foreignObject x="0" y="0" width="${width}" height="${height}">${xml}</foreignObject>` +
+    `${style}<foreignObject x="0" y="0" width="${width}" height="${height}">${xml}</foreignObject>` +
     `</svg>`;
 
   const img = new Image();

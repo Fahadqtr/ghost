@@ -12,6 +12,7 @@ import {
   type SocialPost,
 } from "./actions";
 import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
+import { adFontCss } from "@/lib/social/ad-fonts";
 import AdTemplate, { type AdTemplateProps } from "./AdTemplate";
 
 const BRAND_TOP = "MALIKA'S";
@@ -21,6 +22,7 @@ const PRICE_LABEL = "سعر خاص";
 // Render the ad template off-screen (real fonts → crisp Arabic), rasterize it,
 // then clean up. flushSync mounts synchronously; two rAFs let it lay out first.
 async function captureAd(props: AdTemplateProps): Promise<string> {
+  const fontCss = await adFontCss(); // luxury fonts, inlined for the SVG raster
   const host = document.createElement("div");
   host.style.cssText = "position:fixed;left:-99999px;top:0;width:1080px;height:1080px;pointer-events:none;";
   document.body.appendChild(host);
@@ -30,7 +32,7 @@ async function captureAd(props: AdTemplateProps): Promise<string> {
     await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
     const node = host.firstElementChild as HTMLElement | null;
     if (!node) throw new Error("تعذّر تجهيز التصميم.");
-    return await nodeToJpeg(node, 1080, 1080);
+    return await nodeToJpeg(node, 1080, 1080, 0.92, fontCss);
   } finally {
     root.unmount();
     host.remove();
