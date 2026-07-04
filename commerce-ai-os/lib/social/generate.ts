@@ -129,6 +129,7 @@ export async function generateDailySocialPosts(admin: any): Promise<GenerateResu
     platform,
     caption,
     image_url: imageUrl,
+    scene_url: imageUrl, // clean styled scene — the ad designer always builds on THIS, never a composed ad
     status: "pending",
   }));
   const { error: insErr } = await admin.from("social_posts").insert(rows);
