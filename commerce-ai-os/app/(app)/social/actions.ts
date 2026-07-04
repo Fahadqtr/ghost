@@ -117,8 +117,9 @@ export async function improveSocialImage(id: string, hint?: string): Promise<{ o
   if ("error" in res) return { error: res.error };
 
   // The same daily draft exists once per platform — restyle all of them together.
+  // scene_url tracks the CLEAN styled scene so the ad designer never builds on a composed ad.
   await sb.from("social_posts")
-    .update({ image_url: res.imageUrl })
+    .update({ image_url: res.imageUrl, scene_url: res.imageUrl })
     .eq("product_id", row.product_id)
     .in("status", ["pending", "failed"]);
   revalidatePath("/social");
@@ -148,17 +149,17 @@ export async function getAdOverlayData(id: string): Promise<{ error?: string; da
 
 // AI ad copy (headline + 3 benefits + 3 trust features) + the formatted price,
 // for the browser to lay out in the full ad template.
-export async function generateAdCreative(id: string): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string }> {
+export async function generateAdCreative(id: string): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string; sceneUrl?: string }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const sb = admin();
   if (!sb) return { error: NO_DB };
   if (!process.env.ANTHROPIC_API_KEY) return { error: "توليد النصوص غير مفعّل (ANTHROPIC_API_KEY غير مضبوط)." };
 
-  const { data: row } = await sb.from("social_posts").select("product_id").eq("id", id).single();
+  const { data: row } = await sb.from("social_posts").select("product_id, scene_url").eq("id", id).single();
   if (!row?.product_id) return { error: "المنتج غير مرتبط بهذا المنشور." };
   const { data: p } = await sb
     .from("products")
-    .select("name_en, name_ar, description_en, description_ar, price, discount_price")
+    .select("name_en, name_ar, description_en, description_ar, price, discount_price, image_url")
     .eq("id", row.product_id)
     .single();
   if (!p) return { error: "المنتج غير موجود." };
@@ -180,7 +181,9 @@ export async function generateAdCreative(id: string): Promise<{ error?: string; 
   }
 
   const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
-  return { copy, price, title: String(p.name_ar || p.name_en || "") };
+  // Always design over the CLEAN scene (never a previously composed ad → no nesting).
+  const sceneUrl = String(row.scene_url || p.image_url || "");
+  return { copy, price, title: String(p.name_ar || p.name_en || ""), sceneUrl };
 }
 
 // Persist the browser-composed ad card (JPEG data URL) and point every pending

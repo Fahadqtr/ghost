@@ -91,7 +91,8 @@ export default function SocialClient({
       try {
         const info = await generateAdCreative(p.id);
         if (info.error || !info.copy) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر توليد النصوص"}`); return; }
-        const imageDataUrl = await fetchAsDataUrl(images[p.id] ?? p.image_url);
+        // Build on the CLEAN scene (never the current image, which may already be a composed ad).
+        const imageDataUrl = await fetchAsDataUrl(info.sceneUrl || images[p.id] || p.image_url);
         const dataUrl = await captureAd({
           imageDataUrl,
           brandTop: BRAND_TOP, brandSub: BRAND_SUB, website: WEBSITE, priceLabel: PRICE_LABEL,
