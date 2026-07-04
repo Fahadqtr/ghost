@@ -11,6 +11,7 @@ import { IG_IMAGE_STYLE } from "@/lib/social/content-compute";
 import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
+import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
 import crypto from "crypto";
 
 // Review-first social queue: list pending/recent, publish one (routes to the
@@ -145,6 +146,40 @@ export async function getAdOverlayData(id: string): Promise<{ error?: string; da
     brand = b?.name ?? null;
   }
   return { data: { brand, nameAr: p.name_ar, nameEn: p.name_en, price: p.price, discountPrice: p.discount_price } };
+}
+
+// One-shot luxury ad: gpt-image-1 generates the WHOLE creative (scene + product
+// + elegant Arabic typography + icons + price badge + CTA + footer) from a rich
+// prompt. Built on the product's ORIGINAL photo. Replaces the scene+HTML overlay.
+export async function generateFullAd(id: string): Promise<{ ok?: true; imageUrl?: string; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+
+  const { data: row } = await sb.from("social_posts").select("product_id").eq("id", id).single();
+  if (!row?.product_id) return { error: "المنتج غير مرتبط بهذا المنشور." };
+  const { data: p } = await sb
+    .from("products")
+    .select("name_en, name_ar, description_en, description_ar, price, discount_price, image_url")
+    .eq("id", row.product_id)
+    .single();
+  if (!p) return { error: "المنتج غير موجود." };
+  if (!p.image_url) return { error: "لا توجد صورة أصلية للمنتج." };
+
+  const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
+  const prompt = buildFullAdPrompt({
+    nameAr: p.name_ar, nameEn: p.name_en,
+    description: p.description_ar || p.description_en, price,
+  });
+  const res = await editProductImageCore(sb, String(p.image_url), prompt, "social", { raw: true, quality: "high" });
+  if ("error" in res) return { error: res.error };
+
+  await sb.from("social_posts")
+    .update({ image_url: res.imageUrl })
+    .eq("product_id", row.product_id)
+    .in("status", ["pending", "failed"]);
+  revalidatePath("/social");
+  return { ok: true, imageUrl: res.imageUrl };
 }
 
 // AI ad copy (headline + 3 benefits + 3 trust features) + the formatted price,
