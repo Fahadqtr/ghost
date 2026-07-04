@@ -14,18 +14,19 @@ import {
 import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
 import { adFontCss } from "@/lib/social/ad-fonts";
 import { pickVariant } from "@/lib/social/ad-variants";
-import AdTemplate, { type AdTemplateProps } from "./AdTemplate";
+import AdTemplate, { AD_W, AD_H, type AdTemplateProps } from "./AdTemplate";
 
 const BRAND_TOP = "MALIKA'S";
 const BRAND_SUB = "UNIVERSE BEAUTY";
 const PRICE_LABEL = "سعر خاص";
+const HANDLE = "@malikas.universe";
 
 // Render the ad template off-screen (real fonts → crisp Arabic), rasterize it,
 // then clean up. flushSync mounts synchronously; two rAFs let it lay out first.
 async function captureAd(props: AdTemplateProps): Promise<string> {
   const fontCss = await adFontCss(); // luxury fonts, inlined for the SVG raster
   const host = document.createElement("div");
-  host.style.cssText = "position:fixed;left:-99999px;top:0;width:1080px;height:1080px;pointer-events:none;";
+  host.style.cssText = `position:fixed;left:-99999px;top:0;width:${AD_W}px;height:${AD_H}px;pointer-events:none;`;
   document.body.appendChild(host);
   const root = createRoot(host);
   try {
@@ -33,7 +34,7 @@ async function captureAd(props: AdTemplateProps): Promise<string> {
     await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
     const node = host.firstElementChild as HTMLElement | null;
     if (!node) throw new Error("تعذّر تجهيز التصميم.");
-    return await nodeToJpeg(node, 1080, 1080, 0.92, fontCss);
+    return await nodeToJpeg(node, AD_W, AD_H, 0.92, fontCss);
   } finally {
     root.unmount();
     host.remove();
@@ -73,23 +74,24 @@ export default function SocialClient({
   // and rotates to a fresh art direction on every re-tap.
   const [taps, setTaps] = useState<Record<string, number>>({});
 
-  // Luxury ad: AI writes the Arabic copy, Gemini/OpenAI builds the scene in the
-  // variant's mood, and the browser prints the Arabic with real fonts. Each
-  // product gets its own design variant (palette + scene).
+  // Luxury ad: AI writes the Arabic copy, Gemini paints an EMPTY backdrop in
+  // the variant's mood, and the browser composites the ORIGINAL product photo
+  // (never AI-redrawn) + real-font Arabic on top. Variant rotates per re-tap.
   const designAd = (p: SocialPost) => {
     const tap = taps[p.id] ?? 0;
     const variant = pickVariant(p.id, tap);
     setTaps((s) => ({ ...s, [p.id]: tap + 1 }));
     setBusyId(p.id);
-    setNote(p.id, "…يصمّم الإعلان الفخم (مشهد فخم + نص — ٤٠–٦٠ ثانية، لا تسكّر الصفحة)");
+    setNote(p.id, "…يصمّم الإعلان الفخم (خلفية فخمة + منتجك الأصلي + نص — قد يأخذ دقيقة)");
     start(async () => {
       try {
         const info = await generateAdCreative(p.id, variant.scene);
         if (info.error || !info.copy) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر توليد النصوص"}`); return; }
-        const imageDataUrl = await fetchAsDataUrl(info.sceneUrl || p.image_url);
+        const productDataUrl = await fetchAsDataUrl(info.productUrl || p.image_url);
+        const backdropDataUrl = info.backdropUrl ? await fetchAsDataUrl(info.backdropUrl) : "";
         const dataUrl = await captureAd({
-          imageDataUrl,
-          brandTop: BRAND_TOP, brandSub: BRAND_SUB, priceLabel: PRICE_LABEL,
+          productDataUrl, backdropDataUrl,
+          brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, priceLabel: PRICE_LABEL,
           headline: info.copy.headline, subtitle: info.copy.subtitle,
           benefits: info.copy.benefits, features: info.copy.features,
           price: info.price ?? "",
