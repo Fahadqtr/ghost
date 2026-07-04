@@ -3,6 +3,7 @@ import ProductForm from "@/components/ProductForm";
 import type { Brand } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // photo→AI draft + image edit take 20–40s (same as /staff)
 
 export default async function NewProductPage() {
   const supabase = createClient();

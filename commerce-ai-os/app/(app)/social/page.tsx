@@ -2,6 +2,7 @@ import { listSocialPosts } from "./actions";
 import SocialClient from "./SocialClient";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // AI image restyle takes 20–40s (same as /staff)
 
 export default async function SocialPage() {
   const { error, pending, recent, configured } = await listSocialPosts();
