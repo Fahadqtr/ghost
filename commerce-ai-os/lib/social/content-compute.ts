@@ -24,14 +24,15 @@ export interface SpotlightCandidate {
  * product, no added text/watermark" — this only styles the scene.
  */
 export const IG_IMAGE_STYLE =
-  "Turn this into a high-end advertising campaign photo, magazine-quality, as if shot for a luxury beauty brand. " +
-  "Keep the product itself untouched and sharp, then build a premium editorial scene around it: a tasteful podium " +
-  "or reflective surface (polished marble or glossy acrylic), soft complementary props that suit a beauty product " +
-  "(a few flower petals, delicate green leaves, subtle water droplets or soft silk fabric — sparse, never cluttered), " +
-  "and refined color grading with a cohesive warm palette. Use dramatic yet flattering studio lighting with a soft " +
-  "key light, gentle rim light and a natural shadow, shallow depth of field so the background falls softly out of " +
-  "focus. Cinematic, glossy, professional advertisement look — the product stays the clear hero, centered with " +
-  "generous breathing room for a clean square Instagram composition.";
+  "Ultra-realistic LUXURY beauty campaign photo, editorial 8K quality, like Rhode, Aesop, Dior Beauty or Jo Malone. " +
+  "Keep the SAME product exactly (unchanged design, colors, labels, branding) as the hero, sharp focus with premium " +
+  "reflections, occupying about 40–50% of the frame. Background: warm beige, ivory, cream and soft sand palette, " +
+  "elegant minimalist luxury, soft flowing fabric, natural sunlight entering from one side, soft realistic shadows, " +
+  "a marble or travertine natural-stone podium; a few dried flowers or leaves only if they complement the product. " +
+  "Clean premium spa atmosphere, refined natural color grading. " +
+  "COMPOSITION: place the product toward the RIGHT side and keep the LEFT third as clean empty negative space " +
+  "(for text added later); generous breathing room, elegant balance, extremely clean, no clutter. " +
+  "Photorealistic. Do NOT add any text, letters, logos, watermark or graphics.";
 
 /**
  * Pick today's product: must have an image and stock, must not have been

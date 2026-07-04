@@ -95,6 +95,7 @@ export default function SocialClient({
         const dataUrl = await captureAd({
           imageDataUrl,
           brandTop: BRAND_TOP, brandSub: BRAND_SUB, website: WEBSITE, priceLabel: PRICE_LABEL,
+          title: info.title ?? "",
           headline: info.copy.headline, benefits: info.copy.benefits, features: info.copy.features,
           price: info.price ?? "",
         });

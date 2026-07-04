@@ -1,36 +1,33 @@
 import type { CSSProperties } from "react";
 
-// Fixed 1080×1080 ad creative, styled with INLINE styles only so it can be
-// rasterized via nodeToJpeg (SVG foreignObject can't reach external CSS).
-// Rendered off-screen by SocialClient, captured, then uploaded.
+// Fixed 1080×1080 LUXURY editorial ad creative, styled with INLINE styles only
+// (so nodeToJpeg's SVG foreignObject can rasterize it). Text is laid elegantly
+// over the photographic scene's left negative space — Rhode/Aesop style — not
+// in a separate boxed panel.
 
 export interface AdTemplateProps {
-  imageDataUrl: string;   // product photo, already inlined as a data: URL
+  imageDataUrl: string;   // full-bleed product scene, inlined as a data: URL
   brandTop: string;       // "MALIKA'S"
   brandSub: string;       // "UNIVERSE BEAUTY"
-  headline: string;
-  benefits: string[];
-  features: string[];
+  title: string;          // product name
+  headline: string;       // short luxury marketing line
+  benefits: string[];     // 3–5 elegant lines
+  features: string[];     // 3 tiny footer features
   priceLabel: string;     // "سعر خاص"
   price: string;          // "48 ر.ق" ("" hides the badge)
   website: string;
 }
 
-const INK = "#4a3728";
-const MUTED = "#8c7a66";
-const ACCENT = "#c9a06a";
-const DARK = "#3d2c1e";
+const INK = "#3a2b1d";
+const MUTED = "#7d6b57";
+const GOLD = "#b0894f";
+const DARK = "#2c2013";
+const CREAM = "247,240,230";
 const FONT = '"Tajawal","Cairo","Segoe UI",Arial,sans-serif';
 
-// Filled 24×24 glyphs — decorative (the benefit text carries the meaning).
-const BENEFIT_GLYPHS = [
-  "M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z",           // sparkle
-  "M12 3s6 7 6 12a6 6 0 1 1-12 0c0-5 6-12 6-12z",                         // drop
-  "M5 21c0-10 6-16 14-16 0 10-6 16-14 16z",                               // leaf
-];
 const FEATURE_GLYPHS = [
   "M12 21s-7-4.5-9.5-9C1 9 3 5 6.5 5 9.2 5 12 8 12 8s2.8-3 5.5-3C21 5 23 9 21.5 12 19 16.5 12 21 12 21z", // heart
-  "M12 2l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V5z",                           // shield
+  "M12 2l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V5z",                                                          // shield
   "M12 2a3 3 0 0 1 3 3 3 3 0 0 1 4 4 3 3 0 0 1 0 6 3 3 0 0 1-4 4 3 3 0 0 1-6 0 3 3 0 0 1-4-4 3 3 0 0 1 0-6 3 3 0 0 1 4-4 3 3 0 0 1 3-3z", // flower
 ];
 
@@ -45,87 +42,74 @@ function Glyph({ d, size, color }: { d: string; size: number; color: string }) {
 export default function AdTemplate(p: AdTemplateProps) {
   const root: CSSProperties = {
     position: "absolute", top: 0, left: 0, width: 1080, height: 1080,
-    background: "linear-gradient(135deg,#f6efe3 0%,#ecdecb 100%)",
-    fontFamily: FONT, color: INK, overflow: "hidden",
+    fontFamily: FONT, color: INK, overflow: "hidden", background: "#f7f0e6",
   };
+  const rtl: CSSProperties = { direction: "rtl", textAlign: "right" };
 
   return (
     <div style={root}>
-      {/* Product photo — rounded card, right side (kept clear of the text column) */}
+      {/* Full-bleed product scene */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={p.imageDataUrl}
-        alt=""
-        style={{
-          position: "absolute", top: 190, right: 44, width: 516, height: 600,
-          objectFit: "cover", borderRadius: 30, boxShadow: "0 24px 60px rgba(74,55,40,0.22)",
-        }}
-      />
+      <img src={p.imageDataUrl} alt="" style={{ position: "absolute", inset: 0, width: 1080, height: 1080, objectFit: "cover" }} />
 
-      {/* Brand lockup */}
-      <div style={{ position: "absolute", top: 64, left: 64 }}>
-        <div style={{ fontSize: 62, fontWeight: 800, letterSpacing: 2, lineHeight: 1 }}>{p.brandTop}</div>
-        <div style={{ fontSize: 21, letterSpacing: 9, color: MUTED, marginTop: 8 }}>{p.brandSub}</div>
-      </div>
+      {/* Left wash so the copy reads over the scene's negative space */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: `linear-gradient(100deg, rgba(${CREAM},0.96) 0%, rgba(${CREAM},0.88) 40%, rgba(${CREAM},0.34) 60%, rgba(${CREAM},0) 76%)`,
+      }} />
+      {/* Faint bottom wash for the footer */}
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 150, background: `linear-gradient(0deg, rgba(${CREAM},0.9) 0%, rgba(${CREAM},0) 100%)` }} />
 
-      {/* Headline */}
-      <div style={{ position: "absolute", top: 205, left: 64, width: 396 }}>
-        <div style={{ width: 74, height: 5, background: ACCENT, borderRadius: 3, marginBottom: 20 }} />
-        <div style={{ fontSize: 50, fontWeight: 800, lineHeight: 1.18, textAlign: "right", direction: "rtl" }}>
-          {p.headline}
+      {/* Copy column, over the left negative space */}
+      <div style={{ position: "absolute", top: 96, left: 84, width: 486, ...rtl }}>
+        <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: 2, lineHeight: 1, color: INK }}>{p.brandTop}</div>
+        <div style={{ fontSize: 15, letterSpacing: 7, color: MUTED, marginTop: 6 }}>{p.brandSub}</div>
+
+        <div style={{ width: 66, height: 3, background: GOLD, borderRadius: 2, margin: "28px 0 0 auto" }} />
+
+        {p.title ? <div style={{ fontSize: 27, fontWeight: 600, color: MUTED, marginTop: 22 }}>{p.title}</div> : null}
+        <div style={{ fontSize: 50, fontWeight: 800, lineHeight: 1.18, color: INK, marginTop: 10 }}>{p.headline}</div>
+
+        <div style={{ marginTop: 30 }}>
+          {p.benefits.slice(0, 5).map((b, i) => (
+            <div key={i} style={{ ...rtl, fontSize: 25, fontWeight: 500, color: INK, marginBottom: 14, lineHeight: 1.35 }}>
+              <span style={{ color: GOLD, fontWeight: 700 }}>—</span>&nbsp;{b}
+            </div>
+          ))}
         </div>
-      </div>
-
-      {/* Benefits */}
-      <div style={{ position: "absolute", top: 452, left: 64, width: 396 }}>
-        {p.benefits.slice(0, 3).map((b, i) => (
-          <div key={i} style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 18, marginBottom: 26 }}>
-            <div style={{
-              width: 64, height: 64, borderRadius: 32, flexShrink: 0,
-              background: "rgba(201,160,106,0.22)", display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <Glyph d={BENEFIT_GLYPHS[i % BENEFIT_GLYPHS.length]} size={30} color={ACCENT} />
-            </div>
-            <div style={{ flex: 1, fontSize: 27, fontWeight: 600, color: INK, textAlign: "right", direction: "rtl", lineHeight: 1.3 }}>
-              {b}
-            </div>
-          </div>
-        ))}
       </div>
 
       {/* Price badge */}
       {p.price ? (
         <div style={{
-          position: "absolute", left: 64, bottom: 250, background: ACCENT, borderRadius: 22,
-          padding: "16px 30px", textAlign: "right", direction: "rtl", boxShadow: "0 12px 30px rgba(201,160,106,0.35)",
+          position: "absolute", left: 84, bottom: 236, ...rtl,
+          background: "rgba(255,255,255,0.72)", border: `1.5px solid rgba(176,137,79,0.55)`,
+          borderRadius: 20, padding: "14px 28px", backdropFilter: "blur(2px)",
         }}>
-          <div style={{ fontSize: 22, color: "#5c4326", fontWeight: 600 }}>{p.priceLabel}</div>
-          <div style={{ fontSize: 52, fontWeight: 800, color: "#3a2a17", lineHeight: 1.05 }}>{p.price}</div>
+          <div style={{ fontSize: 19, color: GOLD, fontWeight: 600, letterSpacing: 1 }}>{p.priceLabel}</div>
+          <div style={{ fontSize: 46, fontWeight: 800, color: INK, lineHeight: 1.05 }}>{p.price}</div>
         </div>
       ) : null}
 
-      {/* Order button + website */}
-      <div style={{ position: "absolute", left: 64, bottom: 168, display: "flex", flexDirection: "row", alignItems: "center", gap: 14 }}>
-        <div style={{
-          background: DARK, color: "#f6efe3", borderRadius: 40, padding: "16px 34px",
-          fontSize: 26, fontWeight: 700, letterSpacing: 3, display: "flex", alignItems: "center", gap: 12,
-        }}>
-          <span>ORDER NOW</span>
-          <Glyph d="M6 6h15l-1.5 9h-12z M6 6l-2-3H2 M9 20a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z M18 20a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z" size={24} color="#f6efe3" />
-        </div>
+      {/* CTA button */}
+      <div style={{
+        position: "absolute", left: 84, bottom: 150,
+        background: DARK, color: "#f7f0e6", borderRadius: 40, padding: "18px 46px",
+        fontSize: 27, fontWeight: 700, letterSpacing: 2, direction: "rtl",
+      }}>
+        اطلبيه الآن
       </div>
-      <div style={{ position: "absolute", left: 68, bottom: 130, fontSize: 22, color: MUTED, letterSpacing: 1 }}>{p.website}</div>
 
-      {/* Bottom feature strip */}
+      {/* Minimal footer — 3 feature chips */}
       {p.features.length ? (
         <div style={{
-          position: "absolute", left: 0, bottom: 0, width: 1080, height: 108,
-          background: "rgba(61,44,30,0.06)", display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-around", padding: "0 40px",
+          position: "absolute", left: 0, right: 0, bottom: 40, height: 54,
+          display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: 46,
         }}>
           {p.features.slice(0, 3).map((f, i) => (
-            <div key={i} style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 12 }}>
-              <Glyph d={FEATURE_GLYPHS[i % FEATURE_GLYPHS.length]} size={30} color={ACCENT} />
-              <span style={{ fontSize: 23, fontWeight: 600, color: INK, direction: "rtl" }}>{f}</span>
+            <div key={i} style={{ display: "flex", flexDirection: "row-reverse", alignItems: "center", gap: 9 }}>
+              <Glyph d={FEATURE_GLYPHS[i % FEATURE_GLYPHS.length]} size={22} color={GOLD} />
+              <span style={{ fontSize: 21, fontWeight: 600, color: INK, direction: "rtl" }}>{f}</span>
             </div>
           ))}
         </div>
