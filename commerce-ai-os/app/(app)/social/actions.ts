@@ -8,6 +8,8 @@ import { publishToTikTok, tiktokConfigured } from "@/lib/social/tiktok";
 import { generateDailySocialPosts } from "@/lib/social/generate";
 import { editProductImageCore } from "@/lib/products/imageEdit";
 import { IG_IMAGE_STYLE } from "@/lib/social/content-compute";
+import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
+import crypto from "crypto";
 
 // Review-first social queue: list pending/recent, publish one (routes to the
 // right platform), dismiss one. Owner session required; rows via service role.
@@ -112,6 +114,55 @@ export async function improveSocialImage(id: string, hint?: string): Promise<{ o
     .in("status", ["pending", "failed"]);
   revalidatePath("/social");
   return { ok: true, imageUrl: res.imageUrl };
+}
+
+// Product fields the browser needs to paint the ad text (brand/name/price).
+export async function getAdOverlayData(id: string): Promise<{ error?: string; data?: AdOverlayInput }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const { data: row } = await sb.from("social_posts").select("product_id").eq("id", id).single();
+  if (!row?.product_id) return { error: "المنتج غير مرتبط بهذا المنشور." };
+  const { data: p } = await sb
+    .from("products")
+    .select("name_en, name_ar, brand_id, price, discount_price")
+    .eq("id", row.product_id)
+    .single();
+  if (!p) return { error: "المنتج غير موجود." };
+  let brand: string | null = null;
+  if (p.brand_id) {
+    const { data: b } = await sb.from("brands").select("name").eq("id", p.brand_id).single();
+    brand = b?.name ?? null;
+  }
+  return { data: { brand, nameAr: p.name_ar, nameEn: p.name_en, price: p.price, discountPrice: p.discount_price } };
+}
+
+// Persist the browser-composed ad card (JPEG data URL) and point every pending
+// row of the same product at it — mirrors improveSocialImage's fan-out.
+const AD_BUCKET = "product-images";
+export async function saveSocialImage(id: string, dataUrl: string): Promise<{ ok?: true; imageUrl?: string; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const m = /^data:image\/(png|jpe?g);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl ?? "").trim());
+  if (!m) return { error: "صورة غير صالحة." };
+  const bytes = Buffer.from(m[2], "base64");
+  if (!bytes.length || bytes.length > 8 * 1024 * 1024) return { error: "حجم الصورة غير صالح." };
+
+  const { data: row } = await sb.from("social_posts").select("product_id").eq("id", id).single();
+  if (!row) return { error: "المنشور غير موجود." };
+
+  const path = `social/ad-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.jpg`;
+  const up = await sb.storage.from(AD_BUCKET).upload(path, bytes, { contentType: "image/jpeg", upsert: false, cacheControl: "3600" });
+  if (up.error) return { error: `تعذّر حفظ الصورة: ${up.error.message}` };
+  const imageUrl = sb.storage.from(AD_BUCKET).getPublicUrl(path).data.publicUrl;
+
+  await sb.from("social_posts")
+    .update({ image_url: imageUrl })
+    .eq("product_id", row.product_id)
+    .in("status", ["pending", "failed"]);
+  revalidatePath("/social");
+  return { ok: true, imageUrl };
 }
 
 // Manual "generate now" for testing / a second post — same engine as the cron.
