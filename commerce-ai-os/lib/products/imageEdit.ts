@@ -34,7 +34,7 @@ export async function editProductImageCore(
   const fullPrompt =
     `Edit this product photo as instructed: ${instruction}. ` +
     `Keep it a realistic product photo of the SAME product (same shape, label and colors). ` +
-    `Do NOT add any text, letters, watermark, logo or price. Clean, well-lit e-commerce look.`;
+    `Do NOT add any text, letters, watermark, logo or price. Clean, professional, well-lit result.`;
 
   let bytes: Buffer;
   try {

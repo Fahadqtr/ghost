@@ -24,9 +24,14 @@ export interface SpotlightCandidate {
  * product, no added text/watermark" — this only styles the scene.
  */
 export const IG_IMAGE_STYLE =
-  "Professional Instagram product photography: place the product on an elegant minimal studio backdrop " +
-  "(soft beige-to-blush gradient), soft diffused lighting with a gentle natural shadow, centered square " +
-  "composition with breathing room, high-end beauty-brand aesthetic";
+  "Turn this into a high-end advertising campaign photo, magazine-quality, as if shot for a luxury beauty brand. " +
+  "Keep the product itself untouched and sharp, then build a premium editorial scene around it: a tasteful podium " +
+  "or reflective surface (polished marble or glossy acrylic), soft complementary props that suit a beauty product " +
+  "(a few flower petals, delicate green leaves, subtle water droplets or soft silk fabric — sparse, never cluttered), " +
+  "and refined color grading with a cohesive warm palette. Use dramatic yet flattering studio lighting with a soft " +
+  "key light, gentle rim light and a natural shadow, shallow depth of field so the background falls softly out of " +
+  "focus. Cinematic, glossy, professional advertisement look — the product stays the clear hero, centered with " +
+  "generous breathing room for a clean square Instagram composition.";
 
 /**
  * Pick today's product: must have an image and stock, must not have been
