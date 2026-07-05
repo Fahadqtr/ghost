@@ -21,6 +21,31 @@ const BRAND_SUB = "UNIVERSE BEAUTY";
 const PRICE_LABEL = "سعر خاص";
 const HANDLE = "@malikas.universe";
 
+// Is this a clean white/near-white catalog shot? Sample the border pixels: if
+// almost all are near-white the photo can multiply-melt into the scene;
+// otherwise (lifestyle/busy photo) the template frames it as a rounded card.
+async function hasLightBackground(dataUrl: string): Promise<boolean> {
+  try {
+    const img = new Image();
+    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("img")); img.src = dataUrl; });
+    const S = 48;
+    const cv = document.createElement("canvas");
+    cv.width = S; cv.height = S;
+    const cx = cv.getContext("2d");
+    if (!cx) return false;
+    cx.drawImage(img, 0, 0, S, S);
+    const d = cx.getImageData(0, 0, S, S).data;
+    let light = 0, total = 0;
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      if (x > 3 && x < S - 4 && y > 3 && y < S - 4) continue; // border ring only
+      const i = (y * S + x) * 4;
+      total++;
+      if (Math.min(d[i], d[i + 1], d[i + 2]) > 225) light++;
+    }
+    return light / Math.max(1, total) > 0.82;
+  } catch { return false; }
+}
+
 // Render the ad template off-screen (real fonts → crisp Arabic), rasterize it,
 // then clean up. flushSync mounts synchronously; two rAFs let it lay out first.
 async function captureAd(props: AdTemplateProps): Promise<string> {
@@ -89,8 +114,9 @@ export default function SocialClient({
         if (info.error || !info.copy) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر توليد النصوص"}`); return; }
         const productDataUrl = await fetchAsDataUrl(info.productUrl || p.image_url);
         const backdropDataUrl = info.backdropUrl ? await fetchAsDataUrl(info.backdropUrl) : "";
+        const frameProduct = !(await hasLightBackground(productDataUrl));
         const dataUrl = await captureAd({
-          productDataUrl, backdropDataUrl,
+          productDataUrl, backdropDataUrl, frameProduct,
           brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, priceLabel: PRICE_LABEL,
           headline: info.copy.headline, subtitle: info.copy.subtitle,
           benefits: info.copy.benefits, features: info.copy.features,
