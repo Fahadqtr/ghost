@@ -26,6 +26,7 @@ export interface AdTemplateProps {
   priceLabel: string;       // "سعر خاص"
   price: string;            // "128 ر.ق" ("" hides the badge)
   palette?: AdPalette;      // per-product design variant colors
+  frameProduct?: boolean;   // busy/lifestyle photo → elegant rounded card instead of multiply-melt
 }
 
 // Default palette (cream-gold) — overridden by the picked variant.
@@ -89,15 +90,28 @@ export default function AdTemplate(p: AdTemplateProps) {
       <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, rgb(${CREAM}) 0%, rgb(${CREAM}) 46%, rgba(${CREAM},0.55) 58%, rgba(${CREAM},0) 74%)` }} />
       <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 190, background: `linear-gradient(0deg, rgba(${CREAM},0.95) 0%, rgba(${CREAM},0) 100%)` }} />
 
-      {/* Bright halo so the multiply-blended product melts into the scene */}
-      <div style={{ position: "absolute", right: 6, top: 330, width: 600, height: 720, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,253,248,0.95) 0%, rgba(255,253,248,0) 66%)" }} />
-      {/* THE ORIGINAL PRODUCT PHOTO — composited untouched (never AI-redrawn) */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={p.productDataUrl}
-        alt=""
-        style={{ position: "absolute", right: 28, top: 360, width: 560, height: 660, objectFit: "contain", mixBlendMode: "multiply" }}
-      />
+      {/* THE ORIGINAL PRODUCT PHOTO — composited untouched (never AI-redrawn).
+          White-background catalog shots melt in via multiply; busy lifestyle
+          photos get an intentional rounded card with a soft shadow instead. */}
+      {p.frameProduct ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={p.productDataUrl}
+          alt=""
+          style={{ position: "absolute", right: 40, top: 388, width: 500, height: 620, objectFit: "cover", borderRadius: 28, border: "1.5px solid rgba(255,253,248,0.85)", boxShadow: "0 26px 60px rgba(45,32,20,0.28)" }}
+        />
+      ) : (
+        <>
+          {/* Bright halo so the multiply-blended product melts into the scene */}
+          <div style={{ position: "absolute", right: 6, top: 330, width: 600, height: 720, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,253,248,0.95) 0%, rgba(255,253,248,0) 66%)" }} />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={p.productDataUrl}
+            alt=""
+            style={{ position: "absolute", right: 28, top: 360, width: 560, height: 660, objectFit: "contain", mixBlendMode: "multiply" }}
+          />
+        </>
+      )}
 
       {/* Brand — Marcellus (Roman caps), wide tracking */}
       <div style={{ position: "absolute", top: 64, left: 68, fontFamily: AD_FONT_LATIN }}>
@@ -107,13 +121,13 @@ export default function AdTemplate(p: AdTemplateProps) {
       </div>
 
       {/* Headline (El Messiri display) + subtitle (Almarai light) */}
-      <div style={{ position: "absolute", top: 208, left: 68, width: 470, ...rtl }}>
+      <div style={{ position: "absolute", top: 208, left: 68, width: 424, ...rtl }}>
         <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 54, fontWeight: 700, lineHeight: 1.22, color: INK }}>{p.headline}</div>
         {p.subtitle ? <div style={{ fontSize: 22, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5 }}>{p.subtitle}</div> : null}
       </div>
 
       {/* Benefits — outline icon in a hairline ring, bold title + light sub */}
-      <div style={{ position: "absolute", top: 396, left: 68, width: 470 }}>
+      <div style={{ position: "absolute", top: 396, left: 68, width: 424 }}>
         {benefits.map((b, i) => (
           <div key={i} style={{
             display: "flex", flexDirection: "row", alignItems: "center", gap: 18,
