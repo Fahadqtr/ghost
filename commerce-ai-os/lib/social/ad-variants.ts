@@ -46,9 +46,10 @@ export const AD_LAYOUTS: AdLayout[] = [
       "white, softly glowing zone (a real product photo will be composited there later); the LEFT ~45% stays VERY " +
       "smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY on it. ",
     productPlacement:
-      "PLACEMENT: the product stands ON a low stone/marble pedestal on the RIGHT side of the frame, vertically " +
-      "centered, about 40-45% of the frame height; the LEFT ~45% of the frame stays VERY smooth, soft, evenly lit " +
-      "and low-detail with NOTHING in it — marketing text will be placed DIRECTLY on it. ",
+      "PLACEMENT: the product stands ON a low stone/marble pedestal on the RIGHT side of the frame, about 40-45% of " +
+      "the frame height, its top edge NO higher than 28% from the top. KEEP-OUT ZONES (must stay completely empty — " +
+      "no part of the product, pedestal or props may enter them): the LEFT ~45% of the frame and the TOP 25%; they " +
+      "stay VERY smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY on them. ",
   },
   {
     key: "hero",
@@ -58,9 +59,11 @@ export const AD_LAYOUTS: AdLayout[] = [
       "and BOTTOM quarter stay VERY smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY " +
       "on them. ",
     productPlacement:
-      "PLACEMENT: the product stands ON a low pedestal in the CENTER of the frame, about 40-45% of the frame height, " +
-      "hero composition; the TOP third and BOTTOM quarter of the frame stay VERY smooth, soft, evenly lit and " +
-      "low-detail with NOTHING in them — marketing text will be placed DIRECTLY on them. ",
+      "PLACEMENT: the product stands ON a low pedestal in the CENTER of the frame, hero composition, occupying ONLY " +
+      "the middle band between 38% and 76% of the frame height — its top edge NO higher than 38% from the top. " +
+      "KEEP-OUT ZONES (must stay completely empty — no part of the product, pedestal or props may enter them): the " +
+      "TOP 38% and the BOTTOM 24% of the frame; they stay VERY smooth, soft, evenly lit and low-detail — marketing " +
+      "text will be placed DIRECTLY on them. ",
   },
   {
     key: "banner",
@@ -69,9 +72,11 @@ export const AD_LAYOUTS: AdLayout[] = [
       "there (a real product photo will be composited there later); the BOTTOM ~40% stays VERY smooth, soft, evenly " +
       "lit and low-detail — marketing text will be placed DIRECTLY on it. ",
     productPlacement:
-      "PLACEMENT: the product stands ON a clean surface in the UPPER-CENTER of the frame, about 40% of the frame " +
-      "height; the BOTTOM ~40% of the frame stays VERY smooth, soft, evenly lit and low-detail with NOTHING in it — " +
-      "marketing text will be placed DIRECTLY on it. ",
+      "PLACEMENT: the product stands ON a clean surface in the UPPER-CENTER of the frame, occupying ONLY the band " +
+      "between 20% and 60% of the frame height — its top edge NO higher than 20% from the top. KEEP-OUT ZONES (must " +
+      "stay completely empty — no part of the product, pedestal or props may enter them): the BOTTOM ~40% of the " +
+      "frame and the TOP 18%; they stay VERY smooth, soft, evenly lit and low-detail — marketing text will be " +
+      "placed DIRECTLY on them. ",
   },
 ];
 
@@ -150,7 +155,10 @@ const PRODUCT_SCENE_BASE =
   "reflection — it must NEVER look pasted, cut out or floating in the air. Discard the source photo's own " +
   "background, collage panels, hands and people. " +
   "Do NOT add ANY marketing text, captions, headlines, prices, buttons, icons, logos, watermarks or graphics " +
-  "anywhere in the image. NO people, faces, hands or models. ";
+  "anywhere in the image. NO people, faces, hands or models. " +
+  "CRITICAL FRAMING RULE: the placement below defines KEEP-OUT ZONES reserved for typography that will be added " +
+  "later — the product must fit ENTIRELY inside its allowed band and never overlap a keep-out zone; if in doubt, " +
+  "make the product SMALLER rather than letting it touch a reserved zone. ";
 
 /** The full product-in-scene brief for one (variant, layout) pair. */
 export function buildProductSceneBrief(variant: AdVariant, layout: AdLayout): string {
