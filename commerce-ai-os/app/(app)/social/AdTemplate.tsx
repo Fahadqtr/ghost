@@ -30,8 +30,7 @@ export interface AdTemplateProps {
   subtitle: string;
   benefits: AdBullet[];     // up to 5 (title + optional sub)
   features: AdBullet[];     // up to 3 footer chips
-  priceLabel: string;       // "سعر خاص"
-  price: string;            // "128 ر.ق" ("" hides the badge)
+  website?: string;         // "www.malikasuniverse.com" (store link line)
   palette?: AdPalette;      // per-product design variant colors
   frameProduct?: boolean;   // busy/lifestyle photo → elegant rounded card instead of multiply-melt
   layout?: AdLayoutKey;     // "panel" (default) | "hero" | "banner"
@@ -138,21 +137,6 @@ export default function AdTemplate(p: AdTemplateProps) {
     </div>
   );
 
-  const priceBadge = (compact = false) => !p.price ? null : compact ? (
-    <div style={{ ...rtl, display: "flex", alignItems: "baseline", gap: 12, background: "rgba(255,253,248,0.85)", border: `1.5px solid rgba(${GOLD_RGB},0.5)`, borderRadius: 18, padding: "12px 26px" }}>
-      <span style={{ fontSize: 17, color: GOLD }}>{p.priceLabel}</span>
-      <span style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 38, fontWeight: 700, color: INK, lineHeight: 1 }}>{p.price}</span>
-    </div>
-  ) : (
-    <div style={{ ...rtl, background: "rgba(255,253,248,0.82)", border: `1.5px solid rgba(${GOLD_RGB},0.5)`, borderRadius: 20, padding: "14px 30px" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-        <span style={{ fontSize: 18, color: GOLD, fontWeight: 400, letterSpacing: 1 }}>{p.priceLabel}</span>
-        <span style={{ fontFamily: AD_FONT_LATIN, fontSize: 12, letterSpacing: 2, color: MUTED, direction: "ltr" }}>SPECIAL PRICE</span>
-      </div>
-      <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 44, fontWeight: 700, color: INK, lineHeight: 1.1 }}>{p.price}</div>
-    </div>
-  );
-
   const ctaPill = (
     <div style={{ background: DARK, color: "#f5efe4", borderRadius: 38, padding: "17px 40px", fontSize: 25, fontWeight: 800, letterSpacing: 1, direction: "rtl", display: "flex", alignItems: "center", gap: 13, boxShadow: "0 10px 26px rgba(30,22,14,0.28)" }}>
       <span>اطلبيه الآن</span>
@@ -171,6 +155,11 @@ export default function AdTemplate(p: AdTemplateProps) {
 
   const handleLine = (center = false): ReactNode => (
     <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 19, letterSpacing: 2, color: MUTED, ...(center ? { textAlign: "center" as const } : {}) }}>{p.handle}</div>
+  );
+
+  // Store link — replaces the price badge (Fahad: no prices on the design).
+  const websiteLine = (center = false): ReactNode => !p.website ? null : (
+    <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 21, letterSpacing: 2.5, textTransform: "uppercase" as const, color: INK, direction: "ltr", ...(center ? { textAlign: "center" as const } : {}), ...glow }}>{p.website}</div>
   );
 
   // ---------------------------------------------------------------- panel ----
@@ -212,8 +201,8 @@ export default function AdTemplate(p: AdTemplateProps) {
         </div>
 
         <div style={{ position: "absolute", left: 68, bottom: 140, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16 }}>
-          {priceBadge()}
           {ctaPill}
+          {websiteLine()}
           {handleLine()}
         </div>
 
@@ -265,11 +254,11 @@ export default function AdTemplate(p: AdTemplateProps) {
           </div>
         ) : null}
 
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 140, display: "flex", flexDirection: "row-reverse", justifyContent: "center", alignItems: "center", gap: 18 }}>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 148, display: "flex", flexDirection: "row-reverse", justifyContent: "center", alignItems: "center", gap: 18 }}>
           {ctaPill}
-          {priceBadge(true)}
         </div>
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 84 }}>{handleLine(true)}</div>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 96 }}>{websiteLine(true)}</div>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 58 }}>{handleLine(true)}</div>
       </div>
     );
   }
@@ -311,8 +300,10 @@ export default function AdTemplate(p: AdTemplateProps) {
 
         <div style={{ position: "absolute", bottom: 38, left: 68, right: 68, display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", gap: 18 }}>
           {ctaPill}
-          {priceBadge(true)}
-          {handleLine()}
+          <div style={{ display: "flex", flexDirection: "column", gap: 7, alignItems: "flex-start" }}>
+            {websiteLine()}
+            {handleLine()}
+          </div>
         </div>
       </div>
     </div>
