@@ -18,6 +18,15 @@ test("product-in-scene brief grounds the exact product and bans added text", () 
   }
 });
 
+test("product-in-scene brief fences the product out of the text zones", () => {
+  for (const l of AD_LAYOUTS) {
+    const brief = buildProductSceneBrief(AD_VARIANTS[0], l);
+    assert.ok(brief.includes("CRITICAL FRAMING RULE"));       // base hard rule
+    assert.ok(brief.includes("KEEP-OUT ZONES"));              // per-layout reserved zones
+    assert.ok(brief.includes("NO higher than"));              // explicit top-edge cap
+  }
+});
+
 test("product-refine brief keeps the product identical and strips clutter", () => {
   assert.ok(PRODUCT_REFINE_PROMPT.includes("IDENTICAL"));
   assert.ok(PRODUCT_REFINE_PROMPT.includes("WHITE background"));
