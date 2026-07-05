@@ -1,6 +1,6 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { AdBullet } from "@/lib/social/ad-copy-compute";
-import type { AdPalette } from "@/lib/social/ad-variants";
+import type { AdPalette, AdLayoutKey } from "@/lib/social/ad-variants";
 import { AD_FONT_HEADLINE, AD_FONT_BODY, AD_FONT_LATIN } from "@/lib/social/ad-fonts";
 
 // Fixed 1080×1350 (Instagram 4:5) luxury ad, styled with INLINE styles only
@@ -9,6 +9,11 @@ import { AD_FONT_HEADLINE, AD_FONT_BODY, AD_FONT_LATIN } from "@/lib/social/ad-f
 // KEY RULE: the product photo is the ORIGINAL catalog image, composited as-is
 // (never AI-redrawn), over an AI-generated EMPTY backdrop (or the designed CSS
 // background when no backdrop). Arabic is printed with embedded luxury fonts.
+//
+// THREE LAYOUTS (picked per product, rotate per tap — see ad-variants):
+//   panel  — detailed left copy column, product right (editorial)
+//   hero   — big centered product, minimal centered copy (Rhode-style)
+//   banner — large product on top, solid info panel at the bottom (magazine)
 
 export const AD_W = 1080;
 export const AD_H = 1350;
@@ -27,6 +32,7 @@ export interface AdTemplateProps {
   price: string;            // "128 ر.ق" ("" hides the badge)
   palette?: AdPalette;      // per-product design variant colors
   frameProduct?: boolean;   // busy/lifestyle photo → elegant rounded card instead of multiply-melt
+  layout?: AdLayoutKey;     // "panel" (default) | "hero" | "banner"
 }
 
 // Default palette (cream-gold) — overridden by the picked variant.
@@ -47,6 +53,7 @@ const FEATURE_ICONS = [
   "M6 8h12l-1 11H7z M9 8a3 3 0 0 1 6 0",                                        // bag
   "M20 5C11 5 6 10 5 19c9 0 14-5 15-14z",                                       // leaf
 ];
+const BAG = "M6 8h12l-1 11H7z M9 8a3 3 0 0 1 6 0";
 
 function Glyph({ d, size, color, w = 1.4 }: { d: string; size: number; color: string; w?: number }) {
   return (
@@ -64,116 +71,225 @@ const hexRgb = (hex: string): string => {
   return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
 };
 
+const rtl: CSSProperties = { direction: "rtl", textAlign: "right" };
+
+/** The untouched product photo: framed card OR multiply-melt, at a given box. */
+function ProductPhoto({ src, framed, box }: {
+  src: string; framed: boolean;
+  box: { right?: number; left?: number; top: number; width: number; height: number };
+}) {
+  if (framed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={src} alt="" style={{ position: "absolute", ...box, objectFit: "cover", borderRadius: 28, border: "1.5px solid rgba(255,253,248,0.85)", boxShadow: "0 26px 60px rgba(45,32,20,0.28)" }} />
+    );
+  }
+  const cx = box.left != null ? box.left + box.width / 2 : undefined;
+  return (
+    <>
+      <div style={{
+        position: "absolute", top: box.top - 40, width: box.width + 80, height: box.height + 80, borderRadius: "50%",
+        ...(box.left != null ? { left: (cx as number) - (box.width + 80) / 2 } : { right: (box.right as number) - 40 }),
+        background: "radial-gradient(circle, rgba(255,253,248,0.95) 0%, rgba(255,253,248,0) 66%)",
+      }} />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt="" style={{ position: "absolute", ...box, objectFit: "contain", mixBlendMode: "multiply" }} />
+    </>
+  );
+}
+
 export default function AdTemplate(p: AdTemplateProps) {
-  const { ink: INK, muted: MUTED, gold: GOLD, dark: DARK, panel: CREAM } = p.palette ?? DEFAULT_PALETTE;
+  const pal = p.palette ?? DEFAULT_PALETTE;
+  const { ink: INK, muted: MUTED, gold: GOLD, dark: DARK, panel: CREAM } = pal;
   const GOLD_RGB = hexRgb(GOLD);
+  const layout = p.layout ?? "panel";
+  const framed = !!p.frameProduct;
+
   const root: CSSProperties = {
     position: "absolute", top: 0, left: 0, width: AD_W, height: AD_H,
     fontFamily: AD_FONT_BODY, color: INK, overflow: "hidden", background: `rgb(${CREAM})`,
   };
-  const rtl: CSSProperties = { direction: "rtl", textAlign: "right" };
-  const benefits = p.benefits.slice(0, 5);
 
-  return (
-    <div style={root}>
-      {/* Backdrop: empty AI scene, or the designed gradient when absent */}
-      {p.backdropDataUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={p.backdropDataUrl} alt="" style={{ position: "absolute", inset: 0, width: AD_W, height: AD_H, objectFit: "cover" }} />
-      ) : (
-        <>
-          <div style={{ position: "absolute", inset: 0, background: `linear-gradient(135deg, rgb(${CREAM}) 0%, rgba(${GOLD_RGB},0.16) 100%)` }} />
-          <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 72% 30%, rgba(255,252,246,0.9) 0%, rgba(255,252,246,0) 46%)" }} />
-        </>
-      )}
-      {/* Opaque copy panel on the left, soft fade into the scene */}
-      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, rgb(${CREAM}) 0%, rgb(${CREAM}) 46%, rgba(${CREAM},0.55) 58%, rgba(${CREAM},0) 74%)` }} />
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 190, background: `linear-gradient(0deg, rgba(${CREAM},0.95) 0%, rgba(${CREAM},0) 100%)` }} />
+  const backdrop = p.backdropDataUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={p.backdropDataUrl} alt="" style={{ position: "absolute", inset: 0, width: AD_W, height: AD_H, objectFit: "cover" }} />
+  ) : (
+    <>
+      <div style={{ position: "absolute", inset: 0, background: `linear-gradient(135deg, rgb(${CREAM}) 0%, rgba(${GOLD_RGB},0.16) 100%)` }} />
+      <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 60% 34%, rgba(255,252,246,0.9) 0%, rgba(255,252,246,0) 48%)" }} />
+    </>
+  );
 
-      {/* THE ORIGINAL PRODUCT PHOTO — composited untouched (never AI-redrawn).
-          White-background catalog shots melt in via multiply; busy lifestyle
-          photos get an intentional rounded card with a soft shadow instead. */}
-      {p.frameProduct ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={p.productDataUrl}
-          alt=""
-          style={{ position: "absolute", right: 40, top: 388, width: 500, height: 620, objectFit: "cover", borderRadius: 28, border: "1.5px solid rgba(255,253,248,0.85)", boxShadow: "0 26px 60px rgba(45,32,20,0.28)" }}
-        />
-      ) : (
-        <>
-          {/* Bright halo so the multiply-blended product melts into the scene */}
-          <div style={{ position: "absolute", right: 6, top: 330, width: 600, height: 720, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,253,248,0.95) 0%, rgba(255,253,248,0) 66%)" }} />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={p.productDataUrl}
-            alt=""
-            style={{ position: "absolute", right: 28, top: 360, width: 560, height: 660, objectFit: "contain", mixBlendMode: "multiply" }}
-          />
-        </>
-      )}
+  const brandLockup = (centered = false) => (
+    <div style={{ position: "absolute", top: centered ? 58 : 64, ...(centered ? { left: 0, right: 0, textAlign: "center" as const } : { left: 68 }), fontFamily: AD_FONT_LATIN }}>
+      <div style={{ fontSize: centered ? 46 : 50, fontWeight: 400, letterSpacing: 5, lineHeight: 1, color: INK }}>{p.brandTop}</div>
+      <div style={{ fontSize: 15, letterSpacing: 11, color: MUTED, marginTop: 9 }}>{p.brandSub}</div>
+      {!centered && <div style={{ width: 58, height: 2, background: GOLD, marginTop: 18 }} />}
+    </div>
+  );
 
-      {/* Brand — Marcellus (Roman caps), wide tracking */}
-      <div style={{ position: "absolute", top: 64, left: 68, fontFamily: AD_FONT_LATIN }}>
-        <div style={{ fontSize: 50, fontWeight: 400, letterSpacing: 5, lineHeight: 1, color: INK }}>{p.brandTop}</div>
-        <div style={{ fontSize: 16, letterSpacing: 11, color: MUTED, marginTop: 10 }}>{p.brandSub}</div>
-        <div style={{ width: 58, height: 2, background: GOLD, marginTop: 18 }} />
-      </div>
+  const priceBadge = (compact = false) => !p.price ? null : compact ? (
+    <div style={{ ...rtl, display: "flex", alignItems: "baseline", gap: 12, background: "rgba(255,253,248,0.85)", border: `1.5px solid rgba(${GOLD_RGB},0.5)`, borderRadius: 18, padding: "12px 26px" }}>
+      <span style={{ fontSize: 17, color: GOLD }}>{p.priceLabel}</span>
+      <span style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 38, fontWeight: 700, color: INK, lineHeight: 1 }}>{p.price}</span>
+    </div>
+  ) : (
+    <div style={{ ...rtl, background: "rgba(255,253,248,0.82)", border: `1.5px solid rgba(${GOLD_RGB},0.5)`, borderRadius: 20, padding: "14px 30px" }}>
+      <div style={{ fontSize: 18, color: GOLD, fontWeight: 400, letterSpacing: 1 }}>{p.priceLabel}</div>
+      <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 44, fontWeight: 700, color: INK, lineHeight: 1.1 }}>{p.price}</div>
+    </div>
+  );
 
-      {/* Headline (El Messiri display) + subtitle (Almarai light) */}
-      <div style={{ position: "absolute", top: 208, left: 68, width: 424, ...rtl }}>
-        <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 54, fontWeight: 700, lineHeight: 1.22, color: INK }}>{p.headline}</div>
-        {p.subtitle ? <div style={{ fontSize: 22, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5 }}>{p.subtitle}</div> : null}
-      </div>
+  const ctaPill = (
+    <div style={{ background: DARK, color: "#f5efe4", borderRadius: 38, padding: "17px 44px", fontSize: 25, fontWeight: 800, letterSpacing: 1, direction: "rtl", display: "flex", alignItems: "center", gap: 13, boxShadow: "0 10px 26px rgba(30,22,14,0.28)" }}>
+      <span>اطلبيه الآن</span>
+      <Glyph d={BAG} size={23} color="#f5efe4" />
+    </div>
+  );
 
-      {/* Benefits — outline icon in a hairline ring, bold title + light sub */}
-      <div style={{ position: "absolute", top: 396, left: 68, width: 424 }}>
-        {benefits.map((b, i) => (
-          <div key={i} style={{
-            display: "flex", flexDirection: "row", alignItems: "center", gap: 18,
-            paddingBottom: 16, marginBottom: 16,
-            borderBottom: i < benefits.length - 1 ? `1px solid rgba(${GOLD_RGB},0.22)` : "none",
-          }}>
-            <div style={{ width: 54, height: 54, borderRadius: 27, flexShrink: 0, border: `1.5px solid rgba(${GOLD_RGB},0.45)`, background: "rgba(255,253,248,0.6)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Glyph d={BENEFIT_ICONS[i % BENEFIT_ICONS.length]} size={26} color={GOLD} />
-            </div>
-            <div style={{ flex: 1, ...rtl }}>
-              <div style={{ fontSize: 25, fontWeight: 800, color: INK, lineHeight: 1.3 }}>{b.title}</div>
-              {b.sub ? <div style={{ fontSize: 17, fontWeight: 300, color: MUTED, marginTop: 3, lineHeight: 1.35 }}>{b.sub}</div> : null}
-            </div>
-          </div>
-        ))}
-      </div>
+  const handleLine = (center = false): ReactNode => (
+    <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 19, letterSpacing: 2, color: MUTED, ...(center ? { textAlign: "center" as const } : {}) }}>{p.handle}</div>
+  );
 
-      {/* Price badge + CTA + handle (bottom-left, above the footer) */}
-      <div style={{ position: "absolute", left: 68, bottom: 140, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16 }}>
-        {p.price ? (
-          <div style={{ ...rtl, background: "rgba(255,253,248,0.82)", border: `1.5px solid rgba(${GOLD_RGB},0.5)`, borderRadius: 20, padding: "14px 30px" }}>
-            <div style={{ fontSize: 18, color: GOLD, fontWeight: 400, letterSpacing: 1 }}>{p.priceLabel}</div>
-            <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 44, fontWeight: 700, color: INK, lineHeight: 1.1 }}>{p.price}</div>
-          </div>
-        ) : null}
-        <div style={{ background: DARK, color: "#f5efe4", borderRadius: 38, padding: "17px 44px", fontSize: 25, fontWeight: 800, letterSpacing: 1, direction: "rtl", display: "flex", alignItems: "center", gap: 13, boxShadow: "0 10px 26px rgba(30,22,14,0.28)" }}>
-          <span>اطلبيه الآن</span>
-          <Glyph d="M6 8h12l-1 11H7z M9 8a3 3 0 0 1 6 0" size={23} color="#f5efe4" />
+  // ---------------------------------------------------------------- panel ----
+  if (layout === "panel") {
+    const benefits = p.benefits.slice(0, 5);
+    return (
+      <div style={root}>
+        {backdrop}
+        <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, rgb(${CREAM}) 0%, rgb(${CREAM}) 46%, rgba(${CREAM},0.55) 58%, rgba(${CREAM},0) 74%)` }} />
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 190, background: `linear-gradient(0deg, rgba(${CREAM},0.95) 0%, rgba(${CREAM},0) 100%)` }} />
+
+        <ProductPhoto src={p.productDataUrl} framed={framed}
+          box={framed ? { right: 40, top: 388, width: 500, height: 620 } : { right: 28, top: 360, width: 560, height: 660 }} />
+
+        {brandLockup()}
+
+        <div style={{ position: "absolute", top: 208, left: 68, width: 424, ...rtl }}>
+          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 54, fontWeight: 700, lineHeight: 1.22, color: INK }}>{p.headline}</div>
+          {p.subtitle ? <div style={{ fontSize: 22, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5 }}>{p.subtitle}</div> : null}
         </div>
-        <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 19, letterSpacing: 2, color: MUTED }}>{p.handle}</div>
-      </div>
 
-      {/* Footer feature bar */}
-      {p.features.length ? (
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 108, background: `rgba(${CREAM},0.8)`, display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-around", padding: "0 46px", borderTop: `1px solid rgba(${GOLD_RGB},0.2)` }}>
-          {p.features.slice(0, 3).map((f, i) => (
-            <div key={i} style={{ display: "flex", flexDirection: "row-reverse", alignItems: "center", gap: 13 }}>
-              <Glyph d={FEATURE_ICONS[i % FEATURE_ICONS.length]} size={30} color={GOLD} />
-              <div style={{ ...rtl }}>
-                <div style={{ fontSize: 21, fontWeight: 800, color: INK, lineHeight: 1.25 }}>{f.title}</div>
-                {f.sub ? <div style={{ fontSize: 15, fontWeight: 300, color: MUTED, lineHeight: 1.25 }}>{f.sub}</div> : null}
+        <div style={{ position: "absolute", top: 396, left: 68, width: 424 }}>
+          {benefits.map((b, i) => (
+            <div key={i} style={{
+              display: "flex", flexDirection: "row", alignItems: "center", gap: 18,
+              paddingBottom: 16, marginBottom: 16,
+              borderBottom: i < benefits.length - 1 ? `1px solid rgba(${GOLD_RGB},0.22)` : "none",
+            }}>
+              <div style={{ width: 54, height: 54, borderRadius: 27, flexShrink: 0, border: `1.5px solid rgba(${GOLD_RGB},0.45)`, background: "rgba(255,253,248,0.6)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Glyph d={BENEFIT_ICONS[i % BENEFIT_ICONS.length]} size={26} color={GOLD} />
+              </div>
+              <div style={{ flex: 1, ...rtl }}>
+                <div style={{ fontSize: 25, fontWeight: 800, color: INK, lineHeight: 1.3 }}>{b.title}</div>
+                {b.sub ? <div style={{ fontSize: 17, fontWeight: 300, color: MUTED, marginTop: 3, lineHeight: 1.35 }}>{b.sub}</div> : null}
               </div>
             </div>
           ))}
         </div>
-      ) : null}
+
+        <div style={{ position: "absolute", left: 68, bottom: 140, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16 }}>
+          {priceBadge()}
+          {ctaPill}
+          {handleLine()}
+        </div>
+
+        {p.features.length ? (
+          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 108, background: `rgba(${CREAM},0.8)`, display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-around", padding: "0 46px", borderTop: `1px solid rgba(${GOLD_RGB},0.2)` }}>
+            {p.features.slice(0, 3).map((f, i) => (
+              <div key={i} style={{ display: "flex", flexDirection: "row-reverse", alignItems: "center", gap: 13 }}>
+                <Glyph d={FEATURE_ICONS[i % FEATURE_ICONS.length]} size={30} color={GOLD} />
+                <div style={{ ...rtl }}>
+                  <div style={{ fontSize: 21, fontWeight: 800, color: INK, lineHeight: 1.25 }}>{f.title}</div>
+                  {f.sub ? <div style={{ fontSize: 15, fontWeight: 300, color: MUTED, lineHeight: 1.25 }}>{f.sub}</div> : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  // ----------------------------------------------------------------- hero ----
+  if (layout === "hero") {
+    const chips = p.benefits.slice(0, 3);
+    return (
+      <div style={root}>
+        {backdrop}
+        <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 420, background: `linear-gradient(180deg, rgba(${CREAM},0.96) 0%, rgba(${CREAM},0.75) 55%, rgba(${CREAM},0) 100%)` }} />
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 400, background: `linear-gradient(0deg, rgba(${CREAM},0.96) 0%, rgba(${CREAM},0.7) 55%, rgba(${CREAM},0) 100%)` }} />
+
+        <ProductPhoto src={p.productDataUrl} framed={framed}
+          box={framed ? { left: 250, top: 430, width: 580, height: 560 } : { left: 220, top: 400, width: 640, height: 600 }} />
+
+        {brandLockup(true)}
+
+        <div style={{ position: "absolute", top: 178, left: 60, right: 60, direction: "rtl", textAlign: "center" }}>
+          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 62, fontWeight: 700, lineHeight: 1.2, color: INK }}>{p.headline}</div>
+          {p.subtitle ? <div style={{ fontSize: 23, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5 }}>{p.subtitle}</div> : null}
+        </div>
+
+        {chips.length ? (
+          <div style={{ position: "absolute", left: 40, right: 40, bottom: 258, display: "flex", flexDirection: "row-reverse", justifyContent: "center", gap: 16, flexWrap: "wrap" }}>
+            {chips.map((b, i) => (
+              <div key={i} style={{ display: "flex", flexDirection: "row-reverse", alignItems: "center", gap: 10, background: "rgba(255,253,248,0.85)", border: `1.5px solid rgba(${GOLD_RGB},0.4)`, borderRadius: 30, padding: "12px 24px" }}>
+                <Glyph d={BENEFIT_ICONS[i % BENEFIT_ICONS.length]} size={22} color={GOLD} />
+                <span style={{ fontSize: 21, fontWeight: 800, color: INK, direction: "rtl" }}>{b.title}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 140, display: "flex", flexDirection: "row-reverse", justifyContent: "center", alignItems: "center", gap: 18 }}>
+          {ctaPill}
+          {priceBadge(true)}
+        </div>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 84 }}>{handleLine(true)}</div>
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------- banner ---
+  const cols = p.benefits.slice(0, 3);
+  const PANEL_H = 486;
+  return (
+    <div style={root}>
+      {backdrop}
+      <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 210, background: `linear-gradient(180deg, rgba(${CREAM},0.9) 0%, rgba(${CREAM},0) 100%)` }} />
+
+      <ProductPhoto src={p.productDataUrl} framed={framed}
+        box={framed ? { left: 240, top: 172, width: 600, height: 620 } : { left: 210, top: 140, width: 660, height: 660 }} />
+
+      {brandLockup()}
+
+      {/* Solid bottom info panel */}
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: PANEL_H, background: `rgb(${CREAM})`, borderTop: `2px solid rgba(${GOLD_RGB},0.35)` }}>
+        <div style={{ position: "absolute", top: 40, left: 68, right: 68, ...rtl }}>
+          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 48, fontWeight: 700, lineHeight: 1.2, color: INK }}>{p.headline}</div>
+          {p.subtitle ? <div style={{ fontSize: 21, fontWeight: 300, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>{p.subtitle}</div> : null}
+        </div>
+
+        {cols.length ? (
+          <div style={{ position: "absolute", top: 196, left: 56, right: 56, display: "flex", flexDirection: "row-reverse", justifyContent: "space-around", gap: 14 }}>
+            {cols.map((b, i) => (
+              <div key={i} style={{ flex: 1, textAlign: "center", direction: "rtl" }}>
+                <div style={{ width: 52, height: 52, borderRadius: 26, margin: "0 auto", border: `1.5px solid rgba(${GOLD_RGB},0.45)`, background: "rgba(255,253,248,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Glyph d={BENEFIT_ICONS[i % BENEFIT_ICONS.length]} size={25} color={GOLD} />
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: INK, marginTop: 10, lineHeight: 1.3 }}>{b.title}</div>
+                {b.sub ? <div style={{ fontSize: 15, fontWeight: 300, color: MUTED, marginTop: 3, lineHeight: 1.3 }}>{b.sub}</div> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div style={{ position: "absolute", bottom: 38, left: 68, right: 68, display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", gap: 18 }}>
+          {ctaPill}
+          {priceBadge(true)}
+          {handleLine()}
+        </div>
+      </div>
     </div>
   );
 }

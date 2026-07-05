@@ -13,7 +13,7 @@ import {
 } from "./actions";
 import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
 import { adFontCss } from "@/lib/social/ad-fonts";
-import { pickVariant } from "@/lib/social/ad-variants";
+import { pickVariant, pickLayout, buildSceneBrief } from "@/lib/social/ad-variants";
 import AdTemplate, { AD_W, AD_H, type AdTemplateProps } from "./AdTemplate";
 
 const BRAND_TOP = "MALIKA'S";
@@ -104,13 +104,14 @@ export default function SocialClient({
   // (never AI-redrawn) + real-font Arabic on top. Variant rotates per re-tap.
   const designAd = (p: SocialPost) => {
     const tap = taps[p.id] ?? 0;
-    const variant = pickVariant(p.id, tap);
+    const variant = pickVariant(p.id, tap);   // palette + backdrop mood (5)
+    const layout = pickLayout(p.id, tap);     // arrangement (3) → 15 combos
     setTaps((s) => ({ ...s, [p.id]: tap + 1 }));
     setBusyId(p.id);
     setNote(p.id, "…يصمّم الإعلان الفخم (خلفية فخمة + منتجك الأصلي + نص — قد يأخذ دقيقة)");
     start(async () => {
       try {
-        const info = await generateAdCreative(p.id, variant.scene);
+        const info = await generateAdCreative(p.id, buildSceneBrief(variant, layout));
         if (info.error || !info.copy) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر توليد النصوص"}`); return; }
         const productDataUrl = await fetchAsDataUrl(info.productUrl || p.image_url);
         const backdropDataUrl = info.backdropUrl ? await fetchAsDataUrl(info.backdropUrl) : "";
@@ -122,6 +123,7 @@ export default function SocialClient({
           benefits: info.copy.benefits, features: info.copy.features,
           price: info.price ?? "",
           palette: variant.palette,
+          layout: layout.key,
         });
         const saved = await saveSocialImage(p.id, dataUrl);
         setBusyId(null);
