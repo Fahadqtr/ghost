@@ -4,7 +4,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { AD_VARIANTS, AD_LAYOUTS, hashSeed, pickVariant, pickLayout, buildSceneBrief } from "./ad-variants.ts";
+import { AD_VARIANTS, AD_LAYOUTS, hashSeed, pickVariant, pickLayout, buildSceneBrief, PRODUCT_REFINE_PROMPT } from "./ad-variants.ts";
+
+test("product-refine brief keeps the product identical and strips clutter", () => {
+  assert.ok(PRODUCT_REFINE_PROMPT.includes("IDENTICAL"));
+  assert.ok(PRODUCT_REFINE_PROMPT.includes("WHITE background"));
+  assert.ok(PRODUCT_REFINE_PROMPT.includes("hands, faces, people"));
+  assert.ok(PRODUCT_REFINE_PROMPT.includes("collage"));
+  assert.ok(PRODUCT_REFINE_PROMPT.includes("Do NOT add any new text"));
+});
 
 test("every variant is complete (palette colors + a mood clause)", () => {
   assert.ok(AD_VARIANTS.length >= 4);

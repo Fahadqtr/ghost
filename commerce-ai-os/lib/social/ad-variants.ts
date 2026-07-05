@@ -110,3 +110,18 @@ export function pickLayout(seed: string, tap = 0): AdLayout {
 export function buildSceneBrief(variant: AdVariant, layout: AdLayout): string {
   return SCENE_BASE + layout.composition + variant.setting;
 }
+
+/**
+ * Product-refinement brief: turn a messy supplier photo (collage grids, gray
+ * backgrounds, hands, models) into ONE clean professional studio shot of the
+ * SAME product — identical shape/colors/label — on a seamless near-white
+ * background so it multiply-melts into the luxury backdrop.
+ */
+export const PRODUCT_REFINE_PROMPT =
+  "Professional studio product photograph. From this photo, isolate THE MAIN PRODUCT only and re-photograph it " +
+  "alone on a seamless pure WHITE background. The product must stay IDENTICAL: same shape, proportions, materials, " +
+  "colors, and its own printed label/text exactly as-is (do not redraw, translate or invent any lettering). " +
+  "REMOVE everything else: collage panels, grid layouts, gray or colored backgrounds, hands, faces, people, props " +
+  "and duplicate views — show the product ONCE, large and centered. Soft even studio lighting, a gentle natural " +
+  "shadow under the product, razor-sharp focus, high-end e-commerce quality. " +
+  "Do NOT add any new text, logos, watermarks, graphics or extra objects.";
