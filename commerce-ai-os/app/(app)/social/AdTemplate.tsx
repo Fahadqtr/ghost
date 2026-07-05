@@ -21,10 +21,12 @@ export const AD_H = 1350;
 export interface AdTemplateProps {
   productDataUrl?: string;  // product photo for fallback compositing ("" when the scene already contains it)
   backdropDataUrl?: string; // empty AI backdrop, data: URL ("" → CSS background)
+  logoDataUrl?: string;     // MU monogram (black on white), data: URL — multiplied so white vanishes
   brandTop: string;         // "MALIKA'S"
   brandSub: string;         // "UNIVERSE BEAUTY"
   handle: string;           // "@malikas.universe"
   headline: string;
+  headlineEn?: string;      // elegant English echo line under the Arabic headline
   subtitle: string;
   benefits: AdBullet[];     // up to 5 (title + optional sub)
   features: AdBullet[];     // up to 3 footer chips
@@ -125,10 +127,14 @@ export default function AdTemplate(p: AdTemplateProps) {
   );
 
   const brandLockup = (centered = false) => (
-    <div style={{ position: "absolute", top: centered ? 58 : 64, ...(centered ? { left: 0, right: 0, textAlign: "center" as const } : { left: 68 }), fontFamily: AD_FONT_LATIN }}>
-      <div style={{ fontSize: centered ? 46 : 50, fontWeight: 400, letterSpacing: 5, lineHeight: 1, color: INK }}>{p.brandTop}</div>
-      <div style={{ fontSize: 15, letterSpacing: 11, color: MUTED, marginTop: 9 }}>{p.brandSub}</div>
-      {!centered && <div style={{ width: 58, height: 2, background: GOLD, marginTop: 18 }} />}
+    <div style={{ position: "absolute", top: centered ? 44 : 52, ...(centered ? { left: 0, right: 0, textAlign: "center" as const } : { left: 68 }), fontFamily: AD_FONT_LATIN }}>
+      {p.logoDataUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={p.logoDataUrl} alt="" style={{ height: 96, width: 96, objectFit: "contain", mixBlendMode: "multiply", ...(centered ? { margin: "0 auto", display: "block" } : {}) }} />
+      ) : null}
+      <div style={{ fontSize: centered ? 34 : 36, fontWeight: 400, letterSpacing: 6, lineHeight: 1, color: INK, marginTop: p.logoDataUrl ? 8 : 0 }}>{p.brandTop}</div>
+      <div style={{ fontSize: 14, letterSpacing: 10, color: MUTED, marginTop: 8 }}>{p.brandSub}</div>
+      {!centered && <div style={{ width: 58, height: 2, background: GOLD, marginTop: 14 }} />}
     </div>
   );
 
@@ -139,15 +145,27 @@ export default function AdTemplate(p: AdTemplateProps) {
     </div>
   ) : (
     <div style={{ ...rtl, background: "rgba(255,253,248,0.82)", border: `1.5px solid rgba(${GOLD_RGB},0.5)`, borderRadius: 20, padding: "14px 30px" }}>
-      <div style={{ fontSize: 18, color: GOLD, fontWeight: 400, letterSpacing: 1 }}>{p.priceLabel}</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <span style={{ fontSize: 18, color: GOLD, fontWeight: 400, letterSpacing: 1 }}>{p.priceLabel}</span>
+        <span style={{ fontFamily: AD_FONT_LATIN, fontSize: 12, letterSpacing: 2, color: MUTED, direction: "ltr" }}>SPECIAL PRICE</span>
+      </div>
       <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 44, fontWeight: 700, color: INK, lineHeight: 1.1 }}>{p.price}</div>
     </div>
   );
 
   const ctaPill = (
-    <div style={{ background: DARK, color: "#f5efe4", borderRadius: 38, padding: "17px 44px", fontSize: 25, fontWeight: 800, letterSpacing: 1, direction: "rtl", display: "flex", alignItems: "center", gap: 13, boxShadow: "0 10px 26px rgba(30,22,14,0.28)" }}>
+    <div style={{ background: DARK, color: "#f5efe4", borderRadius: 38, padding: "17px 40px", fontSize: 25, fontWeight: 800, letterSpacing: 1, direction: "rtl", display: "flex", alignItems: "center", gap: 13, boxShadow: "0 10px 26px rgba(30,22,14,0.28)" }}>
       <span>اطلبيه الآن</span>
+      <span style={{ width: 1, height: 22, background: "rgba(245,239,228,0.4)" }} />
+      <span style={{ fontFamily: AD_FONT_LATIN, fontSize: 16, fontWeight: 400, letterSpacing: 3, direction: "ltr" }}>SHOP NOW</span>
       <Glyph d={BAG} size={23} color="#f5efe4" />
+    </div>
+  );
+
+  // Elegant English echo line under the Arabic headline (bilingual design).
+  const headlineEnLine = (center = false): ReactNode => !p.headlineEn ? null : (
+    <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 24, fontWeight: 400, letterSpacing: 4, textTransform: "uppercase" as const, color: GOLD, marginTop: 12, direction: "ltr", textAlign: (center ? "center" : "right") as CSSProperties["textAlign"], ...glow }}>
+      {p.headlineEn}
     </div>
   );
 
@@ -169,12 +187,13 @@ export default function AdTemplate(p: AdTemplateProps) {
 
         {brandLockup()}
 
-        <div style={{ position: "absolute", top: 208, left: 68, width: 424, ...rtl }}>
+        <div style={{ position: "absolute", top: 252, left: 68, width: 424, ...rtl }}>
           <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 54, fontWeight: 700, lineHeight: 1.22, color: INK, ...glow }}>{p.headline}</div>
-          {p.subtitle ? <div style={{ fontSize: 22, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
+          {headlineEnLine()}
+          {p.subtitle ? <div style={{ fontSize: 22, fontWeight: 300, color: MUTED, marginTop: 12, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
         </div>
 
-        <div style={{ position: "absolute", top: 396, left: 68, width: 424 }}>
+        <div style={{ position: "absolute", top: 468, left: 68, width: 424 }}>
           {benefits.map((b, i) => (
             <div key={i} style={{
               display: "flex", flexDirection: "row", alignItems: "center", gap: 18,
@@ -229,9 +248,10 @@ export default function AdTemplate(p: AdTemplateProps) {
 
         {brandLockup(true)}
 
-        <div style={{ position: "absolute", top: 178, left: 60, right: 60, direction: "rtl", textAlign: "center" }}>
+        <div style={{ position: "absolute", top: 252, left: 60, right: 60, direction: "rtl", textAlign: "center" }}>
           <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 62, fontWeight: 700, lineHeight: 1.2, color: INK, ...glow }}>{p.headline}</div>
-          {p.subtitle ? <div style={{ fontSize: 23, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
+          {headlineEnLine(true)}
+          {p.subtitle ? <div style={{ fontSize: 23, fontWeight: 300, color: MUTED, marginTop: 12, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
         </div>
 
         {chips.length ? (
@@ -271,11 +291,12 @@ export default function AdTemplate(p: AdTemplateProps) {
       <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: PANEL_H, background: `linear-gradient(0deg, rgba(${CREAM},0.85) 0%, rgba(${CREAM},0.62) 62%, rgba(${CREAM},0.22) 86%, rgba(${CREAM},0) 100%)` }}>
         <div style={{ position: "absolute", top: 40, left: 68, right: 68, ...rtl }}>
           <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 48, fontWeight: 700, lineHeight: 1.2, color: INK, ...glow }}>{p.headline}</div>
+          {headlineEnLine()}
           {p.subtitle ? <div style={{ fontSize: 21, fontWeight: 300, color: MUTED, marginTop: 8, lineHeight: 1.45, ...glow }}>{p.subtitle}</div> : null}
         </div>
 
         {cols.length ? (
-          <div style={{ position: "absolute", top: 196, left: 56, right: 56, display: "flex", flexDirection: "row-reverse", justifyContent: "space-around", gap: 14 }}>
+          <div style={{ position: "absolute", top: 232, left: 56, right: 56, display: "flex", flexDirection: "row-reverse", justifyContent: "space-around", gap: 14 }}>
             {cols.map((b, i) => (
               <div key={i} style={{ flex: 1, textAlign: "center", direction: "rtl" }}>
                 <div style={{ width: 52, height: 52, borderRadius: 26, margin: "0 auto", border: `1.5px solid rgba(${GOLD_RGB},0.45)`, background: "rgba(255,253,248,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }}>

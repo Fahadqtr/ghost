@@ -13,13 +13,21 @@ import {
 } from "./actions";
 import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
 import { adFontCss } from "@/lib/social/ad-fonts";
-import { pickVariant, pickLayout, buildProductSceneBrief } from "@/lib/social/ad-variants";
+import { pickVariant, pickLayout, buildProductSceneBrief, BRAND_PALETTE } from "@/lib/social/ad-variants";
 import AdTemplate, { AD_W, AD_H, type AdTemplateProps } from "./AdTemplate";
 
 const BRAND_TOP = "MALIKA'S";
 const BRAND_SUB = "UNIVERSE BEAUTY";
 const PRICE_LABEL = "سعر خاص";
 const HANDLE = "@malikas.universe";
+
+// MU monogram, fetched once and inlined (the SVG raster can't load URLs).
+let logoCache: string | null = null;
+async function brandLogoDataUrl(): Promise<string> {
+  if (logoCache) return logoCache;
+  try { logoCache = await fetchAsDataUrl("/brand/logo.png"); } catch { logoCache = ""; }
+  return logoCache;
+}
 
 // Is this a clean white/near-white catalog shot? Sample the border pixels: if
 // almost all are near-white the photo can multiply-melt into the scene;
@@ -119,13 +127,14 @@ export default function SocialClient({
         const backdropDataUrl = info.backdropUrl ? await fetchAsDataUrl(info.backdropUrl) : "";
         const productDataUrl = backdropDataUrl ? "" : await fetchAsDataUrl(info.productUrl || p.image_url);
         const frameProduct = productDataUrl ? !(await hasLightBackground(productDataUrl)) : false;
+        const logoDataUrl = await brandLogoDataUrl();
         const dataUrl = await captureAd({
-          productDataUrl, backdropDataUrl, frameProduct,
+          productDataUrl, backdropDataUrl, frameProduct, logoDataUrl,
           brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, priceLabel: PRICE_LABEL,
-          headline: info.copy.headline, subtitle: info.copy.subtitle,
+          headline: info.copy.headline, headlineEn: info.copy.headlineEn, subtitle: info.copy.subtitle,
           benefits: info.copy.benefits, features: info.copy.features,
           price: info.price ?? "",
-          palette: variant.palette,
+          palette: BRAND_PALETTE,
           layout: layout.key,
         });
         const saved = await saveSocialImage(p.id, dataUrl);

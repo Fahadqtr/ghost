@@ -26,6 +26,14 @@ test("product-refine brief keeps the product identical and strips clutter", () =
   assert.ok(PRODUCT_REFINE_PROMPT.includes("Do NOT add any new text"));
 });
 
+test("brand palette is valid monochrome chrome", async () => {
+  const { BRAND_PALETTE } = await import("./ad-variants.ts");
+  for (const c of [BRAND_PALETTE.ink, BRAND_PALETTE.muted, BRAND_PALETTE.gold, BRAND_PALETTE.dark]) {
+    assert.match(c, /^#[0-9a-f]{6}$/i);
+  }
+  assert.match(BRAND_PALETTE.panel, /^\d+,\d+,\d+$/);
+});
+
 test("every variant is complete (palette colors + a mood clause)", () => {
   assert.ok(AD_VARIANTS.length >= 4);
   for (const v of AD_VARIANTS) {

@@ -17,7 +17,8 @@ export interface AdBullet {
 }
 
 export interface AdCopy {
-  headline: string;   // large product headline
+  headline: string;   // large product headline (Arabic)
+  headlineEn: string; // elegant English line under it (bilingual design)
   subtitle: string;   // short intro line under the headline
   benefits: AdBullet[]; // up to 5
   features: AdBullet[]; // up to 3 (footer bar)
@@ -33,12 +34,13 @@ export function buildAdCopyPrompt(input: AdCopyInput): string {
   const desc = clip(input.description, 600);
   return (
     "أنت مصمّمة إعلانات فخمة لمتجر Malika's Universe (منتجات جمال، قطر). " +
-    "من بيانات المنتج، اكتبي نص إعلان عربي راقٍ وأرجعي JSON فقط بهذا الشكل بالضبط:\n" +
-    '{"headline":"...","subtitle":"...","benefits":[{"title":"...","sub":"..."}],"features":[{"title":"...","sub":"..."}]}\n\n' +
+    "من بيانات المنتج، اكتبي نص إعلان راقٍ (عربي + سطر إنجليزي) وأرجعي JSON فقط بهذا الشكل بالضبط:\n" +
+    '{"headline":"...","headlineEn":"...","subtitle":"...","benefits":[{"title":"...","sub":"..."}],"features":[{"title":"...","sub":"..."}]}\n\n' +
     `المنتج: ${name}${en}\n` +
     (desc ? `الوصف: ${desc}\n` : "") +
     "\nالقواعد:\n" +
-    "• headline: عنوان المنتج الرئيسي، بارز وجذّاب (٢–٤ كلمات).\n" +
+    "• headline: عنوان المنتج الرئيسي بالعربية، بارز وجذّاب (٢–٤ كلمات).\n" +
+    "• headlineEn: سطر إنجليزي أنيق يوازي العنوان (2–5 كلمات إنجليزية بأسلوب إعلانات فاخرة، مثل GLOW REPAIR SERUM).\n" +
     "• subtitle: سطر تعريفي قصير تحت العنوان (٤–٧ كلمات).\n" +
     "• benefits: ٥ مزايا، كل وحدة {title: ٢–٤ كلمات بارزة، sub: ٣–٦ كلمات توضيحية}.\n" +
     "• features: ٣ مميزات ثقة، كل وحدة {title: كلمة–كلمتان، sub: ٢–٤ كلمات}.\n" +
@@ -62,7 +64,7 @@ function bullets(v: unknown, max: number): AdBullet[] {
  * back empty (the template hides empty rows); the headline falls back to the
  * product name.
  */
-export function parseAdCopy(text: string, fallbackName = ""): AdCopy {
+export function parseAdCopy(text: string, fallbackName = "", fallbackNameEn = ""): AdCopy {
   const raw = String(text ?? "");
   let obj: any = null;
   const m = raw.match(/\{[\s\S]*\}/);
@@ -70,6 +72,7 @@ export function parseAdCopy(text: string, fallbackName = ""): AdCopy {
 
   return {
     headline: clip(obj?.headline, 50) || clip(fallbackName, 50),
+    headlineEn: clip(obj?.headlineEn, 44) || clip(fallbackNameEn, 44),
     subtitle: clip(obj?.subtitle, 70),
     benefits: bullets(obj?.benefits, 5),
     features: bullets(obj?.features, 3),

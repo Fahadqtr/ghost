@@ -75,6 +75,19 @@ export const AD_LAYOUTS: AdLayout[] = [
   },
 ];
 
+/**
+ * Brand chrome — matched to the MU monogram (pure black on ivory). All UI
+ * elements (type, hairlines, icons, CTA) use this monochrome identity while
+ * the SCENES keep rotating through the variant moods below.
+ */
+export const BRAND_PALETTE: AdPalette = {
+  ink: "#161412",   // near-black brand text
+  muted: "#6e6862", // soft warm gray
+  gold: "#3a352f",  // charcoal accent (hairlines, icons, price label)
+  dark: "#0f0e0d",  // CTA pill — logo black
+  panel: "246,244,240", // ivory
+};
+
 export const AD_VARIANTS: AdVariant[] = [
   {
     key: "cream-gold",
