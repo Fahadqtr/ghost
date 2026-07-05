@@ -106,7 +106,7 @@ export async function analyzeProductImageWithGemini(imageUrl: string): Promise<s
  * mood). Different variation numbers give clearly different concepts, so every
  * re-tap is a new product-inspired design.
  */
-export async function designSceneSettingWithGemini(imageUrl: string, variation: number): Promise<string | null> {
+export async function designSceneSettingWithGemini(imageUrl: string, variation: number, productName?: string): Promise<string | null> {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
   const src = String(imageUrl || "").trim();
   if (!key || !src) return null;
@@ -117,16 +117,21 @@ export async function designSceneSettingWithGemini(imageUrl: string, variation: 
     const buf = Buffer.from(await r0.arrayBuffer());
     const model = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
     const n = Math.max(1, Math.round(variation));
+    const name = String(productName || "").trim().slice(0, 120);
     const body = {
       contents: [{ parts: [
         { text:
-          "You are a luxury beauty art director. Look at this product photo and invent scene concept #" + n +
-          " for a high-end Instagram ad backdrop INSPIRED BY THIS PRODUCT: pull the palette from its packaging " +
-          "colors, and choose surfaces, textures and props that echo its ingredients or purpose (e.g. water ripples " +
-          "for hydrating care, botanicals for natural formulas, silk for hair care). Reply with EXACTLY one English " +
-          "sentence starting with \"Setting:\" describing palette, surfaces, props and lighting. Rules: no people, " +
-          "no hands, no text, no other products, light and airy (never a dark background). Concept #" + n +
-          " must be clearly different from concepts with other numbers." },
+          "You are a WORLD-CLASS art director for luxury beauty campaigns (think Dior, Jacquemus, Rhode, Glossier " +
+          "set design). Look at this product photo" + (name ? ` — the product is "${name}"` : "") + " — first " +
+          "identify exactly WHAT it is (its category and real form), then invent set-design concept #" + n +
+          " for a high-end Instagram ad backdrop. Be BOLD and imaginative — avoid the cliché round-podium-with-" +
+          "fabric shot. Draw from: sculptural plaster arches and niches, monolithic stone blocks, rippling water " +
+          "surfaces, sun-drenched hard shadow play, floating glass shelves, mirrors, wet sand dunes, curved " +
+          "seamless color walls, oversized ingredient props (petals, citrus, pearls, silk waves) — whatever fits " +
+          "THIS product: pull the palette from its packaging colors and choose textures echoing its purpose. " +
+          "Reply with EXACTLY one English sentence starting with \"Setting:\" describing palette, surfaces, props, " +
+          "composition idea and lighting. Rules: no people, no hands, no text, no other products, light and airy " +
+          "(never a dark background). Concept #" + n + " must be clearly different from concepts with other numbers." },
         { inline_data: { mime_type: ct, data: buf.toString("base64") } },
       ] }],
     };
