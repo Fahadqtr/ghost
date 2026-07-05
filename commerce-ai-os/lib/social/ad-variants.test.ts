@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { AD_VARIANTS, AD_LAYOUTS, hashSeed, pickVariant, pickLayout, buildSceneBrief, buildProductSceneBrief, PRODUCT_REFINE_PROMPT } from "./ad-variants.ts";
+import { AD_VARIANTS, AD_LAYOUTS, hashSeed, pickVariant, pickLayout, buildSceneBrief, buildProductSceneBrief, PRODUCT_SCENE_BASE, WORN_SCENE_BASE, PRODUCT_REFINE_PROMPT } from "./ad-variants.ts";
 
 test("product-in-scene brief grounds the exact product and bans added text", () => {
   for (const l of AD_LAYOUTS) {
@@ -25,6 +25,20 @@ test("product-in-scene brief fences the product out of the text zones", () => {
     assert.ok(brief.includes("NEVER substitute"));            // anti product-swap rule
     assert.ok(brief.includes("KEEP-OUT ZONES"));              // per-layout reserved zones
     assert.ok(brief.includes("NO higher than"));              // explicit top-edge cap
+  }
+});
+
+test("worn brief keeps the photographed subject and swaps cleanly into any layout brief", () => {
+  assert.ok(WORN_SCENE_BASE.includes("KEEP THE SUBJECT"));
+  assert.ok(WORN_SCENE_BASE.includes("REPLACE ONLY THE BACKGROUND"));
+  assert.ok(WORN_SCENE_BASE.includes("Do NOT add ANY marketing text"));
+  assert.ok(WORN_SCENE_BASE.includes("KEEP-OUT ZONES"));
+  for (const l of AD_LAYOUTS) {
+    const brief = buildProductSceneBrief(AD_VARIANTS[0], l);
+    const worn = brief.replace(PRODUCT_SCENE_BASE, WORN_SCENE_BASE); // the server-side swap
+    assert.ok(worn.startsWith(WORN_SCENE_BASE));                     // base really replaced
+    assert.ok(worn.includes("PLACEMENT:"));                          // layout survives
+    assert.ok(worn.includes("Setting:"));                            // mood survives
   }
 });
 
