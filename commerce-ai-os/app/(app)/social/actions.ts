@@ -13,6 +13,7 @@ import { formatQar } from "@/lib/social/ad-overlay-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
 import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
 import { geminiConfigured, generateSceneWithGemini, designSceneSettingWithGemini } from "@/lib/social/scene-gemini";
+import { PRODUCT_SCENE_BASE, WORN_SCENE_BASE } from "@/lib/social/ad-variants";
 import crypto from "crypto";
 
 // Review-first social queue: list pending/recent, publish one (routes to the
@@ -249,8 +250,12 @@ export async function generateAdCreative(id: string, sceneStyle?: string, tap?: 
     ? (async () => {
         const productName = String(p.name_en || p.name_ar || "").trim().slice(0, 120);
         let brief = style;
-        const mood = await designSceneSettingWithGemini(String(p.image_url), (tap ?? 0) + 1, productName).catch(() => null);
-        if (mood) brief = style.replace(/Setting:[\s\S]*$/, mood);
+        const design = await designSceneSettingWithGemini(String(p.image_url), (tap ?? 0) + 1, productName).catch(() => null);
+        if (design?.setting) brief = style.replace(/Setting:[\s\S]*$/, design.setting);
+        // WORN photo (nails on a hand, lashes on an eye…): the photographed
+        // subject IS the hero — keep the hand/product pixel-faithful and
+        // rebuild only the world around it, instead of extracting an object.
+        if (design?.worn) brief = brief.replace(PRODUCT_SCENE_BASE, WORN_SCENE_BASE);
         // Tell the image model what the item actually IS, so a collage of
         // press-on nails can never come back as a polish bottle.
         if (productName) {

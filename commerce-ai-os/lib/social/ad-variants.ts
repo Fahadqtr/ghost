@@ -146,7 +146,7 @@ export function buildSceneBrief(variant: AdVariant, layout: AdLayout): string {
 // Product-IN-scene brief: Gemini places the EXACT product from the supplied
 // photo into the luxury scene itself — standing on the pedestal, grounded with
 // real contact shadow and lighting — so it never looks pasted or floating.
-const PRODUCT_SCENE_BASE =
+export const PRODUCT_SCENE_BASE =
   "Ultra-realistic luxury beauty campaign photograph, editorial 8K quality, vertical 4:5 composition. " +
   "TASK: take the product from the provided photo and place THAT EXACT PRODUCT into the scene described below. " +
   "The product must remain 100% IDENTICAL: same shape, proportions, materials, colors, cap and its own printed " +
@@ -167,6 +167,26 @@ const PRODUCT_SCENE_BASE =
 export function buildProductSceneBrief(variant: AdVariant, layout: AdLayout): string {
   return PRODUCT_SCENE_BASE + layout.productPlacement + variant.setting;
 }
+
+// WORN-product brief: the catalog photo shows the product ON a model (press-on
+// nails on a hand, lashes on an eye, jewelry on skin). The photographed subject
+// IS the hero of the ad — keep it pixel-faithful and rebuild only the world
+// around it. Swapped in for PRODUCT_SCENE_BASE server-side when Gemini
+// classifies the photo as worn.
+export const WORN_SCENE_BASE =
+  "Ultra-realistic luxury beauty campaign photograph, editorial 8K quality, vertical 4:5 composition. " +
+  "TASK: this photo shows the product being WORN (for example press-on nails on a hand). KEEP THE SUBJECT " +
+  "EXACTLY AS PHOTOGRAPHED: the same hand/skin/pose and the same product with identical shape, colors, details " +
+  "and finish — do not redraw, replace, retouch away or alter the hand or the product in any way. Elevate the " +
+  "photograph instead: refined professional editorial lighting, and REPLACE ONLY THE BACKGROUND around the " +
+  "subject with the scene described below, recomposing to a vertical 4:5 frame. Wherever the placement below " +
+  "says 'the product', treat it as THIS SUBJECT — it needs no pedestal; pose it elegantly within its allowed " +
+  "band, cropped like a high-fashion beauty editorial. " +
+  "Do NOT add ANY marketing text, captions, headlines, prices, buttons, icons, logos, watermarks or graphics " +
+  "anywhere in the image. Do not add any OTHER people, hands or products beyond the photographed subject. " +
+  "CRITICAL FRAMING RULE: the placement below defines KEEP-OUT ZONES reserved for typography that will be added " +
+  "later — the subject must fit ENTIRELY inside its allowed band and never overlap a keep-out zone; if in " +
+  "doubt, make the subject SMALLER rather than letting it touch a reserved zone. ";
 
 /**
  * Product-refinement brief: turn a messy supplier photo (collage grids, gray

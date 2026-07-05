@@ -98,15 +98,20 @@ export async function analyzeProductImageWithGemini(imageUrl: string): Promise<s
   } catch { return null; }
 }
 
+export interface SceneDesign {
+  setting: string; // "Setting: ..." clause for the scene brief
+  worn: boolean;   // photo shows the product WORN (nails on a hand, lashes on an eye…)
+}
+
 /**
- * Art-direct the ad scene FROM the product itself: Gemini looks at the photo
- * and invents scene concept #variation (palette pulled from the packaging,
- * textures/props echoing the product's purpose). Returns one English
- * "Setting: ..." clause, or null on any failure (callers keep their fallback
- * mood). Different variation numbers give clearly different concepts, so every
- * re-tap is a new product-inspired design.
+ * Art-direct the ad scene FROM the product itself: Gemini looks at the photo,
+ * classifies HOW the product is shown (worn on a body part vs a standalone
+ * packshot) and invents scene concept #variation (palette pulled from the
+ * packaging, textures/props echoing the product's purpose). Returns null on
+ * any failure (callers keep their fallback mood). Different variation numbers
+ * give clearly different concepts, so every re-tap is a new design.
  */
-export async function designSceneSettingWithGemini(imageUrl: string, variation: number, productName?: string): Promise<string | null> {
+export async function designSceneSettingWithGemini(imageUrl: string, variation: number, productName?: string): Promise<SceneDesign | null> {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
   const src = String(imageUrl || "").trim();
   if (!key || !src) return null;
@@ -122,16 +127,21 @@ export async function designSceneSettingWithGemini(imageUrl: string, variation: 
       contents: [{ parts: [
         { text:
           "You are a WORLD-CLASS art director for luxury beauty campaigns (think Dior, Jacquemus, Rhode, Glossier " +
-          "set design). Look at this product photo" + (name ? ` — the product is "${name}"` : "") + " — first " +
-          "identify exactly WHAT it is (its category and real form), then invent set-design concept #" + n +
-          " for a high-end Instagram ad backdrop. Be BOLD and imaginative — avoid the cliché round-podium-with-" +
-          "fabric shot. Draw from: sculptural plaster arches and niches, monolithic stone blocks, rippling water " +
-          "surfaces, sun-drenched hard shadow play, floating glass shelves, mirrors, wet sand dunes, curved " +
-          "seamless color walls, oversized ingredient props (petals, citrus, pearls, silk waves) — whatever fits " +
-          "THIS product: pull the palette from its packaging colors and choose textures echoing its purpose. " +
-          "Reply with EXACTLY one English sentence starting with \"Setting:\" describing palette, surfaces, props, " +
-          "composition idea and lighting. Rules: no people, no hands, no text, no other products, light and airy " +
-          "(never a dark background). Concept #" + n + " must be clearly different from concepts with other numbers." },
+          "set design). Look at this product photo" + (name ? ` — the product is "${name}"` : "") + ".\n" +
+          "STEP 1 — classify HOW the product is shown: \"worn\" = it is being worn/applied on a body part in the " +
+          "photo (press-on nails on a hand, lashes on an eye, jewelry on skin, a hair accessory in hair); " +
+          "\"packshot\" = the product appears as a standalone object/box/bottle/kit.\n" +
+          "STEP 2 — invent set-design concept #" + n + " for a high-end Instagram ad. Be BOLD and imaginative — " +
+          "avoid the cliché round-podium-with-fabric shot. Draw from: sculptural plaster arches and niches, " +
+          "monolithic stone blocks, rippling water surfaces, sun-drenched hard shadow play, floating glass " +
+          "shelves, mirrors, wet sand dunes, curved seamless color walls, oversized ingredient props (petals, " +
+          "citrus, pearls, silk waves) — whatever fits THIS product: pull the palette from its packaging or its " +
+          "own colors and choose textures echoing its purpose. If worn, the scene is the world AROUND the " +
+          "photographed subject (a backdrop that flatters the hand/skin), never a pedestal for an object.\n" +
+          'Reply with ONLY this JSON: {"worn": true|false, "setting": "Setting: <one English sentence describing ' +
+          'palette, surfaces, props, composition idea and lighting>"}. Rules for the setting: no extra people, no ' +
+          "added text, no other products, light and airy (never a dark background). Concept #" + n +
+          " must be clearly different from concepts with other numbers." },
         { inline_data: { mime_type: ct, data: buf.toString("base64") } },
       ] }],
     };
@@ -145,8 +155,16 @@ export async function designSceneSettingWithGemini(imageUrl: string, variation: 
     const data: any = await r.json();
     const parts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
     const text = parts.map((p) => p?.text ?? "").join("").trim();
+    const j = text.match(/\{[\s\S]*\}/);
+    if (j) {
+      try {
+        const obj: any = JSON.parse(j[0]);
+        const setting = String(obj?.setting ?? "").trim();
+        if (/^Setting:/.test(setting)) return { setting: setting.slice(0, 500), worn: obj?.worn === true };
+      } catch { /* fall through to the plain-text path */ }
+    }
     const m = text.match(/Setting:[^\n]*/);
-    return m ? m[0].slice(0, 500) : null;
+    return m ? { setting: m[0].slice(0, 500), worn: /"worn"\s*:\s*true/.test(text) } : null;
   } catch { return null; }
 }
 
