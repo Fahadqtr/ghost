@@ -239,7 +239,7 @@ export async function generateAdCreative(id: string, sceneStyle?: string): Promi
     const model = process.env.STAFF_MALAK_MODEL || "claude-sonnet-5";
     const resp: any = await client.messages.create({ model, max_tokens: 500, messages: [{ role: "user", content: prompt }] });
     const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-    return parseAdCopy(text, String(p.name_ar || p.name_en || ""));
+    return parseAdCopy(text, String(p.name_ar || p.name_en || ""), String(p.name_en || ""));
   })();
   const sceneJob = gemini && p.image_url && style
     ? generateSceneWithGemini(sb, String(p.image_url), style, "social").catch(() => ({ error: "scene failed" }))

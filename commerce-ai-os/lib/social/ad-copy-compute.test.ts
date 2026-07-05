@@ -14,6 +14,7 @@ test("prompt carries the product name, description, and the JSON shape rule", ()
   assert.ok(p.includes("(Massager)"));
   assert.ok(p.includes("خشب طبيعي"));
   assert.ok(p.includes('"headline"'));
+  assert.ok(p.includes('"headlineEn"'));
   assert.ok(p.includes('"subtitle"'));
   assert.ok(p.includes('"benefits"'));
   assert.ok(p.includes('"features"'));
@@ -50,8 +51,15 @@ test("caps benefits at 5 / features at 3 and drops title-less bullets", () => {
 });
 
 test("falls back to the product name and empty arrays on garbage", () => {
-  const c = parseAdCopy("no json here", "منتج احتياطي");
+  const c = parseAdCopy("no json here", "منتج احتياطي", "Backup Product");
   assert.equal(c.headline, "منتج احتياطي");
+  assert.equal(c.headlineEn, "Backup Product");
   assert.deepEqual(c.benefits, []);
   assert.deepEqual(c.features, []);
+});
+
+test("parses the English echo line and leaves it empty without a fallback", () => {
+  const c = parseAdCopy('{"headline":"سيروم التوهج","headlineEn":"Glow Repair Serum"}');
+  assert.equal(c.headlineEn, "Glow Repair Serum");
+  assert.equal(parseAdCopy('{"headline":"X"}').headlineEn, "");
 });

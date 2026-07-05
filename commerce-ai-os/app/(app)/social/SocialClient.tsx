@@ -131,7 +131,7 @@ export default function SocialClient({
         const dataUrl = await captureAd({
           productDataUrl, backdropDataUrl, frameProduct, logoDataUrl,
           brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, priceLabel: PRICE_LABEL,
-          headline: info.copy.headline, subtitle: info.copy.subtitle,
+          headline: info.copy.headline, headlineEn: info.copy.headlineEn, subtitle: info.copy.subtitle,
           benefits: info.copy.benefits, features: info.copy.features,
           price: info.price ?? "",
           palette: BRAND_PALETTE,
