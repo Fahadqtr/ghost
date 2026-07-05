@@ -73,6 +73,10 @@ const hexRgb = (hex: string): string => {
 
 const rtl: CSSProperties = { direction: "rtl", textAlign: "right" };
 
+// Soft light halo behind text so type stays legible DIRECTLY on the scene
+// (no solid panels — the ad reads as one integrated photograph).
+const glow: CSSProperties = { textShadow: "0 0 18px rgba(255,253,248,0.9), 0 1px 4px rgba(255,253,248,0.75)" };
+
 /** The untouched product photo: framed card OR multiply-melt, at a given box. */
 function ProductPhoto({ src, framed, box }: {
   src: string; framed: boolean;
@@ -157,8 +161,8 @@ export default function AdTemplate(p: AdTemplateProps) {
     return (
       <div style={root}>
         {backdrop}
-        <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, rgb(${CREAM}) 0%, rgb(${CREAM}) 46%, rgba(${CREAM},0.55) 58%, rgba(${CREAM},0) 74%)` }} />
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 190, background: `linear-gradient(0deg, rgba(${CREAM},0.95) 0%, rgba(${CREAM},0) 100%)` }} />
+        <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, rgba(${CREAM},0.66) 0%, rgba(${CREAM},0.44) 42%, rgba(${CREAM},0.16) 60%, rgba(${CREAM},0) 74%)` }} />
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 210, background: `linear-gradient(0deg, rgba(${CREAM},0.6) 0%, rgba(${CREAM},0) 100%)` }} />
 
         <ProductPhoto src={p.productDataUrl} framed={framed}
           box={framed ? { right: 40, top: 388, width: 500, height: 620 } : { right: 28, top: 360, width: 560, height: 660 }} />
@@ -166,8 +170,8 @@ export default function AdTemplate(p: AdTemplateProps) {
         {brandLockup()}
 
         <div style={{ position: "absolute", top: 208, left: 68, width: 424, ...rtl }}>
-          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 54, fontWeight: 700, lineHeight: 1.22, color: INK }}>{p.headline}</div>
-          {p.subtitle ? <div style={{ fontSize: 22, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5 }}>{p.subtitle}</div> : null}
+          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 54, fontWeight: 700, lineHeight: 1.22, color: INK, ...glow }}>{p.headline}</div>
+          {p.subtitle ? <div style={{ fontSize: 22, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
         </div>
 
         <div style={{ position: "absolute", top: 396, left: 68, width: 424 }}>
@@ -181,8 +185,8 @@ export default function AdTemplate(p: AdTemplateProps) {
                 <Glyph d={BENEFIT_ICONS[i % BENEFIT_ICONS.length]} size={26} color={GOLD} />
               </div>
               <div style={{ flex: 1, ...rtl }}>
-                <div style={{ fontSize: 25, fontWeight: 800, color: INK, lineHeight: 1.3 }}>{b.title}</div>
-                {b.sub ? <div style={{ fontSize: 17, fontWeight: 300, color: MUTED, marginTop: 3, lineHeight: 1.35 }}>{b.sub}</div> : null}
+                <div style={{ fontSize: 25, fontWeight: 800, color: INK, lineHeight: 1.3, ...glow }}>{b.title}</div>
+                {b.sub ? <div style={{ fontSize: 17, fontWeight: 300, color: MUTED, marginTop: 3, lineHeight: 1.35, ...glow }}>{b.sub}</div> : null}
               </div>
             </div>
           ))}
@@ -195,7 +199,7 @@ export default function AdTemplate(p: AdTemplateProps) {
         </div>
 
         {p.features.length ? (
-          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 108, background: `rgba(${CREAM},0.8)`, display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-around", padding: "0 46px", borderTop: `1px solid rgba(${GOLD_RGB},0.2)` }}>
+          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 108, background: `rgba(${CREAM},0.5)`, display: "flex", flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-around", padding: "0 46px", borderTop: `1px solid rgba(${GOLD_RGB},0.2)` }}>
             {p.features.slice(0, 3).map((f, i) => (
               <div key={i} style={{ display: "flex", flexDirection: "row-reverse", alignItems: "center", gap: 13 }}>
                 <Glyph d={FEATURE_ICONS[i % FEATURE_ICONS.length]} size={30} color={GOLD} />
@@ -217,8 +221,8 @@ export default function AdTemplate(p: AdTemplateProps) {
     return (
       <div style={root}>
         {backdrop}
-        <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 420, background: `linear-gradient(180deg, rgba(${CREAM},0.96) 0%, rgba(${CREAM},0.75) 55%, rgba(${CREAM},0) 100%)` }} />
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 400, background: `linear-gradient(0deg, rgba(${CREAM},0.96) 0%, rgba(${CREAM},0.7) 55%, rgba(${CREAM},0) 100%)` }} />
+        <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 420, background: `linear-gradient(180deg, rgba(${CREAM},0.62) 0%, rgba(${CREAM},0.4) 55%, rgba(${CREAM},0) 100%)` }} />
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 400, background: `linear-gradient(0deg, rgba(${CREAM},0.62) 0%, rgba(${CREAM},0.38) 55%, rgba(${CREAM},0) 100%)` }} />
 
         <ProductPhoto src={p.productDataUrl} framed={framed}
           box={framed ? { left: 250, top: 430, width: 580, height: 560 } : { left: 220, top: 400, width: 640, height: 600 }} />
@@ -226,8 +230,8 @@ export default function AdTemplate(p: AdTemplateProps) {
         {brandLockup(true)}
 
         <div style={{ position: "absolute", top: 178, left: 60, right: 60, direction: "rtl", textAlign: "center" }}>
-          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 62, fontWeight: 700, lineHeight: 1.2, color: INK }}>{p.headline}</div>
-          {p.subtitle ? <div style={{ fontSize: 23, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5 }}>{p.subtitle}</div> : null}
+          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 62, fontWeight: 700, lineHeight: 1.2, color: INK, ...glow }}>{p.headline}</div>
+          {p.subtitle ? <div style={{ fontSize: 23, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
         </div>
 
         {chips.length ? (
@@ -256,7 +260,7 @@ export default function AdTemplate(p: AdTemplateProps) {
   return (
     <div style={root}>
       {backdrop}
-      <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 210, background: `linear-gradient(180deg, rgba(${CREAM},0.9) 0%, rgba(${CREAM},0) 100%)` }} />
+      <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 210, background: `linear-gradient(180deg, rgba(${CREAM},0.55) 0%, rgba(${CREAM},0) 100%)` }} />
 
       <ProductPhoto src={p.productDataUrl} framed={framed}
         box={framed ? { left: 240, top: 172, width: 600, height: 620 } : { left: 210, top: 140, width: 660, height: 660 }} />
@@ -264,10 +268,10 @@ export default function AdTemplate(p: AdTemplateProps) {
       {brandLockup()}
 
       {/* Solid bottom info panel */}
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: PANEL_H, background: `rgb(${CREAM})`, borderTop: `2px solid rgba(${GOLD_RGB},0.35)` }}>
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: PANEL_H, background: `linear-gradient(0deg, rgba(${CREAM},0.85) 0%, rgba(${CREAM},0.62) 62%, rgba(${CREAM},0.22) 86%, rgba(${CREAM},0) 100%)` }}>
         <div style={{ position: "absolute", top: 40, left: 68, right: 68, ...rtl }}>
-          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 48, fontWeight: 700, lineHeight: 1.2, color: INK }}>{p.headline}</div>
-          {p.subtitle ? <div style={{ fontSize: 21, fontWeight: 300, color: MUTED, marginTop: 8, lineHeight: 1.45 }}>{p.subtitle}</div> : null}
+          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 48, fontWeight: 700, lineHeight: 1.2, color: INK, ...glow }}>{p.headline}</div>
+          {p.subtitle ? <div style={{ fontSize: 21, fontWeight: 300, color: MUTED, marginTop: 8, lineHeight: 1.45, ...glow }}>{p.subtitle}</div> : null}
         </div>
 
         {cols.length ? (
@@ -277,8 +281,8 @@ export default function AdTemplate(p: AdTemplateProps) {
                 <div style={{ width: 52, height: 52, borderRadius: 26, margin: "0 auto", border: `1.5px solid rgba(${GOLD_RGB},0.45)`, background: "rgba(255,253,248,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <Glyph d={BENEFIT_ICONS[i % BENEFIT_ICONS.length]} size={25} color={GOLD} />
                 </div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: INK, marginTop: 10, lineHeight: 1.3 }}>{b.title}</div>
-                {b.sub ? <div style={{ fontSize: 15, fontWeight: 300, color: MUTED, marginTop: 3, lineHeight: 1.3 }}>{b.sub}</div> : null}
+                <div style={{ fontSize: 22, fontWeight: 800, color: INK, marginTop: 10, lineHeight: 1.3, ...glow }}>{b.title}</div>
+                {b.sub ? <div style={{ fontSize: 15, fontWeight: 300, color: MUTED, marginTop: 3, lineHeight: 1.3, ...glow }}>{b.sub}</div> : null}
               </div>
             ))}
           </div>

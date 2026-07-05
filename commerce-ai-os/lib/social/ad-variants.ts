@@ -42,22 +42,23 @@ export const AD_LAYOUTS: AdLayout[] = [
     key: "panel",
     composition:
       "COMPOSITION: on the RIGHT side, a softly lit low stone/marble pedestal or clean surface with a BRIGHT, nearly " +
-      "white, softly glowing zone (a real product photo will be composited there later); the LEFT ~45% stays smooth, " +
-      "clean and uncluttered for marketing text. ",
+      "white, softly glowing zone (a real product photo will be composited there later); the LEFT ~45% stays VERY " +
+      "smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY on it. ",
   },
   {
     key: "hero",
     composition:
       "COMPOSITION: a softly lit low pedestal or clean surface in the CENTER with a BRIGHT, nearly white, softly " +
       "glowing zone in the middle of the frame (a real product photo will be composited there later); the TOP third " +
-      "and BOTTOM quarter stay smooth, clean and uncluttered for marketing text. ",
+      "and BOTTOM quarter stay VERY smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY " +
+      "on them. ",
   },
   {
     key: "banner",
     composition:
       "COMPOSITION: a softly lit clean surface in the UPPER-CENTER with a BRIGHT, nearly white, softly glowing zone " +
-      "there (a real product photo will be composited there later); the BOTTOM ~40% stays smooth, simple and " +
-      "uncluttered (a solid text panel will cover it). ",
+      "there (a real product photo will be composited there later); the BOTTOM ~40% stays VERY smooth, soft, evenly " +
+      "lit and low-detail — marketing text will be placed DIRECTLY on it. ",
   },
 ];
 
