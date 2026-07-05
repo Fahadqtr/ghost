@@ -25,7 +25,8 @@ export type AdLayoutKey = "panel" | "hero" | "banner";
 
 export interface AdLayout {
   key: AdLayoutKey;
-  composition: string; // where the backdrop must stay clean for this layout
+  composition: string;      // where an EMPTY backdrop must stay clean (legacy path)
+  productPlacement: string; // where the product stands when Gemini places it IN the scene
 }
 
 // EMPTY backdrop brief: the model paints scenery ONLY — the real product photo
@@ -44,6 +45,10 @@ export const AD_LAYOUTS: AdLayout[] = [
       "COMPOSITION: on the RIGHT side, a softly lit low stone/marble pedestal or clean surface with a BRIGHT, nearly " +
       "white, softly glowing zone (a real product photo will be composited there later); the LEFT ~45% stays VERY " +
       "smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY on it. ",
+    productPlacement:
+      "PLACEMENT: the product stands ON a low stone/marble pedestal on the RIGHT side of the frame, vertically " +
+      "centered, about 40-45% of the frame height; the LEFT ~45% of the frame stays VERY smooth, soft, evenly lit " +
+      "and low-detail with NOTHING in it — marketing text will be placed DIRECTLY on it. ",
   },
   {
     key: "hero",
@@ -52,6 +57,10 @@ export const AD_LAYOUTS: AdLayout[] = [
       "glowing zone in the middle of the frame (a real product photo will be composited there later); the TOP third " +
       "and BOTTOM quarter stay VERY smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY " +
       "on them. ",
+    productPlacement:
+      "PLACEMENT: the product stands ON a low pedestal in the CENTER of the frame, about 40-45% of the frame height, " +
+      "hero composition; the TOP third and BOTTOM quarter of the frame stay VERY smooth, soft, evenly lit and " +
+      "low-detail with NOTHING in them — marketing text will be placed DIRECTLY on them. ",
   },
   {
     key: "banner",
@@ -59,6 +68,10 @@ export const AD_LAYOUTS: AdLayout[] = [
       "COMPOSITION: a softly lit clean surface in the UPPER-CENTER with a BRIGHT, nearly white, softly glowing zone " +
       "there (a real product photo will be composited there later); the BOTTOM ~40% stays VERY smooth, soft, evenly " +
       "lit and low-detail — marketing text will be placed DIRECTLY on it. ",
+    productPlacement:
+      "PLACEMENT: the product stands ON a clean surface in the UPPER-CENTER of the frame, about 40% of the frame " +
+      "height; the BOTTOM ~40% of the frame stays VERY smooth, soft, evenly lit and low-detail with NOTHING in it — " +
+      "marketing text will be placed DIRECTLY on it. ",
   },
 ];
 
@@ -110,6 +123,25 @@ export function pickLayout(seed: string, tap = 0): AdLayout {
 /** The full backdrop brief for one (variant, layout) pair. */
 export function buildSceneBrief(variant: AdVariant, layout: AdLayout): string {
   return SCENE_BASE + layout.composition + variant.setting;
+}
+
+// Product-IN-scene brief: Gemini places the EXACT product from the supplied
+// photo into the luxury scene itself — standing on the pedestal, grounded with
+// real contact shadow and lighting — so it never looks pasted or floating.
+const PRODUCT_SCENE_BASE =
+  "Ultra-realistic luxury beauty campaign photograph, editorial 8K quality, vertical 4:5 composition. " +
+  "TASK: take the product from the provided photo and place THAT EXACT PRODUCT into the scene described below. " +
+  "The product must remain 100% IDENTICAL: same shape, proportions, materials, colors, cap and its own printed " +
+  "label/text exactly as-is — do not redraw, translate, invent or alter any lettering on it. Show it ONCE, large " +
+  "and razor-sharp, professionally lit, standing NATURALLY with a soft grounded contact shadow and a subtle " +
+  "reflection — it must NEVER look pasted, cut out or floating in the air. Discard the source photo's own " +
+  "background, collage panels, hands and people. " +
+  "Do NOT add ANY marketing text, captions, headlines, prices, buttons, icons, logos, watermarks or graphics " +
+  "anywhere in the image. NO people, faces, hands or models. ";
+
+/** The full product-in-scene brief for one (variant, layout) pair. */
+export function buildProductSceneBrief(variant: AdVariant, layout: AdLayout): string {
+  return PRODUCT_SCENE_BASE + layout.productPlacement + variant.setting;
 }
 
 /**

@@ -13,7 +13,7 @@ import {
 } from "./actions";
 import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
 import { adFontCss } from "@/lib/social/ad-fonts";
-import { pickVariant, pickLayout, buildSceneBrief } from "@/lib/social/ad-variants";
+import { pickVariant, pickLayout, buildProductSceneBrief } from "@/lib/social/ad-variants";
 import AdTemplate, { AD_W, AD_H, type AdTemplateProps } from "./AdTemplate";
 
 const BRAND_TOP = "MALIKA'S";
@@ -111,11 +111,14 @@ export default function SocialClient({
     setNote(p.id, "…يصمّم الإعلان الفخم (خلفية فخمة + منتجك الأصلي + نص — قد يأخذ دقيقة)");
     start(async () => {
       try {
-        const info = await generateAdCreative(p.id, buildSceneBrief(variant, layout));
+        const info = await generateAdCreative(p.id, buildProductSceneBrief(variant, layout));
         if (info.error || !info.copy) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر توليد النصوص"}`); return; }
-        const productDataUrl = await fetchAsDataUrl(info.productUrl || p.image_url);
+        // The Gemini scene already CONTAINS the product (grounded on the
+        // pedestal) — so it becomes the full-bleed backdrop and nothing is
+        // composited on top. Fallback: frame the original photo on the CSS bg.
         const backdropDataUrl = info.backdropUrl ? await fetchAsDataUrl(info.backdropUrl) : "";
-        const frameProduct = !(await hasLightBackground(productDataUrl));
+        const productDataUrl = backdropDataUrl ? "" : await fetchAsDataUrl(info.productUrl || p.image_url);
+        const frameProduct = productDataUrl ? !(await hasLightBackground(productDataUrl)) : false;
         const dataUrl = await captureAd({
           productDataUrl, backdropDataUrl, frameProduct,
           brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, priceLabel: PRICE_LABEL,

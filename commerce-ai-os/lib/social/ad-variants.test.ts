@@ -4,7 +4,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { AD_VARIANTS, AD_LAYOUTS, hashSeed, pickVariant, pickLayout, buildSceneBrief, PRODUCT_REFINE_PROMPT } from "./ad-variants.ts";
+import { AD_VARIANTS, AD_LAYOUTS, hashSeed, pickVariant, pickLayout, buildSceneBrief, buildProductSceneBrief, PRODUCT_REFINE_PROMPT } from "./ad-variants.ts";
+
+test("product-in-scene brief grounds the exact product and bans added text", () => {
+  for (const l of AD_LAYOUTS) {
+    const brief = buildProductSceneBrief(AD_VARIANTS[0], l);
+    assert.ok(brief.includes("THAT EXACT PRODUCT"));
+    assert.ok(brief.includes("100% IDENTICAL"));
+    assert.ok(brief.includes("NEVER look pasted, cut out or floating"));
+    assert.ok(brief.includes("Do NOT add ANY marketing text"));
+    assert.ok(brief.includes("PLACEMENT:"));
+    assert.ok(brief.includes("Setting:"));
+  }
+});
 
 test("product-refine brief keeps the product identical and strips clutter", () => {
   assert.ok(PRODUCT_REFINE_PROMPT.includes("IDENTICAL"));

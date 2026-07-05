@@ -12,8 +12,7 @@ import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
 import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
-import { PRODUCT_REFINE_PROMPT } from "@/lib/social/ad-variants";
-import { geminiConfigured, generateSceneWithGemini, generateBackdropWithGemini } from "@/lib/social/scene-gemini";
+import { geminiConfigured, generateSceneWithGemini } from "@/lib/social/scene-gemini";
 import crypto from "crypto";
 
 // Review-first social queue: list pending/recent, publish one (routes to the
@@ -224,12 +223,14 @@ export async function generateAdCreative(id: string, sceneStyle?: string): Promi
     description: p.description_ar || p.description_en,
   });
 
-  // Three AI jobs in PARALLEL (to fit the 60s route budget):
+  // Two AI jobs in PARALLEL (to fit the 60s route budget):
   //  1. Claude writes the ad copy.
-  //  2. Gemini REFINES the product photo — isolates the product from collage
-  //     grids/hands/gray backgrounds into one clean white studio shot (label
-  //     kept identical). Falls back to the original photo on any failure.
-  //  3. Gemini paints the EMPTY luxury backdrop ("" → CSS background).
+  //  2. Gemini places THE EXACT PRODUCT (from its photo) INTO the luxury scene
+  //     — standing on the pedestal, grounded shadow, real lighting — as ONE
+  //     photograph (no compositing seams, never floating). The Arabic type is
+  //     still overlaid later with real fonts.
+  // Fallback: if the scene fails, the template frames the original photo on
+  // its designed CSS background.
   const style = String(sceneStyle ?? "").trim().slice(0, 4000);
   const gemini = geminiConfigured();
   const copyJob = (async (): Promise<AdCopy> => {
@@ -240,26 +241,21 @@ export async function generateAdCreative(id: string, sceneStyle?: string): Promi
     const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
     return parseAdCopy(text, String(p.name_ar || p.name_en || ""));
   })();
-  const refineJob = gemini && p.image_url
-    ? generateSceneWithGemini(sb, String(p.image_url), PRODUCT_REFINE_PROMPT, "social").catch(() => ({ error: "refine failed" }))
-    : Promise.resolve({ error: "skipped" } as const);
-  const backdropJob = gemini && style
-    ? generateBackdropWithGemini(sb, style, "social").catch(() => ({ error: "backdrop failed" }))
+  const sceneJob = gemini && p.image_url && style
+    ? generateSceneWithGemini(sb, String(p.image_url), style, "social").catch(() => ({ error: "scene failed" }))
     : Promise.resolve({ error: "skipped" } as const);
 
   let copy: AdCopy;
-  let refined: { imageUrl: string } | { error: string };
-  let bg: { imageUrl: string } | { error: string };
+  let scene: { imageUrl: string } | { error: string };
   try {
-    [copy, refined, bg] = await Promise.all([copyJob, refineJob, backdropJob]);
+    [copy, scene] = await Promise.all([copyJob, sceneJob]);
   } catch (e) {
     return { error: e instanceof Error ? e.message : "تعذّر توليد النصوص." };
   }
 
   const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
-  const productUrl = "imageUrl" in refined ? refined.imageUrl : String(p.image_url || "");
-  const backdropUrl = "imageUrl" in bg ? bg.imageUrl : "";
-  return { copy, price, title: String(p.name_ar || p.name_en || ""), productUrl, backdropUrl };
+  const backdropUrl = "imageUrl" in scene ? scene.imageUrl : "";
+  return { copy, price, title: String(p.name_ar || p.name_en || ""), productUrl: String(p.image_url || ""), backdropUrl };
 }
 
 // Persist the browser-composed ad card (JPEG data URL) and point every pending
