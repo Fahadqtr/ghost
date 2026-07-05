@@ -21,6 +21,7 @@ export const AD_H = 1350;
 export interface AdTemplateProps {
   productDataUrl?: string;  // product photo for fallback compositing ("" when the scene already contains it)
   backdropDataUrl?: string; // empty AI backdrop, data: URL ("" → CSS background)
+  logoDataUrl?: string;     // MU monogram (black on white), data: URL — multiplied so white vanishes
   brandTop: string;         // "MALIKA'S"
   brandSub: string;         // "UNIVERSE BEAUTY"
   handle: string;           // "@malikas.universe"
@@ -125,10 +126,14 @@ export default function AdTemplate(p: AdTemplateProps) {
   );
 
   const brandLockup = (centered = false) => (
-    <div style={{ position: "absolute", top: centered ? 58 : 64, ...(centered ? { left: 0, right: 0, textAlign: "center" as const } : { left: 68 }), fontFamily: AD_FONT_LATIN }}>
-      <div style={{ fontSize: centered ? 46 : 50, fontWeight: 400, letterSpacing: 5, lineHeight: 1, color: INK }}>{p.brandTop}</div>
-      <div style={{ fontSize: 15, letterSpacing: 11, color: MUTED, marginTop: 9 }}>{p.brandSub}</div>
-      {!centered && <div style={{ width: 58, height: 2, background: GOLD, marginTop: 18 }} />}
+    <div style={{ position: "absolute", top: centered ? 44 : 52, ...(centered ? { left: 0, right: 0, textAlign: "center" as const } : { left: 68 }), fontFamily: AD_FONT_LATIN }}>
+      {p.logoDataUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={p.logoDataUrl} alt="" style={{ height: 96, width: 96, objectFit: "contain", mixBlendMode: "multiply", ...(centered ? { margin: "0 auto", display: "block" } : {}) }} />
+      ) : null}
+      <div style={{ fontSize: centered ? 34 : 36, fontWeight: 400, letterSpacing: 6, lineHeight: 1, color: INK, marginTop: p.logoDataUrl ? 8 : 0 }}>{p.brandTop}</div>
+      <div style={{ fontSize: 14, letterSpacing: 10, color: MUTED, marginTop: 8 }}>{p.brandSub}</div>
+      {!centered && <div style={{ width: 58, height: 2, background: GOLD, marginTop: 14 }} />}
     </div>
   );
 
@@ -169,12 +174,12 @@ export default function AdTemplate(p: AdTemplateProps) {
 
         {brandLockup()}
 
-        <div style={{ position: "absolute", top: 208, left: 68, width: 424, ...rtl }}>
+        <div style={{ position: "absolute", top: 252, left: 68, width: 424, ...rtl }}>
           <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 54, fontWeight: 700, lineHeight: 1.22, color: INK, ...glow }}>{p.headline}</div>
           {p.subtitle ? <div style={{ fontSize: 22, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
         </div>
 
-        <div style={{ position: "absolute", top: 396, left: 68, width: 424 }}>
+        <div style={{ position: "absolute", top: 440, left: 68, width: 424 }}>
           {benefits.map((b, i) => (
             <div key={i} style={{
               display: "flex", flexDirection: "row", alignItems: "center", gap: 18,
@@ -229,7 +234,7 @@ export default function AdTemplate(p: AdTemplateProps) {
 
         {brandLockup(true)}
 
-        <div style={{ position: "absolute", top: 178, left: 60, right: 60, direction: "rtl", textAlign: "center" }}>
+        <div style={{ position: "absolute", top: 252, left: 60, right: 60, direction: "rtl", textAlign: "center" }}>
           <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 62, fontWeight: 700, lineHeight: 1.2, color: INK, ...glow }}>{p.headline}</div>
           {p.subtitle ? <div style={{ fontSize: 23, fontWeight: 300, color: MUTED, marginTop: 14, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
         </div>
