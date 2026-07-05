@@ -14,8 +14,9 @@ test("every variant is complete (palette colors + a no-text scene brief)", () =>
       assert.match(c, /^#[0-9a-f]{6}$/i);
     }
     assert.match(v.palette.panel, /^\d+,\d+,\d+$/);
-    assert.ok(v.scene.includes("SOURCE OF TRUTH"));
-    assert.ok(v.scene.includes("do NOT add ANY new text"));
+    assert.ok(v.scene.includes("COMPLETELY EMPTY"));            // backdrop only — no product
+    assert.ok(v.scene.includes("NO text, letters, logos"));     // nothing the model can garble
+    assert.ok(v.scene.includes("NO people, faces, hands"));
   }
 });
 

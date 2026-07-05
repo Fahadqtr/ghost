@@ -14,6 +14,51 @@ export function geminiConfigured(): boolean {
 }
 
 /**
+ * Generate an EMPTY luxury backdrop (no product, no text) from a text brief
+ * only — the real product photo is composited on top later, untouched. This is
+ * what guarantees packaging/labels can never be redrawn or garbled.
+ */
+export async function generateBackdropWithGemini(
+  admin: any,
+  prompt: string,
+  pathPrefix: string,
+): Promise<{ imageUrl: string } | { error: string }> {
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
+  if (!key) return { error: "Gemini غير مفعّل (GEMINI_API_KEY غير مضبوط)." };
+  const instruction = String(prompt || "").trim().slice(0, 4000);
+  if (!instruction) return { error: "وصف الخلفية فارغ." };
+
+  const model = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
+  let bytes: Buffer;
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: instruction }] }] }),
+      signal: AbortSignal.timeout(55_000),
+    });
+    if (!r.ok) {
+      const detail = (await r.text()).slice(0, 300);
+      console.error("[gemini-backdrop]", r.status, detail);
+      return { error: `تعذّر توليد الخلفية الآن (رمز ${r.status}).` };
+    }
+    const data: any = await r.json();
+    const parts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
+    const img = parts.find((p) => p?.inlineData?.data || p?.inline_data?.data);
+    const b64 = img?.inlineData?.data || img?.inline_data?.data;
+    if (!b64) return { error: "ما رجعت خلفية من Gemini." };
+    bytes = Buffer.from(b64, "base64");
+  } catch (e: any) {
+    return { error: e?.message || "خطأ أثناء توليد الخلفية." };
+  }
+
+  const path = `${pathPrefix}/bg-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.png`;
+  const up = await admin.storage.from(PRODUCT_BUCKET).upload(path, bytes, { contentType: "image/png", upsert: false, cacheControl: "3600" });
+  if (up.error) return { error: `تعذّر حفظ الخلفية: ${up.error.message}` };
+  return { imageUrl: admin.storage.from(PRODUCT_BUCKET).getPublicUrl(path).data.publicUrl };
+}
+
+/**
  * Read the product photo with Gemini (text out): what's actually on the
  * packaging — name, brand, type, colors, key printed words, visual mood — so
  * the copywriter never invents details. Returns null on any failure (the

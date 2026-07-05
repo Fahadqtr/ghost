@@ -19,14 +19,17 @@ export interface AdVariant {
   scene: string; // English scene brief handed to the image model (no text!)
 }
 
+// EMPTY backdrop brief: the model paints scenery ONLY — the real product photo
+// is composited on top later, untouched, so packaging/labels can never break.
 const SCENE_BASE =
-  "Ultra-realistic LUXURY beauty campaign photo, editorial 8K quality. " +
-  "The uploaded product is the SOURCE OF TRUTH: do NOT redesign, recreate, replace or invent any part of it, its " +
-  "packaging, its label or any lettering on it — preserve every visible detail exactly; the ONLY allowed changes are " +
-  "lighting, shadows, background and camera angle. Keep it the hero, sharp focus, occupying about 40-50% of the frame. " +
-  "COMPOSITION: place the product toward the RIGHT side and keep the LEFT ~45% as clean EMPTY background for text " +
-  "added later; generous breathing room, extremely clean, no clutter. Photorealistic. " +
-  "CRITICAL: do NOT add ANY new text, captions, labels, prices, buttons, icons, typography, UI or graphics. ";
+  "Ultra-realistic EMPTY luxury beauty backdrop photo, editorial 8K quality, vertical 4:5 composition. " +
+  "The scene must be COMPLETELY EMPTY: absolutely NO products, bottles, jars, tubes, boxes, packaging or any object " +
+  "that could look like a beauty product; NO people, faces, hands or models; NO text, letters, logos, watermarks, " +
+  "icons or graphics of any kind. " +
+  "COMPOSITION: on the RIGHT side, a softly lit low stone/marble pedestal or clean surface with a BRIGHT, nearly " +
+  "white, softly glowing background behind it (a real product photo will be composited there later — keep that zone " +
+  "bright and clean); the LEFT ~45% stays smooth, clean and uncluttered for marketing text. Soft natural shadows, " +
+  "realistic photography, no clutter, no neon colors, no dark background. ";
 
 export const AD_VARIANTS: AdVariant[] = [
   {
@@ -52,7 +55,7 @@ export const AD_VARIANTS: AdVariant[] = [
   {
     key: "ivory-noir",
     palette: { ink: "#26211c", muted: "#84796d", gold: "#a68d5c", dark: "#1c1712", panel: "244,241,236" },
-    scene: SCENE_BASE + "Setting: minimal ivory and charcoal palette, dramatic single-source studio light, glossy dark stone surface with elegant reflections, high-contrast chic editorial mood.",
+    scene: SCENE_BASE + "Setting: minimal ivory palette with subtle charcoal accents, dramatic single-source studio light, light polished stone surface with elegant soft reflections, chic editorial mood.",
   },
 ];
 

@@ -12,7 +12,7 @@ import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
 import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
-import { geminiConfigured, generateSceneWithGemini } from "@/lib/social/scene-gemini";
+import { geminiConfigured, generateSceneWithGemini, generateBackdropWithGemini } from "@/lib/social/scene-gemini";
 import crypto from "crypto";
 
 // Review-first social queue: list pending/recent, publish one (routes to the
@@ -203,7 +203,7 @@ export async function generateFullAd(id: string): Promise<{ ok?: true; imageUrl?
 
 // AI ad copy (headline + 3 benefits + 3 trust features) + the formatted price,
 // for the browser to lay out in the full ad template.
-export async function generateAdCreative(id: string, sceneStyle?: string): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string; sceneUrl?: string }> {
+export async function generateAdCreative(id: string, sceneStyle?: string): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string; productUrl?: string; backdropUrl?: string }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const sb = admin();
   if (!sb) return { error: NO_DB };
@@ -236,19 +236,19 @@ export async function generateAdCreative(id: string, sceneStyle?: string): Promi
 
   const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
 
-  // Generate a photorealistic luxury SCENE (product placed in a premium
-  // environment, NO text) for the ad background — Gemini when configured, else
-  // OpenAI. The design-variant scene brief (per product) overrides the default.
-  // Falls back to the original photo if scene generation fails.
-  const style = String(sceneStyle ?? "").trim().slice(0, 4000) || IG_IMAGE_STYLE;
-  let sceneUrl = String(p.image_url || "");
-  if (p.image_url) {
-    const scene = geminiConfigured()
-      ? await generateSceneWithGemini(sb, String(p.image_url), style, "social")
-      : await editProductImageCore(sb, String(p.image_url), style, "social");
-    if ("imageUrl" in scene) sceneUrl = scene.imageUrl;
+  // Generate an EMPTY luxury backdrop (no product, no text) — the ORIGINAL
+  // product photo is composited on top by the template, completely untouched,
+  // so packaging/labels can never be redrawn. Backdrop is optional: on any
+  // failure ("" ) the template falls back to its designed CSS background.
+  let backdropUrl = "";
+  if (geminiConfigured()) {
+    const style = String(sceneStyle ?? "").trim().slice(0, 4000);
+    if (style) {
+      const bg = await generateBackdropWithGemini(sb, style, "social");
+      if ("imageUrl" in bg) backdropUrl = bg.imageUrl;
+    }
   }
-  return { copy, price, title: String(p.name_ar || p.name_en || ""), sceneUrl };
+  return { copy, price, title: String(p.name_ar || p.name_en || ""), productUrl: String(p.image_url || ""), backdropUrl };
 }
 
 // Persist the browser-composed ad card (JPEG data URL) and point every pending
