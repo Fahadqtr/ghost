@@ -247,9 +247,17 @@ export async function generateAdCreative(id: string, sceneStyle?: string, tap?: 
   // inspired by THIS product. Falls back to the rotating mood on any failure.
   const sceneJob = gemini && p.image_url && style
     ? (async () => {
+        const productName = String(p.name_en || p.name_ar || "").trim().slice(0, 120);
         let brief = style;
-        const mood = await designSceneSettingWithGemini(String(p.image_url), (tap ?? 0) + 1).catch(() => null);
+        const mood = await designSceneSettingWithGemini(String(p.image_url), (tap ?? 0) + 1, productName).catch(() => null);
         if (mood) brief = style.replace(/Setting:[\s\S]*$/, mood);
+        // Tell the image model what the item actually IS, so a collage of
+        // press-on nails can never come back as a polish bottle.
+        if (productName) {
+          brief =
+            `THE PRODUCT IS: "${productName}". Identify this exact item in the provided photo (read its packaging) ` +
+            "and reproduce its REAL form faithfully — never swap it for a different object type. " + brief;
+        }
         return generateSceneWithGemini(sb, String(p.image_url), brief, "social");
       })().catch(() => ({ error: "scene failed" }))
     : Promise.resolve({ error: "skipped" } as const);

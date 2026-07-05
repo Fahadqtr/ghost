@@ -22,6 +22,7 @@ test("product-in-scene brief fences the product out of the text zones", () => {
   for (const l of AD_LAYOUTS) {
     const brief = buildProductSceneBrief(AD_VARIANTS[0], l);
     assert.ok(brief.includes("CRITICAL FRAMING RULE"));       // base hard rule
+    assert.ok(brief.includes("NEVER substitute"));            // anti product-swap rule
     assert.ok(brief.includes("KEEP-OUT ZONES"));              // per-layout reserved zones
     assert.ok(brief.includes("NO higher than"));              // explicit top-edge cap
   }

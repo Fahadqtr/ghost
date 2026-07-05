@@ -150,7 +150,10 @@ const PRODUCT_SCENE_BASE =
   "Ultra-realistic luxury beauty campaign photograph, editorial 8K quality, vertical 4:5 composition. " +
   "TASK: take the product from the provided photo and place THAT EXACT PRODUCT into the scene described below. " +
   "The product must remain 100% IDENTICAL: same shape, proportions, materials, colors, cap and its own printed " +
-  "label/text exactly as-is — do not redraw, translate, invent or alter any lettering on it. Show it ONCE, large " +
+  "label/text exactly as-is — do not redraw, translate, invent or alter any lettering on it. LOOK CAREFULLY at " +
+  "what the product actually IS before drawing: NEVER substitute it with a different object type — press-on " +
+  "artificial nails must stay press-on nails (never become a polish bottle), a palette stays a palette, a kit/box " +
+  "stays that kit/box with its real contents. Show it ONCE, large " +
   "and razor-sharp, professionally lit, standing NATURALLY with a soft grounded contact shadow and a subtle " +
   "reflection — it must NEVER look pasted, cut out or floating in the air. Discard the source photo's own " +
   "background, collage panels, hands and people. " +
