@@ -19,7 +19,7 @@ export const AD_W = 1080;
 export const AD_H = 1350;
 
 export interface AdTemplateProps {
-  productDataUrl: string;   // ORIGINAL product photo (untouched), data: URL
+  productDataUrl?: string;  // product photo for fallback compositing ("" when the scene already contains it)
   backdropDataUrl?: string; // empty AI backdrop, data: URL ("" → CSS background)
   brandTop: string;         // "MALIKA'S"
   brandSub: string;         // "UNIVERSE BEAUTY"
@@ -164,8 +164,8 @@ export default function AdTemplate(p: AdTemplateProps) {
         <div style={{ position: "absolute", inset: 0, background: `linear-gradient(90deg, rgba(${CREAM},0.66) 0%, rgba(${CREAM},0.44) 42%, rgba(${CREAM},0.16) 60%, rgba(${CREAM},0) 74%)` }} />
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 210, background: `linear-gradient(0deg, rgba(${CREAM},0.6) 0%, rgba(${CREAM},0) 100%)` }} />
 
-        <ProductPhoto src={p.productDataUrl} framed={framed}
-          box={framed ? { right: 40, top: 388, width: 500, height: 620 } : { right: 28, top: 360, width: 560, height: 660 }} />
+        {p.productDataUrl ? <ProductPhoto src={p.productDataUrl} framed={framed}
+          box={framed ? { right: 40, top: 388, width: 500, height: 620 } : { right: 28, top: 360, width: 560, height: 660 }} /> : null}
 
         {brandLockup()}
 
@@ -224,8 +224,8 @@ export default function AdTemplate(p: AdTemplateProps) {
         <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 420, background: `linear-gradient(180deg, rgba(${CREAM},0.62) 0%, rgba(${CREAM},0.4) 55%, rgba(${CREAM},0) 100%)` }} />
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 400, background: `linear-gradient(0deg, rgba(${CREAM},0.62) 0%, rgba(${CREAM},0.38) 55%, rgba(${CREAM},0) 100%)` }} />
 
-        <ProductPhoto src={p.productDataUrl} framed={framed}
-          box={framed ? { left: 250, top: 430, width: 580, height: 560 } : { left: 220, top: 400, width: 640, height: 600 }} />
+        {p.productDataUrl ? <ProductPhoto src={p.productDataUrl} framed={framed}
+          box={framed ? { left: 250, top: 430, width: 580, height: 560 } : { left: 220, top: 400, width: 640, height: 600 }} /> : null}
 
         {brandLockup(true)}
 
@@ -262,8 +262,8 @@ export default function AdTemplate(p: AdTemplateProps) {
       {backdrop}
       <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 210, background: `linear-gradient(180deg, rgba(${CREAM},0.55) 0%, rgba(${CREAM},0) 100%)` }} />
 
-      <ProductPhoto src={p.productDataUrl} framed={framed}
-        box={framed ? { left: 240, top: 172, width: 600, height: 620 } : { left: 210, top: 140, width: 660, height: 660 }} />
+      {p.productDataUrl ? <ProductPhoto src={p.productDataUrl} framed={framed}
+        box={framed ? { left: 240, top: 172, width: 600, height: 620 } : { left: 210, top: 140, width: 660, height: 660 }} /> : null}
 
       {brandLockup()}
 
