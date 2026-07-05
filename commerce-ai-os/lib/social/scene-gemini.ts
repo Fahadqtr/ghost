@@ -98,6 +98,53 @@ export async function analyzeProductImageWithGemini(imageUrl: string): Promise<s
   } catch { return null; }
 }
 
+/**
+ * Art-direct the ad scene FROM the product itself: Gemini looks at the photo
+ * and invents scene concept #variation (palette pulled from the packaging,
+ * textures/props echoing the product's purpose). Returns one English
+ * "Setting: ..." clause, or null on any failure (callers keep their fallback
+ * mood). Different variation numbers give clearly different concepts, so every
+ * re-tap is a new product-inspired design.
+ */
+export async function designSceneSettingWithGemini(imageUrl: string, variation: number): Promise<string | null> {
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
+  const src = String(imageUrl || "").trim();
+  if (!key || !src) return null;
+  try {
+    const r0 = await fetch(src, { signal: AbortSignal.timeout(10_000) });
+    if (!r0.ok) return null;
+    const ct = (r0.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+    const buf = Buffer.from(await r0.arrayBuffer());
+    const model = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+    const n = Math.max(1, Math.round(variation));
+    const body = {
+      contents: [{ parts: [
+        { text:
+          "You are a luxury beauty art director. Look at this product photo and invent scene concept #" + n +
+          " for a high-end Instagram ad backdrop INSPIRED BY THIS PRODUCT: pull the palette from its packaging " +
+          "colors, and choose surfaces, textures and props that echo its ingredients or purpose (e.g. water ripples " +
+          "for hydrating care, botanicals for natural formulas, silk for hair care). Reply with EXACTLY one English " +
+          "sentence starting with \"Setting:\" describing palette, surfaces, props and lighting. Rules: no people, " +
+          "no hands, no text, no other products, light and airy (never a dark background). Concept #" + n +
+          " must be clearly different from concepts with other numbers." },
+        { inline_data: { mime_type: ct, data: buf.toString("base64") } },
+      ] }],
+    };
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    const parts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
+    const text = parts.map((p) => p?.text ?? "").join("").trim();
+    const m = text.match(/Setting:[^\n]*/);
+    return m ? m[0].slice(0, 500) : null;
+  } catch { return null; }
+}
+
 export async function generateSceneWithGemini(
   admin: any,
   imageUrl: string,

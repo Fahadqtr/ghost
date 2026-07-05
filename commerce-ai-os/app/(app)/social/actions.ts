@@ -12,7 +12,7 @@ import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
 import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
-import { geminiConfigured, generateSceneWithGemini } from "@/lib/social/scene-gemini";
+import { geminiConfigured, generateSceneWithGemini, designSceneSettingWithGemini } from "@/lib/social/scene-gemini";
 import crypto from "crypto";
 
 // Review-first social queue: list pending/recent, publish one (routes to the
@@ -203,7 +203,7 @@ export async function generateFullAd(id: string): Promise<{ ok?: true; imageUrl?
 
 // AI ad copy (headline + 3 benefits + 3 trust features) + the formatted price,
 // for the browser to lay out in the full ad template.
-export async function generateAdCreative(id: string, sceneStyle?: string): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string; productUrl?: string; backdropUrl?: string }> {
+export async function generateAdCreative(id: string, sceneStyle?: string, tap?: number): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string; productUrl?: string; backdropUrl?: string }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const sb = admin();
   if (!sb) return { error: NO_DB };
@@ -241,8 +241,17 @@ export async function generateAdCreative(id: string, sceneStyle?: string): Promi
     const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
     return parseAdCopy(text, String(p.name_ar || p.name_en || ""), String(p.name_en || ""));
   })();
+  // Art direction FROM the product itself: Gemini reads the photo and invents
+  // scene concept #tap (packaging palette, matching textures/props), replacing
+  // the brief's generic "Setting:" clause — every re-tap is a new concept
+  // inspired by THIS product. Falls back to the rotating mood on any failure.
   const sceneJob = gemini && p.image_url && style
-    ? generateSceneWithGemini(sb, String(p.image_url), style, "social").catch(() => ({ error: "scene failed" }))
+    ? (async () => {
+        let brief = style;
+        const mood = await designSceneSettingWithGemini(String(p.image_url), (tap ?? 0) + 1).catch(() => null);
+        if (mood) brief = style.replace(/Setting:[\s\S]*$/, mood);
+        return generateSceneWithGemini(sb, String(p.image_url), brief, "social");
+      })().catch(() => ({ error: "scene failed" }))
     : Promise.resolve({ error: "skipped" } as const);
 
   let copy: AdCopy;

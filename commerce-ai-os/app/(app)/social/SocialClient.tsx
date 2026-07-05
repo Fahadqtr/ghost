@@ -18,8 +18,8 @@ import AdTemplate, { AD_W, AD_H, type AdTemplateProps } from "./AdTemplate";
 
 const BRAND_TOP = "MALIKA'S";
 const BRAND_SUB = "UNIVERSE BEAUTY";
-const PRICE_LABEL = "سعر خاص";
 const HANDLE = "@malikas.universe";
+const WEBSITE = "www.malikasuniverse.com";
 
 // MU monogram, fetched once and inlined (the SVG raster can't load URLs).
 let logoCache: string | null = null;
@@ -52,6 +52,47 @@ async function hasLightBackground(dataUrl: string): Promise<boolean> {
     }
     return light / Math.max(1, total) > 0.82;
   } catch { return false; }
+}
+
+// Guarantee the scene's product never sits under the headline: find the
+// product's top edge (the first row of the central band with real contrast —
+// smooth backdrops stay near zero) and, if it intrudes into the reserved text
+// band, shift the whole scene down, refilling the top with a stretched blurred
+// slice of its own smooth backdrop so nothing looks cropped.
+async function ensureTopClearance(dataUrl: string, clearFrac: number): Promise<string> {
+  try {
+    const img = new Image();
+    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("img")); img.src = dataUrl; });
+    const W = 108, H = 135;
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const cx = cv.getContext("2d");
+    if (!cx) return dataUrl;
+    cx.drawImage(img, 0, 0, W, H);
+    const d = cx.getImageData(0, 0, W, H).data;
+    let top = H;
+    for (let y = 4; y < H; y++) {
+      let busy = 0;
+      for (let x = Math.floor(W * 0.22); x < Math.floor(W * 0.78); x++) {
+        const a = (y * W + x) * 4, b = ((y - 2) * W + x) * 4;
+        if (Math.abs(d[a] - d[b]) + Math.abs(d[a + 1] - d[b + 1]) + Math.abs(d[a + 2] - d[b + 2]) > 36) busy++;
+      }
+      if (busy >= 6) { top = y; break; }
+    }
+    if (top / H >= clearFrac) return dataUrl; // product already below the text band
+    const delta = Math.round(Math.min(clearFrac - top / H, 0.16) * AD_H);
+    const out = document.createElement("canvas");
+    out.width = AD_W; out.height = AD_H;
+    const ox = out.getContext("2d");
+    if (!ox) return dataUrl;
+    const scale = Math.max(AD_W / img.width, AD_H / img.height);
+    const dw = img.width * scale, dh = img.height * scale;
+    ox.filter = "blur(10px)";
+    ox.drawImage(img, 0, 0, img.width, Math.max(8, img.height * 0.03), -20, -20, AD_W + 40, delta + 60);
+    ox.filter = "none";
+    ox.drawImage(img, (AD_W - dw) / 2, (AD_H - dh) / 2 + delta, dw, dh);
+    return out.toDataURL("image/jpeg", 0.92);
+  } catch { return dataUrl; }
 }
 
 // Render the ad template off-screen (real fonts → crisp Arabic), rasterize it,
@@ -119,21 +160,23 @@ export default function SocialClient({
     setNote(p.id, "…يصمّم الإعلان الفخم (خلفية فخمة + منتجك الأصلي + نص — قد يأخذ دقيقة)");
     start(async () => {
       try {
-        const info = await generateAdCreative(p.id, buildProductSceneBrief(variant, layout));
+        const info = await generateAdCreative(p.id, buildProductSceneBrief(variant, layout), tap);
         if (info.error || !info.copy) { setBusyId(null); setNote(p.id, `❌ ${info.error ?? "تعذّر توليد النصوص"}`); return; }
         // The Gemini scene already CONTAINS the product (grounded on the
         // pedestal) — so it becomes the full-bleed backdrop and nothing is
         // composited on top. Fallback: frame the original photo on the CSS bg.
-        const backdropDataUrl = info.backdropUrl ? await fetchAsDataUrl(info.backdropUrl) : "";
+        let backdropDataUrl = info.backdropUrl ? await fetchAsDataUrl(info.backdropUrl) : "";
+        // Hero puts the headline block on the top band — enforce the clearance
+        // in pixels (the prompt alone is not a guarantee).
+        if (backdropDataUrl && layout.key === "hero") backdropDataUrl = await ensureTopClearance(backdropDataUrl, 0.38);
         const productDataUrl = backdropDataUrl ? "" : await fetchAsDataUrl(info.productUrl || p.image_url);
         const frameProduct = productDataUrl ? !(await hasLightBackground(productDataUrl)) : false;
         const logoDataUrl = await brandLogoDataUrl();
         const dataUrl = await captureAd({
           productDataUrl, backdropDataUrl, frameProduct, logoDataUrl,
-          brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, priceLabel: PRICE_LABEL,
+          brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, website: WEBSITE,
           headline: info.copy.headline, headlineEn: info.copy.headlineEn, subtitle: info.copy.subtitle,
           benefits: info.copy.benefits, features: info.copy.features,
-          price: info.price ?? "",
           palette: BRAND_PALETTE,
           layout: layout.key,
         });
