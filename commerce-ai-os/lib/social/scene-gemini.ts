@@ -128,9 +128,12 @@ export async function designSceneSettingWithGemini(imageUrl: string, variation: 
         { text:
           "You are a WORLD-CLASS art director for luxury beauty campaigns (think Dior, Jacquemus, Rhode, Glossier " +
           "set design). Look at this product photo" + (name ? ` — the product is "${name}"` : "") + ".\n" +
-          "STEP 1 — classify HOW the product is shown: \"worn\" = it is being worn/applied on a body part in the " +
-          "photo (press-on nails on a hand, lashes on an eye, jewelry on skin, a hair accessory in hair); " +
-          "\"packshot\" = the product appears as a standalone object/box/bottle/kit.\n" +
+          "STEP 1 — classify HOW the product is shown: \"worn\" = the PHYSICAL PRODUCT ITSELF is visible AND " +
+          "attached to a body part (press-on nails on a hand, false lashes on an eye, jewelry on skin, a hair " +
+          "accessory in hair). NOT worn: a photo that only demonstrates the RESULT or effect of using the product " +
+          "(drawn freckles, a makeup finish, glowing skin, styled hair) or a face/model demo — classify those as " +
+          "\"packshot\" so the actual product packaging stays the hero. " +
+          "\"packshot\" = the product appears as a standalone object/box/bottle/pen/kit.\n" +
           "STEP 2 — invent set-design concept #" + n + " for a high-end Instagram ad. Be BOLD and imaginative — " +
           "STRICTLY BANNED: round marble podiums, marble platters, stone pedestals and any podium-with-fabric " +
           "cliché — the product should live in the scene some other way. Draw from: sculptural plaster arches and niches, " +
