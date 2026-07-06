@@ -12,6 +12,8 @@ import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
 import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
+import { DAY_SLOTS, slotTimeUtc } from "@/lib/social/schedule-compute";
+import { generateScheduledPost } from "@/lib/social/generate";
 import { geminiConfigured, generateSceneWithGemini, designSceneSettingWithGemini } from "@/lib/social/scene-gemini";
 import { PRODUCT_SCENE_BASE, WORN_SCENE_BASE } from "@/lib/social/ad-variants";
 import crypto from "crypto";
@@ -29,6 +31,8 @@ export type SocialPost = {
   created_at: string;
   posted_at: string | null;
   extras?: { story?: string; reel?: string; alt?: string } | null;
+  scheduled_at?: string | null; // week-plan publish time (UTC ISO)
+  approved?: boolean;           // owner approved → the publish cron may post it
 };
 
 function admin(): any | null {
@@ -44,11 +48,11 @@ export async function listSocialPosts(): Promise<{ error?: string; pending: Soci
 
   let { data, error } = await sb
     .from("social_posts")
-    .select("id, platform, caption, image_url, status, error, created_at, posted_at, extras")
+    .select("id, platform, caption, image_url, status, error, created_at, posted_at, extras, scheduled_at, approved")
     .order("created_at", { ascending: false })
-    .limit(40);
-  if (error && /extras/i.test(error.message)) {
-    // extras column not migrated yet — degrade gracefully without it.
+    .limit(80);
+  if (error && /extras|scheduled_at|approved/i.test(error.message)) {
+    // newer columns not migrated yet — degrade gracefully without them.
     ({ data, error } = await sb
       .from("social_posts")
       .select("id, platform, caption, image_url, status, error, created_at, posted_at")
@@ -105,6 +109,79 @@ export async function dismissSocialPost(id: string): Promise<{ ok?: true; error?
   const sb = admin();
   if (!sb) return { error: NO_DB };
   await sb.from("social_posts").update({ status: "dismissed" }).eq("id", id);
+  revalidatePath("/social");
+  return { ok: true };
+}
+
+// ---- Weekly plan --------------------------------------------------------------
+
+/**
+ * Generate ONE slot of the week plan (called 21× from the client with a
+ * progress bar — each call fits the 60s route budget). Idempotent per slot:
+ * if a live row already sits inside this slot's window, it is kept.
+ */
+export async function planWeekSlot(dayOffset: number, slot: number): Promise<{ ok?: true; created?: boolean; name?: string; scheduledAt?: string; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+
+  const s = DAY_SLOTS[Math.max(0, Math.min(DAY_SLOTS.length - 1, slot))];
+  const when = slotTimeUtc(new Date(), dayOffset, slot, Math.random() * s.windowMinutes);
+
+  // Slot already planned? (any live row inside the slot window on that day)
+  const w0 = slotTimeUtc(new Date(), dayOffset, slot, 0);
+  const w1 = new Date(w0.getTime() + s.windowMinutes * 60_000);
+  const { data: existing, error: exErr } = await sb
+    .from("social_posts")
+    .select("id")
+    .gte("scheduled_at", w0.toISOString())
+    .lt("scheduled_at", w1.toISOString())
+    .neq("status", "dismissed")
+    .limit(1);
+  if (exErr) {
+    const hint = /scheduled_at|approved/.test(exErr.message) ? " — شغّل supabase/social_schedule.sql مرة وحدة." : "";
+    return { error: exErr.message + hint };
+  }
+  if (existing?.length) return { ok: true, created: false };
+
+  // Don't repeat products: anything already in the plan or featured recently.
+  const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: recent } = await sb
+    .from("social_posts")
+    .select("product_id")
+    .or(`created_at.gte.${since},scheduled_at.gte.${new Date().toISOString()}`)
+    .neq("status", "dismissed")
+    .limit(300);
+  const exclude = ((recent ?? []) as { product_id: string | null }[])
+    .map((r) => String(r.product_id ?? "")).filter(Boolean);
+
+  const res = await generateScheduledPost(sb, when, exclude);
+  if (!res.created) return { error: res.skipped ?? "تعذّر توليد المنشور" };
+  revalidatePath("/social");
+  return { ok: true, created: true, name: res.productName, scheduledAt: when.toISOString() };
+}
+
+/** Approve / un-approve a planned post (only approved rows auto-publish). */
+export async function approveSocialPost(id: string, approved: boolean): Promise<{ ok?: true; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const { error } = await sb.from("social_posts").update({ approved }).eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/social");
+  return { ok: true };
+}
+
+/** Move a planned post to another time (datetime-local from the UI). */
+export async function rescheduleSocialPost(id: string, iso: string): Promise<{ ok?: true; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const when = new Date(iso);
+  if (isNaN(when.getTime())) return { error: "وقت غير صالح." };
+  if (when.getTime() < Date.now() - 60_000) return { error: "الوقت في الماضي — اختر وقتًا قادمًا." };
+  const { error } = await sb.from("social_posts").update({ scheduled_at: when.toISOString() }).eq("id", id);
+  if (error) return { error: error.message };
   revalidatePath("/social");
   return { ok: true };
 }

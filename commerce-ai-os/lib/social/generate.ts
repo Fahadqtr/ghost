@@ -62,63 +62,15 @@ export async function generateDailySocialPosts(admin: any): Promise<GenerateResu
     .map((r) => String(r.product_id ?? ""))
     .filter(Boolean);
 
-  // Newest approved, in-stock products with images.
-  const { data: prods, error: prodErr } = await admin
-    .from("products")
-    .select("id, name_en, name_ar, brand_id, price, discount_price, image_url, created_at, approval, inventory(stock_quantity)")
-    .eq("approval", "Approved")
-    .not("image_url", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(120);
-  if (prodErr) return { enabled: true, created: 0, skipped: prodErr.message };
-
-  // Resolve brand ids → names so the caption can lead with the brand.
-  const brandName = new Map<string, string>();
-  try {
-    const { data: brands } = await admin.from("brands").select("id, name").limit(500);
-    for (const b of (brands ?? []) as { id: string; name: string | null }[]) {
-      if (b.name) brandName.set(String(b.id), String(b.name));
-    }
-  } catch { /* brand line is optional */ }
-
-  const candidates: SpotlightCandidate[] = ((prods ?? []) as any[]).map((p) => ({
-    id: String(p.id),
-    name_en: p.name_en, name_ar: p.name_ar,
-    brand: p.brand_id ? brandName.get(String(p.brand_id)) ?? null : null,
-    image_url: p.image_url,
-    price: p.price, discount_price: p.discount_price,
-    stock: Array.isArray(p.inventory)
-      ? p.inventory.reduce((s: number, r: any) => s + (Number(r?.stock_quantity) || 0), 0)
-      : Number(p.inventory?.stock_quantity) || 0,
-    created_at: p.created_at,
-  }));
+  const { candidates, error: candErr } = await loadCandidates(admin);
+  if (candErr) return { enabled: true, created: 0, skipped: candErr };
 
   const pick = pickSpotlightProduct(candidates, exclude);
   if (!pick) return { enabled: true, created: 0, skipped: "no eligible product (image + stock + not recently featured)" };
 
-  // 1) Gemini reads the product photo (what's really on the packaging) so the
-  //    copywriter never invents details. Optional — null just omits the block.
-  const analysis = await analyzeProductImageWithGemini(String(pick.image_url));
-
-  // 2) Full post pack via Claude: caption + story + reel script + alt text.
-  let caption = "";
-  let extras: PostExtras = { story: "", reel: "", alt: "" };
-  try {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic();
-    const model = process.env.STAFF_MALAK_MODEL || "claude-sonnet-5";
-    const resp: any = await client.messages.create({
-      model, max_tokens: 1200,
-      messages: [{ role: "user", content: buildPostPrompt(pick, analysis ?? undefined) }],
-    });
-    const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-    const parsed = parsePostReply(text);
-    caption = parsed.caption;
-    extras = parsed.extras;
-  } catch (e) {
-    return { enabled: true, created: 0, skipped: e instanceof Error ? e.message : "caption generation failed" };
-  }
-  if (!caption) return { enabled: true, created: 0, skipped: "empty caption" };
+  const composed = await composePost(pick);
+  if ("error" in composed) return { enabled: true, created: 0, skipped: composed.error };
+  const { caption, extras } = composed;
 
   // Drafts carry the ORIGINAL catalog photo — the owner sees the real product
   // first, and the ad designer (button on /social) builds the scene on demand.
@@ -141,4 +93,107 @@ export async function generateDailySocialPosts(admin: any): Promise<GenerateResu
   if (insErr) return { enabled: true, created: 0, skipped: insErr.message };
 
   return { enabled: true, created: rows.length };
+}
+
+/** Newest approved, in-stock products with images, brand names resolved. */
+async function loadCandidates(admin: any): Promise<{ candidates: SpotlightCandidate[]; error?: string }> {
+  const { data: prods, error: prodErr } = await admin
+    .from("products")
+    .select("id, name_en, name_ar, brand_id, price, discount_price, image_url, created_at, approval, inventory(stock_quantity)")
+    .eq("approval", "Approved")
+    .not("image_url", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(120);
+  if (prodErr) return { candidates: [], error: prodErr.message };
+
+  // Resolve brand ids → names so the caption can lead with the brand.
+  const brandName = new Map<string, string>();
+  try {
+    const { data: brands } = await admin.from("brands").select("id, name").limit(500);
+    for (const b of (brands ?? []) as { id: string; name: string | null }[]) {
+      if (b.name) brandName.set(String(b.id), String(b.name));
+    }
+  } catch { /* brand line is optional */ }
+
+  const candidates: SpotlightCandidate[] = ((prods ?? []) as any[]).map((p) => ({
+    id: String(p.id),
+    name_en: p.name_en, name_ar: p.name_ar,
+    brand: p.brand_id ? brandName.get(String(p.brand_id)) ?? null : null,
+    image_url: p.image_url,
+    price: p.price, discount_price: p.discount_price,
+    stock: Array.isArray(p.inventory)
+      ? p.inventory.reduce((s: number, r: any) => s + (Number(r?.stock_quantity) || 0), 0)
+      : Number(p.inventory?.stock_quantity) || 0,
+    created_at: p.created_at,
+  }));
+  return { candidates };
+}
+
+/** Gemini photo analysis + Claude full post pack for one product. */
+async function composePost(pick: SpotlightCandidate): Promise<{ caption: string; extras: PostExtras } | { error: string }> {
+  // 1) Gemini reads the product photo (what's really on the packaging) so the
+  //    copywriter never invents details. Optional — null just omits the block.
+  const analysis = await analyzeProductImageWithGemini(String(pick.image_url));
+
+  // 2) Full post pack via Claude: caption + story + reel script + alt text.
+  try {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic();
+    const model = process.env.STAFF_MALAK_MODEL || "claude-sonnet-5";
+    const resp: any = await client.messages.create({
+      model, max_tokens: 1200,
+      messages: [{ role: "user", content: buildPostPrompt(pick, analysis ?? undefined) }],
+    });
+    const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const parsed = parsePostReply(text);
+    if (!parsed.caption) return { error: "empty caption" };
+    return { caption: parsed.caption, extras: parsed.extras };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "caption generation failed" };
+  }
+}
+
+export interface ScheduledResult {
+  created: number;
+  productId?: string;
+  productName?: string;
+  skipped?: string;
+}
+
+/**
+ * One WEEK-PLAN draft: pick a product not in `exclude`, compose the caption
+ * pack, and insert a single pending row with scheduled_at (approval happens
+ * on /social; the publish cron only touches approved rows).
+ */
+export async function generateScheduledPost(admin: any, scheduledAt: Date, exclude: string[], platform = "instagram"): Promise<ScheduledResult> {
+  if (!process.env.ANTHROPIC_API_KEY) return { created: 0, skipped: "ANTHROPIC_API_KEY not set" };
+
+  const { candidates, error: candErr } = await loadCandidates(admin);
+  if (candErr) return { created: 0, skipped: candErr };
+
+  const pick = pickSpotlightProduct(candidates, exclude);
+  if (!pick) return { created: 0, skipped: "no eligible product left" };
+
+  const composed = await composePost(pick);
+  if ("error" in composed) return { created: 0, skipped: composed.error };
+
+  const imageUrl = String(pick.image_url);
+  const row: Record<string, unknown> = {
+    product_id: pick.id,
+    platform,
+    caption: composed.caption,
+    image_url: imageUrl,
+    scene_url: imageUrl,
+    extras: composed.extras,
+    status: "pending",
+    approved: false,
+    scheduled_at: scheduledAt.toISOString(),
+  };
+  let { error: insErr } = await admin.from("social_posts").insert(row);
+  if (insErr && /extras/i.test(insErr.message)) {
+    const { extras: _x, ...bare } = row;
+    ({ error: insErr } = await admin.from("social_posts").insert(bare));
+  }
+  if (insErr) return { created: 0, skipped: insErr.message };
+  return { created: 1, productId: pick.id, productName: String(pick.name_ar || pick.name_en || "") };
 }
