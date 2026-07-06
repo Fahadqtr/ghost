@@ -49,6 +49,8 @@ test("product-in-scene brief fences the product out of the text zones", () => {
 test("worn brief keeps the photographed subject and swaps cleanly into any layout brief", () => {
   assert.ok(WORN_SCENE_BASE.includes("KEEP THE SUBJECT"));
   assert.ok(WORN_SCENE_BASE.includes("must remain clearly visible")); // product can never vanish from the ad
+  assert.ok(WORN_SCENE_BASE.includes("ANATOMY RULE"));                 // no merged/fused fingers
+  assert.ok(WORN_SCENE_BASE.includes("SEPARATED fingers"));
   assert.ok(WORN_SCENE_BASE.includes("REPLACE ONLY THE BACKGROUND"));
   assert.ok(WORN_SCENE_BASE.includes("Do NOT add ANY marketing text"));
   assert.ok(WORN_SCENE_BASE.includes("KEEP-OUT ZONES"));
