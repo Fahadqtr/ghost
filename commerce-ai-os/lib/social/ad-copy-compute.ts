@@ -9,6 +9,7 @@ export interface AdCopyInput {
   nameAr?: string | null;
   nameEn?: string | null;
   description?: string | null;
+  options?: string[]; // variant names (shades/sizes) — mentioned in the copy
 }
 
 export interface AdBullet {
@@ -32,13 +33,16 @@ export function buildAdCopyPrompt(input: AdCopyInput): string {
   const name = (input.nameAr || input.nameEn || "").trim();
   const en = input.nameEn && input.nameAr ? ` (${input.nameEn})` : "";
   const desc = clip(input.description, 600);
+  const opts = (input.options ?? []).map((o) => clip(o, 30)).filter(Boolean).slice(0, 6);
   return (
     "أنت مصمّمة إعلانات فخمة لمتجر Malika's Universe (منتجات جمال، قطر). " +
     "من بيانات المنتج، اكتبي نص إعلان راقٍ (عربي + سطر إنجليزي) وأرجعي JSON فقط بهذا الشكل بالضبط:\n" +
     '{"headline":"...","headlineEn":"...","subtitle":"...","benefits":[{"title":"...","sub":"..."}],"features":[{"title":"...","sub":"..."}]}\n\n' +
     `المنتج: ${name}${en}\n` +
     (desc ? `الوصف: ${desc}\n` : "") +
+    (opts.length ? `الخيارات المتوفرة (${opts.length}): ${opts.join("، ")}\n` : "") +
     "\nالقواعد:\n" +
+    (opts.length ? "• المنتج متوفر بعدة خيارات — اجعلي الـ subtitle يلمّح لذلك (مثل: متوفر بـ N درجات).\n" : "") +
     "• headline: عنوان المنتج الرئيسي بالعربية، بارز وجذّاب (٢–٤ كلمات).\n" +
     "• headlineEn: سطر إنجليزي أنيق يوازي العنوان (2–5 كلمات إنجليزية بأسلوب إعلانات فاخرة، مثل GLOW REPAIR SERUM).\n" +
     "• subtitle: سطر تعريفي قصير تحت العنوان (٤–٧ كلمات).\n" +

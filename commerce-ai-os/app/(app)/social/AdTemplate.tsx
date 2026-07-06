@@ -31,6 +31,7 @@ export interface AdTemplateProps {
   benefits: AdBullet[];     // up to 5 (title + optional sub)
   features: AdBullet[];     // up to 3 footer chips
   website?: string;         // "www.malikasuniverse.com" (store link line)
+  options?: string[];       // variant names (shades/sizes) shown as chips
   palette?: AdPalette;      // per-product design variant colors
   frameProduct?: boolean;   // busy/lifestyle photo → elegant rounded card instead of multiply-melt
   layout?: AdLayoutKey;     // "panel" (default) | "hero" | "banner"
@@ -146,6 +147,16 @@ export default function AdTemplate(p: AdTemplateProps) {
     </div>
   );
 
+  // Variant options (shades/sizes) as small elegant chips — real catalog data.
+  const optionsRow = (center = false): ReactNode => !p.options?.length ? null : (
+    <div style={{ display: "flex", flexDirection: "row-reverse", flexWrap: "wrap", gap: 8, marginTop: 14, ...(center ? { justifyContent: "center" } : {}) }}>
+      <span style={{ fontSize: 16, color: MUTED, alignSelf: "center", direction: "rtl", ...glow }}>الخيارات:</span>
+      {p.options.slice(0, 6).map((o, i) => (
+        <span key={i} style={{ fontSize: 17, fontWeight: 400, color: INK, background: "rgba(255,253,248,0.8)", border: `1px solid rgba(${GOLD_RGB},0.4)`, borderRadius: 15, padding: "6px 16px", direction: "rtl" }}>{o}</span>
+      ))}
+    </div>
+  );
+
   // Elegant English echo line under the Arabic headline (bilingual design).
   const headlineEnLine = (center = false): ReactNode => !p.headlineEn ? null : (
     <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 24, fontWeight: 400, letterSpacing: 4, textTransform: "uppercase" as const, color: GOLD, marginTop: 12, direction: "ltr", textAlign: (center ? "center" : "right") as CSSProperties["textAlign"], ...glow }}>
@@ -200,7 +211,8 @@ export default function AdTemplate(p: AdTemplateProps) {
           ))}
         </div>
 
-        <div style={{ position: "absolute", left: 68, bottom: 140, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16 }}>
+        <div style={{ position: "absolute", left: 68, bottom: 140, width: 480, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 16 }}>
+          {optionsRow()}
           {ctaPill}
           {websiteLine()}
           {handleLine()}
@@ -241,6 +253,7 @@ export default function AdTemplate(p: AdTemplateProps) {
           <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 62, fontWeight: 700, lineHeight: 1.2, color: INK, ...glow }}>{p.headline}</div>
           {headlineEnLine(true)}
           {p.subtitle ? <div style={{ fontSize: 23, fontWeight: 300, color: MUTED, marginTop: 12, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
+          {optionsRow(true)}
         </div>
 
         {chips.length ? (
@@ -282,6 +295,7 @@ export default function AdTemplate(p: AdTemplateProps) {
           <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 48, fontWeight: 700, lineHeight: 1.2, color: INK, ...glow }}>{p.headline}</div>
           {headlineEnLine()}
           {p.subtitle ? <div style={{ fontSize: 21, fontWeight: 300, color: MUTED, marginTop: 8, lineHeight: 1.45, ...glow }}>{p.subtitle}</div> : null}
+          {optionsRow()}
         </div>
 
         {cols.length ? (
