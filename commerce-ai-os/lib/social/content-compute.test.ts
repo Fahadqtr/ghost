@@ -10,7 +10,7 @@ import {
   parseCaptionReply,
   parsePostReply,
   type SpotlightCandidate,
-} from "./content-compute.ts";
+ fixHashtags } from "./content-compute.ts";
 
 const c = (over: Partial<SpotlightCandidate>): SpotlightCandidate => ({
   id: "p", name_en: "X", name_ar: "س", image_url: "https://x/img.jpg",
@@ -95,4 +95,21 @@ test("extras are length-capped", () => {
   assert.equal(r.extras.story.length, 500);
   assert.equal(r.extras.reel.length, 700);
   assert.equal(r.extras.alt.length, 300);
+});
+
+// ---- fixHashtags ---------------------------------------------------------------
+
+test("re-attaches # to Arabic underscore hashtags that lost it", () => {
+  const line = "#QatarBeauty #KBeautyQatar العناية_بالبشرة جمال_قطر";
+  assert.equal(fixHashtags(line), "#QatarBeauty #KBeautyQatar #العناية_بالبشرة #جمال_قطر");
+});
+
+test("leaves normal prose, URLs and handles untouched", () => {
+  const text = "بشرتك تستحق لحظة نقاء\nاطلبيه الآن — الرابط في البايو\nwww.malikas_universe.com @user_name";
+  assert.equal(fixHashtags(text), text); // no hashtag-looking line → unchanged
+});
+
+test("keeps already-correct hashtag lines identical", () => {
+  const line = "#MalikasUniverse #جمال_قطر #سكين_كير";
+  assert.equal(fixHashtags(line), line);
 });

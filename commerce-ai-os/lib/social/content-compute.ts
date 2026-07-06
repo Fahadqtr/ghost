@@ -88,7 +88,8 @@ export function buildPostPrompt(p: SpotlightCandidate, imageAnalysis?: string): 
     "• بعده سطر يذكر البراند واسم المنتج بوضوح وبكتابة صحيحة (البراند بالإنجليزية كما هو). لا تحذفي البراند أبدًا.\n" +
     "• ثم 3 فوائد تسويقية قصيرة، ثم السعر إن وُجد.\n" +
     "• اختمي بـ: «اطلبيه الآن من Malika's Universe — الرابط في البايو 🛍️».\n" +
-    "• ثم سطر هاشتاقات: 8-12 هاشتاق تناسب قطر والجمال وK-Beauty (#MalikasUniverse #QatarBeauty #KBeautyQatar #DohaBeauty وما يناسب المنتج).\n" +
+    "• ثم سطر هاشتاقات: 8-12 هاشتاق تناسب قطر والجمال وK-Beauty (#MalikasUniverse #QatarBeauty #KBeautyQatar #DohaBeauty وما يناسب المنتج). " +
+    "كل هاشتاق — حتى العربي — يجب أن يبدأ بعلامة # ملتصقة (مثال: #العناية_بالبشرة #جمال_قطر).\n" +
     "\nقواعد story: نسخة قصيرة جدًا (سطران) بنفس الروح، تنتهي بدعوة بسيطة.\n" +
     "قواعد reel: سكربت تعليق صوتي 8-12 ثانية، جملة أو جملتان بصيغة مخاطبة أنثوية.\n" +
     "قواعد alt: وصف موجز ودقيق لصورة المنتج بالعربي (سطر واحد).\n" +
@@ -102,6 +103,21 @@ export function buildPostPrompt(p: SpotlightCandidate, imageAnalysis?: string): 
 }
 
 /**
+ * Arabic hashtags often come back without their # (so Instagram shows them as
+ * plain text and they earn zero reach). On lines that already carry hashtags,
+ * re-attach # to underscore-joined tokens that lost it.
+ */
+export function fixHashtags(text: string): string {
+  return String(text ?? "").split("\n").map((line) => {
+    const looksTaggy = /#\S/.test(line) || (line.match(/\S+_\S+/g)?.length ?? 0) >= 2;
+    if (!looksTaggy) return line;
+    return line.split(/(\s+)/).map((tok) =>
+      tok.includes("_") && !tok.includes("#") && !/[./:@]/.test(tok) ? `#${tok}` : tok,
+    ).join("");
+  }).join("\n");
+}
+
+/**
  * Read the model's reply: prefer JSON {caption}, fall back to the raw text.
  * Instagram caps captions at 2200 chars — trim hard so publishing never 400s.
  */
@@ -112,7 +128,7 @@ export function parseCaptionReply(text: string): string {
     try {
       const j = JSON.parse(m[0]);
       const c = String(j?.caption ?? "").trim();
-      if (c) return c.slice(0, 2200);
+      if (c) return fixHashtags(c).slice(0, 2200);
     } catch { /* fall through to raw */ }
   }
   return raw.slice(0, 2200);
@@ -130,7 +146,7 @@ export function parsePostReply(text: string): { caption: string; extras: PostExt
   if (m) { try { j = JSON.parse(m[0]); } catch { /* fall through */ } }
   const s = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);
   return {
-    caption: s(j?.caption, 2200) || raw.slice(0, 2200),
+    caption: fixHashtags(s(j?.caption, 2400)).slice(0, 2200) || raw.slice(0, 2200),
     extras: { story: s(j?.story, 500), reel: s(j?.reel, 700), alt: s(j?.alt, 300) },
   };
 }

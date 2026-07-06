@@ -24,7 +24,7 @@ export interface AdTemplateProps {
   logoDataUrl?: string;     // MU monogram (black on white), data: URL — multiplied so white vanishes
   brandTop: string;         // "MALIKA'S"
   brandSub: string;         // "UNIVERSE BEAUTY"
-  handle: string;           // "@malikas.universe"
+  handle: string;           // "@malikas_universe"
   headline: string;
   headlineEn?: string;      // elegant English echo line under the Arabic headline
   subtitle: string;

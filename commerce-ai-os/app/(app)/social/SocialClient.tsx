@@ -18,7 +18,7 @@ import AdTemplate, { AD_W, AD_H, type AdTemplateProps } from "./AdTemplate";
 
 const BRAND_TOP = "MALIKA'S";
 const BRAND_SUB = "UNIVERSE BEAUTY";
-const HANDLE = "@malikas.universe";
+const HANDLE = "@malikas_universe";
 const WEBSITE = "www.malikasuniverse.com";
 
 // MU monogram, fetched once and inlined (the SVG raster can't load URLs).
