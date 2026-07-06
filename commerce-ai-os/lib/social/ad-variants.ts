@@ -164,7 +164,11 @@ export const PRODUCT_SCENE_BASE =
   "anywhere in the image. NO people, faces, hands or models. " +
   "CRITICAL FRAMING RULE: the placement below defines KEEP-OUT ZONES reserved for typography that will be added " +
   "later — the product must fit ENTIRELY inside its allowed band and never overlap a keep-out zone; if in doubt, " +
-  "make the product SMALLER rather than letting it touch a reserved zone. ";
+  "make the product SMALLER rather than letting it touch a reserved zone. " +
+  "COMPOSITION DISCIPLINE: keep the layout MINIMAL and perfectly ORGANIZED — show the product ONE time only (for " +
+  "a multi-piece set, arrange AT MOST 3 pieces, neatly aligned like a styled flat-lay), NEVER tile, fan out, " +
+  "scatter or repeat many copies of it, never let packets or pieces spill across the frame edges or crowd the " +
+  "scene; leave generous clean negative space so the ad breathes. ";
 
 /** The full product-in-scene brief for one (variant, layout) pair. */
 export function buildProductSceneBrief(variant: AdVariant, layout: AdLayout): string {
@@ -189,7 +193,11 @@ export const WORN_SCENE_BASE =
   "anywhere in the image. Do not add any OTHER people, hands or products beyond the photographed subject. " +
   "CRITICAL FRAMING RULE: the placement below defines KEEP-OUT ZONES reserved for typography that will be added " +
   "later — the subject must fit ENTIRELY inside its allowed band and never overlap a keep-out zone; if in " +
-  "doubt, make the subject SMALLER rather than letting it touch a reserved zone. ";
+  "doubt, make the subject SMALLER rather than letting it touch a reserved zone. " +
+  "COMPOSITION DISCIPLINE: keep the layout MINIMAL and perfectly ORGANIZED — beyond the photographed subject, " +
+  "show the product packaging AT MOST once (never tile, fan out, scatter or repeat copies of it), never let " +
+  "packets or pieces spill across the frame edges or crowd the scene; leave generous clean negative space so " +
+  "the ad breathes. ";
 
 /**
  * Product-refinement brief: turn a messy supplier photo (collage grids, gray

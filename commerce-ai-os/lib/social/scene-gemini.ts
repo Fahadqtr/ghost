@@ -141,7 +141,8 @@ export async function designSceneSettingWithGemini(imageUrl: string, variation: 
           "photographed subject (a backdrop that flatters the hand/skin), never a pedestal for an object.\n" +
           'Reply with ONLY this JSON: {"worn": true|false, "setting": "Setting: <one English sentence describing ' +
           'palette, surfaces, props, composition idea and lighting>"}. Rules for the setting: no extra people, no ' +
-          "added text, no other products, light and airy (never a dark background). Concept #" + n +
+          "added text, no other products, light and airy (never a dark background), and the composition must be " +
+          "MINIMAL and ordered with generous negative space — one hero arrangement, never a cluttered collage. Concept #" + n +
           " must be clearly different from concepts with other numbers." },
         { inline_data: { mime_type: ct, data: buf.toString("base64") } },
       ] }],
