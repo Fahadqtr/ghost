@@ -18,6 +18,14 @@ test("product-in-scene brief grounds the exact product and bans added text", () 
   }
 });
 
+test("both scene bases demand a tidy, non-duplicated composition", () => {
+  for (const base of [PRODUCT_SCENE_BASE, WORN_SCENE_BASE]) {
+    assert.ok(base.includes("COMPOSITION DISCIPLINE"));
+    assert.ok(/NEVER tile|never tile/i.test(base));
+    assert.ok(base.includes("negative space"));
+  }
+});
+
 test("placements never hardcode the marble pedestal/platter prop", () => {
   for (const l of AD_LAYOUTS) {
     assert.ok(!/stands ON a .*pedestal/i.test(l.productPlacement));
