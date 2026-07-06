@@ -22,6 +22,15 @@ export interface IgPublishResult {
 }
 
 export async function publishToInstagram(imageUrl: string, caption: string): Promise<IgPublishResult> {
+  return publishIg({ image_url: imageUrl, caption });
+}
+
+/** Publish an image STORY (no caption support in the API — text lives in the image). */
+export async function publishStoryToInstagram(imageUrl: string): Promise<IgPublishResult> {
+  return publishIg({ image_url: imageUrl, media_type: "STORIES" });
+}
+
+async function publishIg(params: Record<string, string>): Promise<IgPublishResult> {
   const igId = process.env.INSTAGRAM_USER_ID;
   const token = process.env.INSTAGRAM_ACCESS_TOKEN;
   if (!igId || !token) return { ok: false, error: "إنستقرام غير مهيأ (INSTAGRAM_USER_ID / INSTAGRAM_ACCESS_TOKEN)." };
@@ -36,7 +45,7 @@ export async function publishToInstagram(imageUrl: string, caption: string): Pro
     const create = await fetch(`${GRAPH}/${igId}/media`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_url: imageUrl, caption, access_token: token }),
+      body: JSON.stringify({ ...params, access_token: token }),
       cache: "no-store",
       signal: AbortSignal.timeout(20_000),
     });

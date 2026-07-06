@@ -204,7 +204,7 @@ export default function SocialClient({
       const r = await publishSocialPost(p.id, captions[p.id] ?? p.caption);
       setBusyId(null);
       if (r.error) { setNote(p.id, `❌ ${r.error}`); return; }
-      setNote(p.id, "✅ نُشر!");
+      setNote(p.id, r.story ? "✅ نُشر بوست + ستوري!" : "✅ نُشر!");
       setPending((list) => list.filter((x) => x.id !== p.id));
     });
   };

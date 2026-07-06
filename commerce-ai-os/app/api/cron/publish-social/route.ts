@@ -5,7 +5,7 @@
 //
 // Auth: same CRON_SECRET bearer scheme as availability-sync / notify.
 import { createAdminClient } from "@/lib/supabase/admin";
-import { publishToInstagram, instagramConfigured } from "@/lib/social/instagram";
+import { publishToInstagram, publishStoryToInstagram, instagramConfigured } from "@/lib/social/instagram";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +48,10 @@ export async function GET(req: Request) {
       await admin.from("social_posts").update({
         status: "posted", error: null, external_id: res.mediaId ?? null, posted_at: new Date().toISOString(),
       }).eq("id", row.id);
-      results.push({ id: row.id, ok: true });
+      // Mirror the post to the STORY too (best-effort — never blocks the run).
+      let story = false;
+      try { story = (await publishStoryToInstagram(row.image_url)).ok; } catch { story = false; }
+      results.push({ id: row.id, ok: true, story });
     } else {
       await admin.from("social_posts").update({ status: "failed", error: res.error ?? "فشل النشر" }).eq("id", row.id);
       results.push({ id: row.id, error: res.error });

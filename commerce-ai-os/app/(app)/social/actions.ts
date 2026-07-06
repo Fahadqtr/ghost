@@ -3,7 +3,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
-import { publishToInstagram, instagramConfigured } from "@/lib/social/instagram";
+import { publishToInstagram, publishStoryToInstagram, instagramConfigured } from "@/lib/social/instagram";
 import { publishToTikTok, tiktokConfigured } from "@/lib/social/tiktok";
 import { generateDailySocialPosts } from "@/lib/social/generate";
 import { editProductImageCore } from "@/lib/products/imageEdit";
@@ -71,7 +71,7 @@ export async function listSocialPosts(): Promise<{ error?: string; pending: Soci
   };
 }
 
-export async function publishSocialPost(id: string, caption: string): Promise<{ ok?: true; error?: string }> {
+export async function publishSocialPost(id: string, caption: string): Promise<{ ok?: true; story?: boolean; error?: string }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const sb = admin();
   if (!sb) return { error: NO_DB };
@@ -100,8 +100,15 @@ export async function publishSocialPost(id: string, caption: string): Promise<{ 
     external_id: (res as any).mediaId ?? (res as any).publishId ?? null,
     posted_at: new Date().toISOString(),
   }).eq("id", id);
+
+  // Feed post is live — mirror it to the STORY too (best-effort: a story
+  // hiccup never rolls back the published post).
+  let story = false;
+  if (row.platform === "instagram") {
+    try { story = (await publishStoryToInstagram(row.image_url)).ok; } catch { story = false; }
+  }
   revalidatePath("/social");
-  return { ok: true };
+  return { ok: true, story };
 }
 
 export async function dismissSocialPost(id: string): Promise<{ ok?: true; error?: string }> {
