@@ -204,7 +204,7 @@ export async function generateFullAd(id: string): Promise<{ ok?: true; imageUrl?
 
 // AI ad copy (headline + 3 benefits + 3 trust features) + the formatted price,
 // for the browser to lay out in the full ad template.
-export async function generateAdCreative(id: string, sceneStyle?: string, tap?: number): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string; productUrl?: string; backdropUrl?: string }> {
+export async function generateAdCreative(id: string, sceneStyle?: string, tap?: number): Promise<{ error?: string; copy?: AdCopy; price?: string; title?: string; productUrl?: string; backdropUrl?: string; options?: string[] }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const sb = admin();
   if (!sb) return { error: NO_DB };
@@ -219,9 +219,22 @@ export async function generateAdCreative(id: string, sceneStyle?: string, tap?: 
     .single();
   if (!p) return { error: "المنتج غير موجود." };
 
+  // Product options (shades/sizes) — real catalog data, shown as elegant
+  // chips on the design and folded into both AI briefs.
+  const { data: vars } = await sb
+    .from("product_variants")
+    .select("variant_name, color, size")
+    .eq("parent_product_id", row.product_id)
+    .limit(8);
+  const options = (vars ?? [])
+    .map((v: any) => String(v.variant_name || v.color || v.size || "").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
   const prompt = buildAdCopyPrompt({
     nameAr: p.name_ar, nameEn: p.name_en,
     description: p.description_ar || p.description_en,
+    options,
   });
 
   // Two AI jobs in PARALLEL (to fit the 60s route budget):
@@ -263,6 +276,14 @@ export async function generateAdCreative(id: string, sceneStyle?: string, tap?: 
             `THE PRODUCT IS: "${productName}". Identify this exact item in the provided photo (read its packaging) ` +
             "and reproduce its REAL form faithfully — never swap it for a different object type. " + brief;
         }
+        // Multi-option product (shades/colors): the options ARE the story —
+        // show them together, neatly lined up (exception to the show-once rule).
+        if (options.length >= 2) {
+          brief =
+            `IT COMES IN ${options.length} OPTIONS shown in the photo — display the option variants TOGETHER, ` +
+            "neatly aligned side by side as one styled group (this variant line-up is the ONLY exception to the " +
+            "show-once rule; still no scattered duplicates of the same option). " + brief;
+        }
         return generateSceneWithGemini(sb, String(p.image_url), brief, "social");
       })().catch(() => ({ error: "scene failed" }))
     : Promise.resolve({ error: "skipped" } as const);
@@ -277,7 +298,7 @@ export async function generateAdCreative(id: string, sceneStyle?: string, tap?: 
 
   const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
   const backdropUrl = "imageUrl" in scene ? scene.imageUrl : "";
-  return { copy, price, title: String(p.name_ar || p.name_en || ""), productUrl: String(p.image_url || ""), backdropUrl };
+  return { copy, price, title: String(p.name_ar || p.name_en || ""), productUrl: String(p.image_url || ""), backdropUrl, options };
 }
 
 // Persist the browser-composed ad card (JPEG data URL) and point every pending

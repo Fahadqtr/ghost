@@ -177,6 +177,7 @@ export default function SocialClient({
           brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, website: WEBSITE,
           headline: info.copy.headline, headlineEn: info.copy.headlineEn, subtitle: info.copy.subtitle,
           benefits: info.copy.benefits, features: info.copy.features,
+          options: info.options ?? [],
           palette: BRAND_PALETTE,
           layout: layout.key,
         });

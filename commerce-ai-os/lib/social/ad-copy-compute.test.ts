@@ -20,6 +20,13 @@ test("prompt carries the product name, description, and the JSON shape rule", ()
   assert.ok(p.includes('"features"'));
 });
 
+test("folds variant options into the prompt and its rules", () => {
+  const p = buildAdCopyPrompt({ nameAr: "تنت شفاه", options: ["أحمر كرزي", "توتي"] });
+  assert.ok(p.includes("الخيارات المتوفرة (2): أحمر كرزي، توتي"));
+  assert.ok(p.includes("متوفر بعدة خيارات"));
+  assert.ok(!buildAdCopyPrompt({ nameAr: "منتج" }).includes("الخيارات المتوفرة"));
+});
+
 test("omits the description line when absent", () => {
   assert.ok(!buildAdCopyPrompt({ nameAr: "منتج" }).includes("الوصف:"));
 });
