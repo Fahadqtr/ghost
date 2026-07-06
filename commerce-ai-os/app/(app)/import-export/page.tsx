@@ -67,6 +67,13 @@ export default async function ImportExportPage() {
         </div>
         <span className="text-brand">→</span>
       </Link>
+      <Link href="/import-export/shopify-sync" className="card flex items-center justify-between hover:bg-slate-50">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">🛍️ Shopify Sync</h3>
+          <p className="text-xs text-muted">{L("مقارنة حية مع متجر شوبي فاي عبر Admin API — فروقات الأسعار والأسماء وتحديث بضغطة.", "Live reconcile against the Shopify store via the Admin API — price/title drift, one-tap price push.")}</p>
+        </div>
+        <span className="text-brand">→</span>
+      </Link>
       <Link href="/import-export/snoonu-sync" className="card flex items-center justify-between hover:bg-slate-50">
         <div>
           <h3 className="text-sm font-semibold text-ink">🔄 Snoonu Sync</h3>
