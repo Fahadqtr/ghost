@@ -46,7 +46,8 @@ export const AD_LAYOUTS: AdLayout[] = [
       "white, softly glowing zone (a real product photo will be composited there later); the LEFT ~45% stays VERY " +
       "smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY on it. ",
     productPlacement:
-      "PLACEMENT: the product stands ON a low stone/marble pedestal on the RIGHT side of the frame, about 40-45% of " +
+      "PLACEMENT: the product stands on the RIGHT side of the frame, grounded naturally on whatever surface the " +
+      "scene concept below calls for (do NOT default to a round marble pedestal or platter), about 40-45% of " +
       "the frame height, its top edge NO higher than 28% from the top. KEEP-OUT ZONES (must stay completely empty — " +
       "no part of the product, pedestal or props may enter them): the LEFT ~45% of the frame and the TOP 25%; they " +
       "stay VERY smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY on them. ",
@@ -59,7 +60,8 @@ export const AD_LAYOUTS: AdLayout[] = [
       "and BOTTOM quarter stay VERY smooth, soft, evenly lit and low-detail — marketing text will be placed DIRECTLY " +
       "on them. ",
     productPlacement:
-      "PLACEMENT: the product stands ON a low pedestal in the CENTER of the frame, hero composition, occupying ONLY " +
+      "PLACEMENT: the product stands in the CENTER of the frame, grounded naturally on whatever surface the scene " +
+      "concept below calls for (do NOT default to a round marble pedestal or platter), hero composition, occupying ONLY " +
       "the middle band between 38% and 76% of the frame height — its top edge NO higher than 38% from the top. " +
       "KEEP-OUT ZONES (must stay completely empty — no part of the product, pedestal or props may enter them): the " +
       "TOP 38% and the BOTTOM 24% of the frame; they stay VERY smooth, soft, evenly lit and low-detail — marketing " +
@@ -72,7 +74,8 @@ export const AD_LAYOUTS: AdLayout[] = [
       "there (a real product photo will be composited there later); the BOTTOM ~40% stays VERY smooth, soft, evenly " +
       "lit and low-detail — marketing text will be placed DIRECTLY on it. ",
     productPlacement:
-      "PLACEMENT: the product stands ON a clean surface in the UPPER-CENTER of the frame, occupying ONLY the band " +
+      "PLACEMENT: the product stands in the UPPER-CENTER of the frame, grounded naturally within the scene " +
+      "described below (do NOT default to a round marble pedestal or platter), occupying ONLY the band " +
       "between 20% and 60% of the frame height — its top edge NO higher than 20% from the top. KEEP-OUT ZONES (must " +
       "stay completely empty — no part of the product, pedestal or props may enter them): the BOTTOM ~40% of the " +
       "frame and the TOP 18%; they stay VERY smooth, soft, evenly lit and low-detail — marketing text will be " +
@@ -97,17 +100,17 @@ export const AD_VARIANTS: AdVariant[] = [
   {
     key: "cream-gold",
     palette: { ink: "#38291b", muted: "#8c7a66", gold: "#b0894f", dark: "#2c2013", panel: "247,240,230" },
-    setting: "Setting: warm beige/ivory/cream palette, soft flowing silk fabric, natural sunlight from one side, a marble or travertine podium, premium spa atmosphere.",
+    setting: "Setting: warm beige/ivory/cream palette, soft flowing silk fabric, natural sunlight from one side, premium spa atmosphere.",
   },
   {
     key: "blush-rose",
     palette: { ink: "#4a2e33", muted: "#a07d84", gold: "#c08d7c", dark: "#3a2226", panel: "250,240,238" },
-    setting: "Setting: soft blush pink and rose-beige palette, delicate rose petals, satin fabric folds, gentle morning light, a polished rose-marble surface, romantic luxury mood.",
+    setting: "Setting: soft blush pink and rose-beige palette, delicate rose petals, satin fabric folds, gentle morning light, romantic luxury mood.",
   },
   {
     key: "sage-botanical",
     palette: { ink: "#2f3a2c", muted: "#7d8a76", gold: "#8f9d6b", dark: "#232d20", panel: "241,244,235" },
-    setting: "Setting: sage green and warm ivory palette, fresh botanical leaves and soft shadows of foliage, natural daylight, a light stone pedestal, clean organic spa mood.",
+    setting: "Setting: sage green and warm ivory palette, fresh botanical leaves and soft shadows of foliage, natural daylight, clean organic spa mood.",
   },
   {
     key: "sand-bronze",
@@ -117,7 +120,7 @@ export const AD_VARIANTS: AdVariant[] = [
   {
     key: "ivory-noir",
     palette: { ink: "#26211c", muted: "#84796d", gold: "#a68d5c", dark: "#1c1712", panel: "244,241,236" },
-    setting: "Setting: minimal ivory palette with subtle charcoal accents, dramatic single-source studio light, light polished stone surface with elegant soft reflections, chic editorial mood.",
+    setting: "Setting: minimal ivory palette with subtle charcoal accents, dramatic single-source studio light, elegant soft reflections, chic editorial mood.",
   },
 ];
 

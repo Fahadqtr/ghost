@@ -18,6 +18,16 @@ test("product-in-scene brief grounds the exact product and bans added text", () 
   }
 });
 
+test("placements never hardcode the marble pedestal/platter prop", () => {
+  for (const l of AD_LAYOUTS) {
+    assert.ok(!/stands ON a .*pedestal/i.test(l.productPlacement));
+    assert.ok(l.productPlacement.includes("do NOT default to a round marble pedestal"));
+  }
+  for (const v of AD_VARIANTS) {
+    assert.ok(!/pedestal|podium|platter/i.test(v.setting)); // fallback moods leave the surface to the scene
+  }
+});
+
 test("product-in-scene brief fences the product out of the text zones", () => {
   for (const l of AD_LAYOUTS) {
     const brief = buildProductSceneBrief(AD_VARIANTS[0], l);

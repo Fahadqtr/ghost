@@ -132,7 +132,8 @@ export async function designSceneSettingWithGemini(imageUrl: string, variation: 
           "photo (press-on nails on a hand, lashes on an eye, jewelry on skin, a hair accessory in hair); " +
           "\"packshot\" = the product appears as a standalone object/box/bottle/kit.\n" +
           "STEP 2 — invent set-design concept #" + n + " for a high-end Instagram ad. Be BOLD and imaginative — " +
-          "avoid the cliché round-podium-with-fabric shot. Draw from: sculptural plaster arches and niches, " +
+          "STRICTLY BANNED: round marble podiums, marble platters, stone pedestals and any podium-with-fabric " +
+          "cliché — the product should live in the scene some other way. Draw from: sculptural plaster arches and niches, " +
           "monolithic stone blocks, rippling water surfaces, sun-drenched hard shadow play, floating glass " +
           "shelves, mirrors, wet sand dunes, curved seamless color walls, oversized ingredient props (petals, " +
           "citrus, pearls, silk waves) — whatever fits THIS product: pull the palette from its packaging or its " +
