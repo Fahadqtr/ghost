@@ -9,8 +9,12 @@ import {
   generateNowAction,
   generateAdCreative,
   saveSocialImage,
+  planWeekSlot,
+  approveSocialPost,
+  rescheduleSocialPost,
   type SocialPost,
 } from "./actions";
+import { planSlots, qatarDayLabel, qatarTimeLabel, qatarDayKey } from "@/lib/social/schedule-compute";
 import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
 import { adFontCss } from "@/lib/social/ad-fonts";
 import { pickVariant, pickLayout, buildProductSceneBrief, BRAND_PALETTE } from "@/lib/social/ad-variants";
@@ -224,9 +228,177 @@ export default function SocialClient({
     });
   };
 
+  // ---- Weekly plan ----------------------------------------------------------
+  const [planMsg, setPlanMsg] = useState("");
+
+  const planWeek = () => {
+    const slots = planSlots();
+    setPlanMsg(`…يجهّز خطة الأسبوع (0/${slots.length}) — خلّ الصفحة مفتوحة`);
+    start(async () => {
+      let made = 0, kept = 0, failed = 0;
+      for (let i = 0; i < slots.length; i++) {
+        try {
+          const r = await planWeekSlot(slots[i].dayOffset, slots[i].slot);
+          if (r.error) { failed++; setPlanMsg(`⚠️ (${i + 1}/${slots.length}) ${r.error}`); }
+          else {
+            if (r.created) made++; else kept++;
+            setPlanMsg(`…يجهّز خطة الأسبوع (${i + 1}/${slots.length})${r.name ? ` — ${r.name}` : ""}`);
+          }
+        } catch { failed++; }
+      }
+      setPlanMsg(`✅ الخطة جاهزة: ${made} منشور جديد${kept ? ` + ${kept} موجود` : ""}${failed ? ` — ${failed} فشل` : ""} — يحدّث الصفحة…`);
+      setTimeout(() => window.location.reload(), 1200);
+    });
+  };
+
+  const toggleApprove = (p: SocialPost) => {
+    const next = !p.approved;
+    setBusyId(p.id);
+    start(async () => {
+      const r = await approveSocialPost(p.id, next);
+      setBusyId(null);
+      if (r.error) { setNote(p.id, `❌ ${r.error}`); return; }
+      setPending((list) => list.map((x) => (x.id === p.id ? { ...x, approved: next } : x)));
+      setNote(p.id, next ? "✅ معتمد — سينشر تلقائيًا في وقته" : "أُلغي الاعتماد — لن يُنشر تلقائيًا");
+    });
+  };
+
+  const reschedule = (p: SocialPost, localValue: string) => {
+    const when = new Date(localValue);
+    if (isNaN(when.getTime())) return;
+    start(async () => {
+      const r = await rescheduleSocialPost(p.id, when.toISOString());
+      if (r.error) { setNote(p.id, `❌ ${r.error}`); return; }
+      setPending((list) => list.map((x) => (x.id === p.id ? { ...x, scheduled_at: when.toISOString() } : x)));
+      setNote(p.id, "✅ انتقل الموعد");
+    });
+  };
+
+  // datetime-local wants "YYYY-MM-DDTHH:mm" in the BROWSER's clock.
+  const toLocalInput = (iso: string) => {
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const planned = pending
+    .filter((p) => p.scheduled_at)
+    .sort((a, b) => String(a.scheduled_at).localeCompare(String(b.scheduled_at)));
+  const daily = pending.filter((p) => !p.scheduled_at);
+  const planDays: [string, SocialPost[]][] = [];
+  for (const p of planned) {
+    const key = qatarDayKey(String(p.scheduled_at));
+    const last = planDays[planDays.length - 1];
+    if (last && last[0] === key) last[1].push(p);
+    else planDays.push([key, [p]]);
+  }
+
   const notConfigured = (platform: string) =>
     (platform === "instagram" && !configured.instagram) ||
     (platform === "tiktok" && !configured.tiktok);
+
+  const postCard = (p: SocialPost) => (
+        <div key={p.id} className="card space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-ink">
+              {PLATFORM[p.platform]?.icon ?? "📣"} {PLATFORM[p.platform]?.label ?? p.platform}
+              {p.status === "failed" ? <span className="mr-2 text-xs text-red-600"> — فشل سابقًا، عدّل وجرّب</span> : null}
+            </span>
+            <span className="text-[11px] text-muted">{new Date(p.created_at).toLocaleDateString("ar")}</span>
+          </div>
+
+          {p.scheduled_at ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[#faf6f0] px-3 py-2">
+              <span className={`text-xs font-semibold ${p.approved ? "text-green-700" : "text-amber-700"}`}>
+                {p.approved ? "✅ معتمد — ينشر تلقائيًا" : "⏳ بانتظار اعتمادك"} · {qatarTimeLabel(String(p.scheduled_at))}
+              </span>
+              <input
+                type="datetime-local"
+                className="input h-8 w-auto px-2 py-0 text-xs"
+                defaultValue={toLocalInput(String(p.scheduled_at))}
+                onBlur={(e) => { if (e.target.value && e.target.value !== toLocalInput(String(p.scheduled_at))) reschedule(p, e.target.value); }}
+              />
+            </div>
+          ) : null}
+
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={images[p.id] ?? p.image_url} alt="" className="max-h-64 w-full rounded-xl border border-[#efe3d6] object-contain bg-white" />
+          <button
+            type="button"
+            className="btn w-full text-sm disabled:opacity-50"
+            onClick={() => designAd(p)}
+            disabled={busy || busyId === p.id}
+          >
+            {busyId === p.id ? "…يصمّم الإعلان الفخم" : "🎨 صمّم إعلان فخم (بضغطة)"}
+          </button>
+
+          <textarea
+            dir="rtl"
+            className="input min-h-36 w-full text-sm leading-6"
+            value={captions[p.id] ?? p.caption}
+            onChange={(e) => setCaptions((s) => ({ ...s, [p.id]: e.target.value }))}
+          />
+
+          {p.extras && (p.extras.story || p.extras.reel || p.extras.alt) ? (
+            <details className="rounded-xl border border-[#efe3d6] bg-white/60 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-semibold text-ink">📦 محتوى إضافي جاهز (ستوري + ريلز + Alt)</summary>
+              <div className="mt-2 space-y-2 text-xs">
+                {([["📱 ستوري", p.extras.story], ["🎬 سكربت ريلز", p.extras.reel], ["🖼️ Alt Text", p.extras.alt]] as const)
+                  .filter(([, v]) => v)
+                  .map(([label, v]) => (
+                    <div key={label} className="rounded-lg bg-[#faf6f0] p-2" dir="rtl">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="font-semibold text-ink">{label}</span>
+                        <button
+                          type="button"
+                          className="rounded-md border border-[#e5d5c0] px-2 py-0.5 text-[10px] text-muted"
+                          onClick={() => { navigator.clipboard?.writeText(String(v)); setNote(p.id, `✅ انتسخ: ${label}`); }}
+                        >
+                          نسخ
+                        </button>
+                      </div>
+                      <p className="whitespace-pre-wrap leading-5 text-ink/80">{v}</p>
+                    </div>
+                  ))}
+              </div>
+            </details>
+          ) : null}
+
+          {notConfigured(p.platform) ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {p.platform === "instagram"
+                ? "إنستقرام غير مربوط بعد — أضف INSTAGRAM_USER_ID و INSTAGRAM_ACCESS_TOKEN في Vercel."
+                : "تيك توك غير مربوط بعد — يحتاج TIKTOK_ACCESS_TOKEN (والنشر العام يتطلب موافقة تيك توك على التطبيق)."}
+            </p>
+          ) : null}
+          {p.error && p.status === "failed" ? <p className="text-xs text-red-600">{p.error}</p> : null}
+          {msg[p.id] ? <p className="text-xs text-muted">{msg[p.id]}</p> : null}
+
+          <div className="flex gap-2">
+            {p.scheduled_at ? (
+              <button
+                type="button"
+                className={`flex-1 disabled:opacity-50 ${p.approved ? "btn-ghost" : "btn"}`}
+                onClick={() => toggleApprove(p)}
+                disabled={busy || busyId === p.id || notConfigured(p.platform)}
+              >
+                {p.approved ? "إلغاء الاعتماد" : "✅ اعتماد للنشر التلقائي"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={`disabled:opacity-50 ${p.scheduled_at ? "btn-ghost" : "btn flex-1"}`}
+              onClick={() => publish(p)}
+              disabled={busy || busyId === p.id || notConfigured(p.platform)}
+            >
+              {busyId === p.id ? "…ينشر" : "🚀 انشر الآن"}
+            </button>
+            <button type="button" className="btn-ghost disabled:opacity-50" onClick={() => dismiss(p)} disabled={busy}>
+              تجاهل
+            </button>
+          </div>
+        </div>
+  );
 
   return (
     <div className="space-y-4">
@@ -235,96 +407,42 @@ export default function SocialClient({
           <h2 className="text-lg font-semibold text-ink">📣 محتوى السوشيال</h2>
           <p className="text-sm text-muted">منشور اليوم يتولّد تلقائيًا كل صباح — راجِع، عدّل، وانشر بضغطة.</p>
         </div>
-        <button type="button" className="btn-ghost whitespace-nowrap disabled:opacity-50" onClick={generateNow} disabled={busy}>
-          ✨ ولّد الآن
-        </button>
+        <div className="flex flex-col gap-2">
+          <button type="button" className="btn-ghost whitespace-nowrap disabled:opacity-50" onClick={generateNow} disabled={busy}>
+            ✨ ولّد الآن
+          </button>
+          <button type="button" className="btn whitespace-nowrap text-sm disabled:opacity-50" onClick={planWeek} disabled={busy}>
+            🗓️ جهّز خطة أسبوع
+          </button>
+        </div>
       </div>
       {genMsg ? <p className="text-xs text-muted">{genMsg}</p> : null}
+      {planMsg ? <p className="text-xs text-muted">{planMsg}</p> : null}
 
-      {pending.length === 0 ? (
-        <div className="card text-center text-sm text-muted">
-          ما فيه منشورات بانتظار المراجعة — منشور بكرة يتولّد الصبح تلقائيًا 🌅
+      {planDays.length ? (
+        <div className="space-y-3">
+          <h3 className="text-base font-semibold text-ink">🗓️ خطة الأسبوع — {planned.length} منشور (يُنشر المعتمد فقط)</h3>
+          {planDays.map(([key, posts]) => (
+            <div key={key} className="space-y-3">
+              <p className="mt-2 text-sm font-bold text-ink/70">📅 {qatarDayLabel(String(posts[0].scheduled_at))}</p>
+              {posts.map(postCard)}
+            </div>
+          ))}
         </div>
-      ) : (
-        pending.map((p) => (
-          <div key={p.id} className="card space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-ink">
-                {PLATFORM[p.platform]?.icon ?? "📣"} {PLATFORM[p.platform]?.label ?? p.platform}
-                {p.status === "failed" ? <span className="mr-2 text-xs text-red-600"> — فشل سابقًا، عدّل وجرّب</span> : null}
-              </span>
-              <span className="text-[11px] text-muted">{new Date(p.created_at).toLocaleDateString("ar")}</span>
-            </div>
+      ) : null}
 
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={images[p.id] ?? p.image_url} alt="" className="max-h-64 w-full rounded-xl border border-[#efe3d6] object-contain bg-white" />
-            <button
-              type="button"
-              className="btn w-full text-sm disabled:opacity-50"
-              onClick={() => designAd(p)}
-              disabled={busy || busyId === p.id}
-            >
-              {busyId === p.id ? "…يصمّم الإعلان الفخم" : "🎨 صمّم إعلان فخم (بضغطة)"}
-            </button>
+      {daily.length === 0 && planDays.length === 0 ? (
+        <div className="card text-center text-sm text-muted">
+          ما فيه منشورات بانتظار المراجعة — اضغط «جهّز خطة أسبوع» ليجهّز ٢١ منشورًا، أو «ولّد الآن» لمنشور اليوم 🌅
+        </div>
+      ) : null}
 
-            <textarea
-              dir="rtl"
-              className="input min-h-36 w-full text-sm leading-6"
-              value={captions[p.id] ?? p.caption}
-              onChange={(e) => setCaptions((s) => ({ ...s, [p.id]: e.target.value }))}
-            />
-
-            {p.extras && (p.extras.story || p.extras.reel || p.extras.alt) ? (
-              <details className="rounded-xl border border-[#efe3d6] bg-white/60 px-3 py-2">
-                <summary className="cursor-pointer text-xs font-semibold text-ink">📦 محتوى إضافي جاهز (ستوري + ريلز + Alt)</summary>
-                <div className="mt-2 space-y-2 text-xs">
-                  {([["📱 ستوري", p.extras.story], ["🎬 سكربت ريلز", p.extras.reel], ["🖼️ Alt Text", p.extras.alt]] as const)
-                    .filter(([, v]) => v)
-                    .map(([label, v]) => (
-                      <div key={label} className="rounded-lg bg-[#faf6f0] p-2" dir="rtl">
-                        <div className="mb-1 flex items-center justify-between">
-                          <span className="font-semibold text-ink">{label}</span>
-                          <button
-                            type="button"
-                            className="rounded-md border border-[#e5d5c0] px-2 py-0.5 text-[10px] text-muted"
-                            onClick={() => { navigator.clipboard?.writeText(String(v)); setNote(p.id, `✅ انتسخ: ${label}`); }}
-                          >
-                            نسخ
-                          </button>
-                        </div>
-                        <p className="whitespace-pre-wrap leading-5 text-ink/80">{v}</p>
-                      </div>
-                    ))}
-                </div>
-              </details>
-            ) : null}
-
-            {notConfigured(p.platform) ? (
-              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                {p.platform === "instagram"
-                  ? "إنستقرام غير مربوط بعد — أضف INSTAGRAM_USER_ID و INSTAGRAM_ACCESS_TOKEN في Vercel."
-                  : "تيك توك غير مربوط بعد — يحتاج TIKTOK_ACCESS_TOKEN (والنشر العام يتطلب موافقة تيك توك على التطبيق)."}
-              </p>
-            ) : null}
-            {p.error && p.status === "failed" ? <p className="text-xs text-red-600">{p.error}</p> : null}
-            {msg[p.id] ? <p className="text-xs text-muted">{msg[p.id]}</p> : null}
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className="btn flex-1 disabled:opacity-50"
-                onClick={() => publish(p)}
-                disabled={busy || busyId === p.id || notConfigured(p.platform)}
-              >
-                {busyId === p.id ? "…ينشر" : "🚀 انشر الآن"}
-              </button>
-              <button type="button" className="btn-ghost disabled:opacity-50" onClick={() => dismiss(p)} disabled={busy}>
-                تجاهل
-              </button>
-            </div>
-          </div>
-        ))
-      )}
+      {daily.length ? (
+        <div className="space-y-3">
+          {planDays.length ? <h3 className="text-base font-semibold text-ink">منشورات بدون جدولة</h3> : null}
+          {daily.map(postCard)}
+        </div>
+      ) : null}
 
       {recent.length ? (
         <div className="card">
