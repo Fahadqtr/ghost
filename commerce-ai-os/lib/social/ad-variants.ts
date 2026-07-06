@@ -185,7 +185,11 @@ export const WORN_SCENE_BASE =
   "TASK: this photo shows the product being WORN (for example press-on nails on a hand). KEEP THE SUBJECT " +
   "EXACTLY AS PHOTOGRAPHED: the same hand/skin/pose and the same product with identical shape, colors, details " +
   "and finish — do not redraw, replace, retouch away or alter the hand or the product in any way. The PHYSICAL " +
-  "PRODUCT must remain clearly visible in the frame — an ad can never show only skin or a face with no product. Elevate the " +
+  "PRODUCT must remain clearly visible in the frame — an ad can never show only skin or a face with no product. " +
+  "ANATOMY RULE (critical): hands and fingers must stay anatomically PERFECT and identical to the source photo — " +
+  "the same number of clearly SEPARATED fingers, never merged, fused, overlapping into one mass, extra, missing " +
+  "or bent-wrong fingers, no warped knuckles or melted skin; if the source shows two hands keep them clearly " +
+  "distinct. When in doubt, crop TIGHTER on the nails/product instead of inventing anatomy. Elevate the " +
   "photograph instead: refined professional editorial lighting, and REPLACE ONLY THE BACKGROUND around the " +
   "subject with the scene described below, recomposing to a vertical 4:5 frame. Wherever the placement below " +
   "says 'the product', treat it as THIS SUBJECT — it needs no pedestal; pose it elegantly within its allowed " +
