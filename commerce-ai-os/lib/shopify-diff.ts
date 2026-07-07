@@ -35,13 +35,20 @@ export interface ShopifyMatch {
   changes: ShopifyFieldChange[];
 }
 
+export interface ShopifyDuplicate {
+  shopify_id: string;
+  title: string;      // the store product both rows point at
+  names: string[];    // our catalog rows (2+) that matched it
+}
+
 export interface ShopifyDiff {
   ok: boolean;
   error?: string;
-  counts: { ours: number; shopify: number; matched: number; updated: number; unchanged: number; onlyShopify: number; onlyOurs: number };
+  counts: { ours: number; shopify: number; matched: number; updated: number; unchanged: number; onlyShopify: number; onlyOurs: number; duplicates: number };
   updated: ShopifyMatch[];                                     // matched, with pending changes
   onlyShopify: { shopify_id: string; title: string; status: string }[]; // in the store, not in our catalog
   onlyOurs: { product_id: string; name_en: string }[];         // in our catalog, missing from the store
+  duplicates: ShopifyDuplicate[];                              // 2+ catalog rows on one store product
 }
 
 export const normTitle = (v: unknown): string =>
@@ -97,6 +104,10 @@ export function diffShopify(ours: OurProductRow[], shopify: ShopifyProductLite[]
   const matchedShopifyIds = new Set<string>();
   const updated: ShopifyMatch[] = [];
   const onlyOurs: ShopifyDiff["onlyOurs"] = [];
+  // Which of OUR rows landed on each store product — a second landing is a
+  // duplicate catalog row. It gets reported, not diffed: two rows syncing the
+  // same product would fight each other (ACTIVE<->DRAFT flip-flop) forever.
+  const landed = new Map<string, ShopifyDuplicate>();
   let matched = 0;
 
   for (const o of ours) {
@@ -105,6 +116,12 @@ export function diffShopify(ours: OurProductRow[], shopify: ShopifyProductLite[]
       onlyOurs.push({ product_id: o.id, name_en: String(o.name_en ?? "") });
       continue;
     }
+    const prior = landed.get(hit.p.id);
+    if (prior) {
+      prior.names.push(String(o.name_en ?? ""));
+      continue;
+    }
+    landed.set(hit.p.id, { shopify_id: hit.p.id, title: hit.p.title, names: [String(o.name_en ?? "")] });
     matched++;
     matchedShopifyIds.add(hit.p.id);
 
@@ -137,14 +154,18 @@ export function diffShopify(ours: OurProductRow[], shopify: ShopifyProductLite[]
     .filter((p) => !matchedShopifyIds.has(p.id))
     .map((p) => ({ shopify_id: p.id, title: p.title, status: p.status }));
 
+  const duplicates = [...landed.values()].filter((d) => d.names.length > 1);
+  const extraRows = duplicates.reduce((n, d) => n + d.names.length - 1, 0);
+
   return {
     ok: true,
     counts: {
       ours: ours.length, shopify: shopify.length, matched,
       updated: updated.length, unchanged: matched - updated.length,
       onlyShopify: onlyShopify.length, onlyOurs: onlyOurs.length,
+      duplicates: extraRows,
     },
-    updated, onlyShopify, onlyOurs,
+    updated, onlyShopify, onlyOurs, duplicates,
   };
 }
 
