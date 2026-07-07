@@ -5,10 +5,10 @@ import * as XLSX from "xlsx";
 import { computeTalabatDiff, buildTalabatPackage, type TalabatDiff } from "@/app/(app)/import-export/talabat-actions";
 
 // Talabat catalog gap-closer: upload Talabat's own export, see which of OUR
-// sellable products (Approved, no options — Talabat rejects variant products)
-// are missing over there, then download the "please add these" package:
-// a sheet in Talabat's exact 10-column format + the matching images ZIP +
-// a ready email text. Talabat's team does the adding — we just hand it over.
+// sellable products are missing over there, then download the "please add
+// these" package: a sheet in Talabat's exact 10-column format (products with
+// options are split into one standalone row per option — Talabat rejects
+// variant products) + the matching images ZIP + a ready email text.
 
 export default function TalabatSync() {
   const [diff, setDiff] = useState<TalabatDiff | null>(null);
@@ -48,10 +48,11 @@ export default function TalabatSync() {
       XLSX.writeFile(wb, `talabat-new-products-${pkg.rows.length}.xlsx`);
       setEmailText(pkg.emailText);
       const warn = [
+        pkg.splitProducts ? `🔀 ${pkg.splitProducts} منتج بخيارات انقسم لصفوف مستقلة` : "",
         pkg.noImage.length ? `⚠️ ${pkg.noImage.length} بدون صورة (${pkg.noImage.slice(0, 3).map((x) => x.sku || x.name_en).join("، ")}…)` : "",
         pkg.emptyDesc.length ? `⚠️ ${pkg.emptyDesc.length} بدون وصف إنجليزي` : "",
       ].filter(Boolean).join(" · ");
-      setPkgMsg(`✅ نزل الملف (${pkg.rows.length} منتج)${warn ? ` — ${warn}` : ""}`);
+      setPkgMsg(`✅ نزل الملف (${pkg.rows.length} صف)${warn ? ` — ${warn}` : ""}`);
     });
   };
 
@@ -89,7 +90,7 @@ export default function TalabatSync() {
     ? [
         ["في الكتالوج", diff.counts.ours],
         ["مؤهل لطلبات", diff.counts.eligible],
-        ["مستبعد (فيه خيارات)", diff.counts.excludedVariants],
+        ["ناقص فيه خيارات (ينقسم)", diff.counts.withOptions],
         ["غير معتمد", diff.counts.notApproved],
         ["في ملف طلبات", diff.counts.theirRows],
         ["متطابق", diff.counts.matched],
@@ -104,8 +105,8 @@ export default function TalabatSync() {
         <div>
           <h3 className="text-sm font-semibold text-ink">مقارنة كتالوج طلبات (Talabat)</h3>
           <p className="text-xs text-muted">
-            ارفع تصدير الكتالوج من لوحة طلبات → نطلع لك المنتجات الناقصة عندهم (المنتجات اللي فيها خيارات
-            مستبعدة تلقائيًا لأن طلبات ما يقبلها) → نزّل ملف الإكسل بصيغتهم + الصور وأرسلهم بالإيميل.
+            ارفع تصدير الكتالوج من لوحة طلبات → نطلع لك المنتجات الناقصة عندهم → نزّل ملف الإكسل بصيغتهم
+            + الصور وأرسلهم بالإيميل. المنتجات اللي فيها خيارات تنقسم تلقائيًا لصفوف مستقلة (لأن طلبات ما يقبل الخيارات).
           </p>
         </div>
         <input type="file" accept=".xlsx,.xls,.csv" onChange={onFile} disabled={busy} className="block text-sm" />
@@ -128,7 +129,7 @@ export default function TalabatSync() {
             <div className="card space-y-3">
               <h3 className="text-sm font-semibold text-ink">🚀 جاهز للإرسال لطلبات ({diff.missing.length} منتج)</h3>
               <ol className="list-decimal space-y-1 pr-5 text-xs text-muted">
-                <li>نزّل ملف الإكسل (بصيغة طلبات بالضبط — 10 أعمدة)</li>
+                <li>نزّل ملف الإكسل (بصيغة طلبات بالضبط — 10 أعمدة، وكل خيار بصف مستقل)</li>
                 <li>نزّل ملف الصور المضغوط (اسم كل صورة يطابق عمود New Image Filename)</li>
                 <li>انسخ نص الإيميل، أرفق الملفين، وأرسل لمسؤول حسابكم في طلبات</li>
               </ol>
@@ -152,23 +153,18 @@ export default function TalabatSync() {
               <details>
                 <summary className="cursor-pointer text-xs font-semibold text-ink">عرض القائمة ({diff.missing.length})</summary>
                 <div className="mt-2 max-h-60 space-y-1 overflow-y-auto text-xs text-muted">
-                  {diff.missing.map((m) => <div key={m.product_id}>{m.name_en || m.product_id}{m.sku ? ` — ${m.sku}` : ""}</div>)}
+                  {diff.missing.map((m) => (
+                    <div key={m.product_id}>
+                      {m.name_en || m.product_id}{m.sku ? ` — ${m.sku}` : ""}
+                      {m.hasVariants ? <span className="mr-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800">🔀 ينقسم لخيارات</span> : null}
+                    </div>
+                  ))}
                 </div>
               </details>
             </div>
           ) : (
             <div className="card text-center text-sm text-muted">✅ كل المنتجات المؤهلة موجودة في طلبات — ما في شي ناقص.</div>
           )}
-
-          {diff.excludedVariants.length ? (
-            <details className="card">
-              <summary className="cursor-pointer text-sm font-semibold text-ink">مستبعد — فيه خيارات ({diff.excludedVariants.length})</summary>
-              <p className="mt-1 text-xs text-muted">طلبات ما يقبل منتجات بخيارات — هذي ما تنرسل. إذا تبي وحدة منها تروح لطلبات، حوّل كل خيار لمنتج مستقل في الكتالوج.</p>
-              <div className="mt-2 max-h-60 space-y-1 overflow-y-auto text-xs text-muted">
-                {diff.excludedVariants.map((m) => <div key={m.product_id}>{m.name_en || m.product_id}{m.sku ? ` — ${m.sku}` : ""}</div>)}
-              </div>
-            </details>
-          ) : null}
 
           {diff.extraOnTalabat.length ? (
             <details className="card">
