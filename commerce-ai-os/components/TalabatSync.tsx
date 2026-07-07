@@ -15,13 +15,20 @@ export default function TalabatSync() {
   const [error, setError] = useState<string | null>(null);
   const [pkgMsg, setPkgMsg] = useState("");
   const [emailText, setEmailText] = useState("");
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [busy, start] = useTransition();
+
+  // Everything is included by default; unchecking a row drops it from BOTH
+  // the Excel sheet and the images ZIP.
+  const chosen = (diff?.missing ?? []).filter((m) => !excluded.has(m.product_id));
+  const toggleRow = (id: string) =>
+    setExcluded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setError(null); setDiff(null); setPkgMsg(""); setEmailText("");
+    setError(null); setDiff(null); setPkgMsg(""); setEmailText(""); setExcluded(new Set());
     start(async () => {
       try {
         const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
@@ -37,10 +44,10 @@ export default function TalabatSync() {
   }
 
   const downloadSheet = () => {
-    if (!diff?.missing.length) return;
+    if (!chosen.length) return;
     setPkgMsg("…يجهّز ملف الإكسل");
     start(async () => {
-      const pkg = await buildTalabatPackage(diff.missing.map((m) => m.product_id));
+      const pkg = await buildTalabatPackage(chosen.map((m) => m.product_id));
       if (!pkg.ok) { setPkgMsg(`❌ ${pkg.error}`); return; }
       const ws = XLSX.utils.json_to_sheet(pkg.rows, { header: pkg.headers });
       const wb = XLSX.utils.book_new();
@@ -57,11 +64,11 @@ export default function TalabatSync() {
   };
 
   const downloadImages = () => {
-    if (!diff?.missing.length) return;
+    if (!chosen.length) return;
     setPkgMsg("…يضغط الصور (قد يأخذ دقائق حسب العدد) — خلّ الصفحة مفتوحة");
     start(async () => {
       try {
-        const skus = diff.missing.map((m) => m.sku).filter(Boolean);
+        const skus = chosen.map((m) => m.sku).filter(Boolean);
         const res = await fetch("/api/export/images", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -127,17 +134,18 @@ export default function TalabatSync() {
 
           {diff.missing.length ? (
             <div className="card space-y-3">
-              <h3 className="text-sm font-semibold text-ink">🚀 جاهز للإرسال لطلبات ({diff.missing.length} منتج)</h3>
+              <h3 className="text-sm font-semibold text-ink">🚀 جاهز للإرسال لطلبات ({chosen.length} من {diff.missing.length})</h3>
               <ol className="list-decimal space-y-1 pr-5 text-xs text-muted">
+                <li>راجع القائمة تحت — شِل الصح عن أي منتج ما تبي يروح، واضغط ✏️ لتعديل بياناته قبل الإرسال</li>
                 <li>نزّل ملف الإكسل (بصيغة طلبات بالضبط — 10 أعمدة، وكل خيار بصف مستقل)</li>
                 <li>نزّل ملف الصور المضغوط (اسم كل صورة يطابق عمود New Image Filename)</li>
                 <li>انسخ نص الإيميل، أرفق الملفين، وأرسل لمسؤول حسابكم في طلبات</li>
               </ol>
               <div className="flex flex-wrap gap-2">
-                <button type="button" className="btn text-xs disabled:opacity-50" onClick={downloadSheet} disabled={busy}>
-                  ⬇️ ملف الإكسل ({diff.missing.length})
+                <button type="button" className="btn text-xs disabled:opacity-50" onClick={downloadSheet} disabled={busy || !chosen.length}>
+                  ⬇️ ملف الإكسل ({chosen.length})
                 </button>
-                <button type="button" className="btn-ghost text-xs disabled:opacity-50" onClick={downloadImages} disabled={busy}>
+                <button type="button" className="btn-ghost text-xs disabled:opacity-50" onClick={downloadImages} disabled={busy || !chosen.length}>
                   🖼️ ملف الصور (ZIP)
                 </button>
                 {emailText ? (
@@ -150,17 +158,28 @@ export default function TalabatSync() {
               {emailText ? (
                 <pre dir="auto" className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-[#faf6f0] p-3 text-xs text-ink/80">{emailText}</pre>
               ) : null}
-              <details>
-                <summary className="cursor-pointer text-xs font-semibold text-ink">عرض القائمة ({diff.missing.length})</summary>
-                <div className="mt-2 max-h-60 space-y-1 overflow-y-auto text-xs text-muted">
-                  {diff.missing.map((m) => (
-                    <div key={m.product_id}>
-                      {m.name_en || m.product_id}{m.sku ? ` — ${m.sku}` : ""}
-                      {m.hasVariants ? <span className="mr-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800">🔀 ينقسم لخيارات</span> : null}
+              <p className="text-[11px] text-muted">💡 عدّلت منتجًا؟ التعديل ينحفظ في الكتالوج فورًا — نزّل ملف الإكسل من جديد بعد التعديل.</p>
+              <div className="max-h-96 space-y-2 overflow-y-auto">
+                {diff.missing.map((m) => (
+                  <div key={m.product_id} className={`flex items-center gap-2 rounded-xl border border-[#efe3d6] p-2 ${excluded.has(m.product_id) ? "bg-slate-50 opacity-60" : "bg-white/60"}`}>
+                    <input type="checkbox" checked={!excluded.has(m.product_id)} onChange={() => toggleRow(m.product_id)} className="h-4 w-4 shrink-0" />
+                    {m.image_url ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={m.image_url} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-lg border border-[#efe3d6] bg-white object-cover" />
+                    ) : (
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-amber-300 bg-amber-50 text-[10px] text-amber-700">بدون صورة</div>
+                    )}
+                    <div className="min-w-0 flex-1 text-xs">
+                      <p className="truncate font-semibold text-ink">{m.name_en || m.product_id}</p>
+                      <p className="mt-0.5 text-muted">
+                        {m.sku ?? "—"}
+                        {m.hasVariants ? <span className="mr-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800">🔀 ينقسم لخيارات</span> : null}
+                      </p>
                     </div>
-                  ))}
-                </div>
-              </details>
+                    <a href={`/products/${m.product_id}`} target="_blank" rel="noreferrer" className="btn-ghost shrink-0 px-2 py-1 text-xs">✏️ تعديل</a>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="card text-center text-sm text-muted">✅ كل المنتجات المؤهلة موجودة في طلبات — ما في شي ناقص.</div>

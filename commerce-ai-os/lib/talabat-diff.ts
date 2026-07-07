@@ -15,6 +15,7 @@ export interface TalabatOurRow {
   name_ar: string | null;
   approval: string | null;
   hasVariants: boolean;
+  image_url?: string | null;
 }
 
 export interface TalabatColumns {
@@ -38,7 +39,7 @@ export interface TalabatDiff {
     missing: number;          // eligible but absent from their sheet
     extraOnTalabat: number;   // their rows we couldn't map to the catalog
   };
-  missing: { product_id: string; sku: string | null; name_en: string; hasVariants: boolean }[];
+  missing: { product_id: string; sku: string | null; name_en: string; hasVariants: boolean; image_url: string | null }[];
   extraOnTalabat: { sku: string; name: string }[];
 }
 
@@ -123,7 +124,7 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
     eligible++;
     if (hit) { matched++; continue; }
     if (o.hasVariants) withOptions++;
-    missing.push({ product_id: o.id, sku: o.sku, name_en: String(o.name_en ?? ""), hasVariants: o.hasVariants });
+    missing.push({ product_id: o.id, sku: o.sku, name_en: String(o.name_en ?? ""), hasVariants: o.hasVariants, image_url: o.image_url ?? null });
   }
 
   // Their rows that map to nothing we sell (any key, any product).
