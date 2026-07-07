@@ -32,7 +32,7 @@ async function readAllProducts(client: any): Promise<OurProductRow[]> {
 export async function computeShopifyDiff(): Promise<ShopifyDiff> {
   if (!(await isSignedIn())) return { ...EMPTY, error: "Not signed in." };
   if (!shopifyConfigured()) {
-    return { ...EMPTY, error: "شوبي فاي غير مربوط — أضف SHOPIFY_STORE_DOMAIN و SHOPIFY_ADMIN_TOKEN في Vercel." };
+    return { ...EMPTY, error: "شوبي فاي غير مربوط — أضف SHOPIFY_STORE_DOMAIN و SHOPIFY_CLIENT_ID و SHOPIFY_CLIENT_SECRET في Vercel، ثم افتح /api/shopify/install لإتمام الربط." };
   }
   try {
     const sb = await createClient();

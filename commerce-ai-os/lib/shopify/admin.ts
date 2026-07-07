@@ -1,13 +1,34 @@
 import "server-only";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-// Env-gated Shopify Admin API client (GraphQL). Inactive until
-// SHOPIFY_STORE_DOMAIN (xxxxx.myshopify.com) + SHOPIFY_ADMIN_TOKEN (shpat_…,
-// from a shop-scoped custom app) are set — same pattern as Instagram/WhatsApp.
+// Env-gated Shopify Admin API client (GraphQL). Needs SHOPIFY_STORE_DOMAIN
+// (xxxxx.myshopify.com) plus a token: either SHOPIFY_ADMIN_TOKEN directly
+// (legacy custom app) or the OAuth token stored in shopify_tokens by the
+// /api/shopify/install flow (new Dev Dashboard apps).
 
 const API_VERSION = "2025-01";
 
 export function shopifyConfigured(): boolean {
-  return Boolean(process.env.SHOPIFY_STORE_DOMAIN && process.env.SHOPIFY_ADMIN_TOKEN);
+  return Boolean(
+    process.env.SHOPIFY_STORE_DOMAIN &&
+    (process.env.SHOPIFY_ADMIN_TOKEN || process.env.SHOPIFY_CLIENT_ID),
+  );
+}
+
+// OAuth token from the DB, cached in-process for 5 minutes.
+let tokCache: { v: string; at: number } | null = null;
+export function invalidateShopifyTokenCache(): void { tokCache = null; }
+async function resolveToken(domain: string): Promise<string | null> {
+  const envTok = process.env.SHOPIFY_ADMIN_TOKEN;
+  if (envTok) return envTok;
+  if (tokCache && Date.now() - tokCache.at < 300_000) return tokCache.v;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin.from("shopify_tokens").select("access_token").eq("shop", domain).single();
+    const t = String(data?.access_token ?? "");
+    if (t) { tokCache = { v: t, at: Date.now() }; return t; }
+  } catch { /* fall through */ }
+  return null;
 }
 
 export async function shopifyGraphQL<T = any>(
@@ -15,8 +36,9 @@ export async function shopifyGraphQL<T = any>(
   variables?: Record<string, unknown>,
 ): Promise<{ data?: T; error?: string }> {
   const domain = String(process.env.SHOPIFY_STORE_DOMAIN ?? "").trim();
-  const token = process.env.SHOPIFY_ADMIN_TOKEN;
-  if (!domain || !token) return { error: "شوبي فاي غير مهيأ (SHOPIFY_STORE_DOMAIN / SHOPIFY_ADMIN_TOKEN)." };
+  if (!domain) return { error: "شوبي فاي غير مهيأ (SHOPIFY_STORE_DOMAIN)." };
+  const token = await resolveToken(domain);
+  if (!token) return { error: "شوبي فاي غير مربوط بعد — افتح /api/shopify/install لإتمام الربط." };
 
   try {
     const r = await fetch(`https://${domain}/admin/api/${API_VERSION}/graphql.json`, {
