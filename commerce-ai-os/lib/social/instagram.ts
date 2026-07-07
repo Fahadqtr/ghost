@@ -30,6 +30,67 @@ export async function publishStoryToInstagram(imageUrl: string): Promise<IgPubli
   return publishIg({ image_url: imageUrl, media_type: "STORIES" });
 }
 
+export interface IgMediaStats {
+  ok: boolean;
+  error?: string;
+  permalink?: string;
+  likes: number;
+  comments: number;
+  reach: number;
+  views: number;
+  saved: number;
+  shares: number;
+}
+
+// Insight metric sets tried in order: Meta renamed impressions→views across
+// API versions and some media types reject some metrics — the first set the
+// API accepts wins. Likes/comments come from the media fields (always work).
+const INSIGHT_METRIC_SETS = [
+  "views,reach,saved,shares",
+  "impressions,reach,saved,shares",
+  "reach,saved",
+  "reach",
+];
+
+/** Performance stats for one published IG media (feed post). */
+export async function fetchIgMediaStats(mediaId: string): Promise<IgMediaStats> {
+  const token = process.env.INSTAGRAM_ACCESS_TOKEN;
+  const empty = { likes: 0, comments: 0, reach: 0, views: 0, saved: 0, shares: 0 };
+  if (!token) return { ok: false, error: "إنستقرام غير مهيأ (INSTAGRAM_ACCESS_TOKEN).", ...empty };
+  try {
+    const base = await fetch(
+      `${GRAPH}/${mediaId}?fields=like_count,comments_count,permalink&access_token=${encodeURIComponent(token)}`,
+      { cache: "no-store", signal: AbortSignal.timeout(15_000) },
+    );
+    if (!base.ok) {
+      const j = await base.json().catch(() => null) as { error?: { message?: string } } | null;
+      return { ok: false, error: j?.error?.message || `HTTP ${base.status}`, ...empty };
+    }
+    const b = (await base.json()) as { like_count?: number; comments_count?: number; permalink?: string };
+    const stats = { ...empty, likes: Number(b.like_count) || 0, comments: Number(b.comments_count) || 0 };
+
+    for (const metrics of INSIGHT_METRIC_SETS) {
+      const r = await fetch(
+        `${GRAPH}/${mediaId}/insights?metric=${metrics}&access_token=${encodeURIComponent(token)}`,
+        { cache: "no-store", signal: AbortSignal.timeout(15_000) },
+      );
+      if (!r.ok) continue;
+      const j = (await r.json()) as { data?: { name?: string; values?: { value?: number }[] }[] };
+      for (const m of j.data ?? []) {
+        const v = Number(m.values?.[0]?.value) || 0;
+        if (m.name === "reach") stats.reach = v;
+        else if (m.name === "views" || m.name === "impressions") stats.views = v;
+        else if (m.name === "saved") stats.saved = v;
+        else if (m.name === "shares") stats.shares = v;
+      }
+      break;
+    }
+    return { ok: true, permalink: b.permalink, ...stats };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "فشل جلب الإحصائيات.", ...empty };
+  }
+}
+
 async function publishIg(params: Record<string, string>): Promise<IgPublishResult> {
   const igId = process.env.INSTAGRAM_USER_ID;
   const token = process.env.INSTAGRAM_ACCESS_TOKEN;
