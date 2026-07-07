@@ -55,6 +55,7 @@ export default function TalabatSync() {
       XLSX.writeFile(wb, `talabat-new-products-${pkg.rows.length}.xlsx`);
       setEmailText(pkg.emailText);
       const warn = [
+        pkg.noPrice.length ? `⛔ ${pkg.noPrice.length} صف بدون سعر (${pkg.noPrice.slice(0, 3).map((x) => x.sku || x.name_en).join("، ")}…) — عدّلها قبل الإرسال` : "",
         pkg.splitProducts ? `🔀 ${pkg.splitProducts} منتج بخيارات انقسم لصفوف مستقلة` : "",
         pkg.noImage.length ? `⚠️ ${pkg.noImage.length} بدون صورة (${pkg.noImage.slice(0, 3).map((x) => x.sku || x.name_en).join("، ")}…)` : "",
         pkg.emptyDesc.length ? `⚠️ ${pkg.emptyDesc.length} بدون وصف إنجليزي` : "",
@@ -135,6 +136,11 @@ export default function TalabatSync() {
           {diff.missing.length ? (
             <div className="card space-y-3">
               <h3 className="text-sm font-semibold text-ink">🚀 جاهز للإرسال لطلبات ({chosen.length} من {diff.missing.length})</h3>
+              {diff.counts.noPrice ? (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                  ⛔ {diff.counts.noPrice} منتج بدون سعر — اضغط ✏️ وحط السعر (أو شِل الصح عنه) قبل التنزيل.
+                </p>
+              ) : null}
               <ol className="list-decimal space-y-1 pr-5 text-xs text-muted">
                 <li>راجع القائمة تحت — شِل الصح عن أي منتج ما تبي يروح، واضغط ✏️ لتعديل بياناته قبل الإرسال</li>
                 <li>نزّل ملف الإكسل (بصيغة طلبات بالضبط — 10 أعمدة، وكل خيار بصف مستقل)</li>
@@ -174,6 +180,7 @@ export default function TalabatSync() {
                       <p className="mt-0.5 text-muted">
                         {m.sku ?? "—"}
                         {m.hasVariants ? <span className="mr-1 rounded bg-amber-100 px-1 text-[10px] text-amber-800">🔀 ينقسم لخيارات</span> : null}
+                        {m.noPrice ? <span className="mr-1 rounded bg-red-100 px-1 text-[10px] font-semibold text-red-700">⛔ بدون سعر</span> : null}
                       </p>
                     </div>
                     <a href={`/products/${m.product_id}`} target="_blank" rel="noreferrer" className="btn-ghost shrink-0 px-2 py-1 text-xs">✏️ تعديل</a>

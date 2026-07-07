@@ -15,7 +15,7 @@ export type { TalabatDiff } from "@/lib/talabat-diff";
 
 const EMPTY_DIFF: TalabatDiff = {
   ok: false, columns: {},
-  counts: { ours: 0, eligible: 0, withOptions: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, extraOnTalabat: 0 },
+  counts: { ours: 0, eligible: 0, withOptions: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, noPrice: 0, extraOnTalabat: 0 },
   missing: [], extraOnTalabat: [],
 };
 
@@ -39,10 +39,10 @@ export async function computeTalabatDiff(rows: Record<string, unknown>[]): Promi
     const sb = await createClient();
     let prods: Record<string, any>[];
     try {
-      prods = await pageAll((from, to) => sb.from("products").select("id, sku, barcode, name_en, name_ar, approval, image_url").range(from, to));
+      prods = await pageAll((from, to) => sb.from("products").select("id, sku, barcode, name_en, name_ar, approval, image_url, price, discount_price").range(from, to));
     } catch {
       // barcode column may not exist on older installs.
-      prods = await pageAll((from, to) => sb.from("products").select("id, sku, name_en, name_ar, approval, image_url").range(from, to));
+      prods = await pageAll((from, to) => sb.from("products").select("id, sku, name_en, name_ar, approval, image_url, price, discount_price").range(from, to));
     }
     const parents = new Set<string>();
     try {
@@ -56,6 +56,7 @@ export async function computeTalabatDiff(rows: Record<string, unknown>[]): Promi
       name_en: p.name_en ?? null, name_ar: p.name_ar ?? null,
       approval: p.approval ?? null, hasVariants: parents.has(p.id),
       image_url: p.image_url ?? null,
+      price: p.price ?? null, discount_price: p.discount_price ?? null,
     }));
     return diffTalabat(ours, rows.slice(0, 20000));
   } catch (e) {
@@ -70,6 +71,7 @@ export interface TalabatPackage {
   rows: Record<string, string>[];         // sheet rows, ready for xlsx
   skus: string[];                         // for the images ZIP request
   splitProducts: number;                  // option products that became N rows
+  noPrice: { sku: string; name_en: string }[];  // final rows with an empty/zero price
   noImage: { sku: string; name_en: string }[];
   emptyDesc: { sku: string; name_en: string }[];
   emailText: string;
@@ -81,7 +83,7 @@ export interface TalabatPackage {
  * writes the .xlsx and requests the images ZIP.
  */
 export async function buildTalabatPackage(productIds: string[]): Promise<TalabatPackage> {
-  const empty = { headers: TALABAT_HEADERS as string[], rows: [], skus: [], splitProducts: 0, noImage: [], emptyDesc: [], emailText: "" };
+  const empty = { headers: TALABAT_HEADERS as string[], rows: [], skus: [], splitProducts: 0, noPrice: [], noImage: [], emptyDesc: [], emailText: "" };
   if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...empty };
   const ids = [...new Set(productIds)].filter(Boolean).slice(0, 2000);
   if (!ids.length) return { ok: false, error: "ما في منتجات محددة.", ...empty };
@@ -118,12 +120,18 @@ export async function buildTalabatPackage(productIds: string[]): Promise<Talabat
     }
 
     const built = buildTalabatRows(prods, variants);
+    // Final safety net on the ACTUAL sheet rows (covers split rows too):
+    // anything without a positive price gets called out before sending.
+    const noPrice = (built.rows as Record<string, string>[])
+      .filter((r) => !(Number(r["Price (QAR)"]) > 0))
+      .map((r) => ({ sku: String(r["SKU"] ?? ""), name_en: String(r["Product Name EN"] ?? "") }));
     return {
       ok: true,
       headers: TALABAT_HEADERS as string[],
       rows: built.rows as Record<string, string>[],
       skus: prods.map((p) => String(p.sku ?? "")).filter(Boolean),
       splitProducts: Number(built.stats.withVariants) || 0,
+      noPrice,
       noImage: built.stats.noImage as { sku: string; name_en: string }[],
       emptyDesc: built.stats.stillEmpty as { sku: string; name_en: string }[],
       emailText: talabatEmailText(built.rows.length),
