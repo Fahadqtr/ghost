@@ -39,10 +39,10 @@ export async function computeTalabatDiff(rows: Record<string, unknown>[]): Promi
     const sb = await createClient();
     let prods: Record<string, any>[];
     try {
-      prods = await pageAll((from, to) => sb.from("products").select("id, sku, barcode, name_en, name_ar, approval").range(from, to));
+      prods = await pageAll((from, to) => sb.from("products").select("id, sku, barcode, name_en, name_ar, approval, image_url").range(from, to));
     } catch {
       // barcode column may not exist on older installs.
-      prods = await pageAll((from, to) => sb.from("products").select("id, sku, name_en, name_ar, approval").range(from, to));
+      prods = await pageAll((from, to) => sb.from("products").select("id, sku, name_en, name_ar, approval, image_url").range(from, to));
     }
     const parents = new Set<string>();
     try {
@@ -55,6 +55,7 @@ export async function computeTalabatDiff(rows: Record<string, unknown>[]): Promi
       id: p.id, sku: p.sku ?? null, barcode: p.barcode ?? null,
       name_en: p.name_en ?? null, name_ar: p.name_ar ?? null,
       approval: p.approval ?? null, hasVariants: parents.has(p.id),
+      image_url: p.image_url ?? null,
     }));
     return diffTalabat(ours, rows.slice(0, 20000));
   } catch (e) {

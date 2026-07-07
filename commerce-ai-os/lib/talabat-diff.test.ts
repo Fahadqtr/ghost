@@ -44,8 +44,8 @@ test("diffTalabat: matched / missing / options marked for split / not-approved",
   assert.equal(d.counts.eligible, 4);
   assert.equal(d.counts.matched, 2);
   assert.deepEqual(d.missing, [
-    { product_id: "p2", sku: "MK-2", name_en: "Gold Mask", hasVariants: false },
-    { product_id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true },
+    { product_id: "p2", sku: "MK-2", name_en: "Gold Mask", hasVariants: false, image_url: null },
+    { product_id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true, image_url: null },
   ]);
   assert.equal(d.counts.withOptions, 1);
   assert.equal(d.counts.notApproved, 1);
