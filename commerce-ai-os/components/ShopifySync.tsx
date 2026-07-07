@@ -139,6 +139,24 @@ export default function ShopifySync() {
             ))}
           </div>
 
+          {diff.duplicates.length ? (
+            <div className="card space-y-2 border-amber-200 bg-amber-50">
+              <h3 className="text-sm font-semibold text-amber-900">⚠️ منتجات مكررة في الكتالوج ({diff.counts.duplicates})</h3>
+              <p className="text-xs text-amber-800">
+                كل مجموعة تحتها تشير لنفس المنتج في شوبي فاي — احذف الصف المكرر من الكتالوج (أو وحّد حالة الاعتماد)
+                وإلا تتعارض المزامنة. المكرر مستثنى من المزامنة تلقائيًا.
+              </p>
+              <div className="max-h-48 space-y-2 overflow-y-auto text-xs">
+                {diff.duplicates.map((d) => (
+                  <div key={d.shopify_id} className="rounded-lg bg-white/70 p-2">
+                    <span className="font-semibold text-ink">{d.title}</span>
+                    <span className="mt-0.5 block text-muted">صفوف الكتالوج: {d.names.join(" · ")}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           {diff.updated.length ? (
             <div className="card space-y-3">
               <div className="flex items-center justify-between">

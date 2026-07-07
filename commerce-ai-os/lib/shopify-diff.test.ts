@@ -61,6 +61,22 @@ test("unmatched rows land in onlyOurs / onlyShopify", () => {
   assert.equal(d.onlyShopify[0].title, "Only There");
 });
 
+test("duplicate catalog rows on one store product are flagged, not diffed", () => {
+  const d = diffShopify(
+    [
+      our({ id: "p1", name_en: "Rose Serum", approval: "Approved" }),
+      our({ id: "p2", name_en: "Rose – Serum", approval: "Rejected" }), // same product, opposite status
+    ],
+    [shop({})],
+  );
+  assert.equal(d.counts.matched, 1);
+  assert.equal(d.counts.duplicates, 1);
+  assert.deepEqual(d.duplicates, [{ shopify_id: "gid://shopify/Product/1", title: "Rose Serum", names: ["Rose Serum", "Rose – Serum"] }]);
+  // Only the FIRST row diffs — no ACTIVE/DRAFT tug-of-war from the duplicate.
+  assert.equal(d.counts.updated, 0);
+  assert.equal(d.counts.onlyOurs, 0);
+});
+
 test("normTitle flattens punctuation, case and unicode variants", () => {
   assert.equal(normTitle("Women’s  Watch – GOLD"), normTitle("womens watch gold"));
 });

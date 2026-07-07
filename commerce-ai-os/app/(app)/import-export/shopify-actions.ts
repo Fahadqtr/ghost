@@ -12,8 +12,8 @@ export type { ShopifyDiff } from "@/lib/shopify-diff";
 
 const EMPTY: ShopifyDiff = {
   ok: false,
-  counts: { ours: 0, shopify: 0, matched: 0, updated: 0, unchanged: 0, onlyShopify: 0, onlyOurs: 0 },
-  updated: [], onlyShopify: [], onlyOurs: [],
+  counts: { ours: 0, shopify: 0, matched: 0, updated: 0, unchanged: 0, onlyShopify: 0, onlyOurs: 0, duplicates: 0 },
+  updated: [], onlyShopify: [], onlyOurs: [], duplicates: [],
 };
 
 async function readAllProducts(client: any): Promise<OurProductRow[]> {
