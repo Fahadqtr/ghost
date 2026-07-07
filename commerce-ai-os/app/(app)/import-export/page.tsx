@@ -74,6 +74,13 @@ export default async function ImportExportPage() {
         </div>
         <span className="text-brand">→</span>
       </Link>
+      <Link href="/import-export/talabat-sync" className="card flex items-center justify-between hover:bg-slate-50">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">🍊 Talabat Sync</h3>
+          <p className="text-xs text-muted">{L("ارفع تصدير طلبات → شوف الناقص عندهم ونزّل إكسل + صور جاهزين للإرسال (المنتجات بخيارات مستبعدة).", "Upload the Talabat export → see what they're missing, download an Excel + images package to email them (option products excluded).")}</p>
+        </div>
+        <span className="text-brand">→</span>
+      </Link>
       <Link href="/import-export/snoonu-sync" className="card flex items-center justify-between hover:bg-slate-50">
         <div>
           <h3 className="text-sm font-semibold text-ink">🔄 Snoonu Sync</h3>
