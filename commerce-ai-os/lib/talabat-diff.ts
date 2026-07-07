@@ -16,6 +16,8 @@ export interface TalabatOurRow {
   approval: string | null;
   hasVariants: boolean;
   image_url?: string | null;
+  price?: number | string | null;
+  discount_price?: number | string | null;
 }
 
 export interface TalabatColumns {
@@ -37,9 +39,10 @@ export interface TalabatDiff {
     theirRows: number;
     matched: number;
     missing: number;          // eligible but absent from their sheet
+    noPrice: number;          // among missing: rows with no sellable price
     extraOnTalabat: number;   // their rows we couldn't map to the catalog
   };
-  missing: { product_id: string; sku: string | null; name_en: string; hasVariants: boolean; image_url: string | null }[];
+  missing: { product_id: string; sku: string | null; name_en: string; hasVariants: boolean; image_url: string | null; noPrice: boolean }[];
   extraOnTalabat: { sku: string; name: string }[];
 }
 
@@ -72,7 +75,7 @@ export function baseSku(v: unknown): string {
 export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unknown>[]): TalabatDiff {
   const empty: TalabatDiff = {
     ok: false, columns: {},
-    counts: { ours: 0, eligible: 0, withOptions: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, extraOnTalabat: 0 },
+    counts: { ours: 0, eligible: 0, withOptions: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, noPrice: 0, extraOnTalabat: 0 },
     missing: [], extraOnTalabat: [],
   };
   if (!theirRows.length) return { ...empty, error: "الملف فاضي — ما فيه صفوف." };
@@ -101,7 +104,7 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
   // Walk OUR catalog.
   const missing: TalabatDiff["missing"] = [];
   const matchedOurKeys = { skus: new Set<string>(), barcodes: new Set<string>(), names: new Set<string>() };
-  let eligible = 0, notApproved = 0, matched = 0, withOptions = 0;
+  let eligible = 0, notApproved = 0, matched = 0, withOptions = 0, noPriceCount = 0;
 
   for (const o of ours) {
     const sku = key(o.sku);
@@ -124,7 +127,9 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
     eligible++;
     if (hit) { matched++; continue; }
     if (o.hasVariants) withOptions++;
-    missing.push({ product_id: o.id, sku: o.sku, name_en: String(o.name_en ?? ""), hasVariants: o.hasVariants, image_url: o.image_url ?? null });
+    const noPrice = !(Number(o.price) > 0 || Number(o.discount_price) > 0);
+    if (noPrice) noPriceCount++;
+    missing.push({ product_id: o.id, sku: o.sku, name_en: String(o.name_en ?? ""), hasVariants: o.hasVariants, image_url: o.image_url ?? null, noPrice });
   }
 
   // Their rows that map to nothing we sell (any key, any product).
@@ -152,7 +157,7 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
     columns,
     counts: {
       ours: ours.length, eligible, withOptions, notApproved,
-      theirRows: theirRows.length, matched, missing: missing.length, extraOnTalabat: extraOnTalabat.length,
+      theirRows: theirRows.length, matched, missing: missing.length, noPrice: noPriceCount, extraOnTalabat: extraOnTalabat.length,
     },
     missing, extraOnTalabat,
   };

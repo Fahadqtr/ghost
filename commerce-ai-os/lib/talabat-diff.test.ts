@@ -8,7 +8,7 @@ import { detectTalabatColumns, diffTalabat, baseSku, talabatEmailText, imageFile
 
 const our = (over: Partial<TalabatOurRow>): TalabatOurRow => ({
   id: "p1", sku: "MK-1", barcode: null, name_en: "Rose Serum", name_ar: "سيروم الورد",
-  approval: "Approved", hasVariants: false, ...over,
+  approval: "Approved", hasVariants: false, price: 50, ...over,
 });
 
 test("detectTalabatColumns finds loose header names", () => {
@@ -44,8 +44,8 @@ test("diffTalabat: matched / missing / options marked for split / not-approved",
   assert.equal(d.counts.eligible, 4);
   assert.equal(d.counts.matched, 2);
   assert.deepEqual(d.missing, [
-    { product_id: "p2", sku: "MK-2", name_en: "Gold Mask", hasVariants: false, image_url: null },
-    { product_id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true, image_url: null },
+    { product_id: "p2", sku: "MK-2", name_en: "Gold Mask", hasVariants: false, image_url: null, noPrice: false },
+    { product_id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true, image_url: null, noPrice: false },
   ]);
   assert.equal(d.counts.withOptions, 1);
   assert.equal(d.counts.notApproved, 1);
@@ -64,6 +64,19 @@ test("diffTalabat: their variant-split SKU (mk123-2) still matches the parent", 
 test("diffTalabat: unusable file yields a clear error", () => {
   assert.match(diffTalabat([our({})], []).error ?? "", /فاضي/);
   assert.match(diffTalabat([our({})], [{ Foo: 1 }]).error ?? "", /ما تعرّفت/);
+});
+
+test("diffTalabat flags missing products without a sellable price", () => {
+  const d = diffTalabat(
+    [
+      our({ id: "p1", sku: "A", name_en: "Free Thing", price: 0 }),
+      our({ id: "p2", sku: "B", name_en: "Disc Only", price: null, discount_price: 30 }),
+    ],
+    [{ SKU: "zz", "Product Name EN": "other" }],
+  );
+  assert.equal(d.counts.noPrice, 1);
+  assert.equal(d.missing.find((m) => m.sku === "A")?.noPrice, true);
+  assert.equal(d.missing.find((m) => m.sku === "B")?.noPrice, false);
 });
 
 test("talabatEmailText carries the count in both languages", () => {
