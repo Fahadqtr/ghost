@@ -147,6 +147,28 @@ export async function updateVariantPrice(
   return { ok: true };
 }
 
+/** Update a product's title and/or status (name/status sync — catalog wins). */
+export async function updateShopifyProductContent(
+  productId: string,
+  fields: { title?: string; status?: "ACTIVE" | "DRAFT" },
+): Promise<{ ok: boolean; error?: string }> {
+  if (!fields.title && !fields.status) return { ok: true };
+  const { data, error } = await shopifyGraphQL<{
+    productUpdate: { userErrors: { message: string }[] };
+  }>(
+    `mutation($product: ProductUpdateInput!) {
+      productUpdate(product: $product) {
+        userErrors { message }
+      }
+    }`,
+    { product: { id: productId, ...(fields.title ? { title: fields.title } : {}), ...(fields.status ? { status: fields.status } : {}) } },
+  );
+  if (error) return { ok: false, error };
+  const ue = data?.productUpdate?.userErrors ?? [];
+  if (ue.length) return { ok: false, error: ue.map((u) => u.message).join("; ").slice(0, 300) };
+  return { ok: true };
+}
+
 import type { ShopifyOrderLite } from "./orders-compute";
 
 interface OrdersQuery {
