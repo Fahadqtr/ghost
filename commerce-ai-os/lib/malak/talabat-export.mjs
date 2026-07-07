@@ -100,8 +100,10 @@ export function seqOf(parentSku, variantSku) {
  * Logic:
  *  • product with no variants → one row as-is.
  *  • product with variants    → one row per variant:
- *      SKU = {parentSku}-{seq}, names suffixed with " - {variant_name}",
- *      barcode/price/discount/descriptions inherited from the parent.
+ *      SKU = {parentSku}-{seq}, standalone name per option,
+ *      barcode/descriptions inherited from the parent.
+ *      Price: the option's OWN price when set (> 0), else the parent's price
+ *      and discount — an unpriced option never ships at zero.
  *  • New Image Filename is always empty (filled in later).
  *
  * Returns { rows, stats }.
@@ -168,9 +170,13 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
     const siblings = ordered.map((x) => clean(x.v.variant_name));
     for (const { v, seq } of ordered) {
       const name = clean(v.variant_name);
+      const ownPrice = Number(v.price);
       rows.push({
         SKU: `${S(p.sku)}-${seq}`,
         ...base,
+        // Own price (when set) wins; the parent's discount only makes sense
+        // alongside the parent's price.
+        ...(ownPrice > 0 ? { "Price (QAR)": S(v.price), Discount: "" } : {}),
         "Product Name EN": cleanSplitName(nameEn, name, siblings),
         "Product Name AR": cleanSplitName(nameAr, name, siblings),
       });

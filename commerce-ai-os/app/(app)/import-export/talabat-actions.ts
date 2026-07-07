@@ -113,7 +113,7 @@ export async function buildTalabatPackage(productIds: string[]): Promise<Talabat
       try {
         const { data } = await sb
           .from("product_variants")
-          .select("parent_product_id, variant_name, sku")
+          .select("parent_product_id, variant_name, sku, price")
           .in("parent_product_id", ids.slice(i, i + 200));
         variants.push(...(data ?? []));
       } catch { /* no variants table → all rows stay simple */ }

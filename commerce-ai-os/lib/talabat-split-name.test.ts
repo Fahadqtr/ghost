@@ -45,3 +45,23 @@ test("buildTalabatRows: split rows carry the clean standalone titles", () => {
   // Arabic parent doesn't contain the (English) option → plain suffix form.
   assert.equal(rows[0]["Product Name AR"], "قلوس جيجي بير - Night Soaked Wisteria 07#");
 });
+
+test("buildTalabatRows: zero-priced options inherit the parent price, own price wins", () => {
+  const { rows } = buildTalabatRows(
+    [{
+      id: "p1", sku: "mk10", barcode: "", price: 99, discount_price: 79,
+      name_en: "Nail Set", name_ar: "", main_category: "Nails",
+      description_en: "x", description_ar: "", image_filename: "mk10.jpg",
+    }],
+    [
+      { parent_product_id: "p1", variant_name: "Red", sku: "mk10-1", price: 0 },      // → parent's 99/79
+      { parent_product_id: "p1", variant_name: "Pink", sku: "mk10-2", price: null },  // → parent's 99/79
+      { parent_product_id: "p1", variant_name: "Gold", sku: "mk10-3", price: 120 },   // → its own 120
+    ],
+  );
+  assert.equal(rows[0]["Price (QAR)"], "99");
+  assert.equal(rows[0]["Discount"], "79");
+  assert.equal(rows[1]["Price (QAR)"], "99");
+  assert.equal(rows[2]["Price (QAR)"], "120");
+  assert.equal(rows[2]["Discount"], "");
+});
