@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { diffShopify, targetShopifyPrice, normTitle, type OurProductRow, type ShopifyProductLite } from "./shopify-diff.ts";
+import { diffShopify, targetShopifyPrice, normTitle, planInventorySync, type OurProductRow, type ShopifyProductLite } from "./shopify-diff.ts";
 
 const our = (over: Partial<OurProductRow>): OurProductRow => ({
   id: "p1", sku: null, name_en: "Rose Serum", name_ar: null, price: 100, discount_price: null, approval: "Approved", ...over,
@@ -63,4 +63,30 @@ test("unmatched rows land in onlyOurs / onlyShopify", () => {
 
 test("normTitle flattens punctuation, case and unicode variants", () => {
   assert.equal(normTitle("Women’s  Watch – GOLD"), normTitle("womens watch gold"));
+});
+
+test("inventory plan corrects drifted quantities and skips in-sync/unmatched", () => {
+  const shopify: ShopifyProductLite[] = [
+    shop({ variants: [{ id: "v1", sku: "sku-1", price: "10", compareAtPrice: null, inventoryItemId: "inv1", inventoryQuantity: 5 }], title: "A" }),
+    shop({ id: "gid://2", title: "B Product", variants: [{ id: "v2", sku: "", price: "10", compareAtPrice: null, inventoryItemId: "inv2", inventoryQuantity: 7 }] }),
+  ];
+  const plan = planInventorySync(
+    [
+      { id: "p1", sku: "SKU-1", name_en: "x", stock: 12 },        // drift 5→12
+      { id: "p2", sku: null, name_en: "B – Product", stock: 7 },  // in sync
+      { id: "p3", sku: null, name_en: "Nowhere", stock: 3 },      // unmatched
+    ],
+    shopify,
+  );
+  assert.equal(plan.matched, 2);
+  assert.equal(plan.unmatched, 1);
+  assert.deepEqual(plan.changes, [{ product_id: "p1", name_en: "x", inventoryItemId: "inv1", from: 5, quantity: 12 }]);
+});
+
+test("inventory plan clamps negative stock to zero", () => {
+  const shopify: ShopifyProductLite[] = [
+    shop({ variants: [{ id: "v1", sku: "s", price: "10", compareAtPrice: null, inventoryItemId: "inv1", inventoryQuantity: 4 }] }),
+  ];
+  const plan = planInventorySync([{ id: "p1", sku: "s", name_en: "x", stock: -3 }], shopify);
+  assert.equal(plan.changes[0].quantity, 0);
 });

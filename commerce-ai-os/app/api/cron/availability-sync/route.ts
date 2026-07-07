@@ -10,6 +10,8 @@
 // whose current availability differs from the master-derived one are upserted,
 // so an unchanged run writes nothing.
 import { createAdminClient } from "@/lib/supabase/admin";
+import { shopifyConfigured } from "@/lib/shopify/admin";
+import { runShopifyInventorySync } from "@/lib/shopify/inventory-sync";
 import { PLATFORMS } from "@/lib/constants";
 import {
   computeStockStatus,
@@ -86,6 +88,14 @@ export async function GET(req: Request) {
       return Response.json({ ok: false, error: firstErr + hint, platforms: OVERLAY.length, written, failed, ...counts }, { status: 500 });
     }
 
+    // Mirror our stock to Shopify's "available" quantities (env-gated,
+    // best-effort — a Shopify hiccup never fails the platform overlay sync).
+    let shopify: Record<string, unknown> = { configured: false };
+    if (shopifyConfigured()) {
+      try { shopify = { configured: true, ...(await runShopifyInventorySync(sb)) }; }
+      catch (e) { shopify = { configured: true, ok: false, error: e instanceof Error ? e.message : "sync failed" }; }
+    }
+
     return Response.json({
       ok: true,
       platforms: OVERLAY.length,
@@ -94,6 +104,7 @@ export async function GET(req: Request) {
       inStock: counts.inStock,
       changed: upserts.length,
       written,
+      shopify,
     });
   } catch (e: any) {
     return Response.json({ ok: false, error: e?.message ?? "sync failed" }, { status: 500 });

@@ -18,7 +18,10 @@ export interface ShopifyProductLite {
   id: string;
   title: string;
   status: string; // ACTIVE | DRAFT | ARCHIVED
-  variants: { id: string; sku: string; price: string; compareAtPrice: string | null }[];
+  variants: {
+    id: string; sku: string; price: string; compareAtPrice: string | null;
+    inventoryItemId?: string; inventoryQuantity?: number | null;
+  }[];
 }
 
 export interface ShopifyFieldChange { field: string; old: string; new: string }
@@ -58,10 +61,15 @@ export function targetShopifyPrice(p: OurProductRow): { price: string; compareAt
   return { price: disc || base, compareAtPrice: null };
 }
 
-/** Diff our catalog (source of truth) against the live Shopify products. */
-export function diffShopify(ours: OurProductRow[], shopify: ShopifyProductLite[]): ShopifyDiff {
-  // Index Shopify by variant SKU and by normalized title.
-  const bySku = new Map<string, { p: ShopifyProductLite; v: ShopifyProductLite["variants"][number] }>();
+type ShopifyHit = { p: ShopifyProductLite; v: ShopifyProductLite["variants"][number] };
+
+/** Index Shopify by variant SKU and by normalized title (shared matcher). */
+export function indexShopify(shopify: ShopifyProductLite[]): {
+  bySku: Map<string, ShopifyHit>;
+  byTitle: Map<string, ShopifyProductLite>;
+  match: (sku: string | null, nameEn: string | null) => ShopifyHit | undefined;
+} {
+  const bySku = new Map<string, ShopifyHit>();
   const byTitle = new Map<string, ShopifyProductLite>();
   for (const p of shopify) {
     if (!byTitle.has(normTitle(p.title))) byTitle.set(normTitle(p.title), p);
@@ -70,6 +78,19 @@ export function diffShopify(ours: OurProductRow[], shopify: ShopifyProductLite[]
       if (k && !bySku.has(k)) bySku.set(k, { p, v });
     }
   }
+  const match = (sku: string | null, nameEn: string | null): ShopifyHit | undefined => {
+    const k = String(sku ?? "").trim().toLowerCase();
+    const hit = k ? bySku.get(k) : undefined;
+    if (hit) return hit;
+    const t = byTitle.get(normTitle(nameEn));
+    return t ? { p: t, v: t.variants[0] } : undefined;
+  };
+  return { bySku, byTitle, match };
+}
+
+/** Diff our catalog (source of truth) against the live Shopify products. */
+export function diffShopify(ours: OurProductRow[], shopify: ShopifyProductLite[]): ShopifyDiff {
+  const { match } = indexShopify(shopify);
 
   const matchedShopifyIds = new Set<string>();
   const updated: ShopifyMatch[] = [];
@@ -77,12 +98,7 @@ export function diffShopify(ours: OurProductRow[], shopify: ShopifyProductLite[]
   let matched = 0;
 
   for (const o of ours) {
-    const sku = String(o.sku ?? "").trim().toLowerCase();
-    let hit = sku ? bySku.get(sku) : undefined;
-    if (!hit) {
-      const t = byTitle.get(normTitle(o.name_en));
-      if (t) hit = { p: t, v: t.variants[0] };
-    }
+    const hit = match(o.sku, o.name_en);
     if (!hit?.v) {
       onlyOurs.push({ product_id: o.id, name_en: String(o.name_en ?? "") });
       continue;
@@ -128,4 +144,39 @@ export function diffShopify(ours: OurProductRow[], shopify: ShopifyProductLite[]
     },
     updated, onlyShopify, onlyOurs,
   };
+}
+
+export interface InventoryPlanItem {
+  product_id: string;
+  name_en: string;
+  inventoryItemId: string;
+  from: number | null; // Shopify's current available qty
+  quantity: number;    // ours — what gets written
+}
+
+/**
+ * Which matched products need their Shopify "available" quantity corrected to
+ * OUR stock (the inventory table is the source of truth). Products without a
+ * Shopify match or without an inventory item are skipped, not errors.
+ */
+export function planInventorySync(
+  ours: { id: string; sku: string | null; name_en: string | null; stock: number }[],
+  shopify: ShopifyProductLite[],
+): { changes: InventoryPlanItem[]; matched: number; unmatched: number } {
+  const { match } = indexShopify(shopify);
+  const changes: InventoryPlanItem[] = [];
+  let matched = 0, unmatched = 0;
+  for (const o of ours) {
+    const hit = match(o.sku, o.name_en);
+    if (!hit?.v?.inventoryItemId) { unmatched++; continue; }
+    matched++;
+    const want = Math.max(0, Math.round(Number(o.stock) || 0));
+    const have = hit.v.inventoryQuantity;
+    if (typeof have === "number" && have === want) continue; // already in sync
+    changes.push({
+      product_id: o.id, name_en: String(o.name_en ?? ""),
+      inventoryItemId: hit.v.inventoryItemId, from: typeof have === "number" ? have : null, quantity: want,
+    });
+  }
+  return { changes, matched, unmatched };
 }

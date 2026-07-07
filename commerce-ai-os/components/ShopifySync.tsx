@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { computeShopifyDiff, applyShopifyPrices, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
+import { computeShopifyDiff, applyShopifyPrices, syncShopifyInventory, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
 
 // One-tap live reconcile against the Shopify store: pull products over the
 // Admin API, diff vs our catalog (source of truth), then push price fixes for
@@ -16,6 +16,7 @@ export default function ShopifySync() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [applyMsg, setApplyMsg] = useState("");
+  const [invMsg, setInvMsg] = useState("");
   const [busy, start] = useTransition();
 
   const run = () => {
@@ -37,6 +38,19 @@ export default function ShopifySync() {
     });
   };
 
+  const syncInventory = () => {
+    setInvMsg("…يزامن الكميات مع شوبي فاي (قد يأخذ دقيقة)");
+    start(async () => {
+      const r = await syncShopifyInventory();
+      if (!r.ok) { setInvMsg(`❌ ${r.error}`); return; }
+      setInvMsg(
+        r.drift === 0
+          ? `✅ الكميات متطابقة أصلًا (${r.matched} منتج)`
+          : `✅ تحدّثت كميات ${r.updated} منتج${r.examples.length ? ` — مثل: ${r.examples.join("، ")}` : ""}`,
+      );
+    });
+  };
+
   const toggle = (id: string) =>
     setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
@@ -50,9 +64,16 @@ export default function ShopifySync() {
             المعاينة للقراءة فقط — ما يتغيّر شي إلا بزر التطبيق.
           </p>
         </div>
-        <button type="button" className="btn text-sm disabled:opacity-50" onClick={run} disabled={busy}>
-          {busy && !diff ? "…يقارن" : "🔄 قارن الآن"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn text-sm disabled:opacity-50" onClick={run} disabled={busy}>
+            {busy && !diff ? "…يقارن" : "🔄 قارن الآن"}
+          </button>
+          <button type="button" className="btn-ghost text-sm disabled:opacity-50" onClick={syncInventory} disabled={busy}>
+            ↕️ زامن المخزون الآن
+          </button>
+        </div>
+        <p className="text-xs text-muted">مزامنة المخزون تصير تلقائيًا كل ليلة (3 فجرًا) — الزر للتزامن الفوري.</p>
+        {invMsg ? <p className="text-xs text-muted">{invMsg}</p> : null}
         {error ? <pre className="whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</pre> : null}
       </div>
 

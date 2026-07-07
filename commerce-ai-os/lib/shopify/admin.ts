@@ -65,6 +65,8 @@ export interface ShopifyVariant {
   sku: string;
   price: string;
   compareAtPrice: string | null;
+  inventoryItemId: string;        // gid://shopify/InventoryItem/… ("" when absent)
+  inventoryQuantity: number | null; // current available qty across locations
 }
 
 export interface ShopifyProduct {
@@ -78,7 +80,7 @@ export interface ShopifyProduct {
 interface ProductsQuery {
   products: {
     pageInfo: { hasNextPage: boolean; endCursor: string | null };
-    nodes: { id: string; title: string; status: string; handle: string; variants: { nodes: { id: string; sku: string | null; price: string; compareAtPrice: string | null }[] } }[];
+    nodes: { id: string; title: string; status: string; handle: string; variants: { nodes: { id: string; sku: string | null; price: string; compareAtPrice: string | null; inventoryQuantity: number | null; inventoryItem: { id: string } | null }[] } }[];
   };
 }
 
@@ -93,7 +95,7 @@ export async function fetchAllShopifyProducts(): Promise<{ products?: ShopifyPro
           pageInfo { hasNextPage endCursor }
           nodes {
             id title status handle
-            variants(first: 50) { nodes { id sku price compareAtPrice } }
+            variants(first: 50) { nodes { id sku price compareAtPrice inventoryQuantity inventoryItem { id } } }
           }
         }
       }`,
@@ -106,6 +108,8 @@ export async function fetchAllShopifyProducts(): Promise<{ products?: ShopifyPro
         id: n.id, title: n.title, status: n.status, handle: n.handle,
         variants: (n.variants?.nodes ?? []).map((v) => ({
           id: v.id, sku: String(v.sku ?? "").trim(), price: v.price, compareAtPrice: v.compareAtPrice,
+          inventoryItemId: String(v.inventoryItem?.id ?? ""),
+          inventoryQuantity: typeof v.inventoryQuantity === "number" ? v.inventoryQuantity : null,
         })),
       });
     }
@@ -180,4 +184,45 @@ export async function fetchRecentShopifyOrders(sinceIso: string, limit = 50): Pr
     items: (n.lineItems?.nodes ?? []).map((li) => ({ title: li.title, qty: li.quantity })),
   }));
   return { orders };
+}
+
+/** First active location's id (single-location stores → the main one). */
+export async function fetchPrimaryLocationId(): Promise<{ locationId?: string; error?: string }> {
+  const resp: { data?: { locations: { nodes: { id: string; isActive: boolean }[] } }; error?: string } =
+    await shopifyGraphQL(`{ locations(first: 10) { nodes { id isActive } } }`);
+  if (resp.error) return { error: resp.error };
+  const loc = (resp.data?.locations?.nodes ?? []).find((l) => l.isActive) ?? resp.data?.locations?.nodes?.[0];
+  if (!loc) return { error: "ما في مواقع مخزون في شوبي فاي." };
+  return { locationId: loc.id };
+}
+
+/** Absolute "available" quantities at one location (batched ≤200 a call). */
+export async function setInventoryQuantities(
+  locationId: string,
+  items: { inventoryItemId: string; quantity: number }[],
+): Promise<{ ok: boolean; updated: number; error?: string }> {
+  let updated = 0;
+  for (let i = 0; i < items.length; i += 200) {
+    const batch = items.slice(i, i + 200);
+    const { data, error } = await shopifyGraphQL<{
+      inventorySetQuantities: { userErrors: { message: string }[] };
+    }>(
+      `mutation($input: InventorySetQuantitiesInput!) {
+        inventorySetQuantities(input: $input) { userErrors { message } }
+      }`,
+      {
+        input: {
+          name: "available",
+          reason: "correction",
+          ignoreCompareQuantity: true,
+          quantities: batch.map((b) => ({ inventoryItemId: b.inventoryItemId, locationId, quantity: Math.max(0, Math.round(b.quantity)) })),
+        },
+      },
+    );
+    if (error) return { ok: false, updated, error };
+    const ue = data?.inventorySetQuantities?.userErrors ?? [];
+    if (ue.length) return { ok: false, updated, error: ue.map((u) => u.message).join("; ").slice(0, 300) };
+    updated += batch.length;
+  }
+  return { ok: true, updated };
 }

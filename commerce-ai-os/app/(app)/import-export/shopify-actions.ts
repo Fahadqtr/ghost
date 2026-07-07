@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
 import { shopifyConfigured, fetchAllShopifyProducts, updateVariantPrice } from "@/lib/shopify/admin";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { runShopifyInventorySync, type InventorySyncResult } from "@/lib/shopify/inventory-sync";
 import { diffShopify, targetShopifyPrice, type ShopifyDiff, type OurProductRow } from "@/lib/shopify-diff";
 
 export type { ShopifyDiff } from "@/lib/shopify-diff";
@@ -91,4 +93,16 @@ export async function applyShopifyPrices(productIds: string[]): Promise<ShopifyA
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Apply failed.", updated: 0, failed: [] };
   }
+}
+
+/** Push OUR stock quantities to Shopify (same engine as the nightly cron). */
+export async function syncShopifyInventory(): Promise<InventorySyncResult> {
+  const empty = { matched: 0, unmatched: 0, drift: 0, updated: 0, examples: [] as string[] };
+  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...empty };
+  let sb;
+  try { sb = createAdminClient(); }
+  catch { return { ok: false, error: "الخادم غير مهيأ (SUPABASE_SERVICE_ROLE_KEY).", ...empty }; }
+  const res = await runShopifyInventorySync(sb);
+  revalidatePath("/import-export/shopify-sync");
+  return res;
 }
