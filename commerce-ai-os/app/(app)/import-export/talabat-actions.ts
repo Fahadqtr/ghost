@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
-import { diffTalabat, talabatEmailText, type TalabatDiff, type TalabatOurRow } from "@/lib/talabat-diff";
+import { diffTalabat, talabatEmailText, imageFileFor, type TalabatDiff, type TalabatOurRow } from "@/lib/talabat-diff";
 import { buildTalabatRows, TALABAT_HEADERS } from "@/lib/malak/talabat-export.mjs";
 
 export type { TalabatDiff } from "@/lib/talabat-diff";
@@ -90,15 +90,19 @@ export async function buildTalabatPackage(productIds: string[]): Promise<Talabat
     const sb = await createClient();
     const prods: Record<string, any>[] = [];
     for (let i = 0; i < ids.length; i += 200) {
-      let sel = "id, sku, barcode, price, discount_price, name_en, name_ar, main_category, description_en, description_ar, image_filename";
+      let sel = "id, sku, barcode, price, discount_price, name_en, name_ar, main_category, description_en, description_ar, image_filename, image_url";
       let { data, error } = await sb.from("products").select(sel).in("id", ids.slice(i, i + 200));
       if (error) {
-        sel = "id, sku, price, discount_price, name_en, name_ar, main_category, description_en, description_ar, image_filename";
+        sel = "id, sku, price, discount_price, name_en, name_ar, main_category, description_en, description_ar, image_filename, image_url";
         ({ data, error } = await sb.from("products").select(sel).in("id", ids.slice(i, i + 200)));
       }
       if (error) return { ok: false, error: error.message, ...empty };
       prods.push(...(data ?? []));
     }
+
+    // Shopify-imported products have image_url but no image_filename — derive
+    // the sheet name from the SKU so the sheet and the images ZIP agree.
+    for (const p of prods) p.image_filename = imageFileFor(p.sku, p.image_filename, p.image_url);
 
     // Options → one standalone row per option ({sku}-{N}, name suffixed with
     // the option): Talabat rejects variant products, so each option ships solo.
