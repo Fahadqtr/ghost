@@ -137,3 +137,47 @@ export async function updateVariantPrice(
   if (ue.length) return { ok: false, error: ue.map((u) => u.message).join("; ").slice(0, 300) };
   return { ok: true };
 }
+
+import type { ShopifyOrderLite } from "./orders-compute";
+
+interface OrdersQuery {
+  orders: {
+    nodes: {
+      id: string; name: string; createdAt: string;
+      displayFinancialStatus: string | null; displayFulfillmentStatus: string | null;
+      totalPriceSet: { shopMoney: { amount: string; currencyCode: string } } | null;
+      customer: { displayName: string | null } | null;
+      lineItems: { nodes: { title: string; quantity: number }[] };
+    }[];
+  };
+}
+
+/** Newest orders since `sinceIso` (custom apps see the last 60 days). */
+export async function fetchRecentShopifyOrders(sinceIso: string, limit = 50): Promise<{ orders?: ShopifyOrderLite[]; error?: string }> {
+  const resp: { data?: OrdersQuery; error?: string } = await shopifyGraphQL<OrdersQuery>(
+    `query($q: String, $first: Int!) {
+      orders(first: $first, query: $q, sortKey: CREATED_AT, reverse: true) {
+        nodes {
+          id name createdAt displayFinancialStatus displayFulfillmentStatus
+          totalPriceSet { shopMoney { amount currencyCode } }
+          customer { displayName }
+          lineItems(first: 5) { nodes { title quantity } }
+        }
+      }
+    }`,
+    { q: `created_at:>=${sinceIso}`, first: Math.max(1, Math.min(100, limit)) },
+  );
+  if (resp.error) return { error: resp.error };
+  const orders: ShopifyOrderLite[] = (resp.data?.orders?.nodes ?? []).map((n) => ({
+    id: n.id,
+    name: n.name,
+    createdAt: n.createdAt,
+    financial: String(n.displayFinancialStatus ?? ""),
+    fulfillment: String(n.displayFulfillmentStatus ?? ""),
+    total: Number(n.totalPriceSet?.shopMoney?.amount ?? NaN),
+    currency: String(n.totalPriceSet?.shopMoney?.currencyCode ?? "QAR"),
+    customer: String(n.customer?.displayName ?? ""),
+    items: (n.lineItems?.nodes ?? []).map((li) => ({ title: li.title, qty: li.quantity })),
+  }));
+  return { orders };
+}

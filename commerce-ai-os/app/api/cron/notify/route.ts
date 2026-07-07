@@ -14,6 +14,8 @@ import { composeMorningPush } from "@/lib/push-compute";
 import { pushConfigured, sendPushToSubscriptions } from "@/lib/push";
 import { whatsappConfigured, sendWhatsAppAlert } from "@/lib/whatsapp";
 import { generateDailySocialPosts } from "@/lib/social/generate";
+import { shopifyConfigured, fetchRecentShopifyOrders } from "@/lib/shopify/admin";
+import { morningOrdersLine } from "@/lib/shopify/orders-compute";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,8 +50,24 @@ export async function GET(req: Request) {
     }
 
     const { items } = await getNotifications();
-    const payload = composeMorningPush(items);
-    if (!payload) return Response.json({ ok: true, allClear: true, sent: 0, social });
+    let payload = composeMorningPush(items);
+
+    // Shopify orders since yesterday — good news rides along with the alerts
+    // (and wakes the phone on its own when everything else is all-clear).
+    let shopifyOrders: Record<string, unknown> = { configured: false };
+    if (shopifyConfigured()) {
+      try {
+        const r = await fetchRecentShopifyOrders(new Date(Date.now() - 24 * 3600_000).toISOString(), 50);
+        const line = r.orders ? morningOrdersLine(r.orders, new Date()) : "";
+        shopifyOrders = { configured: true, count: r.orders?.length ?? 0, ...(r.error ? { error: r.error } : {}) };
+        if (line) {
+          if (payload) payload.body += ` · ${line}`;
+          else payload = { title: "صباح الخير ☀️", body: line, url: "/shopify-orders" };
+        }
+      } catch { /* orders line is optional */ }
+    }
+
+    if (!payload) return Response.json({ ok: true, allClear: true, sent: 0, social, shopifyOrders });
 
     // Web push (independent of WhatsApp — a failure in one never blocks the other).
     let push: Record<string, unknown> = { configured: false };
@@ -81,7 +99,7 @@ export async function GET(req: Request) {
       whatsapp = { configured: true, ok: r.ok, mode: r.mode, ...(r.error ? { error: r.error } : {}) };
     }
 
-    return Response.json({ ok: true, body: payload.body, push, whatsapp, social });
+    return Response.json({ ok: true, body: payload.body, push, whatsapp, social, shopifyOrders });
   } catch (e: any) {
     return Response.json({ ok: false, error: e?.message ?? "notify failed" }, { status: 500 });
   }
