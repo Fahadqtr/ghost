@@ -1,0 +1,70 @@
+// Tests for the pure Talabat catalog diff.
+// Run: node --experimental-strip-types --test lib/talabat-diff.test.ts
+
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { detectTalabatColumns, diffTalabat, baseSku, talabatEmailText, type TalabatOurRow } from "./talabat-diff.ts";
+
+const our = (over: Partial<TalabatOurRow>): TalabatOurRow => ({
+  id: "p1", sku: "MK-1", barcode: null, name_en: "Rose Serum", name_ar: "سيروم الورد",
+  approval: "Approved", hasVariants: false, ...over,
+});
+
+test("detectTalabatColumns finds loose header names", () => {
+  assert.deepEqual(
+    detectTalabatColumns(["Item Code", "Barcode", "Product Name EN", "Product Name AR", "Price"]),
+    { sku: "Item Code", barcode: "Barcode", nameEn: "Product Name EN", nameAr: "Product Name AR" },
+  );
+  assert.deepEqual(detectTalabatColumns(["SKU", "Title", "اسم المنتج"]), { sku: "SKU", nameEn: "Title", nameAr: "اسم المنتج" });
+  assert.deepEqual(detectTalabatColumns(["Foo", "Bar"]), {});
+});
+
+test("baseSku strips our old variant-split suffix", () => {
+  assert.equal(baseSku("MK123-4"), "mk123");
+  assert.equal(baseSku("mk123"), "mk123");
+});
+
+test("diffTalabat: matched / missing / variant exclusion / not-approved", () => {
+  const d = diffTalabat(
+    [
+      our({}),                                                             // on Talabat by SKU
+      our({ id: "p2", sku: "MK-2", name_en: "Gold Mask" }),                // missing
+      our({ id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true }), // excluded (options)
+      our({ id: "p4", sku: "MK-4", name_en: "Old Thing", approval: "Rejected" }), // not approved
+      our({ id: "p5", sku: null, name_en: "Lip Tint" }),                   // on Talabat by name
+    ],
+    [
+      { SKU: "mk-1", "Product Name EN": "whatever" },
+      { SKU: "", "Product Name EN": "Lip  Tint" },
+      { SKU: "ZZ-9", "Product Name EN": "Their Own Product" },
+    ],
+  );
+  assert.equal(d.ok, true);
+  assert.equal(d.counts.eligible, 3);
+  assert.equal(d.counts.matched, 2);
+  assert.deepEqual(d.missing, [{ product_id: "p2", sku: "MK-2", name_en: "Gold Mask" }]);
+  assert.deepEqual(d.excludedVariants, [{ product_id: "p3", sku: "MK-3", name_en: "Nail Set" }]);
+  assert.equal(d.counts.notApproved, 1);
+  assert.deepEqual(d.extraOnTalabat, [{ sku: "ZZ-9", name: "Their Own Product" }]);
+});
+
+test("diffTalabat: their variant-split SKU (mk123-2) still matches the parent", () => {
+  const d = diffTalabat(
+    [our({ sku: "MK123" })],
+    [{ SKU: "MK123-2", "Product Name EN": "Rose Serum - Red" }],
+  );
+  assert.equal(d.counts.matched, 1);
+  assert.equal(d.counts.extraOnTalabat, 0);
+});
+
+test("diffTalabat: unusable file yields a clear error", () => {
+  assert.match(diffTalabat([our({})], []).error ?? "", /فاضي/);
+  assert.match(diffTalabat([our({})], [{ Foo: 1 }]).error ?? "", /ما تعرّفت/);
+});
+
+test("talabatEmailText carries the count in both languages", () => {
+  const t = talabatEmailText(46);
+  assert.match(t, /46 منتج/);
+  assert.match(t, /46 new products/);
+});

@@ -101,30 +101,7 @@ async function fetchAll(q: (from: number, to: number) => any) {
   return out;
 }
 
-export async function GET(req: Request) {
-  const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return new Response("Unauthorized", { status: 401 });
-
-  // Optional batch window (?from=&count=) so each download finishes well under
-  // the serverless time limit. No params → whole catalog (use only locally).
-  const url = new URL(req.url);
-  const from = Math.max(0, parseInt(url.searchParams.get("from") || "0", 10) || 0);
-  const countParam = parseInt(url.searchParams.get("count") || "0", 10);
-  const count = Number.isFinite(countParam) && countParam > 0 ? countParam : 0;
-
-  // Products that have a target file name + a source URL. Name the archive
-  // entry by image_filename so it matches the export's New Image Filename.
-  let products = (await fetchAll((from2, to2) =>
-    supabase.from("products")
-      .select("sku, image_filename, image_url")
-      .not("image_filename", "is", null)
-      .order("sku", { ascending: true })
-      .range(from2, to2)
-  )).filter((p) => String(p.image_filename ?? "").trim() && String(p.image_url ?? "").trim());
-
-  if (count > 0) products = products.slice(from, from + count);
-
+function zipResponse(products: { image_filename: string | null; image_url: string | null }[], tag: string) {
   const central: { name: Uint8Array; crc: number; size: number; offset: number }[] = [];
   let offset = 0;
   let i = 0;
@@ -169,7 +146,6 @@ export async function GET(req: Request) {
     },
   });
 
-  const tag = count > 0 ? `${from + 1}-${from + products.length}` : "all";
   return new Response(stream, {
     status: 200,
     headers: {
@@ -178,4 +154,58 @@ export async function GET(req: Request) {
       "Cache-Control": "no-store",
     },
   });
+}
+
+/** ZIP of the images for an explicit SKU list (the "missing on Talabat" set). */
+export async function POST(req: Request) {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return new Response("Unauthorized", { status: 401 });
+
+  let skus: string[] = [];
+  try {
+    const body = await req.json();
+    skus = Array.isArray(body?.skus) ? body.skus.map((v: unknown) => String(v ?? "").trim().toLowerCase()).filter(Boolean) : [];
+  } catch { /* empty */ }
+  if (!skus.length) return new Response("skus required", { status: 400 });
+  const wanted = new Set(skus.slice(0, 5000));
+
+  const products = (await fetchAll((from2, to2) =>
+    supabase.from("products")
+      .select("sku, image_filename, image_url")
+      .not("image_filename", "is", null)
+      .order("sku", { ascending: true })
+      .range(from2, to2)
+  )).filter((p) =>
+    wanted.has(String(p.sku ?? "").trim().toLowerCase()) &&
+    String(p.image_filename ?? "").trim() && String(p.image_url ?? "").trim());
+
+  return zipResponse(products, `missing-${products.length}`);
+}
+
+export async function GET(req: Request) {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return new Response("Unauthorized", { status: 401 });
+
+  // Optional batch window (?from=&count=) so each download finishes well under
+  // the serverless time limit. No params → whole catalog (use only locally).
+  const url = new URL(req.url);
+  const from = Math.max(0, parseInt(url.searchParams.get("from") || "0", 10) || 0);
+  const countParam = parseInt(url.searchParams.get("count") || "0", 10);
+  const count = Number.isFinite(countParam) && countParam > 0 ? countParam : 0;
+
+  // Products that have a target file name + a source URL. Name the archive
+  // entry by image_filename so it matches the export's New Image Filename.
+  let products = (await fetchAll((from2, to2) =>
+    supabase.from("products")
+      .select("sku, image_filename, image_url")
+      .not("image_filename", "is", null)
+      .order("sku", { ascending: true })
+      .range(from2, to2)
+  )).filter((p) => String(p.image_filename ?? "").trim() && String(p.image_url ?? "").trim());
+
+  if (count > 0) products = products.slice(from, from + count);
+
+  return zipResponse(products, count > 0 ? `${from + 1}-${from + products.length}` : "all");
 }

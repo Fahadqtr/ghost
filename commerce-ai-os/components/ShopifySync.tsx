@@ -54,10 +54,14 @@ export default function ShopifySync() {
     start(async () => {
       const r = await syncShopifyInventory();
       if (!r.ok) { setInvMsg(`❌ ${r.error}`); return; }
+      const ordersBit = r.ordersProcessed
+        ? ` · 🛍️ خُصم ${r.deducted ?? 0} قطعة من ${r.ordersProcessed} طلب جديد`
+        : "";
+      const noteBit = r.ordersNote ? ` · ${r.ordersNote}` : "";
       setInvMsg(
-        r.drift === 0
+        (r.drift === 0
           ? `✅ الكميات متطابقة أصلًا (${r.matched} منتج)`
-          : `✅ تحدّثت كميات ${r.updated} منتج${r.examples.length ? ` — مثل: ${r.examples.join("، ")}` : ""}`,
+          : `✅ تحدّثت كميات ${r.updated} منتج${r.examples.length ? ` — مثل: ${r.examples.join("، ")}` : ""}`) + ordersBit + noteBit,
       );
     });
   };
@@ -123,7 +127,7 @@ export default function ShopifySync() {
             ↕️ زامن المخزون الآن
           </button>
         </div>
-        <p className="text-xs text-muted">مزامنة المخزون تصير تلقائيًا كل ليلة (3 فجرًا) — الزر للتزامن الفوري.</p>
+        <p className="text-xs text-muted">مزامنة المخزون تصير تلقائيًا كل ليلة (3 فجرًا) — الزر للتزامن الفوري. طلبات المتجر الجديدة تُخصم من مخزون الكتالوج أولًا قبل الدفع.</p>
         {invMsg ? <p className="text-xs text-muted">{invMsg}</p> : null}
         {error ? <pre className="whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</pre> : null}
       </div>
