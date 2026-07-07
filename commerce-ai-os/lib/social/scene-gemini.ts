@@ -98,6 +98,66 @@ export async function analyzeProductImageWithGemini(imageUrl: string): Promise<s
   } catch { return null; }
 }
 
+export interface ImageQualityVerdict {
+  ok: boolean;
+  problems: string[]; // cropped | corrupt | blurry | placeholder | watermark | dark | wrong
+  note: string;       // short Arabic note
+}
+
+/**
+ * Visual audit of ONE product photo (text out): does the image itself have a
+ * problem a customer would notice — product cut off by the frame, glitched
+ * file, blur, watermark, placeholder, too dark, or not a product photo at
+ * all. Returns null on any failure so batch scans just skip that image.
+ */
+export async function auditProductImageWithGemini(imageUrl: string): Promise<ImageQualityVerdict | null> {
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
+  const src = String(imageUrl || "").trim();
+  if (!key || !src) return null;
+  try {
+    const r0 = await fetch(src, { signal: AbortSignal.timeout(10_000) });
+    if (!r0.ok) return null;
+    const ct = (r0.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+    const buf = Buffer.from(await r0.arrayBuffer());
+    if (!buf.length || buf.length > 9_000_000) return null;
+    const model = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+    const body = {
+      contents: [{ parts: [
+        { text:
+          "You are auditing e-commerce product photos for a beauty store.\n" +
+          "Reply ONLY with minified JSON: {\"ok\":true|false,\"problems\":[...],\"note\":\"...\"}\n" +
+          "problems values (flag ONLY what a customer would clearly notice):\n" +
+          "- \"cropped\": the product is visibly cut off by the image edge\n" +
+          "- \"corrupt\": glitch/truncation artifacts, broken rendering\n" +
+          "- \"blurry\": out of focus or resolution too low to read the product\n" +
+          "- \"placeholder\": no real product shown (logo, gray box, 'no image')\n" +
+          "- \"watermark\": a watermark/stamp over the photo\n" +
+          "- \"dark\": too dark to see the product\n" +
+          "- \"wrong\": clearly not a product photo (screenshot, document, random scene)\n" +
+          "note: <= 12 words, in Arabic, describing the issue (or empty when ok).\n" +
+          "Minor imperfections are fine: then reply {\"ok\":true,\"problems\":[],\"note\":\"\"}." },
+        { inline_data: { mime_type: ct, data: buf.toString("base64") } },
+      ] }],
+    };
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    const parts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
+    const text = parts.map((pp) => pp?.text ?? "").join("").trim().replace(/^```(json)?|```$/g, "").trim();
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const j = JSON.parse(m[0]);
+    const allowed = new Set(["cropped", "corrupt", "blurry", "placeholder", "watermark", "dark", "wrong"]);
+    const problems = Array.isArray(j.problems) ? j.problems.map(String).filter((x: string) => allowed.has(x)) : [];
+    return { ok: j.ok !== false && problems.length === 0, problems, note: String(j.note ?? "").slice(0, 160) };
+  } catch { return null; }
+}
+
 export interface SceneDesign {
   setting: string; // "Setting: ..." clause for the scene brief
   worn: boolean;   // photo shows the product WORN (nails on a hand, lashes on an eye…)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { scanCatalogImages, type ImageProblem } from "@/app/(app)/import-export/image-health-actions";
+import { scanCatalogImages, auditImageQuality, type ImageProblem, type ImageQualityIssue } from "@/app/(app)/import-export/image-health-actions";
 
 // One-tap catalog image health scan: walks every product (30 per server call,
 // same chunked pattern as the week plan), probes each image_url server-side,
@@ -16,11 +16,47 @@ const KIND_AR: Record<string, { label: string; icon: string }> = {
   unsafe_url: { label: "رابط غير صالح", icon: "⚠️" },
 };
 
+const QUALITY_AR: Record<string, string> = {
+  cropped: "✂️ مقصوصة",
+  corrupt: "🧩 مشوهة/تالفة",
+  blurry: "🌫️ غير واضحة",
+  placeholder: "🖼️ بدون منتج حقيقي",
+  watermark: "🏷️ عليها علامة مائية",
+  dark: "🌑 مظلمة",
+  wrong: "❓ مو صورة منتج",
+};
+
 export default function ImageHealth() {
   const [msg, setMsg] = useState("");
   const [problems, setProblems] = useState<ImageProblem[] | null>(null);
   const [scannedOk, setScannedOk] = useState(0);
+  const [qMsg, setQMsg] = useState("");
+  const [issues, setIssues] = useState<ImageQualityIssue[] | null>(null);
   const [busy, start] = useTransition();
+
+  // Deep AI pass: Gemini LOOKS at every image (10 per server call) — slow but
+  // catches what a link check can't: cropped, glitched, blurry, wrong photos.
+  const audit = () => {
+    setIssues(null);
+    setQMsg("…يبدأ الفحص البصري");
+    start(async () => {
+      const found: ImageQualityIssue[] = [];
+      let offset = 0, total = 0;
+      for (;;) {
+        const r = await auditImageQuality(offset, 10);
+        if (!r.ok) { setQMsg(`❌ ${r.error}`); return; }
+        total = r.total || total;
+        found.push(...r.flagged);
+        offset += r.checked;
+        setQMsg(`…يشوف الصور ${Math.min(offset, total)}/${total} — ${found.length} صورة معلّمة حتى الآن`);
+        if (!r.checked || (total && offset >= total)) break;
+      }
+      setIssues(found);
+      setQMsg(found.length
+        ? `⚠️ اكتمل: ${found.length} صورة فيها مشكلة بصرية (من ${offset})`
+        : `✅ اكتمل: كل الصور سليمة بصريًا (${offset})`);
+    });
+  };
 
   const scan = () => {
     setProblems(null); setScannedOk(0);
@@ -66,6 +102,35 @@ export default function ImageHealth() {
         </button>
       </div>
       {msg ? <p className="text-xs text-muted">{msg}</p> : null}
+
+      <div className="flex items-center justify-between gap-3 border-t border-[#efe3d6] pt-3">
+        <p className="text-xs text-muted">
+          <span className="font-semibold text-ink">🔎 الفحص البصري (AI):</span> يشوف كل صورة فعليًا ويعلّم
+          المقصوصة والمشوهة وغير الواضحة — أدق وأبطأ (يمكن ياخذ ٢٠+ دقيقة، خلّ الصفحة مفتوحة).
+        </p>
+        <button type="button" className="btn-ghost whitespace-nowrap text-sm disabled:opacity-50" onClick={audit} disabled={busy}>
+          🔎 افحص الجودة
+        </button>
+      </div>
+      {qMsg ? <p className="text-xs text-muted">{qMsg}</p> : null}
+
+      {issues?.length ? (
+        <div className="max-h-96 space-y-2 overflow-y-auto">
+          {issues.map((p) => (
+            <div key={p.product_id} className="flex items-center gap-2 rounded-xl border border-[#efe3d6] bg-white/60 p-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={p.image_url} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-lg border border-[#efe3d6] bg-white object-cover" />
+              <div className="min-w-0 flex-1 text-xs">
+                <p className="truncate font-semibold text-ink">{p.name_en || p.product_id}{p.sku ? ` — ${p.sku}` : ""}</p>
+                <p className="mt-0.5 text-muted">
+                  {p.problems.map((k) => QUALITY_AR[k] ?? k).join(" · ")}{p.note ? ` — ${p.note}` : ""}
+                </p>
+              </div>
+              <a href={`/products/${p.product_id}`} target="_blank" rel="noreferrer" className="btn-ghost shrink-0 px-2 py-1 text-xs">✏️ تعديل</a>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {problems?.length ? (
         <div className="space-y-3">

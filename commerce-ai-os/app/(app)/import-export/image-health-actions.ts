@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { safeImageUrlOrNull, safeFetchImage } from "@/lib/net/safeImage";
+import { auditProductImageWithGemini, geminiConfigured } from "@/lib/social/scene-gemini";
 
 // Catalog image health scan: probe every product's image_url (first KB only)
 // and report the ones a browser can't render — dead links, hotlink-blocked
@@ -85,5 +86,74 @@ export async function scanCatalogImages(offset: number, limit = 30): Promise<Ima
     return { ok: true, total: count ?? 0, checked: rows.length, okCount, problems };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Scan failed.", ...EMPTY };
+  }
+}
+
+// ---- AI visual quality audit ---------------------------------------------------
+// The HTTP scan above only proves the link works; this one LOOKS at the image
+// (Gemini vision) and flags what a customer would notice: product cut off by
+// the frame, glitched file, blur, watermark, placeholder, too dark, or not a
+// product photo at all.
+
+export interface ImageQualityIssue {
+  product_id: string;
+  sku: string | null;
+  name_en: string;
+  image_url: string;
+  problems: string[];
+  note: string;
+}
+
+export interface QualityScanChunk {
+  ok: boolean;
+  error?: string;
+  total: number;    // products WITH an image (progress denominator)
+  checked: number;  // examined in this chunk (unreadable images count too)
+  flagged: ImageQualityIssue[];
+}
+
+const Q_EMPTY: Omit<QualityScanChunk, "ok"> = { total: 0, checked: 0, flagged: [] };
+
+/** Audit ONE slice of the products that have an image (client loops; ≤10). */
+export async function auditImageQuality(offset: number, limit = 10): Promise<QualityScanChunk> {
+  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...Q_EMPTY };
+  if (!geminiConfigured()) return { ok: false, error: "Gemini غير مفعّل (GEMINI_API_KEY).", ...Q_EMPTY };
+  const from = Math.max(0, Math.floor(offset));
+  const size = Math.max(1, Math.min(10, Math.floor(limit)));
+
+  try {
+    const sb = await createClient();
+    const { count } = await sb
+      .from("products")
+      .select("id", { count: "exact", head: true })
+      .not("image_url", "is", null)
+      .neq("image_url", "");
+    const { data, error } = await sb
+      .from("products")
+      .select("id, sku, name_en, image_url")
+      .not("image_url", "is", null)
+      .neq("image_url", "")
+      .order("sku", { ascending: true })
+      .range(from, from + size - 1);
+    if (error) return { ok: false, error: error.message, ...Q_EMPTY };
+
+    type Row = { id: string; sku: string | null; name_en: string | null; image_url: string };
+    const rows = (data ?? []) as Row[];
+    const flagged: ImageQualityIssue[] = [];
+
+    await Promise.all(rows.map(async (r) => {
+      if (!safeImageUrlOrNull(r.image_url)) return; // HTTP scan's territory
+      const v = await auditProductImageWithGemini(r.image_url);
+      if (v && !v.ok) {
+        flagged.push({
+          product_id: r.id, sku: r.sku, name_en: String(r.name_en ?? ""),
+          image_url: r.image_url, problems: v.problems, note: v.note,
+        });
+      }
+    }));
+
+    return { ok: true, total: count ?? 0, checked: rows.length, flagged };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Audit failed.", ...Q_EMPTY };
   }
 }
