@@ -18,6 +18,8 @@ export interface ShopifyProductLite {
   id: string;
   title: string;
   status: string; // ACTIVE | DRAFT | ARCHIVED
+  descriptionHtml?: string;
+  imageUrl?: string;
   variants: {
     id: string; sku: string; price: string; compareAtPrice: string | null;
     inventoryItemId?: string; inventoryQuantity?: number | null;
@@ -179,4 +181,58 @@ export function planInventorySync(
     });
   }
   return { changes, matched, unmatched };
+}
+
+/** Plain catalog text → simple safe HTML for Shopify's descriptionHtml. */
+export function htmlFromPlain(text: unknown): string {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\r?\n/g, "<br>")
+    .trim();
+}
+
+/** Shopify descriptionHtml → clean plain text for our description columns. */
+export function textFromHtml(html: unknown): string {
+  return String(html ?? "")
+    .replace(/<(br|\/p|\/div|\/li)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** Inverse of targetShopifyPrice: Shopify price(+compareAt) → our columns. */
+export function shopifyToCatalogPrices(price: unknown, compareAtPrice: unknown): { price: number | null; discount_price: number | null } {
+  const p = Number(price);
+  const c = Number(compareAtPrice);
+  const hasP = Number.isFinite(p) && p > 0;
+  const hasC = Number.isFinite(c) && c > 0;
+  if (hasP && hasC && c > p) return { price: c, discount_price: p };
+  return { price: hasP ? p : null, discount_price: null };
+}
+
+export interface CatalogImportRow {
+  name_en: string;
+  description_en: string | null;
+  price: number | null;
+  discount_price: number | null;
+  sku: string | null;
+  image_url: string | null;
+  approval: string;
+}
+
+/** One Shopify product → the catalog row the import inserts. */
+export function mapShopifyToCatalogRow(p: ShopifyProductLite): CatalogImportRow {
+  const v = p.variants[0];
+  const prices = shopifyToCatalogPrices(v?.price, v?.compareAtPrice);
+  const desc = textFromHtml(p.descriptionHtml);
+  return {
+    name_en: p.title.trim(),
+    description_en: desc || null,
+    price: prices.price,
+    discount_price: prices.discount_price,
+    sku: v?.sku?.trim() || null,
+    image_url: p.imageUrl?.trim() || null,
+    approval: p.status === "ACTIVE" ? "Approved" : "Rejected",
+  };
 }
