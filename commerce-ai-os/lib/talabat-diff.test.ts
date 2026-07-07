@@ -25,12 +25,12 @@ test("baseSku strips our old variant-split suffix", () => {
   assert.equal(baseSku("mk123"), "mk123");
 });
 
-test("diffTalabat: matched / missing / variant exclusion / not-approved", () => {
+test("diffTalabat: matched / missing / options marked for split / not-approved", () => {
   const d = diffTalabat(
     [
       our({}),                                                             // on Talabat by SKU
-      our({ id: "p2", sku: "MK-2", name_en: "Gold Mask" }),                // missing
-      our({ id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true }), // excluded (options)
+      our({ id: "p2", sku: "MK-2", name_en: "Gold Mask" }),                // missing (simple)
+      our({ id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true }), // missing (will split)
       our({ id: "p4", sku: "MK-4", name_en: "Old Thing", approval: "Rejected" }), // not approved
       our({ id: "p5", sku: null, name_en: "Lip Tint" }),                   // on Talabat by name
     ],
@@ -41,10 +41,13 @@ test("diffTalabat: matched / missing / variant exclusion / not-approved", () => 
     ],
   );
   assert.equal(d.ok, true);
-  assert.equal(d.counts.eligible, 3);
+  assert.equal(d.counts.eligible, 4);
   assert.equal(d.counts.matched, 2);
-  assert.deepEqual(d.missing, [{ product_id: "p2", sku: "MK-2", name_en: "Gold Mask" }]);
-  assert.deepEqual(d.excludedVariants, [{ product_id: "p3", sku: "MK-3", name_en: "Nail Set" }]);
+  assert.deepEqual(d.missing, [
+    { product_id: "p2", sku: "MK-2", name_en: "Gold Mask", hasVariants: false },
+    { product_id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true },
+  ]);
+  assert.equal(d.counts.withOptions, 1);
   assert.equal(d.counts.notApproved, 1);
   assert.deepEqual(d.extraOnTalabat, [{ sku: "ZZ-9", name: "Their Own Product" }]);
 });

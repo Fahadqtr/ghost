@@ -7,15 +7,16 @@ import { buildTalabatRows, TALABAT_HEADERS } from "@/lib/malak/talabat-export.mj
 
 export type { TalabatDiff } from "@/lib/talabat-diff";
 
-// Talabat has no API — the owner uploads Talabat's own catalog export and we
-// diff it against the catalog (options-products excluded: Talabat rejects
-// them), then build the "please add these" package: a sheet in the exact
-// 10-column Talabat format + the matching images ZIP + a ready email.
+// Talabat has no API — the owner uploads Talabat's own catalog export, we
+// diff it against the catalog, then build the "please add these" package:
+// a sheet in the exact 10-column Talabat format + the matching images ZIP +
+// a ready email. Products WITH options are split into one standalone row per
+// option (Talabat rejects variant products, so each option ships solo).
 
 const EMPTY_DIFF: TalabatDiff = {
   ok: false, columns: {},
-  counts: { ours: 0, eligible: 0, excludedVariants: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, extraOnTalabat: 0 },
-  missing: [], excludedVariants: [], extraOnTalabat: [],
+  counts: { ours: 0, eligible: 0, withOptions: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, extraOnTalabat: 0 },
+  missing: [], extraOnTalabat: [],
 };
 
 async function pageAll<T>(q: (from: number, to: number) => any): Promise<T[]> {
@@ -67,6 +68,7 @@ export interface TalabatPackage {
   headers: string[];                      // exact Talabat column order
   rows: Record<string, string>[];         // sheet rows, ready for xlsx
   skus: string[];                         // for the images ZIP request
+  splitProducts: number;                  // option products that became N rows
   noImage: { sku: string; name_en: string }[];
   emptyDesc: { sku: string; name_en: string }[];
   emailText: string;
@@ -78,7 +80,7 @@ export interface TalabatPackage {
  * writes the .xlsx and requests the images ZIP.
  */
 export async function buildTalabatPackage(productIds: string[]): Promise<TalabatPackage> {
-  const empty = { headers: TALABAT_HEADERS as string[], rows: [], skus: [], noImage: [], emptyDesc: [], emailText: "" };
+  const empty = { headers: TALABAT_HEADERS as string[], rows: [], skus: [], splitProducts: 0, noImage: [], emptyDesc: [], emailText: "" };
   if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...empty };
   const ids = [...new Set(productIds)].filter(Boolean).slice(0, 2000);
   if (!ids.length) return { ok: false, error: "ما في منتجات محددة.", ...empty };
@@ -97,13 +99,26 @@ export async function buildTalabatPackage(productIds: string[]): Promise<Talabat
       prods.push(...(data ?? []));
     }
 
-    // No variants passed on purpose: options-products never reach Talabat.
-    const built = buildTalabatRows(prods, []);
+    // Options → one standalone row per option ({sku}-{N}, name suffixed with
+    // the option): Talabat rejects variant products, so each option ships solo.
+    const variants: Record<string, any>[] = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      try {
+        const { data } = await sb
+          .from("product_variants")
+          .select("parent_product_id, variant_name, sku")
+          .in("parent_product_id", ids.slice(i, i + 200));
+        variants.push(...(data ?? []));
+      } catch { /* no variants table → all rows stay simple */ }
+    }
+
+    const built = buildTalabatRows(prods, variants);
     return {
       ok: true,
       headers: TALABAT_HEADERS as string[],
       rows: built.rows as Record<string, string>[],
       skus: prods.map((p) => String(p.sku ?? "")).filter(Boolean),
+      splitProducts: Number(built.stats.withVariants) || 0,
       noImage: built.stats.noImage as { sku: string; name_en: string }[],
       emptyDesc: built.stats.stillEmpty as { sku: string; name_en: string }[],
       emailText: talabatEmailText(built.rows.length),

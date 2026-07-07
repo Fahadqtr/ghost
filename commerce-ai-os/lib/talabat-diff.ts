@@ -2,9 +2,10 @@
 //
 // Talabat has no API for us: the merchant uploads Talabat's own catalog
 // export (xlsx, unknown/loose column names) and we answer one question —
-// which of OUR sellable products are missing over there. Products WITH
-// options are excluded up front (Talabat rejects variant products), and only
-// Approved products count as sellable.
+// which of OUR sellable products are missing over there. Talabat rejects
+// variant products, so products WITH options are still sent — SPLIT into one
+// standalone row per option (mk123-1, mk123-2 …) by the package builder; the
+// diff just marks them. Only Approved products count as sellable.
 
 export interface TalabatOurRow {
   id: string;
@@ -29,16 +30,15 @@ export interface TalabatDiff {
   columns: TalabatColumns; // what we recognized in their sheet
   counts: {
     ours: number;
-    eligible: number;         // Approved + no options
-    excludedVariants: number; // ours with options (Talabat rejects them)
+    eligible: number;         // Approved (option products included — they split)
+    withOptions: number;      // among missing: products that will be split
     notApproved: number;
     theirRows: number;
     matched: number;
     missing: number;          // eligible but absent from their sheet
     extraOnTalabat: number;   // their rows we couldn't map to the catalog
   };
-  missing: { product_id: string; sku: string | null; name_en: string }[];
-  excludedVariants: { product_id: string; sku: string | null; name_en: string }[];
+  missing: { product_id: string; sku: string | null; name_en: string; hasVariants: boolean }[];
   extraOnTalabat: { sku: string; name: string }[];
 }
 
@@ -71,8 +71,8 @@ export function baseSku(v: unknown): string {
 export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unknown>[]): TalabatDiff {
   const empty: TalabatDiff = {
     ok: false, columns: {},
-    counts: { ours: 0, eligible: 0, excludedVariants: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, extraOnTalabat: 0 },
-    missing: [], excludedVariants: [], extraOnTalabat: [],
+    counts: { ours: 0, eligible: 0, withOptions: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, extraOnTalabat: 0 },
+    missing: [], extraOnTalabat: [],
   };
   if (!theirRows.length) return { ...empty, error: "الملف فاضي — ما فيه صفوف." };
 
@@ -99,9 +99,8 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
 
   // Walk OUR catalog.
   const missing: TalabatDiff["missing"] = [];
-  const excludedVariants: TalabatDiff["excludedVariants"] = [];
   const matchedOurKeys = { skus: new Set<string>(), barcodes: new Set<string>(), names: new Set<string>() };
-  let eligible = 0, notApproved = 0, matched = 0;
+  let eligible = 0, notApproved = 0, matched = 0, withOptions = 0;
 
   for (const o of ours) {
     const sku = key(o.sku);
@@ -120,14 +119,11 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
     if (nEn) matchedOurKeys.names.add(nEn);
     if (nAr) matchedOurKeys.names.add(nAr);
 
-    if (o.hasVariants) {
-      excludedVariants.push({ product_id: o.id, sku: o.sku, name_en: String(o.name_en ?? "") });
-      continue;
-    }
     if (String(o.approval ?? "") !== "Approved") { notApproved++; continue; }
     eligible++;
-    if (hit) matched++;
-    else missing.push({ product_id: o.id, sku: o.sku, name_en: String(o.name_en ?? "") });
+    if (hit) { matched++; continue; }
+    if (o.hasVariants) withOptions++;
+    missing.push({ product_id: o.id, sku: o.sku, name_en: String(o.name_en ?? ""), hasVariants: o.hasVariants });
   }
 
   // Their rows that map to nothing we sell (any key, any product).
@@ -154,10 +150,10 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
     ok: true,
     columns,
     counts: {
-      ours: ours.length, eligible, excludedVariants: excludedVariants.length, notApproved,
+      ours: ours.length, eligible, withOptions, notApproved,
       theirRows: theirRows.length, matched, missing: missing.length, extraOnTalabat: extraOnTalabat.length,
     },
-    missing, excludedVariants, extraOnTalabat,
+    missing, extraOnTalabat,
   };
 }
 
