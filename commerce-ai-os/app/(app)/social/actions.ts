@@ -3,7 +3,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
-import { publishToInstagram, publishStoryToInstagram, instagramConfigured } from "@/lib/social/instagram";
+import { publishToInstagram, publishStoryToInstagram, instagramConfigured, fetchIgMediaStats } from "@/lib/social/instagram";
+import { engagementScore, engagementRate, summarizeInsights, EMPTY_STATS, type PostStats } from "@/lib/social/insights-compute";
 import { publishToTikTok, tiktokConfigured } from "@/lib/social/tiktok";
 import { generateDailySocialPosts } from "@/lib/social/generate";
 import { editProductImageCore } from "@/lib/products/imageEdit";
@@ -423,4 +424,75 @@ export async function generateNowAction(): Promise<{ ok?: true; error?: string; 
   if (!r.enabled) return { error: "المحرّك غير مفعّل — أضف SOCIAL_PLATFORMS في Vercel (مثال: instagram)." };
   if (!r.created) return { note: r.skipped ?? "ما انولّد شي" };
   return { ok: true };
+}
+
+// ---- Performance report --------------------------------------------------------
+
+export type SocialInsight = {
+  id: string;
+  caption: string;       // first line only — enough to recognize the post
+  image_url: string;
+  posted_at: string | null;
+  permalink: string | null;
+  stats: PostStats;
+  score: number;
+  rate: number | null;
+};
+
+export type SocialInsightsReport = {
+  ok?: true;
+  error?: string;
+  posts: SocialInsight[];
+  totals: PostStats;
+  bestId: string | null;
+  avgReach: number;
+  failed: number; // media we could not read stats for (deleted, token limits)
+};
+
+/**
+ * Pull live Instagram stats for the latest published posts (we stored each
+ * post's IG media id in external_id at publish time). Read-only.
+ */
+export async function fetchSocialInsights(): Promise<SocialInsightsReport> {
+  const empty = { posts: [], totals: { ...EMPTY_STATS }, bestId: null, avgReach: 0, failed: 0 };
+  if (!(await isSignedIn())) return { error: "Not signed in.", ...empty };
+  if (!instagramConfigured()) return { error: "إنستقرام غير مربوط.", ...empty };
+  const sb = admin();
+  if (!sb) return { error: NO_DB, ...empty };
+
+  const { data, error } = await sb
+    .from("social_posts")
+    .select("id, caption, image_url, posted_at, external_id")
+    .eq("platform", "instagram")
+    .eq("status", "posted")
+    .not("external_id", "is", null)
+    .order("posted_at", { ascending: false })
+    .limit(25);
+  if (error) return { error: error.message, ...empty };
+
+  type Row = { id: string; caption: string; image_url: string; posted_at: string | null; external_id: string };
+  const rows = (data ?? []) as Row[];
+  if (!rows.length) return { ok: true, ...empty };
+
+  let failed = 0;
+  const posts: SocialInsight[] = [];
+  const results = await Promise.all(rows.map((r) => fetchIgMediaStats(r.external_id)));
+  for (let i = 0; i < rows.length; i++) {
+    const res = results[i];
+    if (!res.ok) { failed++; continue; }
+    const stats: PostStats = { likes: res.likes, comments: res.comments, reach: res.reach, views: res.views, saved: res.saved, shares: res.shares };
+    posts.push({
+      id: rows[i].id,
+      caption: String(rows[i].caption ?? "").split("\n")[0].slice(0, 80),
+      image_url: rows[i].image_url,
+      posted_at: rows[i].posted_at,
+      permalink: res.permalink ?? null,
+      stats,
+      score: engagementScore(stats),
+      rate: engagementRate(stats),
+    });
+  }
+  posts.sort((a, b) => b.score - a.score);
+  const { totals, bestId, avgReach } = summarizeInsights(posts);
+  return { ok: true, posts, totals, bestId, avgReach, failed };
 }
