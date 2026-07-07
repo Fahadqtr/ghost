@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { detectTalabatColumns, diffTalabat, baseSku, talabatEmailText, type TalabatOurRow } from "./talabat-diff.ts";
+import { detectTalabatColumns, diffTalabat, baseSku, talabatEmailText, imageFileFor, type TalabatOurRow } from "./talabat-diff.ts";
 
 const our = (over: Partial<TalabatOurRow>): TalabatOurRow => ({
   id: "p1", sku: "MK-1", barcode: null, name_en: "Rose Serum", name_ar: "سيروم الورد",
@@ -70,4 +70,13 @@ test("talabatEmailText carries the count in both languages", () => {
   const t = talabatEmailText(46);
   assert.match(t, /46 منتج/);
   assert.match(t, /46 new products/);
+});
+
+test("imageFileFor: stored name wins, else derived from sku + url extension", () => {
+  assert.equal(imageFileFor("mk1", "folder/mk1215.jpg", "ignored"), "mk1215.jpg");
+  assert.equal(imageFileFor("MK2085", "", "https://cdn.shopify.com/s/files/x/mk2085.jpg?v=123"), "mk2085.jpg");
+  assert.equal(imageFileFor("mk9", null, "https://cdn/img.WEBP"), "mk9.webp");
+  assert.equal(imageFileFor("mk9", null, "https://cdn/no-extension"), "mk9.jpg");
+  assert.equal(imageFileFor("", null, "https://cdn/img.jpg"), "");
+  assert.equal(imageFileFor("mk9", null, ""), "");
 });

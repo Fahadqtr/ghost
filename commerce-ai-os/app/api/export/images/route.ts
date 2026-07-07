@@ -10,6 +10,7 @@
 // < 4 GB total and < 65535 entries.
 import { createClient } from "@/lib/supabase/server";
 import { safeImageUrlOrNull, safeFetchImage } from "@/lib/net/safeImage";
+import { imageFileFor } from "@/lib/talabat-diff";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -170,15 +171,17 @@ export async function POST(req: Request) {
   if (!skus.length) return new Response("skus required", { status: 400 });
   const wanted = new Set(skus.slice(0, 5000));
 
+  // No image_filename filter here: Shopify-imported products carry image_url
+  // only — their entry name is derived from the SKU (same rule as the sheet).
   const products = (await fetchAll((from2, to2) =>
     supabase.from("products")
       .select("sku, image_filename, image_url")
-      .not("image_filename", "is", null)
       .order("sku", { ascending: true })
       .range(from2, to2)
-  )).filter((p) =>
-    wanted.has(String(p.sku ?? "").trim().toLowerCase()) &&
-    String(p.image_filename ?? "").trim() && String(p.image_url ?? "").trim());
+  ))
+    .filter((p) => wanted.has(String(p.sku ?? "").trim().toLowerCase()) && String(p.image_url ?? "").trim())
+    .map((p) => ({ ...p, image_filename: imageFileFor(p.sku, p.image_filename, p.image_url) }))
+    .filter((p) => p.image_filename);
 
   return zipResponse(products, `missing-${products.length}`);
 }

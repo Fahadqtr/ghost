@@ -158,6 +158,22 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
   };
 }
 
+/**
+ * The sheet's "New Image Filename": the stored filename when present, else a
+ * name DERIVED from the SKU + the image URL's extension (Shopify-imported
+ * products carry image_url but no image_filename). The images ZIP uses the
+ * same rule, so sheet and archive always agree.
+ */
+export function imageFileFor(sku: unknown, imageFilename: unknown, imageUrl: unknown): string {
+  const f = String(imageFilename ?? "").trim();
+  if (f) { const i = f.lastIndexOf("/"); return i >= 0 ? f.slice(i + 1) : f; }
+  const s = String(sku ?? "").trim().toLowerCase();
+  const u = String(imageUrl ?? "").trim();
+  if (!s || !u) return "";
+  const m = u.split(/[?#]/)[0].match(/\.(jpe?g|png|webp|gif|avif)$/i);
+  return `${s}.${m ? m[1].toLowerCase() : "jpg"}`;
+}
+
 /** Ready-to-send email (AR + EN) asking Talabat to add the missing products. */
 export function talabatEmailText(count: number, storeName = "Malika's Universe"): string {
   return [
