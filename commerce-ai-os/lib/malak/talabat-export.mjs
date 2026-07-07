@@ -44,6 +44,41 @@ const cell = (v) => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
+/**
+ * Standalone title for one split option — each option ships to Talabat as its
+ * own product, so the name must read clean:
+ *  • parent name already CONTAINS this option (it enumerates its options,
+ *    e.g. "Lip Gloss – Shade A & Shade B") → strip the OTHER options and the
+ *    dangling separators, keeping only this one.
+ *  • otherwise → "{parent} - {option}".
+ */
+export function cleanSplitName(parentName, optionName, siblings = []) {
+  const p = S(parentName);
+  const o = S(optionName);
+  if (!o) return p;
+  if (p.toLowerCase().includes(o.toLowerCase())) {
+    let t = p;
+    for (const sib of siblings) {
+      const ss = S(sib);
+      if (!ss || ss.toLowerCase() === o.toLowerCase()) continue;
+      const idx = t.toLowerCase().indexOf(ss.toLowerCase());
+      if (idx >= 0) t = t.slice(0, idx) + t.slice(idx + ss.length);
+    }
+    // Collapse separator runs left by removals ("– &", "& &") to the first one.
+    for (let prev = ""; prev !== t; ) {
+      prev = t;
+      t = t.replace(/([&/،,\-–—])\s*[&/،,]/g, "$1");
+    }
+    t = t
+      .replace(/\s{2,}/g, " ")
+      .replace(/^[\s&/،,]+/, "")
+      .replace(/[\s&/،,\-–—]+$/, "")
+      .trim();
+    return t || `${p} - ${o}`;
+  }
+  return `${p} - ${o}`;
+}
+
 // Variant export seq: the index baked into the stored variant sku
 // ({parentSku}-{N}-{slug}). Returns N, or null if it can't be parsed.
 export function seqOf(parentSku, variantSku) {
@@ -130,13 +165,14 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
     const ordered = vs
       .map((v, i) => ({ v, seq: seqOf(p.sku, v.sku) ?? i + 1 }))
       .sort((a, b) => a.seq - b.seq);
+    const siblings = ordered.map((x) => clean(x.v.variant_name));
     for (const { v, seq } of ordered) {
       const name = clean(v.variant_name);
       rows.push({
         SKU: `${S(p.sku)}-${seq}`,
         ...base,
-        "Product Name EN": name ? `${nameEn} - ${name}` : nameEn,
-        "Product Name AR": name ? `${nameAr} - ${name}` : nameAr,
+        "Product Name EN": cleanSplitName(nameEn, name, siblings),
+        "Product Name AR": cleanSplitName(nameAr, name, siblings),
       });
     }
   }
