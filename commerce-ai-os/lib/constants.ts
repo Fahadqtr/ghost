@@ -135,6 +135,7 @@ export const NAV_GROUPS = [
     title: "المنصات", titleEn: "Channels",
     items: [
       { href: "/platforms", label: "المنصات", en: "Platforms", icon: "🏬" },
+      { href: "/shopify-orders", label: "طلبات شوبي فاي", en: "Shopify orders", icon: "🛍️" },
       { href: "/channels", label: "القنوات", en: "Channels", icon: "🛒" },
     ],
   },
