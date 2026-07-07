@@ -178,7 +178,8 @@ interface OrdersQuery {
       displayFinancialStatus: string | null; displayFulfillmentStatus: string | null;
       totalPriceSet: { shopMoney: { amount: string; currencyCode: string } } | null;
       customer: { displayName: string | null } | null;
-      lineItems: { nodes: { title: string; quantity: number }[] };
+      cancelledAt: string | null;
+      lineItems: { nodes: { title: string; quantity: number; sku: string | null }[] };
     }[];
   };
 }
@@ -192,7 +193,8 @@ export async function fetchRecentShopifyOrders(sinceIso: string, limit = 50): Pr
           id name createdAt displayFinancialStatus displayFulfillmentStatus
           totalPriceSet { shopMoney { amount currencyCode } }
           customer { displayName }
-          lineItems(first: 5) { nodes { title quantity } }
+          cancelledAt
+          lineItems(first: 25) { nodes { title quantity sku } }
         }
       }
     }`,
@@ -208,7 +210,8 @@ export async function fetchRecentShopifyOrders(sinceIso: string, limit = 50): Pr
     total: Number(n.totalPriceSet?.shopMoney?.amount ?? NaN),
     currency: String(n.totalPriceSet?.shopMoney?.currencyCode ?? "QAR"),
     customer: String(n.customer?.displayName ?? ""),
-    items: (n.lineItems?.nodes ?? []).map((li) => ({ title: li.title, qty: li.quantity })),
+    cancelledAt: n.cancelledAt ?? null,
+    items: (n.lineItems?.nodes ?? []).map((li) => ({ title: li.title, qty: li.quantity, sku: li.sku ?? undefined })),
   }));
   return { orders };
 }

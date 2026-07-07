@@ -9,7 +9,8 @@ export interface ShopifyOrderLite {
   total: number;
   currency: string;
   customer: string;      // display name ("" when guest)
-  items: { title: string; qty: number }[];
+  cancelledAt?: string | null;
+  items: { title: string; qty: number; sku?: string }[];
 }
 
 /** Count + revenue of a batch (revenue ignores unparsable totals). */
