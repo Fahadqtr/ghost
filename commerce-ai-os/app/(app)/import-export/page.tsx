@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getT } from "@/lib/i18n-server";
+import ImageHealth from "@/components/ImageHealth";
 import ExcelImport from "@/components/ExcelImport";
 import ImageUpload from "@/components/ImageUpload";
 import ExportButtons from "@/components/ExportButtons";
@@ -95,6 +96,7 @@ export default async function ImportExportPage() {
         </div>
         <span className="text-brand">→</span>
       </Link>
+      <ImageHealth />
       <ExcelImport locale={locale} />
       <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} locale={locale} />
       <TalabatExport categories={categories} newCount={newCount ?? 0} locale={locale} />
