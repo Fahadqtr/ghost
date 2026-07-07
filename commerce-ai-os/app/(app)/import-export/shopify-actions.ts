@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
-import { shopifyConfigured, fetchAllShopifyProducts, updateVariantPrice, fetchPrimaryLocationId, createShopifyProduct } from "@/lib/shopify/admin";
+import { shopifyConfigured, fetchAllShopifyProducts, updateVariantPrice, updateShopifyProductContent, fetchPrimaryLocationId, createShopifyProduct } from "@/lib/shopify/admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runShopifyInventorySync, type InventorySyncResult } from "@/lib/shopify/inventory-sync";
 import { diffShopify, targetShopifyPrice, indexShopify, normTitle, htmlFromPlain, mapShopifyToCatalogRow, type ShopifyDiff, type OurProductRow } from "@/lib/shopify-diff";
@@ -85,6 +85,48 @@ export async function applyShopifyPrices(productIds: string[]): Promise<ShopifyA
       if (!priceChange) continue;
       const want = targetShopifyPrice(o);
       const r = await updateVariantPrice(m.shopify_id, m.variant_id, want.price, want.compareAtPrice);
+      if (r.ok) updated++;
+      else failed.push({ name: m.name_en, error: r.error ?? "فشل التحديث" });
+    }
+    revalidatePath("/import-export/shopify-sync");
+    return { ok: true, updated, failed };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Apply failed.", updated: 0, failed: [] };
+  }
+}
+
+/**
+ * Push OUR titles and statuses to the matched Shopify products (the catalog
+ * wins: name_en becomes the store title, Approved -> ACTIVE else DRAFT).
+ */
+export async function applyShopifyContent(productIds: string[]): Promise<ShopifyApplyResult> {
+  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", updated: 0, failed: [] };
+  if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", updated: 0, failed: [] };
+  const ids = [...new Set(productIds)].filter(Boolean).slice(0, 200);
+  if (!ids.length) return { ok: false, error: "ما في منتجات محددة.", updated: 0, failed: [] };
+
+  try {
+    const sb = await createClient();
+    const { data, error } = await sb
+      .from("products")
+      .select("id, sku, name_en, name_ar, price, discount_price, approval")
+      .in("id", ids);
+    if (error) return { ok: false, error: error.message, updated: 0, failed: [] };
+
+    const remote = await fetchAllShopifyProducts();
+    if (remote.error) return { ok: false, error: remote.error, updated: 0, failed: [] };
+    const diff = diffShopify((data ?? []) as OurProductRow[], remote.products ?? []);
+
+    let updated = 0;
+    const failed: { name: string; error: string }[] = [];
+    for (const m of diff.updated) {
+      const title = m.changes.find((c) => c.field === "title")?.new;
+      const status = m.changes.find((c) => c.field === "status")?.new;
+      if (!title && !status) continue;
+      const r = await updateShopifyProductContent(m.shopify_id, {
+        ...(title ? { title } : {}),
+        ...(status === "ACTIVE" || status === "DRAFT" ? { status } : {}),
+      });
       if (r.ok) updated++;
       else failed.push({ name: m.name_en, error: r.error ?? "فشل التحديث" });
     }

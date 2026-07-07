@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { computeShopifyDiff, applyShopifyPrices, syncShopifyInventory, pushProductsToShopify, importShopifyProducts, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
+import { computeShopifyDiff, applyShopifyPrices, applyShopifyContent, syncShopifyInventory, pushProductsToShopify, importShopifyProducts, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
 
 // One-tap live reconcile against the Shopify store: pull products over the
-// Admin API, diff vs our catalog (source of truth), then push price fixes for
-// the rows the owner keeps selected. Titles/status are shown read-only.
+// Admin API, diff vs our catalog (source of truth), then push price fixes
+// and/or title+status fixes for the rows the owner keeps selected.
 
 const FIELD_AR: Record<string, string> = {
   price: "السعر", compare_at: "السعر قبل الخصم", title: "الاسم", status: "الحالة",
@@ -27,7 +27,7 @@ export default function ShopifySync() {
       const d = await computeShopifyDiff();
       if (!d.ok) { setError(d.error ?? "فشل الجلب."); return; }
       setDiff(d);
-      setSelected(new Set(d.updated.filter((u) => u.changes.some((c) => c.field === "price" || c.field === "compare_at")).map((u) => u.product_id)));
+      setSelected(new Set(d.updated.map((u) => u.product_id)));
     });
   };
 
@@ -37,6 +37,15 @@ export default function ShopifySync() {
       const r = await applyShopifyPrices([...selected]);
       if (!r.ok) { setApplyMsg(`❌ ${r.error}`); return; }
       setApplyMsg(`✅ تحدّث ${r.updated} منتج${r.failed.length ? ` — فشل ${r.failed.length}: ${r.failed.map((f) => f.name).join("، ").slice(0, 200)}` : ""}`);
+    });
+  };
+
+  const applyContent = () => {
+    setApplyMsg("…يزامن الأسماء والحالات في شوبي فاي");
+    start(async () => {
+      const r = await applyShopifyContent([...selected]);
+      if (!r.ok) { setApplyMsg(`❌ ${r.error}`); return; }
+      setApplyMsg(`✅ تزامن ${r.updated} منتج${r.failed.length ? ` — فشل ${r.failed.length}: ${r.failed.map((f) => f.name).join("، ").slice(0, 200)}` : ""} — اضغط «قارن الآن» للتحديث`);
     });
   };
 
@@ -134,9 +143,14 @@ export default function ShopifySync() {
             <div className="card space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-ink">تغييرات معلّقة ({diff.updated.length})</h3>
-                <button type="button" className="btn text-xs disabled:opacity-50" onClick={apply} disabled={busy || selected.size === 0}>
-                  💾 حدّث أسعار المحدد ({selected.size})
-                </button>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button type="button" className="btn text-xs disabled:opacity-50" onClick={apply} disabled={busy || selected.size === 0}>
+                    💾 حدّث أسعار المحدد ({selected.size})
+                  </button>
+                  <button type="button" className="btn-ghost text-xs disabled:opacity-50" onClick={applyContent} disabled={busy || selected.size === 0}>
+                    🏷️ زامن أسماء/حالات المحدد
+                  </button>
+                </div>
               </div>
               {applyMsg ? <p className="text-xs text-muted">{applyMsg}</p> : null}
               <div className="max-h-96 space-y-2 overflow-y-auto">
@@ -146,7 +160,6 @@ export default function ShopifySync() {
                       type="checkbox"
                       checked={selected.has(u.product_id)}
                       onChange={() => toggle(u.product_id)}
-                      disabled={!u.changes.some((c) => c.field === "price" || c.field === "compare_at")}
                     />
                     <span className="min-w-0 flex-1">
                       <span className="font-semibold text-ink">{u.name_en}</span>
@@ -154,7 +167,6 @@ export default function ShopifySync() {
                         {u.changes.map((c, i) => (
                           <span key={i} className="block text-muted">
                             {FIELD_AR[c.field] ?? c.field}: <s>{c.old || "—"}</s> ← <b className="text-ink">{c.new || "—"}</b>
-                            {c.field === "title" || c.field === "status" ? " (للعرض فقط حاليًا)" : ""}
                           </span>
                         ))}
                       </span>
