@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { diffShopify, targetShopifyPrice, normTitle, planInventorySync, type OurProductRow, type ShopifyProductLite } from "./shopify-diff.ts";
+import { diffShopify, targetShopifyPrice, normTitle, planInventorySync, htmlFromPlain, textFromHtml, shopifyToCatalogPrices, mapShopifyToCatalogRow, type OurProductRow, type ShopifyProductLite } from "./shopify-diff.ts";
 
 const our = (over: Partial<OurProductRow>): OurProductRow => ({
   id: "p1", sku: null, name_en: "Rose Serum", name_ar: null, price: 100, discount_price: null, approval: "Approved", ...over,
@@ -89,4 +89,37 @@ test("inventory plan clamps negative stock to zero", () => {
   ];
   const plan = planInventorySync([{ id: "p1", sku: "s", name_en: "x", stock: -3 }], shopify);
   assert.equal(plan.changes[0].quantity, 0);
+});
+
+test("htmlFromPlain escapes and keeps line breaks", () => {
+  assert.equal(htmlFromPlain("a<b\nc & d"), "a&lt;b<br>c &amp; d");
+  assert.equal(htmlFromPlain(null), "");
+});
+
+test("textFromHtml strips tags/entities and preserves breaks", () => {
+  assert.equal(textFromHtml("<p>Hello <b>world</b></p><br>&amp; more&nbsp;!"), "Hello world\n\n& more !");
+  assert.equal(textFromHtml(""), "");
+});
+
+test("shopifyToCatalogPrices inverts the discount mapping", () => {
+  assert.deepEqual(shopifyToCatalogPrices("80.00", "100.00"), { price: 100, discount_price: 80 });
+  assert.deepEqual(shopifyToCatalogPrices("100.00", null), { price: 100, discount_price: null });
+  assert.deepEqual(shopifyToCatalogPrices("100.00", "90.00"), { price: 100, discount_price: null }); // compareAt below price = noise
+  assert.deepEqual(shopifyToCatalogPrices("", null), { price: null, discount_price: null });
+});
+
+test("mapShopifyToCatalogRow builds a complete catalog insert", () => {
+  const row = mapShopifyToCatalogRow(shop({
+    title: "  Glow Serum  ",
+    status: "ACTIVE",
+    descriptionHtml: "<p>Nice<br>serum</p>",
+    imageUrl: "https://cdn/img.jpg",
+    variants: [{ id: "v", sku: "GS-1", price: "80.00", compareAtPrice: "100.00" }],
+  }));
+  assert.deepEqual(row, {
+    name_en: "Glow Serum", description_en: "Nice\nserum",
+    price: 100, discount_price: 80, sku: "GS-1",
+    image_url: "https://cdn/img.jpg", approval: "Approved",
+  });
+  assert.equal(mapShopifyToCatalogRow(shop({ status: "DRAFT" })).approval, "Rejected");
 });

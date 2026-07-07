@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { computeShopifyDiff, applyShopifyPrices, syncShopifyInventory, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
+import { computeShopifyDiff, applyShopifyPrices, syncShopifyInventory, pushProductsToShopify, importShopifyProducts, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
 
 // One-tap live reconcile against the Shopify store: pull products over the
 // Admin API, diff vs our catalog (source of truth), then push price fixes for
@@ -17,6 +17,8 @@ export default function ShopifySync() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [applyMsg, setApplyMsg] = useState("");
   const [invMsg, setInvMsg] = useState("");
+  const [pushMsg, setPushMsg] = useState("");
+  const [importMsg, setImportMsg] = useState("");
   const [busy, start] = useTransition();
 
   const run = () => {
@@ -48,6 +50,46 @@ export default function ShopifySync() {
           ? `✅ الكميات متطابقة أصلًا (${r.matched} منتج)`
           : `✅ تحدّثت كميات ${r.updated} منتج${r.examples.length ? ` — مثل: ${r.examples.join("، ")}` : ""}`,
       );
+    });
+  };
+
+  // Client-driven chunking (same pattern as the week plan) so every server
+  // call stays inside the 60s route budget.
+  const pushAll = () => {
+    const ids = (diff?.onlyOurs ?? []).map((p) => p.product_id);
+    if (!ids.length) return;
+    setPushMsg(`…يرفع 0/${ids.length} لشوبي فاي — خلّ الصفحة مفتوحة`);
+    start(async () => {
+      let created = 0, skipped = 0, failed = 0, firstErr = "";
+      for (let i = 0; i < ids.length; i += 8) {
+        const r = await pushProductsToShopify(ids.slice(i, i + 8));
+        if (!r.ok) { failed += Math.min(8, ids.length - i); if (!firstErr) firstErr = r.error ?? ""; }
+        else {
+          created += r.created; skipped += r.skipped; failed += r.failed.length;
+          if (!firstErr && r.failed.length) firstErr = `${r.failed[0].name}: ${r.failed[0].error}`;
+        }
+        setPushMsg(`…يرفع ${Math.min(i + 8, ids.length)}/${ids.length} لشوبي فاي`);
+      }
+      setPushMsg(`✅ انرفع ${created} منتج${skipped ? ` · تخطى ${skipped} (موجود)` : ""}${failed ? ` · فشل ${failed}${firstErr ? ` — ${firstErr.slice(0, 120)}` : ""}` : ""} — اضغط «قارن الآن» لتحديث القوائم`);
+    });
+  };
+
+  const importAll = () => {
+    const ids = (diff?.onlyShopify ?? []).map((p) => p.shopify_id);
+    if (!ids.length) return;
+    setImportMsg(`…يستورد 0/${ids.length} للكتالوج`);
+    start(async () => {
+      let created = 0, skipped = 0, failed = 0, firstErr = "";
+      for (let i = 0; i < ids.length; i += 40) {
+        const r = await importShopifyProducts(ids.slice(i, i + 40));
+        if (!r.ok) { failed += Math.min(40, ids.length - i); if (!firstErr) firstErr = r.error ?? ""; }
+        else {
+          created += r.created; skipped += r.skipped; failed += r.failed.length;
+          if (!firstErr && r.failed.length) firstErr = `${r.failed[0].name}: ${r.failed[0].error}`;
+        }
+        setImportMsg(`…يستورد ${Math.min(i + 40, ids.length)}/${ids.length} للكتالوج`);
+      }
+      setImportMsg(`✅ انستورد ${created} منتج${skipped ? ` · تخطى ${skipped} (موجود)` : ""}${failed ? ` · فشل ${failed}${firstErr ? ` — ${firstErr.slice(0, 120)}` : ""}` : ""} — اضغط «قارن الآن» لتحديث القوائم`);
     });
   };
 
@@ -126,8 +168,14 @@ export default function ShopifySync() {
           {diff.onlyShopify.length ? (
             <details className="card">
               <summary className="cursor-pointer text-sm font-semibold text-ink">في شوبي فاي وليس في الكتالوج ({diff.onlyShopify.length})</summary>
-              <div className="mt-2 max-h-60 space-y-1 overflow-y-auto text-xs text-muted">
-                {diff.onlyShopify.map((p) => <div key={p.shopify_id}>{p.title} <span className="text-[10px]">({p.status})</span></div>)}
+              <div className="mt-2 space-y-2">
+                <button type="button" className="btn text-xs disabled:opacity-50" onClick={importAll} disabled={busy}>
+                  ⬇️ استورد الكل للكتالوج ({diff.onlyShopify.length})
+                </button>
+                {importMsg ? <p className="text-xs text-muted">{importMsg}</p> : null}
+                <div className="max-h-60 space-y-1 overflow-y-auto text-xs text-muted">
+                  {diff.onlyShopify.map((p) => <div key={p.shopify_id}>{p.title} <span className="text-[10px]">({p.status})</span></div>)}
+                </div>
               </div>
             </details>
           ) : null}
@@ -135,8 +183,15 @@ export default function ShopifySync() {
           {diff.onlyOurs.length ? (
             <details className="card">
               <summary className="cursor-pointer text-sm font-semibold text-ink">في الكتالوج وليس في شوبي فاي ({diff.onlyOurs.length})</summary>
-              <div className="mt-2 max-h-60 space-y-1 overflow-y-auto text-xs text-muted">
-                {diff.onlyOurs.map((p) => <div key={p.product_id}>{p.name_en || p.product_id}</div>)}
+              <div className="mt-2 space-y-2">
+                <button type="button" className="btn text-xs disabled:opacity-50" onClick={pushAll} disabled={busy}>
+                  ⬆️ ارفع الكل لشوبي فاي ({diff.onlyOurs.length})
+                </button>
+                <p className="text-[11px] text-muted">ينرفع بصورته وسعره ووصفه وكميته — المعتمد يظهر ACTIVE والمرفوض DRAFT.</p>
+                {pushMsg ? <p className="text-xs text-muted">{pushMsg}</p> : null}
+                <div className="max-h-60 space-y-1 overflow-y-auto text-xs text-muted">
+                  {diff.onlyOurs.map((p) => <div key={p.product_id}>{p.name_en || p.product_id}</div>)}
+                </div>
               </div>
             </details>
           ) : null}

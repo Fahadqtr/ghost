@@ -74,13 +74,15 @@ export interface ShopifyProduct {
   title: string;
   status: string;        // ACTIVE | DRAFT | ARCHIVED
   handle: string;
+  descriptionHtml: string;
+  imageUrl: string;      // featured image ("" when none)
   variants: ShopifyVariant[];
 }
 
 interface ProductsQuery {
   products: {
     pageInfo: { hasNextPage: boolean; endCursor: string | null };
-    nodes: { id: string; title: string; status: string; handle: string; variants: { nodes: { id: string; sku: string | null; price: string; compareAtPrice: string | null; inventoryQuantity: number | null; inventoryItem: { id: string } | null }[] } }[];
+    nodes: { id: string; title: string; status: string; handle: string; descriptionHtml: string | null; featuredMedia: { preview: { image: { url: string } | null } | null } | null; variants: { nodes: { id: string; sku: string | null; price: string; compareAtPrice: string | null; inventoryQuantity: number | null; inventoryItem: { id: string } | null }[] } }[];
   };
 }
 
@@ -94,7 +96,8 @@ export async function fetchAllShopifyProducts(): Promise<{ products?: ShopifyPro
         products(first: 100, after: $after) {
           pageInfo { hasNextPage endCursor }
           nodes {
-            id title status handle
+            id title status handle descriptionHtml
+            featuredMedia { preview { image { url } } }
             variants(first: 50) { nodes { id sku price compareAtPrice inventoryQuantity inventoryItem { id } } }
           }
         }
@@ -106,6 +109,8 @@ export async function fetchAllShopifyProducts(): Promise<{ products?: ShopifyPro
     for (const n of conn?.nodes ?? []) {
       out.push({
         id: n.id, title: n.title, status: n.status, handle: n.handle,
+        descriptionHtml: String(n.descriptionHtml ?? ""),
+        imageUrl: String(n.featuredMedia?.preview?.image?.url ?? ""),
         variants: (n.variants?.nodes ?? []).map((v) => ({
           id: v.id, sku: String(v.sku ?? "").trim(), price: v.price, compareAtPrice: v.compareAtPrice,
           inventoryItemId: String(v.inventoryItem?.id ?? ""),
@@ -225,4 +230,70 @@ export async function setInventoryQuantities(
     updated += batch.length;
   }
   return { ok: true, updated };
+}
+
+export interface CreateProductOpts {
+  title: string;
+  descriptionHtml: string;
+  status: "ACTIVE" | "DRAFT";
+  price: string;
+  compareAtPrice: string | null;
+  sku: string | null;
+  quantity: number;
+  locationId: string | null; // null → skip the stock step
+  imageUrl: string | null;
+}
+
+/**
+ * Create one product with its default variant priced, SKU'd, tracked and
+ * stocked — 3 sequential Admin calls (create → variant update → quantity).
+ */
+export async function createShopifyProduct(opts: CreateProductOpts): Promise<{ ok: boolean; shopifyId?: string; error?: string }> {
+  const media = opts.imageUrl ? [{ originalSource: opts.imageUrl, mediaContentType: "IMAGE" }] : [];
+  const created: { data?: {
+    productCreate: {
+      product: { id: string; variants: { nodes: { id: string; inventoryItem: { id: string } | null }[] } } | null;
+      userErrors: { message: string }[];
+    };
+  }; error?: string } = await shopifyGraphQL(
+    `mutation($input: ProductInput!, $media: [CreateMediaInput!]) {
+      productCreate(input: $input, media: $media) {
+        product { id variants(first: 1) { nodes { id inventoryItem { id } } } }
+        userErrors { message }
+      }
+    }`,
+    { input: { title: opts.title, descriptionHtml: opts.descriptionHtml, status: opts.status }, media },
+  );
+  if (created.error) return { ok: false, error: created.error };
+  const ue = created.data?.productCreate?.userErrors ?? [];
+  if (ue.length) return { ok: false, error: ue.map((u) => u.message).join("; ").slice(0, 300) };
+  const product = created.data?.productCreate?.product;
+  const variant = product?.variants?.nodes?.[0];
+  if (!product || !variant) return { ok: false, error: "ما رجع منتج من Shopify." };
+
+  // Default variant: price / compare-at / SKU / tracked inventory.
+  const vu: { data?: { productVariantsBulkUpdate: { userErrors: { message: string }[] } }; error?: string } = await shopifyGraphQL(
+    `mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { message } }
+    }`,
+    {
+      productId: product.id,
+      variants: [{
+        id: variant.id,
+        price: opts.price,
+        compareAtPrice: opts.compareAtPrice,
+        inventoryItem: { ...(opts.sku ? { sku: opts.sku } : {}), tracked: true },
+      }],
+    },
+  );
+  const vue = vu.data?.productVariantsBulkUpdate?.userErrors ?? [];
+  if (vu.error || vue.length) {
+    return { ok: false, shopifyId: product.id, error: vu.error ?? vue.map((u) => u.message).join("; ").slice(0, 300) };
+  }
+
+  // Opening stock (best-effort — the product exists even if this step fails).
+  if (opts.locationId && variant.inventoryItem?.id) {
+    await setInventoryQuantities(opts.locationId, [{ inventoryItemId: variant.inventoryItem.id, quantity: opts.quantity }]);
+  }
+  return { ok: true, shopifyId: product.id };
 }
