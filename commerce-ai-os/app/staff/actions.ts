@@ -357,15 +357,16 @@ export async function staffProducts(query: string): Promise<{ items: StaffProduc
 
 // The WHOLE catalog for the staff browse tab (paged through Supabase's 1000-row
 // cap). The tab does search + category/stock filtering client-side.
-export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showPrices: boolean; canEdit: boolean; canEditImage: boolean; error?: string }> {
+export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showPrices: boolean; canEdit: boolean; canEditImage: boolean; canMove: boolean; error?: string }> {
   const who = await currentStaff();
-  if (!who) return { items: [], showPrices: false, canEdit: false, canEditImage: false, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
-  if (!hasPerm(who.perms, "products")) return { items: [], showPrices: false, canEdit: false, canEditImage: false, error: "ما عندك صلاحية عرض المنتجات." };
+  if (!who) return { items: [], showPrices: false, canEdit: false, canEditImage: false, canMove: false, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "products")) return { items: [], showPrices: false, canEdit: false, canEditImage: false, canMove: false, error: "ما عندك صلاحية عرض المنتجات." };
   const canEdit = hasPerm(who.perms, "edit_products");
   const canEditImage = hasPerm(who.perms, "edit_images");
+  const canMove = hasPerm(who.perms, "stock"); // stock in/out straight from the browse tab
   const showPrices = hasPerm(who.perms, "prices") || canEdit;
   const admin = adminClient();
-  if (!admin) return { items: [], showPrices, canEdit, canEditImage, error: NO_DB };
+  if (!admin) return { items: [], showPrices, canEdit, canEditImage, canMove, error: NO_DB };
 
   // Per-variant shelf stock (summed) — a fallback when the variant row itself
   // has no stock_quantity. Optional table; degrades silently.
@@ -405,7 +406,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
   const items: StaffProduct[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await admin.from("products").select(cols).order("name_en", { ascending: true }).range(from, from + 999);
-    if (error) return { items, showPrices, canEdit, canEditImage, error: error.message };
+    if (error) return { items, showPrices, canEdit, canEditImage, canMove, error: error.message };
     for (const p of (data ?? []) as any[]) {
       items.push({
         id: String(p.id),
@@ -422,7 +423,47 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
     }
     if (!data || data.length < 1000) break;
   }
-  return { items, showPrices, canEdit, canEditImage };
+  return { items, showPrices, canEdit, canEditImage, canMove };
+}
+
+// The movement panel needs an inventory row — resolve (or seed) it for a
+// product picked in the browse tab, so stock in/out works right from there.
+export async function staffItemForProduct(productId: string): Promise<{ item: StaffItem } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية إدخال/إخراج المخزون." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  const { data: p } = await admin
+    .from("products")
+    .select("id, sku, name_en, name_ar, barcode, image_url")
+    .eq("id", String(productId))
+    .maybeSingle();
+  if (!p) return { error: "المنتج غير موجود." };
+
+  const { data: invRows } = await admin.from("inventory").select("id, stock_quantity").eq("product_id", p.id).limit(1);
+  let inv = (invRows ?? [])[0] as { id: string; stock_quantity: number | null } | undefined;
+  if (!inv) {
+    // Older products may predate the inventory table — seed a zero row.
+    const ins = await admin
+      .from("inventory")
+      .insert({ product_id: p.id, stock_quantity: 0, sold_quantity: 0, low_stock_threshold: 5 })
+      .select("id, stock_quantity")
+      .single();
+    if (ins.error || !ins.data) return { error: "ما قدرت أجهز صف المخزون للمنتج." };
+    inv = ins.data as { id: string; stock_quantity: number | null };
+  }
+
+  return { item: {
+    inventoryId: String(inv.id),
+    sku: p.sku ?? null,
+    name: p.name_en ?? p.name_ar ?? null,
+    name_ar: p.name_ar ?? null,
+    barcode: p.barcode ?? null,
+    image: p.image_url ?? null,
+    stock: Number(inv.stock_quantity) || 0,
+  } };
 }
 
 /* ── Staff Malak — an ISOLATED, read-only assistant (gated by "malak") ─────
