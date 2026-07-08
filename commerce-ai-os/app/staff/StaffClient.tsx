@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
   staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
-  staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct,
+  staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct, staffOpenStockTask, staffDraftFromImageUrl,
   type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct, type StaffTaskRow,
 } from "./actions";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
@@ -163,6 +163,11 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
   // Permission tabs + the always-on Guide tab at the end.
   const tabs = [...TABS.filter((t) => perms.includes(t.perm)), GUIDE_TAB];
   const [tab, setTab] = useState<TabKey>(tabs[0]?.key ?? "guide");
+  // A supervisor photo-task hands its image to the Add-product tab.
+  const [productSeed, setProductSeed] = useState<{ imageUrl: string; taskId: string } | null>(null);
+  const startProductFromTask = perms.includes("add_product")
+    ? (imageUrl: string, taskId: string) => { setProductSeed({ imageUrl, taskId }); setTab("add_product"); }
+    : undefined;
 
   const logout = () => start(async () => { await staffLogout(); onLogout(); });
 
@@ -193,9 +198,9 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
         ) : null}
 
         {tab === "stock" && perms.includes("stock") ? <StockTab initialToday={initialToday} locale={locale} /> : null}
-        {tab === "add_product" && perms.includes("add_product") ? <AddProductTab locale={locale} /> : null}
+        {tab === "add_product" && perms.includes("add_product") ? <AddProductTab key={productSeed?.taskId ?? "plain"} locale={locale} seed={productSeed} /> : null}
         {tab === "products" && perms.includes("products") ? <ProductsTab locale={locale} /> : null}
-        {tab === "tasks" && perms.includes("tasks") ? <TasksTab locale={locale} supervisor={perms.includes("manage_tasks")} /> : null}
+        {tab === "tasks" && perms.includes("tasks") ? <TasksTab locale={locale} supervisor={perms.includes("manage_tasks")} onStartProduct={startProductFromTask} /> : null}
         {tab === "malak" && perms.includes("malak") ? <MalakTab name={name} locale={locale} /> : null}
         {tab === "reports" && perms.includes("reports") ? <ReportsTab locale={locale} /> : null}
         {tab === "guide" ? <StaffGuide locale={locale} /> : null}
@@ -307,6 +312,8 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const [detail, setDetail] = useState<StaffProduct | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [canMove, setCanMove] = useState(false); // stock permission: in/out from here
+  const [canOos, setCanOos] = useState(false);   // manage_tasks: one-tap oos task on sold-out cards
+  const [oosOpened, setOosOpened] = useState<Set<string>>(new Set());
   const [moveFor, setMoveFor] = useState<{ productId: string; item: StaffItem } | null>(null);
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, start] = useTransition();
@@ -318,10 +325,18 @@ function ProductsTab({ locale }: { locale: Locale }) {
       const r = await staffAllProducts();
       if (!alive) return;
       if (r.error) setErr(r.error);
-      setAll(r.items); setShowPrices(r.showPrices); setCanEdit(r.canEdit || r.canEditImage); setCanMove(r.canMove); setLoading(false);
+      setAll(r.items); setShowPrices(r.showPrices); setCanEdit(r.canEdit || r.canEditImage); setCanMove(r.canMove); setCanOos(r.canOos); setLoading(false);
     })();
     return () => { alive = false; };
   }, []);
+
+  // One tap on a sold-out card → the «علّمه غير متوفر» task, right here.
+  const openOosNow = (p: StaffProduct) => start(async () => {
+    const r = await staffOpenStockTask(p.id, "oos");
+    if ("error" in r) { flash(false, r.error); return; }
+    setOosOpened((s) => new Set(s).add(p.id));
+    flash(true, L(`انفتحت مهمة أوت ستوك: ${p.name ?? p.sku ?? ""} — وزّعها من تبويب المهام.`, `Out-of-stock task opened: ${p.name ?? p.sku ?? ""} — assign it from the Tasks tab.`));
+  });
 
   const flash = (ok: boolean, text: string) => { setToast({ ok, text }); setTimeout(() => setToast(null), 2600); };
 
@@ -442,6 +457,15 @@ function ProductsTab({ locale }: { locale: Locale }) {
                   </span>
                   {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
                   <span className="flex gap-1">
+                    {canOos && p.stock != null && p.stock <= 0 ? (
+                      oosOpened.has(p.id) ? (
+                        <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">✓ {L("انفتحت", "Opened")}</span>
+                      ) : (
+                        <button disabled={busy} onClick={() => openOosNow(p)} className="rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white disabled:opacity-50">
+                          🚫 {L("اوت ستوك", "Out of stock")}
+                        </button>
+                      )
+                    ) : null}
                     {canMove ? (
                       <button disabled={busy} onClick={() => startMove(p)} className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 disabled:opacity-50">
                         📦 {L("مخزون", "Stock")}
@@ -505,6 +529,11 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 <span className={`text-lg font-bold ${detail.stock != null && detail.stock <= 0 ? "text-red-600" : "text-ink"}`}>{detail.stock != null ? detail.stock : "—"} <span className="text-xs font-normal text-muted">{L("مخزون", "stock")}</span></span>
                 {showPrices && detail.price != null ? <span className="ms-auto text-base font-bold text-emerald-700">{detail.price} {L("ر.ق", "QAR")}</span> : null}
               </div>
+              {canOos && detail.stock != null && detail.stock <= 0 && !oosOpened.has(detail.id) ? (
+                <button disabled={busy} onClick={() => { openOosNow(detail); setDetail(null); }} className="w-full rounded-lg bg-red-600 py-2 text-sm font-bold text-white disabled:opacity-50">
+                  🚫 {L("اوت ستوك — افتح مهمة «علّمه غير متوفر»", "Out of stock — open the mark-unavailable task")}
+                </button>
+              ) : null}
               {canMove ? (
                 <button disabled={busy} onClick={() => startMove(detail)} className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2 text-sm font-medium text-emerald-700 disabled:opacity-50">
                   📦 {L("حركة مخزون (إدخال/إخراج)", "Stock move (in / out)")}
@@ -552,13 +581,15 @@ function ProductsTab({ locale }: { locale: Locale }) {
 // Image downscaling lives in lib/imagePrep (shared with the admin product
 // form) — phone photos must shrink below the server-action body cap.
 
-/* ── Add-product tab (photo → AI draft → submit → copy fields) ─────────── */
-function AddProductTab({ locale }: { locale: Locale }) {
+/* ── Add-product tab (photo → AI draft → submit → copy fields) ───────────
+   `seed` = a supervisor's photo-task: starts at the form with that image and
+   drafts the fields from it; a successful add auto-closes the task. */
+function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: { imageUrl: string; taskId: string } | null }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
-  const [phase, setPhase] = useState<"upload" | "form" | "done">("upload");
-  const [preview, setPreview] = useState<string>("");
-  const [imageUrl, setImageUrl] = useState<string>("");
+  const [phase, setPhase] = useState<"upload" | "form" | "done">(seed ? "form" : "upload");
+  const [preview, setPreview] = useState<string>(seed?.imageUrl ?? "");
+  const [imageUrl, setImageUrl] = useState<string>(seed?.imageUrl ?? "");
   const [draft, setDraft] = useState<ProductDraft>({ name_en: "", name_ar: "", description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", main_category: "" });
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("0");
@@ -566,6 +597,18 @@ function AddProductTab({ locale }: { locale: Locale }) {
   const [err, setErr] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
   const [busy, start] = useTransition();
+
+  // Draft the fields from the task's photo (async — never blocks the form).
+  useEffect(() => {
+    if (!seed?.imageUrl) return;
+    let alive = true;
+    (async () => {
+      const r = await staffDraftFromImageUrl(seed.imageUrl);
+      if (!alive || "error" in r) return;
+      setDraft((d) => (d.name_en || d.name_ar ? d : r.draft));
+    })();
+    return () => { alive = false; };
+  }, [seed?.imageUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const editImage = () => {
     if (!imageUrl || !editPrompt.trim()) return;
@@ -602,7 +645,7 @@ function AddProductTab({ locale }: { locale: Locale }) {
     setErr("");
     start(async () => {
       try {
-        const r = await staffAddProduct({ ...draft, price, stock_quantity: stock, image_url: imageUrl });
+        const r = await staffAddProduct({ ...draft, price, stock_quantity: stock, image_url: imageUrl, sourceTaskId: seed?.taskId });
         if ("error" in r) { setErr(r.error); return; }
         setCreated(r.product);
         setPhase("done");
@@ -658,6 +701,9 @@ function AddProductTab({ locale }: { locale: Locale }) {
 
       {phase === "form" ? (
         <div className="space-y-2.5">
+          {seed && !draft.name_en && !draft.name_ar ? (
+            <p className="text-xs text-violet-600">✨ {L("جاري توليد الاسم والوصف من صورة المهمة…", "Drafting title & description from the task photo…")}</p>
+          ) : null}
           <p className="text-xs text-emerald-700">{L("✓ جاهز — راجع وعدّل ثم أضِف. الكود والباركود يتولّدان تلقائيًا.", "✓ Ready — review, edit, then add. SKU & barcode auto-generate.")}</p>
           <Field label={L("الاسم (عربي)", "Name (AR)")} value={draft.name_ar} onChange={(v) => setD("name_ar", v)} dir="rtl" />
           <Field label={L("الاسم (إنجليزي)", "Name (EN)")} value={draft.name_en} onChange={(v) => setD("name_en", v)} dir="ltr" />
@@ -777,7 +823,10 @@ function SupervisorViewToggle({ view, setView, locale }: { view: "mine" | "all";
 }
 
 /* ── Tasks tab (my assigned tasks; supervisors get an all-tasks view too) ── */
-function TasksTab({ locale, supervisor = false }: { locale: Locale; supervisor?: boolean }) {
+function TasksTab({ locale, supervisor = false, onStartProduct }: {
+  locale: Locale; supervisor?: boolean;
+  onStartProduct?: (imageUrl: string, taskId: string) => void; // photo-task → Add tab
+}) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const [view, setView] = useState<"mine" | "all">(supervisor ? "all" : "mine");
@@ -860,6 +909,12 @@ function TasksTab({ locale, supervisor = false }: { locale: Locale; supervisor?:
                 <CatalogTaskDetails payload={t.payload} />
               ) : t.description ? (
                 <p className="mt-0.5 whitespace-pre-line text-xs text-muted">{t.description}</p>
+              ) : null}
+              {onStartProduct && t.payload?.action === "new_product" && String(t.payload?.snapshot?.image_url ?? "") ? (
+                <button onClick={() => onStartProduct(String(t.payload!.snapshot!.image_url), t.id)}
+                  className="mt-2 w-full rounded-lg bg-violet-600 py-2.5 text-sm font-bold text-white">
+                  ➕ {L("أضِفه كمنتج جديد (بالصورة)", "Add it as a new product (with the photo)")}
+                </button>
               ) : null}
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 {t.forEveryone ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">👥 {L("للكل", "Everyone")}</span> : null}
