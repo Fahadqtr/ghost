@@ -10,6 +10,7 @@ import {
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
 import TaskThread from "@/components/TaskThread";
 import StaffProductEdit, { type StaffProductPatchUI } from "./StaffProductEdit";
+import StaffSupervisorTasks from "./StaffSupervisorTasks";
 import { useMemo } from "react";
 import { dirOf, type Locale } from "@/lib/i18n";
 import { type StaffPermission } from "@/lib/staff/permissions";
@@ -194,7 +195,7 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
         {tab === "stock" && perms.includes("stock") ? <StockTab initialToday={initialToday} locale={locale} /> : null}
         {tab === "add_product" && perms.includes("add_product") ? <AddProductTab locale={locale} /> : null}
         {tab === "products" && perms.includes("products") ? <ProductsTab locale={locale} /> : null}
-        {tab === "tasks" && perms.includes("tasks") ? <TasksTab locale={locale} /> : null}
+        {tab === "tasks" && perms.includes("tasks") ? <TasksTab locale={locale} supervisor={perms.includes("manage_tasks")} /> : null}
         {tab === "malak" && perms.includes("malak") ? <MalakTab name={name} locale={locale} /> : null}
         {tab === "reports" && perms.includes("reports") ? <ReportsTab locale={locale} /> : null}
         {tab === "guide" ? <StaffGuide locale={locale} /> : null}
@@ -711,10 +712,28 @@ function CopyFieldsPanel({ product, locale, onAgain }: { product: CreatedProduct
   );
 }
 
-/* ── Tasks tab (my assigned tasks) ─────────────────────────────────────── */
-function TasksTab({ locale }: { locale: Locale }) {
+function SupervisorViewToggle({ view, setView, locale }: { view: "mine" | "all"; setView: (v: "mine" | "all") => void; locale: Locale }) {
+  const en = locale === "en";
+  return (
+    <div className="flex gap-1 rounded-xl bg-[#f3ece1] p-1">
+      {([
+        { k: "all" as const, ar: "🗂️ كل المهام (إشراف)", en: "🗂️ All tasks (supervise)" },
+        { k: "mine" as const, ar: "📋 مهامي", en: "📋 My tasks" },
+      ]).map((o) => (
+        <button key={o.k} onClick={() => setView(o.k)}
+          className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition ${view === o.k ? "bg-white text-ink shadow-xs" : "text-[#8a7461]"}`}>
+          {en ? o.en : o.ar}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ── Tasks tab (my assigned tasks; supervisors get an all-tasks view too) ── */
+function TasksTab({ locale, supervisor = false }: { locale: Locale; supervisor?: boolean }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
+  const [view, setView] = useState<"mine" | "all">(supervisor ? "all" : "mine");
   const [tasks, setTasks] = useState<StaffTaskRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -750,8 +769,18 @@ function TasksTab({ locale }: { locale: Locale }) {
   const overdueN = openT.filter(overdue).length;
   const bar = (p: string) => (p === "high" ? "bg-red-500" : p === "low" ? "bg-slate-300" : "bg-amber-400");
 
+  if (supervisor && view === "all") {
+    return (
+      <div className="mx-auto w-full max-w-2xl space-y-3">
+        <SupervisorViewToggle view={view} setView={setView} locale={locale} />
+        <StaffSupervisorTasks locale={locale} />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-2xl space-y-3">
+      {supervisor ? <SupervisorViewToggle view={view} setView={setView} locale={locale} /> : null}
       {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
 
       {/* summary */}

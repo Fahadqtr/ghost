@@ -43,6 +43,11 @@ test('supervisor edit perms require "products" — dropped when it is absent', (
   );
 });
 
+test('"manage_tasks" requires "tasks"', () => {
+  assert.deepEqual(parsePermissions(["manage_tasks"]), []);
+  assert.deepEqual(parsePermissions(["tasks", "manage_tasks"]), ["tasks", "manage_tasks"]);
+});
+
 test("deduplicates repeated keys", () => {
   assert.deepEqual(parsePermissions(["stock", "stock", "tasks", "tasks"]), ["stock", "tasks"]);
 });
