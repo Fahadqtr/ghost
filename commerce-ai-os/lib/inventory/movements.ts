@@ -1,6 +1,7 @@
 import "server-only";
 import { revalidatePath } from "next/cache";
 import { insertAuditRow } from "@/lib/audit";
+import { logStockTransition } from "@/lib/tasks/stock-tasks";
 import { normalizeQty, planApply, planEdit, planDelete } from "./movements-compute";
 
 // Shared stock IN/OUT engine, used by BOTH the admin movements action
@@ -73,6 +74,10 @@ export async function applyMovement(admin: any, input: MovementInput): Promise<M
   });
   if (logErr) console.error("[applyMovement] audit insert failed:", logErr.message);
 
+  // Zero-crossing? Auto-open the "mark unavailable / re-enable on the manual
+  // platforms" task (best-effort inside).
+  await logStockTransition(admin, { productId: inv.product_id, before, after: plan.after, actor: input.by ?? undefined });
+
   revalidatePath("/inventory");
   revalidatePath("/inventory/movements");
   revalidatePath("/dashboard");
@@ -96,13 +101,14 @@ export async function editMovementQty(admin: any, id: number, newQty: number, ac
 
   const dir = row.action_type === "stock_in" ? "in" : "out";
   const reason = String(row.details?.reason ?? "");
-  const { data: inv } = await admin.from("inventory").select("stock_quantity, sold_quantity").eq("id", inventoryId).single();
+  const { data: inv } = await admin.from("inventory").select("stock_quantity, sold_quantity, product_id").eq("id", inventoryId).single();
   if (!inv) return { error: "صف المخزون غير موجود." };
 
   const plan = planEdit({ dir, reason, oldQty, newQty: q, stock: inv.stock_quantity, sold: inv.sold_quantity, oldValue: row.old_value });
   const patch: Record<string, unknown> = { stock_quantity: plan.stockAfter, updated_at: new Date().toISOString() };
   if (plan.soldAfter != null) patch.sold_quantity = plan.soldAfter;
   await admin.from("inventory").update(patch).eq("id", inventoryId);
+  await logStockTransition(admin, { productId: inv.product_id, before: inv.stock_quantity ?? 0, after: plan.stockAfter, actor });
 
   const hist = Array.isArray(row.details?.editHistory) ? row.details.editHistory : [];
   hist.push({ by: actor, at: new Date().toISOString(), from: oldQty, to: q });
@@ -128,12 +134,13 @@ export async function deleteMovement(admin: any, id: number, actor: string): Pro
   const reason = String(row.details?.reason ?? "");
 
   if (inventoryId && qty && rev !== "reversed") {
-    const { data: inv } = await admin.from("inventory").select("stock_quantity, sold_quantity").eq("id", inventoryId).single();
+    const { data: inv } = await admin.from("inventory").select("stock_quantity, sold_quantity, product_id").eq("id", inventoryId).single();
     if (inv) {
       const plan = planDelete({ dir, reason, qty, stock: inv.stock_quantity, sold: inv.sold_quantity });
       const patch: Record<string, unknown> = { stock_quantity: plan.stockAfter, updated_at: new Date().toISOString() };
       if (plan.soldAfter != null) patch.sold_quantity = plan.soldAfter;
       await admin.from("inventory").update(patch).eq("id", inventoryId);
+      await logStockTransition(admin, { productId: inv.product_id, before: inv.stock_quantity ?? 0, after: plan.stockAfter, actor });
     }
   }
 

@@ -26,6 +26,8 @@ const ACTION_META: Record<string, { icon: string; label: string; cls: string }> 
   image: { icon: "🖼️", label: "صورة جديدة", cls: "bg-violet-50 text-violet-700" },
   approval: { icon: "🔖", label: "تغيير حالة", cls: "bg-amber-50 text-amber-700" },
   bulk: { icon: "📦", label: "عملية جماعية", cls: "bg-slate-100 text-slate-600" },
+  oos: { icon: "🚫", label: "نفد المخزون — علّمه غير متوفر", cls: "bg-red-50 text-red-700" },
+  restock: { icon: "🔄", label: "رجع المخزون — فعّله", cls: "bg-emerald-50 text-emerald-700" },
 };
 
 const s = (v: unknown) => String(v ?? "").trim();

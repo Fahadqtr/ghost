@@ -16,6 +16,7 @@ import { buildDraftPrompt, parseProductDraft, EMPTY_DRAFT, type ProductDraft } f
 import { editProductImageCore } from "@/lib/products/imageEdit";
 import { storePrimaryProductImage } from "@/lib/products/imageStore";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
+import { openStockTask } from "@/lib/tasks/stock-tasks";
 import { clean } from "@/lib/malak/talabat-export.mjs";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
@@ -980,6 +981,82 @@ export async function staffAssignTask(taskId: string, staffId: string | null): P
     .eq("id", String(taskId));
   if (error) return { error: error.message };
   return { ok: true as const, assignedName };
+}
+
+/* Supervisor: out-of-stock review — every Approved product whose TOTAL stock
+   (inventory + variants) is zero, with whether an open OOS task already
+   exists, plus one-tap task creation for the ones that don't. */
+
+export type OosProduct = { id: string; sku: string | null; name: string | null; image: string | null; hasOpenTask: boolean };
+
+export async function staffOutOfStock(): Promise<{ items: OosProduct[]; error?: string }> {
+  const who = await currentStaff();
+  if (!who) return { items: [], error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { items: [], error: "ما عندك صلاحية إدارة المهام." };
+  const admin = adminClient();
+  if (!admin) return { items: [], error: NO_DB };
+
+  // Variant stock per parent (optional table).
+  const varTotal = new Map<string, number>();
+  try {
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await admin.from("product_variants").select("parent_product_id, stock_quantity").range(from, from + 999);
+      if (error) break;
+      for (const v of (data ?? []) as any[]) {
+        if (!v.parent_product_id) continue;
+        varTotal.set(String(v.parent_product_id), (varTotal.get(String(v.parent_product_id)) ?? 0) + (Number(v.stock_quantity) || 0));
+      }
+      if (!data || data.length < 1000) break;
+    }
+  } catch { /* optional */ }
+
+  const out: OosProduct[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await admin
+      .from("products")
+      .select("id, sku, name_en, name_ar, image_url, approval, inventory(stock_quantity)")
+      .eq("approval", "Approved")
+      .range(from, from + 999);
+    if (error) return { items: out, error: error.message };
+    for (const p of (data ?? []) as any[]) {
+      const invSum = ((p.inventory ?? []) as { stock_quantity: number | null }[])
+        .reduce((s2, r) => s2 + (Number(r.stock_quantity) || 0), 0);
+      const total = invSum + (varTotal.get(String(p.id)) ?? 0);
+      if (total > 0) continue;
+      out.push({ id: String(p.id), sku: p.sku ?? null, name: p.name_en ?? p.name_ar ?? null, image: p.image_url ?? null, hasOpenTask: false });
+    }
+    if (!data || data.length < 1000) break;
+  }
+
+  // Which of them already have an OPEN oos task?
+  const withTask = new Set<string>();
+  for (let i = 0; i < out.length; i += 100) {
+    const ids = out.slice(i, i + 100).map((o) => o.id);
+    const { data } = await admin
+      .from("staff_tasks")
+      .select("product_id, payload")
+      .eq("kind", "catalog")
+      .neq("status", "done")
+      .in("product_id", ids);
+    for (const t of (data ?? []) as any[]) {
+      if (t.product_id && t?.payload?.action === "oos") withTask.add(String(t.product_id));
+    }
+  }
+  for (const o of out) o.hasOpenTask = withTask.has(o.id);
+  return { items: out };
+}
+
+// One-tap "open the mark-unavailable task" for a product from the OOS review.
+export async function staffOpenOosTask(productId: string): Promise<{ ok: true } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { error: "ما عندك صلاحية إدارة المهام." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const r = await openStockTask(admin, String(productId), "oos", `مشرف: ${who.name}`);
+  if (r === "duplicate") return { error: "فيه مهمة أوت ستوك مفتوحة لهذا المنتج من قبل." };
+  if (r === "skipped") return { error: "المنتج غير موجود أو غير معتمد." };
+  return { ok: true as const };
 }
 
 // Supervisor status flip on ANY task (the plain staffSetTaskStatus only allows

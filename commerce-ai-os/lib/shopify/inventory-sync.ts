@@ -2,6 +2,7 @@ import "server-only";
 import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, setInventoryQuantities, fetchRecentShopifyOrders } from "./admin";
 import { planInventorySync } from "@/lib/shopify-diff";
 import { planOrderDeductions, spreadDeduction, type CatalogRowLite } from "./order-deduct-compute";
+import { logStockTransition } from "@/lib/tasks/stock-tasks";
 
 // Stock → Shopify sync core, shared by the manual button on /import-export/
 // shopify-sync and the nightly availability cron. Our `inventory` table (plus
@@ -79,14 +80,23 @@ async function deductRecentOrders(
           .select("id, stock_quantity")
           .eq("product_id", d.product_id);
         if (rowErr) continue;
-        const updates = spreadDeduction(
-          ((rows ?? []) as { id: string | number; stock_quantity: number | null }[])
-            .map((r) => ({ rowKey: r.id, stock: Number(r.stock_quantity) || 0 })),
-          d.qty,
-        );
+        const rowStocks = ((rows ?? []) as { id: string | number; stock_quantity: number | null }[])
+          .map((r) => ({ rowKey: r.id, stock: Number(r.stock_quantity) || 0 }));
+        const updates = spreadDeduction(rowStocks, d.qty);
+        let applied = 0; // what actually landed (clamped + write-checked)
         for (const u of updates) {
+          const prev = rowStocks.find((r) => r.rowKey === u.rowKey)?.stock ?? 0;
           const { error: upErr } = await sb.from("inventory").update({ stock_quantity: u.stock }).eq("id", u.rowKey);
-          if (!upErr) deducted++;
+          if (!upErr) { deducted++; applied += prev - u.stock; }
+        }
+        // A store sale that empties the product opens the "mark unavailable on
+        // the manual platforms" task (best-effort inside).
+        if (applied > 0) {
+          const beforeTotal = rowStocks.reduce((s, r) => s + r.stock, 0);
+          await logStockTransition(sb, {
+            productId: d.product_id, before: beforeTotal, after: beforeTotal - applied,
+            actor: "شوبي فاي — طلب متجر",
+          });
         }
       }
     }

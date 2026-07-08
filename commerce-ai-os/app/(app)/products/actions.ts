@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
+import { logStockTransition } from "@/lib/tasks/stock-tasks";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
@@ -221,7 +223,7 @@ export async function updateProduct(id: string, input: ProductInput) {
   // if there is one, otherwise seed a new one (older products may predate it).
   const { data: invRow } = await supabase
     .from("inventory")
-    .select("id")
+    .select("id, stock_quantity")
     .eq("product_id", id)
     .maybeSingle();
   const invErr = invRow
@@ -240,6 +242,15 @@ export async function updateProduct(id: string, input: ProductInput) {
         })
       ).error;
   if (invErr) return { error: `Product saved, but stock sync failed: ${invErr.message}` };
+
+  // Stock crossed zero in this edit? Open the manual-platforms task.
+  try {
+    await logStockTransition(createAdminClient(), {
+      productId: id,
+      before: Number(invRow?.stock_quantity) || 0,
+      after: productRow.stock_quantity ?? 0,
+    });
+  } catch { /* best-effort */ }
 
   // Replace variants: delete existing, re-insert the submitted set.
   await supabase.from("product_variants").delete().eq("parent_product_id", id);
