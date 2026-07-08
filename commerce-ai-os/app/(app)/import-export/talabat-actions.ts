@@ -35,6 +35,84 @@ async function pageAll<T>(q: (from: number, to: number) => any): Promise<T[]> {
   return out;
 }
 
+/* ── Talabat new-product queue ────────────────────────────────────────────
+   Products land here automatically when they become Approved; the owner
+   downloads the sheet+images from this page, emails Talabat, then marks the
+   batch sent — after which the items disappear from the queue. */
+
+export interface TalabatQueueItem {
+  id: string;
+  sku: string | null;
+  name_en: string | null;
+  image_url: string | null;
+  queued_at: string | null;
+  noPrice: boolean;
+}
+
+export async function listTalabatQueue(): Promise<{ ok: boolean; ready: boolean; items: TalabatQueueItem[]; error?: string }> {
+  if (!(await isSignedIn())) return { ok: false, ready: true, items: [], error: "Not signed in." };
+  try {
+    const admin = createAdminClient();
+    const { data: q, error } = await admin
+      .from("talabat_queue")
+      .select("product_id, queued_at")
+      .is("sent_at", null)
+      .order("queued_at", { ascending: false })
+      .limit(500);
+    if (error) {
+      if ((error as any).code === "42P01" || /talabat_queue/i.test(error.message)) {
+        return { ok: true, ready: false, items: [] }; // migration not run yet
+      }
+      return { ok: false, ready: true, items: [], error: error.message };
+    }
+    const ids = ((q ?? []) as { product_id: string; queued_at: string | null }[]);
+    if (!ids.length) return { ok: true, ready: true, items: [] };
+
+    const queuedAt = new Map(ids.map((r) => [String(r.product_id), r.queued_at ?? null]));
+    const { data: prods } = await admin
+      .from("products")
+      .select("id, sku, name_en, name_ar, image_url, price, discount_price, approval")
+      .in("id", ids.map((r) => r.product_id));
+
+    const items: TalabatQueueItem[] = ((prods ?? []) as any[])
+      .filter((p) => String(p.approval ?? "") === "Approved") // rejected later? drop from view
+      .map((p) => ({
+        id: String(p.id),
+        sku: p.sku ?? null,
+        name_en: p.name_en ?? p.name_ar ?? null,
+        image_url: p.image_url ?? null,
+        queued_at: queuedAt.get(String(p.id)) ?? null,
+        noPrice: !(Number(p.price) > 0 || Number(p.discount_price) > 0),
+      }))
+      .sort((a, b) => String(b.queued_at ?? "").localeCompare(String(a.queued_at ?? "")));
+    return { ok: true, ready: true, items };
+  } catch (e) {
+    return { ok: false, ready: true, items: [], error: e instanceof Error ? e.message : "فشل تحميل طابور طلبات." };
+  }
+}
+
+/** The email went out — stamp the batch so it leaves the queue. */
+export async function markTalabatSent(productIds: string[]): Promise<{ ok: boolean; marked: number; error?: string }> {
+  if (!(await isSignedIn())) return { ok: false, marked: 0, error: "Not signed in." };
+  const ids = [...new Set(productIds)].filter(Boolean).slice(0, 1000);
+  if (!ids.length) return { ok: false, marked: 0, error: "ما في منتجات محددة." };
+  try {
+    const admin = createAdminClient();
+    let by = "";
+    try { by = (await createClient().auth.getUser()).data.user?.email ?? ""; } catch { /* keep empty */ }
+    const { error, count } = await admin
+      .from("talabat_queue")
+      .update({ sent_at: new Date().toISOString(), sent_by: by || "owner" }, { count: "exact" })
+      .in("product_id", ids)
+      .is("sent_at", null);
+    if (error) return { ok: false, marked: 0, error: error.message };
+    revalidatePath("/import-export/talabat-sync");
+    return { ok: true, marked: count ?? ids.length };
+  } catch (e) {
+    return { ok: false, marked: 0, error: e instanceof Error ? e.message : "فشل تعليم الإرسال." };
+  }
+}
+
 /** READ-ONLY: diff Talabat's uploaded export rows against our catalog. */
 export async function computeTalabatDiff(rows: Record<string, unknown>[]): Promise<TalabatDiff> {
   if (!(await isSignedIn())) return { ...EMPTY_DIFF, error: "Not signed in." };

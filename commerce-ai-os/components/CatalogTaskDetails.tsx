@@ -179,10 +179,10 @@ export default function CatalogTaskDetails({ payload, productId, manager = false
       {payload.action !== "bulk" && payload.action !== "new_product" ? (
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
           <span className="font-semibold text-ink">📌 حدّث يدويًا في:</span>
-          {["طلبات", "سنونو", "رفيق"].map((p) => (
+          {["سنونو مليكاز", "سنونو بيور سيول", "رفيق"].map((p) => (
             <span key={p} className="rounded-full bg-white px-2 py-0.5 text-muted ring-1 ring-[#efe3d6]">☐ {p}</span>
           ))}
-          <span className="text-muted">(شوبي فاي تلقائي ✓)</span>
+          <span className="text-muted">(شوبي فاي تلقائي ✓ · طلبات بالإيميل من صفحة طلبات)</span>
         </div>
       ) : null}
 
