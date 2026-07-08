@@ -70,11 +70,14 @@ export async function logCatalogTask(opts: {
   snapshot?: Record<string, unknown> | null;
   changes?: CatalogFieldChange[];
   note?: string; // bulk summaries / extra context line
+  actor?: string; // explicit attribution (staff/supervisor paths have no Supabase user)
 }): Promise<void> {
   try {
     const admin = createAdminClient();
-    let actor = "";
-    try { actor = (await createClient().auth.getUser()).data.user?.email ?? ""; } catch { /* cron/staff paths */ }
+    let actor = opts.actor ?? "";
+    if (!actor) {
+      try { actor = (await createClient().auth.getUser()).data.user?.email ?? ""; } catch { /* cron/staff paths */ }
+    }
 
     const snap = (opts.snapshot ?? {}) as Record<string, unknown>;
     const name = s(snap.name_en) || s(snap.name_ar) || s(opts.note) || "منتج";

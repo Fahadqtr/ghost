@@ -9,6 +9,7 @@ import {
 } from "./actions";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
 import TaskThread from "@/components/TaskThread";
+import StaffProductEdit, { type StaffProductPatchUI } from "./StaffProductEdit";
 import { useMemo } from "react";
 import { dirOf, type Locale } from "@/lib/i18n";
 import { type StaffPermission } from "@/lib/staff/permissions";
@@ -294,6 +295,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const L = (ar: string, e: string) => (en ? e : ar);
   const [all, setAll] = useState<StaffProduct[]>([]);
   const [showPrices, setShowPrices] = useState(false);
+  const [canEdit, setCanEdit] = useState(false); // supervisor: edit_products/edit_images
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
@@ -302,6 +304,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const [onlyVar, setOnlyVar] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<StaffProduct | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -310,10 +313,24 @@ function ProductsTab({ locale }: { locale: Locale }) {
       const r = await staffAllProducts();
       if (!alive) return;
       if (r.error) setErr(r.error);
-      setAll(r.items); setShowPrices(r.showPrices); setLoading(false);
+      setAll(r.items); setShowPrices(r.showPrices); setCanEdit(r.canEdit || r.canEditImage); setLoading(false);
     })();
     return () => { alive = false; };
   }, []);
+
+  // Patch the local list after a supervisor edit (no full reload of 1200+ rows).
+  const applyPatch = (id: string, patch: StaffProductPatchUI) => {
+    const map = (p: StaffProduct): StaffProduct => (p.id !== id ? p : {
+      ...p,
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.nameAr !== undefined ? { nameAr: patch.nameAr } : {}),
+      ...(patch.category !== undefined ? { category: patch.category } : {}),
+      ...(patch.price !== undefined && showPrices ? { price: patch.price } : {}),
+      ...(patch.image !== undefined ? { image: patch.image } : {}),
+    });
+    setAll((list) => list.map(map));
+    setDetail((d) => (d && d.id === id ? map(d) : d));
+  };
 
   const cats = useMemo(() => Array.from(new Set(all.map((p) => p.category).filter(Boolean))).sort() as string[], [all]);
   const withVarsCount = useMemo(() => all.filter((p) => (p.variants?.length ?? 0) > 0).length, [all]);
@@ -396,6 +413,11 @@ function ProductsTab({ locale }: { locale: Locale }) {
                     <span className={`text-sm font-bold ${p.stock != null && p.stock <= 0 ? "text-red-600" : "text-ink"}`}>{p.stock != null ? p.stock : "—"}</span>
                   </span>
                   {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
+                  {canEdit ? (
+                    <button onClick={() => setEditId(p.id)} className="rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                      ✏️ {L("عدّل", "Edit")}
+                    </button>
+                  ) : null}
                 </div>
               </div>
               {open && vs.length > 0 ? (
@@ -448,6 +470,11 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 <span className={`text-lg font-bold ${detail.stock != null && detail.stock <= 0 ? "text-red-600" : "text-ink"}`}>{detail.stock != null ? detail.stock : "—"} <span className="text-xs font-normal text-muted">{L("مخزون", "stock")}</span></span>
                 {showPrices && detail.price != null ? <span className="ms-auto text-base font-bold text-emerald-700">{detail.price} {L("ر.ق", "QAR")}</span> : null}
               </div>
+              {canEdit ? (
+                <button onClick={() => { setEditId(detail.id); setDetail(null); }} className="w-full rounded-lg border border-violet-200 bg-violet-50 py-2 text-sm font-medium text-violet-700">
+                  ✏️ {L("عدّل المنتج", "Edit product")}
+                </button>
+              ) : null}
               {(detail.variants?.length ?? 0) > 0 ? (
                 <div className="rounded-lg bg-slate-50 p-2">
                   <p className="mb-1 text-[11px] font-semibold text-muted">🎚️ {L("الخيارات", "Options")} ({detail.variants!.length})</p>
@@ -465,6 +492,10 @@ function ProductsTab({ locale }: { locale: Locale }) {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {editId ? (
+        <StaffProductEdit productId={editId} locale={locale} onClose={() => setEditId(null)} onSaved={applyPatch} />
       ) : null}
     </div>
   );

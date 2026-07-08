@@ -35,6 +35,14 @@ test('"prices" requires "products" — dropped when products is absent', () => {
   assert.deepEqual(parsePermissions(["products", "prices"]), ["products", "prices"]); // together: kept
 });
 
+test('supervisor edit perms require "products" — dropped when it is absent', () => {
+  assert.deepEqual(parsePermissions(["edit_products", "edit_images"]), []);
+  assert.deepEqual(
+    parsePermissions(["products", "edit_products", "edit_images"]),
+    ["products", "edit_products", "edit_images"],
+  );
+});
+
 test("deduplicates repeated keys", () => {
   assert.deepEqual(parsePermissions(["stock", "stock", "tasks", "tasks"]), ["stock", "tasks"]);
 });

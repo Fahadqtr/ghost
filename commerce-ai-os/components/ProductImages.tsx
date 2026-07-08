@@ -46,7 +46,7 @@ export default function ProductImages({
     fd.set("productId", productId);
     startTransition(async () => {
       const res = await uploadProductImage(fd);
-      if (res?.error) setError(res.error);
+      if ("error" in res) setError(res.error);
       else { setMsg("Image uploaded ✓"); router.refresh(); }
       if (fileRef.current) fileRef.current.value = "";
     });
