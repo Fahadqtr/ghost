@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createTask, updateTask, deleteTask, managerListComments, managerAddComment, createRoutine, setRoutineActive, deleteRoutine, type StaffTask, type TaskPriority, type TaskStatus } from "./actions";
 import type { Routine } from "@/lib/tasks/routines";
+import CatalogTaskDetails from "@/components/CatalogTaskDetails";
 import TaskThread from "@/components/TaskThread";
 import type { Locale } from "@/lib/i18n";
 
@@ -45,26 +46,6 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
 
   const flash = (t: string) => { setNote(t); setTimeout(() => setNote(""), 3000); };
   const refresh = () => router.refresh();
-
-  // Catalog auto-tasks: one tap copies everything the assignee needs to paste
-  // into a platform dashboard (Talabat/Snoonu/Rafeeq).
-  const copyCatalog = (t: StaffTask) => {
-    const sn = (t.payload?.snapshot ?? {}) as Record<string, unknown>;
-    const v = (x: unknown) => String(x ?? "").trim();
-    const lines = [
-      v(sn.name_en) && `Name EN: ${v(sn.name_en)}`,
-      v(sn.name_ar) && `الاسم: ${v(sn.name_ar)}`,
-      v(sn.sku) && `SKU: ${v(sn.sku)}`,
-      v(sn.barcode) && `Barcode: ${v(sn.barcode)}`,
-      Number(sn.price) > 0 ? `Price: ${sn.price} QAR` : "",
-      Number(sn.discount_price) > 0 ? `Discounted: ${sn.discount_price} QAR` : "",
-      v(sn.main_category) && `Category: ${v(sn.main_category)}`,
-      v(sn.description_en) && `Description EN:\n${v(sn.description_en)}`,
-      v(sn.description_ar) && `الوصف:\n${v(sn.description_ar)}`,
-    ].filter(Boolean).join("\n");
-    navigator.clipboard?.writeText(lines || t.description || t.title);
-    flash(L("✅ انتسخت البيانات — الصقها في لوحة المنصة", "✅ Data copied — paste it into the platform dashboard"));
-  };
 
   const reassign = (t: StaffTask, staffId: string) => {
     const name = staff.find((s) => s.id === staffId)?.name ?? null;
@@ -309,11 +290,11 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-ink">{p.dot} {t.title}</p>
-                    {t.kind === "catalog" && (t.payload?.snapshot as any)?.image_url ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img src={String((t.payload!.snapshot as any).image_url)} alt="" loading="lazy" className="mt-1.5 h-16 w-16 rounded-lg border border-slate-200 bg-white object-cover" />
+                    {t.kind === "catalog" && t.payload ? (
+                      <CatalogTaskDetails payload={t.payload} productId={t.productId} manager />
+                    ) : t.description ? (
+                      <p className="mt-0.5 whitespace-pre-line text-xs text-muted">{t.description}</p>
                     ) : null}
-                    {t.description ? <p className="mt-0.5 whitespace-pre-line text-xs text-muted">{t.description}</p> : null}
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                       {t.kind === "catalog" ? <Chip cls="bg-sky-50 font-bold text-sky-700">🗂️ {L("تغيير كتالوج", "Catalog change")}</Chip> : null}
                       <Chip cls={everyone ? "bg-slate-100 text-slate-500" : "bg-violet-50 text-violet-700"}>{everyone ? (t.kind === "catalog" ? L("⏳ بانتظار التوجيه", "⏳ Unassigned") : L("👥 للكل", "👥 Everyone")) : `👤 ${t.assignedName}`}</Chip>
@@ -323,19 +304,7 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
                     </div>
                     {t.kind === "catalog" ? (
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        <button type="button" disabled={busy} onClick={() => copyCatalog(t)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-slate-50 disabled:opacity-50">
-                          📋 {L("نسخ البيانات", "Copy data")}
-                        </button>
-                        {(t.payload?.snapshot as any)?.image_url ? (
-                          <a href={String((t.payload!.snapshot as any).image_url)} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-slate-50">
-                            ⬇️ {L("الصورة", "Image")}
-                          </a>
-                        ) : null}
-                        {t.productId && t.payload?.action !== "delete" ? (
-                          <a href={`/products/${t.productId}`} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-ink hover:bg-slate-50">
-                            ✏️ {L("فتح المنتج", "Open product")}
-                          </a>
-                        ) : null}
+                        <span className="text-[11px] font-semibold text-muted">{L("التكليف:", "Assign:")}</span>
                         <select
                           value={t.assignedTo ?? ""}
                           onChange={(e) => reassign(t, e.target.value)}

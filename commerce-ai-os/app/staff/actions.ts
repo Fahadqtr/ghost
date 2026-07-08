@@ -641,6 +641,8 @@ export type StaffTaskRow = {
   status: "open" | "in_progress" | "done";
   forEveryone: boolean;
   createdAt: string | null;
+  kind: "manual" | "catalog";
+  payload: { action?: string; snapshot?: Record<string, unknown>; changes?: { field: string; old: string; new: string }[] } | null;
 };
 
 export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: string }> {
@@ -655,14 +657,15 @@ export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: s
   // Unassigned CATALOG tasks are the manager's triage queue — staff see them
   // only once assigned. Falls back to the legacy filter until the kind column
   // exists (supabase/catalog_change_tasks.sql).
-  const baseSelect = "id, title, description, priority, due_date, status, created_at, assigned_to";
+  const baseSelect = "id, title, description, priority, due_date, status, created_at, assigned_to, kind, payload";
+  const legacySelect = "id, title, description, priority, due_date, status, created_at, assigned_to";
   let query = admin.from("staff_tasks").select(baseSelect);
   query = who.id
     ? query.or(`assigned_to.eq.${who.id},and(assigned_to.is.null,kind.neq.catalog)`)
     : query.or("and(assigned_to.is.null,kind.neq.catalog)");
   let { data, error } = await query.order("created_at", { ascending: false }).limit(300);
-  if (error && /kind/i.test(error.message)) {
-    let legacy = admin.from("staff_tasks").select(baseSelect);
+  if (error && /kind|payload/i.test(error.message)) {
+    let legacy = admin.from("staff_tasks").select(legacySelect);
     legacy = who.id ? legacy.or(`assigned_to.eq.${who.id},assigned_to.is.null`) : legacy.is("assigned_to", null);
     ({ data, error } = await legacy.order("created_at", { ascending: false }).limit(300));
   }
@@ -679,6 +682,8 @@ export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: s
     status: (["open", "in_progress", "done"].includes(r.status) ? r.status : "open"),
     forEveryone: r.assigned_to == null,
     createdAt: r.created_at ?? null,
+    kind: r.kind === "catalog" ? "catalog" : "manual",
+    payload: r.payload ?? null,
   }));
   return { tasks };
 }
