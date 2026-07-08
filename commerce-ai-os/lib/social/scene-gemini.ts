@@ -124,18 +124,21 @@ export async function auditProductImageWithGemini(imageUrl: string): Promise<Ima
     const body = {
       contents: [{ parts: [
         { text:
-          "You are auditing e-commerce product photos for a beauty store.\n" +
+          "You are auditing e-commerce product photos for an online store that sells beauty AND lifestyle items " +
+          "(cosmetics, nails, hair, home goods, mugs, gadgets, accessories — ALL categories are valid products).\n" +
           "Reply ONLY with minified JSON: {\"ok\":true|false,\"problems\":[...],\"note\":\"...\"}\n" +
-          "problems values (flag ONLY what a customer would clearly notice):\n" +
-          "- \"cropped\": the product is visibly cut off by the image edge\n" +
-          "- \"corrupt\": glitch/truncation artifacts, broken rendering\n" +
-          "- \"blurry\": out of focus or resolution too low to read the product\n" +
-          "- \"placeholder\": no real product shown (logo, gray box, 'no image')\n" +
-          "- \"watermark\": a watermark/stamp over the photo\n" +
+          "problems values (flag ONLY what a customer would clearly notice and find unacceptable):\n" +
+          "- \"cropped\": a significant part of the product is cut off by the image edge (tight close-ups that still show the product well are fine)\n" +
+          "- \"corrupt\": glitch/truncation artifacts, broken rendering, large blank areas\n" +
+          "- \"blurry\": out of focus or resolution too low to recognize the product\n" +
+          "- \"placeholder\": no real product shown (logo only, gray box, 'no image')\n" +
+          "- \"watermark\": a THIRD-PARTY watermark/stamp/site-logo over the photo. Manufacturer feature text, " +
+          "brand names on packaging, or supplier infographic callouts are NORMAL — do NOT flag them\n" +
           "- \"dark\": too dark to see the product\n" +
-          "- \"wrong\": clearly not a product photo (screenshot, document, random scene)\n" +
+          "- \"wrong\": not a photo of a sellable product at all (screenshot of text, document, random unrelated scene). " +
+          "NEVER flag a product just because of its category — kitchenware, gadgets and home items are all sold here\n" +
           "note: <= 12 words, in Arabic, describing the issue (or empty when ok).\n" +
-          "Minor imperfections are fine: then reply {\"ok\":true,\"problems\":[],\"note\":\"\"}." },
+          "When in doubt, pass it: reply {\"ok\":true,\"problems\":[],\"note\":\"\"}." },
         { inline_data: { mime_type: ct, data: buf.toString("base64") } },
       ] }],
     };

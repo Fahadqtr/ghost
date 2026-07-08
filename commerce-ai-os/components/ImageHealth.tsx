@@ -166,20 +166,37 @@ export default function ImageHealth() {
       {qMsg ? <p className="text-xs text-muted">{qMsg}</p> : null}
 
       {issues?.length ? (
-        <div className="max-h-96 space-y-2 overflow-y-auto">
-          {issues.map((p) => (
-            <div key={p.product_id} className="flex items-center gap-2 rounded-xl border border-[#efe3d6] bg-white/60 p-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={p.image_url} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-lg border border-[#efe3d6] bg-white object-cover" />
-              <div className="min-w-0 flex-1 text-xs">
-                <p className="truncate font-semibold text-ink">{p.name_en || p.product_id}{p.sku ? ` — ${p.sku}` : ""}</p>
-                <p className="mt-0.5 text-muted">
-                  {p.problems.map((k) => QUALITY_AR[k] ?? k).join(" · ")}{p.note ? ` — ${p.note}` : ""}
-                </p>
-              </div>
-              <a href={`/products/${p.product_id}`} target="_blank" rel="noreferrer" className="btn-ghost shrink-0 px-2 py-1 text-xs">✏️ تعديل</a>
-            </div>
-          ))}
+        <div className="space-y-2">
+          {Object.entries(
+            issues.reduce<Record<string, ImageQualityIssue[]>>((acc, p) => {
+              const k = p.problems[0] ?? "other";
+              (acc[k] = acc[k] ?? []).push(p);
+              return acc;
+            }, {}),
+          )
+            .sort((a, b) => b[1].length - a[1].length)
+            .map(([kind, list]) => (
+              <details key={kind} className="rounded-xl border border-[#efe3d6] bg-white/60 p-2">
+                <summary className="cursor-pointer text-xs font-semibold text-ink">
+                  {QUALITY_AR[kind] ?? kind} ({list.length})
+                </summary>
+                <div className="mt-2 max-h-80 space-y-2 overflow-y-auto">
+                  {list.map((p) => (
+                    <div key={p.product_id} className="flex items-center gap-2 rounded-lg bg-white/70 p-1.5">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={p.image_url} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-lg border border-[#efe3d6] bg-white object-cover" />
+                      <div className="min-w-0 flex-1 text-xs">
+                        <p className="truncate font-semibold text-ink">{p.name_en || p.product_id}{p.sku ? ` — ${p.sku}` : ""}</p>
+                        <p className="mt-0.5 text-muted">
+                          {p.problems.map((k) => QUALITY_AR[k] ?? k).join(" · ")}{p.note ? ` — ${p.note}` : ""}
+                        </p>
+                      </div>
+                      <a href={`/products/${p.product_id}`} target="_blank" rel="noreferrer" className="btn-ghost shrink-0 px-2 py-1 text-xs">✏️ تعديل</a>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
         </div>
       ) : null}
 
