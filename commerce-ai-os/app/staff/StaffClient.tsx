@@ -675,17 +675,25 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
     return () => { alive = false; };
   }, [seed?.imageUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const editImage = () => {
-    if (!imageUrl || !editPrompt.trim()) return;
+  const runEdit = (text: string) => {
+    if (!imageUrl || !text.trim()) return;
     setErr("");
     start(async () => {
-      const r = await staffEditProductImage(imageUrl, editPrompt);
+      const r = await staffEditProductImage(imageUrl, text);
       if ("error" in r) { setErr(r.error); return; }
       setImageUrl(r.imageUrl);
       setPreview(r.imageUrl);
       setEditPrompt("");
     });
   };
+  const editImage = () => runEdit(editPrompt);
+
+  // One-tap staging presets — premium-brand looks (the product itself stays intact).
+  const EDIT_PRESETS = [
+    { icon: "✨", ar: "خلفية براند فاخرة", en: "Premium brand look", p: "ضع المنتج في خلفية استوديو فاخرة بأسلوب إعلانات البراندات العالمية: تدرج لوني أنيق يناسب ألوان المنتج، ظل ناعم وانعكاس خفيف تحت المنتج" },
+    { icon: "⬜", ar: "خلفية بيضاء نظيفة", en: "Clean white", p: "خلفية بيضاء نظيفة تمامًا مع إضاءة استوديو ناعمة وظل خفيف طبيعي تحت المنتج" },
+    { icon: "🌸", ar: "ستايل كوري ناعم", en: "Soft K-beauty", p: "خلفية باستيل ناعمة بأسلوب منتجات التجميل الكورية مع إضاءة نهارية ناعمة وظل خفيف" },
+  ];
 
   const onFile = (file: File) => {
     setErr("");
@@ -758,12 +766,20 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
       {phase === "form" && imageUrl ? (
         <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-2.5">
           <p className="mb-1.5 text-xs font-semibold text-brand-dark">✨ {L("عدّل الصورة بالذكاء", "Edit the photo with AI")}</p>
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {EDIT_PRESETS.map((pr) => (
+              <button key={pr.ar} type="button" disabled={busy} onClick={() => runEdit(pr.p)}
+                className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-medium text-violet-700 disabled:opacity-50">
+                {pr.icon} {en ? pr.en : pr.ar}
+              </button>
+            ))}
+          </div>
           <div className="flex gap-2">
             <input value={editPrompt} onChange={(e) => setEditPrompt(e.target.value)} className="input flex-1 text-sm"
-              placeholder={L("مثال: خلفية بيضاء نظيفة، إضاءة أنقى", "e.g. clean white background, brighter")} onKeyDown={(e) => e.key === "Enter" && editImage()} />
+              placeholder={L("أو اكتب تعديلك الخاص…", "or describe your own edit…")} onKeyDown={(e) => e.key === "Enter" && editImage()} />
             <button onClick={editImage} disabled={busy || !editPrompt.trim()} className="btn-primary px-3 py-2 text-xs disabled:opacity-50">{busy ? "…" : L("✨ عدّل", "✨ Edit")}</button>
           </div>
-          <p className="mt-1 text-[11px] text-muted">{L("اكتب التعديل المطلوب وتنعدّل الصورة تلقائيًا (يبقى نفس المنتج).", "Describe the change; the same product is kept.")}</p>
+          <p className="mt-1 text-[11px] text-muted">{L("المنتج ونصوص ملصقه يبقون كما هم — تتغير الخلفية والإضاءة فقط.", "The product and its label stay intact — only the scene changes.")}</p>
         </div>
       ) : null}
 
