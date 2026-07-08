@@ -742,13 +742,17 @@ export async function staffDraftFromImageUrl(imageUrl: string): Promise<{ draft:
   }
 }
 
-/* Supervisor: photograph a new product → task for an employee to (AI-)fix the
-   photo and add it to the catalog from the Add-product tab. */
+/* Supervisor: photograph a new product (several angles allowed) → task for an
+   employee to (AI-)fix the photos and add it — options included — from the
+   Add-product tab. */
+export type PhotoTaskOption = { name: string; price?: string; stock?: string };
+
 export async function staffCreatePhotoTask(input: {
-  base64: string; mediaType: string;
+  images: { base64: string; mediaType: string }[]; // 1..6, first = the primary
   assignedTo?: string | null;
   note?: string;
   price?: string; // hands the employee the selling price, pre-filled in the Add form
+  options?: PhotoTaskOption[]; // the product's options — pre-filled in the Add form
 }): Promise<{ ok: true } | { error: string }> {
   const who = await currentStaff();
   if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
@@ -756,20 +760,26 @@ export async function staffCreatePhotoTask(input: {
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
 
-  const mt = String(input.mediaType || "").toLowerCase();
-  const ext = IMG_EXT[mt];
-  if (!ext) return { error: "نوع الصورة غير مدعوم — استخدم JPG أو PNG أو WebP." };
-  const raw = String(input.base64 || "").replace(/^data:[^,]+,/, "");
-  if (!raw) return { error: "أضف صورة أولاً." };
-  let buf: Buffer;
-  try { buf = Buffer.from(raw, "base64"); } catch { return { error: "الصورة غير صالحة." }; }
-  if (!buf.length) return { error: "الصورة فارغة." };
-  if (buf.length > 10 * 1024 * 1024) return { error: "الصورة كبيرة جدًا (الحد 10 ميغابايت)." };
+  const images = (input.images ?? []).slice(0, 6);
+  if (!images.length) return { error: "أضف صورة أولاً." };
 
-  const path = `staff/task-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
-  const up = await admin.storage.from(PRODUCT_BUCKET).upload(path, buf, { contentType: mt, upsert: false, cacheControl: "3600" });
-  if (up.error) return { error: `تعذّر رفع الصورة: ${up.error.message}` };
-  const imageUrl = admin.storage.from(PRODUCT_BUCKET).getPublicUrl(path).data.publicUrl;
+  const urls: string[] = [];
+  for (const img of images) {
+    const mt = String(img?.mediaType || "").toLowerCase();
+    const ext = IMG_EXT[mt];
+    if (!ext) return { error: "نوع صورة غير مدعوم — استخدم JPG أو PNG أو WebP." };
+    const raw = String(img?.base64 || "").replace(/^data:[^,]+,/, "");
+    if (!raw) return { error: "إحدى الصور فارغة." };
+    let buf: Buffer;
+    try { buf = Buffer.from(raw, "base64"); } catch { return { error: "إحدى الصور غير صالحة." }; }
+    if (!buf.length) return { error: "إحدى الصور فارغة." };
+    if (buf.length > 10 * 1024 * 1024) return { error: "إحدى الصور كبيرة جدًا (الحد 10 ميغابايت)." };
+    const path = `staff/task-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
+    const up = await admin.storage.from(PRODUCT_BUCKET).upload(path, buf, { contentType: mt, upsert: false, cacheControl: "3600" });
+    if (up.error) return { error: `تعذّر رفع الصورة: ${up.error.message}` };
+    urls.push(admin.storage.from(PRODUCT_BUCKET).getPublicUrl(path).data.publicUrl);
+  }
+  const imageUrl = urls[0];
 
   let assignedName: string | null = null;
   const assignedTo = input.assignedTo || null;
@@ -783,12 +793,24 @@ export async function staffCreatePhotoTask(input: {
   const priceRaw = String(input.price ?? "").trim();
   const price = priceRaw === "" ? null : Number(priceRaw);
   if (price != null && (Number.isNaN(price) || price < 0)) return { error: "السعر غير صحيح." };
+
+  const options = (input.options ?? [])
+    .map((o) => ({
+      name: String(o?.name || "").trim().slice(0, 80),
+      price: String(o?.price ?? "").trim(),
+      stock: String(o?.stock ?? "").trim(),
+    }))
+    .filter((o) => o.name)
+    .slice(0, 20);
+
   const row: Record<string, unknown> = {
     title: `📸 منتج جديد من صورة${note ? `: ${note.slice(0, 120)}` : ""}`.slice(0, 200),
     description: [
       `منتج جديد وصل — بواسطة مشرف: ${who.name}`,
       ...(note ? [note] : []),
       ...(price != null ? [`السعر: ${price} ر.ق`] : []),
+      ...(urls.length > 1 ? [`عدد الصور: ${urls.length}`] : []),
+      ...(options.length ? ["الخيارات: " + options.map((o) => o.name).join("، ")] : []),
       "",
       "من صفحة الموظف: افتح المهمة واضغط «➕ أضِفه كمنتج جديد» —",
       "عدّل الصورة بالذكاء إذا تحتاج، راجع الاسم والوصف، حط السعر والمخزون، وأضِف.",
@@ -800,7 +822,13 @@ export async function staffCreatePhotoTask(input: {
     created_by: `مشرف: ${who.name}`,
     kind: "catalog",
     product_id: null,
-    payload: { action: "new_product", snapshot: { image_url: imageUrl, ...(price != null ? { price } : {}) }, changes: [] },
+    payload: {
+      action: "new_product",
+      snapshot: { image_url: imageUrl, ...(price != null ? { price } : {}) },
+      changes: [],
+      ...(urls.length > 1 ? { images: urls } : {}),
+      ...(options.length ? { options } : {}),
+    },
   };
   let { error } = await admin.from("staff_tasks").insert(row);
   if (error && /kind|payload|product_id/i.test(error.message)) {
@@ -826,6 +854,7 @@ export type AddProductInput = {
   stock_quantity: string | number;
   image_url: string;
   variants?: AddVariantInput[];   // product options — each gets its own barcode
+  extraImageUrls?: string[];      // additional photos (photo-task) → product_images
   sourceTaskId?: string; // a supervisor's photo-task: auto-close it on success
 };
 
@@ -893,6 +922,26 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
   // Inventory row so it's stock-trackable immediately.
   await admin.from("inventory").insert({ product_id: id, stock_quantity: stock, sold_quantity: 0 });
 
+  // Extra photos from the supervisor's task → the product's image gallery
+  // (main image primary, the rest ordered behind it). Own-bucket URLs only.
+  try {
+    const mainUrl = row.image_url;
+    const bucketBase = admin.storage.from(PRODUCT_BUCKET).getPublicUrl("").data.publicUrl;
+    const extras = [...new Set((input.extraImageUrls ?? []).map((u) => String(u || "").trim()))]
+      .filter((u) => u && u !== mainUrl && u.startsWith(bucketBase))
+      .slice(0, 8);
+    const fileOf = (u: string) => { const p = u.split(/[?#]/)[0]; return p.slice(p.lastIndexOf("/") + 1); };
+    const gallery = [
+      ...(mainUrl ? [{ url: mainUrl, primary: true }] : []),
+      ...extras.map((u) => ({ url: u, primary: false })),
+    ];
+    if (gallery.length) {
+      await admin.from("product_images").insert(gallery.map((g, i) => ({
+        product_id: id, url: g.url, filename: fileOf(g.url), is_primary: g.primary, sort_order: i,
+      })));
+    }
+  } catch { /* gallery is best-effort */ }
+
   // Register the options — each with its own auto-generated barcode so it's
   // scannable in the stock flows right away.
   const createdVariants: CreatedProduct["variants"] = [];
@@ -945,7 +994,13 @@ export type StaffTaskRow = {
   forEveryone: boolean;
   createdAt: string | null;
   kind: "manual" | "catalog";
-  payload: { action?: string; snapshot?: Record<string, unknown>; changes?: { field: string; old: string; new: string }[] } | null;
+  payload: {
+    action?: string;
+    snapshot?: Record<string, unknown>;
+    changes?: { field: string; old: string; new: string }[];
+    images?: string[]; // photo-task extra shots
+    options?: { name?: string; price?: string; stock?: string }[]; // photo-task options
+  } | null;
 };
 
 export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: string }> {
