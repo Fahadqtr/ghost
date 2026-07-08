@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import * as XLSX from "xlsx";
-import { computeTalabatDiff, buildTalabatPackage, type TalabatDiff } from "@/app/(app)/import-export/talabat-actions";
+import { computeTalabatDiff, buildTalabatPackage, verifyCatalogEntries, type TalabatDiff, type VerifySummary } from "@/app/(app)/import-export/talabat-actions";
 
 // Talabat catalog gap-closer: upload Talabat's own export, see which of OUR
 // sellable products are missing over there, then download the "please add
@@ -16,6 +16,9 @@ export default function TalabatSync() {
   const [pkgMsg, setPkgMsg] = useState("");
   const [emailText, setEmailText] = useState("");
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [rawRows, setRawRows] = useState<Record<string, unknown>[]>([]);
+  const [verify, setVerify] = useState<VerifySummary | null>(null);
+  const [verifyMsg, setVerifyMsg] = useState("");
   const [busy, start] = useTransition();
 
   // Everything is included by default; unchecking a row drops it from BOTH
@@ -28,7 +31,7 @@ export default function TalabatSync() {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setError(null); setDiff(null); setPkgMsg(""); setEmailText(""); setExcluded(new Set());
+    setError(null); setDiff(null); setPkgMsg(""); setEmailText(""); setExcluded(new Set()); setVerify(null); setVerifyMsg(""); setRawRows([]);
     start(async () => {
       try {
         const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
@@ -37,6 +40,7 @@ export default function TalabatSync() {
         const d = await computeTalabatDiff(raw);
         if (!d.ok) { setError(d.error ?? "فشل التحليل."); return; }
         setDiff(d);
+        setRawRows(raw);
       } catch (err) {
         setError(err instanceof Error ? err.message : "تعذّر قراءة الملف.");
       }
@@ -89,6 +93,22 @@ export default function TalabatSync() {
     });
   };
 
+  // Same uploaded file doubles as the ground truth for staff-entry checks.
+  const runVerify = () => {
+    if (!rawRows.length) return;
+    setVerifyMsg("…يتحقق من مهام الكتالوج ضد ملف المنصة");
+    start(async () => {
+      const r = await verifyCatalogEntries(rawRows);
+      if (!r.ok) { setVerifyMsg(`❌ ${r.error}`); return; }
+      setVerify(r);
+      setVerifyMsg(
+        r.checked === 0
+          ? "ما في مهام كتالوج للتحقق منها (آخر 45 يوم)."
+          : `اكتمل: ${r.confirmed} مؤكد ✅${r.autoClosed ? ` (منها ${r.autoClosed} انقفلت تلقائيًا)` : ""}${r.reopened ? ` · ${r.reopened} رجعت مفتوحة ❌` : ""}`,
+      );
+    });
+  };
+
   const copyEmail = () => {
     navigator.clipboard?.writeText(emailText);
     setPkgMsg("✅ انتسخ نص الإيميل — أرفق الملفين وأرسله");
@@ -131,6 +151,32 @@ export default function TalabatSync() {
                 <div className="text-muted">{label}</div>
               </div>
             ))}
+          </div>
+
+          <div className="card space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-ink">🕵️ التحقق من إدخالات الموظفين</h3>
+                <p className="text-xs text-muted">
+                  يطابق مهام الكتالوج (آخر 45 يوم) مع هذا الملف: المهمة المنفذة صح تتأكد ✅ وتنقفل،
+                  والمعلّمة «تم» بدون ما توصل المنصة ترجع مفتوحة ❌ مع تعليق يشرح المشكلة.
+                </p>
+              </div>
+              <button type="button" className="btn whitespace-nowrap text-sm disabled:opacity-50" onClick={runVerify} disabled={busy || !rawRows.length}>
+                🕵️ تحقق الآن
+              </button>
+            </div>
+            {verifyMsg ? <p className="text-xs text-muted">{verifyMsg}</p> : null}
+            {verify?.flagged.length ? (
+              <div className="max-h-60 space-y-1.5 overflow-y-auto">
+                {verify.flagged.map((f, i) => (
+                  <div key={i} className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800">
+                    <span className="font-semibold">{f.title}</span>
+                    <span className="block">{f.detail}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {diff.missing.length ? (

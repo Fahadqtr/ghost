@@ -13,8 +13,8 @@ const our = (over: Partial<TalabatOurRow>): TalabatOurRow => ({
 
 test("detectTalabatColumns finds loose header names", () => {
   assert.deepEqual(
-    detectTalabatColumns(["Item Code", "Barcode", "Product Name EN", "Product Name AR", "Price"]),
-    { sku: "Item Code", barcode: "Barcode", nameEn: "Product Name EN", nameAr: "Product Name AR" },
+    detectTalabatColumns(["Item Code", "Barcode", "Product Name EN", "Product Name AR", "Price (QAR)"]),
+    { sku: "Item Code", barcode: "Barcode", nameEn: "Product Name EN", nameAr: "Product Name AR", price: "Price (QAR)" },
   );
   assert.deepEqual(detectTalabatColumns(["SKU", "Title", "اسم المنتج"]), { sku: "SKU", nameEn: "Title", nameAr: "اسم المنتج" });
   assert.deepEqual(detectTalabatColumns(["Foo", "Bar"]), {});
