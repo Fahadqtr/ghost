@@ -88,6 +88,15 @@ function LogRow({ r, locale, showBy, onChanged }: { r: StaffLogRow; locale: Loca
 
 type Session = { name: string; perms: StaffPermission[] };
 
+// What a supervisor photo-task hands to the Add-product tab.
+type ProductSeed = {
+  imageUrl: string;
+  taskId: string;
+  price?: string;
+  images?: string[]; // all shots (first = primary)
+  options?: { name: string; price: string; stock: string }[];
+};
+
 export default function StaffClient({ initialName, initialPerms, initialToday, locale = "ar" }: {
   initialName: string | null; initialPerms: StaffPermission[]; initialToday: StaffLogRow[]; locale?: Locale;
 }) {
@@ -164,10 +173,10 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
   // Permission tabs + the always-on Guide tab at the end.
   const tabs = [...TABS.filter((t) => perms.includes(t.perm)), GUIDE_TAB];
   const [tab, setTab] = useState<TabKey>(tabs[0]?.key ?? "guide");
-  // A supervisor photo-task hands its image (+ price) to the Add-product tab.
-  const [productSeed, setProductSeed] = useState<{ imageUrl: string; taskId: string; price?: string } | null>(null);
+  // A supervisor photo-task hands its images / price / options to the Add tab.
+  const [productSeed, setProductSeed] = useState<ProductSeed | null>(null);
   const startProductFromTask = perms.includes("add_product")
-    ? (imageUrl: string, taskId: string, price?: string) => { setProductSeed({ imageUrl, taskId, price }); setTab("add_product"); }
+    ? (seed: ProductSeed) => { setProductSeed(seed); setTab("add_product"); }
     : undefined;
 
   const logout = () => start(async () => { await staffLogout(); onLogout(); });
@@ -638,7 +647,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
 /* ── Add-product tab (photo → AI draft → submit → copy fields) ───────────
    `seed` = a supervisor's photo-task: starts at the form with that image and
    drafts the fields from it; a successful add auto-closes the task. */
-function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: { imageUrl: string; taskId: string; price?: string } | null }) {
+function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: ProductSeed | null }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const [phase, setPhase] = useState<"upload" | "form" | "done">(seed ? "form" : "upload");
@@ -647,7 +656,8 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: { image
   const [draft, setDraft] = useState<ProductDraft>({ name_en: "", name_ar: "", description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", main_category: "" });
   const [price, setPrice] = useState(seed?.price ?? ""); // the supervisor's price arrives pre-filled
   const [stock, setStock] = useState("0");
-  const [vars, setVars] = useState<{ name: string; price: string; stock: string }[]>([]);
+  const [vars, setVars] = useState<{ name: string; price: string; stock: string }[]>(seed?.options ?? []);
+  const seedImages = seed?.images?.length ? seed.images : (seed ? [seed.imageUrl] : []);
   const [created, setCreated] = useState<CreatedProduct | null>(null);
   const [err, setErr] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
@@ -703,6 +713,7 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: { image
         const r = await staffAddProduct({
           ...draft, price, stock_quantity: stock, image_url: imageUrl, sourceTaskId: seed?.taskId,
           variants: vars.filter((v) => v.name.trim()),
+          extraImageUrls: seedImages.filter((u) => u !== imageUrl),
         });
         if ("error" in r) { setErr(r.error); return; }
         setCreated(r.product);
@@ -753,6 +764,23 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: { image
             <button onClick={editImage} disabled={busy || !editPrompt.trim()} className="btn-primary px-3 py-2 text-xs disabled:opacity-50">{busy ? "…" : L("✨ عدّل", "✨ Edit")}</button>
           </div>
           <p className="mt-1 text-[11px] text-muted">{L("اكتب التعديل المطلوب وتنعدّل الصورة تلقائيًا (يبقى نفس المنتج).", "Describe the change; the same product is kept.")}</p>
+        </div>
+      ) : null}
+
+      {/* the supervisor sent several shots — tap one to make it the main photo */}
+      {phase === "form" && seedImages.length > 1 ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-2.5">
+          <p className="mb-1.5 text-xs font-semibold text-muted">📷 {L(`صور المهمة (${seedImages.length}) — اضغط وحدة تصير الأساسية:`, `Task photos (${seedImages.length}) — tap one to make it primary:`)}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {seedImages.map((u, i) => (
+              <button key={i} type="button" onClick={() => { setImageUrl(u); setPreview(u); }}
+                className={`overflow-hidden rounded-lg border-2 ${imageUrl === u ? "border-violet-500" : "border-slate-200"}`}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={u} alt="" loading="lazy" className="h-16 w-16 object-cover" />
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-[10px] text-muted">{L("كل الصور تنحفظ مع المنتج — الأساسية هي اللي تظهر أول.", "All photos are saved with the product — the primary shows first.")}</p>
         </div>
       ) : null}
 
@@ -924,7 +952,7 @@ function SupervisorViewToggle({ view, setView, locale }: { view: "mine" | "all";
 /* ── Tasks tab (my assigned tasks; supervisors get an all-tasks view too) ── */
 function TasksTab({ locale, supervisor = false, onStartProduct }: {
   locale: Locale; supervisor?: boolean;
-  onStartProduct?: (imageUrl: string, taskId: string, price?: string) => void; // photo-task → Add tab
+  onStartProduct?: (seed: ProductSeed) => void; // photo-task → Add tab
 }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
@@ -1010,10 +1038,15 @@ function TasksTab({ locale, supervisor = false, onStartProduct }: {
                 <p className="mt-0.5 whitespace-pre-line text-xs text-muted">{t.description}</p>
               ) : null}
               {onStartProduct && t.payload?.action === "new_product" && String(t.payload?.snapshot?.image_url ?? "") ? (
-                <button onClick={() => onStartProduct(
-                  String(t.payload!.snapshot!.image_url), t.id,
-                  Number(t.payload?.snapshot?.price) > 0 ? String(t.payload!.snapshot!.price) : undefined,
-                )}
+                <button onClick={() => onStartProduct({
+                  imageUrl: String(t.payload!.snapshot!.image_url),
+                  taskId: t.id,
+                  price: Number(t.payload?.snapshot?.price) > 0 ? String(t.payload!.snapshot!.price) : undefined,
+                  images: t.payload?.images?.map(String),
+                  options: (t.payload?.options ?? [])
+                    .filter((o) => String(o?.name ?? "").trim())
+                    .map((o) => ({ name: String(o.name), price: String(o.price ?? ""), stock: String(o.stock ?? "0") || "0" })),
+                })}
                   className="mt-2 w-full rounded-lg bg-violet-600 py-2.5 text-sm font-bold text-white">
                   ➕ {L("أضِفه كمنتج جديد (بالصورة)", "Add it as a new product (with the photo)")}
                 </button>

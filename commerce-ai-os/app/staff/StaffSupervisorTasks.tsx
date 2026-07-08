@@ -26,10 +26,11 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
   const [oosItems, setOosItems] = useState<OosProduct[] | null>(null); // null = not scanned yet
   const [restockQ, setRestockQ] = useState("");
   const [restockItems, setRestockItems] = useState<RestockCandidate[] | null>(null);
-  const [photo, setPhoto] = useState<{ base64: string; mediaType: string; dataUrl: string } | null>(null);
+  const [photos, setPhotos] = useState<{ base64: string; mediaType: string; dataUrl: string }[]>([]);
   const [photoAssign, setPhotoAssign] = useState("");
   const [photoNote, setPhotoNote] = useState("");
   const [photoPrice, setPhotoPrice] = useState("");
+  const [photoOpts, setPhotoOpts] = useState<{ name: string; price: string; stock: string }[]>([]);
   const [photoOk, setPhotoOk] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: "", description: "", assignedTo: "", priority: "normal", dueDate: "" });
@@ -104,26 +105,35 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
     reload();
   });
 
-  const onPhotoFile = (file: File) => {
+  const onPhotoFiles = (files: File[]) => {
     setErr(""); setPhotoOk("");
     start(async () => {
-      try {
-        const p = await prepareImage(file);
-        setPhoto({ base64: p.base64, mediaType: p.mediaType, dataUrl: p.dataUrl });
-      } catch {
-        setErr(L("تعذّر معالجة الصورة — جرّب صورة ثانية.", "Couldn't process the photo — try another one."));
+      for (const file of files.slice(0, 6)) {
+        try {
+          const p = await prepareImage(file);
+          setPhotos((list) => (list.length >= 6 ? list : [...list, { base64: p.base64, mediaType: p.mediaType, dataUrl: p.dataUrl }]));
+        } catch {
+          setErr(L("تعذّر معالجة إحدى الصور — جرّب صورة ثانية.", "Couldn't process one of the photos — try another."));
+        }
       }
     });
   };
 
+  const setPhotoOpt = (i: number, k: "name" | "price" | "stock", v: string) =>
+    setPhotoOpts((list) => list.map((row, j) => (j === i ? { ...row, [k]: v } : row)));
+
   const sendPhotoTask = () => {
-    if (!photo) return;
+    if (!photos.length) return;
     setErr(""); setPhotoOk("");
     start(async () => {
-      const r = await staffCreatePhotoTask({ base64: photo.base64, mediaType: photo.mediaType, assignedTo: photoAssign || null, note: photoNote, price: photoPrice });
+      const r = await staffCreatePhotoTask({
+        images: photos.map((p) => ({ base64: p.base64, mediaType: p.mediaType })),
+        assignedTo: photoAssign || null, note: photoNote, price: photoPrice,
+        options: photoOpts.filter((o) => o.name.trim()),
+      });
       if ("error" in r) { setErr(r.error); return; }
       const name = members.find((m) => m.id === photoAssign)?.name;
-      setPhoto(null); setPhotoNote(""); setPhotoAssign(""); setPhotoPrice("");
+      setPhotos([]); setPhotoNote(""); setPhotoAssign(""); setPhotoPrice(""); setPhotoOpts([]);
       setPhotoOk(name ? L(`✓ انفتحت المهمة وانحوّلت إلى ${name}.`, `✓ Task opened and assigned to ${name}.`) : L("✓ انفتحت المهمة (للكل).", "✓ Task opened (everyone)."));
       reload();
     });
@@ -230,19 +240,29 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
         {photoOk ? <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">{photoOk}</p> : null}
         <div className="mt-2 space-y-2">
           <label className="flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed border-violet-200 bg-white p-2.5">
-            {photo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={photo.dataUrl} alt="" className="h-14 w-14 rounded-lg border border-slate-200 object-cover" />
-            ) : (
-              <span className="flex h-14 w-14 items-center justify-center rounded-lg bg-violet-100 text-2xl">📸</span>
-            )}
+            <span className="flex h-14 w-14 items-center justify-center rounded-lg bg-violet-100 text-2xl">📸</span>
             <span className="min-w-0 flex-1 text-xs font-medium text-violet-700">
-              {photo ? L("✓ الصورة جاهزة — اضغط لتبديلها", "✓ Photo ready — tap to replace") : L("صوّر المنتج أو ارفع صورة", "Photograph the product or upload")}
+              {photos.length
+                ? L(`✓ ${photos.length} ${photos.length === 1 ? "صورة" : "صور"} — اضغط لإضافة المزيد (الحد 6)`, `✓ ${photos.length} photo(s) — tap to add more (max 6)`)
+                : L("صوّر المنتج أو ارفع صورة (تقدر أكثر من وحدة)", "Photograph the product or upload (more than one allowed)")}
             </span>
-            <input type="file" accept="image/*" className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) onPhotoFile(f); e.target.value = ""; }} />
+            <input type="file" accept="image/*" multiple className="hidden"
+              onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) onPhotoFiles(fs); e.target.value = ""; }} />
           </label>
-          {photo ? (
+          {photos.length ? (
+            <div className="flex flex-wrap gap-1.5">
+              {photos.map((p, i) => (
+                <span key={i} className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={p.dataUrl} alt="" className={`h-14 w-14 rounded-lg border-2 object-cover ${i === 0 ? "border-violet-500" : "border-slate-200"}`} />
+                  {i === 0 ? <span className="absolute -bottom-1 inset-s-0 rounded-sm bg-violet-600 px-1 text-[8px] font-bold text-white">{L("أساسية", "Main")}</span> : null}
+                  <button type="button" onClick={() => setPhotos((list) => list.filter((_, j) => j !== i))}
+                    className="absolute -top-1.5 inset-e-[-6px] flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[9px] font-bold text-white">✕</button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {photos.length ? (
             <>
               <div className="flex gap-2">
                 <select className="input flex-1 text-sm" value={photoAssign} onChange={(e) => setPhotoAssign(e.target.value)}>
@@ -254,6 +274,27 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
               </div>
               <input className="input w-full text-sm" value={photoNote} onChange={(e) => setPhotoNote(e.target.value)}
                 placeholder={L("ملاحظة (اختياري)…", "Note (optional)…")} />
+
+              {/* the product's options — arrive pre-filled in the employee's form */}
+              {photoOpts.length > 0 ? (
+                <div className="space-y-1.5">
+                  {photoOpts.map((o, i) => (
+                    <div key={i} className="flex items-center gap-1.5">
+                      <input className="input flex-1 py-1.5 text-sm" value={o.name} onChange={(e) => setPhotoOpt(i, "name", e.target.value)}
+                        placeholder={L("اسم الخيار — مثال: أحمر", "Option name — e.g. Red")} />
+                      <input className="input w-20 py-1.5 text-center text-sm" inputMode="decimal" value={o.price} onChange={(e) => setPhotoOpt(i, "price", e.target.value)} placeholder={L("سعره", "Price")} />
+                      <input className="input w-16 py-1.5 text-center text-sm" inputMode="numeric" value={o.stock} onChange={(e) => setPhotoOpt(i, "stock", e.target.value)} placeholder={L("كمية", "Qty")} />
+                      <button type="button" onClick={() => setPhotoOpts((list) => list.filter((_, j) => j !== i))}
+                        className="w-6 text-center text-sm text-red-500">✕</button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <button type="button" onClick={() => setPhotoOpts((list) => [...list, { name: "", price: "", stock: "" }])}
+                className="w-full rounded-lg border border-dashed border-violet-300 py-1.5 text-xs font-medium text-violet-700">
+                🎚️ {L("أضف خيار (لون / حجم…)", "Add an option (color / size…)")}
+              </button>
+
               <button disabled={busy} onClick={sendPhotoTask} className="w-full rounded-lg bg-violet-600 py-2.5 text-sm font-bold text-white disabled:opacity-50">
                 {busy ? "…" : L("➕ افتح المهمة وحوّلها", "➕ Open & assign the task")}
               </button>

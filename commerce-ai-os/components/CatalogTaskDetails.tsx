@@ -13,6 +13,8 @@ export interface CatalogTaskPayload {
   changes?: { field: string; old: string; new: string }[];
   variantId?: string;   // option-scoped task (one variant only)
   variantName?: string;
+  images?: string[];    // photo-task: all shots (first = primary)
+  options?: { name?: string; price?: string; stock?: string }[]; // photo-task: the product's options
 }
 
 const FIELD_AR: Record<string, string> = {
@@ -99,6 +101,32 @@ export default function CatalogTaskDetails({ payload, productId, manager = false
           ) : null}
         </div>
       </div>
+
+      {/* Photo-task: the rest of the shots */}
+      {(payload.images?.length ?? 0) > 1 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {payload.images!.slice(1).map((u, i) => (
+            <a key={i} href={u} target="_blank" rel="noreferrer">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={u} alt="" loading="lazy" className="h-14 w-14 rounded-lg border border-[#efe3d6] bg-white object-cover" />
+            </a>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Photo-task: the product's options as dictated by the supervisor */}
+      {payload.options?.length ? (
+        <div className="space-y-1 rounded-lg bg-violet-50 p-2.5 ring-1 ring-violet-200">
+          <p className="text-[11px] font-bold text-violet-800">🎚️ الخيارات المطلوب تسجيلها:</p>
+          {payload.options.map((o, i) => (
+            <p key={i} className="text-xs text-violet-900">
+              • <b>{o.name}</b>
+              {String(o.price ?? "").trim() ? ` — ${o.price} ر.ق` : ""}
+              {String(o.stock ?? "").trim() && Number(o.stock) > 0 ? ` — الكمية ${o.stock}` : ""}
+            </p>
+          ))}
+        </div>
+      ) : null}
 
       {/* Old → new changes */}
       {payload.changes?.length ? (
