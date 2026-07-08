@@ -811,6 +811,12 @@ export async function staffCreatePhotoTask(input: {
   return { ok: true as const };
 }
 
+export type AddVariantInput = {
+  name: string;                   // e.g. "أحمر" / "Large"
+  price?: string | number;        // empty = product price applies
+  stock?: string | number;
+};
+
 export type AddProductInput = {
   name_en: string; name_ar: string;
   description_en: string; description_ar: string;
@@ -819,6 +825,7 @@ export type AddProductInput = {
   price: string | number;
   stock_quantity: string | number;
   image_url: string;
+  variants?: AddVariantInput[];   // product options — each gets its own barcode
   sourceTaskId?: string; // a supervisor's photo-task: auto-close it on success
 };
 
@@ -828,6 +835,7 @@ export type CreatedProduct = {
   description_en: string; description_ar: string;
   keywords_en: string; keywords_ar: string;
   main_category: string; price: number | null; stock: number; image_url: string;
+  variants: { name: string; barcode: string; price: number | null; stock: number }[];
 };
 
 export async function staffAddProduct(input: AddProductInput): Promise<{ product: CreatedProduct } | { error: string }> {
@@ -845,6 +853,18 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
   const price = input.price === "" || input.price == null ? null : Number(input.price);
   if (price != null && (Number.isNaN(price) || price < 0)) return { error: "السعر غير صحيح." };
   const stock = Math.max(0, Math.floor(Number(input.stock_quantity) || 0));
+
+  // Options (variants): named rows only; empty price = the product price rules.
+  const varInputs = (input.variants ?? [])
+    .map((v) => ({
+      name: String(v?.name || "").trim(),
+      price: v?.price === "" || v?.price == null ? null : Number(v.price),
+      stock: Math.max(0, Math.floor(Number(v?.stock) || 0)),
+    }))
+    .filter((v) => v.name);
+  if (varInputs.some((v) => v.price != null && (Number.isNaN(v.price) || v.price < 0))) {
+    return { error: "سعر أحد الخيارات غير صحيح." };
+  }
 
   const sku = await nextStaffSku(admin);
   const barcode = await genUniqueBarcode(admin);
@@ -873,6 +893,24 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
   // Inventory row so it's stock-trackable immediately.
   await admin.from("inventory").insert({ product_id: id, stock_quantity: stock, sold_quantity: 0 });
 
+  // Register the options — each with its own auto-generated barcode so it's
+  // scannable in the stock flows right away.
+  const createdVariants: CreatedProduct["variants"] = [];
+  for (const v of varInputs) {
+    const vBarcode = await genUniqueBarcode(admin);
+    const vErr = (await admin.from("product_variants").insert({
+      parent_product_id: id,
+      variant_name: v.name,
+      barcode: vBarcode,
+      price: v.price,
+      stock_quantity: v.stock,
+    })).error;
+    if (!vErr) createdVariants.push({ name: v.name, barcode: vBarcode, price: v.price, stock: v.stock });
+  }
+  if (varInputs.length && createdVariants.length < varInputs.length) {
+    console.error("[staffAddProduct] some variants failed to save", { want: varInputs.length, got: createdVariants.length });
+  }
+
   // Came from a supervisor's photo-task? Close it and leave the trace.
   if (input.sourceTaskId) {
     try {
@@ -892,6 +930,7 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
     description_en: row.description_en ?? "", description_ar: row.description_ar ?? "",
     keywords_en: row.keywords_en ?? "", keywords_ar: row.keywords_ar ?? "",
     main_category: cat, price, stock, image_url: row.image_url ?? "",
+    variants: createdVariants,
   } };
 }
 
