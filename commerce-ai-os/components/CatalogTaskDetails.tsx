@@ -28,6 +28,7 @@ const ACTION_META: Record<string, { icon: string; label: string; cls: string }> 
   bulk: { icon: "📦", label: "عملية جماعية", cls: "bg-slate-100 text-slate-600" },
   oos: { icon: "🚫", label: "نفد المخزون — علّمه غير متوفر", cls: "bg-red-50 text-red-700" },
   restock: { icon: "🔄", label: "رجع المخزون — فعّله", cls: "bg-emerald-50 text-emerald-700" },
+  new_product: { icon: "📸", label: "أضِفه كمنتج جديد", cls: "bg-violet-50 text-violet-700" },
 };
 
 const s = (v: unknown) => String(v ?? "").trim();
@@ -141,8 +142,8 @@ export default function CatalogTaskDetails({ payload, productId, manager = false
         ))}
       </div>
 
-      {/* Where the manual update goes */}
-      {payload.action !== "bulk" ? (
+      {/* Where the manual update goes (a photo-task isn't in the catalog yet) */}
+      {payload.action !== "bulk" && payload.action !== "new_product" ? (
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
           <span className="font-semibold text-ink">📌 حدّث يدويًا في:</span>
           {["طلبات", "سنونو", "رفيق"].map((p) => (

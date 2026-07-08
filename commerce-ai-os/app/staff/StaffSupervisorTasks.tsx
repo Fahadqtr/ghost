@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   staffAllTasks, staffCreateTask, staffAssignTask, staffSuperviseSetStatus,
-  staffTaskComments, staffAddTaskComment, staffOutOfStock, staffOpenStockTask, staffFindForRestock,
+  staffTaskComments, staffAddTaskComment, staffOutOfStock, staffOpenStockTask, staffFindForRestock, staffCreatePhotoTask,
   type SupervisorTask, type StaffMemberLite, type OosProduct, type RestockCandidate,
 } from "./actions";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
 import TaskThread from "@/components/TaskThread";
+import { prepareImage } from "@/lib/imagePrep";
 import { type Locale } from "@/lib/i18n";
 
 // Supervisor view inside the staff Tasks tab (gated by "manage_tasks"):
@@ -25,6 +26,10 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
   const [oosItems, setOosItems] = useState<OosProduct[] | null>(null); // null = not scanned yet
   const [restockQ, setRestockQ] = useState("");
   const [restockItems, setRestockItems] = useState<RestockCandidate[] | null>(null);
+  const [photo, setPhoto] = useState<{ base64: string; mediaType: string; dataUrl: string } | null>(null);
+  const [photoAssign, setPhotoAssign] = useState("");
+  const [photoNote, setPhotoNote] = useState("");
+  const [photoOk, setPhotoOk] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: "", description: "", assignedTo: "", priority: "normal", dueDate: "" });
   const [busy, start] = useTransition();
@@ -97,6 +102,31 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
     setRestockItems((items) => items?.map((i) => (i.id === id ? { ...i, hasOpenTask: true } : i)) ?? null);
     reload();
   });
+
+  const onPhotoFile = (file: File) => {
+    setErr(""); setPhotoOk("");
+    start(async () => {
+      try {
+        const p = await prepareImage(file);
+        setPhoto({ base64: p.base64, mediaType: p.mediaType, dataUrl: p.dataUrl });
+      } catch {
+        setErr(L("تعذّر معالجة الصورة — جرّب صورة ثانية.", "Couldn't process the photo — try another one."));
+      }
+    });
+  };
+
+  const sendPhotoTask = () => {
+    if (!photo) return;
+    setErr(""); setPhotoOk("");
+    start(async () => {
+      const r = await staffCreatePhotoTask({ base64: photo.base64, mediaType: photo.mediaType, assignedTo: photoAssign || null, note: photoNote });
+      if ("error" in r) { setErr(r.error); return; }
+      const name = members.find((m) => m.id === photoAssign)?.name;
+      setPhoto(null); setPhotoNote(""); setPhotoAssign("");
+      setPhotoOk(name ? L(`✓ انفتحت المهمة وانحوّلت إلى ${name}.`, `✓ Task opened and assigned to ${name}.`) : L("✓ انفتحت المهمة (للكل).", "✓ Task opened (everyone)."));
+      reload();
+    });
+  };
 
   const create = () => {
     setErr("");
@@ -190,6 +220,43 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
             </div>
           </div>
         )}
+      </div>
+
+      {/* new product from a photo → an employee cleans it up and adds it */}
+      <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+        <p className="text-sm font-bold text-violet-800">📸 {L("منتج جديد من صورة", "New product from a photo")}</p>
+        <p className="mt-0.5 text-[11px] text-violet-700/70">{L("صوّر المنتج وحوّله لموظف — يعدّل الصورة بالذكاء ويضيفه للكتالوج.", "Photograph it and hand it to an employee — they AI-fix the photo and add it to the catalog.")}</p>
+        {photoOk ? <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">{photoOk}</p> : null}
+        <div className="mt-2 space-y-2">
+          <label className="flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed border-violet-200 bg-white p-2.5">
+            {photo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={photo.dataUrl} alt="" className="h-14 w-14 rounded-lg border border-slate-200 object-cover" />
+            ) : (
+              <span className="flex h-14 w-14 items-center justify-center rounded-lg bg-violet-100 text-2xl">📸</span>
+            )}
+            <span className="min-w-0 flex-1 text-xs font-medium text-violet-700">
+              {photo ? L("✓ الصورة جاهزة — اضغط لتبديلها", "✓ Photo ready — tap to replace") : L("صوّر المنتج أو ارفع صورة", "Photograph the product or upload")}
+            </span>
+            <input type="file" accept="image/*" className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) onPhotoFile(f); e.target.value = ""; }} />
+          </label>
+          {photo ? (
+            <>
+              <div className="flex gap-2">
+                <select className="input flex-1 text-sm" value={photoAssign} onChange={(e) => setPhotoAssign(e.target.value)}>
+                  <option value="">{L("👥 للكل", "👥 Everyone")}</option>
+                  {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <input className="input flex-1 text-sm" value={photoNote} onChange={(e) => setPhotoNote(e.target.value)}
+                  placeholder={L("ملاحظة (اختياري) — مثال: السعر 45", "Note (optional) — e.g. price 45")} />
+              </div>
+              <button disabled={busy} onClick={sendPhotoTask} className="w-full rounded-lg bg-violet-600 py-2.5 text-sm font-bold text-white disabled:opacity-50">
+                {busy ? "…" : L("➕ افتح المهمة وحوّلها", "➕ Open & assign the task")}
+              </button>
+            </>
+          ) : null}
+        </div>
       </div>
 
       {/* back-in-stock: search a product and open the "re-enable on the platforms" task */}

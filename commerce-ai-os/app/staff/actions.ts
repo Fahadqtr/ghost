@@ -610,6 +610,108 @@ export async function staffGenerateProductDraft(base64: string, mediaType: strin
   }
 }
 
+// AI-draft title/description for an ALREADY-stored photo (a supervisor's
+// new-product task) — same prompt/parser as the upload path, no re-upload.
+export async function staffDraftFromImageUrl(imageUrl: string): Promise<{ draft: ProductDraft } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "add_product")) return { error: "ما عندك صلاحية إضافة منتج." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  // Only our own storage bucket — this is not a generic URL fetcher.
+  const bucketBase = admin.storage.from(PRODUCT_BUCKET).getPublicUrl("").data.publicUrl;
+  const url = String(imageUrl || "").trim();
+  if (!url || !url.startsWith(bucketBase)) return { error: "رابط الصورة غير صالح." };
+  if (!process.env.ANTHROPIC_API_KEY) return { draft: { ...EMPTY_DRAFT } };
+
+  try {
+    const r = await fetch(url.split("?")[0]);
+    if (!r.ok) return { error: `تعذّر جلب الصورة (${r.status}).` };
+    const ct = (r.headers.get("content-type") || "image/jpeg").split(";")[0].trim().toLowerCase();
+    const mt = IMG_EXT[ct] ? ct : "image/jpeg";
+    const b64 = Buffer.from(await r.arrayBuffer()).toString("base64");
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic();
+    const model = process.env.STAFF_MALAK_MODEL || "claude-sonnet-5";
+    const resp: any = await client.messages.create({
+      model, max_tokens: 1200,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: mt, data: b64 } } as any,
+        { type: "text", text: buildDraftPrompt(CATEGORIES) },
+      ] }],
+    });
+    const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    return { draft: parseProductDraft(text, CATEGORIES) ?? { ...EMPTY_DRAFT } };
+  } catch {
+    return { draft: { ...EMPTY_DRAFT } }; // let the employee fill the fields
+  }
+}
+
+/* Supervisor: photograph a new product → task for an employee to (AI-)fix the
+   photo and add it to the catalog from the Add-product tab. */
+export async function staffCreatePhotoTask(input: {
+  base64: string; mediaType: string;
+  assignedTo?: string | null;
+  note?: string;
+}): Promise<{ ok: true } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { error: "ما عندك صلاحية إدارة المهام." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  const mt = String(input.mediaType || "").toLowerCase();
+  const ext = IMG_EXT[mt];
+  if (!ext) return { error: "نوع الصورة غير مدعوم — استخدم JPG أو PNG أو WebP." };
+  const raw = String(input.base64 || "").replace(/^data:[^,]+,/, "");
+  if (!raw) return { error: "أضف صورة أولاً." };
+  let buf: Buffer;
+  try { buf = Buffer.from(raw, "base64"); } catch { return { error: "الصورة غير صالحة." }; }
+  if (!buf.length) return { error: "الصورة فارغة." };
+  if (buf.length > 10 * 1024 * 1024) return { error: "الصورة كبيرة جدًا (الحد 10 ميغابايت)." };
+
+  const path = `staff/task-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
+  const up = await admin.storage.from(PRODUCT_BUCKET).upload(path, buf, { contentType: mt, upsert: false, cacheControl: "3600" });
+  if (up.error) return { error: `تعذّر رفع الصورة: ${up.error.message}` };
+  const imageUrl = admin.storage.from(PRODUCT_BUCKET).getPublicUrl(path).data.publicUrl;
+
+  let assignedName: string | null = null;
+  const assignedTo = input.assignedTo || null;
+  if (assignedTo) {
+    const { data } = await admin.from("staff_members").select("name").eq("id", assignedTo).maybeSingle();
+    if (!data) return { error: "الموظف غير موجود." };
+    assignedName = String(data.name ?? "");
+  }
+
+  const note = String(input.note || "").trim();
+  const row: Record<string, unknown> = {
+    title: `📸 منتج جديد من صورة${note ? `: ${note.slice(0, 120)}` : ""}`.slice(0, 200),
+    description: [
+      `منتج جديد وصل — بواسطة مشرف: ${who.name}`,
+      ...(note ? [note] : []),
+      "",
+      "من صفحة الموظف: افتح المهمة واضغط «➕ أضِفه كمنتج جديد» —",
+      "عدّل الصورة بالذكاء إذا تحتاج، راجع الاسم والوصف، حط السعر والمخزون، وأضِف.",
+    ].join("\n").slice(0, 4000),
+    assigned_to: assignedTo,
+    assigned_name: assignedName,
+    priority: "normal",
+    status: "open",
+    created_by: `مشرف: ${who.name}`,
+    kind: "catalog",
+    product_id: null,
+    payload: { action: "new_product", snapshot: { image_url: imageUrl }, changes: [] },
+  };
+  let { error } = await admin.from("staff_tasks").insert(row);
+  if (error && /kind|payload|product_id/i.test(error.message)) {
+    const { kind: _k, product_id: _p, payload: _pl, ...legacy } = row;
+    ({ error } = await admin.from("staff_tasks").insert(legacy));
+  }
+  if (error) return { error: error.message };
+  return { ok: true as const };
+}
+
 export type AddProductInput = {
   name_en: string; name_ar: string;
   description_en: string; description_ar: string;
@@ -618,6 +720,7 @@ export type AddProductInput = {
   price: string | number;
   stock_quantity: string | number;
   image_url: string;
+  sourceTaskId?: string; // a supervisor's photo-task: auto-close it on success
 };
 
 export type CreatedProduct = {
@@ -670,6 +773,19 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
   const id = String(ins.data.id);
   // Inventory row so it's stock-trackable immediately.
   await admin.from("inventory").insert({ product_id: id, stock_quantity: stock, sold_quantity: 0 });
+
+  // Came from a supervisor's photo-task? Close it and leave the trace.
+  if (input.sourceTaskId) {
+    try {
+      await admin.from("staff_tasks")
+        .update({ status: "done", completed_at: new Date().toISOString(), completed_by: `staff:${who.name}` })
+        .eq("id", String(input.sourceTaskId));
+      await insertComment(admin, {
+        taskId: String(input.sourceTaskId), role: "staff", author: `staff:${who.name}`,
+        body: `✅ انضاف المنتج: ${nameEn || nameAr} (${sku}) — بانتظار اعتماد المدير.`,
+      });
+    } catch { /* best-effort */ }
+  }
 
   return { product: {
     id, sku, barcode,
