@@ -726,7 +726,8 @@ export async function staffTaskComments(taskId: string): Promise<{ comments: Tas
   if (!hasPerm(who.perms, "tasks")) return { comments: [], error: "ما عندك صلاحية المهام." };
   const admin = adminClient();
   if (!admin) return { comments: [], error: NO_DB };
-  if (!(await myTaskGuard(String(taskId), who, admin))) return { comments: [], error: "هذه المهمة مب لك." };
+  // A supervisor (manage_tasks) may read any task's thread.
+  if (!hasPerm(who.perms, "manage_tasks") && !(await myTaskGuard(String(taskId), who, admin))) return { comments: [], error: "هذه المهمة مب لك." };
   return { comments: await listComments(admin, String(taskId)) };
 }
 
@@ -736,7 +737,7 @@ export async function staffAddTaskComment(taskId: string, body: string, attachme
   if (!hasPerm(who.perms, "tasks")) return { error: "ما عندك صلاحية المهام." };
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
-  if (!(await myTaskGuard(String(taskId), who, admin))) return { error: "هذه المهمة مب لك." };
+  if (!hasPerm(who.perms, "manage_tasks") && !(await myTaskGuard(String(taskId), who, admin))) return { error: "هذه المهمة مب لك." };
   let att: { url: string; type: "image" | "file"; name: string } | null = null;
   if (attachment?.base64) {
     const up = await uploadCommentAttachment(admin, String(taskId), attachment);
@@ -865,4 +866,135 @@ export async function staffUploadProductImage(formData: FormData): Promise<{ ok:
   const productId = String(formData.get("productId") || "");
   const file = formData.get("file");
   return storePrimaryProductImage(admin, productId, file as File, `مشرف: ${who.name}`);
+}
+
+/* ── Supervisor: manage ALL tasks (gated by "manage_tasks")
+   The supervisor sees every task — including unassigned catalog cards (the
+   triage queue) — creates tasks, assigns/reassigns them to employees, and can
+   flip any status. Comment access is widened above via the same permission. ── */
+
+export type StaffMemberLite = { id: string; name: string };
+
+export type SupervisorTask = StaffTaskRow & {
+  assignedTo: string | null;
+  assignedName: string | null;
+  createdBy: string | null;
+  completedBy: string | null;
+};
+
+export async function staffAllTasks(): Promise<{ tasks: SupervisorTask[]; members: StaffMemberLite[]; error?: string }> {
+  const who = await currentStaff();
+  if (!who) return { tasks: [], members: [], error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { tasks: [], members: [], error: "ما عندك صلاحية إدارة المهام." };
+  const admin = adminClient();
+  if (!admin) return { tasks: [], members: [], error: NO_DB };
+  await materializeRoutines(admin); // today's routine instances first
+
+  const baseSelect = "id, title, description, priority, due_date, status, created_at, assigned_to, assigned_name, created_by, completed_by, kind, payload";
+  const legacySelect = "id, title, description, priority, due_date, status, created_at, assigned_to, assigned_name, created_by, completed_by";
+  let { data, error } = await admin.from("staff_tasks").select(baseSelect).order("created_at", { ascending: false }).limit(400);
+  if (error && /kind|payload/i.test(error.message)) {
+    ({ data, error } = await admin.from("staff_tasks").select(legacySelect).order("created_at", { ascending: false }).limit(400));
+  }
+  if (error) {
+    if ((error as any).code === "42P01" || /staff_tasks/.test(error.message)) return { tasks: [], members: [] };
+    return { tasks: [], members: [], error: error.message };
+  }
+
+  const { data: mem } = await admin.from("staff_members").select("id, name, active").order("name", { ascending: true });
+  const members: StaffMemberLite[] = ((mem ?? []) as any[])
+    .filter((m) => m.active !== false)
+    .map((m) => ({ id: String(m.id), name: String(m.name ?? "") }));
+
+  const tasks: SupervisorTask[] = (data ?? []).map((r: any) => ({
+    id: String(r.id),
+    title: r.title ?? "",
+    description: r.description ?? null,
+    priority: (["low", "normal", "high"].includes(r.priority) ? r.priority : "normal"),
+    dueDate: r.due_date ?? null,
+    status: (["open", "in_progress", "done"].includes(r.status) ? r.status : "open"),
+    forEveryone: r.assigned_to == null,
+    createdAt: r.created_at ?? null,
+    kind: r.kind === "catalog" ? "catalog" : "manual",
+    payload: r.payload ?? null,
+    assignedTo: r.assigned_to ?? null,
+    assignedName: r.assigned_name ?? null,
+    createdBy: r.created_by ?? null,
+    completedBy: r.completed_by ?? null,
+  }));
+  return { tasks, members };
+}
+
+export async function staffCreateTask(input: {
+  title: string; description?: string; assignedTo?: string | null;
+  priority?: "low" | "normal" | "high"; dueDate?: string | null;
+}): Promise<{ ok: true } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { error: "ما عندك صلاحية إدارة المهام." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const title = String(input.title || "").trim().slice(0, 200);
+  if (!title) return { error: "اكتب عنوان المهمة." };
+
+  let assignedName: string | null = null;
+  const assignedTo = input.assignedTo || null;
+  if (assignedTo) {
+    const { data } = await admin.from("staff_members").select("name").eq("id", assignedTo).maybeSingle();
+    if (!data) return { error: "الموظف غير موجود." };
+    assignedName = String(data.name ?? "");
+  }
+
+  const { error } = await admin.from("staff_tasks").insert({
+    title,
+    description: String(input.description || "").trim() || null,
+    assigned_to: assignedTo,
+    assigned_name: assignedName,
+    priority: ["low", "normal", "high"].includes(String(input.priority)) ? input.priority : "normal",
+    due_date: input.dueDate || null,
+    status: "open",
+    created_by: `مشرف: ${who.name}`,
+  });
+  if (error) {
+    if ((error as any).code === "42P01") return { error: "الجدول غير موجود — شغّل supabase/staff_tasks.sql أولاً." };
+    return { error: error.message };
+  }
+  return { ok: true as const };
+}
+
+export async function staffAssignTask(taskId: string, staffId: string | null): Promise<{ ok: true; assignedName: string | null } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { error: "ما عندك صلاحية إدارة المهام." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  let assignedName: string | null = null;
+  if (staffId) {
+    const { data } = await admin.from("staff_members").select("name").eq("id", staffId).maybeSingle();
+    if (!data) return { error: "الموظف غير موجود." };
+    assignedName = String(data.name ?? "");
+  }
+  const { error } = await admin.from("staff_tasks")
+    .update({ assigned_to: staffId || null, assigned_name: assignedName })
+    .eq("id", String(taskId));
+  if (error) return { error: error.message };
+  return { ok: true as const, assignedName };
+}
+
+// Supervisor status flip on ANY task (the plain staffSetTaskStatus only allows
+// the assignee). Reopen included.
+export async function staffSuperviseSetStatus(id: string, status: "open" | "in_progress" | "done"): Promise<{ ok: true } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { error: "ما عندك صلاحية إدارة المهام." };
+  if (!["open", "in_progress", "done"].includes(status)) return { error: "حالة غير صالحة." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const patch: Record<string, unknown> = { status };
+  if (status === "done") { patch.completed_at = new Date().toISOString(); patch.completed_by = `مشرف: ${who.name}`; }
+  else { patch.completed_at = null; patch.completed_by = null; }
+  const { error } = await admin.from("staff_tasks").update(patch).eq("id", String(id));
+  if (error) return { error: error.message };
+  return { ok: true as const };
 }

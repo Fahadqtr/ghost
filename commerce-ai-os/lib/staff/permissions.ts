@@ -5,9 +5,10 @@
 export type StaffPermission =
   | "stock" | "add_product" | "products" | "prices"
   | "edit_products" | "edit_images" // supervisor: change prices/data & photos from /staff
-  | "malak" | "reports" | "tasks";
+  | "malak" | "reports" | "tasks"
+  | "manage_tasks"; // supervisor: see ALL tasks, create & assign, follow up
 
-export const STAFF_PERMISSION_KEYS: StaffPermission[] = ["stock", "add_product", "products", "prices", "edit_products", "edit_images", "malak", "reports", "tasks"];
+export const STAFF_PERMISSION_KEYS: StaffPermission[] = ["stock", "add_product", "products", "prices", "edit_products", "edit_images", "malak", "reports", "tasks", "manage_tasks"];
 
 // Existing employees (before the permissions column) keep exactly what they had:
 // stock in/out only.
@@ -23,6 +24,7 @@ export const STAFF_PERMISSIONS: { key: StaffPermission; ar: string; en: string; 
   { key: "malak",    ar: "استخدام ملاك AI",       en: "Use Malak AI",    icon: "✨" },
   { key: "reports",  ar: "عرض تقاريره",           en: "View own reports", icon: "📊" },
   { key: "tasks",    ar: "المهام",                en: "Tasks",           icon: "📋" },
+  { key: "manage_tasks", ar: "إدارة المهام (مشرف)", en: "Manage tasks (supervisor)", icon: "🗂️", needs: "tasks" },
 ];
 
 // Coerce whatever came back from the DB (jsonb array, comma string, null) into a
