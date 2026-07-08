@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
   staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
-  staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment,
+  staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct,
   type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct, type StaffTaskRow,
 } from "./actions";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
@@ -306,6 +306,10 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<StaffProduct | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
+  const [canMove, setCanMove] = useState(false); // stock permission: in/out from here
+  const [moveFor, setMoveFor] = useState<{ productId: string; item: StaffItem } | null>(null);
+  const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, start] = useTransition();
   const [page, setPage] = useState(1);
 
   useEffect(() => {
@@ -314,10 +318,32 @@ function ProductsTab({ locale }: { locale: Locale }) {
       const r = await staffAllProducts();
       if (!alive) return;
       if (r.error) setErr(r.error);
-      setAll(r.items); setShowPrices(r.showPrices); setCanEdit(r.canEdit || r.canEditImage); setLoading(false);
+      setAll(r.items); setShowPrices(r.showPrices); setCanEdit(r.canEdit || r.canEditImage); setCanMove(r.canMove); setLoading(false);
     })();
     return () => { alive = false; };
   }, []);
+
+  const flash = (ok: boolean, text: string) => { setToast({ ok, text }); setTimeout(() => setToast(null), 2600); };
+
+  // Open the movement panel for a product card (resolves its inventory row first).
+  const startMove = (p: StaffProduct) => start(async () => {
+    const r = await staffItemForProduct(p.id);
+    if ("error" in r) { flash(false, r.error); return; }
+    setDetail(null);
+    setMoveFor({ productId: p.id, item: r.item });
+  });
+
+  // Record the movement, patch the list's stock in place, close the panel.
+  const doMove = (dir: "in" | "out", qty: number, reason: string) => start(async () => {
+    if (!moveFor) return;
+    const { productId, item } = moveFor;
+    const r = await recordStaffMovement({ inventoryId: item.inventoryId, sku: item.sku, type: dir, quantity: qty, reason });
+    if ("error" in r) { flash(false, r.error); return; }
+    setAll((list) => list.map((p) => (p.id === productId ? { ...p, stock: r.after } : p)));
+    const verb = dir === "in" ? L("أُدخل", "In") : L("أُخرج", "Out");
+    flash(true, `${verb} ${qty} · ${item.sku ?? item.name} → ${L("المخزون", "stock")} ${r.after}`);
+    setMoveFor(null);
+  });
 
   // Patch the local list after a supervisor edit (no full reload of 1200+ rows).
   const applyPatch = (id: string, patch: StaffProductPatchUI) => {
@@ -387,6 +413,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
       ) : null}
 
       {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
+      {toast ? <div className={`rounded-lg px-3 py-2 text-sm ${toast.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{toast.text}</div> : null}
       <p className="text-xs text-muted">{loading ? L("جاري التحميل…", "Loading…") : L(`${filtered.length} من ${all.length} منتج`, `${filtered.length} of ${all.length} products`)}</p>
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
@@ -414,11 +441,18 @@ function ProductsTab({ locale }: { locale: Locale }) {
                     <span className={`text-sm font-bold ${p.stock != null && p.stock <= 0 ? "text-red-600" : "text-ink"}`}>{p.stock != null ? p.stock : "—"}</span>
                   </span>
                   {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
-                  {canEdit ? (
-                    <button onClick={() => setEditId(p.id)} className="rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
-                      ✏️ {L("عدّل", "Edit")}
-                    </button>
-                  ) : null}
+                  <span className="flex gap-1">
+                    {canMove ? (
+                      <button disabled={busy} onClick={() => startMove(p)} className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 disabled:opacity-50">
+                        📦 {L("مخزون", "Stock")}
+                      </button>
+                    ) : null}
+                    {canEdit ? (
+                      <button onClick={() => setEditId(p.id)} className="rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                        ✏️ {L("عدّل", "Edit")}
+                      </button>
+                    ) : null}
+                  </span>
                 </div>
               </div>
               {open && vs.length > 0 ? (
@@ -471,6 +505,11 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 <span className={`text-lg font-bold ${detail.stock != null && detail.stock <= 0 ? "text-red-600" : "text-ink"}`}>{detail.stock != null ? detail.stock : "—"} <span className="text-xs font-normal text-muted">{L("مخزون", "stock")}</span></span>
                 {showPrices && detail.price != null ? <span className="ms-auto text-base font-bold text-emerald-700">{detail.price} {L("ر.ق", "QAR")}</span> : null}
               </div>
+              {canMove ? (
+                <button disabled={busy} onClick={() => startMove(detail)} className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2 text-sm font-medium text-emerald-700 disabled:opacity-50">
+                  📦 {L("حركة مخزون (إدخال/إخراج)", "Stock move (in / out)")}
+                </button>
+              ) : null}
               {canEdit ? (
                 <button onClick={() => { setEditId(detail.id); setDetail(null); }} className="w-full rounded-lg border border-violet-200 bg-violet-50 py-2 text-sm font-medium text-violet-700">
                   ✏️ {L("عدّل المنتج", "Edit product")}
@@ -497,6 +536,14 @@ function ProductsTab({ locale }: { locale: Locale }) {
 
       {editId ? (
         <StaffProductEdit productId={editId} locale={locale} onClose={() => setEditId(null)} onSaved={applyPatch} />
+      ) : null}
+
+      {moveFor ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4" onClick={() => setMoveFor(null)}>
+          <div className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <MovePanel item={moveFor.item} busy={busy} locale={locale} onCancel={() => setMoveFor(null)} onDone={doMove} />
+          </div>
+        </div>
       ) : null}
     </div>
   );
