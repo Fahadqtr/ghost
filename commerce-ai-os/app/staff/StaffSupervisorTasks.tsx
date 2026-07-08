@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   staffAllTasks, staffCreateTask, staffAssignTask, staffSuperviseSetStatus,
-  staffTaskComments, staffAddTaskComment,
-  type SupervisorTask, type StaffMemberLite,
+  staffTaskComments, staffAddTaskComment, staffOutOfStock, staffOpenOosTask,
+  type SupervisorTask, type StaffMemberLite, type OosProduct,
 } from "./actions";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
 import TaskThread from "@/components/TaskThread";
@@ -22,6 +22,7 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [whoFilter, setWhoFilter] = useState(""); // "" all · "none" unassigned · member id
+  const [oosItems, setOosItems] = useState<OosProduct[] | null>(null); // null = not scanned yet
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: "", description: "", assignedTo: "", priority: "normal", dueDate: "" });
   const [busy, start] = useTransition();
@@ -57,6 +58,29 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
     const r = await staffSuperviseSetStatus(id, status);
     if ("error" in r) { setErr(r.error); return; }
     setTasks((ts) => ts.map((x) => (x.id === id ? { ...x, status } : x)));
+  });
+
+  const scanOos = () => start(async () => {
+    const r = await staffOutOfStock();
+    if (r.error) { setErr(r.error); return; }
+    setOosItems(r.items);
+  });
+
+  const openOos = (id: string) => start(async () => {
+    const r = await staffOpenOosTask(id);
+    if ("error" in r) { setErr(r.error); return; }
+    setOosItems((items) => items?.map((i) => (i.id === id ? { ...i, hasOpenTask: true } : i)) ?? null);
+    reload(); // the new task appears in the list below
+  });
+
+  const openAllOos = () => start(async () => {
+    const targets = (oosItems ?? []).filter((i) => !i.hasOpenTask);
+    for (const t of targets) {
+      const r = await staffOpenOosTask(t.id);
+      if ("error" in r) { setErr(r.error); break; }
+      setOosItems((items) => items?.map((i) => (i.id === t.id ? { ...i, hasOpenTask: true } : i)) ?? null);
+    }
+    reload();
   });
 
   const create = () => {
@@ -103,6 +127,54 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
             {m.name} · {m.open}{m.done ? ` ✓${m.done}` : ""}
           </button>
         ))}
+      </div>
+
+      {/* out-of-stock review: which sold-out products still need the platforms flipped */}
+      <div className="rounded-xl border border-red-100 bg-red-50/40 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-bold text-red-800">🚫 {L("المنتجات المخلّصة", "Out of stock")}{oosItems ? ` (${oosItems.length})` : ""}</p>
+          <button disabled={busy} onClick={scanOos} className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 disabled:opacity-50">
+            {busy && oosItems === null ? "…" : oosItems === null ? L("🔍 افحص", "🔍 Scan") : L("↻ حدّث", "↻ Refresh")}
+          </button>
+        </div>
+        {oosItems === null ? (
+          <p className="mt-1 text-[11px] text-red-700/70">{L("يعرض المنتجات المعتمدة اللي مخزونها صفر ويفتح مهام «علّمه غير متوفر» للموظفين.", "Lists Approved products at zero stock and opens the mark-unavailable tasks.")}</p>
+        ) : oosItems.length === 0 ? (
+          <p className="mt-2 text-sm text-emerald-700">✓ {L("ما فيه منتجات مخلّصة 🎉", "Nothing is out of stock 🎉")}</p>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {oosItems.some((i) => !i.hasOpenTask) ? (
+              <button disabled={busy} onClick={openAllOos} className="w-full rounded-lg bg-red-600 py-2 text-xs font-bold text-white disabled:opacity-50">
+                {L(`📋 افتح مهمة لكل منتج بدون مهمة (${oosItems.filter((i) => !i.hasOpenTask).length})`, `📋 Open a task for each one missing it (${oosItems.filter((i) => !i.hasOpenTask).length})`)}
+              </button>
+            ) : (
+              <p className="text-[11px] font-medium text-emerald-700">✓ {L("كلها لها مهام مفتوحة.", "All have open tasks.")}</p>
+            )}
+            <div className="max-h-72 space-y-1 overflow-y-auto">
+              {oosItems.map((p) => (
+                <div key={p.id} className="flex items-center gap-2 rounded-lg border border-red-100 bg-white px-2 py-1.5">
+                  <span className="block h-9 w-9 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-50">
+                    {p.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.image} alt="" width={36} height={36} loading="lazy" className="block h-9 w-9 object-cover" />
+                    ) : <span className="flex h-full w-full items-center justify-center text-slate-300">📦</span>}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-ink">{p.name ?? p.sku ?? "—"}</span>
+                    {p.sku ? <span className="block font-mono text-[10px] text-muted">{p.sku}</span> : null}
+                  </span>
+                  {p.hasOpenTask ? (
+                    <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">✓ {L("لها مهمة", "Has task")}</span>
+                  ) : (
+                    <button disabled={busy} onClick={() => openOos(p.id)} className="shrink-0 rounded-md bg-red-600 px-2 py-1 text-[10px] font-bold text-white disabled:opacity-50">
+                      {L("📋 افتح مهمة", "📋 Open task")}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* quick create */}

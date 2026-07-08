@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 // verified against the platform's own export. Strictly best-effort: a logging
 // failure must never block the product write it describes.
 
-export type CatalogTaskAction = "create" | "update" | "delete" | "image" | "approval" | "bulk";
+export type CatalogTaskAction = "create" | "update" | "delete" | "image" | "approval" | "bulk" | "oos" | "restock";
 export interface CatalogFieldChange { field: string; old: string; new: string }
 
 export const CATALOG_FIELD_AR: Record<string, string> = {
@@ -18,10 +18,12 @@ export const CATALOG_FIELD_AR: Record<string, string> = {
 
 const ICON: Record<CatalogTaskAction, string> = {
   create: "🆕", update: "✏️", delete: "🗑️", image: "🖼️", approval: "🔖", bulk: "📦",
+  oos: "🚫", restock: "🔄",
 };
 const VERB: Record<CatalogTaskAction, string> = {
   create: "منتج جديد", update: "تعديل منتج", delete: "حذف منتج",
   image: "تغيير صورة", approval: "تغيير حالة", bulk: "عملية جماعية",
+  oos: "نفد المخزون", restock: "رجع المخزون",
 };
 
 const s = (v: unknown) => String(v ?? "").trim();
@@ -94,6 +96,8 @@ export async function logCatalogTask(opts: {
       for (const c of opts.changes) parts.push(`• ${CATALOG_FIELD_AR[c.field] ?? c.field}: ${c.old} ← ${c.new}`);
     }
     if (opts.action === "delete") parts.push("", "⚠️ احذفه من المنصات اليدوية أيضًا.");
+    if (opts.action === "oos") parts.push("", "⚠️ علّمه «غير متوفر / Out of stock» في المنصات اليدوية.");
+    if (opts.action === "restock") parts.push("", "✅ فعّله من جديد (متوفر) في المنصات اليدوية.");
     parts.push("", "📌 حدّث يدويًا في: طلبات ☐ · سنونو ☐ · رفيق ☐", "(شوبي فاي يتزامن تلقائيًا — لا يحتاج شي)");
 
     const row: Record<string, unknown> = {
@@ -101,7 +105,7 @@ export async function logCatalogTask(opts: {
       description: parts.join("\n").slice(0, 4000),
       assigned_to: null,
       assigned_name: null,
-      priority: opts.action === "delete" ? "high" : "normal",
+      priority: opts.action === "delete" || opts.action === "oos" ? "high" : "normal",
       status: "open",
       created_by: actor || "system",
       kind: "catalog",
