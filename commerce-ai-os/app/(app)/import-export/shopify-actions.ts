@@ -3,7 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
-import { shopifyConfigured, fetchAllShopifyProducts, updateVariantPrice, updateShopifyProductContent, fetchPrimaryLocationId, createShopifyProduct } from "@/lib/shopify/admin";
+import { shopifyConfigured, fetchAllShopifyProducts, updateVariantPrice, updateShopifyProductContent, fetchPrimaryLocationId, createShopifyProduct, addProductImage } from "@/lib/shopify/admin";
+import { safeImageUrlOrNull, safeFetchImage } from "@/lib/net/safeImage";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runShopifyInventorySync, type InventorySyncResult } from "@/lib/shopify/inventory-sync";
 import { diffShopify, targetShopifyPrice, indexShopify, normTitle, htmlFromPlain, mapShopifyToCatalogRow, type ShopifyDiff, type OurProductRow } from "@/lib/shopify-diff";
@@ -273,4 +274,106 @@ export async function importShopifyProducts(shopifyIds: string[]): Promise<BulkM
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Import failed.", ...MOVE_EMPTY };
   }
+}
+
+// ---- Missing store images --------------------------------------------------------
+// Store products without a picture + a matched catalog product WITH one.
+// Every candidate image is probed before pushing, so a broken/truncated file
+// (the reason the store copy has no image in the first place) never ships.
+
+export interface MissingImagePair {
+  shopify_id: string;
+  title: string;
+  sku: string | null;
+  image_url: string;
+}
+
+export async function listShopifyMissingImages(): Promise<{
+  ok: boolean; error?: string;
+  pairs: MissingImagePair[];   // fixable: we have an image for them
+  storeMissing: number;        // store products without any image
+}> {
+  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", pairs: [], storeMissing: 0 };
+  if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", pairs: [], storeMissing: 0 };
+
+  try {
+    const sb = await createClient();
+    const ours: { id: string; sku: string | null; name_en: string | null; image_url: string | null }[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await sb.from("products").select("id, sku, name_en, image_url").range(from, from + 999);
+      if (error) return { ok: false, error: error.message, pairs: [], storeMissing: 0 };
+      ours.push(...((data ?? []) as typeof ours));
+      if ((data ?? []).length < 1000) break;
+    }
+    const bySku = new Map<string, string>();   // sku -> image_url
+    const byTitle = new Map<string, string>(); // normTitle -> image_url
+    for (const o of ours) {
+      const img = String(o.image_url ?? "").trim();
+      if (!img) continue;
+      const k = String(o.sku ?? "").trim().toLowerCase();
+      if (k && !bySku.has(k)) bySku.set(k, img);
+      const t = normTitle(o.name_en);
+      if (t && !byTitle.has(t)) byTitle.set(t, img);
+    }
+
+    const remote = await fetchAllShopifyProducts();
+    if (remote.error) return { ok: false, error: remote.error, pairs: [], storeMissing: 0 };
+
+    const pairs: MissingImagePair[] = [];
+    let storeMissing = 0;
+    for (const sp of remote.products ?? []) {
+      if (String(sp.imageUrl ?? "").trim()) continue;
+      storeMissing++;
+      const sku = String(sp.variants[0]?.sku ?? "").trim().toLowerCase();
+      const img = (sku ? bySku.get(sku) : undefined) ?? byTitle.get(normTitle(sp.title));
+      if (img) pairs.push({ shopify_id: sp.id, title: sp.title, sku: sp.variants[0]?.sku ?? null, image_url: img });
+    }
+    return { ok: true, pairs, storeMissing };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "List failed.", pairs: [], storeMissing: 0 };
+  }
+}
+
+export interface PushImagesResult {
+  ok: boolean;
+  error?: string;
+  pushed: number;
+  skippedBroken: { title: string; reason: string }[]; // source image doesn't load — never pushed
+  failed: { title: string; error: string }[];
+}
+
+/** Push ONE slice of the missing-image pairs (client loops; ≤10 per call). */
+export async function pushShopifyImages(pairs: MissingImagePair[]): Promise<PushImagesResult> {
+  const empty = { pushed: 0, skippedBroken: [], failed: [] };
+  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...empty };
+  if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", ...empty };
+  const list = (pairs ?? []).slice(0, 10);
+  if (!list.length) return { ok: false, error: "ما في صور محددة.", ...empty };
+
+  let pushed = 0;
+  const skippedBroken: { title: string; reason: string }[] = [];
+  const failed: { title: string; error: string }[] = [];
+
+  for (const pr of list) {
+    const url = safeImageUrlOrNull(pr.image_url);
+    if (!url) { skippedBroken.push({ title: pr.title, reason: "رابط غير صالح" }); continue; }
+    // Probe before pushing: the store copy is imageless BECAUSE the source
+    // was often broken — a truncated file must not ship again.
+    try {
+      const res = await safeFetchImage(url, { headers: { Range: "bytes=0-2047" }, cache: "no-store", signal: AbortSignal.timeout(8_000) });
+      const ct = String(res.headers.get("content-type") ?? "").toLowerCase();
+      if ((!res.ok && res.status !== 206) || (ct && !ct.startsWith("image/") && !ct.includes("octet-stream"))) {
+        skippedBroken.push({ title: pr.title, reason: `HTTP ${res.status}${ct ? ` · ${ct.split(";")[0]}` : ""}` });
+        continue;
+      }
+    } catch {
+      skippedBroken.push({ title: pr.title, reason: "الصورة ما تتحمل (timeout)" });
+      continue;
+    }
+    const r = await addProductImage(pr.shopify_id, pr.image_url);
+    if (r.ok) pushed++;
+    else failed.push({ title: pr.title, error: r.error ?? "فشل الرفع" });
+  }
+  revalidatePath("/import-export/shopify-sync");
+  return { ok: true, pushed, skippedBroken, failed };
 }
