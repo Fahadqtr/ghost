@@ -14,6 +14,9 @@ import type { TaskComment, CommentAttachment } from "@/lib/tasks/comments";
 import { materializeRoutines } from "@/lib/tasks/routines";
 import { buildDraftPrompt, parseProductDraft, EMPTY_DRAFT, type ProductDraft } from "@/lib/products/draft-compute";
 import { editProductImageCore } from "@/lib/products/imageEdit";
+import { storePrimaryProductImage } from "@/lib/products/imageStore";
+import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
+import { clean } from "@/lib/malak/talabat-export.mjs";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
 function pinOk(pin: string): boolean {
@@ -315,7 +318,8 @@ export async function staffProducts(query: string): Promise<{ items: StaffProduc
   const who = await currentStaff();
   if (!who) return { items: [], showPrices: false, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
   if (!hasPerm(who.perms, "products")) return { items: [], showPrices: false, error: "ما عندك صلاحية عرض المنتجات." };
-  const showPrices = hasPerm(who.perms, "prices");
+  // A supervisor who can EDIT prices necessarily sees them.
+  const showPrices = hasPerm(who.perms, "prices") || hasPerm(who.perms, "edit_products");
   const admin = adminClient();
   if (!admin) return { items: [], showPrices, error: NO_DB };
 
@@ -352,13 +356,15 @@ export async function staffProducts(query: string): Promise<{ items: StaffProduc
 
 // The WHOLE catalog for the staff browse tab (paged through Supabase's 1000-row
 // cap). The tab does search + category/stock filtering client-side.
-export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showPrices: boolean; error?: string }> {
+export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showPrices: boolean; canEdit: boolean; canEditImage: boolean; error?: string }> {
   const who = await currentStaff();
-  if (!who) return { items: [], showPrices: false, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
-  if (!hasPerm(who.perms, "products")) return { items: [], showPrices: false, error: "ما عندك صلاحية عرض المنتجات." };
-  const showPrices = hasPerm(who.perms, "prices");
+  if (!who) return { items: [], showPrices: false, canEdit: false, canEditImage: false, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "products")) return { items: [], showPrices: false, canEdit: false, canEditImage: false, error: "ما عندك صلاحية عرض المنتجات." };
+  const canEdit = hasPerm(who.perms, "edit_products");
+  const canEditImage = hasPerm(who.perms, "edit_images");
+  const showPrices = hasPerm(who.perms, "prices") || canEdit;
   const admin = adminClient();
-  if (!admin) return { items: [], showPrices, error: NO_DB };
+  if (!admin) return { items: [], showPrices, canEdit, canEditImage, error: NO_DB };
 
   // Per-variant shelf stock (summed) — a fallback when the variant row itself
   // has no stock_quantity. Optional table; degrades silently.
@@ -398,7 +404,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
   const items: StaffProduct[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await admin.from("products").select(cols).order("name_en", { ascending: true }).range(from, from + 999);
-    if (error) return { items, showPrices, error: error.message };
+    if (error) return { items, showPrices, canEdit, canEditImage, error: error.message };
     for (const p of (data ?? []) as any[]) {
       items.push({
         id: String(p.id),
@@ -415,7 +421,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
     }
     if (!data || data.length < 1000) break;
   }
-  return { items, showPrices };
+  return { items, showPrices, canEdit, canEditImage };
 }
 
 /* ── Staff Malak — an ISOLATED, read-only assistant (gated by "malak") ─────
@@ -750,4 +756,113 @@ export async function staffEditProductImage(imageUrl: string, prompt: string): P
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
   return editProductImageCore(admin, imageUrl, prompt, "staff");
+}
+
+/* ── Supervisor: edit existing products (gated by "edit_products"/"edit_images")
+   Same rules as the manager's editor: cleaned strings, locked category list,
+   and every change opens the catalog auto-task (old → new) attributed to the
+   supervisor — so the update-the-platforms cycle stays intact. ────────────── */
+
+export type StaffEditable = {
+  id: string; sku: string | null;
+  name_en: string; name_ar: string;
+  price: string; discount_price: string;
+  main_category: string;
+  description_en: string; description_ar: string;
+  image_url: string | null;
+  canEdit: boolean; canEditImage: boolean;
+};
+
+export async function staffProductForEdit(id: string): Promise<{ item: StaffEditable } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "edit_products") && !hasPerm(who.perms, "edit_images"))
+    return { error: "ما عندك صلاحية تعديل المنتجات." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const { data, error } = await admin
+    .from("products")
+    .select("id, sku, name_en, name_ar, price, discount_price, main_category, description_en, description_ar, image_url")
+    .eq("id", String(id))
+    .maybeSingle();
+  if (error || !data) return { error: "ما لقيت المنتج." };
+  const s = (v: unknown) => (v == null ? "" : String(v));
+  return { item: {
+    id: String(data.id), sku: data.sku ?? null,
+    name_en: s(data.name_en), name_ar: s(data.name_ar),
+    price: data.price != null ? String(data.price) : "",
+    discount_price: data.discount_price != null ? String(data.discount_price) : "",
+    main_category: s(data.main_category),
+    description_en: s(data.description_en), description_ar: s(data.description_ar),
+    image_url: data.image_url ?? null,
+    canEdit: hasPerm(who.perms, "edit_products"),
+    canEditImage: hasPerm(who.perms, "edit_images"),
+  } };
+}
+
+export interface StaffProductPatch {
+  name_en: string; name_ar: string;
+  price: string; discount_price: string;
+  main_category: string;
+  description_en: string; description_ar: string;
+}
+
+export async function staffUpdateProduct(id: string, input: StaffProductPatch): Promise<{ ok: true } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "edit_products")) return { error: "ما عندك صلاحية تعديل المنتجات." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  const txt = (v: string) => { const t = clean(String(v ?? "")); return t === "" ? null : t; };
+  const num = (v: string) => { const t = String(v ?? "").trim(); if (t === "") return null; const n = Number(t); return n; };
+  const price = num(input.price);
+  const disc = num(input.discount_price);
+  if ((price != null && (Number.isNaN(price) || price < 0)) || (disc != null && (Number.isNaN(disc) || disc < 0)))
+    return { error: "السعر غير صحيح." };
+  const category = String(input.main_category ?? "").trim() || null;
+  if (category && !(CATEGORIES as readonly string[]).includes(category)) return { error: "التصنيف غير معروف." };
+
+  const patch = {
+    name_en: txt(input.name_en), name_ar: txt(input.name_ar),
+    price, discount_price: disc, main_category: category,
+    description_en: txt(input.description_en), description_ar: txt(input.description_ar),
+  };
+  if (!patch.name_en && !patch.name_ar) return { error: "لازم اسم للمنتج (عربي أو إنجليزي)." };
+
+  const { data: before } = await admin
+    .from("products")
+    .select("name_en, name_ar, sku, barcode, price, discount_price, description_en, description_ar, main_category, image_url")
+    .eq("id", String(id))
+    .maybeSingle();
+  if (!before) return { error: "ما لقيت المنتج." };
+
+  const { error } = await admin.from("products").update(patch).eq("id", String(id));
+  if (error) return { error: error.message };
+
+  const after = { ...(before as Record<string, unknown>), ...patch };
+  const changes = computeFieldChanges(
+    before as Record<string, unknown>, after,
+    ["name_en", "name_ar", "price", "discount_price", "description_en", "description_ar", "main_category"],
+  );
+  if (changes.length) {
+    await logCatalogTask({
+      action: "update", productId: String(id), snapshot: after, changes,
+      actor: `مشرف: ${who.name}`,
+    });
+  }
+  return { ok: true as const };
+}
+
+// Replace the product's primary photo (same core as the manager's editor —
+// SKU-named file, primary swap, auto-task).
+export async function staffUploadProductImage(formData: FormData): Promise<{ ok: true; url: string } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "edit_images")) return { error: "ما عندك صلاحية تعديل الصور." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const productId = String(formData.get("productId") || "");
+  const file = formData.get("file");
+  return storePrimaryProductImage(admin, productId, file as File, `مشرف: ${who.name}`);
 }
