@@ -20,6 +20,7 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
   const L = (ar: string, e: string) => (en ? e : ar);
   const [tasks, setTasks] = useState<SupervisorTask[]>([]);
   const [members, setMembers] = useState<StaffMemberLite[]>([]);
+  const [meId, setMeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [whoFilter, setWhoFilter] = useState(""); // "" all · "none" unassigned · member id
@@ -39,7 +40,7 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
   const reload = () => start(async () => {
     const r = await staffAllTasks();
     if (r.error) setErr(r.error);
-    setTasks(r.tasks); setMembers(r.members); setLoading(false);
+    setTasks(r.tasks); setMembers(r.members); setMeId(r.meId); setLoading(false);
   });
   useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -406,10 +407,17 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
                 <option value="">{L("حوّلها إلى… (الكل)", "Assign to… (everyone)")}</option>
                 {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
-              {t.status !== "in_progress" ? (
-                <button disabled={busy} onClick={() => setStatus(t.id, "in_progress")} className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 disabled:opacity-50">▶ {L("جاري", "Start")}</button>
+              {/* «جاري»/«تم» are the assignee's buttons — the supervisor only
+                  sees them on his own (or everyone) tasks; otherwise he assigns
+                  and follows up. */}
+              {!t.assignedTo || t.assignedTo === meId ? (
+                <>
+                  {t.status !== "in_progress" ? (
+                    <button disabled={busy} onClick={() => setStatus(t.id, "in_progress")} className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 disabled:opacity-50">▶ {L("جاري", "Start")}</button>
+                  ) : null}
+                  <button disabled={busy} onClick={() => setStatus(t.id, "done")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">✓ {L("تم", "Done")}</button>
+                </>
               ) : null}
-              <button disabled={busy} onClick={() => setStatus(t.id, "done")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">✓ {L("تم", "Done")}</button>
             </div>
             <TaskThread taskId={t.id} locale={locale} load={staffTaskComments} add={staffAddTaskComment} />
           </div>
