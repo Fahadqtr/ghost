@@ -29,6 +29,7 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
   const [photo, setPhoto] = useState<{ base64: string; mediaType: string; dataUrl: string } | null>(null);
   const [photoAssign, setPhotoAssign] = useState("");
   const [photoNote, setPhotoNote] = useState("");
+  const [photoPrice, setPhotoPrice] = useState("");
   const [photoOk, setPhotoOk] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: "", description: "", assignedTo: "", priority: "normal", dueDate: "" });
@@ -119,10 +120,10 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
     if (!photo) return;
     setErr(""); setPhotoOk("");
     start(async () => {
-      const r = await staffCreatePhotoTask({ base64: photo.base64, mediaType: photo.mediaType, assignedTo: photoAssign || null, note: photoNote });
+      const r = await staffCreatePhotoTask({ base64: photo.base64, mediaType: photo.mediaType, assignedTo: photoAssign || null, note: photoNote, price: photoPrice });
       if ("error" in r) { setErr(r.error); return; }
       const name = members.find((m) => m.id === photoAssign)?.name;
-      setPhoto(null); setPhotoNote(""); setPhotoAssign("");
+      setPhoto(null); setPhotoNote(""); setPhotoAssign(""); setPhotoPrice("");
       setPhotoOk(name ? L(`✓ انفتحت المهمة وانحوّلت إلى ${name}.`, `✓ Task opened and assigned to ${name}.`) : L("✓ انفتحت المهمة (للكل).", "✓ Task opened (everyone)."));
       reload();
     });
@@ -248,9 +249,11 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
                   <option value="">{L("👥 للكل", "👥 Everyone")}</option>
                   {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </select>
-                <input className="input flex-1 text-sm" value={photoNote} onChange={(e) => setPhotoNote(e.target.value)}
-                  placeholder={L("ملاحظة (اختياري) — مثال: السعر 45", "Note (optional) — e.g. price 45")} />
+                <input className="input w-28 text-sm" inputMode="decimal" value={photoPrice} onChange={(e) => setPhotoPrice(e.target.value)}
+                  placeholder={L("السعر ر.ق", "Price QAR")} />
               </div>
+              <input className="input w-full text-sm" value={photoNote} onChange={(e) => setPhotoNote(e.target.value)}
+                placeholder={L("ملاحظة (اختياري)…", "Note (optional)…")} />
               <button disabled={busy} onClick={sendPhotoTask} className="w-full rounded-lg bg-violet-600 py-2.5 text-sm font-bold text-white disabled:opacity-50">
                 {busy ? "…" : L("➕ افتح المهمة وحوّلها", "➕ Open & assign the task")}
               </button>
