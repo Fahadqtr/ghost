@@ -61,7 +61,7 @@ export async function getNotifications(): Promise<{ items: Notification[] }> {
           icon: "✅", severity: "high",
           ar: `${count} حركة موظفين بانتظار اعتمادك`,
           en: `${count} staff movement${count === 1 ? "" : "s"} awaiting approval`,
-          href: "/inventory/approvals",
+          href: "/approvals",
         });
       }
     } catch { /* skip */ }
@@ -79,7 +79,7 @@ export async function getNotifications(): Promise<{ items: Notification[] }> {
           icon: "🆕", severity: "high",
           ar: `${count} منتج جديد من الموظفين بانتظار اعتمادك`,
           en: `${count} new staff product${count === 1 ? "" : "s"} awaiting approval`,
-          href: "/products?review=staff",
+          href: "/approvals",
         });
       }
     } catch { /* skip */ }
