@@ -123,7 +123,7 @@ export const NAV_GROUPS = [
     items: [
       { href: "/team", label: "الموظفون", en: "Employees", icon: "👥" },
       { href: "/tasks", label: "المهام", en: "Tasks", icon: "📋" },
-      { href: "/inventory/approvals", label: "اعتماد الحركات", en: "Approve movements", icon: "✅" },
+      { href: "/approvals", label: "الاعتمادات", en: "Approvals", icon: "✅" },
       { href: "/staff", label: "صفحة الموظفين", en: "Staff page", icon: "📲" },
     ],
   },
