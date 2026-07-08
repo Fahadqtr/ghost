@@ -38,6 +38,22 @@ export function clean(v) {
   return s;
 }
 
+// Like clean(), but PRESERVES the catalog's house bullet markers — 🔸 (AR) and
+// ✔️/✔ (EN) — which the AI drafts and the store descriptions are styled with.
+// Markers are swapped for control-char sentinels (untouched by EMOJI_RE),
+// cleaned, then restored. Used when SAVING descriptions to the catalog; the
+// platform exports still run plain clean() so the sheets stay emoji-free.
+export function cleanDescription(v) {
+  const CHECK = "\u0001";
+  const DIAMOND = "\u0002";
+  const s = S(v)
+    .replace(/\u{2714}\u{FE0F}?/gu, CHECK) // ✔️ / ✔
+    .replace(/\u{1F538}/gu, DIAMOND);       // 🔸
+  return clean(s)
+    .replace(/\u0001/g, "✔️")
+    .replace(/\u0002/g, "🔸");
+}
+
 // RFC-4180 CSV cell: quote when it contains comma/quote/newline; escape quotes.
 const cell = (v) => {
   const s = S(v);

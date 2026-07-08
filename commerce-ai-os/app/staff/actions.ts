@@ -18,7 +18,7 @@ import { storePrimaryProductImage } from "@/lib/products/imageStore";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
 import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
 import { insertAuditRow } from "@/lib/audit";
-import { clean } from "@/lib/malak/talabat-export.mjs";
+import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
 function pinOk(pin: string): boolean {
@@ -1168,6 +1168,8 @@ export async function staffUpdateProduct(id: string, input: StaffProductPatch): 
   if (!admin) return { error: NO_DB };
 
   const txt = (v: string) => { const t = clean(String(v ?? "")); return t === "" ? null : t; };
+  // Descriptions keep the house bullets (🔸 / ✔️); exports strip them later.
+  const txtDesc = (v: string) => { const t = cleanDescription(String(v ?? "")); return t === "" ? null : t; };
   const num = (v: string) => { const t = String(v ?? "").trim(); if (t === "") return null; const n = Number(t); return n; };
   const price = num(input.price);
   const disc = num(input.discount_price);
@@ -1179,7 +1181,7 @@ export async function staffUpdateProduct(id: string, input: StaffProductPatch): 
   const patch = {
     name_en: txt(input.name_en), name_ar: txt(input.name_ar),
     price, discount_price: disc, main_category: category,
-    description_en: txt(input.description_en), description_ar: txt(input.description_ar),
+    description_en: txtDesc(input.description_en), description_ar: txtDesc(input.description_ar),
   };
   if (!patch.name_en && !patch.name_ar) return { error: "لازم اسم للمنتج (عربي أو إنجليزي)." };
 
