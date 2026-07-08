@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   staffAllTasks, staffCreateTask, staffAssignTask, staffSuperviseSetStatus,
-  staffTaskComments, staffAddTaskComment, staffOutOfStock, staffOpenOosTask,
-  type SupervisorTask, type StaffMemberLite, type OosProduct,
+  staffTaskComments, staffAddTaskComment, staffOutOfStock, staffOpenStockTask, staffFindForRestock,
+  type SupervisorTask, type StaffMemberLite, type OosProduct, type RestockCandidate,
 } from "./actions";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
 import TaskThread from "@/components/TaskThread";
@@ -23,6 +23,8 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
   const [err, setErr] = useState("");
   const [whoFilter, setWhoFilter] = useState(""); // "" all · "none" unassigned · member id
   const [oosItems, setOosItems] = useState<OosProduct[] | null>(null); // null = not scanned yet
+  const [restockQ, setRestockQ] = useState("");
+  const [restockItems, setRestockItems] = useState<RestockCandidate[] | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: "", description: "", assignedTo: "", priority: "normal", dueDate: "" });
   const [busy, start] = useTransition();
@@ -67,7 +69,7 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
   });
 
   const openOos = (id: string) => start(async () => {
-    const r = await staffOpenOosTask(id);
+    const r = await staffOpenStockTask(id, "oos");
     if ("error" in r) { setErr(r.error); return; }
     setOosItems((items) => items?.map((i) => (i.id === id ? { ...i, hasOpenTask: true } : i)) ?? null);
     reload(); // the new task appears in the list below
@@ -76,10 +78,23 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
   const openAllOos = () => start(async () => {
     const targets = (oosItems ?? []).filter((i) => !i.hasOpenTask);
     for (const t of targets) {
-      const r = await staffOpenOosTask(t.id);
+      const r = await staffOpenStockTask(t.id, "oos");
       if ("error" in r) { setErr(r.error); break; }
       setOosItems((items) => items?.map((i) => (i.id === t.id ? { ...i, hasOpenTask: true } : i)) ?? null);
     }
+    reload();
+  });
+
+  const searchRestock = () => start(async () => {
+    const r = await staffFindForRestock(restockQ);
+    if (r.error) { setErr(r.error); return; }
+    setRestockItems(r.items);
+  });
+
+  const openRestock = (id: string) => start(async () => {
+    const r = await staffOpenStockTask(id, "restock");
+    if ("error" in r) { setErr(r.error); return; }
+    setRestockItems((items) => items?.map((i) => (i.id === id ? { ...i, hasOpenTask: true } : i)) ?? null);
     reload();
   });
 
@@ -175,6 +190,48 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
             </div>
           </div>
         )}
+      </div>
+
+      {/* back-in-stock: search a product and open the "re-enable on the platforms" task */}
+      <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-3">
+        <p className="text-sm font-bold text-emerald-800">🔄 {L("رجع المخزون", "Back in stock")}</p>
+        <p className="mt-0.5 text-[11px] text-emerald-700/70">{L("منتج رجع له مخزون والمنصات لسا معلّمته غير متوفر؟ دوّره وافتح مهمة «فعّله».", "A product is back but the platforms still show it unavailable? Find it and open the re-enable task.")}</p>
+        <form onSubmit={(e) => { e.preventDefault(); searchRestock(); }} className="mt-2 flex gap-2">
+          <input value={restockQ} onChange={(e) => setRestockQ(e.target.value)} className="input flex-1 text-sm"
+            placeholder={L("اسم أو كود أو باركود…", "Name / SKU / barcode…")} />
+          <button type="submit" disabled={busy || !restockQ.trim()} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{L("بحث", "Search")}</button>
+        </form>
+        {restockItems !== null ? (
+          restockItems.length === 0 ? (
+            <p className="mt-2 text-xs text-slate-500">{L("ما لقيت منتج معتمد مطابق.", "No matching Approved product.")}</p>
+          ) : (
+            <div className="mt-2 max-h-72 space-y-1 overflow-y-auto">
+              {restockItems.map((p) => (
+                <div key={p.id} className="flex items-center gap-2 rounded-lg border border-emerald-100 bg-white px-2 py-1.5">
+                  <span className="block h-9 w-9 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-50">
+                    {p.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={p.image} alt="" width={36} height={36} loading="lazy" className="block h-9 w-9 object-cover" />
+                    ) : <span className="flex h-full w-full items-center justify-center text-slate-300">📦</span>}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-ink">{p.name ?? p.sku ?? "—"}</span>
+                    <span className="block text-[10px] text-muted">{p.sku ? <span className="font-mono">{p.sku} · </span> : null}{L("المخزون", "stock")} <b className={p.stock > 0 ? "text-emerald-700" : "text-red-600"}>{p.stock}</b></span>
+                  </span>
+                  {p.hasOpenTask ? (
+                    <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">✓ {L("لها مهمة", "Has task")}</span>
+                  ) : p.stock > 0 ? (
+                    <button disabled={busy} onClick={() => openRestock(p.id)} className="shrink-0 rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white disabled:opacity-50">
+                      {L("📋 افتح مهمة «فعّله»", "📋 Open re-enable task")}
+                    </button>
+                  ) : (
+                    <span className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">{L("لسا صفر", "Still 0")}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )
+        ) : null}
       </div>
 
       {/* quick create */}
