@@ -5,7 +5,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 // @ts-expect-error — plain-JS module (single Talabat format source of truth)
-import { cleanSplitName, buildTalabatRows } from "./malak/talabat-export.mjs";
+import { cleanSplitName, buildTalabatRows, clean, cleanDescription } from "./malak/talabat-export.mjs";
+
+test("cleanDescription keeps the house bullets, strips other emojis", () => {
+  const ar = "جملة افتتاحية 💄\n🔸 نقطة أولى\n🔸 نقطة ثانية\nاللون: وردي";
+  assert.equal(cleanDescription(ar), "جملة افتتاحية\n🔸 نقطة أولى\n🔸 نقطة ثانية\nاللون: وردي");
+  const en = "Opening line ✨\n✔️ Point one\n✔ Point two\nColor: Pink";
+  assert.equal(cleanDescription(en), "Opening line\n✔️ Point one\n✔️ Point two\nColor: Pink");
+  // plain clean() (export path) still strips the bullets entirely
+  assert.equal(clean("🔸 نقطة\n✔️ Point"), "نقطة\nPoint");
+});
 
 test("cleanSplitName: enumerating parent keeps only this option", () => {
   const parent = "Gege Bear Lip Gloss – Night Soaked Wisteria 07# & Model 02# Lip Gloss";

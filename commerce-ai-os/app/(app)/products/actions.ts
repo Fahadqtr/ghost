@@ -11,7 +11,7 @@ import { isSignedIn } from "@/lib/auth/requireUser";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
 import { buildDraftPrompt, parseProductDraft } from "@/lib/products/draft-compute";
-import { clean } from "@/lib/malak/talabat-export.mjs";
+import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
 
 // --- input shapes (sent from the client form) -----------------------------
 
@@ -67,6 +67,11 @@ const cleanStr = (v: string) => {
   const t = clean(v);
   return t === "" ? null : t;
 };
+// For descriptions: same cleanup but the house bullets (🔸 / ✔️) survive.
+const cleanDesc = (v: string) => {
+  const t = cleanDescription(v);
+  return t === "" ? null : t;
+};
 const num = (v: string) => {
   const t = (v ?? "").trim();
   if (t === "") return null;
@@ -101,8 +106,10 @@ function toProductRow(input: ProductInput) {
     rejection_reason: str(input.rejection_reason),
     image_filename: str(input.image_filename),
     image_url: str(input.image_url),
-    description_en: cleanStr(input.description_en),
-    description_ar: cleanStr(input.description_ar),
+    // Descriptions keep the house bullet markers (🔸 / ✔️) — the platform
+    // exports strip them at export time.
+    description_en: cleanDesc(input.description_en),
+    description_ar: cleanDesc(input.description_ar),
     keywords_en: str(input.keywords_en),
     keywords_ar: str(input.keywords_ar),
     notes: str(input.notes),
