@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
 import { logStockTransition } from "@/lib/tasks/stock-tasks";
+import { queueForTalabat } from "@/lib/talabat/queue";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
@@ -282,6 +283,7 @@ export async function updateProduct(id: string, input: ProductInput) {
       action: "create", productId: id, snapshot: productRow as Record<string, unknown>,
       note: "✅ المنتج انعتمد — أضِفه في المنصات اليدوية بكل بياناته، وبعد الإضافة علّم المهمة «تم».",
     });
+    try { await queueForTalabat(createAdminClient(), id); } catch { /* best-effort */ }
   } else if (changes.length) {
     await logCatalogTask({ action: "update", productId: id, snapshot: productRow as Record<string, unknown>, changes });
   }
@@ -310,13 +312,15 @@ export async function setProductApproval(id: string, approval: string, reason?: 
   if (String(beforeRow?.approval ?? "") !== String(approval)) {
     if (approval === "Approved") {
       // Newly approved → the "add it to the platforms" task, full details.
-      // The employee enters it in طلبات/سنونو/رفيق then marks the task done;
-      // the platform-export verification confirms it later.
+      // The employee enters it in سنونو/رفيق then marks the task done; the
+      // platform-export verification confirms it later. Talabat goes by the
+      // owner's email instead — the product waits in talabat_queue.
       await logCatalogTask({
         action: "create", productId: id,
         snapshot: { ...(beforeRow ?? {}), approval: "Approved" } as Record<string, unknown>,
         note: "✅ المنتج انعتمد — أضِفه في المنصات اليدوية بكل بياناته، وبعد الإضافة علّم المهمة «تم».",
       });
+      try { await queueForTalabat(createAdminClient(), id); } catch { /* best-effort */ }
     } else {
       await logCatalogTask({
         action: "approval", productId: id, snapshot: (beforeRow ?? {}) as Record<string, unknown>,

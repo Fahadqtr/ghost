@@ -146,7 +146,7 @@ export default function StaffProductEdit({ productId, locale, onClose, onSaved }
                   <textarea className="input mt-1 w-full" rows={3} dir="ltr" value={item.description_en} onChange={(e) => set("description_en", e.target.value)} />
                 </label>
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                  💡 {L("كل تعديل يفتح مهمة تلقائيًا لتحديث المنصات اليدوية (طلبات / سنونو / رفيق) — شوبي فاي يتزامن بروحه.", "Every save auto-opens a task to update the manual platforms — Shopify syncs itself.")}
+                  💡 {L("كل تعديل يفتح مهمة تلقائيًا لتحديث المنصات اليدوية (سنونو مليكاز / سنونو بيور سيول / رفيق) — شوبي فاي يتزامن بروحه.", "Every save auto-opens a task to update the manual platforms — Shopify syncs itself.")}
                 </p>
                 <button disabled={busy} onClick={save} className="btn-primary w-full py-3 text-base disabled:opacity-50">
                   {busy ? "..." : L("💾 احفظ التعديلات", "💾 Save changes")}

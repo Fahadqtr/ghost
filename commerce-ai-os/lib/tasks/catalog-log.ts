@@ -99,7 +99,7 @@ export async function logCatalogTask(opts: {
     if (opts.action === "delete") parts.push("", "⚠️ احذفه من المنصات اليدوية أيضًا.");
     if (opts.action === "oos") parts.push("", "⚠️ علّمه «غير متوفر / Out of stock» في المنصات اليدوية.");
     if (opts.action === "restock") parts.push("", "✅ فعّله من جديد (متوفر) في المنصات اليدوية.");
-    parts.push("", "📌 حدّث يدويًا في: طلبات ☐ · سنونو ☐ · رفيق ☐", "(شوبي فاي يتزامن تلقائيًا — لا يحتاج شي)");
+    parts.push("", "📌 حدّث يدويًا في: سنونو مليكاز ☐ · سنونو بيور سيول ☐ · رفيق ☐", "(شوبي فاي يتزامن تلقائيًا · طلبات يرسلها المدير بالإيميل)");
 
     const row: Record<string, unknown> = {
       title,

@@ -1,8 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import * as XLSX from "xlsx";
-import { computeTalabatDiff, buildTalabatPackage, verifyCatalogEntries, type TalabatDiff, type VerifySummary } from "@/app/(app)/import-export/talabat-actions";
+import {
+  computeTalabatDiff, buildTalabatPackage, verifyCatalogEntries, listTalabatQueue, markTalabatSent,
+  type TalabatDiff, type VerifySummary, type TalabatQueueItem,
+} from "@/app/(app)/import-export/talabat-actions";
 
 // Talabat catalog gap-closer: upload Talabat's own export, see which of OUR
 // sellable products are missing over there, then download the "please add
@@ -19,7 +22,75 @@ export default function TalabatSync() {
   const [rawRows, setRawRows] = useState<Record<string, unknown>[]>([]);
   const [verify, setVerify] = useState<VerifySummary | null>(null);
   const [verifyMsg, setVerifyMsg] = useState("");
+  const [queue, setQueue] = useState<TalabatQueueItem[] | null>(null);
+  const [queueReady, setQueueReady] = useState(true);
+  const [qMsg, setQMsg] = useState("");
+  const [qEmail, setQEmail] = useState("");
   const [busy, start] = useTransition();
+
+  // Approved-but-not-yet-emailed products (fills automatically on approval).
+  const loadQueue = () => start(async () => {
+    const r = await listTalabatQueue();
+    if (!r.ok) { setQMsg(`❌ ${r.error}`); return; }
+    setQueueReady(r.ready);
+    setQueue(r.items);
+  });
+  useEffect(() => { loadQueue(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const qSheet = () => {
+    const items = queue ?? [];
+    if (!items.length) return;
+    setQMsg("…يجهّز ملف الإكسل");
+    start(async () => {
+      const pkg = await buildTalabatPackage(items.map((m) => m.id));
+      if (!pkg.ok) { setQMsg(`❌ ${pkg.error}`); return; }
+      const ws = XLSX.utils.json_to_sheet(pkg.rows, { header: pkg.headers });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Talabat");
+      XLSX.writeFile(wb, `talabat-new-products-${pkg.rows.length}.xlsx`);
+      setQEmail(pkg.emailText);
+      const warn = pkg.noPrice.length ? ` — ⛔ ${pkg.noPrice.length} صف بدون سعر، عدّله قبل الإرسال` : "";
+      setQMsg(`✅ نزل الملف (${pkg.rows.length} صف)${warn}`);
+    });
+  };
+
+  const qImages = () => {
+    const skus = (queue ?? []).map((m) => m.sku).filter(Boolean);
+    if (!skus.length) return;
+    setQMsg("…يضغط الصور — خلّ الصفحة مفتوحة");
+    start(async () => {
+      try {
+        const res = await fetch("/api/export/images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ skus }),
+        });
+        if (!res.ok) { setQMsg(`❌ فشل تجهيز الصور (HTTP ${res.status})`); return; }
+        const blob = await res.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `talabat-images-${skus.length}.zip`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setQMsg(`✅ نزل ملف الصور (${skus.length} SKU)`);
+      } catch (e) {
+        setQMsg(`❌ ${e instanceof Error ? e.message : "فشل تنزيل الصور"}`);
+      }
+    });
+  };
+
+  const qMarkSent = () => {
+    const items = queue ?? [];
+    if (!items.length) return;
+    if (!confirm(`تأكيد: أرسلت الإيميل لطلبات وفيه ${items.length} منتج؟ بينشالون من القائمة.`)) return;
+    start(async () => {
+      const r = await markTalabatSent(items.map((m) => m.id));
+      if (!r.ok) { setQMsg(`❌ ${r.error}`); return; }
+      setQueue([]);
+      setQEmail("");
+      setQMsg(`✅ تم — ${r.marked} منتج انعلم إنه انضاف في طلبات.`);
+    });
+  };
 
   // Everything is included by default; unchecking a row drops it from BOTH
   // the Excel sheet and the images ZIP.
@@ -140,6 +211,73 @@ export default function TalabatSync() {
         <input type="file" accept=".xlsx,.xls,.csv" onChange={onFile} disabled={busy} className="block text-sm" />
         {busy && !diff ? <p className="text-xs text-muted">…يحلّل الملف ويقارن</p> : null}
         {error ? <pre className="whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</pre> : null}
+      </div>
+
+      {/* Auto queue: approved products waiting for the Talabat email */}
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-ink">📬 منتجات جديدة بانتظار الإرسال لطلبات{queue ? ` (${queue.length})` : ""}</h3>
+            <p className="text-xs text-muted">
+              كل منتج يُعتمد يدخل هنا تلقائيًا. نزّل الإكسل والصور، أرسل الإيميل لمسؤول طلبات،
+              ثم اضغط «تم الإرسال» — تنعلم إنها انضافت في طلبات وتختفي من القائمة.
+            </p>
+          </div>
+          <button type="button" className="btn-ghost shrink-0 text-xs disabled:opacity-50" onClick={loadQueue} disabled={busy}>↻ حدّث</button>
+        </div>
+        {!queueReady ? (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            ⚙️ شغّل <code>supabase/talabat_queue.sql</code> مرة وحدة في Supabase SQL editor عشان تشتغل القائمة.
+          </p>
+        ) : queue === null ? (
+          <p className="text-xs text-muted">…يحمّل</p>
+        ) : queue.length === 0 ? (
+          <p className="text-xs text-emerald-700">✅ ما في منتجات جديدة بانتظار الإرسال.</p>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn text-xs disabled:opacity-50" onClick={qSheet} disabled={busy}>
+                ⬇️ ملف الإكسل ({queue.length})
+              </button>
+              <button type="button" className="btn-ghost text-xs disabled:opacity-50" onClick={qImages} disabled={busy}>
+                🖼️ ملف الصور (ZIP)
+              </button>
+              {qEmail ? (
+                <button type="button" className="btn-ghost text-xs" onClick={() => { navigator.clipboard?.writeText(qEmail); setQMsg("✅ انتسخ نص الإيميل — أرفق الملفين وأرسله"); }}>
+                  ✉️ انسخ نص الإيميل
+                </button>
+              ) : null}
+              <button type="button" className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50" onClick={qMarkSent} disabled={busy}>
+                ✅ تم الإرسال — علّمها انضافت ({queue.length})
+              </button>
+            </div>
+            {qMsg ? <p className="text-xs text-muted">{qMsg}</p> : null}
+            {qEmail ? (
+              <pre dir="auto" className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg bg-[#faf6f0] p-3 text-xs text-ink/80">{qEmail}</pre>
+            ) : null}
+            <div className="max-h-72 space-y-2 overflow-y-auto">
+              {queue.map((m) => (
+                <div key={m.id} className="flex items-center gap-2 rounded-xl border border-[#efe3d6] bg-white/60 p-2">
+                  {m.image_url ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={m.image_url} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-lg border border-[#efe3d6] bg-white object-cover" />
+                  ) : (
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-amber-300 bg-amber-50 text-[10px] text-amber-700">بدون صورة</div>
+                  )}
+                  <div className="min-w-0 flex-1 text-xs">
+                    <p className="truncate font-semibold text-ink">{m.name_en || m.id}</p>
+                    <p className="mt-0.5 text-muted">
+                      {m.sku ?? "—"}
+                      {m.noPrice ? <span className="mr-1 rounded bg-red-100 px-1 text-[10px] font-semibold text-red-700">⛔ بدون سعر</span> : null}
+                    </p>
+                  </div>
+                  <a href={`/products/${m.id}`} target="_blank" rel="noreferrer" className="btn-ghost shrink-0 px-2 py-1 text-xs">✏️ تعديل</a>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        {queueReady && qMsg && (queue?.length ?? 0) === 0 ? <p className="text-xs text-muted">{qMsg}</p> : null}
       </div>
 
       {diff?.ok ? (
