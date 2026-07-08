@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
   staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
-  staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct,
+  staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct, staffOpenStockTask,
   type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct, type StaffTaskRow,
 } from "./actions";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
@@ -307,6 +307,8 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const [detail, setDetail] = useState<StaffProduct | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [canMove, setCanMove] = useState(false); // stock permission: in/out from here
+  const [canOos, setCanOos] = useState(false);   // manage_tasks: one-tap oos task on sold-out cards
+  const [oosOpened, setOosOpened] = useState<Set<string>>(new Set());
   const [moveFor, setMoveFor] = useState<{ productId: string; item: StaffItem } | null>(null);
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, start] = useTransition();
@@ -318,10 +320,18 @@ function ProductsTab({ locale }: { locale: Locale }) {
       const r = await staffAllProducts();
       if (!alive) return;
       if (r.error) setErr(r.error);
-      setAll(r.items); setShowPrices(r.showPrices); setCanEdit(r.canEdit || r.canEditImage); setCanMove(r.canMove); setLoading(false);
+      setAll(r.items); setShowPrices(r.showPrices); setCanEdit(r.canEdit || r.canEditImage); setCanMove(r.canMove); setCanOos(r.canOos); setLoading(false);
     })();
     return () => { alive = false; };
   }, []);
+
+  // One tap on a sold-out card → the «علّمه غير متوفر» task, right here.
+  const openOosNow = (p: StaffProduct) => start(async () => {
+    const r = await staffOpenStockTask(p.id, "oos");
+    if ("error" in r) { flash(false, r.error); return; }
+    setOosOpened((s) => new Set(s).add(p.id));
+    flash(true, L(`انفتحت مهمة أوت ستوك: ${p.name ?? p.sku ?? ""} — وزّعها من تبويب المهام.`, `Out-of-stock task opened: ${p.name ?? p.sku ?? ""} — assign it from the Tasks tab.`));
+  });
 
   const flash = (ok: boolean, text: string) => { setToast({ ok, text }); setTimeout(() => setToast(null), 2600); };
 
@@ -442,6 +452,15 @@ function ProductsTab({ locale }: { locale: Locale }) {
                   </span>
                   {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
                   <span className="flex gap-1">
+                    {canOos && p.stock != null && p.stock <= 0 ? (
+                      oosOpened.has(p.id) ? (
+                        <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">✓ {L("انفتحت", "Opened")}</span>
+                      ) : (
+                        <button disabled={busy} onClick={() => openOosNow(p)} className="rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white disabled:opacity-50">
+                          🚫 {L("اوت ستوك", "Out of stock")}
+                        </button>
+                      )
+                    ) : null}
                     {canMove ? (
                       <button disabled={busy} onClick={() => startMove(p)} className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 disabled:opacity-50">
                         📦 {L("مخزون", "Stock")}
@@ -505,6 +524,11 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 <span className={`text-lg font-bold ${detail.stock != null && detail.stock <= 0 ? "text-red-600" : "text-ink"}`}>{detail.stock != null ? detail.stock : "—"} <span className="text-xs font-normal text-muted">{L("مخزون", "stock")}</span></span>
                 {showPrices && detail.price != null ? <span className="ms-auto text-base font-bold text-emerald-700">{detail.price} {L("ر.ق", "QAR")}</span> : null}
               </div>
+              {canOos && detail.stock != null && detail.stock <= 0 && !oosOpened.has(detail.id) ? (
+                <button disabled={busy} onClick={() => { openOosNow(detail); setDetail(null); }} className="w-full rounded-lg bg-red-600 py-2 text-sm font-bold text-white disabled:opacity-50">
+                  🚫 {L("اوت ستوك — افتح مهمة «علّمه غير متوفر»", "Out of stock — open the mark-unavailable task")}
+                </button>
+              ) : null}
               {canMove ? (
                 <button disabled={busy} onClick={() => startMove(detail)} className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2 text-sm font-medium text-emerald-700 disabled:opacity-50">
                   📦 {L("حركة مخزون (إدخال/إخراج)", "Stock move (in / out)")}
