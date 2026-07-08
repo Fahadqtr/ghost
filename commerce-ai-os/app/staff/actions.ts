@@ -16,7 +16,8 @@ import { buildDraftPrompt, parseProductDraft, EMPTY_DRAFT, type ProductDraft } f
 import { editProductImageCore } from "@/lib/products/imageEdit";
 import { storePrimaryProductImage } from "@/lib/products/imageStore";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
-import { openStockTask, totalStock } from "@/lib/tasks/stock-tasks";
+import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
+import { insertAuditRow } from "@/lib/audit";
 import { clean } from "@/lib/malak/talabat-export.mjs";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
@@ -301,7 +302,7 @@ export async function staffDeleteMovement(id: number) {
 }
 
 /* ── Products browse (read-only; gated by "products", prices by "prices") ── */
-export type StaffVariant = { name: string | null; barcode: string | null; stock: number | null };
+export type StaffVariant = { id: string | null; name: string | null; barcode: string | null; stock: number | null };
 export type StaffProduct = {
   id: string;
   sku: string | null;
@@ -396,7 +397,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
         const shelf = shelfByVariant.get(String(v.id));
         const stock = own != null ? Number(own) : (shelf != null ? shelf : null);
         const arr = varsByParent.get(v.parent_product_id) ?? [];
-        arr.push({ name: v.variant_name ?? null, barcode: v.barcode ?? null, stock });
+        arr.push({ id: v.id ? String(v.id) : null, name: v.variant_name ?? null, barcode: v.barcode ?? null, stock });
         varsByParent.set(v.parent_product_id, arr);
       }
       if (!data || data.length < 1000) break;
@@ -465,6 +466,99 @@ export async function staffItemForProduct(productId: string): Promise<{ item: St
     image: p.image_url ?? null,
     stock: Number(inv.stock_quantity) || 0,
   } };
+}
+
+/* ── Variant (option) stock — move + option-scoped out-of-stock ──────────── */
+
+// Stock IN/OUT for ONE option row (product_variants.stock_quantity). Mirrors
+// the product movement flow: audited (variant_stock_in/out so the reversible
+// approvals queue ignores it) and feeds the option/product zero-crossing tasks.
+export async function staffMoveVariant(
+  variantId: string,
+  dir: "in" | "out",
+  quantity: number,
+  reason: string,
+): Promise<{ ok: true; after: number } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية إدخال/إخراج المخزون." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const qty = Math.floor(Number(quantity) || 0);
+  if (!variantId || qty < 1) return { error: "اختر خيارًا وكمية أكبر من صفر." };
+  if (dir !== "in" && dir !== "out") return { error: "نوع حركة غير صالح." };
+
+  const { data: v } = await admin
+    .from("product_variants")
+    .select("id, parent_product_id, variant_name, barcode, stock_quantity")
+    .eq("id", String(variantId))
+    .maybeSingle();
+  if (!v) return { error: "الخيار غير موجود." };
+
+  const before = Number(v.stock_quantity) || 0;
+  if (dir === "out" && qty > before) return { error: `الكمية أكبر من مخزون الخيار (${before}).` };
+  const after = dir === "in" ? before + qty : before - qty;
+
+  const { error } = await admin.from("product_variants").update({ stock_quantity: after }).eq("id", v.id);
+  if (error) return { error: error.message };
+
+  const { error: logErr } = await insertAuditRow(admin, {
+    agent: `staff:${who.name}`,
+    action: dir === "in" ? "variant_stock_in" : "variant_stock_out",
+    action_type: dir === "in" ? "variant_stock_in" : "variant_stock_out",
+    sku: v.barcode ?? v.variant_name ?? null,
+    product_id: v.parent_product_id ?? null,
+    field: "variant_stock",
+    old_value: String(before),
+    new_value: String(after),
+    status: "done",
+    details: {
+      productId: v.parent_product_id ?? null,
+      variantId: String(v.id),
+      variantName: v.variant_name ?? null,
+      quantity: qty,
+      direction: dir,
+      reason: reason || null,
+      by: `staff:${who.name}`,
+    },
+  });
+  if (logErr) console.error("[staffMoveVariant] audit insert failed:", logErr.message);
+
+  await logVariantStockTransition(admin, {
+    productId: v.parent_product_id,
+    variantId: String(v.id),
+    variantName: String(v.variant_name ?? "خيار"),
+    before, after,
+    actor: `staff:${who.name}`,
+  });
+
+  return { ok: true as const, after };
+}
+
+// Manual «اوت ستوك» for ONE option that is already at zero (supervisor button).
+export async function staffVariantOosTask(variantId: string): Promise<{ ok: true } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { error: "ما عندك صلاحية إدارة المهام." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  const { data: v } = await admin
+    .from("product_variants")
+    .select("id, parent_product_id, variant_name, stock_quantity")
+    .eq("id", String(variantId))
+    .maybeSingle();
+  if (!v || !v.parent_product_id) return { error: "الخيار غير موجود." };
+  if ((Number(v.stock_quantity) || 0) > 0) return { error: "الخيار لسا فيه مخزون." };
+
+  const r = await openVariantStockTask(
+    admin, String(v.parent_product_id),
+    { id: String(v.id), name: String(v.variant_name ?? "خيار") },
+    "oos", `مشرف: ${who.name}`,
+  );
+  if (r === "duplicate") return { error: "فيه مهمة مفتوحة لهذا الخيار من قبل." };
+  if (r === "skipped") return { error: "المنتج غير موجود أو غير معتمد." };
+  return { ok: true as const };
 }
 
 /* ── Staff Malak — an ISOLATED, read-only assistant (gated by "malak") ─────
@@ -654,6 +748,7 @@ export async function staffCreatePhotoTask(input: {
   base64: string; mediaType: string;
   assignedTo?: string | null;
   note?: string;
+  price?: string; // hands the employee the selling price, pre-filled in the Add form
 }): Promise<{ ok: true } | { error: string }> {
   const who = await currentStaff();
   if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
@@ -685,11 +780,15 @@ export async function staffCreatePhotoTask(input: {
   }
 
   const note = String(input.note || "").trim();
+  const priceRaw = String(input.price ?? "").trim();
+  const price = priceRaw === "" ? null : Number(priceRaw);
+  if (price != null && (Number.isNaN(price) || price < 0)) return { error: "السعر غير صحيح." };
   const row: Record<string, unknown> = {
     title: `📸 منتج جديد من صورة${note ? `: ${note.slice(0, 120)}` : ""}`.slice(0, 200),
     description: [
       `منتج جديد وصل — بواسطة مشرف: ${who.name}`,
       ...(note ? [note] : []),
+      ...(price != null ? [`السعر: ${price} ر.ق`] : []),
       "",
       "من صفحة الموظف: افتح المهمة واضغط «➕ أضِفه كمنتج جديد» —",
       "عدّل الصورة بالذكاء إذا تحتاج، راجع الاسم والوصف، حط السعر والمخزون، وأضِف.",
@@ -701,7 +800,7 @@ export async function staffCreatePhotoTask(input: {
     created_by: `مشرف: ${who.name}`,
     kind: "catalog",
     product_id: null,
-    payload: { action: "new_product", snapshot: { image_url: imageUrl }, changes: [] },
+    payload: { action: "new_product", snapshot: { image_url: imageUrl, ...(price != null ? { price } : {}) }, changes: [] },
   };
   let { error } = await admin.from("staff_tasks").insert(row);
   if (error && /kind|payload|product_id/i.test(error.message)) {

@@ -73,6 +73,7 @@ export async function logCatalogTask(opts: {
   changes?: CatalogFieldChange[];
   note?: string; // bulk summaries / extra context line
   actor?: string; // explicit attribution (staff/supervisor paths have no Supabase user)
+  extraPayload?: Record<string, unknown>; // e.g. variantId/variantName for option-scoped tasks
 }): Promise<void> {
   try {
     const admin = createAdminClient();
@@ -110,7 +111,7 @@ export async function logCatalogTask(opts: {
       created_by: actor || "system",
       kind: "catalog",
       product_id: opts.productId || null,
-      payload: { action: opts.action, snapshot: snap, changes: opts.changes ?? [] },
+      payload: { action: opts.action, snapshot: snap, changes: opts.changes ?? [], ...(opts.extraPayload ?? {}) },
     };
     let { error } = await admin.from("staff_tasks").insert(row);
     if (error && /kind|payload|product_id/i.test(error.message)) {

@@ -11,6 +11,8 @@ export interface CatalogTaskPayload {
   action?: string;
   snapshot?: Record<string, unknown>;
   changes?: { field: string; old: string; new: string }[];
+  variantId?: string;   // option-scoped task (one variant only)
+  variantName?: string;
 }
 
 const FIELD_AR: Record<string, string> = {
@@ -82,6 +84,9 @@ export default function CatalogTaskDetails({ payload, productId, manager = false
         )}
         <div className="min-w-0 flex-1 space-y-1">
           <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${action.cls}`}>{action.icon} {action.label}</span>
+          {payload.variantName ? (
+            <span className="ms-1 inline-block rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-700">🎚️ الخيار: {payload.variantName} فقط</span>
+          ) : null}
           {disc != null && price != null && disc < price ? (
             <p className="text-sm"><b className="text-emerald-700">{disc} ر.ق</b> <s className="text-xs text-muted">{price} ر.ق</s></p>
           ) : price != null || disc != null ? (

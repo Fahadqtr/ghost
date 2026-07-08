@@ -5,7 +5,8 @@ import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
   staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
   staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct, staffOpenStockTask, staffDraftFromImageUrl,
-  type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct, type StaffTaskRow,
+  staffMoveVariant, staffVariantOosTask,
+  type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct, type StaffTaskRow, type StaffVariant,
 } from "./actions";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
 import TaskThread from "@/components/TaskThread";
@@ -163,10 +164,10 @@ function Desk({ name, perms, initialToday, onLogout, locale }: {
   // Permission tabs + the always-on Guide tab at the end.
   const tabs = [...TABS.filter((t) => perms.includes(t.perm)), GUIDE_TAB];
   const [tab, setTab] = useState<TabKey>(tabs[0]?.key ?? "guide");
-  // A supervisor photo-task hands its image to the Add-product tab.
-  const [productSeed, setProductSeed] = useState<{ imageUrl: string; taskId: string } | null>(null);
+  // A supervisor photo-task hands its image (+ price) to the Add-product tab.
+  const [productSeed, setProductSeed] = useState<{ imageUrl: string; taskId: string; price?: string } | null>(null);
   const startProductFromTask = perms.includes("add_product")
-    ? (imageUrl: string, taskId: string) => { setProductSeed({ imageUrl, taskId }); setTab("add_product"); }
+    ? (imageUrl: string, taskId: string, price?: string) => { setProductSeed({ imageUrl, taskId, price }); setTab("add_product"); }
     : undefined;
 
   const logout = () => start(async () => { await staffLogout(); onLogout(); });
@@ -314,7 +315,8 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const [canMove, setCanMove] = useState(false); // stock permission: in/out from here
   const [canOos, setCanOos] = useState(false);   // manage_tasks: one-tap oos task on sold-out cards
   const [oosOpened, setOosOpened] = useState<Set<string>>(new Set());
-  const [moveFor, setMoveFor] = useState<{ productId: string; item: StaffItem } | null>(null);
+  const [moveFor, setMoveFor] = useState<{ productId: string; item: StaffItem; variantId?: string } | null>(null);
+  const [vOosDone, setVOosDone] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, start] = useTransition();
   const [page, setPage] = useState(1);
@@ -351,14 +353,64 @@ function ProductsTab({ locale }: { locale: Locale }) {
   // Record the movement, patch the list's stock in place, close the panel.
   const doMove = (dir: "in" | "out", qty: number, reason: string) => start(async () => {
     if (!moveFor) return;
-    const { productId, item } = moveFor;
+    const { productId, item, variantId } = moveFor;
+    const verb = dir === "in" ? L("أُدخل", "In") : L("أُخرج", "Out");
+    if (variantId) {
+      const r = await staffMoveVariant(variantId, dir, qty, reason);
+      if ("error" in r) { flash(false, r.error); return; }
+      setAll((list) => list.map((p) => (p.id === productId
+        ? { ...p, variants: (p.variants ?? []).map((v) => (v.id === variantId ? { ...v, stock: r.after } : v)) }
+        : p)));
+      flash(true, `${verb} ${qty} · ${item.name} → ${L("مخزون الخيار", "option stock")} ${r.after}`);
+      setMoveFor(null);
+      return;
+    }
     const r = await recordStaffMovement({ inventoryId: item.inventoryId, sku: item.sku, type: dir, quantity: qty, reason });
     if ("error" in r) { flash(false, r.error); return; }
     setAll((list) => list.map((p) => (p.id === productId ? { ...p, stock: r.after } : p)));
-    const verb = dir === "in" ? L("أُدخل", "In") : L("أُخرج", "Out");
     flash(true, `${verb} ${qty} · ${item.sku ?? item.name} → ${L("المخزون", "stock")} ${r.after}`);
     setMoveFor(null);
   });
+
+  // Movement panel for ONE option row (no inventory row involved).
+  const startMoveVariant = (p: StaffProduct, v: StaffVariant) => {
+    if (!v.id) return;
+    setDetail(null);
+    setMoveFor({
+      productId: p.id, variantId: v.id,
+      item: {
+        inventoryId: "", sku: v.barcode, name: `${p.name ?? p.sku ?? ""} — ${v.name ?? L("خيار", "option")}`,
+        name_ar: null, barcode: v.barcode, image: p.image, stock: v.stock ?? 0,
+      },
+    });
+  };
+
+  // One tap: the option is at zero → open its «علّمه غير متوفر» task.
+  const openVariantOos = (v: StaffVariant) => start(async () => {
+    if (!v.id) return;
+    const r = await staffVariantOosTask(v.id);
+    if ("error" in r) { flash(false, r.error); return; }
+    setVOosDone((s) => new Set(s).add(v.id!));
+    flash(true, L(`انفتحت مهمة أوت ستوك للخيار «${v.name ?? ""}».`, `Out-of-stock task opened for option "${v.name ?? ""}".`));
+  });
+
+  // Shared little action buttons for a variant row (card + detail sheet).
+  const variantButtons = (p: StaffProduct, v: StaffVariant) => (!v.id ? null : (
+    <span className="flex shrink-0 gap-1">
+      {canOos && (v.stock ?? 0) <= 0 && v.stock != null ? (
+        vOosDone.has(v.id) ? (
+          <span className="rounded-sm bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">✓</span>
+        ) : (
+          <button disabled={busy} onClick={() => openVariantOos(v)} title={L("اوت ستوك للخيار", "Option out of stock")}
+            className="rounded-sm bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white disabled:opacity-50">🚫</button>
+        )
+      ) : null}
+      {canMove ? (
+        <button disabled={busy} onClick={() => startMoveVariant(p, v)} title={L("حركة مخزون للخيار", "Option stock move")}
+          className="rounded-sm border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 disabled:opacity-50">📦</button>
+      ) : null}
+    </span>
+  ));
 
   // Patch the local list after a supervisor edit (no full reload of 1200+ rows).
   const applyPatch = (id: string, patch: StaffProductPatchUI) => {
@@ -486,6 +538,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
                       <span className="min-w-0 flex-1 truncate text-slate-700">{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
                       {v.barcode ? <span className="font-mono text-[11px] text-slate-500">{v.barcode}</span> : null}
                       <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{v.stock != null ? v.stock : "—"}</span>
+                      {variantButtons(p, v)}
                     </div>
                   ))}
                 </div>
@@ -553,6 +606,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
                         <span className="min-w-0 flex-1 truncate text-slate-700">{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
                         {v.barcode ? <span className="font-mono text-[11px] text-slate-500">{v.barcode}</span> : null}
                         <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{v.stock != null ? v.stock : "—"}</span>
+                        {variantButtons(detail, v)}
                       </div>
                     ))}
                   </div>
@@ -584,14 +638,14 @@ function ProductsTab({ locale }: { locale: Locale }) {
 /* ── Add-product tab (photo → AI draft → submit → copy fields) ───────────
    `seed` = a supervisor's photo-task: starts at the form with that image and
    drafts the fields from it; a successful add auto-closes the task. */
-function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: { imageUrl: string; taskId: string } | null }) {
+function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: { imageUrl: string; taskId: string; price?: string } | null }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const [phase, setPhase] = useState<"upload" | "form" | "done">(seed ? "form" : "upload");
   const [preview, setPreview] = useState<string>(seed?.imageUrl ?? "");
   const [imageUrl, setImageUrl] = useState<string>(seed?.imageUrl ?? "");
   const [draft, setDraft] = useState<ProductDraft>({ name_en: "", name_ar: "", description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", main_category: "" });
-  const [price, setPrice] = useState("");
+  const [price, setPrice] = useState(seed?.price ?? ""); // the supervisor's price arrives pre-filled
   const [stock, setStock] = useState("0");
   const [created, setCreated] = useState<CreatedProduct | null>(null);
   const [err, setErr] = useState("");
@@ -825,7 +879,7 @@ function SupervisorViewToggle({ view, setView, locale }: { view: "mine" | "all";
 /* ── Tasks tab (my assigned tasks; supervisors get an all-tasks view too) ── */
 function TasksTab({ locale, supervisor = false, onStartProduct }: {
   locale: Locale; supervisor?: boolean;
-  onStartProduct?: (imageUrl: string, taskId: string) => void; // photo-task → Add tab
+  onStartProduct?: (imageUrl: string, taskId: string, price?: string) => void; // photo-task → Add tab
 }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
@@ -911,7 +965,10 @@ function TasksTab({ locale, supervisor = false, onStartProduct }: {
                 <p className="mt-0.5 whitespace-pre-line text-xs text-muted">{t.description}</p>
               ) : null}
               {onStartProduct && t.payload?.action === "new_product" && String(t.payload?.snapshot?.image_url ?? "") ? (
-                <button onClick={() => onStartProduct(String(t.payload!.snapshot!.image_url), t.id)}
+                <button onClick={() => onStartProduct(
+                  String(t.payload!.snapshot!.image_url), t.id,
+                  Number(t.payload?.snapshot?.price) > 0 ? String(t.payload!.snapshot!.price) : undefined,
+                )}
                   className="mt-2 w-full rounded-lg bg-violet-600 py-2.5 text-sm font-bold text-white">
                   ➕ {L("أضِفه كمنتج جديد (بالصورة)", "Add it as a new product (with the photo)")}
                 </button>
