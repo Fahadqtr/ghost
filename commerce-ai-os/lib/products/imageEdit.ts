@@ -33,12 +33,16 @@ export async function editProductImageCore(
 
   const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
   // raw mode (full ad): the caller's prompt is complete — it WANTS text. Default
-  // mode wraps the instruction and forbids any added text/logo/price.
+  // mode wraps the instruction: the PRODUCT must survive untouched (models love
+  // to repaint labels into gibberish), only the scene around it changes — styled
+  // like a premium global-brand product ad.
   const fullPrompt = opts?.raw
     ? instruction
     : `Edit this product photo as instructed: ${instruction}. ` +
-      `Keep it a realistic product photo of the SAME product (same shape, label and colors). ` +
-      `Do NOT add any text, letters, watermark, logo or price. Clean, professional, well-lit result.`;
+      `CRITICAL: keep the product itself EXACTLY as in the input photo — identical shape, colors, materials and above all the label: ` +
+      `do NOT redraw, retype, distort or invent any text, lettering or logos on the product. Change only the background, surface and lighting around it. ` +
+      `Style it like a premium international beauty-brand advertisement: clean studio backdrop, soft natural shadow and gentle reflection, elegant complementary tones. ` +
+      `Do NOT add any new text, watermark or price anywhere. Photorealistic, high-end commercial photography.`;
 
   let bytes: Buffer;
   try {
@@ -51,6 +55,10 @@ export async function editProductImageCore(
     // gpt-image-* default to strict ("auto") moderation, which false-positives
     // on ordinary product/beauty photos. "low" relaxes it (still filtered).
     if (model.startsWith("gpt-image")) form.append("moderation", "low");
+    // High input fidelity preserves the source product faithfully (label
+    // typography, logos, fine detail) instead of repainting it from scratch —
+    // the fix for garbled label text on edited product photos.
+    if (model.startsWith("gpt-image")) form.append("input_fidelity", "high");
     form.append("image", new Blob([new Uint8Array(buf)], { type: ct }), `src.${ct.includes("png") ? "png" : "jpg"}`);
     const r = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form,
