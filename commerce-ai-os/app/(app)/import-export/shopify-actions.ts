@@ -7,6 +7,7 @@ import { shopifyConfigured, fetchAllShopifyProducts, updateVariantPrice, updateS
 import { safeImageUrlOrNull, safeFetchImage } from "@/lib/net/safeImage";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runShopifyInventorySync, type InventorySyncResult } from "@/lib/shopify/inventory-sync";
+import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { diffShopify, targetShopifyPrice, indexShopify, normTitle, htmlFromPlain, mapShopifyToCatalogRow, type ShopifyDiff, type OurProductRow } from "@/lib/shopify-diff";
 
 export type { ShopifyDiff } from "@/lib/shopify-diff";
@@ -268,6 +269,9 @@ export async function importShopifyProducts(shopifyIds: string[]): Promise<BulkM
       // Seed the stock from the store's current quantity (best-effort).
       const qty = Math.max(0, Number(p.variants[0]?.inventoryQuantity ?? 0) || 0);
       try { await sb.from("inventory").insert({ product_id: ins.id, stock_quantity: qty }); } catch { /* optional */ }
+    }
+    if (created > 0) {
+      await logCatalogTask({ action: "bulk", note: `انستورد ${created} منتج من شوبي فاي للكتالوج — راجعها وحدّث المنصات اليدوية بالجديد منها.` });
     }
     revalidatePath("/import-export/shopify-sync");
     return { ok: true, created, skipped, failed };

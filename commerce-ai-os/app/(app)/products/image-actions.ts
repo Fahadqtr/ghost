@@ -1,5 +1,6 @@
 "use server";
 
+import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
@@ -39,7 +40,7 @@ export async function uploadProductImage(formData: FormData) {
   catch (e) { return { error: e instanceof Error ? e.message : "Service role unavailable." }; }
 
   const { data: prod, error: pErr } = await admin
-    .from("products").select("sku").eq("id", productId).single();
+    .from("products").select("sku, name_en, name_ar").eq("id", productId).single();
   if (pErr || !prod) return { error: "Product not found." };
 
   const sku = String(prod.sku || "img").replace(/[^a-zA-Z0-9_-]/g, "") || "img";
@@ -66,6 +67,12 @@ export async function uploadProductImage(formData: FormData) {
       product_id: productId, url, filename, is_primary: true, sort_order: 0,
     });
     await admin.from("products").update({ image_url: url, image_filename: filename }).eq("id", productId);
+
+    await logCatalogTask({
+      action: "image", productId,
+      snapshot: { name_en: prod.name_en, name_ar: prod.name_ar, sku: prod.sku, image_url: url },
+      note: "انرفعت صورة جديدة وصارت الأساسية.",
+    });
 
     revalidate(productId);
     return { ok: true, url };
@@ -125,7 +132,7 @@ export async function removeProductImage(productId: string, url: string) {
   try {
     await admin.from("product_images").delete().eq("product_id", productId).eq("url", url);
 
-    const { data: prod } = await admin.from("products").select("image_url").eq("id", productId).single();
+    const { data: prod } = await admin.from("products").select("image_url, name_en, name_ar, sku").eq("id", productId).single();
     if (prod && prod.image_url === url) {
       const { data: rest } = await admin
         .from("product_images").select("url")
@@ -136,6 +143,11 @@ export async function removeProductImage(productId: string, url: string) {
       const next = rest && rest[0] ? rest[0].url : null;
       await admin.from("products").update({ image_url: next }).eq("id", productId);
       if (next) await admin.from("product_images").update({ is_primary: true }).eq("product_id", productId).eq("url", next);
+      await logCatalogTask({
+        action: "image", productId,
+        snapshot: { name_en: prod.name_en, name_ar: prod.name_ar, sku: prod.sku, image_url: next ?? "" },
+        note: next ? "انحذفت الصورة الأساسية وحلّت محلها التالية." : "انحذفت صورة المنتج — صار بدون صورة.",
+      });
     }
 
     revalidate(productId);
