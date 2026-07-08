@@ -5,8 +5,9 @@ import {
   staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
   staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
   staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct, staffOpenStockTask, staffDraftFromImageUrl,
-  staffMoveVariant, staffVariantOosTask,
+  staffMoveVariant, staffVariantOosTask, staffForwardTask,
   type StaffItem, type StaffLogRow, type StaffProduct, type StaffChatMsg, type ProductDraft, type CreatedProduct, type StaffTaskRow, type StaffVariant,
+  type StaffMemberLite,
 } from "./actions";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
 import TaskThread from "@/components/TaskThread";
@@ -974,6 +975,8 @@ function TasksTab({ locale, supervisor = false, onStartProduct }: {
   const L = (ar: string, e: string) => (en ? e : ar);
   const [view, setView] = useState<"mine" | "all">(supervisor ? "all" : "mine");
   const [tasks, setTasks] = useState<StaffTaskRow[]>([]);
+  const [members, setMembers] = useState<StaffMemberLite[]>([]);
+  const [meId, setMeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [busy, start] = useTransition();
@@ -981,7 +984,14 @@ function TasksTab({ locale, supervisor = false, onStartProduct }: {
   const reload = () => start(async () => {
     const r = await staffMyTasks();
     if (r.error) setErr(r.error);
-    setTasks(r.tasks); setLoading(false);
+    setTasks(r.tasks); setMembers(r.members); setMeId(r.meId); setLoading(false);
+  });
+
+  // Forward MY task to a colleague, or return it (empty) to the supervisor.
+  const forward = (t: StaffTaskRow, toId: string) => start(async () => {
+    const r = await staffForwardTask(t.id, toId === "__back" ? null : toId);
+    if ("error" in r) { setErr(r.error); return; }
+    setTasks((ts) => ts.filter((x) => x.id !== t.id)); // it's not mine anymore
   });
   useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1078,6 +1088,16 @@ function TasksTab({ locale, supervisor = false, onStartProduct }: {
                 ) : null}
                 <button disabled={busy} onClick={() => setStatus(t.id, "done")} className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-bold text-white disabled:opacity-50">{L("✓ تم", "✓ Done")}</button>
               </div>
+              {t.assignedTo && t.assignedTo === meId ? (
+                <select value="" disabled={busy} onChange={(e) => { if (e.target.value) forward(t, e.target.value); }}
+                  className="input mt-1.5 w-full py-1.5 text-xs text-muted">
+                  <option value="">{L("↪️ حوّلها أو رجّعها…", "↪️ Forward or return…")}</option>
+                  <option value="__back">{L("↩️ رجّعها للمشرف", "↩️ Return to the supervisor")}</option>
+                  {members.filter((m) => m.id !== meId).map((m) => (
+                    <option key={m.id} value={m.id}>{L(`حوّلها إلى ${m.name}`, `Forward to ${m.name}`)}</option>
+                  ))}
+                </select>
+              ) : null}
               <TaskThread taskId={t.id} locale={locale} load={staffTaskComments} add={staffAddTaskComment} />
             </div>
           );
