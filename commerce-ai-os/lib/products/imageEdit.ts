@@ -39,8 +39,10 @@ export async function editProductImageCore(
   const fullPrompt = opts?.raw
     ? instruction
     : `Edit this product photo as instructed: ${instruction}. ` +
-      `CRITICAL: keep the product itself EXACTLY as in the input photo — identical shape, colors, materials and above all the label: ` +
-      `do NOT redraw, retype, distort or invent any text, lettering or logos on the product. Change only the background, surface and lighting around it. ` +
+      `CRITICAL: keep the product itself EXACTLY as in the input photo — identical shape, size, position, colors, materials and above all the packaging text: ` +
+      `every word, line and letter of the label (including SMALL fine print) must be copied from the source pixels character-for-character — never retype, approximate, blur or invent lettering. ` +
+      `If any small text cannot be reproduced perfectly, keep the original pixels of that area untouched. ` +
+      `Change ONLY the background, surface and lighting around the product. ` +
       `Style it like a premium international beauty-brand advertisement: clean studio backdrop, soft natural shadow and gentle reflection, elegant complementary tones. ` +
       `Do NOT add any new text, watermark or price anywhere. Photorealistic, high-end commercial photography.`;
 
@@ -51,7 +53,9 @@ export async function editProductImageCore(
     form.append("prompt", fullPrompt);
     form.append("size", "1024x1024");
     form.append("n", "1");
-    if (opts?.quality && model.startsWith("gpt-image")) form.append("quality", opts.quality);
+    // Default to the top quality tier: fine label print survives at "high"
+    // where "auto"/medium rewrites it into gibberish. Env-overridable.
+    if (model.startsWith("gpt-image")) form.append("quality", opts?.quality || process.env.OPENAI_IMAGE_QUALITY || "high");
     // gpt-image-* default to strict ("auto") moderation, which false-positives
     // on ordinary product/beauty photos. "low" relaxes it (still filtered).
     if (model.startsWith("gpt-image")) form.append("moderation", "low");
