@@ -1,7 +1,12 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { revalidatePath } from "next/cache";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { verdictForTask, type VerifyTaskLite } from "@/lib/tasks/verify-compute";
+import { insertComment } from "@/lib/tasks/commentStore";
+import { detectTalabatColumns, baseSku } from "@/lib/talabat-diff";
 import { diffTalabat, talabatEmailText, imageFileFor, type TalabatDiff, type TalabatOurRow } from "@/lib/talabat-diff";
 import { buildTalabatRows, TALABAT_HEADERS } from "@/lib/malak/talabat-export.mjs";
 
@@ -138,5 +143,124 @@ export async function buildTalabatPackage(productIds: string[]): Promise<Talabat
     };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Package failed.", ...empty };
+  }
+}
+
+// ---- Verify staff entries against the platform's export --------------------------
+// The platform file is the ground truth: every catalog-change task is checked
+// against it. A done-task whose entry is missing/wrong REOPENS with an ❌
+// comment naming the problem; matching entries get a ✅ comment (and an open
+// task whose entry already landed is auto-closed — the work is proven done).
+
+export interface VerifySummary {
+  ok: boolean;
+  error?: string;
+  checked: number;
+  confirmed: number;
+  reopened: number;
+  autoClosed: number;
+  flagged: { title: string; detail: string }[];
+}
+
+const V_EMPTY = { checked: 0, confirmed: 0, reopened: 0, autoClosed: 0, flagged: [] as { title: string; detail: string }[] };
+
+export async function verifyCatalogEntries(rows: Record<string, unknown>[]): Promise<VerifySummary> {
+  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...V_EMPTY };
+  if (!rows?.length) return { ok: false, error: "الملف فاضي.", ...V_EMPTY };
+
+  try {
+    const admin = createAdminClient();
+    const key = (v: unknown) => String(v ?? "").toLowerCase().normalize("NFKC").replace(/[’']/g, "").replace(/["،,.\-–—]/g, " ").replace(/\s+/g, " ").trim();
+
+    // Index THEIR file: skus (exact + split-base), names, and prices.
+    const cols = detectTalabatColumns(Object.keys(rows[0] ?? {}));
+    if (!cols.sku && !cols.nameEn && !cols.nameAr) return { ok: false, error: "ما تعرّفت على أعمدة الملف.", ...V_EMPTY };
+    const skus = new Set<string>();
+    const bases = new Set<string>();
+    const names = new Set<string>();
+    const priceBySku = new Map<string, number>();
+    const priceByName = new Map<string, number>();
+    for (const r of rows.slice(0, 20000)) {
+      const sk = key(cols.sku ? r[cols.sku] : "");
+      const nm = key(cols.nameEn ? r[cols.nameEn] : "") || key(cols.nameAr ? r[cols.nameAr] : "");
+      const pr = cols.price ? Number(r[cols.price]) : NaN;
+      if (sk) { skus.add(sk); bases.add(baseSku(cols.sku ? r[cols.sku] : "")); if (Number.isFinite(pr) && pr > 0) priceBySku.set(sk, pr); }
+      if (nm) { names.add(nm); if (Number.isFinite(pr) && pr > 0 && !priceByName.has(nm)) priceByName.set(nm, pr); }
+    }
+    const idx = {
+      hasSku: (v: string) => skus.has(key(v)) || bases.has(baseSku(v)) || skus.has(baseSku(v)),
+      hasName: (v: string) => names.has(key(v)),
+      priceFor: (sk: string, nm: string) => priceBySku.get(key(sk)) ?? priceByName.get(key(nm)) ?? null,
+    };
+
+    // Catalog-change tasks from the last 45 days.
+    const sinceIso = new Date(Date.now() - 45 * 24 * 3600_000).toISOString();
+    const { data: tData, error: tErr } = await admin
+      .from("staff_tasks")
+      .select("id, title, status, product_id, payload, assigned_name")
+      .eq("kind", "catalog")
+      .gte("created_at", sinceIso)
+      .in("status", ["open", "in_progress", "done"])
+      .limit(400);
+    if (tErr) {
+      if (/kind|payload/i.test(tErr.message)) return { ok: false, error: "شغّل supabase/catalog_change_tasks.sql أولًا.", ...V_EMPTY };
+      return { ok: false, error: tErr.message, ...V_EMPTY };
+    }
+    type TRow = { id: string; title: string; status: string; product_id: string | null; payload: any; assigned_name: string | null };
+    const tasks = ((tData ?? []) as TRow[]).filter((t) => t.payload?.snapshot);
+    if (!tasks.length) return { ok: true, ...V_EMPTY };
+
+    // Current catalog values (the platform must match NOW, not change-time).
+    const ids = [...new Set(tasks.map((t) => t.product_id).filter(Boolean))] as string[];
+    const current = new Map<string, { sku: string | null; name_en: string | null; price: number | null }>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await admin.from("products").select("id, sku, name_en, price, discount_price").in("id", ids.slice(i, i + 200));
+      for (const r of (data ?? []) as any[]) {
+        const eff = Number(r.discount_price) > 0 ? Number(r.discount_price) : Number(r.price) > 0 ? Number(r.price) : null;
+        current.set(r.id, { sku: r.sku ?? null, name_en: r.name_en ?? null, price: eff });
+      }
+    }
+
+    let confirmed = 0, reopened = 0, autoClosed = 0, checked = 0;
+    const flagged: { title: string; detail: string }[] = [];
+    for (const t of tasks) {
+      const snap = t.payload.snapshot as Record<string, unknown>;
+      const cur = t.product_id ? current.get(t.product_id) : undefined;
+      const lite: VerifyTaskLite = {
+        id: t.id, status: t.status, action: String(t.payload.action ?? "update"),
+        sku: (cur?.sku ?? (snap.sku as string) ?? null) || null,
+        name_en: (cur?.name_en ?? (snap.name_en as string) ?? null) || null,
+        price: cur?.price ?? null,
+      };
+      const v = verdictForTask(lite, idx);
+      if (v.status === "skipped") continue;
+      checked++;
+
+      const comment = async (body: string) => {
+        try { await insertComment(admin, { taskId: t.id, role: "manager", author: "التحقق الآلي 🕵️", body }); } catch { /* best-effort */ }
+      };
+
+      if (v.status === "confirmed") {
+        confirmed++;
+        if (t.status !== "done") {
+          // Entry already landed on the platform — the work is proven done.
+          await admin.from("staff_tasks").update({ status: "done", completed_at: new Date().toISOString(), completed_by: "auto-verify" }).eq("id", t.id);
+          await comment(`✅ ${v.detail} — قفلت المهمة تلقائيًا.`);
+          autoClosed++;
+        }
+        continue;
+      }
+      if (v.reopen) {
+        await admin.from("staff_tasks").update({ status: "open", completed_at: null, completed_by: null }).eq("id", t.id);
+        await comment(`❌ ${v.detail}`);
+        reopened++;
+        flagged.push({ title: t.title, detail: v.detail });
+      }
+    }
+
+    revalidatePath("/tasks");
+    return { ok: true, checked, confirmed, reopened, autoClosed, flagged };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Verification failed.", ...V_EMPTY };
   }
 }

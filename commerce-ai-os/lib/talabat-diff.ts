@@ -25,6 +25,7 @@ export interface TalabatColumns {
   barcode?: string;
   nameEn?: string;
   nameAr?: string;
+  price?: string;
 }
 
 export interface TalabatDiff {
@@ -63,6 +64,7 @@ export function detectTalabatColumns(headers: string[]): TalabatColumns {
     else if (!out.barcode && /barcode|\bean\b|\bupc\b|\bgtin\b/.test(n)) out.barcode = h;
     else if (!out.nameAr && ((/name|title|product/.test(n) && /\bar\b|arabic|عرب/.test(n)) || /اسم|الاسم/.test(n))) out.nameAr = h;
     else if (!out.nameEn && ((/name|title/.test(n) && /\ben\b|english/.test(n)) || /^(product\s*)?(name|title)$/.test(n) || n === "product name")) out.nameEn = h;
+    else if (!out.price && (/\bprice\b/.test(n) || /سعر/.test(n)) && !/discount|compare|old|قبل|خصم/.test(n)) out.price = h;
   }
   return out;
 }
