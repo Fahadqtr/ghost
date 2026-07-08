@@ -272,7 +272,17 @@ export async function updateProduct(id: string, input: ProductInput) {
     productRow as Record<string, unknown>,
     ["name_en", "name_ar", "sku", "barcode", "price", "discount_price", "description_en", "description_ar", "main_category", "sub_category", "image_url"],
   );
-  if (changes.length) {
+  // Approving through the full form gets the same "add it to the platforms"
+  // task as the quick-approve buttons.
+  const becameApproved =
+    String((beforeRow as { approval?: string | null } | null)?.approval ?? "") !== "Approved" &&
+    productRow.approval === "Approved";
+  if (becameApproved) {
+    await logCatalogTask({
+      action: "create", productId: id, snapshot: productRow as Record<string, unknown>,
+      note: "✅ المنتج انعتمد — أضِفه في المنصات اليدوية بكل بياناته، وبعد الإضافة علّم المهمة «تم».",
+    });
+  } else if (changes.length) {
     await logCatalogTask({ action: "update", productId: id, snapshot: productRow as Record<string, unknown>, changes });
   }
 
@@ -292,14 +302,27 @@ export async function setProductApproval(id: string, approval: string, reason?: 
   const supabase = createClient();
   const patch: Record<string, unknown> = { approval: approval === "" ? null : approval };
   if (reason !== undefined) patch.rejection_reason = reason.trim() || null;
-  const { data: beforeRow } = await supabase.from("products").select("name_en, name_ar, sku, approval, image_url").eq("id", id).maybeSingle();
+  // Full row: an APPROVAL task must carry everything the employee copies into
+  // the manual platforms (names, prices, descriptions, category, photo).
+  const { data: beforeRow } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   const { error } = await supabase.from("products").update(patch).eq("id", id);
   if (error) return { error: error.message };
   if (String(beforeRow?.approval ?? "") !== String(approval)) {
-    await logCatalogTask({
-      action: "approval", productId: id, snapshot: (beforeRow ?? {}) as Record<string, unknown>,
-      changes: [{ field: "approval", old: String(beforeRow?.approval ?? "—"), new: approval || "—" }],
-    });
+    if (approval === "Approved") {
+      // Newly approved → the "add it to the platforms" task, full details.
+      // The employee enters it in طلبات/سنونو/رفيق then marks the task done;
+      // the platform-export verification confirms it later.
+      await logCatalogTask({
+        action: "create", productId: id,
+        snapshot: { ...(beforeRow ?? {}), approval: "Approved" } as Record<string, unknown>,
+        note: "✅ المنتج انعتمد — أضِفه في المنصات اليدوية بكل بياناته، وبعد الإضافة علّم المهمة «تم».",
+      });
+    } else {
+      await logCatalogTask({
+        action: "approval", productId: id, snapshot: (beforeRow ?? {}) as Record<string, unknown>,
+        changes: [{ field: "approval", old: String(beforeRow?.approval ?? "—"), new: approval || "—" }],
+      });
+    }
   }
   revalidatePath("/products");
   revalidatePath("/dashboard");
