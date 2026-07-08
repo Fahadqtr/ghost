@@ -651,10 +651,21 @@ export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: s
   if (!admin) return { tasks: [], error: NO_DB };
   await materializeRoutines(admin); // generate today's routine instances first
 
-  let query = admin.from("staff_tasks").select("id, title, description, priority, due_date, status, created_at, assigned_to");
-  // Tasks assigned to me, plus tasks for everyone (assigned_to null).
-  query = who.id ? query.or(`assigned_to.eq.${who.id},assigned_to.is.null`) : query.is("assigned_to", null);
-  const { data, error } = await query.order("created_at", { ascending: false }).limit(300);
+  // Tasks assigned to me, plus MANUAL tasks for everyone (assigned_to null).
+  // Unassigned CATALOG tasks are the manager's triage queue — staff see them
+  // only once assigned. Falls back to the legacy filter until the kind column
+  // exists (supabase/catalog_change_tasks.sql).
+  const baseSelect = "id, title, description, priority, due_date, status, created_at, assigned_to";
+  let query = admin.from("staff_tasks").select(baseSelect);
+  query = who.id
+    ? query.or(`assigned_to.eq.${who.id},and(assigned_to.is.null,kind.neq.catalog)`)
+    : query.or("and(assigned_to.is.null,kind.neq.catalog)");
+  let { data, error } = await query.order("created_at", { ascending: false }).limit(300);
+  if (error && /kind/i.test(error.message)) {
+    let legacy = admin.from("staff_tasks").select(baseSelect);
+    legacy = who.id ? legacy.or(`assigned_to.eq.${who.id},assigned_to.is.null`) : legacy.is("assigned_to", null);
+    ({ data, error } = await legacy.order("created_at", { ascending: false }).limit(300));
+  }
   if (error) {
     if ((error as any).code === "42P01" || /staff_tasks/.test(error.message)) return { tasks: [] };
     return { tasks: [], error: error.message };

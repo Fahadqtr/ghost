@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
@@ -182,6 +183,8 @@ export async function createProduct(input: ProductInput) {
     }
   }
 
+  await logCatalogTask({ action: "create", productId: product.id, snapshot: productRow as Record<string, unknown> });
+
   revalidatePath("/products");
   revalidatePath("/inventory");
   redirect("/products");
@@ -197,6 +200,13 @@ export async function updateProduct(id: string, input: ProductInput) {
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Invalid product data." };
   }
+
+  // Snapshot BEFORE the write so the auto-task can show old -> new.
+  const { data: beforeRow } = await supabase
+    .from("products")
+    .select("name_en, name_ar, sku, barcode, price, discount_price, description_en, description_ar, main_category, sub_category, image_url, approval")
+    .eq("id", id)
+    .maybeSingle();
 
   const { error } = await supabase
     .from("products")
@@ -239,6 +249,15 @@ export async function updateProduct(id: string, input: ProductInput) {
     if (vErr) return { error: friendlyWriteError(vErr, "Could not save variants.") };
   }
 
+  const changes = computeFieldChanges(
+    (beforeRow ?? {}) as Record<string, unknown>,
+    productRow as Record<string, unknown>,
+    ["name_en", "name_ar", "sku", "barcode", "price", "discount_price", "description_en", "description_ar", "main_category", "sub_category", "image_url"],
+  );
+  if (changes.length) {
+    await logCatalogTask({ action: "update", productId: id, snapshot: productRow as Record<string, unknown>, changes });
+  }
+
   revalidatePath("/products");
   revalidatePath(`/products/${id}`);
   revalidatePath("/inventory");
@@ -255,8 +274,15 @@ export async function setProductApproval(id: string, approval: string, reason?: 
   const supabase = createClient();
   const patch: Record<string, unknown> = { approval: approval === "" ? null : approval };
   if (reason !== undefined) patch.rejection_reason = reason.trim() || null;
+  const { data: beforeRow } = await supabase.from("products").select("name_en, name_ar, sku, approval, image_url").eq("id", id).maybeSingle();
   const { error } = await supabase.from("products").update(patch).eq("id", id);
   if (error) return { error: error.message };
+  if (String(beforeRow?.approval ?? "") !== String(approval)) {
+    await logCatalogTask({
+      action: "approval", productId: id, snapshot: (beforeRow ?? {}) as Record<string, unknown>,
+      changes: [{ field: "approval", old: String(beforeRow?.approval ?? "—"), new: approval || "—" }],
+    });
+  }
   revalidatePath("/products");
   revalidatePath("/dashboard");
   revalidatePath(`/products/${id}`);
@@ -281,6 +307,15 @@ export async function setProductsApproval(ids: string[], approval: string, reaso
     const { error, count } = await supabase
       .from("products").update(patch, { count: "exact" }).in("id", chunk);
     if (error) failed += chunk.length; else updated += count ?? chunk.length;
+  }
+  if (updated > 0) {
+    const { data: sample } = await supabase.from("products").select("name_en, sku").in("id", list.slice(0, 6));
+    const names = ((sample ?? []) as { name_en: string | null; sku: string | null }[])
+      .map((r) => `${r.name_en ?? ""}${r.sku ? ` (${r.sku})` : ""}`).join("، ");
+    await logCatalogTask({
+      action: "bulk",
+      note: `تغيير حالة ${updated} منتج إلى «${value ?? "بدون"}»${names ? ` — منها: ${names}${list.length > 6 ? "…" : ""}` : ""}`,
+    });
   }
   revalidatePath("/products");
   revalidatePath("/dashboard");
@@ -448,12 +483,16 @@ export async function describeProductFromImage(
 export async function deleteProduct(id: string) {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const supabase = createClient();
+  // Full snapshot BEFORE deleting — the auto-task carries it so the assignee
+  // can remove the product from the manual platforms too.
+  const { data: doomed } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).
   await supabase.from("product_variants").delete().eq("parent_product_id", id);
   await supabase.from("channel_products").delete().eq("product_id", id);
   await supabase.from("inventory").delete().eq("product_id", id);
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) return { error: error.message };
+  await logCatalogTask({ action: "delete", productId: id, snapshot: (doomed ?? {}) as Record<string, unknown> });
   revalidatePath("/products");
   revalidatePath("/inventory");
   redirect("/products");

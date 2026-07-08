@@ -748,7 +748,7 @@ function TasksTab({ locale }: { locale: Locale }) {
             <div key={t.id} className={`relative overflow-hidden rounded-xl border p-3 ps-4 ${od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
               <span className={`absolute inset-y-0 inset-s-0 w-1.5 ${bar(t.priority)}`} />
               <p className="text-sm font-semibold text-ink">{dot(t.priority)} {t.title}</p>
-              {t.description ? <p className="mt-0.5 text-xs text-muted">{t.description}</p> : null}
+              {t.description ? <p className="mt-0.5 whitespace-pre-line text-xs text-muted">{t.description}</p> : null}
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 {t.forEveryone ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">👥 {L("للكل", "Everyone")}</span> : null}
                 {t.dueDate ? <span className={`rounded-full px-2 py-0.5 text-[11px] ${od ? "bg-red-100 font-bold text-red-700" : "border border-slate-200 bg-white text-muted"}`}>⏰ {fmt(t.dueDate)}{od ? L(" · متأخّرة", " · overdue") : ""}</span> : null}
