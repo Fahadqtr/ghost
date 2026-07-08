@@ -1236,12 +1236,12 @@ export type SupervisorTask = StaffTaskRow & {
   completedBy: string | null;
 };
 
-export async function staffAllTasks(): Promise<{ tasks: SupervisorTask[]; members: StaffMemberLite[]; error?: string }> {
+export async function staffAllTasks(): Promise<{ tasks: SupervisorTask[]; members: StaffMemberLite[]; meId: string | null; error?: string }> {
   const who = await currentStaff();
-  if (!who) return { tasks: [], members: [], error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
-  if (!hasPerm(who.perms, "manage_tasks")) return { tasks: [], members: [], error: "ما عندك صلاحية إدارة المهام." };
+  if (!who) return { tasks: [], members: [], meId: null, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { tasks: [], members: [], meId: null, error: "ما عندك صلاحية إدارة المهام." };
   const admin = adminClient();
-  if (!admin) return { tasks: [], members: [], error: NO_DB };
+  if (!admin) return { tasks: [], members: [], meId: who.id, error: NO_DB };
   await materializeRoutines(admin); // today's routine instances first
 
   const baseSelect = "id, title, description, priority, due_date, status, created_at, assigned_to, assigned_name, created_by, completed_by, kind, payload";
@@ -1251,8 +1251,8 @@ export async function staffAllTasks(): Promise<{ tasks: SupervisorTask[]; member
     ({ data, error } = await admin.from("staff_tasks").select(legacySelect).order("created_at", { ascending: false }).limit(400));
   }
   if (error) {
-    if ((error as any).code === "42P01" || /staff_tasks/.test(error.message)) return { tasks: [], members: [] };
-    return { tasks: [], members: [], error: error.message };
+    if ((error as any).code === "42P01" || /staff_tasks/.test(error.message)) return { tasks: [], members: [], meId: who.id };
+    return { tasks: [], members: [], meId: who.id, error: error.message };
   }
 
   const { data: mem } = await admin.from("staff_members").select("id, name, active").order("name", { ascending: true });
@@ -1276,7 +1276,7 @@ export async function staffAllTasks(): Promise<{ tasks: SupervisorTask[]; member
     createdBy: r.created_by ?? null,
     completedBy: r.completed_by ?? null,
   }));
-  return { tasks, members };
+  return { tasks, members, meId: who.id };
 }
 
 export async function staffCreateTask(input: {
@@ -1479,8 +1479,9 @@ export async function staffFindForRestock(query: string): Promise<{ items: Resto
   }) };
 }
 
-// Supervisor status flip on ANY task (the plain staffSetTaskStatus only allows
-// the assignee). Reopen included.
+// Supervisor status action: REOPEN is supervision (allowed on any task), but
+// «جاري»/«تم» belong to the person the task is assigned to — the supervisor
+// can flip those only on tasks assigned to him (or "everyone" tasks).
 export async function staffSuperviseSetStatus(id: string, status: "open" | "in_progress" | "done"): Promise<{ ok: true } | { error: string }> {
   const who = await currentStaff();
   if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
@@ -1488,6 +1489,11 @@ export async function staffSuperviseSetStatus(id: string, status: "open" | "in_p
   if (!["open", "in_progress", "done"].includes(status)) return { error: "حالة غير صالحة." };
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
+  if (status !== "open") {
+    const { data: row } = await admin.from("staff_tasks").select("assigned_to").eq("id", String(id)).maybeSingle();
+    if (!row) return { error: "المهمة غير موجودة." };
+    if (row.assigned_to && row.assigned_to !== who.id) return { error: "«جاري» و«تم» للمكلّف بالمهمة فقط — حوّلها له وخله يحدثها." };
+  }
   const patch: Record<string, unknown> = { status };
   if (status === "done") { patch.completed_at = new Date().toISOString(); patch.completed_by = `مشرف: ${who.name}`; }
   else { patch.completed_at = null; patch.completed_by = null; }
