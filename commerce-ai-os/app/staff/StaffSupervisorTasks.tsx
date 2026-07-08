@@ -402,11 +402,17 @@ export default function StaffSupervisorTasks({ locale }: { locale: Locale }) {
               {t.createdBy ? <span className="text-slate-400">{t.createdBy}</span> : null}
             </div>
             <div className="mt-2.5 flex flex-wrap gap-2">
-              <select value={t.assignedTo ?? ""} onChange={(e) => assign(t, e.target.value)} disabled={busy}
-                className="input flex-1 py-1.5 text-xs">
-                <option value="">{L("حوّلها إلى… (الكل)", "Assign to… (everyone)")}</option>
-                {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
+              {/* Triage only: once the task is with another employee, HE forwards
+                  or returns it — the supervisor's select disappears. */}
+              {!t.assignedTo || t.assignedTo === meId ? (
+                <select value={t.assignedTo ?? ""} onChange={(e) => assign(t, e.target.value)} disabled={busy}
+                  className="input flex-1 py-1.5 text-xs">
+                  <option value="">{L("حوّلها إلى… (الكل)", "Assign to… (everyone)")}</option>
+                  {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              ) : (
+                <span className="flex-1 self-center text-[11px] text-muted">{L(`عند ${t.assignedName ?? "موظف"} — هو اللي يرجّعها أو يحوّلها.`, `With ${t.assignedName ?? "an employee"} — they forward or return it.`)}</span>
+              )}
               {/* «جاري»/«تم» are the assignee's buttons — the supervisor only
                   sees them on his own (or everyone) tasks; otherwise he assigns
                   and follows up. */}

@@ -1001,14 +1001,15 @@ export type StaffTaskRow = {
     images?: string[]; // photo-task extra shots
     options?: { name?: string; price?: string; stock?: string }[]; // photo-task options
   } | null;
+  assignedTo: string | null; // null = everyone (or supervisor triage for catalog)
 };
 
-export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: string }> {
+export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; members: StaffMemberLite[]; meId: string | null; error?: string }> {
   const who = await currentStaff();
-  if (!who) return { tasks: [], error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
-  if (!hasPerm(who.perms, "tasks")) return { tasks: [], error: "ما عندك صلاحية المهام." };
+  if (!who) return { tasks: [], members: [], meId: null, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "tasks")) return { tasks: [], members: [], meId: null, error: "ما عندك صلاحية المهام." };
   const admin = adminClient();
-  if (!admin) return { tasks: [], error: NO_DB };
+  if (!admin) return { tasks: [], members: [], meId: who.id, error: NO_DB };
   await materializeRoutines(admin); // generate today's routine instances first
 
   // Tasks assigned to me, plus MANUAL tasks for everyone (assigned_to null).
@@ -1028,8 +1029,8 @@ export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: s
     ({ data, error } = await legacy.order("created_at", { ascending: false }).limit(300));
   }
   if (error) {
-    if ((error as any).code === "42P01" || /staff_tasks/.test(error.message)) return { tasks: [] };
-    return { tasks: [], error: error.message };
+    if ((error as any).code === "42P01" || /staff_tasks/.test(error.message)) return { tasks: [], members: [], meId: who.id };
+    return { tasks: [], members: [], meId: who.id, error: error.message };
   }
   const tasks: StaffTaskRow[] = (data ?? []).map((r: any) => ({
     id: String(r.id),
@@ -1042,8 +1043,51 @@ export async function staffMyTasks(): Promise<{ tasks: StaffTaskRow[]; error?: s
     createdAt: r.created_at ?? null,
     kind: r.kind === "catalog" ? "catalog" : "manual",
     payload: r.payload ?? null,
+    assignedTo: r.assigned_to ?? null,
   }));
-  return { tasks };
+
+  // Active colleagues, for the forward/return control on my own tasks.
+  const { data: mem } = await admin.from("staff_members").select("id, name, active").order("name", { ascending: true });
+  const members: StaffMemberLite[] = ((mem ?? []) as any[])
+    .filter((m) => m.active !== false)
+    .map((m) => ({ id: String(m.id), name: String(m.name ?? "") }));
+
+  return { tasks, members, meId: who.id };
+}
+
+// The ASSIGNEE forwards his task to a colleague, or returns it (null) to the
+// supervisor's triage queue. Only the current assignee may do this.
+export async function staffForwardTask(taskId: string, toStaffId: string | null): Promise<{ ok: true } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "tasks")) return { error: "ما عندك صلاحية المهام." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  const { data: cur } = await admin.from("staff_tasks").select("assigned_to").eq("id", String(taskId)).maybeSingle();
+  if (!cur) return { error: "المهمة غير موجودة." };
+  if (!cur.assigned_to || cur.assigned_to !== who.id) return { error: "بس المكلّف بالمهمة يقدر يحوّلها أو يرجّعها." };
+
+  let toName: string | null = null;
+  if (toStaffId) {
+    const { data } = await admin.from("staff_members").select("name, active").eq("id", toStaffId).maybeSingle();
+    if (!data || data.active === false) return { error: "الموظف غير موجود." };
+    toName = String(data.name ?? "");
+  }
+
+  const { error } = await admin.from("staff_tasks")
+    .update({ assigned_to: toStaffId || null, assigned_name: toName })
+    .eq("id", String(taskId));
+  if (error) return { error: error.message };
+
+  // Leave the trace in the thread (best-effort).
+  try {
+    await insertComment(admin, {
+      taskId: String(taskId), role: "staff", author: `staff:${who.name}`,
+      body: toName ? `↪️ حوّلتها إلى ${toName}.` : "↩️ رجّعتها للمشرف.",
+    });
+  } catch { /* best-effort */ }
+  return { ok: true as const };
 }
 
 export async function staffSetTaskStatus(id: string, status: "open" | "in_progress" | "done") {
@@ -1322,6 +1366,15 @@ export async function staffAssignTask(taskId: string, staffId: string | null): P
   if (!hasPerm(who.perms, "manage_tasks")) return { error: "ما عندك صلاحية إدارة المهام." };
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
+
+  // The supervisor TRIAGES: he assigns unassigned tasks (or his own). Once a
+  // task is with an employee, that employee forwards/returns it himself
+  // (staffForwardTask) — only the owner on /tasks can override.
+  const { data: cur } = await admin.from("staff_tasks").select("assigned_to").eq("id", String(taskId)).maybeSingle();
+  if (!cur) return { error: "المهمة غير موجودة." };
+  if (cur.assigned_to && cur.assigned_to !== who.id) {
+    return { error: "المهمة محوّلة على موظف — هو اللي يرجّعها أو يحوّلها لغيره." };
+  }
 
   let assignedName: string | null = null;
   if (staffId) {
