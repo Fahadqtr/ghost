@@ -11,7 +11,7 @@ import { logCatalogTask } from "./catalog-log";
 const s = (v: unknown) => String(v ?? "").trim();
 
 /** TOTAL sellable stock of a product = its inventory rows + its variant rows. */
-async function totalStock(admin: any, productId: string): Promise<number> {
+export async function totalStock(admin: any, productId: string): Promise<number> {
   let total = 0;
   const { data: inv } = await admin.from("inventory").select("stock_quantity").eq("product_id", productId);
   for (const r of (inv ?? []) as { stock_quantity: number | null }[]) total += Number(r.stock_quantity) || 0;

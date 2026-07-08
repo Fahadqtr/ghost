@@ -16,7 +16,7 @@ import { buildDraftPrompt, parseProductDraft, EMPTY_DRAFT, type ProductDraft } f
 import { editProductImageCore } from "@/lib/products/imageEdit";
 import { storePrimaryProductImage } from "@/lib/products/imageStore";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
-import { openStockTask } from "@/lib/tasks/stock-tasks";
+import { openStockTask, totalStock } from "@/lib/tasks/stock-tasks";
 import { clean } from "@/lib/malak/talabat-export.mjs";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
@@ -1046,17 +1046,84 @@ export async function staffOutOfStock(): Promise<{ items: OosProduct[]; error?: 
   return { items: out };
 }
 
-// One-tap "open the mark-unavailable task" for a product from the OOS review.
-export async function staffOpenOosTask(productId: string): Promise<{ ok: true } | { error: string }> {
+// One-tap task from the supervisor reviews: "oos" (mark unavailable) or
+// "restock" (re-enable on the platforms). Restock requires the product to
+// actually have stock again.
+export async function staffOpenStockTask(productId: string, action: "oos" | "restock"): Promise<{ ok: true } | { error: string }> {
   const who = await currentStaff();
   if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
   if (!hasPerm(who.perms, "manage_tasks")) return { error: "ما عندك صلاحية إدارة المهام." };
+  if (action !== "oos" && action !== "restock") return { error: "نوع مهمة غير صالح." };
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
-  const r = await openStockTask(admin, String(productId), "oos", `مشرف: ${who.name}`);
-  if (r === "duplicate") return { error: "فيه مهمة أوت ستوك مفتوحة لهذا المنتج من قبل." };
+  if (action === "restock" && (await totalStock(admin, String(productId))) <= 0) {
+    return { error: "مخزون المنتج لسا صفر — سجّل الإدخال أولًا أو افتح مهمة «نفد المخزون»." };
+  }
+  const r = await openStockTask(admin, String(productId), action, `مشرف: ${who.name}`);
+  if (r === "duplicate") return { error: "فيه مهمة مفتوحة من نفس النوع لهذا المنتج." };
   if (r === "skipped") return { error: "المنتج غير موجود أو غير معتمد." };
   return { ok: true as const };
+}
+
+// Search the catalog for the manual "رجع المخزون" flow: matching products with
+// their total stock and whether an open restock task already exists.
+export type RestockCandidate = { id: string; sku: string | null; name: string | null; image: string | null; stock: number; hasOpenTask: boolean };
+
+export async function staffFindForRestock(query: string): Promise<{ items: RestockCandidate[]; error?: string }> {
+  const who = await currentStaff();
+  if (!who) return { items: [], error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "manage_tasks")) return { items: [], error: "ما عندك صلاحية إدارة المهام." };
+  const admin = adminClient();
+  if (!admin) return { items: [], error: NO_DB };
+  const q = String(query || "").trim();
+  if (!q) return { items: [] };
+
+  const cols = "id, sku, name_en, name_ar, barcode, image_url, approval, inventory(stock_quantity)";
+  let { data } = await admin.from("products").select(cols).eq("barcode", q).limit(10);
+  if (!data?.length) {
+    const like = `%${q.replace(/[%,()]/g, " ")}%`;
+    ({ data } = await admin
+      .from("products")
+      .select(cols)
+      .or(`sku.ilike.${like},name_en.ilike.${like},name_ar.ilike.${like},barcode.ilike.${like}`)
+      .limit(10));
+  }
+  const rows = ((data ?? []) as any[]).filter((p) => String(p.approval ?? "") === "Approved");
+  if (!rows.length) return { items: [] };
+
+  // Variant stock for just these products.
+  const varTotal = new Map<string, number>();
+  try {
+    const { data: vars } = await admin
+      .from("product_variants")
+      .select("parent_product_id, stock_quantity")
+      .in("parent_product_id", rows.map((p) => p.id));
+    for (const v of (vars ?? []) as any[]) {
+      varTotal.set(String(v.parent_product_id), (varTotal.get(String(v.parent_product_id)) ?? 0) + (Number(v.stock_quantity) || 0));
+    }
+  } catch { /* optional */ }
+
+  const { data: open } = await admin
+    .from("staff_tasks")
+    .select("product_id, payload")
+    .eq("kind", "catalog")
+    .neq("status", "done")
+    .in("product_id", rows.map((p) => p.id));
+  const withTask = new Set(
+    ((open ?? []) as any[]).filter((t) => t?.payload?.action === "restock").map((t) => String(t.product_id)),
+  );
+
+  return { items: rows.map((p) => {
+    const invSum = ((p.inventory ?? []) as { stock_quantity: number | null }[])
+      .reduce((s2, r) => s2 + (Number(r.stock_quantity) || 0), 0);
+    return {
+      id: String(p.id), sku: p.sku ?? null,
+      name: p.name_en ?? p.name_ar ?? null,
+      image: p.image_url ?? null,
+      stock: invSum + (varTotal.get(String(p.id)) ?? 0),
+      hasOpenTask: withTask.has(String(p.id)),
+    };
+  }) };
 }
 
 // Supervisor status flip on ANY task (the plain staffSetTaskStatus only allows
