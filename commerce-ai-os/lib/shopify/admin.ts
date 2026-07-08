@@ -169,6 +169,24 @@ export async function updateShopifyProductContent(
   return { ok: true };
 }
 
+/** Attach an image (public URL — Shopify fetches it) to an EXISTING product. */
+export async function addProductImage(productId: string, imageUrl: string): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await shopifyGraphQL<{
+    productCreateMedia: { mediaUserErrors: { message: string }[] };
+  }>(
+    `mutation($productId: ID!, $media: [CreateMediaInput!]!) {
+      productCreateMedia(productId: $productId, media: $media) {
+        mediaUserErrors { message }
+      }
+    }`,
+    { productId, media: [{ originalSource: imageUrl, mediaContentType: "IMAGE" }] },
+  );
+  if (error) return { ok: false, error };
+  const ue = data?.productCreateMedia?.mediaUserErrors ?? [];
+  if (ue.length) return { ok: false, error: ue.map((u) => u.message).join("; ").slice(0, 300) };
+  return { ok: true };
+}
+
 import type { ShopifyOrderLite } from "./orders-compute";
 
 interface OrdersQuery {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { computeShopifyDiff, applyShopifyPrices, applyShopifyContent, syncShopifyInventory, pushProductsToShopify, importShopifyProducts, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
+import { computeShopifyDiff, applyShopifyPrices, applyShopifyContent, syncShopifyInventory, pushProductsToShopify, importShopifyProducts, listShopifyMissingImages, pushShopifyImages, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
 
 // One-tap live reconcile against the Shopify store: pull products over the
 // Admin API, diff vs our catalog (source of truth), then push price fixes
@@ -19,6 +19,7 @@ export default function ShopifySync() {
   const [invMsg, setInvMsg] = useState("");
   const [pushMsg, setPushMsg] = useState("");
   const [importMsg, setImportMsg] = useState("");
+  const [imgMsg, setImgMsg] = useState("");
   const [busy, start] = useTransition();
 
   const run = () => {
@@ -106,6 +107,30 @@ export default function ShopifySync() {
     });
   };
 
+  // Store products without a picture get the matched catalog image — each
+  // source image is probed server-side first, so broken files never ship.
+  const pushImages = () => {
+    setImgMsg("…يبحث عن منتجات المتجر بدون صور");
+    start(async () => {
+      const l = await listShopifyMissingImages();
+      if (!l.ok) { setImgMsg(`❌ ${l.error}`); return; }
+      if (!l.storeMissing) { setImgMsg("✅ كل منتجات المتجر عندها صور"); return; }
+      if (!l.pairs.length) { setImgMsg(`⚠️ ${l.storeMissing} منتج بدون صورة في المتجر — وما عندنا صورة مطابقة لأي منها في الكتالوج`); return; }
+      let pushed = 0, skipped = 0, failed = 0, firstNote = "";
+      for (let i = 0; i < l.pairs.length; i += 10) {
+        const r = await pushShopifyImages(l.pairs.slice(i, i + 10));
+        if (!r.ok) { failed += Math.min(10, l.pairs.length - i); if (!firstNote) firstNote = r.error ?? ""; }
+        else {
+          pushed += r.pushed; skipped += r.skippedBroken.length; failed += r.failed.length;
+          if (!firstNote && r.skippedBroken.length) firstNote = `${r.skippedBroken[0].title}: ${r.skippedBroken[0].reason}`;
+          if (!firstNote && r.failed.length) firstNote = `${r.failed[0].title}: ${r.failed[0].error}`;
+        }
+        setImgMsg(`…يرفع الصور ${Math.min(i + 10, l.pairs.length)}/${l.pairs.length}`);
+      }
+      setImgMsg(`✅ انرفعت صور ${pushed} منتج${skipped ? ` · تخطى ${skipped} (صورة المصدر خربانة — أصلحها بالكتالوج أول)` : ""}${failed ? ` · فشل ${failed}` : ""}${firstNote ? ` — ${firstNote.slice(0, 120)}` : ""}`);
+    });
+  };
+
   const toggle = (id: string) =>
     setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
@@ -126,9 +151,13 @@ export default function ShopifySync() {
           <button type="button" className="btn-ghost text-sm disabled:opacity-50" onClick={syncInventory} disabled={busy}>
             ↕️ زامن المخزون الآن
           </button>
+          <button type="button" className="btn-ghost text-sm disabled:opacity-50" onClick={pushImages} disabled={busy}>
+            🖼️ ارفع الصور الناقصة
+          </button>
         </div>
         <p className="text-xs text-muted">مزامنة المخزون تصير تلقائيًا كل ليلة (3 فجرًا) — الزر للتزامن الفوري. طلبات المتجر الجديدة تُخصم من مخزون الكتالوج أولًا قبل الدفع.</p>
         {invMsg ? <p className="text-xs text-muted">{invMsg}</p> : null}
+        {imgMsg ? <p className="text-xs text-muted">{imgMsg}</p> : null}
         {error ? <pre className="whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</pre> : null}
       </div>
 
