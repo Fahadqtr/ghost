@@ -96,7 +96,7 @@ function RowApproval({ id, value, en }: { id: string; value: string | null; en: 
   );
 }
 
-export default function ProductTable({ products, locale = "ar", initialGroup = "" }: { products: ProductRow[]; locale?: Locale; initialGroup?: string }) {
+export default function ProductTable({ products, locale = "ar", initialGroup = "", simpleMode = false }: { products: ProductRow[]; locale?: Locale; initialGroup?: string; simpleMode?: boolean }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const router = useRouter();
@@ -144,7 +144,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
       const matchesStk = !stk
         || (stk === "out" ? !(n > 0)
           : stk === "low" ? (n > 0 && n < 10)
-          : stk === "in" ? n >= 10 : true);
+          : stk === "in" ? (simpleMode ? n > 0 : n >= 10) : true);
       const matchesPlat = !plat || (plat === "active" ? p.platform_status === "Active" : p.platform_status !== "Active");
       const rr = p.rejection_reason ?? "";
       const matchesGrp = !grp || (
@@ -156,7 +156,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         : true);
       return !removed.has(p.id) && matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
     });
-  }, [products, q, cat, appr, stk, plat, grp, removed]);
+  }, [products, q, cat, appr, stk, plat, grp, removed, simpleMode]);
 
   useEffect(() => { setPage(1); }, [q, cat, appr, stk, plat, grp]);
 
@@ -288,8 +288,8 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         <select className="input sm:max-w-48" value={stk} onChange={(e) => setStk(e.target.value)}>
           <option value="">{L("كل المخزون", "All stock")}</option>
           <option value="out">{L("نافد", "Out of stock")}</option>
-          <option value="low">{L("منخفض (1-9)", "Low (1-9)")}</option>
-          <option value="in">{L("متوفّر (10+)", "In stock (10+)")}</option>
+          {simpleMode ? null : <option value="low">{L("منخفض (1-9)", "Low (1-9)")}</option>}
+          <option value="in">{simpleMode ? L("متوفّر", "In stock") : L("متوفّر (10+)", "In stock (10+)")}</option>
         </select>
         <select className="input sm:max-w-48" value={plat} onChange={(e) => setPlat(e.target.value)}>
           <option value="">{L("مفعّل + غير مفعّل", "Active + inactive")}</option>
@@ -367,6 +367,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   </span>
                   {p.stock == null ? null
                     : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
+                    : simpleMode ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
                     : Number(p.stock) < 10 ? <span className="text-amber-700">{L("مخزون", "stock")} {p.stock}</span>
                     : <span className="text-slate-600">{L("مخزون", "stock")} {p.stock}</span>}
                 </div>
@@ -435,6 +436,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   <td className="px-3 py-3">
                     {p.stock == null ? <span className="text-slate-400">—</span>
                       : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
+                      : simpleMode ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
                       : Number(p.stock) < 10 ? <span className="text-amber-700">{p.stock}</span>
                       : <span className="text-slate-600">{p.stock}</span>}
                   </td>
