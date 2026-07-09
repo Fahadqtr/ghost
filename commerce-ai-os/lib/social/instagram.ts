@@ -80,12 +80,18 @@ export async function fetchIgMediaStats(mediaId: string): Promise<IgMediaStats> 
     const b = (await base.json()) as { like_count?: number; comments_count?: number; permalink?: string };
     const stats = { ...empty, likes: Number(b.like_count) || 0, comments: Number(b.comments_count) || 0 };
 
+    let gotInsights = false;
+    let lastInsightErr = "";
     for (const metrics of INSIGHT_METRIC_SETS) {
       const r = await fetch(
         `${GRAPH}/${mediaId}/insights?metric=${metrics}&access_token=${encodeURIComponent(token)}`,
         { cache: "no-store", signal: AbortSignal.timeout(15_000) },
       );
-      if (!r.ok) continue;
+      if (!r.ok) {
+        const j = await r.json().catch(() => null) as { error?: { message?: string } } | null;
+        lastInsightErr = j?.error?.message || `HTTP ${r.status}`;
+        continue;
+      }
       const j = (await r.json()) as { data?: { name?: string; values?: { value?: number }[] }[] };
       for (const m of j.data ?? []) {
         const v = Number(m.values?.[0]?.value) || 0;
@@ -94,8 +100,10 @@ export async function fetchIgMediaStats(mediaId: string): Promise<IgMediaStats> 
         else if (m.name === "saved") stats.saved = v;
         else if (m.name === "shares") stats.shares = v;
       }
+      gotInsights = true;
       break;
     }
+    if (!gotInsights && lastInsightErr) console.error("[ig-insights]", mediaId, lastInsightErr);
     return { ok: true, permalink: b.permalink, ...stats };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "فشل جلب الإحصائيات.", ...empty };
