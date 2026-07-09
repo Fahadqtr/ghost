@@ -1,14 +1,75 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
-import { publishStoryByUrl, scheduleStory, generateStoryForProduct, listProductsForStory, type StoryProduct } from "@/app/(app)/social/actions";
+import { publishStoryByUrl, scheduleStory, generateStoryCreative, saveStoryImage, listProductsForStory, type StoryProduct } from "@/app/(app)/social/actions";
+import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
+import { adFontCss } from "@/lib/social/ad-fonts";
+import StoryTemplate, { STORY_W, STORY_H, type StoryTemplateProps } from "@/app/(app)/social/StoryTemplate";
 import type { Locale } from "@/lib/i18n";
 
 const BUCKET = "product-images";
+const BRAND_TOP = "MALIKA'S";
+const BRAND_SUB = "UNIVERSE BEAUTY";
+const HANDLE = "@malikas_universe";
+
+// MU monogram, fetched once and inlined (the SVG raster can't load URLs).
+let logoCache: string | null = null;
+async function brandLogoDataUrl(): Promise<string> {
+  if (logoCache) return logoCache;
+  try { logoCache = await fetchAsDataUrl("/brand/logo.png"); } catch { logoCache = ""; }
+  return logoCache;
+}
+
+// Clean white/near-white catalog shot? Sample border pixels — near-white borders
+// multiply-melt into the scene; a busy/lifestyle photo gets a framed card.
+async function hasLightBackground(dataUrl: string): Promise<boolean> {
+  try {
+    const img = new Image();
+    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error("img")); img.src = dataUrl; });
+    const S = 48;
+    const cv = document.createElement("canvas");
+    cv.width = S; cv.height = S;
+    const cx = cv.getContext("2d");
+    if (!cx) return false;
+    cx.drawImage(img, 0, 0, S, S);
+    const d = cx.getImageData(0, 0, S, S).data;
+    let light = 0, total = 0;
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      if (x > 3 && x < S - 4 && y > 3 && y < S - 4) continue;
+      const i = (y * S + x) * 4;
+      total++;
+      if (Math.min(d[i], d[i + 1], d[i + 2]) > 225) light++;
+    }
+    return light / Math.max(1, total) > 0.82;
+  } catch { return false; }
+}
+
+// Render the story template off-screen (real fonts → crisp Arabic), rasterize
+// it, then clean up. Mirrors SocialClient's captureAd.
+async function captureStory(props: StoryTemplateProps): Promise<string> {
+  const fontCss = await adFontCss();
+  const host = document.createElement("div");
+  host.style.cssText = `position:fixed;left:-99999px;top:0;width:${STORY_W}px;height:${STORY_H}px;pointer-events:none;`;
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    flushSync(() => root.render(<StoryTemplate {...props} />));
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    const node = host.firstElementChild as HTMLElement | null;
+    if (!node) throw new Error("تعذّر تجهيز التصميم.");
+    return await nodeToJpeg(node, STORY_W, STORY_H, 0.92, fontCss);
+  } finally {
+    root.unmount();
+    host.remove();
+  }
+}
 
 // Publish an Instagram Story: upload/paste media, OR generate one with AI from a
-// product photo, then post now or schedule it for auto-publish.
+// product photo (wordless scene + real-font Arabic overlaid in the browser),
+// then post now or schedule it for auto-publish.
 export default function StoryPublisher({ configured, locale = "ar" }: { configured: boolean; locale?: Locale }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
@@ -55,12 +116,30 @@ export default function StoryPublisher({ configured, locale = "ar" }: { configur
 
   const generate = () => {
     if (!productId) { setMsg({ ok: false, text: L("اختر منتج أولًا.", "Pick a product first.") }); return; }
-    setMsg({ ok: true, text: L("🎨 يولّد ستوري بالذكاء… (٢٠–٤٠ ثانية)", "🎨 Generating a story with AI… (20–40s)") });
+    setMsg({ ok: true, text: L("🎨 يصمّم ستوري فخم بالذكاء… (٢٠–٤٠ ثانية)", "🎨 Designing a luxury story with AI… (20–40s)") });
     startGenerate(async () => {
-      const r = await generateStoryForProduct(productId);
-      if (r.error || !r.imageUrl) { setMsg({ ok: false, text: `❌ ${r.error ?? L("تعذّر التوليد", "Generation failed")}` }); return; }
-      setMediaUrl(r.imageUrl); setKind("image");
-      setMsg({ ok: true, text: L("✅ اتولّد الستوري — انشره الآن أو جدوله.", "✅ Story generated — post now or schedule it.") });
+      try {
+        const info = await generateStoryCreative(productId);
+        if (info.error || !info.copy) { setMsg({ ok: false, text: `❌ ${info.error ?? L("تعذّر التوليد", "Generation failed")}` }); return; }
+        // Wordless scene as the backdrop (contains the product). If it failed,
+        // the template frames the ORIGINAL product photo on its gradient.
+        const sceneDataUrl = info.sceneUrl ? await fetchAsDataUrl(info.sceneUrl).catch(() => "") : "";
+        const productDataUrl = sceneDataUrl ? "" : await fetchAsDataUrl(info.productUrl || "").catch(() => "");
+        const framed = productDataUrl ? !(await hasLightBackground(productDataUrl)) : false;
+        const logoDataUrl = await brandLogoDataUrl();
+        const dataUrl = await captureStory({
+          sceneDataUrl, productDataUrl, framed, logoDataUrl,
+          brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE,
+          headline: info.copy.headline, headlineEn: info.copy.headlineEn, subtitle: info.copy.subtitle,
+          price: info.price ?? "", options: info.options ?? [],
+        });
+        const saved = await saveStoryImage(dataUrl);
+        if (saved.error || !saved.imageUrl) { setMsg({ ok: false, text: `❌ ${saved.error ?? L("تعذّر الحفظ", "Save failed")}` }); return; }
+        setMediaUrl(saved.imageUrl); setKind("image");
+        setMsg({ ok: true, text: L("✅ اتصمّم الستوري — انشره الآن أو جدوله.", "✅ Story designed — post now or schedule it.") });
+      } catch (e) {
+        setMsg({ ok: false, text: `❌ ${e instanceof Error ? e.message : L("تعذّر التصميم", "Design failed")}` });
+      }
     });
   };
 
@@ -117,9 +196,10 @@ export default function StoryPublisher({ configured, locale = "ar" }: { configur
               </select>
               <button onClick={generate} disabled={busy || !productId}
                 className="btn-primary shrink-0 whitespace-nowrap px-3 text-xs disabled:opacity-50">
-                {generating ? L("يولّد…", "…") : `✨ ${L("ولّد", "Generate")}`}
+                {generating ? L("يصمّم…", "…") : `✨ ${L("ولّد", "Generate")}`}
               </button>
             </div>
+            <p className="mt-1 text-[11px] text-violet-700/80">{L("النص العربي يُكتب بخط حقيقي فوق الصورة — مضبوط دائمًا.", "Arabic is set in real fonts over the photo — always crisp.")}</p>
           </div>
 
           <div>
@@ -134,7 +214,7 @@ export default function StoryPublisher({ configured, locale = "ar" }: { configur
 
           {mediaUrl && kind === "image" ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={mediaUrl} alt="story preview" className="mx-auto max-h-64 rounded-lg" />
+            <img src={mediaUrl} alt="story preview" className="mx-auto max-h-80 rounded-lg" />
           ) : null}
 
           {msg ? <p className={`rounded-lg px-3 py-2 text-xs ${msg.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{msg.text}</p> : null}

@@ -1,50 +1,38 @@
-// Story-ad prompt core — pure, network-free.
+// Story scene brief — pure, network-free.
 //
-// Builds the single rich prompt handed to Gemini/gpt-image-1 to generate a
-// full VERTICAL 9:16 Instagram STORY from the uploaded beauty product: scene +
-// product + elegant Arabic headline + CTA, sized for the story canvas. Kept
-// pure so the prompt shape is unit-tested; the model call lives in the action.
+// The image model CANNOT render Arabic (it comes out as broken glyphs), so —
+// exactly like the feed ad — we ask it for a TEXT-FREE vertical 9:16 scene with
+// the product as the hero and an empty lower third, then the browser overlays
+// the real Arabic headline + price + CTA with embedded fonts (see StoryTemplate).
 
-export interface StoryAdInput {
+export interface StorySceneInput {
   nameAr?: string | null;
   nameEn?: string | null;
-  description?: string | null;
-  price?: string | null; // already formatted, e.g. "78 ر.ق" ("" → no badge)
 }
 
 const clip = (s: unknown, max: number): string =>
   String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
-/** The luxury vertical-story instruction (English directions, Arabic content). */
-export function buildStoryAdPrompt(input: StoryAdInput): string {
-  const nameAr = clip(input.nameAr, 120);
-  const nameEn = clip(input.nameEn, 120);
-  const desc = clip(input.description, 400);
-  const price = clip(input.price, 40);
-  const nameLine = [nameAr, nameEn].filter(Boolean).join(" / ") || "the uploaded product";
-
+/**
+ * Vertical story scene instruction. Product hero in the UPPER-MIDDLE, empty
+ * airy LOWER THIRD reserved for the (later, real-font) text. ABSOLUTELY NO
+ * text/letters/logos baked into the image — that is what the overlay is for.
+ */
+export function buildStorySceneBrief(input: StorySceneInput): string {
+  const name = [clip(input.nameAr, 120), clip(input.nameEn, 120)].filter(Boolean).join(" / ");
   return (
-    "Create an ultra-premium VERTICAL 9:16 (1080x1920) Instagram STORY using the uploaded beauty product.\n\n" +
-    "BRAND — render at the top in elegant type:\nMALIKA'S\nUNIVERSE BEAUTY\n\n" +
-    "STYLE: luxury, minimalist, editorial beauty campaign like Rhode, Dior Beauty, Chanel Beauty and Aesop. " +
-    "Warm beige, ivory, cream, champagne, soft brown and subtle gold palette.\n\n" +
-    "LAYOUT for a phone story: keep all text and the product SAFELY inside the central area — leave generous empty " +
-    "margins at the very top and very bottom so nothing is hidden behind the Instagram profile bar or the reply " +
-    "bar. Product as the hero in the middle, text stacked in the lower third.\n\n" +
-    "SCENE: an elegant travertine or soft-fabric setting, warm golden sunlight from one side, soft realistic " +
-    "shadows, a clean luxury spa atmosphere, high-end studio lighting, lots of negative space.\n\n" +
-    "PRODUCT: use ONLY the uploaded product; preserve its exact packaging, colours, logo and proportions; make it " +
-    "the hero; photorealistic and ultra-sharp.\n\n" +
-    `PRODUCT CONTEXT (write the Arabic copy about THIS): ${nameLine}.` + (desc ? ` Notes: ${desc}.` : "") + "\n\n" +
-    "TYPOGRAPHY — render in ELEGANT, CORRECT, MODERN ARABIC (fully shaped, no broken or mirrored letters):\n" +
-    "- a powerful large luxury Arabic marketing headline;\n" +
-    "- one short premium Arabic line about the product;\n" +
-    (price
-      ? `- a luxury rounded price badge showing the label «سعر خاص» above the price «${price}»;\n`
-      : "- (no price badge);\n") +
-    "- a luxury rounded dark CTA button with the exact Arabic text «اطلبيه الآن».\n\n" +
-    "RULES: ultra clean, premium, editorial, soft luxury colour grading, perfect spacing, photorealistic, 8K, no " +
-    "clutter, no watermark, and absolutely NO distorted Arabic text. It must look like it was designed by a luxury " +
-    "beauty advertising agency."
+    "Create an ultra-premium VERTICAL 9:16 (1080x1920) luxury beauty product photograph using the uploaded product" +
+    (name ? ` (the product is: ${name})` : "") + ".\n\n" +
+    "COMPOSITION: place the product as the hero in the UPPER-MIDDLE of a tall vertical frame; keep the ENTIRE " +
+    "LOWER THIRD calm, soft and almost empty (a clean surface, gentle shadow or soft fabric) — that empty space is " +
+    "reserved and must stay simple.\n\n" +
+    "STYLE: editorial luxury beauty campaign like Rhode, Dior Beauty, Chanel Beauty and Aesop. Warm beige, ivory, " +
+    "cream, champagne, soft brown and subtle gold palette, warm golden side light, soft realistic shadows, high-end " +
+    "studio look, light and airy (never dark).\n\n" +
+    "PRODUCT: use ONLY the uploaded product; preserve its exact packaging, colours, logo and proportions faithfully; " +
+    "photorealistic and ultra-sharp; do NOT redraw or relabel it.\n\n" +
+    "STRICT RULES: absolutely NO text, NO letters, NO words, NO numbers, NO logos, NO watermark and NO captions " +
+    "anywhere in the image — it must be a clean wordless photograph. No extra people, no clutter, ordered and " +
+    "minimal with generous negative space."
   );
 }
