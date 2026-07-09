@@ -67,19 +67,25 @@ export async function connectDmChannel(): Promise<{ ok: boolean; log: string[] }
   const log: string[] = [];
   const token = dmToken();
   if (!token) return { ok: false, log: ["❌ INSTAGRAM_ACCESS_TOKEN غير مضبوط في Vercel."] };
+  log.push(`🔧 مصدر التوكن: ${process.env.META_MESSAGING_TOKEN ? "META_MESSAGING_TOKEN" : "INSTAGRAM_ACCESS_TOKEN"} · ينتهي بـ …${token.slice(-4)}`);
   try {
     const me = await graphGet("/me?fields=id,name", token);
-    log.push(`🔑 التوكن باسم: ${me?.name ?? me?.id ?? "غير معروف"}`);
+    log.push(`🔑 التوكن باسم: ${me?.name ?? me?.id ?? "غير معروف"} (ID: ${me?.id ?? "؟"})`);
 
     // User tokens list their pages (with page tokens) via /me/accounts; a
     // page token can't, and is itself the page — fall back to /me.
     let pages: { id: string; name: string; token: string }[] = [];
+    let accountsNote = "";
     try {
       const acc = await graphGet("/me/accounts?fields=id,name,access_token&limit=10", token);
       pages = ((acc?.data ?? []) as any[]).map((p) => ({
         id: String(p.id), name: String(p.name ?? p.id), token: String(p.access_token || token),
       }));
-    } catch { /* not a user token — use /me below */ }
+      accountsNote = `📄 صفحات مرتبطة بالتوكن: ${pages.length ? pages.map((p) => p.name).join("، ") : "ولا وحدة"}`;
+    } catch (e) {
+      accountsNote = `📄 التوكن ما يقدر يسرد صفحات (${e instanceof Error ? e.message.slice(0, 80) : "?"}) — بنعامله كتوكن صفحة مباشرة.`;
+    }
+    log.push(accountsNote);
     if (pages.length === 0) pages = [{ id: String(me?.id ?? ""), name: String(me?.name ?? me?.id ?? ""), token }];
 
     let okAny = false;
