@@ -7,6 +7,9 @@ import { requireUser } from "@/lib/auth/requireUser";
 import { listComments, insertComment, uploadCommentAttachment } from "@/lib/tasks/commentStore";
 import type { TaskComment, CommentAttachment } from "@/lib/tasks/comments";
 import { materializeRoutines, mapRoutine, type Routine } from "@/lib/tasks/routines";
+import { computeWeeklyReport, type WeeklyReport } from "@/lib/tasks/weekly-report";
+
+export type { WeeklyReport, MemberWeekStats } from "@/lib/tasks/weekly-report";
 
 export type TaskPriority = "low" | "normal" | "high";
 export type TaskStatus = "open" | "in_progress" | "done";
@@ -145,6 +148,47 @@ export async function deleteTask(id: string) {
   revalidatePath("/tasks");
   revalidatePath("/dashboard");
   return { ok: true as const };
+}
+
+/* ── Weekly performance report (last 7 days vs the 7 before) ───────────── */
+export async function weeklyTaskReport(): Promise<{ current: WeeklyReport; previous: WeeklyReport; error?: string }> {
+  const empty: WeeklyReport = { from: "", to: "", totals: { done: 0, created: 0, open: 0, overdue: 0 }, members: [] };
+  const unauth = await requireUser();
+  if (unauth) return { current: empty, previous: empty, error: unauth.error };
+  const admin = adminClient();
+  if (!admin) return { current: empty, previous: empty, error: NO_DB };
+
+  // Enough history for both windows + all still-open tasks (snapshot counts).
+  const since = new Date(Date.now() - 45 * 24 * 3_600_000).toISOString();
+  const cols = "assigned_to, status, created_at, completed_at, completed_by, due_date";
+  const [recent, openRows, mem] = await Promise.all([
+    admin.from("staff_tasks").select(cols).gte("created_at", since).limit(3000),
+    admin.from("staff_tasks").select(cols).neq("status", "done").limit(2000),
+    admin.from("staff_members").select("id, name, active").order("name", { ascending: true }),
+  ]);
+  if (recent.error) return { current: empty, previous: empty, error: recent.error.message };
+
+  // Merge (open tasks may predate the window) and dedupe crude by identity of row values.
+  const rows = [...(recent.data ?? []), ...((openRows.data ?? []) as any[])];
+  const seen = new Set<string>();
+  const tasks = rows.filter((r: any) => {
+    const k = `${r.assigned_to}|${r.status}|${r.created_at}|${r.completed_at}|${r.due_date}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  const members = ((mem.data ?? []) as any[])
+    .filter((m) => m.active !== false)
+    .map((m) => ({ id: String(m.id), name: String(m.name ?? "") }));
+
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 3_600_000);
+  const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 3_600_000);
+  return {
+    current: computeWeeklyReport(tasks as any[], members, weekAgo, now),
+    previous: computeWeeklyReport(tasks as any[], members, twoWeeksAgo, weekAgo),
+  };
 }
 
 /* ── Task comment thread (manager side) ────────────────────────────────── */
