@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
-  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak, staffSetAvailability,
+  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak, staffSetAvailability, staffSetAvailabilityInv, staffInventoryMode,
   staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
   staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct, staffOpenStockTask, staffDraftFromImageUrl,
   staffMoveVariant, staffVariantOosTask, staffForwardTask,
@@ -229,11 +229,13 @@ function StockTab({ initialToday, locale }: { initialToday: StaffLogRow[]; local
   const [picked, setPicked] = useState<StaffItem | null>(null);
   const [today, setToday] = useState<StaffLogRow[]>(initialToday);
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
+  const [simpleMode, setSimpleMode] = useState(false);
   const [busy, start] = useTransition();
   const scanRef = useRef<HTMLInputElement>(null);
 
   const focusScan = () => scanRef.current?.focus();
   useEffect(() => { focusScan(); }, [picked]);
+  useEffect(() => { staffInventoryMode().then((m) => setSimpleMode(m === "simple")); }, []);
 
   const flash = (ok: boolean, text: string) => { setToast({ ok, text }); setTimeout(() => setToast(null), 2600); };
 
@@ -265,7 +267,35 @@ function StockTab({ initialToday, locale }: { initialToday: StaffLogRow[]; local
         <div className={`rounded-lg px-3 py-2 text-sm ${toast.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{toast.text}</div>
       ) : null}
 
-      {picked ? (
+      {picked && simpleMode ? (
+        <div className="card space-y-3 p-4">
+          <div className="flex items-center gap-3">
+            <Thumb src={picked.image} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold text-ink">{(en ? picked.name : picked.name_ar) || picked.name || picked.sku || "—"}</p>
+              <p className="text-xs text-muted">{picked.sku ?? "—"}</p>
+            </div>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${picked.stock > 0 ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+              {picked.stock > 0 ? L("متوفر", "In") : L("نفذ", "Out")}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button disabled={busy} onClick={() => start(async () => {
+              const r = await staffSetAvailabilityInv(picked.inventoryId, true);
+              if ("error" in r) { flash(false, r.error); return; }
+              flash(true, `${picked.sku ?? picked.name} → ${L("متوفر", "In stock")}`);
+              setPicked(null); refreshToday(); focusScan();
+            })} className="rounded-lg bg-emerald-600 py-3 text-sm font-bold text-white disabled:opacity-50">✅ {L("متوفر", "In stock")}</button>
+            <button disabled={busy} onClick={() => start(async () => {
+              const r = await staffSetAvailabilityInv(picked.inventoryId, false);
+              if ("error" in r) { flash(false, r.error); return; }
+              flash(true, `${picked.sku ?? picked.name} → ${L("نفذ", "Out of stock")}`);
+              setPicked(null); refreshToday(); focusScan();
+            })} className="rounded-lg bg-red-600 py-3 text-sm font-bold text-white disabled:opacity-50">🚫 {L("نفذ", "Out of stock")}</button>
+          </div>
+          <button onClick={() => { setPicked(null); focusScan(); }} className="w-full text-xs text-muted">{L("إلغاء", "Cancel")}</button>
+        </div>
+      ) : picked ? (
         <MovePanel item={picked} busy={busy} locale={locale}
           onCancel={() => { setPicked(null); focusScan(); }}
           onDone={(dir, qty, reason) => start(async () => {
@@ -285,7 +315,7 @@ function StockTab({ initialToday, locale }: { initialToday: StaffLogRow[]; local
               <Thumb src={it.image} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-ink">{it.name ?? it.sku}</span>
-                <span className="block text-xs text-muted">{it.sku} · {L("مخزون", "stock")} {it.stock}</span>
+                <span className="block text-xs text-muted">{it.sku}{simpleMode ? ` · ${it.stock > 0 ? L("متوفر", "In") : L("نفذ", "Out")}` : ` · ${L("مخزون", "stock")} ${it.stock}`}</span>
               </span>
             </button>
           ))}

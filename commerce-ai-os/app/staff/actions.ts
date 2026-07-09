@@ -1512,6 +1512,31 @@ export async function staffSetAvailability(productId: string, inStock: boolean):
   return { ok: true as const, stock: after };
 }
 
+/** Current system inventory mode, for the staff scan tab UI. */
+export async function staffInventoryMode(): Promise<"quantities" | "simple"> {
+  const who = await currentStaff();
+  if (!who) return "quantities";
+  return getInventoryMode();
+}
+
+/** Same as staffSetAvailability but keyed by inventory row id (scan tab). */
+export async function staffSetAvailabilityInv(inventoryId: string, inStock: boolean): Promise<{ ok: true; stock: number } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية تحديث المخزون." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const { data: row } = await admin.from("inventory").select("id, product_id, stock_quantity").eq("id", String(inventoryId)).maybeSingle();
+  if (!row) return { error: "الصنف غير موجود." };
+  const before = Number((row as any).stock_quantity) || 0;
+  const after = inStock ? (before > 0 ? before : 1) : 0;
+  if (after === before) return { ok: true as const, stock: after };
+  const { error } = await admin.from("inventory").update({ stock_quantity: after, updated_at: new Date().toISOString() }).eq("id", (row as any).id);
+  if (error) return { error: error.message };
+  await logStockTransition(admin, { productId: (row as any).product_id, before, after, actor: `موظف: ${who.name}` });
+  return { ok: true as const, stock: after };
+}
+
 // Search the catalog for the manual "رجع المخزون" flow: matching products with
 // their total stock and whether an open restock task already exists.
 export type RestockCandidate = { id: string; sku: string | null; name: string | null; image: string | null; stock: number; hasOpenTask: boolean };
