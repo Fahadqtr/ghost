@@ -13,7 +13,7 @@ import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
 import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
-import { buildStoryAdPrompt } from "@/lib/social/story-compute";
+import { buildStorySceneBrief } from "@/lib/social/story-compute";
 import { DAY_SLOTS, slotTimeUtc } from "@/lib/social/schedule-compute";
 import { generateScheduledPost } from "@/lib/social/generate";
 import { geminiConfigured, generateSceneWithGemini, designSceneSettingWithGemini } from "@/lib/social/scene-gemini";
@@ -207,15 +207,25 @@ export async function listProductsForStory(): Promise<{ error?: string; products
   return { products };
 }
 
+export type StoryCreative = {
+  copy: AdCopy;
+  sceneUrl: string;   // TEXT-FREE vertical scene ("" → template uses its gradient + product photo)
+  productUrl: string; // original product photo (composited when there's no scene)
+  price: string;      // formatted, e.g. "78 ر.ق" ("" → no badge)
+  options: string[];
+};
+
 /**
- * Generate a full vertical 9:16 STORY creative from a product's photo with AI
- * (Gemini when configured, else OpenAI). Uploads to storage and returns the
- * public URL — the owner then schedules or posts it. Does not touch social_posts.
+ * Build the pieces of an AI STORY for a product WITHOUT baking any Arabic into
+ * the image (the model garbles Arabic). Returns the ad copy + a TEXT-FREE
+ * vertical scene; the browser overlays the real Arabic with embedded fonts and
+ * uploads the composed JPEG via saveStoryImage. Mirrors generateAdCreative.
  */
-export async function generateStoryForProduct(productId: string): Promise<{ ok?: true; imageUrl?: string; error?: string }> {
+export async function generateStoryCreative(productId: string): Promise<{ error?: string } & Partial<StoryCreative>> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const sb = admin();
   if (!sb) return { error: NO_DB };
+  if (!process.env.ANTHROPIC_API_KEY) return { error: "توليد النصوص غير مفعّل (ANTHROPIC_API_KEY غير مضبوط)." };
   const { data: p } = await sb
     .from("products")
     .select("name_en, name_ar, description_en, description_ar, price, discount_price, image_url")
@@ -224,16 +234,66 @@ export async function generateStoryForProduct(productId: string): Promise<{ ok?:
   if (!p) return { error: "المنتج غير موجود." };
   if (!p.image_url) return { error: "لا توجد صورة أصلية للمنتج." };
 
-  const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
-  const prompt = buildStoryAdPrompt({
+  // Product options (shades/sizes) → shown as chips and folded into the copy.
+  const { data: vars } = await sb
+    .from("product_variants")
+    .select("variant_name, color, size")
+    .eq("parent_product_id", productId)
+    .limit(8);
+  const options = (vars ?? [])
+    .map((v: any) => String(v.variant_name || v.color || v.size || "").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  const copyPrompt = buildAdCopyPrompt({
     nameAr: p.name_ar, nameEn: p.name_en,
-    description: p.description_ar || p.description_en, price,
+    description: p.description_ar || p.description_en, options,
   });
-  const res = geminiConfigured()
-    ? await generateSceneWithGemini(sb, String(p.image_url), prompt, "stories")
-    : await editProductImageCore(sb, String(p.image_url), prompt, "stories", { raw: true, quality: "high" });
-  if ("error" in res) return { error: res.error };
-  return { ok: true, imageUrl: res.imageUrl };
+
+  // Two AI jobs in parallel (fit the 60s budget): Claude writes the copy while
+  // Gemini paints the wordless vertical scene. Scene is best-effort — the
+  // template falls back to its gradient + the original product photo.
+  const copyJob = (async (): Promise<AdCopy> => {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic();
+    const model = process.env.STAFF_MALAK_MODEL || "claude-sonnet-5";
+    const resp: any = await client.messages.create({ model, max_tokens: 500, messages: [{ role: "user", content: copyPrompt }] });
+    const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    return parseAdCopy(text, String(p.name_ar || p.name_en || ""), String(p.name_en || ""));
+  })();
+  const sceneJob = geminiConfigured()
+    ? generateSceneWithGemini(sb, String(p.image_url), buildStorySceneBrief({ nameAr: p.name_ar, nameEn: p.name_en }), "stories").catch(() => ({ error: "scene failed" }))
+    : Promise.resolve({ error: "skipped" } as const);
+
+  let copy: AdCopy;
+  let scene: { imageUrl: string } | { error: string };
+  try {
+    [copy, scene] = await Promise.all([copyJob, sceneJob]);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "تعذّر توليد الستوري." };
+  }
+
+  const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
+  return {
+    copy, price, options,
+    sceneUrl: "imageUrl" in scene ? scene.imageUrl : "",
+    productUrl: String(p.image_url || ""),
+  };
+}
+
+// Persist the browser-composed story (JPEG data URL) and return its public URL.
+export async function saveStoryImage(dataUrl: string): Promise<{ ok?: true; imageUrl?: string; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const m = /^data:image\/(png|jpe?g);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl ?? "").trim());
+  if (!m) return { error: "صورة غير صالحة." };
+  const bytes = Buffer.from(m[2], "base64");
+  if (!bytes.length || bytes.length > 8 * 1024 * 1024) return { error: "حجم الصورة غير صالح." };
+  const path = `stories/story-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.jpg`;
+  const up = await sb.storage.from(AD_BUCKET).upload(path, bytes, { contentType: "image/jpeg", upsert: false, cacheControl: "3600" });
+  if (up.error) return { error: `تعذّر حفظ الصورة: ${up.error.message}` };
+  return { ok: true, imageUrl: sb.storage.from(AD_BUCKET).getPublicUrl(path).data.publicUrl };
 }
 
 /**
