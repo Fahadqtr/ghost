@@ -84,6 +84,23 @@ export async function getNotifications(): Promise<{ items: Notification[] }> {
       }
     } catch { /* skip */ }
 
+    // 3.5) DMs «ملاك» couldn't handle — a human needs to reply.
+    try {
+      const { count } = await admin
+        .from("dm_conversations")
+        .select("id", { count: "exact", head: true })
+        .eq("needs_human", true);
+      if ((count ?? 0) > 0) {
+        items.push({
+          key: `dm-human:${count}`,
+          icon: "💬", severity: "high",
+          ar: count === 1 ? "محادثة دايركت تحتاج رد بشري" : `${count} محادثات دايركت تحتاج رد بشري`,
+          en: `${count} DM conversation${count === 1 ? "" : "s"} need a human reply`,
+          href: "/inbox",
+        });
+      }
+    } catch { /* table optional until dm_inbox.sql runs */ }
+
     // 4) Social posts drafted by the daily engine, awaiting review at /social.
     try {
       const { count } = await admin

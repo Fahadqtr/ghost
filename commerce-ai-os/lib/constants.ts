@@ -128,6 +128,7 @@ export const NAV_GROUPS = [
     ],
   },
   { title: "التسويق", titleEn: "Marketing", items: [
+    { href: "/inbox", label: "الوارد (دايركت)", en: "Inbox (DMs)", icon: "💬" },
     { href: "/social", label: "محتوى السوشيال", en: "Social content", icon: "📣" },
     { href: "/content", label: "مولّد المحتوى", en: "Content generator", icon: "🎬" },
   ] },
