@@ -30,6 +30,12 @@ export async function publishStoryToInstagram(imageUrl: string): Promise<IgPubli
   return publishIg({ image_url: imageUrl, media_type: "STORIES" });
 }
 
+/** Publish a Reel from a PUBLIC video URL. Video takes longer to process, so
+ *  we poll the container longer than for images. */
+export async function publishReelToInstagram(videoUrl: string, caption: string): Promise<IgPublishResult> {
+  return publishIg({ media_type: "REELS", video_url: videoUrl, caption, share_to_feed: "true" }, 18);
+}
+
 export interface IgMediaStats {
   ok: boolean;
   error?: string;
@@ -91,7 +97,7 @@ export async function fetchIgMediaStats(mediaId: string): Promise<IgMediaStats> 
   }
 }
 
-async function publishIg(params: Record<string, string>): Promise<IgPublishResult> {
+async function publishIg(params: Record<string, string>, pollAttempts = 6): Promise<IgPublishResult> {
   const igId = process.env.INSTAGRAM_USER_ID;
   const token = process.env.INSTAGRAM_ACCESS_TOKEN;
   if (!igId || !token) return { ok: false, error: "إنستقرام غير مهيأ (INSTAGRAM_USER_ID / INSTAGRAM_ACCESS_TOKEN)." };
@@ -118,7 +124,7 @@ async function publishIg(params: Record<string, string>): Promise<IgPublishResul
     // Publishing too early returns "Media ID is not available" — Meta needs a
     // few seconds to fetch/process the image (heavier ad images take longer).
     let ready = false;
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < pollAttempts; attempt++) {
       await new Promise((r) => setTimeout(r, attempt === 0 ? 1500 : 2000));
       try {
         const st = await fetch(
