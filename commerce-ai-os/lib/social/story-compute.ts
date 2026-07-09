@@ -23,9 +23,9 @@ export function buildStorySceneBrief(input: StorySceneInput): string {
   return (
     "Create an ultra-premium VERTICAL 9:16 (1080x1920) luxury beauty product photograph using the uploaded product" +
     (name ? ` (the product is: ${name})` : "") + ".\n\n" +
-    "COMPOSITION: place the product as the hero in the UPPER-MIDDLE of a tall vertical frame; keep the ENTIRE " +
-    "LOWER THIRD calm, soft and almost empty (a clean surface, gentle shadow or soft fabric) — that empty space is " +
-    "reserved and must stay simple.\n\n" +
+    "COMPOSITION: place the product as the hero in the UPPER HALF of a tall vertical frame; keep the ENTIRE " +
+    "LOWER 45% calm, soft and almost empty (a clean surface, gentle shadow or soft fabric) — that bottom space is " +
+    "reserved for a text card and must stay simple and uncluttered.\n\n" +
     "STYLE: editorial luxury beauty campaign like Rhode, Dior Beauty, Chanel Beauty and Aesop. Warm beige, ivory, " +
     "cream, champagne, soft brown and subtle gold palette, warm golden side light, soft realistic shadows, high-end " +
     "studio look, light and airy (never dark).\n\n" +

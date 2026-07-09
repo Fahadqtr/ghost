@@ -19,6 +19,7 @@ export interface StoryTemplateProps {
   brandTop: string;         // "MALIKA'S"
   brandSub: string;         // "UNIVERSE BEAUTY"
   handle: string;           // "@malikas_universe"
+  website?: string;         // "www.malikasuniverse.com" (store link)
   headline: string;
   headlineEn?: string;
   subtitle?: string;
@@ -31,7 +32,6 @@ const INK = "#38291b", MUTED = "#8c7a66", GOLD = "#b0894f", DARK = "#2c2013";
 const CREAM = "247,240,230";
 const GOLD_RGB = "176,137,79";
 
-const glow: CSSProperties = { textShadow: "0 0 20px rgba(255,253,248,0.92), 0 1px 5px rgba(255,253,248,0.8)" };
 const BAG = "M6 8h12l-1 11H7z M9 8a3 3 0 0 1 6 0";
 
 export default function StoryTemplate(p: StoryTemplateProps) {
@@ -74,9 +74,9 @@ export default function StoryTemplate(p: StoryTemplateProps) {
       {backdrop}
       {product}
 
-      {/* top & bottom scrims for text legibility over any scene */}
+      {/* top scrim keeps the brand legible; a soft bottom fade blends into the panel */}
       <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: 460, background: `linear-gradient(180deg, rgba(${CREAM},0.72) 0%, rgba(${CREAM},0.4) 52%, rgba(${CREAM},0) 100%)` }} />
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 900, background: `linear-gradient(0deg, rgba(${CREAM},0.9) 0%, rgba(${CREAM},0.66) 46%, rgba(${CREAM},0.2) 82%, rgba(${CREAM},0) 100%)` }} />
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 640, background: `linear-gradient(0deg, rgba(${CREAM},0.7) 0%, rgba(${CREAM},0.2) 62%, rgba(${CREAM},0) 100%)` }} />
 
       {/* brand lockup — kept below the IG profile bar */}
       <div style={{ position: "absolute", top: 150, left: 0, right: 0, textAlign: "center", fontFamily: AD_FONT_LATIN }}>
@@ -88,32 +88,39 @@ export default function StoryTemplate(p: StoryTemplateProps) {
         <div style={{ fontSize: 18, letterSpacing: 13, color: MUTED, marginTop: 10 }}>{p.brandSub}</div>
       </div>
 
-      {/* copy block — anchored above the reply-bar safe zone */}
-      <div style={{ position: "absolute", left: 70, right: 70, bottom: 240, display: "flex", flexDirection: "column", alignItems: "center", gap: 20, direction: "rtl", textAlign: "center" }}>
-        <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 74, fontWeight: 700, lineHeight: 1.18, color: INK, ...glow }}>{p.headline}</div>
-        {p.headlineEn ? (
-          <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 28, fontWeight: 400, letterSpacing: 5, textTransform: "uppercase", color: GOLD, direction: "ltr", ...glow }}>{p.headlineEn}</div>
-        ) : null}
-        {p.subtitle ? <div style={{ fontSize: 30, fontWeight: 300, color: MUTED, lineHeight: 1.5, ...glow }}>{p.subtitle}</div> : null}
+      {/* copy panel — a frosted cream card so the text is always crisp, whatever
+          the photo behind it. Anchored above the reply-bar safe zone. */}
+      <div style={{ position: "absolute", left: 48, right: 48, bottom: 150 }}>
+        <div style={{ background: `rgba(255,252,247,0.9)`, border: `1px solid rgba(${GOLD_RGB},0.35)`, borderRadius: 42, padding: "44px 44px 34px", boxShadow: "0 22px 64px rgba(45,32,20,0.22)", display: "flex", flexDirection: "column", alignItems: "center", gap: 18, direction: "rtl", textAlign: "center" }}>
+          <div style={{ fontFamily: AD_FONT_HEADLINE, fontSize: 76, fontWeight: 700, lineHeight: 1.18, color: INK }}>{p.headline}</div>
+          {p.headlineEn ? (
+            <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 28, fontWeight: 400, letterSpacing: 5, textTransform: "uppercase", color: GOLD, direction: "ltr" }}>{p.headlineEn}</div>
+          ) : null}
+          {p.subtitle ? <div style={{ fontSize: 31, fontWeight: 300, color: MUTED, lineHeight: 1.5 }}>{p.subtitle}</div> : null}
 
-        {p.options?.length ? (
-          <div style={{ display: "flex", flexDirection: "row-reverse", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
-            {p.options.slice(0, 6).map((o, i) => (
-              <span key={i} style={{ fontSize: 22, color: INK, background: "rgba(255,253,248,0.85)", border: `1px solid rgba(${GOLD_RGB},0.4)`, borderRadius: 17, padding: "7px 20px" }}>{o}</span>
-            ))}
+          {p.options?.length ? (
+            <div style={{ display: "flex", flexDirection: "row-reverse", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
+              {p.options.slice(0, 6).map((o, i) => (
+                <span key={i} style={{ fontSize: 22, color: INK, background: "rgba(255,253,248,0.9)", border: `1px solid rgba(${GOLD_RGB},0.4)`, borderRadius: 17, padding: "7px 20px" }}>{o}</span>
+              ))}
+            </div>
+          ) : null}
+
+          {priceBadge}
+
+          <div style={{ background: DARK, color: "#f5efe4", borderRadius: 44, padding: "22px 52px", fontSize: 32, fontWeight: 800, letterSpacing: 1, direction: "rtl", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 12px 30px rgba(30,22,14,0.3)", marginTop: 6 }}>
+            <span>اطلبيه الآن</span>
+            <span style={{ width: 1, height: 28, background: "rgba(245,239,228,0.4)" }} />
+            <span style={{ fontFamily: AD_FONT_LATIN, fontSize: 20, fontWeight: 400, letterSpacing: 4, direction: "ltr" }}>SHOP NOW</span>
+            <svg width={30} height={30} viewBox="0 0 24 24" fill="none" stroke="#f5efe4" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg"><path d={BAG} /></svg>
           </div>
-        ) : null}
 
-        {priceBadge}
-
-        <div style={{ background: DARK, color: "#f5efe4", borderRadius: 44, padding: "22px 52px", fontSize: 32, fontWeight: 800, letterSpacing: 1, direction: "rtl", display: "flex", alignItems: "center", gap: 16, boxShadow: "0 12px 30px rgba(30,22,14,0.3)", marginTop: 6 }}>
-          <span>اطلبيه الآن</span>
-          <span style={{ width: 1, height: 28, background: "rgba(245,239,228,0.4)" }} />
-          <span style={{ fontFamily: AD_FONT_LATIN, fontSize: 20, fontWeight: 400, letterSpacing: 4, direction: "ltr" }}>SHOP NOW</span>
-          <svg width={30} height={30} viewBox="0 0 24 24" fill="none" stroke="#f5efe4" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg"><path d={BAG} /></svg>
+          {/* store link + handle — forced LTR so "@" and "www" read correctly */}
+          {p.website ? (
+            <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 27, fontWeight: 400, letterSpacing: 2.5, textTransform: "uppercase", color: INK, direction: "ltr", marginTop: 4 }}>{p.website}</div>
+          ) : null}
+          <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 23, letterSpacing: 2, color: MUTED, direction: "ltr" }}>{p.handle}</div>
         </div>
-
-        <div style={{ fontFamily: AD_FONT_LATIN, fontSize: 24, letterSpacing: 2, color: MUTED }}>{p.handle}</div>
       </div>
     </div>
   );
