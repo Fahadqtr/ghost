@@ -65,79 +65,72 @@ async function graphPost(path: string, token: string): Promise<any> {
  */
 export async function connectDmChannel(): Promise<{ ok: boolean; log: string[] }> {
   const log: string[] = [];
-  const token = dmToken();
-  if (!token) return { ok: false, log: ["❌ INSTAGRAM_ACCESS_TOKEN غير مضبوط في Vercel."] };
-  log.push(`🔧 مصدر التوكن: ${process.env.META_MESSAGING_TOKEN ? "META_MESSAGING_TOKEN" : "INSTAGRAM_ACCESS_TOKEN"} · ينتهي بـ …${token.slice(-4)}`);
-  try {
-    const me = await graphGet("/me?fields=id,name", token);
-    log.push(`🔑 التوكن باسم: ${me?.name ?? me?.id ?? "غير معروف"} (ID: ${me?.id ?? "؟"})`);
-
-    // User tokens list their pages (with page tokens) via /me/accounts; a
-    // page token can't, and is itself the page — fall back to /me.
-    let pages: { id: string; name: string; token: string }[] = [];
-    let accountsNote = "";
-    try {
-      const acc = await graphGet("/me/accounts?fields=id,name,access_token&limit=10", token);
-      pages = ((acc?.data ?? []) as any[]).map((p) => ({
-        id: String(p.id), name: String(p.name ?? p.id), token: String(p.access_token || token),
-      }));
-      accountsNote = `📄 صفحات مرتبطة بالتوكن: ${pages.length ? pages.map((p) => p.name).join("، ") : "ولا وحدة"}`;
-    } catch (e) {
-      accountsNote = `📄 التوكن ما يقدر يسرد صفحات (${e instanceof Error ? e.message.slice(0, 80) : "?"}) — بنعامله كتوكن صفحة مباشرة.`;
-    }
-    log.push(accountsNote);
-
-    let okAny = false;
-
-    // Strategy A — the Instagram account itself. On the Instagram API (with
-    // either login flavor) the professional account carries the messaging
-    // subscription; this path needs no Facebook Page in the token at all.
-    const igId = process.env.INSTAGRAM_USER_ID || "";
-    if (igId) {
-      try {
-        const sub = await graphPost(`/${igId}/subscribed_apps?subscribed_fields=messages`, token);
-        const done = sub?.success === true;
-        okAny = okAny || done;
-        log.push(done
-          ? "✅ حساب إنستقرام المتجر اشترك في استقبال الرسائل مباشرة."
-          : `⚠️ اشتراك حساب إنستقرام: رد غير متوقع — ${JSON.stringify(sub).slice(0, 140)}`);
-        try {
-          const chk = await graphGet(`/${igId}/subscribed_apps`, token);
-          const fields = ((chk?.data ?? []) as any[])
-            .map((a) => `${a.name ?? "app"}: ${(a.subscribed_fields ?? []).join("، ")}`).join(" | ");
-          if (fields) log.push(`📋 اشتراك الإنستقرام: ${fields}`);
-        } catch { /* read-back informational */ }
-      } catch (e) {
-        log.push(`❌ اشتراك حساب الإنستقرام: ${e instanceof Error ? e.message.slice(0, 120) : "فشل"}`);
-      }
-    } else {
-      log.push("ℹ️ INSTAGRAM_USER_ID غير مضبوط — نجرب طريق الصفحة فقط.");
-    }
-
-    // Strategy B — the linked Facebook Page (Messenger-platform flavor). Only
-    // runs when the token actually surfaced a page.
-    for (const p of pages) {
-      if (!p.id) continue;
-      try {
-        const sub = await graphPost(`/${p.id}/subscribed_apps?subscribed_fields=messages`, p.token);
-        const done = sub?.success === true;
-        okAny = okAny || done;
-        log.push(done
-          ? `✅ صفحة «${p.name}» اشتركت في استقبال الرسائل.`
-          : `⚠️ «${p.name}»: رد غير متوقع — ${JSON.stringify(sub).slice(0, 140)}`);
-      } catch (e) {
-        log.push(`❌ «${p.name}»: ${e instanceof Error ? e.message.slice(0, 120) : "فشل الاشتراك"}`);
-      }
-    }
-
-    if (!okAny) {
-      log.push("💡 التوكن ما يشوف صفحة فيسبوك ولا نجح اشتراك الإنستقرام. عند توليد التوكن في Graph API Explorer لازم توافق على صفحة فيسبوك «Malika's Universe» مو بس حساب الإنستقرام — وبعدها اختر Page Access Token للصفحة وانسخه.");
-    }
-    return { ok: okAny, log };
-  } catch (e) {
-    log.push(`❌ ${e instanceof Error ? e.message : "فشل الاتصال بـ Graph API"}`);
-    return { ok: false, log };
+  // Try every token we have. The publishing token (INSTAGRAM_ACCESS_TOKEN)
+  // already works on the IG account and its page, so even if the dedicated
+  // messaging token is a bare user token, the publishing one may surface the
+  // page and complete the subscription. Deduped, messaging token first.
+  const candidates: { name: string; token: string }[] = [];
+  if (process.env.META_MESSAGING_TOKEN) candidates.push({ name: "META_MESSAGING_TOKEN", token: process.env.META_MESSAGING_TOKEN });
+  if (process.env.INSTAGRAM_ACCESS_TOKEN && process.env.INSTAGRAM_ACCESS_TOKEN !== process.env.META_MESSAGING_TOKEN) {
+    candidates.push({ name: "INSTAGRAM_ACCESS_TOKEN", token: process.env.INSTAGRAM_ACCESS_TOKEN });
   }
+  if (candidates.length === 0) return { ok: false, log: ["❌ لا يوجد توكن (META_MESSAGING_TOKEN أو INSTAGRAM_ACCESS_TOKEN) في Vercel."] };
+
+  const igId = process.env.INSTAGRAM_USER_ID || "";
+  let okAny = false;
+
+  for (const c of candidates) {
+    log.push(`— — — التوكن «${c.name}» (…${c.token.slice(-4)})`);
+    try {
+      const me = await graphGet("/me?fields=id,name", c.token).catch(() => null);
+      if (me) log.push(`🔑 باسم: ${me?.name ?? me?.id ?? "?"} (ID: ${me?.id ?? "?"})`);
+
+      // Pages this token can act on (page tokens included).
+      let pages: { id: string; name: string; token: string }[] = [];
+      try {
+        const acc = await graphGet("/me/accounts?fields=id,name,access_token&limit=10", c.token);
+        pages = ((acc?.data ?? []) as any[]).map((p) => ({
+          id: String(p.id), name: String(p.name ?? p.id), token: String(p.access_token || c.token),
+        }));
+        log.push(`📄 صفحات: ${pages.length ? pages.map((p) => p.name).join("، ") : "ولا وحدة"}`);
+      } catch (e) {
+        log.push(`📄 ما قدر يسرد صفحات (${e instanceof Error ? e.message.slice(0, 60) : "?"})`);
+      }
+
+      // Subscribe the Facebook Page (Messenger-platform flavor).
+      for (const p of pages) {
+        if (!p.id) continue;
+        try {
+          const sub = await graphPost(`/${p.id}/subscribed_apps?subscribed_fields=messages`, p.token);
+          const done = sub?.success === true;
+          okAny = okAny || done;
+          log.push(done ? `✅ صفحة «${p.name}» اشتركت في استقبال الرسائل!` : `⚠️ «${p.name}»: ${JSON.stringify(sub).slice(0, 120)}`);
+        } catch (e) {
+          log.push(`❌ «${p.name}»: ${e instanceof Error ? e.message.slice(0, 100) : "فشل"}`);
+        }
+      }
+
+      // Subscribe the Instagram professional account directly (IG-login flavor).
+      if (igId && !okAny) {
+        try {
+          const sub = await graphPost(`/${igId}/subscribed_apps?subscribed_fields=messages`, c.token);
+          const done = sub?.success === true;
+          okAny = okAny || done;
+          log.push(done ? "✅ حساب إنستقرام اشترك في استقبال الرسائل مباشرة!" : `⚠️ إنستقرام: ${JSON.stringify(sub).slice(0, 120)}`);
+        } catch (e) {
+          log.push(`❌ اشتراك إنستقرام: ${e instanceof Error ? e.message.slice(0, 100) : "فشل"}`);
+        }
+      }
+    } catch (e) {
+      log.push(`❌ ${e instanceof Error ? e.message.slice(0, 120) : "فشل الاتصال"}`);
+    }
+    if (okAny) break; // one working token is enough
+  }
+
+  if (!okAny) {
+    log.push("💡 ولا توكن نجح. أغلب الاحتمال: التطبيق ما عنده Advanced Access لصلاحية instagram_manage_messages. الحل: نجرّب رسالة تجريبية فعلية — إذا وصلت للوارد فالاستقبال شغّال أصلًا من إعداد الويب هوك، وما نحتاج هالزر.");
+  }
+  return { ok: okAny, log };
 }
 
 /** Find or create the conversation row for this sender. */
