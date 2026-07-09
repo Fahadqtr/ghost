@@ -11,7 +11,7 @@ import { NextResponse, type NextRequest } from "next/server";
 // `/api/cron` runs on a schedule with no user cookie — redirecting it to /login
 // would 307 the job away from its handler; it authenticates itself with the
 // CRON_SECRET bearer token instead.
-const PUBLIC_PATHS = ["/login", "/auth", "/staff", "/api/cron"];
+const PUBLIC_PATHS = ["/login", "/auth", "/staff", "/api/cron", "/api/webhooks"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
