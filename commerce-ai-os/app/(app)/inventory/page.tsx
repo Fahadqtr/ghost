@@ -3,6 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import KpiCard from "@/components/KpiCard";
 import InventoryTable, { type InventoryRow } from "@/components/InventoryTable";
+import InventoryModeToggle from "@/components/InventoryModeToggle";
+import SimpleAvailabilityList from "@/components/SimpleAvailabilityList";
+import { getInventoryMode } from "@/lib/settings";
 import { getT } from "@/lib/i18n-server";
 
 // Count staff movements still awaiting the owner's review (details.review unset).
@@ -30,6 +33,8 @@ export default async function InventoryPage() {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const pendingApprovals = await pendingApprovalsCount();
+  const inventoryMode = await getInventoryMode();
+  const simpleMode = inventoryMode === "simple";
 
   // Is the `location` column present yet? (degrade gracefully pre-migration.)
   const probe = await supabase.from("inventory").select("location").limit(1);
@@ -177,6 +182,16 @@ export default async function InventoryPage() {
     new Set(rows.map((r) => r.category).filter((c): c is string => !!c))
   ).sort();
 
+  // Simple-mode rows: one In/Out flag per product (derived from effective stock).
+  const availabilityRows = rows.map((r) => ({
+    id: r.id,
+    product_name: r.product_name,
+    product_name_ar: r.product_name_ar,
+    sku: r.sku,
+    image_url: r.image_url,
+    in_stock: effectiveStock(r) > 0,
+  }));
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -195,10 +210,21 @@ export default async function InventoryPage() {
         ) : null}
       </div>
 
+      <InventoryModeToggle mode={inventoryMode} locale={locale} />
+
       {loadError ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           {L(`تعذّر تحميل المخزون: ${loadError}. تأكّد أنك مسجّل الدخول (RLS).`, `Couldn’t load inventory: ${loadError}. Make sure you’re signed in (RLS).`)}
         </div>
+      ) : simpleMode ? (
+        <>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            <KpiCard title={L("منتجات", "Products")} value={nf(total)} icon="🏷️" />
+            <KpiCard title={L("متوفر", "In stock")} value={nf(total - out)} icon="✅" />
+            <KpiCard title={L("نافد", "Out of stock")} value={nf(out)} icon="⛔" />
+          </div>
+          <SimpleAvailabilityList rows={availabilityRows} locale={locale} />
+        </>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">

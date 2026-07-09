@@ -7,6 +7,8 @@ import { fetchAll } from "@/lib/supabase/paginate";
 import { applyMovement } from "@/lib/inventory/movements";
 import { requireUser } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
+import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
+import { logStockTransition } from "@/lib/tasks/stock-tasks";
 import Anthropic from "@anthropic-ai/sdk";
 
 function toNum(v: string | number | null | undefined): number | null {
@@ -1491,4 +1493,67 @@ export async function matchChannelsToMalika(apply = false): Promise<{
   revalidatePath("/inventory/out-of-stock");
   revalidatePath("/channels");
   return { applied: true, products, channelRows, shopify };
+}
+
+// ── System-wide inventory mode (quantities ↔ simple in/out of stock) ──────────
+
+/** Read the current inventory mode (server component / client refresh). */
+export async function readInventoryMode(): Promise<InventoryMode> {
+  return getInventoryMode();
+}
+
+/** Flip the whole system between quantity tracking and simple availability. */
+export async function switchInventoryMode(mode: InventoryMode): Promise<{ ok: boolean; error?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { ok: false, error: unauth.error };
+  const res = await setInventoryMode(mode === "simple" ? "simple" : "quantities");
+  if (!res.ok) return res;
+  revalidatePath("/inventory");
+  revalidatePath("/dashboard");
+  revalidatePath("/products");
+  return { ok: true };
+}
+
+/**
+ * Simple-mode toggle: mark a product In-stock / Out-of-stock without touching a
+ * number. Out → stock 0; In → keep the existing quantity if it's already
+ * positive, else set it to 1. Fires the same OOS/restock catalog task as a
+ * normal movement so the platforms checklist still flows.
+ */
+export async function setProductAvailability(
+  inventoryId: string,
+  inStock: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { ok: false, error: unauth.error };
+  const admin = writableClient();
+  const { data: row, error: readErr } = await admin
+    .from("inventory")
+    .select("id, product_id, stock_quantity")
+    .eq("id", inventoryId)
+    .maybeSingle();
+  if (readErr) return { ok: false, error: readErr.message };
+  if (!row) return { ok: false, error: "الصنف غير موجود." };
+
+  const before = Number((row as any).stock_quantity) || 0;
+  const after = inStock ? (before > 0 ? before : 1) : 0;
+  if (after === before) return { ok: true };
+
+  const { error } = await admin
+    .from("inventory")
+    .update({ stock_quantity: after, updated_at: new Date().toISOString() })
+    .eq("id", inventoryId);
+  if (error) return { ok: false, error: error.message };
+
+  await logStockTransition(admin, {
+    productId: (row as any).product_id,
+    before,
+    after,
+    actor: "مدير — متوفر/نفذ",
+  });
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/out-of-stock");
+  revalidatePath("/dashboard");
+  return { ok: true };
 }
