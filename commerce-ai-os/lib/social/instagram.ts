@@ -30,6 +30,11 @@ export async function publishStoryToInstagram(imageUrl: string): Promise<IgPubli
   return publishIg({ image_url: imageUrl, media_type: "STORIES" });
 }
 
+/** Publish a VIDEO story from a public URL (video needs longer processing). */
+export async function publishVideoStoryToInstagram(videoUrl: string): Promise<IgPublishResult> {
+  return publishIg({ media_type: "STORIES", video_url: videoUrl }, 18);
+}
+
 /** Publish a Reel from a PUBLIC video URL. Video takes longer to process, so
  *  we poll the container longer than for images. */
 export async function publishReelToInstagram(videoUrl: string, caption: string): Promise<IgPublishResult> {

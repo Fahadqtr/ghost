@@ -3,7 +3,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
-import { publishToInstagram, publishStoryToInstagram, publishReelToInstagram, instagramConfigured, fetchIgMediaStats } from "@/lib/social/instagram";
+import { publishToInstagram, publishStoryToInstagram, publishVideoStoryToInstagram, publishReelToInstagram, instagramConfigured, fetchIgMediaStats } from "@/lib/social/instagram";
 import { engagementScore, engagementRate, summarizeInsights, EMPTY_STATS, type PostStats } from "@/lib/social/insights-compute";
 import { publishToTikTok, tiktokConfigured } from "@/lib/social/tiktok";
 import { generateDailySocialPosts } from "@/lib/social/generate";
@@ -150,6 +150,38 @@ export async function publishReelByUrl(videoUrl: string, caption: string): Promi
   revalidatePath("/social");
   if (!res.ok) return { error: res.error ?? "فشل نشر الريل" };
   return { ok: true, mediaId: res.mediaId };
+}
+
+/**
+ * Publish a Story (image or video) from a public URL — uploaded client-side to
+ * our storage, or any public link. Stories carry no caption (text lives in the
+ * media). Recorded in social_posts so it appears in the recent list.
+ */
+export async function publishStoryByUrl(mediaUrl: string, kind: "image" | "video"): Promise<{ ok?: true; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const url = String(mediaUrl || "").trim();
+  if (!/^https:\/\/.+/i.test(url)) return { error: "رابط الوسائط غير صالح (لازم https عام)." };
+
+  const res = kind === "video"
+    ? await publishVideoStoryToInstagram(url)
+    : await publishStoryToInstagram(url);
+  const now = new Date().toISOString();
+  await sb.from("social_posts").insert({
+    platform: "instagram",
+    caption: "",
+    image_url: url,
+    status: res.ok ? "posted" : "failed",
+    error: res.ok ? null : (res.error ?? "فشل نشر الستوري"),
+    posted_at: res.ok ? now : null,
+    external_id: res.ok ? (res.mediaId ?? null) : null,
+    approved: true,
+    extras: { kind: "story" },
+  });
+  revalidatePath("/social");
+  if (!res.ok) return { error: res.error ?? "فشل نشر الستوري" };
+  return { ok: true };
 }
 
 // ---- Weekly plan --------------------------------------------------------------
