@@ -86,9 +86,36 @@ export async function connectDmChannel(): Promise<{ ok: boolean; log: string[] }
       accountsNote = `📄 التوكن ما يقدر يسرد صفحات (${e instanceof Error ? e.message.slice(0, 80) : "?"}) — بنعامله كتوكن صفحة مباشرة.`;
     }
     log.push(accountsNote);
-    if (pages.length === 0) pages = [{ id: String(me?.id ?? ""), name: String(me?.name ?? me?.id ?? ""), token }];
 
     let okAny = false;
+
+    // Strategy A — the Instagram account itself. On the Instagram API (with
+    // either login flavor) the professional account carries the messaging
+    // subscription; this path needs no Facebook Page in the token at all.
+    const igId = process.env.INSTAGRAM_USER_ID || "";
+    if (igId) {
+      try {
+        const sub = await graphPost(`/${igId}/subscribed_apps?subscribed_fields=messages`, token);
+        const done = sub?.success === true;
+        okAny = okAny || done;
+        log.push(done
+          ? "✅ حساب إنستقرام المتجر اشترك في استقبال الرسائل مباشرة."
+          : `⚠️ اشتراك حساب إنستقرام: رد غير متوقع — ${JSON.stringify(sub).slice(0, 140)}`);
+        try {
+          const chk = await graphGet(`/${igId}/subscribed_apps`, token);
+          const fields = ((chk?.data ?? []) as any[])
+            .map((a) => `${a.name ?? "app"}: ${(a.subscribed_fields ?? []).join("، ")}`).join(" | ");
+          if (fields) log.push(`📋 اشتراك الإنستقرام: ${fields}`);
+        } catch { /* read-back informational */ }
+      } catch (e) {
+        log.push(`❌ اشتراك حساب الإنستقرام: ${e instanceof Error ? e.message.slice(0, 120) : "فشل"}`);
+      }
+    } else {
+      log.push("ℹ️ INSTAGRAM_USER_ID غير مضبوط — نجرب طريق الصفحة فقط.");
+    }
+
+    // Strategy B — the linked Facebook Page (Messenger-platform flavor). Only
+    // runs when the token actually surfaced a page.
     for (const p of pages) {
       if (!p.id) continue;
       try {
@@ -97,20 +124,14 @@ export async function connectDmChannel(): Promise<{ ok: boolean; log: string[] }
         okAny = okAny || done;
         log.push(done
           ? `✅ صفحة «${p.name}» اشتركت في استقبال الرسائل.`
-          : `⚠️ «${p.name}»: رد غير متوقع — ${JSON.stringify(sub).slice(0, 160)}`);
-        try {
-          const chk = await graphGet(`/${p.id}/subscribed_apps`, p.token);
-          const fields = ((chk?.data ?? []) as any[])
-            .map((a) => `${a.name}: ${(a.subscribed_fields ?? []).join("، ")}`)
-            .join(" | ");
-          if (fields) log.push(`📋 اشتراكات «${p.name}»: ${fields}`);
-        } catch { /* read-back is informational only */ }
+          : `⚠️ «${p.name}»: رد غير متوقع — ${JSON.stringify(sub).slice(0, 140)}`);
       } catch (e) {
-        log.push(`❌ «${p.name}»: ${e instanceof Error ? e.message : "فشل الاشتراك"}`);
+        log.push(`❌ «${p.name}»: ${e instanceof Error ? e.message.slice(0, 120) : "فشل الاشتراك"}`);
       }
     }
+
     if (!okAny) {
-      log.push("💡 لو الخطأ عن صلاحيات: نحتاج توكن مراسلة جديد فيه pages_manage_metadata + pages_messaging + instagram_manage_messages — نحطه كمتغير META_MESSAGING_TOKEN بدون المساس بتوكن النشر.");
+      log.push("💡 التوكن ما يشوف صفحة فيسبوك ولا نجح اشتراك الإنستقرام. عند توليد التوكن في Graph API Explorer لازم توافق على صفحة فيسبوك «Malika's Universe» مو بس حساب الإنستقرام — وبعدها اختر Page Access Token للصفحة وانسخه.");
     }
     return { ok: okAny, log };
   } catch (e) {
