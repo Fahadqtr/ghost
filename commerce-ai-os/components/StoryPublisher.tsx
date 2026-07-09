@@ -14,6 +14,7 @@ const BUCKET = "product-images";
 const BRAND_TOP = "MALIKA'S";
 const BRAND_SUB = "UNIVERSE BEAUTY";
 const HANDLE = "@malikas_universe";
+const WEBSITE = "www.malikasuniverse.com";
 
 // MU monogram, fetched once and inlined (the SVG raster can't load URLs).
 let logoCache: string | null = null;
@@ -129,7 +130,7 @@ export default function StoryPublisher({ configured, locale = "ar" }: { configur
         const logoDataUrl = await brandLogoDataUrl();
         const dataUrl = await captureStory({
           sceneDataUrl, productDataUrl, framed, logoDataUrl,
-          brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE,
+          brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, website: WEBSITE,
           headline: info.copy.headline, headlineEn: info.copy.headlineEn, subtitle: info.copy.subtitle,
           price: info.price ?? "", options: info.options ?? [],
         });
