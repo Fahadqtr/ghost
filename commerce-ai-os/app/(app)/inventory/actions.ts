@@ -8,7 +8,7 @@ import { applyMovement } from "@/lib/inventory/movements";
 import { requireUser } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
-import { logStockTransition } from "@/lib/tasks/stock-tasks";
+import { logStockTransition, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
 import Anthropic from "@anthropic-ai/sdk";
 
 function toNum(v: string | number | null | undefined): number | null {
@@ -1554,6 +1554,72 @@ export async function setProductAvailability(
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/out-of-stock");
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+/** Bulk simple-mode toggle: mark many products In / Out at once (select-all). */
+export async function setManyAvailability(
+  inventoryIds: string[],
+  inStock: boolean
+): Promise<{ ok: boolean; count: number; error?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { ok: false, count: 0, error: unauth.error };
+  const admin = writableClient();
+  const ids = Array.from(new Set((inventoryIds ?? []).map((s) => String(s)).filter(Boolean)));
+  if (ids.length === 0) return { ok: true, count: 0 };
+  const now = new Date().toISOString();
+  let count = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    // Out → 0 for all. In → 1 only where it's currently 0/empty (keep real counts).
+    let q = admin.from("inventory").update({ stock_quantity: inStock ? 1 : 0, updated_at: now }).in("id", chunk);
+    if (inStock) q = q.lte("stock_quantity", 0);
+    const { error } = await q;
+    if (error) return { ok: false, count, error: error.message };
+    count += chunk.length;
+  }
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/out-of-stock");
+  revalidatePath("/products");
+  revalidatePath("/dashboard");
+  return { ok: true, count };
+}
+
+/** Simple-mode toggle for ONE option (variant): In / Out without a quantity. */
+export async function setVariantAvailability(
+  variantId: string,
+  inStock: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { ok: false, error: unauth.error };
+  const admin = writableClient();
+  const { data: v, error: readErr } = await admin
+    .from("product_variants")
+    .select("id, parent_product_id, variant_name, stock_quantity")
+    .eq("id", String(variantId))
+    .maybeSingle();
+  if (readErr) return { ok: false, error: readErr.message };
+  if (!v) return { ok: false, error: "الخيار غير موجود." };
+
+  const before = Number((v as any).stock_quantity) || 0;
+  const after = inStock ? (before > 0 ? before : 1) : 0;
+  if (after === before) return { ok: true };
+  const { error } = await admin
+    .from("product_variants")
+    .update({ stock_quantity: after })
+    .eq("id", String(variantId));
+  if (error) return { ok: false, error: error.message };
+
+  await logVariantStockTransition(admin, {
+    productId: (v as any).parent_product_id,
+    variantId: String(variantId),
+    variantName: (v as any).variant_name ?? "",
+    before,
+    after,
+    actor: "مدير — متوفر/نفذ",
+  });
+  revalidatePath("/inventory");
   revalidatePath("/dashboard");
   return { ok: true };
 }

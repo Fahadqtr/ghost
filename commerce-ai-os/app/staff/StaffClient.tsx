@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
-  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak, staffSetAvailability, staffSetAvailabilityInv, staffInventoryMode,
+  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak, staffSetAvailability, staffSetAvailabilityInv, staffInventoryMode, staffSetManyAvailability, staffSetVariantAvailability,
   staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
   staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct, staffOpenStockTask, staffDraftFromImageUrl,
   staffMoveVariant, staffVariantOosTask, staffForwardTask,
@@ -421,6 +421,31 @@ function ProductsTab({ locale }: { locale: Locale }) {
     flash(true, `${p.name ?? p.sku ?? ""} → ${inStock ? L("متوفر", "In stock") : L("نفذ", "Out of stock")}`);
   });
 
+  // Simple-mode: flip ONE option In / Out.
+  const setVarAvail = (p: StaffProduct, v: StaffVariant, inStock: boolean) => start(async () => {
+    if (!v.id) return;
+    const r = await staffSetVariantAvailability(v.id, inStock);
+    if ("error" in r) { flash(false, r.error); return; }
+    setAll((list) => list.map((x) => x.id === p.id
+      ? { ...x, variants: (x.variants ?? []).map((vv) => vv.id === v.id ? { ...vv, stock: r.stock } : vv) }
+      : x));
+    flash(true, `${v.name ?? ""} → ${inStock ? L("متوفر", "In stock") : L("نفذ", "Out of stock")}`);
+  });
+
+  // Simple-mode: mark every filtered product In / Out at once (ids passed from
+  // the render scope where `filtered` is defined).
+  const bulkAvail = (inStock: boolean, ids: string[]) => {
+    if (ids.length === 0) return;
+    const word = inStock ? L("متوفر", "In stock") : L("نفذ", "Out of stock");
+    if (!confirm(L(`علّم ${ids.length} منتج «${word}»؟`, `Mark ${ids.length} products "${word}"?`))) return;
+    start(async () => {
+      const r = await staffSetManyAvailability(ids, inStock);
+      if ("error" in r) { flash(false, r.error); return; }
+      setAll((list) => list.map((x) => ids.includes(x.id) ? { ...x, stock: inStock ? 1 : 0 } : x));
+      flash(true, L(`تم — ${r.count} منتج «${word}».`, `Done — ${r.count} products "${word}".`));
+    });
+  };
+
   // Movement panel for ONE option row (no inventory row involved).
   const startMoveVariant = (p: StaffProduct, v: StaffVariant) => {
     if (!v.id) return;
@@ -523,12 +548,20 @@ function ProductsTab({ locale }: { locale: Locale }) {
           <option value="out">{L("نافد", "Out of stock")}</option>
         </select>
       </div>
-      {withVarsCount > 0 ? (
-        <button onClick={() => setOnlyVar((v) => !v)}
-          className={`rounded-full px-3 py-1 text-xs font-medium ${onlyVar ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-600"}`}>
-          🎚️ {L("له خيارات", "Has options")} ({withVarsCount})
-        </button>
-      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        {withVarsCount > 0 ? (
+          <button onClick={() => setOnlyVar((v) => !v)}
+            className={`rounded-full px-3 py-1 text-xs font-medium ${onlyVar ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+            🎚️ {L("له خيارات", "Has options")} ({withVarsCount})
+          </button>
+        ) : null}
+        {simpleMode && canMove ? (
+          <span className="ms-auto flex items-center gap-1">
+            <button disabled={busy} onClick={() => bulkAvail(true, filtered.map((p) => p.id))} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">✅ {L("الكل متوفر", "All In")}</button>
+            <button disabled={busy} onClick={() => bulkAvail(false, filtered.map((p) => p.id))} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">🚫 {L("الكل نفذ", "All Out")}</button>
+          </span>
+        ) : null}
+      </div>
 
       {err ? <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div> : null}
       {toast ? <div className={`rounded-lg px-3 py-2 text-sm ${toast.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{toast.text}</div> : null}
@@ -605,8 +638,23 @@ function ProductsTab({ locale }: { locale: Locale }) {
                     <div key={i} className="flex items-center justify-between gap-2 text-xs">
                       <span className="min-w-0 flex-1 truncate text-slate-700">{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
                       {v.barcode ? <span className="font-mono text-[11px] text-slate-500">{v.barcode}</span> : null}
-                      <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{stockNum(v.stock)}</span>
-                      {variantButtons(p, v)}
+                      {simpleMode ? (
+                        canMove ? (
+                          <span className="flex items-center gap-1 rounded-full bg-slate-100 p-0.5">
+                            <button disabled={busy} onClick={() => setVarAvail(p, v, true)}
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold disabled:opacity-50 ${v.stock != null && v.stock > 0 ? "bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-200" : "text-slate-400"}`}>{L("متوفر", "In")}</button>
+                            <button disabled={busy} onClick={() => setVarAvail(p, v, false)}
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold disabled:opacity-50 ${v.stock != null && v.stock <= 0 ? "bg-white text-red-600 shadow-sm ring-1 ring-red-200" : "text-slate-400"}`}>{L("نفذ", "Out")}</button>
+                          </span>
+                        ) : (
+                          <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-emerald-600"}`}>{v.stock != null && v.stock <= 0 ? L("نفذ", "Out") : L("متوفر", "In")}</span>
+                        )
+                      ) : (
+                        <>
+                          <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{stockNum(v.stock)}</span>
+                          {variantButtons(p, v)}
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>

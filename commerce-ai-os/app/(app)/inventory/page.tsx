@@ -182,7 +182,8 @@ export default async function InventoryPage() {
     new Set(rows.map((r) => r.category).filter((c): c is string => !!c))
   ).sort();
 
-  // Simple-mode rows: one In/Out flag per product (derived from effective stock).
+  // Simple-mode rows: one In/Out flag per product (derived from effective stock)
+  // plus its options, each with its own In/Out flag.
   const availabilityRows = rows.map((r) => ({
     id: r.id,
     product_name: r.product_name,
@@ -190,6 +191,11 @@ export default async function InventoryPage() {
     sku: r.sku,
     image_url: r.image_url,
     in_stock: effectiveStock(r) > 0,
+    variants: (r.product_id ? variantsByProduct[r.product_id] ?? [] : []).map((v: any) => ({
+      id: String(v.id),
+      name: v.variant_name ?? null,
+      in_stock: (Number(v.stock_quantity) || 0) > 0,
+    })),
   }));
 
   return (
