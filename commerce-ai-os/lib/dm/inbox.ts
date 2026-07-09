@@ -8,36 +8,45 @@ import { STORE_INFO } from "./store-info";
 // flags the conversation instead of dropping the customer.
 
 const GRAPH = "https://graph.facebook.com/v21.0";
+// Instagram-Login tokens (generated via "API setup with Instagram business
+// login") speak to graph.instagram.com, not the Facebook graph host.
+const IG_GRAPH = "https://graph.instagram.com/v21.0";
 
 export function dmToken(): string {
   return process.env.META_MESSAGING_TOKEN || process.env.INSTAGRAM_ACCESS_TOKEN || "";
 }
 
-/** Send one Instagram DM (Messenger platform, page-linked IG account). */
+/**
+ * Send one Instagram DM. Tries the Facebook graph host first (page-linked
+ * publishing token), then graph.instagram.com (Instagram-Login messaging
+ * token) — whichever the configured token belongs to.
+ */
 export async function sendInstagramDm(recipientId: string, text: string): Promise<{ ok: boolean; error?: string }> {
   const token = dmToken();
   if (!token) return { ok: false, error: "INSTAGRAM_ACCESS_TOKEN غير مضبوط" };
-  try {
-    const r = await fetch(`${GRAPH}/me/messages?access_token=${encodeURIComponent(token)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recipient: { id: recipientId }, message: { text: text.slice(0, 900) } }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!r.ok) {
-      const detail = (await r.text()).slice(0, 300);
-      console.error("[dm-send]", r.status, detail);
-      return { ok: false, error: `Graph ${r.status}` };
+  const body = JSON.stringify({ recipient: { id: recipientId }, message: { text: text.slice(0, 900) } });
+  let lastErr = "";
+  for (const base of [GRAPH, IG_GRAPH]) {
+    try {
+      const r = await fetch(`${base}/me/messages?access_token=${encodeURIComponent(token)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (r.ok) return { ok: true };
+      lastErr = `Graph ${r.status}`;
+      console.error("[dm-send]", base, r.status, (await r.text()).slice(0, 300));
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : "send failed";
     }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "send failed" };
   }
+  return { ok: false, error: lastErr };
 }
 
-async function graphGet(path: string, token: string): Promise<any> {
+async function graphGet(path: string, token: string, base: string = GRAPH): Promise<any> {
   const sep = path.includes("?") ? "&" : "?";
-  const r = await fetch(`${GRAPH}${path}${sep}access_token=${encodeURIComponent(token)}`, {
+  const r = await fetch(`${base}${path}${sep}access_token=${encodeURIComponent(token)}`, {
     signal: AbortSignal.timeout(15_000),
   });
   const j = await r.json().catch(() => ({}));
@@ -45,9 +54,9 @@ async function graphGet(path: string, token: string): Promise<any> {
   return j;
 }
 
-async function graphPost(path: string, token: string): Promise<any> {
+async function graphPost(path: string, token: string, base: string = GRAPH): Promise<any> {
   const sep = path.includes("?") ? "&" : "?";
-  const r = await fetch(`${GRAPH}${path}${sep}access_token=${encodeURIComponent(token)}`, {
+  const r = await fetch(`${base}${path}${sep}access_token=${encodeURIComponent(token)}`, {
     method: "POST",
     signal: AbortSignal.timeout(15_000),
   });
@@ -110,15 +119,33 @@ export async function connectDmChannel(): Promise<{ ok: boolean; log: string[] }
         }
       }
 
-      // Subscribe the Instagram professional account directly (IG-login flavor).
+      // Instagram-Login flavor: the token lives on graph.instagram.com, and
+      // the account subscribes itself via /me/subscribed_apps there. This is
+      // the correct host for a token generated through "Instagram business
+      // login" — the Facebook graph host rejects it with capability error #3.
+      if (!okAny) {
+        for (const path of ["/me/subscribed_apps?subscribed_fields=messages", ...(igId ? [`/${igId}/subscribed_apps?subscribed_fields=messages`] : [])]) {
+          try {
+            const sub = await graphPost(path, c.token, IG_GRAPH);
+            const done = sub?.success === true;
+            okAny = okAny || done;
+            log.push(done ? "✅ حساب إنستقرام اشترك في استقبال الرسائل (graph.instagram.com)!" : `⚠️ إنستقرام (IG host): ${JSON.stringify(sub).slice(0, 100)}`);
+            if (done) break;
+          } catch (e) {
+            log.push(`❌ إنستقرام (IG host): ${e instanceof Error ? e.message.slice(0, 100) : "فشل"}`);
+          }
+        }
+      }
+
+      // Facebook-graph fallback for the Instagram account (page-linked flavor).
       if (igId && !okAny) {
         try {
           const sub = await graphPost(`/${igId}/subscribed_apps?subscribed_fields=messages`, c.token);
           const done = sub?.success === true;
           okAny = okAny || done;
-          log.push(done ? "✅ حساب إنستقرام اشترك في استقبال الرسائل مباشرة!" : `⚠️ إنستقرام: ${JSON.stringify(sub).slice(0, 120)}`);
+          log.push(done ? "✅ حساب إنستقرام اشترك في استقبال الرسائل (FB host)!" : `⚠️ إنستقرام (FB host): ${JSON.stringify(sub).slice(0, 100)}`);
         } catch (e) {
-          log.push(`❌ اشتراك إنستقرام: ${e instanceof Error ? e.message.slice(0, 100) : "فشل"}`);
+          log.push(`❌ إنستقرام (FB host): ${e instanceof Error ? e.message.slice(0, 100) : "فشل"}`);
         }
       }
     } catch (e) {
@@ -128,7 +155,7 @@ export async function connectDmChannel(): Promise<{ ok: boolean; log: string[] }
   }
 
   if (!okAny) {
-    log.push("💡 ولا توكن نجح. أغلب الاحتمال: التطبيق ما عنده Advanced Access لصلاحية instagram_manage_messages. الحل: نجرّب رسالة تجريبية فعلية — إذا وصلت للوارد فالاستقبال شغّال أصلًا من إعداد الويب هوك، وما نحتاج هالزر.");
+    log.push("💡 ولا توكن نجح. الأغلب التطبيق يحتاج App Review لصلاحية instagram_manage_messages، أو نوع التوكن ما يطابق. نراجع الخيار الثاني.");
   }
   return { ok: okAny, log };
 }
