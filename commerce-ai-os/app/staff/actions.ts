@@ -1620,3 +1620,50 @@ export async function staffSuperviseSetStatus(id: string, status: "open" | "in_p
   if (error) return { error: error.message };
   return { ok: true as const };
 }
+
+/** Bulk simple-mode toggle for staff: mark many products In / Out at once. */
+export async function staffSetManyAvailability(productIds: string[], inStock: boolean): Promise<{ ok: true; count: number } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية تحديث المخزون." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const ids = Array.from(new Set((productIds ?? []).map((s) => String(s)).filter(Boolean)));
+  if (ids.length === 0) return { ok: true as const, count: 0 };
+  const now = new Date().toISOString();
+  let count = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    let q = admin.from("inventory").update({ stock_quantity: inStock ? 1 : 0, updated_at: now }).in("product_id", chunk);
+    if (inStock) q = q.lte("stock_quantity", 0);
+    const { error } = await q;
+    if (error) return { error: error.message };
+    count += chunk.length;
+  }
+  return { ok: true as const, count };
+}
+
+/** Simple-mode toggle for ONE option (variant) from the staff portal. */
+export async function staffSetVariantAvailability(variantId: string, inStock: boolean): Promise<{ ok: true; stock: number } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية تحديث المخزون." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const { data: v } = await admin
+    .from("product_variants")
+    .select("id, parent_product_id, variant_name, stock_quantity")
+    .eq("id", String(variantId))
+    .maybeSingle();
+  if (!v) return { error: "الخيار غير موجود." };
+  const before = Number((v as any).stock_quantity) || 0;
+  const after = inStock ? (before > 0 ? before : 1) : 0;
+  if (after === before) return { ok: true as const, stock: after };
+  const { error } = await admin.from("product_variants").update({ stock_quantity: after }).eq("id", String(variantId));
+  if (error) return { error: error.message };
+  await logVariantStockTransition(admin, {
+    productId: (v as any).parent_product_id, variantId: String(variantId),
+    variantName: (v as any).variant_name ?? "", before, after, actor: `موظف: ${who.name}`,
+  });
+  return { ok: true as const, stock: after };
+}
