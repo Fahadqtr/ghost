@@ -13,6 +13,7 @@ import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
 import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
+import { buildStoryAdPrompt } from "@/lib/social/story-compute";
 import { DAY_SLOTS, slotTimeUtc } from "@/lib/social/schedule-compute";
 import { generateScheduledPost } from "@/lib/social/generate";
 import { geminiConfigured, generateSceneWithGemini, designSceneSettingWithGemini } from "@/lib/social/scene-gemini";
@@ -182,6 +183,89 @@ export async function publishStoryByUrl(mediaUrl: string, kind: "image" | "video
   revalidatePath("/social");
   if (!res.ok) return { error: res.error ?? "فشل نشر الستوري" };
   return { ok: true };
+}
+
+// ---- Generate + schedule a Story ---------------------------------------------
+
+export type StoryProduct = { id: string; name: string; imageUrl: string };
+
+/** Products that can back an AI story (approved + have a photo), for the picker. */
+export async function listProductsForStory(): Promise<{ error?: string; products: StoryProduct[] }> {
+  if (!(await isSignedIn())) return { error: "Not signed in.", products: [] };
+  const sb = admin();
+  if (!sb) return { error: NO_DB, products: [] };
+  const { data, error } = await sb
+    .from("products")
+    .select("id, name_ar, name_en, image_url, approval, created_at")
+    .not("image_url", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(300);
+  if (error) return { error: error.message, products: [] };
+  const products = ((data ?? []) as { id: string; name_ar: string | null; name_en: string | null; image_url: string | null; approval: string | null }[])
+    .filter((p) => p.image_url && (p.approval ?? "Approved") !== "Rejected")
+    .map((p) => ({ id: String(p.id), name: String(p.name_ar || p.name_en || "منتج").trim(), imageUrl: String(p.image_url) }));
+  return { products };
+}
+
+/**
+ * Generate a full vertical 9:16 STORY creative from a product's photo with AI
+ * (Gemini when configured, else OpenAI). Uploads to storage and returns the
+ * public URL — the owner then schedules or posts it. Does not touch social_posts.
+ */
+export async function generateStoryForProduct(productId: string): Promise<{ ok?: true; imageUrl?: string; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const { data: p } = await sb
+    .from("products")
+    .select("name_en, name_ar, description_en, description_ar, price, discount_price, image_url")
+    .eq("id", productId)
+    .single();
+  if (!p) return { error: "المنتج غير موجود." };
+  if (!p.image_url) return { error: "لا توجد صورة أصلية للمنتج." };
+
+  const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
+  const prompt = buildStoryAdPrompt({
+    nameAr: p.name_ar, nameEn: p.name_en,
+    description: p.description_ar || p.description_en, price,
+  });
+  const res = geminiConfigured()
+    ? await generateSceneWithGemini(sb, String(p.image_url), prompt, "stories")
+    : await editProductImageCore(sb, String(p.image_url), prompt, "stories", { raw: true, quality: "high" });
+  if ("error" in res) return { error: res.error };
+  return { ok: true, imageUrl: res.imageUrl };
+}
+
+/**
+ * Schedule a Story (image or video, from a public URL) to auto-publish at a
+ * future time. Inserts an approved+pending social_posts row the publish cron
+ * posts as a story when scheduled_at passes. Immediate (empty/past time) posts now.
+ */
+export async function scheduleStory(mediaUrl: string, kind: "image" | "video", whenIso: string): Promise<{ ok?: true; scheduled?: boolean; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const url = String(mediaUrl || "").trim();
+  if (!/^https:\/\/.+/i.test(url)) return { error: "رابط الوسائط غير صالح (لازم https عام)." };
+  const when = new Date(whenIso);
+  if (isNaN(when.getTime())) return { error: "وقت غير صالح." };
+  if (when.getTime() < Date.now() - 60_000) return { error: "الوقت في الماضي — اختر وقتًا قادمًا." };
+
+  const { error } = await sb.from("social_posts").insert({
+    platform: "instagram",
+    caption: "",
+    image_url: url,
+    status: "pending",
+    approved: true,
+    scheduled_at: when.toISOString(),
+    extras: { kind: "story", storyKind: kind },
+  });
+  if (error) {
+    const hint = /scheduled_at|approved|extras/.test(error.message) ? " — شغّل supabase/social_schedule.sql مرة وحدة." : "";
+    return { error: error.message + hint };
+  }
+  revalidatePath("/social");
+  return { ok: true, scheduled: true };
 }
 
 // ---- Weekly plan --------------------------------------------------------------
