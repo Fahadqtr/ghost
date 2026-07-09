@@ -21,8 +21,10 @@ test("forbids ALL baked-in text so Arabic is never garbled by the model", () => 
   assert.ok(/wordless/i.test(p));
 });
 
-test("reserves the lower area for the real-font overlay card", () => {
-  assert.ok(/LOWER 45%/i.test(buildStorySceneBrief({ nameAr: "منتج" })));
+test("reserves the top for the logo and the lower area for the overlay card", () => {
+  const p = buildStorySceneBrief({ nameAr: "منتج" });
+  assert.ok(/TOP 18%/i.test(p));
+  assert.ok(/LOWER 42%/i.test(p));
 });
 
 test("omits the product-name clause when no name is given", () => {

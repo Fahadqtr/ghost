@@ -7,7 +7,8 @@ import { createClient } from "@/lib/supabase/client";
 import { publishStoryByUrl, scheduleStory, generateStoryCreative, saveStoryImage, listProductsForStory, type StoryProduct } from "@/app/(app)/social/actions";
 import { fetchAsDataUrl, nodeToJpeg } from "@/lib/social/dom-to-image";
 import { adFontCss } from "@/lib/social/ad-fonts";
-import StoryTemplate, { STORY_W, STORY_H, type StoryTemplateProps } from "@/app/(app)/social/StoryTemplate";
+import StoryTemplate, { STORY_W, STORY_H, STORY_STYLES, type StoryTemplateProps } from "@/app/(app)/social/StoryTemplate";
+import type { AdCopy } from "@/lib/social/ad-copy-compute";
 import type { Locale } from "@/lib/i18n";
 
 const BUCKET = "product-images";
@@ -87,6 +88,10 @@ export default function StoryPublisher({ configured, locale = "ar" }: { configur
   const [products, setProducts] = useState<StoryProduct[]>([]);
   const [productId, setProductId] = useState("");
   const [generating, startGenerate] = useTransition();
+  // Cached creative pieces so «ستايل ثاني» re-composes instantly (no re-gen).
+  const creativeRef = useRef<null | { sceneDataUrl: string; productDataUrl: string; framed: boolean; logoDataUrl: string; copy: AdCopy; price: string; options: string[] }>(null);
+  const [hasCreative, setHasCreative] = useState(false);
+  const [styleIdx, setStyleIdx] = useState(0);
 
   useEffect(() => {
     if (!open || products.length) return;
@@ -115,6 +120,21 @@ export default function StoryPublisher({ configured, locale = "ar" }: { configur
     }
   };
 
+  // Compose the cached creative with a given style, upload it, show it.
+  const composeWithStyle = async (idx: number) => {
+    const cr = creativeRef.current;
+    if (!cr) return;
+    const dataUrl = await captureStory({
+      sceneDataUrl: cr.sceneDataUrl, productDataUrl: cr.productDataUrl, framed: cr.framed, logoDataUrl: cr.logoDataUrl,
+      brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, website: WEBSITE,
+      headline: cr.copy.headline, headlineEn: cr.copy.headlineEn, subtitle: cr.copy.subtitle,
+      price: cr.price, options: cr.options, style: STORY_STYLES[idx],
+    });
+    const saved = await saveStoryImage(dataUrl);
+    if (saved.error || !saved.imageUrl) throw new Error(saved.error ?? L("تعذّر الحفظ", "Save failed"));
+    setMediaUrl(saved.imageUrl); setKind("image");
+  };
+
   const generate = () => {
     if (!productId) { setMsg({ ok: false, text: L("اختر منتج أولًا.", "Pick a product first.") }); return; }
     setMsg({ ok: true, text: L("🎨 يصمّم ستوري فخم بالذكاء… (٢٠–٤٠ ثانية)", "🎨 Designing a luxury story with AI… (20–40s)") });
@@ -128,23 +148,33 @@ export default function StoryPublisher({ configured, locale = "ar" }: { configur
         const productDataUrl = sceneDataUrl ? "" : await fetchAsDataUrl(info.productUrl || "").catch(() => "");
         const framed = productDataUrl ? !(await hasLightBackground(productDataUrl)) : false;
         const logoDataUrl = await brandLogoDataUrl();
-        const dataUrl = await captureStory({
-          sceneDataUrl, productDataUrl, framed, logoDataUrl,
-          brandTop: BRAND_TOP, brandSub: BRAND_SUB, handle: HANDLE, website: WEBSITE,
-          headline: info.copy.headline, headlineEn: info.copy.headlineEn, subtitle: info.copy.subtitle,
-          price: info.price ?? "", options: info.options ?? [],
-        });
-        const saved = await saveStoryImage(dataUrl);
-        if (saved.error || !saved.imageUrl) { setMsg({ ok: false, text: `❌ ${saved.error ?? L("تعذّر الحفظ", "Save failed")}` }); return; }
-        setMediaUrl(saved.imageUrl); setKind("image");
-        setMsg({ ok: true, text: L("✅ اتصمّم الستوري — انشره الآن أو جدوله.", "✅ Story designed — post now or schedule it.") });
+        creativeRef.current = { sceneDataUrl, productDataUrl, framed, logoDataUrl, copy: info.copy, price: info.price ?? "", options: info.options ?? [] };
+        setHasCreative(true); setStyleIdx(0);
+        await composeWithStyle(0);
+        setMsg({ ok: true, text: L("✅ اتصمّم الستوري — بدّل الستايل، انشره أو جدوله.", "✅ Story designed — switch style, post or schedule it.") });
       } catch (e) {
         setMsg({ ok: false, text: `❌ ${e instanceof Error ? e.message : L("تعذّر التصميم", "Design failed")}` });
       }
     });
   };
 
-  const reset = () => { setMediaUrl(""); setWhen(""); if (fileRef.current) fileRef.current.value = ""; };
+  // Re-compose the SAME creative in the next style — instant, no AI call.
+  const changeStyle = () => {
+    if (!creativeRef.current) return;
+    const idx = (styleIdx + 1) % STORY_STYLES.length;
+    setStyleIdx(idx);
+    setMsg({ ok: true, text: L("🎨 يبدّل الستايل…", "🎨 Switching style…") });
+    startGenerate(async () => {
+      try {
+        await composeWithStyle(idx);
+        setMsg({ ok: true, text: L(`✅ ستايل ${idx + 1}/${STORY_STYLES.length} — انشره أو جدوله.`, `✅ Style ${idx + 1}/${STORY_STYLES.length} — post or schedule it.`) });
+      } catch (e) {
+        setMsg({ ok: false, text: `❌ ${e instanceof Error ? e.message : L("تعذّر التبديل", "Switch failed")}` });
+      }
+    });
+  };
+
+  const reset = () => { setMediaUrl(""); setWhen(""); creativeRef.current = null; setHasCreative(false); if (fileRef.current) fileRef.current.value = ""; };
 
   const publish = () => {
     if (!mediaUrl.trim()) { setMsg({ ok: false, text: L("ارفع/ولّد وسائط أو الصق رابط أولًا.", "Upload/generate media or paste a link first.") }); return; }
@@ -216,6 +246,12 @@ export default function StoryPublisher({ configured, locale = "ar" }: { configur
           {mediaUrl && kind === "image" ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={mediaUrl} alt="story preview" className="mx-auto max-h-80 rounded-lg" />
+          ) : null}
+
+          {hasCreative ? (
+            <button onClick={changeStyle} disabled={busy} className="btn-ghost w-full text-xs disabled:opacity-50">
+              {generating ? L("يبدّل…", "…") : `🎨 ${L(`ستايل ثاني (${styleIdx + 1}/${STORY_STYLES.length})`, `Another style (${styleIdx + 1}/${STORY_STYLES.length})`)}`}
+            </button>
           ) : null}
 
           {msg ? <p className={`rounded-lg px-3 py-2 text-xs ${msg.ok ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{msg.text}</p> : null}
