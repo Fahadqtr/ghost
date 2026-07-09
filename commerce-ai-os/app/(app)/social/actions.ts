@@ -3,7 +3,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
-import { publishToInstagram, publishStoryToInstagram, instagramConfigured, fetchIgMediaStats } from "@/lib/social/instagram";
+import { publishToInstagram, publishStoryToInstagram, publishReelToInstagram, instagramConfigured, fetchIgMediaStats } from "@/lib/social/instagram";
 import { engagementScore, engagementRate, summarizeInsights, EMPTY_STATS, type PostStats } from "@/lib/social/insights-compute";
 import { publishToTikTok, tiktokConfigured } from "@/lib/social/tiktok";
 import { generateDailySocialPosts } from "@/lib/social/generate";
@@ -119,6 +119,37 @@ export async function dismissSocialPost(id: string): Promise<{ ok?: true; error?
   await sb.from("social_posts").update({ status: "dismissed" }).eq("id", id);
   revalidatePath("/social");
   return { ok: true };
+}
+
+/**
+ * Publish a Reel from a public video URL (uploaded to our storage client-side,
+ * or any public link). Records the result in social_posts so it shows in the
+ * recent list with its stats like any other post.
+ */
+export async function publishReelByUrl(videoUrl: string, caption: string): Promise<{ ok?: true; mediaId?: string; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const sb = admin();
+  if (!sb) return { error: NO_DB };
+  const url = String(videoUrl || "").trim();
+  if (!/^https:\/\/.+/i.test(url)) return { error: "رابط الفيديو غير صالح (لازم يكون https عام)." };
+  const cap = String(caption || "").trim();
+
+  const res = await publishReelToInstagram(url, cap);
+  const now = new Date().toISOString();
+  await sb.from("social_posts").insert({
+    platform: "instagram",
+    caption: cap,
+    image_url: url,
+    status: res.ok ? "posted" : "failed",
+    error: res.ok ? null : (res.error ?? "فشل نشر الريل"),
+    posted_at: res.ok ? now : null,
+    external_id: res.ok ? (res.mediaId ?? null) : null,
+    approved: true,
+    extras: { kind: "reel" },
+  });
+  revalidatePath("/social");
+  if (!res.ok) return { error: res.error ?? "فشل نشر الريل" };
+  return { ok: true, mediaId: res.mediaId };
 }
 
 // ---- Weekly plan --------------------------------------------------------------
