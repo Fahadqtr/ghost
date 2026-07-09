@@ -18,6 +18,7 @@ import { storePrimaryProductImage } from "@/lib/products/imageStore";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
 import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
 import { insertAuditRow } from "@/lib/audit";
+import { getInventoryMode } from "@/lib/settings";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
@@ -358,17 +359,18 @@ export async function staffProducts(query: string): Promise<{ items: StaffProduc
 
 // The WHOLE catalog for the staff browse tab (paged through Supabase's 1000-row
 // cap). The tab does search + category/stock filtering client-side.
-export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showPrices: boolean; canEdit: boolean; canEditImage: boolean; canMove: boolean; canOos: boolean; error?: string }> {
+export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showPrices: boolean; canEdit: boolean; canEditImage: boolean; canMove: boolean; canOos: boolean; simpleMode: boolean; error?: string }> {
   const who = await currentStaff();
-  if (!who) return { items: [], showPrices: false, canEdit: false, canEditImage: false, canMove: false, canOos: false, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
-  if (!hasPerm(who.perms, "products")) return { items: [], showPrices: false, canEdit: false, canEditImage: false, canMove: false, canOos: false, error: "ما عندك صلاحية عرض المنتجات." };
+  if (!who) return { items: [], showPrices: false, canEdit: false, canEditImage: false, canMove: false, canOos: false, simpleMode: false, error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "products")) return { items: [], showPrices: false, canEdit: false, canEditImage: false, canMove: false, canOos: false, simpleMode: false, error: "ما عندك صلاحية عرض المنتجات." };
   const canEdit = hasPerm(who.perms, "edit_products");
   const canEditImage = hasPerm(who.perms, "edit_images");
   const canMove = hasPerm(who.perms, "stock"); // stock in/out straight from the browse tab
   const canOos = hasPerm(who.perms, "manage_tasks"); // one-tap oos task on sold-out cards
   const showPrices = hasPerm(who.perms, "prices") || canEdit;
+  const simpleMode = (await getInventoryMode()) === "simple";
   const admin = adminClient();
-  if (!admin) return { items: [], showPrices, canEdit, canEditImage, canMove, canOos, error: NO_DB };
+  if (!admin) return { items: [], showPrices, canEdit, canEditImage, canMove, canOos, simpleMode, error: NO_DB };
 
   // Per-variant shelf stock (summed) — a fallback when the variant row itself
   // has no stock_quantity. Optional table; degrades silently.
@@ -408,7 +410,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
   const items: StaffProduct[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await admin.from("products").select(cols).order("name_en", { ascending: true }).range(from, from + 999);
-    if (error) return { items, showPrices, canEdit, canEditImage, canMove, canOos, error: error.message };
+    if (error) return { items, showPrices, canEdit, canEditImage, canMove, canOos, simpleMode, error: error.message };
     for (const p of (data ?? []) as any[]) {
       items.push({
         id: String(p.id),
@@ -425,7 +427,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
     }
     if (!data || data.length < 1000) break;
   }
-  return { items, showPrices, canEdit, canEditImage, canMove, canOos };
+  return { items, showPrices, canEdit, canEditImage, canMove, canOos, simpleMode };
 }
 
 // The movement panel needs an inventory row — resolve (or seed) it for a

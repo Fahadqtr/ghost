@@ -324,6 +324,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const [editId, setEditId] = useState<string | null>(null);
   const [canMove, setCanMove] = useState(false); // stock permission: in/out from here
   const [canOos, setCanOos] = useState(false);   // manage_tasks: one-tap oos task on sold-out cards
+  const [simpleMode, setSimpleMode] = useState(false); // system-wide In/Out mode (no numbers)
   const [oosOpened, setOosOpened] = useState<Set<string>>(new Set());
   const [moveFor, setMoveFor] = useState<{ productId: string; item: StaffItem; variantId?: string } | null>(null);
   const [vOosDone, setVOosDone] = useState<Set<string>>(new Set());
@@ -337,7 +338,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
       const r = await staffAllProducts();
       if (!alive) return;
       if (r.error) setErr(r.error);
-      setAll(r.items); setShowPrices(r.showPrices); setCanEdit(r.canEdit || r.canEditImage); setCanMove(r.canMove); setCanOos(r.canOos); setLoading(false);
+      setAll(r.items); setShowPrices(r.showPrices); setCanEdit(r.canEdit || r.canEditImage); setCanMove(r.canMove); setCanOos(r.canOos); setSimpleMode(r.simpleMode); setLoading(false);
     })();
     return () => { alive = false; };
   }, []);
@@ -447,11 +448,11 @@ function ProductsTab({ locale }: { locale: Locale }) {
         || (p.variants ?? []).some((v) => (v.barcode ?? "").toLowerCase().includes(q) || (v.name ?? "").toLowerCase().includes(q));
       const matchCat = !cat || p.category === cat;
       const n = Number(p.stock);
-      const matchStk = !stk || (stk === "out" ? !(n > 0) : stk === "low" ? (n > 0 && n < 10) : stk === "in" ? n >= 10 : true);
+      const matchStk = !stk || (stk === "out" ? !(n > 0) : stk === "low" ? (n > 0 && n < 10) : stk === "in" ? (simpleMode ? n > 0 : n >= 10) : true);
       const matchVar = !onlyVar || (p.variants?.length ?? 0) > 0;
       return matchQ && matchCat && matchStk && matchVar;
     });
-  }, [all, query, cat, stk, onlyVar]);
+  }, [all, query, cat, stk, onlyVar, simpleMode]);
 
   const toggleExpand = (id: string) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   useEffect(() => { setPage(1); }, [query, cat, stk, onlyVar]);
@@ -462,9 +463,11 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const stockBadge = (n: number | null) => {
     if (n == null) return null;
     if (n <= 0) return <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{L("نافد", "Out")}</span>;
-    if (n < 10) return <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{L("منخفض", "Low")}</span>;
+    if (!simpleMode && n < 10) return <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{L("منخفض", "Low")}</span>;
     return <span className="rounded-sm bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">{L("متوفّر", "In")}</span>;
   };
+  // In simple mode the numeric count is hidden — the badge alone says In/Out.
+  const stockNum = (n: number | null) => (simpleMode ? null : (n != null ? n : "—"));
 
   return (
     <div className="space-y-3">
@@ -477,8 +480,8 @@ function ProductsTab({ locale }: { locale: Locale }) {
         </select>
         <select value={stk} onChange={(e) => setStk(e.target.value)} className="input flex-1 text-sm">
           <option value="">{L("كل الحالات", "All statuses")}</option>
-          <option value="in">{L("متوفّر (10+)", "In stock (10+)")}</option>
-          <option value="low">{L("منخفض (1-9)", "Low (1-9)")}</option>
+          <option value="in">{simpleMode ? L("متوفّر", "In stock") : L("متوفّر (10+)", "In stock (10+)")}</option>
+          {simpleMode ? null : <option value="low">{L("منخفض (1-9)", "Low (1-9)")}</option>}
           <option value="out">{L("نافد", "Out of stock")}</option>
         </select>
       </div>
@@ -515,7 +518,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 <div className="flex shrink-0 flex-col items-end gap-0.5 text-end">
                   <span className="flex items-center gap-1">
                     {stockBadge(p.stock)}
-                    <span className={`text-sm font-bold ${p.stock != null && p.stock <= 0 ? "text-red-600" : "text-ink"}`}>{p.stock != null ? p.stock : "—"}</span>
+                    <span className={`text-sm font-bold ${p.stock != null && p.stock <= 0 ? "text-red-600" : "text-ink"}`}>{stockNum(p.stock)}</span>
                   </span>
                   {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
                   <span className="flex gap-1">
@@ -547,7 +550,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
                     <div key={i} className="flex items-center justify-between gap-2 text-xs">
                       <span className="min-w-0 flex-1 truncate text-slate-700">{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
                       {v.barcode ? <span className="font-mono text-[11px] text-slate-500">{v.barcode}</span> : null}
-                      <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{v.stock != null ? v.stock : "—"}</span>
+                      <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{stockNum(v.stock)}</span>
                       {variantButtons(p, v)}
                     </div>
                   ))}
@@ -589,7 +592,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
               </div>
               <div className="flex items-center gap-2">
                 {stockBadge(detail.stock)}
-                <span className={`text-lg font-bold ${detail.stock != null && detail.stock <= 0 ? "text-red-600" : "text-ink"}`}>{detail.stock != null ? detail.stock : "—"} <span className="text-xs font-normal text-muted">{L("مخزون", "stock")}</span></span>
+                <span className={`text-lg font-bold ${detail.stock != null && detail.stock <= 0 ? "text-red-600" : "text-ink"}`}>{stockNum(detail.stock)} {simpleMode ? null : <span className="text-xs font-normal text-muted">{L("مخزون", "stock")}</span>}</span>
                 {showPrices && detail.price != null ? <span className="ms-auto text-base font-bold text-emerald-700">{detail.price} {L("ر.ق", "QAR")}</span> : null}
               </div>
               {canOos && detail.stock != null && detail.stock <= 0 && !oosOpened.has(detail.id) ? (
@@ -615,7 +618,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
                       <div key={i} className="flex items-center justify-between gap-2 text-xs">
                         <span className="min-w-0 flex-1 truncate text-slate-700">{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
                         {v.barcode ? <span className="font-mono text-[11px] text-slate-500">{v.barcode}</span> : null}
-                        <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{v.stock != null ? v.stock : "—"}</span>
+                        <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{stockNum(v.stock)}</span>
                         {variantButtons(detail, v)}
                       </div>
                     ))}

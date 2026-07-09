@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import ProductTable, { type ProductRow } from "@/components/ProductTable";
 import Link from "next/link";
+import { getInventoryMode } from "@/lib/settings";
 import { getT } from "@/lib/i18n-server";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
   const initialGroup = (await searchParams).review === "staff" ? "staff_pending" : "";
+  const simpleMode = (await getInventoryMode()) === "simple";
 
   let products: ProductRow[] = [];
   let errMsg: string | null = null;
@@ -105,7 +107,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           {L(`تعذّر تحميل المنتجات: ${errMsg}. تأكّد أنك مسجّل الدخول (RLS).`, `Couldn’t load products: ${errMsg}. Make sure you’re signed in (RLS).`)}
         </div>
       ) : (
-        <ProductTable products={products} locale={locale} initialGroup={initialGroup} />
+        <ProductTable products={products} locale={locale} initialGroup={initialGroup} simpleMode={simpleMode} />
       )}
     </div>
   );
