@@ -114,6 +114,25 @@ async function publishIg(params: Record<string, string>): Promise<IgPublishResul
     const container = (await create.json()) as { id?: string };
     if (!container.id) return { ok: false, error: "ما رجع معرف الحاوية من Meta." };
 
+    // 1b) Wait for the container to finish processing before publishing.
+    // Publishing too early returns "Media ID is not available" — Meta needs a
+    // few seconds to fetch/process the image (heavier ad images take longer).
+    let ready = false;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await new Promise((r) => setTimeout(r, attempt === 0 ? 1500 : 2000));
+      try {
+        const st = await fetch(
+          `${GRAPH}/${container.id}?fields=status_code&access_token=${encodeURIComponent(token)}`,
+          { cache: "no-store", signal: AbortSignal.timeout(15_000) }
+        );
+        const sj = (await st.json().catch(() => null)) as { status_code?: string } | null;
+        const code = sj?.status_code;
+        if (code === "FINISHED") { ready = true; break; }
+        if (code === "ERROR") return { ok: false, error: "فشلت معالجة الصورة عند Meta (تحقق من رابط/حجم الصورة)." };
+      } catch { /* transient — keep polling */ }
+    }
+    if (!ready) return { ok: false, error: "الصورة ما جهزت عند Meta في الوقت المتاح — جرّب مرة ثانية." };
+
     // 2) Publish it.
     const pub = await fetch(`${GRAPH}/${igId}/media_publish`, {
       method: "POST",
