@@ -16,7 +16,7 @@ import { buildDraftPrompt, parseProductDraft, EMPTY_DRAFT, type ProductDraft } f
 import { editProductImageCore } from "@/lib/products/imageEdit";
 import { storePrimaryProductImage } from "@/lib/products/imageStore";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
-import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
+import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransition, logStockTransition } from "@/lib/tasks/stock-tasks";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode } from "@/lib/settings";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
@@ -1471,6 +1471,45 @@ export async function staffOpenStockTask(productId: string, action: "oos" | "res
   if (r === "duplicate") return { error: "فيه مهمة مفتوحة من نفس النوع لهذا المنتج." };
   if (r === "skipped") return { error: "المنتج غير موجود أو غير معتمد." };
   return { ok: true as const };
+}
+
+/**
+ * Simple-mode availability toggle for staff: mark a product In-stock / Out-of-
+ * stock without a quantity. Out → 0; In → keep the existing count if positive,
+ * else 1. Fires the same OOS/restock catalog task as a movement. Gated on the
+ * same "stock" permission as stock in/out.
+ */
+export async function staffSetAvailability(productId: string, inStock: boolean): Promise<{ ok: true; stock: number } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية تحديث المخزون." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+
+  const { data: invRows } = await admin.from("inventory").select("id, stock_quantity").eq("product_id", String(productId)).limit(1);
+  let inv = (invRows ?? [])[0] as { id: string; stock_quantity: number | null } | undefined;
+  if (!inv) {
+    const ins = await admin
+      .from("inventory")
+      .insert({ product_id: String(productId), stock_quantity: 0, sold_quantity: 0, low_stock_threshold: 5 })
+      .select("id, stock_quantity")
+      .single();
+    if (ins.error || !ins.data) return { error: "ما قدرت أجهز صف المخزون." };
+    inv = ins.data as { id: string; stock_quantity: number | null };
+  }
+
+  const before = Number(inv.stock_quantity) || 0;
+  const after = inStock ? (before > 0 ? before : 1) : 0;
+  if (after === before) return { ok: true as const, stock: after };
+
+  const { error } = await admin
+    .from("inventory")
+    .update({ stock_quantity: after, updated_at: new Date().toISOString() })
+    .eq("id", inv.id);
+  if (error) return { error: error.message };
+
+  await logStockTransition(admin, { productId: String(productId), before, after, actor: `موظف: ${who.name}` });
+  return { ok: true as const, stock: after };
 }
 
 // Search the catalog for the manual "رجع المخزون" flow: matching products with

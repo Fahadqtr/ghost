@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
-  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak,
+  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak, staffSetAvailability,
   staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
   staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct, staffOpenStockTask, staffDraftFromImageUrl,
   staffMoveVariant, staffVariantOosTask, staffForwardTask,
@@ -383,6 +383,14 @@ function ProductsTab({ locale }: { locale: Locale }) {
     setMoveFor(null);
   });
 
+  // Simple-mode: flip a product In / Out of stock (no quantity entry).
+  const setAvail = (p: StaffProduct, inStock: boolean) => start(async () => {
+    const r = await staffSetAvailability(p.id, inStock);
+    if ("error" in r) { flash(false, r.error); return; }
+    setAll((list) => list.map((x) => (x.id === p.id ? { ...x, stock: r.stock } : x)));
+    flash(true, `${p.name ?? p.sku ?? ""} → ${inStock ? L("متوفر", "In stock") : L("نفذ", "Out of stock")}`);
+  });
+
   // Movement panel for ONE option row (no inventory row involved).
   const startMoveVariant = (p: StaffProduct, v: StaffVariant) => {
     if (!v.id) return;
@@ -522,20 +530,37 @@ function ProductsTab({ locale }: { locale: Locale }) {
                   </span>
                   {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
                   <span className="flex gap-1">
-                    {canOos && p.stock != null && p.stock <= 0 ? (
-                      oosOpened.has(p.id) ? (
-                        <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">✓ {L("انفتحت", "Opened")}</span>
-                      ) : (
-                        <button disabled={busy} onClick={() => openOosNow(p)} className="rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white disabled:opacity-50">
-                          🚫 {L("اوت ستوك", "Out of stock")}
-                        </button>
-                      )
-                    ) : null}
-                    {canMove ? (
-                      <button disabled={busy} onClick={() => startMove(p)} className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 disabled:opacity-50">
-                        📦 {L("مخزون", "Stock")}
-                      </button>
-                    ) : null}
+                    {simpleMode ? (
+                      canMove ? (
+                        <span className="flex items-center gap-1 rounded-full bg-slate-100 p-0.5">
+                          <button disabled={busy} onClick={() => setAvail(p, true)}
+                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold disabled:opacity-50 ${p.stock != null && p.stock > 0 ? "bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-200" : "text-slate-400"}`}>
+                            {L("متوفر", "In")}
+                          </button>
+                          <button disabled={busy} onClick={() => setAvail(p, false)}
+                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold disabled:opacity-50 ${p.stock != null && p.stock <= 0 ? "bg-white text-red-600 shadow-sm ring-1 ring-red-200" : "text-slate-400"}`}>
+                            {L("نفذ", "Out")}
+                          </button>
+                        </span>
+                      ) : null
+                    ) : (
+                      <>
+                        {canOos && p.stock != null && p.stock <= 0 ? (
+                          oosOpened.has(p.id) ? (
+                            <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">✓ {L("انفتحت", "Opened")}</span>
+                          ) : (
+                            <button disabled={busy} onClick={() => openOosNow(p)} className="rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white disabled:opacity-50">
+                              🚫 {L("اوت ستوك", "Out of stock")}
+                            </button>
+                          )
+                        ) : null}
+                        {canMove ? (
+                          <button disabled={busy} onClick={() => startMove(p)} className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 disabled:opacity-50">
+                            📦 {L("مخزون", "Stock")}
+                          </button>
+                        ) : null}
+                      </>
+                    )}
                     {canEdit ? (
                       <button onClick={() => setEditId(p.id)} className="rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
                         ✏️ {L("عدّل", "Edit")}
@@ -595,16 +620,33 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 <span className={`text-lg font-bold ${detail.stock != null && detail.stock <= 0 ? "text-red-600" : "text-ink"}`}>{stockNum(detail.stock)} {simpleMode ? null : <span className="text-xs font-normal text-muted">{L("مخزون", "stock")}</span>}</span>
                 {showPrices && detail.price != null ? <span className="ms-auto text-base font-bold text-emerald-700">{detail.price} {L("ر.ق", "QAR")}</span> : null}
               </div>
-              {canOos && detail.stock != null && detail.stock <= 0 && !oosOpened.has(detail.id) ? (
-                <button disabled={busy} onClick={() => { openOosNow(detail); setDetail(null); }} className="w-full rounded-lg bg-red-600 py-2 text-sm font-bold text-white disabled:opacity-50">
-                  🚫 {L("اوت ستوك — افتح مهمة «علّمه غير متوفر»", "Out of stock — open the mark-unavailable task")}
-                </button>
-              ) : null}
-              {canMove ? (
-                <button disabled={busy} onClick={() => startMove(detail)} className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2 text-sm font-medium text-emerald-700 disabled:opacity-50">
-                  📦 {L("حركة مخزون (إدخال/إخراج)", "Stock move (in / out)")}
-                </button>
-              ) : null}
+              {simpleMode ? (
+                canMove ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button disabled={busy} onClick={() => setAvail(detail, true)}
+                      className={`rounded-lg py-2 text-sm font-bold disabled:opacity-50 ${detail.stock != null && detail.stock > 0 ? "bg-emerald-600 text-white" : "border border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                      ✅ {L("متوفر", "In stock")}
+                    </button>
+                    <button disabled={busy} onClick={() => setAvail(detail, false)}
+                      className={`rounded-lg py-2 text-sm font-bold disabled:opacity-50 ${detail.stock != null && detail.stock <= 0 ? "bg-red-600 text-white" : "border border-red-200 bg-red-50 text-red-600"}`}>
+                      🚫 {L("نفذ", "Out of stock")}
+                    </button>
+                  </div>
+                ) : null
+              ) : (
+                <>
+                  {canOos && detail.stock != null && detail.stock <= 0 && !oosOpened.has(detail.id) ? (
+                    <button disabled={busy} onClick={() => { openOosNow(detail); setDetail(null); }} className="w-full rounded-lg bg-red-600 py-2 text-sm font-bold text-white disabled:opacity-50">
+                      🚫 {L("اوت ستوك — افتح مهمة «علّمه غير متوفر»", "Out of stock — open the mark-unavailable task")}
+                    </button>
+                  ) : null}
+                  {canMove ? (
+                    <button disabled={busy} onClick={() => startMove(detail)} className="w-full rounded-lg border border-emerald-200 bg-emerald-50 py-2 text-sm font-medium text-emerald-700 disabled:opacity-50">
+                      📦 {L("حركة مخزون (إدخال/إخراج)", "Stock move (in / out)")}
+                    </button>
+                  ) : null}
+                </>
+              )}
               {canEdit ? (
                 <button onClick={() => { setEditId(detail.id); setDetail(null); }} className="w-full rounded-lg border border-violet-200 bg-violet-50 py-2 text-sm font-medium text-violet-700">
                   ✏️ {L("عدّل المنتج", "Edit product")}
