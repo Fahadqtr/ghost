@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
-  listDmConversations, dmThread, sendDmReply, toggleDmAuto, resolveDmHuman,
+  listDmConversations, dmThread, sendDmReply, toggleDmAuto, resolveDmHuman, connectDmSubscription,
   type DmConversationRow, type DmMessageRow,
 } from "@/app/(app)/inbox/actions";
 import { type Locale } from "@/lib/i18n";
@@ -21,6 +21,7 @@ export default function InboxClient({ initial, ready, locale = "ar" }: {
   const [thread, setThread] = useState<DmMessageRow[]>([]);
   const [input, setInput] = useState("");
   const [err, setErr] = useState("");
+  const [connectLog, setConnectLog] = useState<string[]>([]);
   const [busy, start] = useTransition();
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [thread]);
@@ -62,6 +63,12 @@ export default function InboxClient({ initial, ready, locale = "ar" }: {
     if ("error" in r) { setErr(r.error); return; }
     setConvos((cs) => cs.map((x) => (x.id === c.id ? { ...x, auto_reply: !c.auto_reply } : x)));
     setSel((s) => (s && s.id === c.id ? { ...s, auto_reply: !c.auto_reply } : s));
+  });
+
+  const connect = () => start(async () => {
+    setConnectLog([L("⏳ جاري ربط الصفحة…", "⏳ Connecting the page…")]);
+    const r = await connectDmSubscription();
+    setConnectLog(r.log.length ? r.log : [r.ok ? "✅" : "❌"]);
   });
 
   const resolve = (c: DmConversationRow) => start(async () => {
@@ -142,12 +149,22 @@ export default function InboxClient({ initial, ready, locale = "ar" }: {
           {convos.length} {L("محادثة", "conversations")}
           {needing ? <span className="ms-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">🙋 {needing} {L("تحتاج رد", "need a human")}</span> : null}
         </p>
-        <button onClick={refresh} disabled={busy} className="btn-ghost px-3 py-1 text-xs disabled:opacity-50">↻ {L("حدّث", "Refresh")}</button>
+        <div className="flex items-center gap-1">
+          <button onClick={connect} disabled={busy} className="btn-ghost px-3 py-1 text-xs disabled:opacity-50">🔌 {L("فعّل الاستقبال", "Connect")}</button>
+          <button onClick={refresh} disabled={busy} className="btn-ghost px-3 py-1 text-xs disabled:opacity-50">↻ {L("حدّث", "Refresh")}</button>
+        </div>
       </div>
+      {connectLog.length ? (
+        <div className="space-y-1 rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-xs text-ink">
+          {connectLog.map((line, i) => <p key={i} className="break-words">{line}</p>)}
+        </div>
+      ) : null}
       {err ? <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{err}</p> : null}
       {convos.length === 0 ? (
         <div className="card py-8 text-center text-sm text-muted">
           {L("ما وصلت رسائل بعد — أول دايركت يوصل بيظهر هنا وترد عليه ملاك تلقائيًا.", "No messages yet — the first DM will appear here and ملاك replies automatically.")}
+          <br />
+          <span className="text-xs">{L("أرسلت رسالة تجريبية وما ظهرت؟ اضغط «🔌 فعّل الاستقبال» فوق مرة وحدة.", "Sent a test DM and nothing showed? Tap “🔌 Connect” above once.")}</span>
         </div>
       ) : (
         <div className="space-y-2">

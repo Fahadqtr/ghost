@@ -35,6 +35,84 @@ export async function sendInstagramDm(recipientId: string, text: string): Promis
   }
 }
 
+async function graphGet(path: string, token: string): Promise<any> {
+  const sep = path.includes("?") ? "&" : "?";
+  const r = await fetch(`${GRAPH}${path}${sep}access_token=${encodeURIComponent(token)}`, {
+    signal: AbortSignal.timeout(15_000),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j?.error?.message || `Graph ${r.status}`);
+  return j;
+}
+
+async function graphPost(path: string, token: string): Promise<any> {
+  const sep = path.includes("?") ? "&" : "?";
+  const r = await fetch(`${GRAPH}${path}${sep}access_token=${encodeURIComponent(token)}`, {
+    method: "POST",
+    signal: AbortSignal.timeout(15_000),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j?.error?.message || `Graph ${r.status}`);
+  return j;
+}
+
+/**
+ * One-tap wiring of DM delivery: subscribe the Facebook Page (the one linked
+ * to the IG account) to this app's `messages` webhook field. Meta verifies the
+ * callback URL from the dashboard, but message events only flow once the page
+ * itself is subscribed — a step with no dashboard button. Returns a human
+ * (Arabic) diagnostic log so token/permission gaps are visible in the UI.
+ */
+export async function connectDmChannel(): Promise<{ ok: boolean; log: string[] }> {
+  const log: string[] = [];
+  const token = dmToken();
+  if (!token) return { ok: false, log: ["❌ INSTAGRAM_ACCESS_TOKEN غير مضبوط في Vercel."] };
+  try {
+    const me = await graphGet("/me?fields=id,name", token);
+    log.push(`🔑 التوكن باسم: ${me?.name ?? me?.id ?? "غير معروف"}`);
+
+    // User tokens list their pages (with page tokens) via /me/accounts; a
+    // page token can't, and is itself the page — fall back to /me.
+    let pages: { id: string; name: string; token: string }[] = [];
+    try {
+      const acc = await graphGet("/me/accounts?fields=id,name,access_token&limit=10", token);
+      pages = ((acc?.data ?? []) as any[]).map((p) => ({
+        id: String(p.id), name: String(p.name ?? p.id), token: String(p.access_token || token),
+      }));
+    } catch { /* not a user token — use /me below */ }
+    if (pages.length === 0) pages = [{ id: String(me?.id ?? ""), name: String(me?.name ?? me?.id ?? ""), token }];
+
+    let okAny = false;
+    for (const p of pages) {
+      if (!p.id) continue;
+      try {
+        const sub = await graphPost(`/${p.id}/subscribed_apps?subscribed_fields=messages`, p.token);
+        const done = sub?.success === true;
+        okAny = okAny || done;
+        log.push(done
+          ? `✅ صفحة «${p.name}» اشتركت في استقبال الرسائل.`
+          : `⚠️ «${p.name}»: رد غير متوقع — ${JSON.stringify(sub).slice(0, 160)}`);
+        try {
+          const chk = await graphGet(`/${p.id}/subscribed_apps`, p.token);
+          const fields = ((chk?.data ?? []) as any[])
+            .map((a) => `${a.name}: ${(a.subscribed_fields ?? []).join("، ")}`)
+            .join(" | ");
+          if (fields) log.push(`📋 اشتراكات «${p.name}»: ${fields}`);
+        } catch { /* read-back is informational only */ }
+      } catch (e) {
+        log.push(`❌ «${p.name}»: ${e instanceof Error ? e.message : "فشل الاشتراك"}`);
+      }
+    }
+    if (!okAny) {
+      log.push("💡 لو الخطأ عن صلاحيات: نحتاج توكن مراسلة جديد فيه pages_manage_metadata + pages_messaging + instagram_manage_messages — نحطه كمتغير META_MESSAGING_TOKEN بدون المساس بتوكن النشر.");
+    }
+    return { ok: okAny, log };
+  } catch (e) {
+    log.push(`❌ ${e instanceof Error ? e.message : "فشل الاتصال بـ Graph API"}`);
+    return { ok: false, log };
+  }
+}
+
 /** Find or create the conversation row for this sender. */
 export async function upsertDmConversation(admin: any, channel: string, externalId: string): Promise<{ id: string; auto_reply: boolean } | null> {
   const { data: found } = await admin

@@ -2,7 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
-import { sendInstagramDm, insertDmMessage } from "@/lib/dm/inbox";
+import { sendInstagramDm, insertDmMessage, connectDmChannel } from "@/lib/dm/inbox";
 
 // Owner's DM inbox actions — read the conversations «ملاك» is handling, jump
 // in with a manual reply (clears the needs-human flag), and flip auto-reply
@@ -96,6 +96,13 @@ export async function sendDmReply(conversationId: string, text: string): Promise
   await insertDmMessage(admin, { conversationId: String(convo.id), direction: "out", body, ai: false });
   await admin.from("dm_conversations").update({ needs_human: false }).eq("id", String(convo.id));
   return { ok: true as const };
+}
+
+/** Subscribe the linked Facebook Page to the app's `messages` webhook (one-tap fix for "nothing arrives"). */
+export async function connectDmSubscription(): Promise<{ ok: boolean; log: string[] }> {
+  const unauth = await requireUser();
+  if (unauth) return { ok: false, log: [unauth.error] };
+  return connectDmChannel();
 }
 
 export async function toggleDmAuto(conversationId: string, on: boolean): Promise<{ ok: true } | { error: string }> {
