@@ -60,6 +60,25 @@ test("orders out-of-stock first, then by lowest stock", () => {
   assert.deepEqual(r.items.map((i) => i.productId), ["b", "c", "a"]);
 });
 
+test("simple In/Out mode flags ONLY out-of-stock — every available (qty 1) item is ignored", () => {
+  // The bulk «متوفر» toggle sets available products to exactly 1; with a
+  // threshold of 5 that used to flag the whole catalogue. Simple mode must
+  // treat qty 1 as available and surface nothing when nothing is truly out.
+  const available = computeLowStock([
+    row({ product_id: "a", stock_quantity: 1, low_stock_threshold: 5 }),
+    row({ product_id: "b", stock_quantity: 1, low_stock_threshold: 5 }),
+  ], 12, true);
+  assert.deepEqual(available, { outCount: 0, lowCount: 0, items: [] });
+
+  const withOut = computeLowStock([
+    row({ product_id: "a", stock_quantity: 1, low_stock_threshold: 5 }),
+    row({ product_id: "b", stock_quantity: 0, low_stock_threshold: 5 }),
+  ], 12, true);
+  assert.equal(withOut.outCount, 1);
+  assert.equal(withOut.lowCount, 0);
+  assert.deepEqual(withOut.items.map((i) => i.productId), ["b"]);
+});
+
 test("caps the item list at the limit but keeps the full counts", () => {
   const rows: LowStockRow[] = [];
   for (let i = 0; i < 20; i++) rows.push(row({ product_id: `p${i}`, stock_quantity: 0 }));

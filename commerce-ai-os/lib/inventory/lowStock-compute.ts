@@ -47,14 +47,19 @@ const EMPTY: LowStockSummary = { outCount: 0, lowCount: 0, items: [] };
  * one row moves off 50 we treat stock as untracked and surface nothing, so the
  * owner isn't drowned in false alerts on day one.
  */
-export function computeLowStock(rows: LowStockRow[], limit: number): LowStockSummary {
+export function computeLowStock(rows: LowStockRow[], limit: number, simpleMode = false): LowStockSummary {
   const tracked = rows.some((r) => Number(r.stock_quantity) !== 50);
   if (!tracked) return { ...EMPTY };
 
   const flagged: LowStockItem[] = [];
   for (const r of rows) {
     const stock = Number(r.stock_quantity) || 0;
-    const threshold = r.low_stock_threshold != null ? Number(r.low_stock_threshold) : DEFAULT_LOW_THRESHOLD;
+    // In simple In/Out mode, quantities are only 1 (available) / 0 (out) — a
+    // "low stock" band is meaningless (every available item would look low), so
+    // only flag actual out-of-stock by pinning the threshold to 0.
+    const threshold = simpleMode
+      ? 0
+      : (r.low_stock_threshold != null ? Number(r.low_stock_threshold) : DEFAULT_LOW_THRESHOLD);
     if (stock > threshold) continue;
     flagged.push({
       productId: r.product_id ?? null,

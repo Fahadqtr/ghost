@@ -127,6 +127,9 @@ export const NAV_GROUPS = [
       { href: "/staff", label: "صفحة الموظفين", en: "Staff page", icon: "📲" },
     ],
   },
+  { title: "العملاء", titleEn: "Customers", items: [
+    { href: "/crm", label: "العملاء (CRM)", en: "Customers (CRM)", icon: "🧑‍🤝‍🧑" },
+  ] },
   { title: "التسويق", titleEn: "Marketing", items: [
     { href: "/inbox", label: "الوارد (دايركت)", en: "Inbox (DMs)", icon: "💬" },
     { href: "/social", label: "محتوى السوشيال", en: "Social content", icon: "📣" },
