@@ -11,8 +11,17 @@ import "server-only";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
+// Env values pasted into the dashboard often pick up a stray newline, space, or
+// wrapping quotes — Meta then rejects the token with "Cannot parse access
+// token". Normalize on read so a clean copy isn't required to publish.
+function cleanEnv(v: string | undefined): string {
+  return String(v ?? "").trim().replace(/^["']|["']$/g, "").trim();
+}
+function igUserId(): string { return cleanEnv(process.env.INSTAGRAM_USER_ID); }
+function igToken(): string { return cleanEnv(process.env.INSTAGRAM_ACCESS_TOKEN); }
+
 export function instagramConfigured(): boolean {
-  return Boolean(process.env.INSTAGRAM_USER_ID && process.env.INSTAGRAM_ACCESS_TOKEN);
+  return Boolean(igUserId() && igToken());
 }
 
 export interface IgPublishResult {
@@ -65,7 +74,7 @@ const INSIGHT_METRIC_SETS = [
 
 /** Performance stats for one published IG media (feed post). */
 export async function fetchIgMediaStats(mediaId: string): Promise<IgMediaStats> {
-  const token = process.env.INSTAGRAM_ACCESS_TOKEN;
+  const token = igToken();
   const empty = { likes: 0, comments: 0, reach: 0, views: 0, saved: 0, shares: 0 };
   if (!token) return { ok: false, error: "إنستقرام غير مهيأ (INSTAGRAM_ACCESS_TOKEN).", ...empty };
   try {
@@ -111,8 +120,8 @@ export async function fetchIgMediaStats(mediaId: string): Promise<IgMediaStats> 
 }
 
 async function publishIg(params: Record<string, string>, pollAttempts = 6): Promise<IgPublishResult> {
-  const igId = process.env.INSTAGRAM_USER_ID;
-  const token = process.env.INSTAGRAM_ACCESS_TOKEN;
+  const igId = igUserId();
+  const token = igToken();
   if (!igId || !token) return { ok: false, error: "إنستقرام غير مهيأ (INSTAGRAM_USER_ID / INSTAGRAM_ACCESS_TOKEN)." };
 
   const metaError = async (r: Response) => {
