@@ -340,3 +340,104 @@ export async function createShopifyProduct(opts: CreateProductOpts): Promise<{ o
   }
   return { ok: true, shopifyId: product.id };
 }
+
+// ---- Customers (CRM) ---------------------------------------------------------
+
+export interface ShopifyCustomerLite {
+  id: string;               // gid://shopify/Customer/…
+  name: string;
+  email: string;
+  phone: string;
+  orders: number;
+  spent: number;            // total spend
+  currency: string;
+  lastOrderAt: string | null;
+  createdAt: string | null;
+}
+
+interface CustomersQuery {
+  customers: {
+    nodes: {
+      id: string; displayName: string | null; email: string | null; phone: string | null;
+      numberOfOrders: string | number | null;
+      amountSpent: { amount: string; currencyCode: string } | null;
+      createdAt: string | null;
+      lastOrder: { createdAt: string | null } | null;
+    }[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
+}
+
+/** All customers (highest spend first), paged up to `limit`. Needs the app's
+ *  read_customers scope — a scope error surfaces so the UI can explain it. */
+export async function fetchShopifyCustomers(limit = 250): Promise<{ customers?: ShopifyCustomerLite[]; error?: string }> {
+  const out: ShopifyCustomerLite[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 20 && out.length < limit; page++) {
+    const resp: { data?: CustomersQuery; error?: string } = await shopifyGraphQL<CustomersQuery>(
+      `query($cursor: String) {
+        customers(first: 100, after: $cursor, sortKey: TOTAL_SPENT, reverse: true) {
+          nodes {
+            id displayName email phone numberOfOrders
+            amountSpent { amount currencyCode }
+            createdAt
+            lastOrder { createdAt }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+      { cursor },
+    );
+    if (resp.error) return out.length ? { customers: out } : { error: resp.error };
+    const data = resp.data?.customers;
+    for (const n of data?.nodes ?? []) {
+      out.push({
+        id: n.id,
+        name: String(n.displayName ?? "").trim(),
+        email: String(n.email ?? "").trim(),
+        phone: String(n.phone ?? "").trim(),
+        orders: Number(n.numberOfOrders ?? 0) || 0,
+        spent: Number(n.amountSpent?.amount ?? 0) || 0,
+        currency: String(n.amountSpent?.currencyCode ?? "QAR"),
+        lastOrderAt: n.lastOrder?.createdAt ?? null,
+        createdAt: n.createdAt ?? null,
+      });
+    }
+    if (!data?.pageInfo?.hasNextPage) break;
+    cursor = data.pageInfo.endCursor;
+  }
+  return { customers: out.slice(0, limit) };
+}
+
+export interface ShopifyCustomerOrder {
+  name: string; createdAt: string; fulfillment: string; total: number; currency: string;
+}
+
+/** Recent orders for ONE customer (for the CRM profile). */
+export async function fetchShopifyCustomerOrders(customerId: string, limit = 20): Promise<{ orders?: ShopifyCustomerOrder[]; error?: string }> {
+  const resp: { data?: { customer: { orders: { nodes: {
+    name: string; createdAt: string; displayFulfillmentStatus: string | null;
+    totalPriceSet: { shopMoney: { amount: string; currencyCode: string } } | null;
+  }[] } } | null }; error?: string } = await shopifyGraphQL(
+    `query($id: ID!, $first: Int!) {
+      customer(id: $id) {
+        orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+          nodes {
+            name createdAt displayFulfillmentStatus
+            totalPriceSet { shopMoney { amount currencyCode } }
+          }
+        }
+      }
+    }`,
+    { id: customerId, first: Math.max(1, Math.min(50, limit)) },
+  );
+  if (resp.error) return { error: resp.error };
+  const orders: ShopifyCustomerOrder[] = (resp.data?.customer?.orders?.nodes ?? []).map((n) => ({
+    name: n.name,
+    createdAt: n.createdAt,
+    fulfillment: String(n.displayFulfillmentStatus ?? ""),
+    total: Number(n.totalPriceSet?.shopMoney?.amount ?? NaN),
+    currency: String(n.totalPriceSet?.shopMoney?.currencyCode ?? "QAR"),
+  }));
+  return { orders };
+}
