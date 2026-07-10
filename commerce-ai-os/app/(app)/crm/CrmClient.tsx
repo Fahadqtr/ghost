@@ -71,15 +71,16 @@ export default function CrmClient({ rows, counts, shopifyNote }: {
       ) : null}
 
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث بالاسم، الجوال، الحساب…"
+        type="search" aria-label="ابحث في العملاء" autoComplete="off" spellCheck={false}
         className="input w-full text-sm" />
 
       <div className="flex flex-wrap gap-2">
-        <button onClick={() => setSeg("all")}
+        <button type="button" onClick={() => setSeg("all")} aria-pressed={seg === "all"}
           className={`rounded-full px-3 py-1 text-xs font-semibold ${seg === "all" ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>
           الكل ({rows.length})
         </button>
         {SEGMENTS.map((s) => (
-          <button key={s.key} onClick={() => setSeg(s.key)}
+          <button key={s.key} type="button" onClick={() => setSeg(s.key)} aria-pressed={seg === s.key}
             className={`rounded-full px-3 py-1 text-xs font-semibold ${seg === s.key ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>
             {s.emoji} {s.ar} ({counts[s.key] ?? 0})
           </button>
@@ -97,8 +98,8 @@ export default function CrmClient({ rows, counts, shopifyNote }: {
             const hasNote = st?.hasNote ?? c.hasNote;
             return (
               <li key={k} className="card p-0">
-                <button onClick={() => toggle(c)} className="flex w-full items-center gap-3 p-3 text-start">
-                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold ${SEG_STYLE[c.segment]}`}>
+                <button type="button" onClick={() => toggle(c)} aria-expanded={open} className="flex w-full items-center gap-3 p-3 text-start">
+                  <span aria-hidden="true" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold ${SEG_STYLE[c.segment]}`}>
                     {(c.name || "؟").trim().charAt(0)}
                   </span>
                   <div className="min-w-0 flex-1">
@@ -106,15 +107,15 @@ export default function CrmClient({ rows, counts, shopifyNote }: {
                       <span className="truncate text-sm font-bold text-ink">{c.name}</span>
                       <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${SEG_STYLE[c.segment]}`}>{segmentLabel(c.segment)}</span>
                       {c.needsHuman ? <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">يحتاج رد</span> : null}
-                      {hasNote ? <span className="shrink-0" title="فيه ملاحظة">📝</span> : null}
+                      {hasNote ? <span className="shrink-0" role="img" aria-label="فيه ملاحظة">📝</span> : null}
                     </div>
-                    <div className="truncate text-[11px] text-muted" dir="ltr">
+                    <div className="truncate text-[11px] text-muted tabular-nums" dir="ltr">
                       {c.source === "shopify"
                         ? `${c.orders} طلب · ${formatQar(c.spent)}${c.phone ? " · " + c.phone : ""}`
                         : `${c.channel === "whatsapp" ? "واتساب" : "دايركت"}${c.instagram ? " · @" + c.instagram.replace(/^@/, "") : ""}`}
                     </div>
                   </div>
-                  <span className="shrink-0 text-[11px] text-muted">{relDay(c.lastActivityAt)}</span>
+                  <span className="shrink-0 text-[11px] text-muted tabular-nums">{relDay(c.lastActivityAt)}</span>
                 </button>
 
                 {open ? (
@@ -143,7 +144,7 @@ function CustomerDetail({ c, detail, onSaved }: {
   const [busy, start] = useTransition();
 
   if (detail === "loading" || detail === undefined) {
-    return <div className="border-t border-[#efe3d6] p-3 text-xs text-muted">جاري التحميل…</div>;
+    return <div role="status" aria-live="polite" className="border-t border-[#efe3d6] p-3 text-xs text-muted">جاري التحميل…</div>;
   }
 
   const noteVal = note ?? detail.notes;
@@ -185,8 +186,8 @@ function CustomerDetail({ c, detail, onSaved }: {
               {detail.orders.map((o, i) => (
                 <li key={i} className="flex items-center justify-between rounded bg-slate-50 px-2 py-1 text-xs">
                   <span className="font-semibold text-ink" dir="ltr">{o.name}</span>
-                  <span className="text-muted">{relDay(o.createdAt)}{o.fulfillment ? ` · ${o.fulfillment}` : ""}</span>
-                  <span className="font-semibold text-ink">{formatQar(o.total)}</span>
+                  <span className="text-muted tabular-nums">{relDay(o.createdAt)}{o.fulfillment ? ` · ${o.fulfillment}` : ""}</span>
+                  <span className="font-semibold text-ink tabular-nums">{formatQar(o.total)}</span>
                 </li>
               ))}
             </ul>
@@ -219,11 +220,12 @@ function CustomerDetail({ c, detail, onSaved }: {
           {tagVal.map((t) => (
             <span key={t} className="inline-flex items-center gap-1 rounded-full bg-brand-light px-2 py-0.5 text-[11px] text-brand-dark">
               {t}
-              <button onClick={() => commitTags(tagVal.filter((x) => x !== t))} disabled={busy} className="text-brand-dark/60">×</button>
+              <button type="button" onClick={() => commitTags(tagVal.filter((x) => x !== t))} disabled={busy} aria-label={`حذف الوسم ${t}`} className="text-brand-dark/60">×</button>
             </span>
           ))}
           <input value={tagInput} onChange={(e) => setTagInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
+            aria-label="أضف وسمًا" autoComplete="off"
             placeholder="+ وسم" className="w-20 rounded-full border border-slate-200 px-2 py-0.5 text-[11px]" />
         </div>
       </div>
@@ -232,12 +234,13 @@ function CustomerDetail({ c, detail, onSaved }: {
       <div>
         <p className="mb-1 text-xs font-semibold text-muted">ملاحظات</p>
         <textarea value={noteVal} onChange={(e) => setNote(e.target.value)} rows={2}
+          aria-label="ملاحظات العميل"
           className="input w-full text-xs" placeholder="تفضيلات العميل، طلبات خاصة…" />
         <div className="mt-1 flex items-center gap-2">
-          <button onClick={saveNote} disabled={busy} className="btn-primary px-3 py-1 text-xs disabled:opacity-50">
+          <button type="button" onClick={saveNote} disabled={busy} className="btn-primary px-3 py-1 text-xs disabled:opacity-50">
             {busy ? "…" : "حفظ"}
           </button>
-          {msg ? <span className="text-[11px] text-muted">{msg}</span> : null}
+          <span role="status" aria-live="polite" className="text-[11px] text-muted">{msg}</span>
         </div>
       </div>
     </div>
