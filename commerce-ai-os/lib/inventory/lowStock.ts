@@ -5,6 +5,7 @@
 // unit-tested in lowStock-compute.ts; this file only does the I/O.
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 import { fetchAll } from "@/lib/supabase/paginate";
+import { getInventoryMode } from "@/lib/settings";
 import { computeLowStock, type LowStockRow } from "./lowStock-compute";
 
 export { DEFAULT_LOW_THRESHOLD } from "./lowStock-compute";
@@ -32,5 +33,9 @@ export async function getLowStockAlerts(limit = 12): Promise<LowStockAlerts> {
     return { configured: true, outCount: 0, lowCount: 0, items: [] };
   }
 
-  return { configured: true, ...computeLowStock(rows, limit) };
+  // In simple In/Out mode every available product sits at qty 1, which would
+  // trip the "low stock" threshold for the whole catalogue — so only real
+  // out-of-stock is surfaced there.
+  const simpleMode = (await getInventoryMode()) === "simple";
+  return { configured: true, ...computeLowStock(rows, limit, simpleMode) };
 }
