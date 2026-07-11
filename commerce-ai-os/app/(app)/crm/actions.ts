@@ -34,11 +34,22 @@ export type CrmCustomer = {
   hasNote: boolean;
 };
 
-export async function listCustomers(): Promise<{ error?: string; shopifyNote?: string; rows: CrmCustomer[]; counts: Record<CustomerSegment, number> }> {
+export type CrmStats = {
+  buyers: number;          // customers with ≥1 order
+  leads: number;           // DM contacts, no order yet
+  revenue: number;         // total spend across buyers
+  orders: number;          // total orders across buyers
+  avgOrder: number;        // revenue / orders
+  currency: string;
+  top: { name: string; spent: number; orders: number }[]; // top spenders
+};
+const EMPTY_STATS: CrmStats = { buyers: 0, leads: 0, revenue: 0, orders: 0, avgOrder: 0, currency: "QAR", top: [] };
+
+export async function listCustomers(): Promise<{ error?: string; shopifyNote?: string; rows: CrmCustomer[]; counts: Record<CustomerSegment, number>; stats: CrmStats }> {
   const guard = await requireUser();
-  if (guard) return { error: guard.error, rows: [], counts: EMPTY_COUNTS };
+  if (guard) return { error: guard.error, rows: [], counts: EMPTY_COUNTS, stats: EMPTY_STATS };
   const sb = admin();
-  if (!sb) return { error: NO_DB, rows: [], counts: EMPTY_COUNTS };
+  if (!sb) return { error: NO_DB, rows: [], counts: EMPTY_COUNTS, stats: EMPTY_STATS };
   const now = new Date();
 
   // 1) Shopify buyers (highest spend first).
@@ -85,7 +96,19 @@ export async function listCustomers(): Promise<{ error?: string; shopifyNote?: s
     if (m) { r.tags = m.tags ?? []; r.hasNote = !!(m.notes && String(m.notes).trim()); }
   }
 
-  return { rows, counts: segmentCounts(rows), shopifyNote };
+  const revenue = shopRows.reduce((s, r) => s + (Number(r.spent) || 0), 0);
+  const totalOrders = shopRows.reduce((s, r) => s + (Number(r.orders) || 0), 0);
+  const stats: CrmStats = {
+    buyers: shopRows.length,
+    leads: dmRows.length,
+    revenue,
+    orders: totalOrders,
+    avgOrder: totalOrders > 0 ? revenue / totalOrders : 0,
+    currency: shopRows[0]?.currency || "QAR",
+    top: shopRows.slice(0, 5).map((r) => ({ name: r.name, spent: r.spent, orders: r.orders })),
+  };
+
+  return { rows, counts: segmentCounts(rows), shopifyNote, stats };
 }
 
 export type CrmDetail = {
