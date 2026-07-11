@@ -41,6 +41,7 @@ export default function SimpleAvailabilityList({ rows, locale = "ar" }: { rows: 
     Object.fromEntries(rows.flatMap((r) => r.variants.map((v) => [v.id, v.in_stock])))
   );
   const [q, setQ] = useState("");
+  const [avail, setAvail] = useState<"all" | "in" | "out">("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [bulkBusy, startBulk] = useTransition();
   const [zoom, setZoom] = useState<AvailabilityRow | null>(null);
@@ -51,11 +52,16 @@ export default function SimpleAvailabilityList({ rows, locale = "ar" }: { rows: 
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase();
-    if (!t) return rows;
-    return rows.filter((r) => [r.product_name, r.product_name_ar, r.sku].some((v) => v && v.toLowerCase().includes(t)));
-  }, [rows, q]);
+    return rows.filter((r) => {
+      if (avail === "in" && !state[r.id]) return false;
+      if (avail === "out" && state[r.id]) return false;
+      if (t && ![r.product_name, r.product_name_ar, r.sku].some((v) => v && v.toLowerCase().includes(t))) return false;
+      return true;
+    });
+  }, [rows, q, avail, state]);
 
   const outCount = rows.filter((r) => !state[r.id]).length;
+  const inCount = rows.length - outCount;
 
   const toggle = (r: AvailabilityRow, next: boolean) => {
     if (busyId) return;
@@ -102,6 +108,20 @@ export default function SimpleAvailabilityList({ rows, locale = "ar" }: { rows: 
           <button disabled={bulkBusy} onClick={() => bulk(true)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">✅ {L("الكل متوفر", "All In")}</button>
           <button disabled={bulkBusy} onClick={() => bulk(false)} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">🚫 {L("الكل نفذ", "All Out")}</button>
         </div>
+      </div>
+
+      {/* Availability filter */}
+      <div className="flex flex-wrap gap-2">
+        {([
+          { key: "all", label: L("الكل", "All"), n: rows.length, on: "bg-brand text-white" },
+          { key: "in", label: `✅ ${L("متوفر", "In")}`, n: inCount, on: "bg-emerald-600 text-white" },
+          { key: "out", label: `⛔ ${L("نفذ", "Out")}`, n: outCount, on: "bg-red-600 text-white" },
+        ] as const).map((c) => (
+          <button key={c.key} type="button" onClick={() => setAvail(c.key)} aria-pressed={avail === c.key}
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${avail === c.key ? c.on : "bg-slate-100 text-slate-600"}`}>
+            {c.label} ({c.n})
+          </button>
+        ))}
       </div>
       <p className="text-xs text-muted">
         {L("المعروض", "Showing")} {filtered.length} · <span className="font-bold text-red-600">{outCount} {L("نافد", "out")}</span>
