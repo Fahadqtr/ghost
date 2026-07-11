@@ -577,6 +577,7 @@ export default function CatalogHealthPage() {
                 <thead>
                   <tr className="border-b border-slate-200 text-right text-xs font-bold text-muted">
                     {BULK_ACTION[activeIssue] && <th className="px-4 py-2.5"></th>}
+                    <th className="px-4 py-2.5">صورة</th>
                     <th className="px-4 py-2.5">SKU</th>
                     <th className="px-4 py-2.5">الاسم</th>
                     <th className="px-4 py-2.5">السعر</th>
@@ -594,6 +595,14 @@ export default function CatalogHealthPage() {
                             onChange={() => setSelected((s) => { const n = new Set(s); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n })} className="h-4 w-4" />
                         </td>
                       )}
+                      <td className="px-4 py-2.5">
+                        <div className="h-11 w-11 overflow-hidden rounded-md bg-slate-100 ring-1 ring-slate-200">
+                          {p.image_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={p.image_url} alt="" width={44} height={44} loading="lazy" className="h-full w-full object-cover" />
+                          ) : <div className="grid h-full w-full place-items-center text-slate-300">📦</div>}
+                        </div>
+                      </td>
                       <td className="px-4 py-2.5 text-right font-mono" dir="ltr">{p.sku || '—'}</td>
                       <td className="px-4 py-2.5">
                         <div className="text-ink">{p.name_ar || '—'}</div>
