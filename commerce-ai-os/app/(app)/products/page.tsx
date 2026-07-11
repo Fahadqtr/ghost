@@ -46,7 +46,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         supabase.from("channel_products").select("product_id, channel_id, channel_status").range(from, to)
       ),
       fetchAll((from, to) =>
-        supabase.from("product_variants").select("parent_product_id, variant_name, barcode, price, discount_price").range(from, to)
+        supabase.from("product_variants").select("parent_product_id, variant_name, barcode, price").range(from, to)
       ),
     ]);
 
@@ -57,7 +57,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
     for (const v of variantRows as any[]) {
       if (!v?.parent_product_id) continue;
       const pArr = pricesByProduct.get(v.parent_product_id) ?? [];
-      pArr.push({ price: v.price, discount_price: v.discount_price });
+      pArr.push({ price: v.price });
       pricesByProduct.set(v.parent_product_id, pArr);
       const bc = v?.barcode ? String(v.barcode).trim() : "";
       if (!bc) continue;

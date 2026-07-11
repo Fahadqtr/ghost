@@ -31,7 +31,8 @@ type Product = {
   approval: string | null
 }
 
-type Variant = { id: string; parent_product_id: string; variant_name: string | null; barcode: string | null; price: number | null; discount_price: number | null }
+// ملاحظة: جدول product_variants فيه price فقط — ما فيه discount_price.
+type Variant = { id: string; parent_product_id: string; variant_name: string | null; barcode: string | null; price: number | null }
 
 type ChannelProduct = {
   product_id: string
@@ -189,7 +190,7 @@ export default function CatalogHealthPage() {
       try {
         for (let from = 0; ; from += PAGE) {
           const { data, error } = await supabase.from('product_variants')
-            .select('id, parent_product_id, variant_name, barcode, price, discount_price').range(from, from + PAGE - 1)
+            .select('id, parent_product_id, variant_name, barcode, price').range(from, from + PAGE - 1)
           if (error) break
           if (!data || data.length === 0) break
           vrows.push(...(data as any[]))
@@ -232,7 +233,7 @@ export default function CatalogHealthPage() {
       if (v.barcode && String(v.barcode).trim() !== '') s.withBc += 1
       variantStats.set(v.parent_product_id, s)
       const arr = pricedByProduct.get(v.parent_product_id) || []
-      arr.push({ price: v.price, discount_price: v.discount_price })
+      arr.push({ price: v.price })
       pricedByProduct.set(v.parent_product_id, arr)
     }
     const priceByProduct = new Map<string, EffectivePrice>()
