@@ -16,7 +16,7 @@ export default async function CrmPage() {
       ) : (
         <>
           {stats.buyers > 0 ? <CrmInsights stats={stats} locale={locale} /> : null}
-          <CrmClient rows={rows} counts={counts} shopifyNote={shopifyNote} />
+          <CrmClient rows={rows} counts={counts} shopifyNote={shopifyNote} locale={locale} />
         </>
       )}
     </div>

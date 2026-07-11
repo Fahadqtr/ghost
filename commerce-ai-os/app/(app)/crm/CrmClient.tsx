@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { getCustomerDetail, saveCustomerNote, setCustomerTags, type CrmCustomer, type CrmDetail } from "./actions";
 import { SEGMENTS, segmentLabel, type CustomerSegment } from "@/lib/crm/customer-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
+import CrmFollowUps from "./CrmFollowUps";
 
 const keyOf = (c: { source: string; sourceId: string }) => `${c.source}:${c.sourceId}`;
 
@@ -27,10 +28,11 @@ const SEG_STYLE: Record<CustomerSegment, string> = {
   lead: "bg-violet-100 text-violet-800",
 };
 
-export default function CrmClient({ rows, counts, shopifyNote }: {
+export default function CrmClient({ rows, counts, shopifyNote, locale = "ar" }: {
   rows: CrmCustomer[];
   counts: Record<CustomerSegment, number>;
   shopifyNote?: string;
+  locale?: string;
 }) {
   const [q, setQ] = useState("");
   const [seg, setSeg] = useState<CustomerSegment | "all">("all");
@@ -59,6 +61,20 @@ export default function CrmClient({ rows, counts, shopifyNote }: {
     }
   };
 
+  // Surface one customer (from the follow-ups panel) and open their card.
+  const openCustomer = (c: CrmCustomer) => {
+    setSeg("all");
+    setQ(c.name);
+    const k = keyOf(c);
+    setOpenKey(k);
+    if (!details[k]) {
+      setDetails((s) => ({ ...s, [k]: "loading" }));
+      getCustomerDetail(c.source, c.sourceId)
+        .then((d) => setDetails((s) => ({ ...s, [k]: d })))
+        .catch(() => setDetails((s) => ({ ...s, [k]: { notes: "", tags: [], error: "تعذّر جلب التفاصيل." } })));
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between">
@@ -69,6 +85,9 @@ export default function CrmClient({ rows, counts, shopifyNote }: {
       {shopifyNote ? (
         <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{shopifyNote}</div>
       ) : null}
+
+      <CrmFollowUps rows={rows} onOpen={openCustomer} locale={locale} />
+
 
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث بالاسم، الجوال، الحساب…"
         type="search" aria-label="ابحث في العملاء" autoComplete="off" spellCheck={false}
