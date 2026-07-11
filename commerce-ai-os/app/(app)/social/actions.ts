@@ -24,7 +24,7 @@ import crypto from "crypto";
 // السعر المعروض في الإعلان: إذا للمنتج خيارات مُسعّرة نمشي على سعر الخيارات
 // (نبدأ من أقلها)، وإلا سعر المنتج نفسه (الخصم أولاً). فارغ = بدون شارة سعر.
 async function adPriceLabel(sb: any, productId: string, price: number | string | null | undefined, discount: number | string | null | undefined): Promise<string> {
-  const { data: vp } = await sb.from("product_variants").select("price, discount_price").eq("parent_product_id", productId);
+  const { data: vp } = await sb.from("product_variants").select("price").eq("parent_product_id", productId);
   const ep = effectivePrice(price, discount, vp ?? null);
   if (ep.fromVariants && ep.min != null) return formatQar(ep.min);
   return formatQar(discount ?? null) || formatQar(price ?? null);
@@ -464,7 +464,7 @@ export async function getAdOverlayData(id: string): Promise<{ error?: string; da
     brand = b?.name ?? null;
   }
   // خيارات مُسعّرة → نعرض سعر البداية (أقل خيار) بدون شارة خصم للمنتج الأب.
-  const { data: vp } = await sb.from("product_variants").select("price, discount_price").eq("parent_product_id", row.product_id);
+  const { data: vp } = await sb.from("product_variants").select("price").eq("parent_product_id", row.product_id);
   const ep = effectivePrice(p.price, p.discount_price, vp ?? null);
   const price = ep.fromVariants ? ep.min : p.price;
   const discountPrice = ep.fromVariants ? null : p.discount_price;
