@@ -11,6 +11,7 @@ import { editProductImageCore } from "@/lib/products/imageEdit";
 import { IG_IMAGE_STYLE } from "@/lib/social/content-compute";
 import type { AdOverlayInput } from "@/lib/social/ad-overlay-compute";
 import { formatQar } from "@/lib/social/ad-overlay-compute";
+import { effectivePrice } from "@/lib/products/price-compute";
 import { buildAdCopyPrompt, parseAdCopy, type AdCopy } from "@/lib/social/ad-copy-compute";
 import { buildFullAdPrompt } from "@/lib/social/full-ad-compute";
 import { buildStorySceneBrief } from "@/lib/social/story-compute";
@@ -19,6 +20,15 @@ import { generateScheduledPost } from "@/lib/social/generate";
 import { geminiConfigured, generateSceneWithGemini, designSceneSettingWithGemini } from "@/lib/social/scene-gemini";
 import { PRODUCT_SCENE_BASE, WORN_SCENE_BASE } from "@/lib/social/ad-variants";
 import crypto from "crypto";
+
+// السعر المعروض في الإعلان: إذا للمنتج خيارات مُسعّرة نمشي على سعر الخيارات
+// (نبدأ من أقلها)، وإلا سعر المنتج نفسه (الخصم أولاً). فارغ = بدون شارة سعر.
+async function adPriceLabel(sb: any, productId: string, price: number | string | null | undefined, discount: number | string | null | undefined): Promise<string> {
+  const { data: vp } = await sb.from("product_variants").select("price, discount_price").eq("parent_product_id", productId);
+  const ep = effectivePrice(price, discount, vp ?? null);
+  if (ep.fromVariants && ep.min != null) return formatQar(ep.min);
+  return formatQar(discount ?? null) || formatQar(price ?? null);
+}
 
 // Review-first social queue: list pending/recent, publish one (routes to the
 // right platform), dismiss one. Owner session required; rows via service role.
@@ -273,7 +283,7 @@ export async function generateStoryCreative(productId: string): Promise<{ error?
     return { error: e instanceof Error ? e.message : "تعذّر توليد الستوري." };
   }
 
-  const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
+  const price = await adPriceLabel(sb, productId, p.price, p.discount_price);
   return {
     copy, price, options,
     sceneUrl: "imageUrl" in scene ? scene.imageUrl : "",
@@ -453,7 +463,12 @@ export async function getAdOverlayData(id: string): Promise<{ error?: string; da
     const { data: b } = await sb.from("brands").select("name").eq("id", p.brand_id).single();
     brand = b?.name ?? null;
   }
-  return { data: { brand, nameAr: p.name_ar, nameEn: p.name_en, price: p.price, discountPrice: p.discount_price } };
+  // خيارات مُسعّرة → نعرض سعر البداية (أقل خيار) بدون شارة خصم للمنتج الأب.
+  const { data: vp } = await sb.from("product_variants").select("price, discount_price").eq("parent_product_id", row.product_id);
+  const ep = effectivePrice(p.price, p.discount_price, vp ?? null);
+  const price = ep.fromVariants ? ep.min : p.price;
+  const discountPrice = ep.fromVariants ? null : p.discount_price;
+  return { data: { brand, nameAr: p.name_ar, nameEn: p.name_en, price, discountPrice } };
 }
 
 // One-shot luxury ad: gpt-image-1 generates the WHOLE creative (scene + product
@@ -474,7 +489,7 @@ export async function generateFullAd(id: string): Promise<{ ok?: true; imageUrl?
   if (!p) return { error: "المنتج غير موجود." };
   if (!p.image_url) return { error: "لا توجد صورة أصلية للمنتج." };
 
-  const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
+  const price = await adPriceLabel(sb, row.product_id, p.price, p.discount_price);
   const prompt = buildFullAdPrompt({
     nameAr: p.name_ar, nameEn: p.name_en,
     description: p.description_ar || p.description_en, price,
@@ -588,7 +603,7 @@ export async function generateAdCreative(id: string, sceneStyle?: string, tap?: 
     return { error: e instanceof Error ? e.message : "تعذّر توليد النصوص." };
   }
 
-  const price = formatQar(p.discount_price ?? null) || formatQar(p.price ?? null);
+  const price = await adPriceLabel(sb, row.product_id, p.price, p.discount_price);
   const backdropUrl = "imageUrl" in scene ? scene.imageUrl : "";
   return { copy, price, title: String(p.name_ar || p.name_en || ""), productUrl: String(p.image_url || ""), backdropUrl, options };
 }

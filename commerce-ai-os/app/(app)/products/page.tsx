@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import ProductTable, { type ProductRow } from "@/components/ProductTable";
 import Link from "next/link";
 import { getInventoryMode } from "@/lib/settings";
+import { effectivePrice, type PricedVariant } from "@/lib/products/price-compute";
 import { getT } from "@/lib/i18n-server";
 
 export const dynamic = "force-dynamic";
@@ -45,15 +46,21 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         supabase.from("channel_products").select("product_id, channel_id, channel_status").range(from, to)
       ),
       fetchAll((from, to) =>
-        supabase.from("product_variants").select("parent_product_id, variant_name, barcode").range(from, to)
+        supabase.from("product_variants").select("parent_product_id, variant_name, barcode, price, discount_price").range(from, to)
       ),
     ]);
 
     // parent_product_id -> [{name, barcode}] (for barcode search + showing which option matched)
     const variantsByProduct = new Map<string, { name: string | null; barcode: string }[]>();
+    // parent_product_id -> [{price, discount_price}] (ALL options, for the effective price)
+    const pricesByProduct = new Map<string, PricedVariant[]>();
     for (const v of variantRows as any[]) {
+      if (!v?.parent_product_id) continue;
+      const pArr = pricesByProduct.get(v.parent_product_id) ?? [];
+      pArr.push({ price: v.price, discount_price: v.discount_price });
+      pricesByProduct.set(v.parent_product_id, pArr);
       const bc = v?.barcode ? String(v.barcode).trim() : "";
-      if (!v?.parent_product_id || !bc) continue;
+      if (!bc) continue;
       const arr = variantsByProduct.get(v.parent_product_id) ?? [];
       arr.push({ name: v.variant_name ?? null, barcode: bc });
       variantsByProduct.set(v.parent_product_id, arr);
@@ -86,6 +93,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
       notes: p.notes,
       price: p.price,
       discount_price: p.discount_price,
+      priceEff: effectivePrice(p.price, p.discount_price, pricesByProduct.get(p.id)),
       stock: p.inventory?.[0]?.stock_quantity ?? null,
       variant_count: p.product_variants?.[0]?.count ?? 0,
       variants: variantsByProduct.get(p.id) ?? [],

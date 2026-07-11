@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { setProductApproval, setProductStatus } from "@/app/(app)/products/actions";
 import { setProductAvailability } from "@/app/(app)/inventory/actions";
+import { PriceCell } from "@/components/ProductTable";
 import type { ProductRow } from "@/components/ProductTable";
 import type { Locale } from "@/lib/i18n";
 
@@ -106,8 +107,7 @@ export default function ProductQuickView({
               {p.barcode ? <span dir="ltr">{p.barcode}</span> : null}
             </div>
             <div className="mt-1 text-sm text-slate-700 tabular-nums">
-              {p.price != null ? `${p.price} QAR` : "—"}
-              {p.discount_price != null ? <span className="ml-1 text-green-700">→ {p.discount_price}</span> : null}
+              <PriceCell p={p} en={en} />
             </div>
           </div>
         </div>

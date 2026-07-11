@@ -7,10 +7,12 @@ import { CATEGORIES } from "@/lib/constants";
 import { setProductApproval } from "@/app/(app)/products/actions";
 import { archiveAndDeleteProducts } from "@/app/(app)/products/archive/actions";
 import ProductQuickView from "@/components/ProductQuickView";
+import { priceRangeLabel, type EffectivePrice } from "@/lib/products/price-compute";
 import type { Locale } from "@/lib/i18n";
 
 const PAGE_SIZE = 50;
 const CHANNELS = ["Shopify", "Snoonu", "Talabat", "Rafeeq"] as const;
+const qar = (n: number) => `${n} QAR`;
 
 export interface ProductRow {
   id: string;
@@ -27,10 +29,35 @@ export interface ProductRow {
   notes: string | null;
   price: number | null;
   discount_price: number | null;
+  // Effective price — computed on the server from the variants when the product
+  // has priced options; falls back to the parent price otherwise.
+  priceEff?: EffectivePrice;
   stock: number | null;
   variant_count: number;
   variants?: { name: string | null; barcode: string }[];
   channels: Record<string, string>;
+}
+
+// Price to SHOW: a range drawn from the options when they carry prices,
+// otherwise the parent price (+ its discount). Used on card + table + quick view.
+export function PriceCell({ p, en }: { p: ProductRow; en: boolean }) {
+  const ep = p.priceEff;
+  if (ep?.fromVariants) {
+    return (
+      <span className="text-slate-600 tabular-nums">
+        {priceRangeLabel(ep, qar)}
+        <span className="ms-1 rounded bg-violet-100 px-1 py-0.5 text-[10px] font-medium text-violet-700 tabular-nums">
+          🎚️ {en ? "from options" : "من الخيارات"}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="text-slate-600 tabular-nums">
+      {p.price != null ? qar(p.price) : "—"}
+      {p.discount_price != null ? <span className="ml-1 text-green-700">→ {p.discount_price}</span> : null}
+    </span>
+  );
 }
 
 function Thumb({ url, alt }: { url: string | null; alt: string }) {
@@ -393,10 +420,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   </div>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="text-slate-600 tabular-nums">
-                    {p.price != null ? `${p.price} QAR` : "—"}
-                    {p.discount_price != null ? <span className="ml-1 text-green-700">→ {p.discount_price}</span> : null}
-                  </span>
+                  <PriceCell p={p} en={en} />
                   {(() => {
                     const s = effStock(p);
                     return s == null ? null
@@ -473,8 +497,16 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   <td className="px-3 py-3 text-slate-600">{p.barcode ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.main_category ?? "—"}</td>
                   <td className="px-3 py-3"><RowApproval id={p.id} value={effAppr(p)} en={en} onChanged={(v) => setApprOv((s) => ({ ...s, [p.id]: v }))} /></td>
-                  <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
-                  <td className="px-3 py-3 text-slate-600">{p.discount_price ?? "—"}</td>
+                  <td className="px-3 py-3">
+                    {p.priceEff?.fromVariants
+                      ? <span className="text-slate-600 tabular-nums">{priceRangeLabel(p.priceEff, qar)}</span>
+                      : <span className="text-slate-600">{p.price ?? "—"}</span>}
+                  </td>
+                  <td className="px-3 py-3 text-slate-600">
+                    {p.priceEff?.fromVariants
+                      ? <span className="text-[11px] text-violet-700">{L("من الخيارات", "from options")}</span>
+                      : (p.discount_price ?? "—")}
+                  </td>
                   <td className="px-3 py-3">
                     {(() => {
                       const s = effStock(p);

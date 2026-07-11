@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { setVariantBarcodes, upsertVariants } from '@/app/(app)/inventory/actions'
 import { uploadProductImage } from '@/app/(app)/products/image-actions'
+import { effectivePrice, priceRangeLabel, type EffectivePrice, type PricedVariant } from '@/lib/products/price-compute'
 
 // ---------- الأنواع ----------
 type Product = {
@@ -23,11 +24,14 @@ type Product = {
   name_en: string | null
   image_url: string | null
   price: number | null
+  discount_price: number | null
   snoonu_id: string | null
   rafeeq_product_id: string | null
   main_category: string | null
   approval: string | null
 }
+
+type Variant = { id: string; parent_product_id: string; variant_name: string | null; barcode: string | null; price: number | null; discount_price: number | null }
 
 type ChannelProduct = {
   product_id: string
@@ -53,13 +57,21 @@ type Ctx = {
   dupSkus: Set<string>
   cpByProduct: Map<string, ChannelProduct[]>
   variantStats: Map<string, { total: number; withBc: number }>
+  // Effective price per product: if the product has priced options, the price
+  // comes FROM the options (a range) — otherwise from the parent price.
+  priceByProduct: Map<string, EffectivePrice>
 }
+
+// السعر الفعّال للمنتج (يراعي أسعار الخيارات إن وجدت)
+const effOf = (p: Product, ctx: Ctx): EffectivePrice =>
+  ctx.priceByProduct.get(p.id) ?? effectivePrice(p.price, p.discount_price, null)
 
 // ---------- تعريف الفحوصات ----------
 const ISSUES: IssueDef[] = [
   { key: 'no_image', label: 'بدون صورة', desc: 'منتجات ما لها image_url — تمنع النشر على كل المنصّات', severity: 'critical', test: (p) => !p.image_url || p.image_url.trim() === '' },
-  { key: 'zero_price', label: 'سعر صفر', desc: 'السعر = 0 — خطأ يطلّع المنتج مجّاني', severity: 'critical', test: (p) => p.price === 0 },
-  { key: 'no_price', label: 'بدون سعر', desc: 'price فاضي (null)', severity: 'critical', test: (p) => p.price === null || p.price === undefined },
+  // سعر صفر/بدون سعر: المنتج ذو الخيارات المُسعّرة يمشي على سعر الخيارات، فلا يُعتبر ناقصًا.
+  { key: 'zero_price', label: 'سعر صفر', desc: 'السعر = 0 وما في خيارات مُسعّرة — خطأ يطلّع المنتج مجّاني', severity: 'critical', test: (p, ctx) => p.price === 0 && !effOf(p, ctx).hasPrice },
+  { key: 'no_price', label: 'بدون سعر', desc: 'price فاضي (null) وما في خيارات مُسعّرة', severity: 'critical', test: (p, ctx) => (p.price === null || p.price === undefined) && !effOf(p, ctx).hasPrice },
   { key: 'dup_sku', label: 'SKU مكرّر', desc: 'نفس الـSKU على أكثر من منتج — يخرّب المطابقة بين المنصّات', severity: 'critical', test: (p, ctx) => !!p.sku && ctx.dupSkus.has(p.sku) },
   {
     key: 'price_mismatch', label: 'فرق سعر بين المنصّات', desc: 'سعر المنصّة يختلف عن سعر النظام (النظام هو المصدر الرسمي)', severity: 'critical',
@@ -121,7 +133,7 @@ function genEan13(): string {
 // ---------- المكوّن ----------
 export default function CatalogHealthPage() {
   const [products, setProducts] = useState<Product[]>([])
-  const [variants, setVariants] = useState<{ id: string; parent_product_id: string; variant_name: string | null; barcode: string | null }[]>([])
+  const [variants, setVariants] = useState<Variant[]>([])
   const [channelProducts, setChannelProducts] = useState<ChannelProduct[]>([])
   const [channelNames, setChannelNames] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
@@ -157,7 +169,7 @@ export default function CatalogHealthPage() {
       const PAGE = 1000
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await supabase.from('products')
-          .select('id, sku, barcode, name_ar, name_en, image_url, price, snoonu_id, rafeeq_product_id, main_category, approval')
+          .select('id, sku, barcode, name_ar, name_en, image_url, price, discount_price, snoonu_id, rafeeq_product_id, main_category, approval')
           .range(from, from + PAGE - 1)
         if (error) throw error
         if (!data || data.length === 0) break
@@ -173,11 +185,11 @@ export default function CatalogHealthPage() {
         cp.push(...(data as ChannelProduct[]))
         if (data.length < PAGE) break
       }
-      const vrows: { id: string; parent_product_id: string; variant_name: string | null; barcode: string | null }[] = []
+      const vrows: Variant[] = []
       try {
         for (let from = 0; ; from += PAGE) {
           const { data, error } = await supabase.from('product_variants')
-            .select('id, parent_product_id, variant_name, barcode').range(from, from + PAGE - 1)
+            .select('id, parent_product_id, variant_name, barcode, price, discount_price').range(from, from + PAGE - 1)
           if (error) break
           if (!data || data.length === 0) break
           vrows.push(...(data as any[]))
@@ -212,14 +224,20 @@ export default function CatalogHealthPage() {
       arr.push(cp); cpByProduct.set(cp.product_id, arr)
     }
     const variantStats = new Map<string, { total: number; withBc: number }>()
+    const pricedByProduct = new Map<string, PricedVariant[]>()
     for (const v of variants) {
       if (!v.parent_product_id) continue
       const s = variantStats.get(v.parent_product_id) || { total: 0, withBc: 0 }
       s.total += 1
       if (v.barcode && String(v.barcode).trim() !== '') s.withBc += 1
       variantStats.set(v.parent_product_id, s)
+      const arr = pricedByProduct.get(v.parent_product_id) || []
+      arr.push({ price: v.price, discount_price: v.discount_price })
+      pricedByProduct.set(v.parent_product_id, arr)
     }
-    return { dupSkus, cpByProduct, variantStats }
+    const priceByProduct = new Map<string, EffectivePrice>()
+    for (const p of products) priceByProduct.set(p.id, effectivePrice(p.price, p.discount_price, pricedByProduct.get(p.id)))
+    return { dupSkus, cpByProduct, variantStats, priceByProduct }
   }, [products, channelProducts, variants])
 
   const counts = useMemo(() => {
@@ -620,7 +638,13 @@ export default function CatalogHealthPage() {
                           return <div className="mt-1 text-xs text-amber-800">باركود المنتج فاضي</div>
                         })()}
                       </td>
-                      <td className="px-4 py-2.5 tabular-nums">{p.price ?? '—'}</td>
+                      <td className="px-4 py-2.5 tabular-nums">
+                        {(() => {
+                          const ep = ctx.priceByProduct.get(p.id)
+                          if (ep?.fromVariants) return <span title="السعر من الخيارات">{priceRangeLabel(ep, (n) => String(n))} <span className="text-[10px] text-violet-700">🎚️ خيارات</span></span>
+                          return p.price ?? '—'
+                        })()}
+                      </td>
                       <td className="px-4 py-2.5">{p.main_category || '—'}</td>
                       <td className="px-4 py-2.5">
                         {quickField === 'image_url' ? (
