@@ -6,6 +6,7 @@ import BarcodeScanner from "@/components/BarcodeScanner";
 import { CATEGORIES } from "@/lib/constants";
 import { setProductApproval } from "@/app/(app)/products/actions";
 import { archiveAndDeleteProducts } from "@/app/(app)/products/archive/actions";
+import ProductQuickView from "@/components/ProductQuickView";
 import type { Locale } from "@/lib/i18n";
 
 const PAGE_SIZE = 50;
@@ -65,27 +66,27 @@ const apprCls = (s: string) =>
   : "bg-slate-100 text-slate-400";
 
 // Inline approve/reject straight from the list — no need to open the product.
-// stopPropagation keeps the row-click (navigate to detail) from firing.
-function RowApproval({ id, value, en }: { id: string; value: string | null; en: boolean }) {
+// Controlled by the parent's override map so the card + quick-view card stay in
+// sync. stopPropagation keeps the row-click (navigate to detail) from firing.
+function RowApproval({ id, value, en, onChanged }: { id: string; value: string | null; en: boolean; onChanged: (v: string) => void }) {
   const L = (ar: string, e: string) => (en ? e : ar);
-  const [val, setVal] = useState(value ?? "");
   const [busy, start] = useTransition();
   return (
     <select
-      value={val}
+      value={value ?? ""}
       disabled={busy}
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => {
         e.stopPropagation();
         const v = e.target.value;
-        const prev = val;
-        setVal(v);
+        const prev = value ?? "";
+        onChanged(v);
         start(async () => {
           const res = await setProductApproval(id, v);
-          if (res?.error) { setVal(prev); alert(res.error); }
+          if (res?.error) { onChanged(prev); alert(res.error); }
         });
       }}
-      className={`badge cursor-pointer border-0 outline-hidden ${apprCls(val)} ${busy ? "opacity-50" : ""}`}
+      className={`badge cursor-pointer border-0 outline-hidden ${apprCls(value ?? "")} ${busy ? "opacity-50" : ""}`}
       title={L("غيّر حالة الاعتماد", "Change approval status")}
     >
       <option value="">{L("بدون", "None")}</option>
@@ -113,6 +114,16 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   const [removed, setRemoved] = useState<Set<string>>(new Set());
   const [busyDel, startDel] = useTransition();
   const [delNote, setDelNote] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [quickId, setQuickId] = useState<string | null>(null);
+  // Live edits (approval/status/availability) made from the list or the quick
+  // card — kept here so both surfaces reflect the change without a full reload.
+  const [apprOv, setApprOv] = useState<Record<string, string>>({});
+  const [statOv, setStatOv] = useState<Record<string, string>>({});
+  const [stockOv, setStockOv] = useState<Record<string, number>>({});
+  const effAppr = (p: ProductRow) => (p.id in apprOv ? apprOv[p.id] : p.approval);
+  const effStatus = (p: ProductRow) => (p.id in statOv ? statOv[p.id] : p.platform_status);
+  const effStock = (p: ProductRow): number | null => (p.id in stockOv ? stockOv[p.id] : p.stock);
   const toggleExpand = (id: string) =>
     setExpanded((s) => {
       const n = new Set(s);
@@ -138,14 +149,17 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         (p.variants ?? []).some(
           (v) => v.barcode.toLowerCase().includes(needle) || (v.name ?? "").toLowerCase().includes(needle)
         );
+      const ap = p.id in apprOv ? apprOv[p.id] : p.approval;
+      const ps = p.id in statOv ? statOv[p.id] : p.platform_status;
+      const st = p.id in stockOv ? stockOv[p.id] : p.stock;
       const matchesCat = !cat || p.main_category === cat;
-      const matchesAppr = !appr || (appr === "none" ? !p.approval : p.approval === appr);
-      const n = Number(p.stock);
+      const matchesAppr = !appr || (appr === "none" ? !ap : ap === appr);
+      const n = Number(st);
       const matchesStk = !stk
         || (stk === "out" ? !(n > 0)
           : stk === "low" ? (n > 0 && n < 10)
           : stk === "in" ? (simpleMode ? n > 0 : n >= 10) : true);
-      const matchesPlat = !plat || (plat === "active" ? p.platform_status === "Active" : p.platform_status !== "Active");
+      const matchesPlat = !plat || (plat === "active" ? ps === "Active" : ps !== "Active");
       const rr = p.rejection_reason ?? "";
       const matchesGrp = !grp || (
         grp === "new" ? (p.notes ?? "").startsWith("Imported from Snoonu sync")
@@ -156,7 +170,10 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         : true);
       return !removed.has(p.id) && matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
     });
-  }, [products, q, cat, appr, stk, plat, grp, removed, simpleMode]);
+  }, [products, q, cat, appr, stk, plat, grp, removed, simpleMode, apprOv, statOv, stockOv]);
+
+  const anyFilter = !!(q || cat || appr || stk || plat || grp);
+  const clearFilters = () => { setQ(""); setCat(""); setAppr(""); setStk(""); setPlat(""); setGrp(""); };
 
   useEffect(() => { setPage(1); }, [q, cat, appr, stk, plat, grp]);
 
@@ -248,7 +265,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           onClose={() => setScanning(false)}
         />
       )}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex w-full sm:max-w-xs">
           <input
             className="input w-full pr-9"
@@ -266,6 +283,21 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
             📷
           </button>
         </div>
+        <button type="button" onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}
+          className="btn-ghost shrink-0 whitespace-nowrap px-3 py-2 text-sm sm:hidden">
+          🎛️ {L("فلاتر", "Filters")} {showFilters ? "▴" : "▾"}
+        </button>
+        {anyFilter ? (
+          <button type="button" onClick={clearFilters} className="btn-ghost shrink-0 whitespace-nowrap px-3 py-2 text-sm text-red-600">
+            ✕ {L("مسح الفلاتر", "Clear filters")}
+          </button>
+        ) : null}
+        <span className="ms-auto whitespace-nowrap text-sm text-muted">
+          {filtered.length === products.length ? L(`${products.length} منتج`, `${products.length} products`) : L(`${filtered.length} من ${products.length}`, `${filtered.length} of ${products.length}`)}
+        </span>
+      </div>
+
+      <div className={`${showFilters ? "flex" : "hidden"} flex-col gap-2 sm:flex sm:flex-row sm:flex-wrap sm:items-center`}>
         <select className="input sm:max-w-xs" value={cat} onChange={(e) => setCat(e.target.value)}>
           <option value="">{L("كل الفئات", "All categories")}</option>
           {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
@@ -296,9 +328,6 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           <option value="active">{L("مفعّل", "Active")}</option>
           <option value="inactive">{L("غير مفعّل", "Draft")}</option>
         </select>
-        <span className="text-sm text-muted sm:ml-auto">
-          {filtered.length === products.length ? L(`${products.length} منتج`, `${products.length} products`) : L(`${filtered.length} من ${products.length}`, `${filtered.length} of ${products.length}`)}
-        </span>
       </div>
 
       {/* Bulk action bar (appears when rows are selected) */}
@@ -333,7 +362,10 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                 className="mt-1 h-4 w-4 shrink-0"
                 aria-label={L("تحديد", "Select")}
               />
-              <Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} />
+              <button type="button" aria-label={L("افتح بطاقة المنتج", "Open product card")}
+                onClick={(e) => { e.stopPropagation(); setQuickId(p.id); }} className="shrink-0">
+                <Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} />
+              </button>
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -341,7 +373,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                     {p.name_ar ? <div className="truncate text-xs text-muted" dir="rtl">{p.name_ar}</div> : null}
                     <VariantHits p={p} />
                   </div>
-                  <RowApproval id={p.id} value={p.approval} en={en} />
+                  <RowApproval id={p.id} value={effAppr(p)} en={en} onChanged={(v) => setApprOv((s) => ({ ...s, [p.id]: v }))} />
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
                   {p.sku ? <span>SKU {p.sku}</span> : null}
@@ -361,15 +393,21 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   </div>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="text-slate-600">
+                  <span className="text-slate-600 tabular-nums">
                     {p.price != null ? `${p.price} QAR` : "—"}
                     {p.discount_price != null ? <span className="ml-1 text-green-700">→ {p.discount_price}</span> : null}
                   </span>
-                  {p.stock == null ? null
-                    : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
-                    : simpleMode ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
-                    : Number(p.stock) < 10 ? <span className="text-amber-700">{L("مخزون", "stock")} {p.stock}</span>
-                    : <span className="text-slate-600">{L("مخزون", "stock")} {p.stock}</span>}
+                  {(() => {
+                    const s = effStock(p);
+                    return s == null ? null
+                      : Number(s) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
+                      : simpleMode ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
+                      : Number(s) < 10 ? <span className="text-amber-700 tabular-nums">{L("مخزون", "stock")} {s}</span>
+                      : <span className="text-slate-600 tabular-nums">{L("مخزون", "stock")} {s}</span>;
+                  })()}
+                  <span className={`badge ${effStatus(p) === "Active" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"}`}>
+                    {effStatus(p) === "Active" ? L("مفعّل", "Active") : L("غير مفعّل", "Draft")}
+                  </span>
                 </div>
                 <div className="flex flex-wrap gap-1 pt-0.5">
                   {CHANNELS.map((c) => (
@@ -421,7 +459,11 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={sel.has(p.id)} onChange={() => toggleSel(p.id)} className="h-4 w-4" aria-label={L("تحديد", "Select")} />
                   </td>
-                  <td className="px-3 py-2"><Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} /></td>
+                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" aria-label={L("افتح بطاقة المنتج", "Open product card")} onClick={() => setQuickId(p.id)}>
+                      <Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} />
+                    </button>
+                  </td>
                   <td className="px-3 py-3 font-medium text-ink">{p.name_en ?? "—"}<VariantHits p={p} /></td>
                   <td className="px-3 py-3 text-slate-600" dir="rtl">{p.name_ar ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.sku ?? "—"}</td>
@@ -430,15 +472,18 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   </td>
                   <td className="px-3 py-3 text-slate-600">{p.barcode ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.main_category ?? "—"}</td>
-                  <td className="px-3 py-3"><RowApproval id={p.id} value={p.approval} en={en} /></td>
+                  <td className="px-3 py-3"><RowApproval id={p.id} value={effAppr(p)} en={en} onChanged={(v) => setApprOv((s) => ({ ...s, [p.id]: v }))} /></td>
                   <td className="px-3 py-3 text-slate-600">{p.price ?? "—"}</td>
                   <td className="px-3 py-3 text-slate-600">{p.discount_price ?? "—"}</td>
                   <td className="px-3 py-3">
-                    {p.stock == null ? <span className="text-slate-400">—</span>
-                      : Number(p.stock) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
-                      : simpleMode ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
-                      : Number(p.stock) < 10 ? <span className="text-amber-700">{p.stock}</span>
-                      : <span className="text-slate-600">{p.stock}</span>}
+                    {(() => {
+                      const s = effStock(p);
+                      return s == null ? <span className="text-slate-400">—</span>
+                        : Number(s) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
+                        : simpleMode ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
+                        : Number(s) < 10 ? <span className="text-amber-700 tabular-nums">{s}</span>
+                        : <span className="text-slate-600 tabular-nums">{s}</span>;
+                    })()}
                   </td>
                   <td className="px-3 py-3 text-slate-600">
                     {p.variant_count > 0 ? (
@@ -482,6 +527,21 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           </div>
         </div>
       ) : null}
+
+      {quickId ? (() => {
+        const p = products.find((x) => x.id === quickId);
+        if (!p) return null;
+        return (
+          <ProductQuickView
+            product={p} locale={locale} simpleMode={simpleMode}
+            approval={effAppr(p)} status={effStatus(p)} stock={effStock(p)}
+            onClose={() => setQuickId(null)}
+            onApproval={(v) => setApprOv((s) => ({ ...s, [p.id]: v }))}
+            onStatus={(v) => setStatOv((s) => ({ ...s, [p.id]: v }))}
+            onStock={(v) => setStockOv((s) => ({ ...s, [p.id]: v }))}
+          />
+        );
+      })() : null}
     </div>
   );
 }
