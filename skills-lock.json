@@ -1,11 +1,29 @@
 {
   "version": 1,
   "skills": {
+    "content-calendar-sms": {
+      "source": "blacktwist/social-media-skills",
+      "sourceType": "github",
+      "skillPath": "skills/content-calendar-sms/SKILL.md",
+      "computedHash": "072497335e3d19b2ea238d4f61764663f7ec5b1039a4e13387c25cf26fc1d040"
+    },
+    "copywriting": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "skillPath": "skills/copywriting/SKILL.md",
+      "computedHash": "c8d63b1f77be04fd54981720de65697988810bd28331097dbe0aaf3e166d638a"
+    },
     "find-skills": {
       "source": "vercel-labs/skills",
       "sourceType": "github",
       "skillPath": "skills/find-skills/SKILL.md",
       "computedHash": "1c27b1774a4ec17ad4556a72e3c0168beab3af0183b2c1b8aa9e320af3ff41ce"
+    },
+    "product-page-seo": {
+      "source": "nexscope-ai/ecommerce-skills",
+      "sourceType": "github",
+      "skillPath": "product-page-seo/SKILL.md",
+      "computedHash": "829536339baf64288c70a846d3b3ff81d4980466c75bb1b6de1d330a1aee54a6"
     },
     "social": {
       "source": "coreyhaines31/marketingskills",

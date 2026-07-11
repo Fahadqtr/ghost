@@ -110,7 +110,7 @@ const txt = (v: any): string =>
   : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
 
 interface PanelData {
-  type: "products" | "stats" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser" | "search" | "live" | "links" | "player";
+  type: "products" | "stats" | "plan" | "post" | "tiktok" | "confirm" | "image_request" | "briefing" | "scan" | "browser" | "search" | "live" | "links" | "player";
   items?: any[];
   item?: any;
 }
@@ -299,6 +299,37 @@ function StatsPanel({ items, en = false }: { items: any[]; en?: boolean }) {
           {s.sub ? <p className="mt-0.5 text-[11px] text-white/40">{txt(s.sub)}</p> : null}
         </div>
       ))}
+    </div>
+  );
+}
+
+// Weekly content calendar: rows of {day, platform, pillar, topic, format}.
+function PlanPanel({ items, en = false }: { items: any[]; en?: boolean }) {
+  const H = (ar: string, e: string) => (en ? e : ar);
+  return (
+    <div className={`overflow-x-auto rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm ${en ? "text-left" : "text-right"}`}>
+      <table className="w-full min-w-[520px] text-sm">
+        <thead>
+          <tr className="border-b border-white/10 text-[11px] uppercase text-white/50">
+            <th className="px-3 py-2 font-medium">{H("اليوم", "Day")}</th>
+            <th className="px-3 py-2 font-medium">{H("المنصّة", "Platform")}</th>
+            <th className="px-3 py-2 font-medium">{H("المحور", "Pillar")}</th>
+            <th className="px-3 py-2 font-medium">{H("الفكرة", "Topic")}</th>
+            <th className="px-3 py-2 font-medium">{H("الصيغة", "Format")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((r, i) => (
+            <tr key={i} className="border-b border-white/5 last:border-0">
+              <td className="px-3 py-2 font-semibold text-white/90">{txt(r.day)}</td>
+              <td className="px-3 py-2 text-cyan-300">{txt(r.platform)}</td>
+              <td className="px-3 py-2"><span className="rounded-full bg-purple-500/20 px-2 py-0.5 text-[11px] text-purple-200">{txt(r.pillar)}</span></td>
+              <td className="px-3 py-2 text-white/80">{txt(r.topic)}</td>
+              <td className="px-3 py-2 text-white/60">{txt(r.format)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1216,6 +1247,7 @@ function Panel({
 }) {
   if (data.type === "products" && Array.isArray(data.items)) return <ProductsPanel items={data.items} en={en} />;
   if (data.type === "stats" && Array.isArray(data.items)) return <StatsPanel items={data.items} en={en} />;
+  if (data.type === "plan" && Array.isArray(data.items)) return <PlanPanel items={data.items} en={en} />;
   if (data.type === "post" && data.item) return <PostPanel item={data.item} en={en} />;
   if (data.type === "tiktok" && data.item) return <TiktokPanel item={data.item} en={en} />;
   if (data.type === "browser" && data.item) return <BrowserPanel item={data.item} en={en} />;
