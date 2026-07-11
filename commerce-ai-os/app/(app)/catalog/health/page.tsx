@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { setVariantBarcodes, upsertVariants } from '@/app/(app)/inventory/actions'
+import { uploadProductImage } from '@/app/(app)/products/image-actions'
 
 // ---------- الأنواع ----------
 type Product = {
@@ -145,6 +146,7 @@ export default function CatalogHealthPage() {
   // إصلاح سريع من القائمة (صورة/سعر)
   const [quickVal, setQuickVal] = useState<Record<string, string>>({})
   const [quickBusy, setQuickBusy] = useState<string | null>(null)
+  const [imgBusy, setImgBusy] = useState<string | null>(null)
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true)
@@ -317,6 +319,27 @@ export default function CatalogHealthPage() {
       setBulkErr(e?.message || 'فشل الحفظ')
     } finally {
       setQuickBusy(null)
+    }
+  }
+
+  // رفع صورة من الجهاز → يخزّنها ويعيّنها كصورة رئيسية للمنتج مباشرة.
+  const uploadDeviceImage = async (productId: string, file: File, onDone?: (url: string) => void) => {
+    setImgBusy(productId); setBulkErr(null); setSaveErr(null)
+    try {
+      const fd = new FormData()
+      fd.set('file', file)
+      fd.set('productId', productId)
+      const r: any = await uploadProductImage(fd)
+      if (r?.error) throw new Error(r.error)
+      const url = String(r?.url || '')
+      setProducts((prev) => prev.map((x) => (x.id === productId ? { ...x, image_url: url } : x)))
+      setLastUpdated(new Date())
+      onDone?.(url)
+    } catch (e: any) {
+      const msg = e?.message || 'فشل رفع الصورة'
+      setBulkErr(msg); setSaveErr(msg)
+    } finally {
+      setImgBusy(null)
     }
   }
 
@@ -591,17 +614,21 @@ export default function CatalogHealthPage() {
                       <td className="px-4 py-2.5 tabular-nums">{p.price ?? '—'}</td>
                       <td className="px-4 py-2.5">{p.main_category || '—'}</td>
                       <td className="px-4 py-2.5">
-                        {quickField ? (
+                        {quickField === 'image_url' ? (
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-brand px-3 py-1.5 text-xs font-bold text-white">
+                            {imgBusy === p.id ? '⏳ جارٍ الرفع…' : '📷 رفع صورة من الجهاز'}
+                            <input type="file" accept="image/*" className="hidden" disabled={imgBusy === p.id}
+                              aria-label={`رفع صورة ${p.name_ar || p.sku || ''}`}
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadDeviceImage(p.id, f); e.currentTarget.value = '' }} />
+                          </label>
+                        ) : quickField === 'price' ? (
                           <div className="flex items-center gap-1.5">
-                            <input
-                              type={quickField === 'price' ? 'number' : 'url'}
-                              value={quickVal[p.id] ?? ''}
+                            <input type="number" value={quickVal[p.id] ?? ''}
                               onChange={(e) => setQuickVal((s) => ({ ...s, [p.id]: e.target.value }))}
-                              onKeyDown={(e) => { if (e.key === 'Enter') quickSave(p, quickField) }}
-                              aria-label={quickField === 'price' ? `سعر ${p.name_ar || p.sku || ''}` : `رابط صورة ${p.name_ar || p.sku || ''}`}
-                              placeholder={quickField === 'price' ? 'السعر' : 'https://…'}
-                              dir="ltr" className="input w-32 py-1 text-xs" />
-                            <button type="button" onClick={() => quickSave(p, quickField)} disabled={quickBusy === p.id || !(quickVal[p.id] ?? '').trim()}
+                              onKeyDown={(e) => { if (e.key === 'Enter') quickSave(p, 'price') }}
+                              aria-label={`سعر ${p.name_ar || p.sku || ''}`} placeholder="السعر"
+                              dir="ltr" className="input w-24 py-1 text-xs" />
+                            <button type="button" onClick={() => quickSave(p, 'price')} disabled={quickBusy === p.id || !(quickVal[p.id] ?? '').trim()}
                               className="btn-primary px-2.5 py-1 text-xs disabled:opacity-40">{quickBusy === p.id ? '…' : 'حفظ'}</button>
                           </div>
                         ) : null}
@@ -676,8 +703,26 @@ export default function CatalogHealthPage() {
                     )}
                     <Label id="f-cat">التصنيف</Label>
                     <input id="f-cat" className={cls('main_category')} value={(form.main_category as string) ?? ''} onChange={(e) => set('main_category', e.target.value)} dir="rtl" />
-                    <Label id="f-img">رابط الصورة</Label>
-                    <input id="f-img" className={cls('image_url')} value={(form.image_url as string) ?? ''} onChange={(e) => set('image_url', e.target.value)} dir="ltr" />
+                    <label className="mt-2.5 block text-xs font-bold text-slate-600">صورة المنتج</label>
+                    <div className="mt-1 flex items-center gap-3">
+                      <div className="h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-slate-100 ring-1 ring-slate-200">
+                        {form.image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={form.image_url as string} alt="" className="h-full w-full object-cover" />
+                        ) : <div className="grid h-full w-full place-items-center text-2xl text-slate-300">📦</div>}
+                      </div>
+                      <div className="flex-1">
+                        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-brand px-3 py-2 text-xs font-bold text-white">
+                          {imgBusy === fixProduct.id ? '⏳ جارٍ الرفع…' : (form.image_url ? '📷 استبدال الصورة' : '📷 رفع صورة من الجهاز')}
+                          <input type="file" accept="image/*" className="hidden" disabled={imgBusy === fixProduct.id}
+                            aria-label="رفع صورة المنتج من الجهاز"
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadDeviceImage(fixProduct.id, f, (url) => set('image_url', url)); e.currentTarget.value = '' }} />
+                        </label>
+                        <p className="mt-1 text-[11px] text-muted">تُرفع الصورة فورًا وتُعيّن للمنتج. JPG/PNG/WebP حتى 10 ميغا.</p>
+                      </div>
+                    </div>
+                    <label htmlFor="f-img" className="mt-2.5 block text-[11px] font-semibold text-slate-400">أو الصق رابطًا (اختياري)</label>
+                    <input id="f-img" className={cls('image_url')} value={(form.image_url as string) ?? ''} onChange={(e) => set('image_url', e.target.value)} dir="ltr" placeholder="https://…" />
                     <div className="flex gap-3">
                       <div className="flex-1"><Label id="f-sn">Snoonu ID</Label><input id="f-sn" className={cls('snoonu_id')} value={(form.snoonu_id as string) ?? ''} onChange={(e) => set('snoonu_id', e.target.value)} dir="ltr" /></div>
                       <div className="flex-1"><Label id="f-rf">Rafeeq ID</Label><input id="f-rf" className={cls('rafeeq_product_id')} value={(form.rafeeq_product_id as string) ?? ''} onChange={(e) => set('rafeeq_product_id', e.target.value)} dir="ltr" /></div>
