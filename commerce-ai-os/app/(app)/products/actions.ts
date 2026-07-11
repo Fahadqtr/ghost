@@ -334,6 +334,20 @@ export async function setProductApproval(id: string, approval: string, reason?: 
   return { ok: true };
 }
 
+// Inline product status toggle (Active / Draft) — straight from the catalog,
+// no need to open the product editor.
+export async function setProductStatus(id: string, status: string): Promise<{ ok?: true; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in." };
+  if (!id) return { error: "Missing product id." };
+  const value = status === "Active" ? "Active" : "Draft";
+  const supabase = createClient();
+  const { error } = await supabase.from("products").update({ platform_status: value }).eq("id", id);
+  if (error) return { error: error.message };
+  revalidatePath("/products");
+  revalidatePath(`/products/${id}`);
+  return { ok: true };
+}
+
 // Bulk approve/reject (e.g. reject everything Snoonu marked unavailable).
 // Optional `reason` records WHY (written to notes), e.g. "بسبب الصورة".
 export async function setProductsApproval(ids: string[], approval: string, reason?: string) {
