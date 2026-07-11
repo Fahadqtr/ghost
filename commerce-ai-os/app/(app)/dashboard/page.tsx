@@ -5,6 +5,9 @@ import { getLowStockAlerts, type LowStockItem } from "@/lib/inventory/lowStock";
 import { getT } from "@/lib/i18n-server";
 import { recordAndDiffSnapshot } from "@/lib/kpiSnapshots";
 import DashboardRefresh from "@/components/DashboardRefresh";
+import { shopifyConfigured, fetchRecentShopifyOrders } from "@/lib/shopify/admin";
+import { ordersSummary, ordersWithin } from "@/lib/shopify/orders-compute";
+import { formatQar } from "@/lib/social/ad-overlay-compute";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +22,21 @@ export default async function DashboardPage() {
   const L = (ar: string, e: string) => (en ? e : ar);
   const trends = k.configured ? await recordAndDiffSnapshot(k) : null;
   const healthIssues = k.missingPrice + k.missingImage + k.missingBarcode + k.missingCategory;
+
+  // Sales pulse — last 7 days of Shopify orders (revenue + count, plus today).
+  let sales: { rev7: number; orders7: number; revToday: number; ordersToday: number } | null = null;
+  if (shopifyConfigured()) {
+    const now = new Date();
+    const since = new Date(now.getTime() - 7 * 24 * 3600_000).toISOString();
+    const { orders, error } = await fetchRecentShopifyOrders(since, 100);
+    if (!error) {
+      const live = (orders ?? []).filter((o) => !o.cancelledAt);
+      const s7 = ordersSummary(live);
+      const today = ordersSummary(ordersWithin(live, 24, now));
+      sales = { rev7: s7.revenue, orders7: s7.count, revToday: today.revenue, ordersToday: today.count };
+    }
+  }
+  const money = (v: number) => formatQar(Math.round(v));
 
   return (
     <div className="space-y-6">
@@ -36,6 +54,22 @@ export default async function DashboardPage() {
 
       {trends?.asOf ? (
         <p className="-mt-2 text-xs text-muted">{L(`▲▼ التغيّر منذ ${trends.asOf}`, `▲▼ change since ${trends.asOf}`)}</p>
+      ) : null}
+
+      {/* Sales pulse — the number a CEO wants first */}
+      {sales ? (
+        <Link href="/shopify-orders" className="block rounded-2xl border border-emerald-200 bg-emerald-50 p-4 transition hover:bg-emerald-100/70">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-emerald-900">🛍️ {L("نبض المبيعات · آخر ٧ أيام", "Sales pulse · last 7 days")}</h3>
+            <span className="text-xs font-medium text-emerald-700">{L("طلبات شوبي فاي ←", "Shopify orders →")}</span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <PulseStat label={L("إيرادات ٧ أيام", "Revenue · 7d")} value={money(sales.rev7)} big />
+            <PulseStat label={L("طلبات ٧ أيام", "Orders · 7d")} value={nf(sales.orders7)} />
+            <PulseStat label={L("إيرادات اليوم", "Revenue · today")} value={money(sales.revToday)} />
+            <PulseStat label={L("طلبات اليوم", "Orders · today")} value={nf(sales.ordersToday)} />
+          </div>
+        </Link>
       ) : null}
 
       {/* Open / overdue staff tasks */}
@@ -169,7 +203,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Catalog health strip — data quality at a glance */}
-      <Section title={L("جودة الكتالوج", "Catalog health")}>
+      <Section title={L("جودة الكتالوج", "Catalog health")} href="/catalog/health" linkLabel={L("افحص وصحّح ←", "Scan & fix →")}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <HealthChip label={L("بدون سعر", "Missing price")} value={k.missingPrice} />
           <HealthChip label={L("بدون صورة", "Missing image")} value={k.missingImage} />
@@ -279,11 +313,23 @@ function HealthChip({ label, value }: { label: string; value: number }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children, href, linkLabel }: { title: string; children: React.ReactNode; href?: string; linkLabel?: string }) {
   return (
     <div className="card">
-      <h3 className="mb-3 text-sm font-semibold text-ink">{title}</h3>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+        {href ? <Link href={href} className="whitespace-nowrap text-xs font-medium text-brand hover:underline">{linkLabel ?? "←"}</Link> : null}
+      </div>
       {children}
+    </div>
+  );
+}
+
+function PulseStat({ label, value, big }: { label: string; value: string; big?: boolean }) {
+  return (
+    <div className="rounded-xl bg-white/70 p-2.5 text-center">
+      <p className={`font-bold text-emerald-800 tabular-nums ${big ? "text-xl" : "text-lg"}`}>{value}</p>
+      <p className="text-[11px] text-emerald-700/80">{label}</p>
     </div>
   );
 }
