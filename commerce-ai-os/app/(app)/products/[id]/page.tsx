@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { effectivePrice, priceRangeLabel, type PricedVariant } from "@/lib/products/price-compute";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,11 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   if (product.image_url && !galleryUrls.includes(product.image_url)) galleryUrls.unshift(product.image_url);
   const heroUrl = galleryUrls[0] ?? null;
 
+  // Selling price shown to staff: when the product has priced options, the price
+  // comes FROM the options (a range); otherwise from the parent product's price.
+  const priceEff = effectivePrice(product.price, product.discount_price, (variants ?? []) as PricedVariant[]);
+  const priceLabel = priceRangeLabel(priceEff, (n) => `${n} QAR`);
+
   const brandName = (brands ?? []).find((b: any) => b.id === product.brand_id)?.name ?? null;
   const statusByChannel = (channels ?? []).map((c: any) => ({
     name: c.name,
@@ -58,6 +64,12 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
           <Link href="/products" className="text-sm text-brand hover:underline">← All products</Link>
           <h2 className="text-xl font-semibold text-ink">{product.name_en ?? "Product"}</h2>
           <p className="text-sm text-muted" dir="rtl">{product.name_ar ?? ""}</p>
+          <p className="mt-1 text-sm font-semibold text-ink tabular-nums">
+            {priceLabel}
+            {priceEff.fromVariants ? (
+              <span className="ms-1 rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">🎚️ from options</span>
+            ) : null}
+          </p>
         </div>
         <Link href={`/products/${product.id}/edit`} className="btn-primary w-full sm:w-auto">Edit</Link>
       </div>
