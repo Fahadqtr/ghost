@@ -7,6 +7,7 @@ import { CATEGORIES } from "@/lib/constants";
 import { setProductApproval } from "@/app/(app)/products/actions";
 import { archiveAndDeleteProducts } from "@/app/(app)/products/archive/actions";
 import ProductQuickView from "@/components/ProductQuickView";
+import BulkImageUpload from "@/components/BulkImageUpload";
 import { priceRangeLabel, type EffectivePrice } from "@/lib/products/price-compute";
 import type { Locale } from "@/lib/i18n";
 
@@ -149,7 +150,10 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   const [apprOv, setApprOv] = useState<Record<string, string>>({});
   const [statOv, setStatOv] = useState<Record<string, string>>({});
   const [stockOv, setStockOv] = useState<Record<string, number>>({});
+  const [imgOv, setImgOv] = useState<Record<string, string>>({});
+  const [bulkImg, setBulkImg] = useState(false);
   const effAppr = (p: ProductRow) => (p.id in apprOv ? apprOv[p.id] : p.approval);
+  const effImg = (p: ProductRow) => (p.id in imgOv ? imgOv[p.id] : p.image_url);
   const effStatus = (p: ProductRow) => (p.id in statOv ? statOv[p.id] : p.platform_status);
   const effStock = (p: ProductRow): number | null => (p.id in stockOv ? stockOv[p.id] : p.stock);
   const toggleExpand = (id: string) =>
@@ -189,7 +193,8 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           : stk === "in" ? (simpleMode ? n > 0 : n >= 10) : true);
       const matchesPlat = !plat || (plat === "active" ? ps === "Active" : ps !== "Active");
       const rr = p.rejection_reason ?? "";
-      const noImage = !p.image_url || p.image_url.trim() === "";
+      const img = p.id in imgOv ? imgOv[p.id] : p.image_url;
+      const noImage = !img || img.trim() === "";
       const matchesGrp = !grp || (
         grp === "no_image" ? noImage
         : grp === "new" ? (p.notes ?? "").startsWith("Imported from Snoonu sync")
@@ -202,7 +207,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         : true);
       return !removed.has(p.id) && matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
     });
-  }, [products, q, cat, appr, stk, plat, grp, removed, simpleMode, apprOv, statOv, stockOv]);
+  }, [products, q, cat, appr, stk, plat, grp, removed, simpleMode, apprOv, statOv, stockOv, imgOv]);
 
   const anyFilter = !!(q || cat || appr || stk || plat || grp);
   const clearFilters = () => { setQ(""); setCat(""); setAppr(""); setStk(""); setPlat(""); setGrp(""); };
@@ -376,6 +381,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           <span className="text-sm font-semibold text-violet-900">{L(`${sel.size} محدّد`, `${sel.size} selected`)}</span>
           <div className="flex items-center gap-2">
             <button onClick={() => setSel(new Set())} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">{L("إلغاء التحديد", "Clear")}</button>
+            <button onClick={() => setBulkImg(true)} className="rounded-md bg-brand px-3 py-1.5 text-xs font-bold text-white">{L(`📷 أضف صور (${sel.size})`, `📷 Add images (${sel.size})`)}</button>
             <button disabled={busyDel} onClick={deleteSelected} className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">{busyDel ? "…" : L(`🗑 حذف المحدّد (${sel.size})`, `🗑 Delete selected (${sel.size})`)}</button>
           </div>
         </div>
@@ -404,7 +410,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
               />
               <button type="button" aria-label={L("افتح بطاقة المنتج", "Open product card")}
                 onClick={(e) => { e.stopPropagation(); setQuickId(p.id); }} className="shrink-0">
-                <Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} />
+                <Thumb url={effImg(p)} alt={p.name_en ?? p.sku ?? "product"} />
               </button>
               <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex items-start justify-between gap-2">
@@ -498,7 +504,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   </td>
                   <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                     <button type="button" aria-label={L("افتح بطاقة المنتج", "Open product card")} onClick={() => setQuickId(p.id)}>
-                      <Thumb url={p.image_url} alt={p.name_en ?? p.sku ?? "product"} />
+                      <Thumb url={effImg(p)} alt={p.name_en ?? p.sku ?? "product"} />
                     </button>
                   </td>
                   <td className="px-3 py-3 font-medium text-ink">{p.name_en ?? "—"}<VariantHits p={p} /></td>
@@ -571,6 +577,15 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
             <button className="btn-ghost px-3 py-1.5 text-sm disabled:opacity-40" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={current >= totalPages}>{L("← التالي", "Next →")}</button>
           </div>
         </div>
+      ) : null}
+
+      {bulkImg ? (
+        <BulkImageUpload
+          locale={locale}
+          products={products.filter((p) => sel.has(p.id)).map((p) => ({ id: p.id, name: p.name_en ?? p.name_ar, sku: p.sku }))}
+          onClose={() => setBulkImg(false)}
+          onSaved={(urls) => setImgOv((s) => ({ ...s, ...urls }))}
+        />
       ) : null}
 
       {quickId ? (() => {
