@@ -14,6 +14,8 @@ import { createLiveSession, liveConfigured, liveNavigate, encodeLive, decodeLive
 import { openBrowserbase, browserbaseConfigured } from "@/lib/malak/browserbase";
 import { youtubeSearchId } from "@/lib/malak/youtube";
 import { effectivePrice, priceRangeLabel } from "@/lib/products/price-compute";
+import { fetchRecentShopifyOrders } from "@/lib/shopify/admin";
+import { ordersSummary, topProducts } from "@/lib/shopify/orders-compute";
 
 // Malak AI — server brain. Holds all secrets (ANTHROPIC_API_KEY +
 // Supabase service role); the browser only ever sees the final structured JSON.
@@ -132,8 +134,12 @@ const SYSTEM_PROMPT =
   'مهم: في لوحة products أدرجي sku دائمًا لكل منتج، ولا تُدرجي image_url إطلاقًا — ' +
   'الخادم يضيف صورة كل منتج تلقائيًا حسب الـsku (هذا يوفّر المساحة ويضمن ظهور الصور الحقيقية). ' +
   'قدّمي ردّكِ النهائي دائمًا عبر استدعاء أداة respond (وليس كنص عادي). ' +
+  // مبيعات: أداة sales_report متاحة وتقرأ مبيعات شوبيفاي الحقيقية.
+  'المبيعات والتحليلات: لأي «كم بعنا/مبيعاتنا/إيراداتنا/كم طلب» أو «أكثر منتج مبيعًا» استدعي sales_report (مرّري days: اليوم=1، الأسبوع=7، الشهر=30)، ثم أرجعي panel نوعه stats بالإيراد والطلبات ومتوسّط الطلب، واذكري أعلى المنتجات مبيعًا. لا تقولي إنك ما تقدرين تشوفين المبيعات — الأداة متاحة وتعمل. ' +
   'قواعد الكتابة (إلزامية وحرجة): أي طلب لتعديل سعر أو مخزون أو حالة اعتماد أو إضافة منتج أو توليد صورة إعلانية ' +
-  'يجب أن تستدعي فيه الأداة المطابقة فورًا: set_price أو update_stock أو set_approval أو add_product أو set_image أو generate_product_image. '
+  'يجب أن تستدعي فيه الأداة المطابقة فورًا: set_price أو update_stock أو set_approval أو add_product أو set_image أو generate_product_image. ' +
+  // إجراءات جماعية: bulk_approve / bulk_adjust_price تجهّز كرت تأكيد بالجملة.
+  'الإجراءات الجماعية: «اعتمدي/ارفضي كل [فئة/الجديد]» → استدعي bulk_approve. «ارفعي/انزّلي السعر ٪ على [فئة/الكل]» → استدعي bulk_adjust_price (pct موجب رفع، سالب خفض). كلاهما يجهّز كرت تأكيد بعدد المنتجات — لا تكتب فورًا، والمنتجات تحت التكلفة تُتخطّى تلقائيًا في تعديل السعر. لا تقولي إن الإجراء الجماعي غير متاح. '
   + 'إذا أرفق المستخدم صورة (يخبرك النظام بذلك)، فهو يريد ربطها بمنتج: استدعي set_image مع الـSKU المذكور. ' +
   'ممنوع منعًا باتًا أن تدّعي في speak أنكِ عدّلتِ أو حدّثتِ أو أضفتِ أو أن العملية "تمّت/تم/خلصت" ' +
   'بدون استدعاء أداة الكتابة المناسبة. وممنوع استخدام respond للردّ على طلب تعديل قبل استدعاء أداة الكتابة. ' +
@@ -174,6 +180,14 @@ const TOOLS: Anthropic.Tool[] = [
     name: "catalog_stats",
     description: "إحصائيات الكتالوج الكاملة: الإجمالي، أعداد الاعتماد، المنتجات بدون صورة، المروّجة، أعلى التصنيفات، عدد العلامات التجارية.",
     input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "sales_report",
+    description: "تقرير مبيعات شوبيفاي الحقيقي: الإيراد وعدد الطلبات ومتوسّط الطلب خلال فترة (افتراضي ٧ أيام)، وأكثر المنتجات مبيعًا بالكمية. استخدميها لأي «كم بعنا/مبيعاتنا/إيراداتنا هالأسبوع/اليوم/الشهر؟»، «شنو أكثر منتج مبيع؟»، «كم طلب وصلنا؟». أرجعي panel نوعه stats بالأرقام، واذكري أعلى المنتجات في speak أو panel نوعه products (بدون أسعار).",
+    input_schema: {
+      type: "object",
+      properties: { days: { type: "integer", description: "عدد الأيام للخلف (افتراضي 7، اليوم=1، الشهر=30)" } },
+    },
   },
   {
     name: "list_rejected",
@@ -257,6 +271,35 @@ const TOOLS: Anthropic.Tool[] = [
         status: { type: "string", enum: ["Approved", "Rejected", "SentAI"], description: "حالة الاعتماد الجديدة" },
       },
       required: ["sku", "status"],
+    },
+  },
+  {
+    name: "bulk_approve",
+    description:
+      "اعتماد جماعي: غيّري حالة اعتماد كل المنتجات المطابقة لفلتر دفعة وحدة (كرت تأكيد بالجملة). استخدميها لـ«اعتمدي كل الجديد»، «اعتمدي كل منتجات المكياج»، «ارفضي كل اللي بدون صورة». الفلتر: category (فئة) و/أو onlyPending (فقط اللي بدون قرار اعتماد) و/أو query (كلمة في الاسم). status الهدف: Approved/Rejected/SentAI. لا تكتب فورًا — كرت تأكيد بعدد المنتجات.",
+    input_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["Approved", "Rejected", "SentAI"], description: "حالة الاعتماد الجديدة للكل" },
+        category: { type: "string", description: "قصر التغيير على فئة رئيسية (اختياري)" },
+        query: { type: "string", description: "قصر التغيير على منتجات يحتوي اسمها هذه الكلمة (اختياري)" },
+        onlyPending: { type: "boolean", description: "فقط المنتجات بدون قرار اعتماد (approval فارغ). افتراضي false" },
+      },
+      required: ["status"],
+    },
+  },
+  {
+    name: "bulk_adjust_price",
+    description:
+      "تعديل سعر جماعي بنسبة مئوية: ارفعي/اخفضي أسعار كل المنتجات المطابقة لفلتر بنسبة٪ (كرت تأكيد بالجملة). استخدميها لـ«ارفعي السعر ١٠٪ على المكياج»، «انزّلي ٥٪ على كل شي». pct موجب=رفع، سالب=خفض. الفلتر: category و/أو query. المنتجات اللي سعرها الجديد ينزل تحت التكلفة تُتخطّى تلقائيًا. لا تكتب فورًا — كرت تأكيد بعدد المنتجات.",
+    input_schema: {
+      type: "object",
+      properties: {
+        pct: { type: "number", description: "نسبة التعديل المئوية: 10 = رفع ١٠٪، -5 = خفض ٥٪" },
+        category: { type: "string", description: "قصر التعديل على فئة رئيسية (اختياري)" },
+        query: { type: "string", description: "قصر التعديل على منتجات يحتوي اسمها هذه الكلمة (اختياري)" },
+      },
+      required: ["pct"],
     },
   },
   {
@@ -489,6 +532,26 @@ async function searchProducts(sb: Sb, input: any) {
     };
   });
   return { count: items.length, items };
+}
+
+// Real Shopify sales for the last N days: revenue, orders, average order value,
+// and best sellers by quantity. Read-only (no DB write).
+async function salesReport(input: any) {
+  const days = Math.min(Math.max(Number(input?.days) || 7, 1), 90);
+  const since = new Date(Date.now() - days * 24 * 3600_000).toISOString();
+  const { orders, error } = await fetchRecentShopifyOrders(since, 250);
+  if (error) return { error, note: "تعذّر جلب طلبات شوبيفاي — تأكّدي أن ربط شوبيفاي مفعّل." };
+  const live = (orders ?? []).filter((o) => !o.cancelledAt);
+  const { count, revenue } = ordersSummary(live);
+  const avg = count ? Math.round((revenue / count) * 100) / 100 : 0;
+  const top = topProducts(live, 5).map((t) => ({ title: t.title, sku: t.sku ?? null, qty: t.qty }));
+  const currency = live[0]?.currency || "QAR";
+  return {
+    days, currency,
+    revenue, orders: count, avgOrder: avg,
+    topProducts: top,
+    note: `مبيعات آخر ${days} يوم من شوبيفاي. أرجعي panel نوعه stats فيه {label,value,sub}: الإيراد (${revenue} ${currency})، عدد الطلبات (${count})، متوسّط الطلب (${avg} ${currency}). واذكري أعلى المنتجات مبيعًا (topProducts بالكمية) في speak أو كـpanel products بدون أسعار. لو count=0 قولي ما في مبيعات بالفترة.`,
+  };
 }
 
 async function catalogStats(sb: Sb) {
@@ -908,6 +971,9 @@ async function runTool(sb: Sb, name: string, input: any, skuImages: Map<string, 
     case "catalog_stats":
       result = await catalogStats(sb);
       break;
+    case "sales_report":
+      result = await salesReport(input);
+      break;
     case "list_rejected":
       result = await listRejected(sb);
       break;
@@ -988,7 +1054,7 @@ function enrichPanel(
 // These NEVER mutate data. Each validates inputs, reads the current value, and
 // returns a signed CONFIRM panel. The write happens in /api/malak/commit only
 // after the user confirms.
-const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image", "generate_product_image", "sync_availability"];
+const WRITE_TOOLS = ["update_stock", "set_price", "set_approval", "add_product", "set_image", "generate_product_image", "sync_availability", "bulk_approve", "bulk_adjust_price"];
 const APPROVAL_VALUES = ["Approved", "Rejected", "SentAI"];
 
 // Malak owns every action — no sub-agents.
@@ -1036,7 +1102,68 @@ async function generateSku(sb: Sb, category: string | null, sub: string | null):
   return `MU-${cat}-${sc}-${Date.now().toString().slice(-4)}`;
 }
 
+// Resolve the products a bulk action targets. Shared shape with the commit
+// executor (which re-runs the same filter so the applied set is always live).
+function bulkQuery(sb: Sb, cols: string, f: { category?: string; query?: string; onlyPending?: boolean }) {
+  let q = sb.from("products").select(cols);
+  if (f.category) q = q.ilike("main_category", `%${f.category}%`);
+  if (f.query) q = q.ilike("name_en", `%${String(f.query).replace(/[%,()]/g, " ")}%`);
+  if (f.onlyPending) q = q.or("approval.is.null,approval.eq.");
+  return q;
+}
+
 async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: string | null } = {}): Promise<PrepResult> {
+  if (name === "bulk_approve") {
+    const status = String(input?.status ?? "").trim();
+    if (!APPROVAL_VALUES.includes(status)) return { ok: false, error: `حالة اعتماد غير صالحة: ${status}` };
+    const filter = {
+      category: String(input?.category ?? "").trim() || undefined,
+      query: String(input?.query ?? "").trim() || undefined,
+      onlyPending: !!input?.onlyPending,
+    };
+    const { data } = await bulkQuery(sb, "id, name_en", filter).limit(1000);
+    const rows = (data ?? []) as any[];
+    if (rows.length === 0) return { ok: false, error: "ما لقيت منتجات مطابقة للفلتر." };
+    const scope = [filter.category && `فئة «${filter.category}»`, filter.query && `الاسم يحتوي «${filter.query}»`, filter.onlyPending && "بدون قرار اعتماد"].filter(Boolean).join(" · ") || "كل المنتجات";
+    const sample = rows.slice(0, 6).map((p) => p.name_en || "—").join(" · ");
+    const token = signAction({ v: 1, type: "bulk_approve", agent: "malak", newValue: status, filter, count: rows.length, ts: Date.now() });
+    return {
+      ok: true, agent: "malak",
+      speak: `جهّزت اعتماد جماعي: ${rows.length} منتج (${scope}) → ${status}. راجع وأكّد.`,
+      panel: confirmPanel("اعتماد جماعي", "malak", `تغيير اعتماد ${rows.length} منتج إلى ${status}`, null, null,
+        [{ label: "النطاق", old: "", new: scope }, { label: "العدد", old: "—", new: rows.length }, { label: "أمثلة", old: "", new: sample }],
+        token, `عملية بالجملة على ${rows.length} منتج — راجع قبل التأكيد.`),
+    };
+  }
+
+  if (name === "bulk_adjust_price") {
+    const pct = Number(input?.pct);
+    if (!Number.isFinite(pct) || pct === 0) return { ok: false, error: "نسبة التعديل غير صالحة." };
+    if (Math.abs(pct) > 90) return { ok: false, error: "نسبة كبيرة جدًا (>٩٠٪) — حدّدي نسبة معقولة." };
+    const filter = {
+      category: String(input?.category ?? "").trim() || undefined,
+      query: String(input?.query ?? "").trim() || undefined,
+    };
+    const { data } = await bulkQuery(sb, "id, price, cost", filter).limit(1000);
+    const rows = (data ?? []) as any[];
+    const priced = rows.filter((p) => Number.isFinite(Number(p.price)) && Number(p.price) > 0);
+    if (priced.length === 0) return { ok: false, error: "ما لقيت منتجات مسعّرة مطابقة للفلتر." };
+    // Preview how many would be skipped for landing below cost.
+    const factor = 1 + pct / 100;
+    const belowCost = priced.filter((p) => { const c = Number(p.cost); return Number.isFinite(c) && c > 0 && Number(p.price) * factor < c; }).length;
+    const scope = [filter.category && `فئة «${filter.category}»`, filter.query && `الاسم يحتوي «${filter.query}»`].filter(Boolean).join(" · ") || "كل المنتجات المسعّرة";
+    const dir = pct > 0 ? `رفع +${pct}٪` : `خفض ${pct}٪`;
+    const token = signAction({ v: 1, type: "bulk_price", agent: "malak", pct, filter, count: priced.length, ts: Date.now() });
+    const skipNote = belowCost > 0 ? ` (${belowCost} منتج بيُتخطّى لأنه ينزل تحت التكلفة)` : "";
+    return {
+      ok: true, agent: "malak",
+      speak: `جهّزت تعديل سعر جماعي: ${dir} على ${priced.length} منتج (${scope})${skipNote}. راجع وأكّد.`,
+      panel: confirmPanel("تعديل سعر جماعي", "malak", `${dir} على ${priced.length} منتج`, null, null,
+        [{ label: "النطاق", old: "", new: scope }, { label: "التعديل", old: "السعر الحالي", new: dir }, { label: "العدد", old: "—", new: priced.length }, ...(belowCost > 0 ? [{ label: "يُتخطّى (تحت التكلفة)", old: "", new: belowCost }] : [])],
+        token, `تعديل أسعار بالجملة على ${priced.length} منتج — راجع بعناية قبل التأكيد.`),
+    };
+  }
+
   if (name === "sync_availability") {
     // Preview only (apply=false): how many out-of-stock products are still
     // listed/Active on a channel — the mismatch to fix across all platforms.
