@@ -13,6 +13,7 @@ import { webSearch, searchConfigured, searchEnvNamesPresent } from "@/lib/malak/
 import { createLiveSession, liveConfigured, liveNavigate, encodeLive, decodeLive, encodeProfile, decodeProfile, LIVE_TTL_SEC, PROFILE_TTL_SEC, type LiveSessionData } from "@/lib/malak/live";
 import { openBrowserbase, browserbaseConfigured } from "@/lib/malak/browserbase";
 import { youtubeSearchId } from "@/lib/malak/youtube";
+import { effectivePrice, priceRangeLabel } from "@/lib/products/price-compute";
 
 // Malak AI — server brain. Holds all secrets (ANTHROPIC_API_KEY +
 // Supabase service role); the browser only ever sees the final structured JSON.
@@ -106,12 +107,26 @@ const SYSTEM_PROMPT =
   '1) عنوان جذّاب قصير. 2) Hook قوي من أول سطر يلامس مشكلة يحلّها المنتج. 3) أهم 3 إلى 5 فوائد كنقاط قصيرة. ' +
   '4) المكوّنات أو التقنية المميزة إن وُجدت (من الوصف/الكلمات). 5) طريقة استخدام مختصرة. 6) النتيجة المتوقّعة للعميل. ' +
   '7) دعوة واضحة لاتخاذ إجراء (CTA) مع ذكر السعر/العرض الحالي إن وُجد. ' +
+  'السعر في المحتوى: استخدمي السعر الفعّال — إذا كان price_from_options=true فالمنتج له خيارات مُسعّرة، فاذكري «يبدأ من price_effective ر.ق» أو المدى price_range، ولا تكتبي price المنتج الأب (قد يكون صفرًا). ' +
   'الأسلوب: تسويقي أنيق وغير مبالغ فيه، بالعربية الخليجية المناسبة لعملاء قطر والخليج. ' +
+  // مبادئ كتابة تحويلية (من مهارة copywriting): وضوح، فائدة، تحديد، لغة العميل.
+  'مبادئ الكتابة (إلزامية للكابشن): (أ) الوضوح قبل الذكاء — جملة تفهمها من أول قراءة. ' +
+  '(ب) الفائدة قبل الميزة — لا تقولي «فيتامين C 15%»، بل «يوحّد لون البشرة ويخفّي الاسمرار». ' +
+  '(ج) التحديد قبل العموم — «نتيجة خلال أسبوعين» أفضل من «نتيجة سريعة». ' +
+  '(د) لغة العميلة — الكلمات اللي تستخدمها بنات قطر/الخليج، لا لغة الشركات. ' +
+  '(هـ) بدون مبالغة ولا علامات تعجّب متتالية ولا كلمات جوفاء («الأفضل، ثوري، مذهل») بدون دليل. ' +
+  '(و) CTA قوي بصيغة [فعل + ما تحصل عليه]: «اطلبيه الحين ووصله لباب بيتك»، «اقتنيه قبل ما يخلص» — لا «اضغط هنا» ولا «اطلب الآن» المجرّدة. ' +
+  // SEO للأوصاف والكلمات (من مهارة product-page-seo): تُستخدم عند add_product/توليد وصف.
+  'عند كتابة/تحسين وصف منتج أو كلماته المفتاحية (add_product أو أي وصف للمتجر): ضعي الكلمة المفتاحية الأساسية (اسم المنتج + النوع + العلامة) في أول جملة وبشكل طبيعي؛ اكتبي وصفًا غنيًا (٢-٤ جمل) يجاوب على «شنو، لمن، ليش، كيف يُستخدم»؛ أضيفي كلمات بحث فعلية يكتبها العملاء (مرادفات عربية/إنجليزية للفئة)؛ نصّ بديل للصورة (alt) وصفي. keywords_ar/keywords_en: ٦-١٠ كلمات لكل لغة بدون حشو مكرّر. ' +
   'caption_en: نسخة إنجليزية مختصرة (هوك + أبرز فائدة + CTA). ' +
   'hashtags: 10 هاشتاقات مناسبة (مزيج عربي/إنجليزي للجمال والعناية الكورية وقطر والخليج). ' +
   'platforms: ["Instagram","TikTok","Snapchat","Snoonu","Talabat","Rafeeq"]. ' +
   'لا تخترعي مكوّنات أو أرقامًا غير موجودة — استندي لوصف المنتج الحقيقي؛ ولو الوصف ناقص استخدمي فوائد عامة معقولة للفئة بدون مبالغة ولا ادّعاءات طبية. ' +
   'النشر الفعلي يحتاج Meta/TikTok API — وضّحي ذلك في speak. ' +
+  // خطة/تقويم محتوى أسبوعي (من مهارة content-calendar): جدول ماركداون في summary.
+  'خطة/تقويم محتوى (لما يطلب فهد «خطة بوستات» أو «جدول محتوى أسبوعي» أو «شنو أنشر هالأسبوع»): أرجعي panel نوعه **plan**، items صفوف بالحقول {day, platform, pillar, topic, format} — كل صف يوم/منصّة/فكرة محدّدة. ' +
+  'محاور المتجر (pillar): تعليمي (نصائح عناية/مكياج)، منتج (إبراز منتج بفائدته)، ترند/تفاعل (سؤال أو ترند كوري)، عرض/CTA (خصم أو وصول جديد)، وراء الكواليس/قصة. ' +
+  'قواعد التوازن: وزّعي المحاور بالتساوي (ما يتجاوز محور ٤٠٪)؛ لا تترك أي منصّة نشطة أكثر من ٣ أيام بدون بوست؛ نوّعي الصيغ (منشور/ريلز/ستوري/كاروسيل)؛ اتركي ٢٠-٣٠٪ خانات مرنة للترند اللحظي؛ لا تكدّسي محتوى ثقيل (ريلز+كاروسيل) بنفس اليوم. الفكرة (topic) محدّدة لا عامة، واربطيها بمنتجات حقيقية من الكتالوج عبر search_products إن أمكن. اجعلي speak جملة قصيرة والتقويم كامل في لوحة plan. ' +
   'تصدير ملف للمنصّات (Excel/CSV): النظام عنده تصدير جاهز. لما يطلب فهد ملف تصدير لسنونو/شوبيفاي/طلبات/رفيق، أعطيه رابط تحميل عبر panel نوعه links فيه زر يفتح /api/export/<channel> (القنوات: snoonu, shopify, talabat, rafeeq) — يحمّل الملف الجاهز مباشرة. مثال label: «⬇️ نزّل ملف سنونو» url: /api/export/snoonu. لا تقولي إنكِ ما تقدرين تصدّرين ملف. ' +
   'حقول معرّفات المنصّات: snoonu_id (معرّف سنونو) و rafeeq_product_id حقول **مستقلة** عن الـSKU، وتظهر في product_detail. سنونو آيدي ≠ SKU. ' +
   'مهم: في لوحة products أدرجي sku دائمًا لكل منتج، ولا تُدرجي image_url إطلاقًا — ' +
@@ -143,7 +158,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_products",
     description:
-      "ابحثي في كتالوج المنتجات. مرّري query (كلمة بحث في الاسم/الـSKU/العلامة) و/أو brand و/أو category و/أو status (Approved/Rejected/SentAI). ترجع صفوفًا فيها name و name_ar و brand و price و discount_price و size و status و sku و الوصف (description_ar/en) والكلمات المفتاحية (keywords_ar/en) — استخدمي الوصف والكلمات لكتابة المحتوى التسويقي.",
+      "ابحثي في كتالوج المنتجات. مرّري query (كلمة بحث في الاسم/الـSKU/العلامة) و/أو brand و/أو category و/أو status (Approved/Rejected/SentAI). ترجع صفوفًا فيها name و name_ar و brand و price و discount_price و **price_effective** (السعر الفعّال) و **price_from_options** (هل السعر من الخيارات؟) و **price_range** (مدى السعر) و size و status و sku و الوصف (description_ar/en) والكلمات المفتاحية (keywords_ar/en) — استخدمي الوصف والكلمات لكتابة المحتوى التسويقي. مهم للسعر: لو price_from_options=true فالسعر يجي من الخيارات — اذكري price_range (أو «يبدأ من price_effective ر.ق»)، لا تعتمدي على price لأنه سعر المنتج الأب وقد يكون صفرًا.",
     input_schema: {
       type: "object",
       properties: {
@@ -385,7 +400,7 @@ const TOOLS: Anthropic.Tool[] = [
           type: "object",
           description: "لوحة بصرية اختيارية",
           properties: {
-            type: { type: "string", enum: ["products", "stats", "post", "tiktok", "browser", "search", "live", "links", "player"] },
+            type: { type: "string", enum: ["products", "stats", "plan", "post", "tiktok", "browser", "search", "live", "links", "player"] },
             items: { type: "array", items: { type: "object" } },
             item: { type: "object" },
           },
@@ -436,12 +451,30 @@ async function searchProducts(sb: Sb, input: any) {
   if (error) return { error: error.message, items: [] };
 
   const brands = await brandMap(sb);
-  const items = (data ?? []).map((r: any) => ({
+  // أسعار الخيارات لكل المنتجات المُعادة دفعة واحدة → السعر الفعّال (يبدأ من أرخص خيار).
+  const ids = (data ?? []).map((r: any) => r.id).filter(Boolean);
+  const vpByProduct = new Map<string, { price: number | null }[]>();
+  if (ids.length) {
+    const { data: vps } = await sb.from("product_variants").select("parent_product_id, price").in("parent_product_id", ids);
+    for (const v of (vps ?? []) as any[]) {
+      if (!v?.parent_product_id) continue;
+      const arr = vpByProduct.get(v.parent_product_id) ?? [];
+      arr.push({ price: v.price });
+      vpByProduct.set(v.parent_product_id, arr);
+    }
+  }
+  const items = (data ?? []).map((r: any) => {
+    const ep = effectivePrice(r.price, r.discount_price, vpByProduct.get(r.id));
+    return {
     name: r.name_en,
     name_ar: r.name_ar,
     brand: r.brand_id ? brands.get(r.brand_id) ?? null : null,
     price: r.price,
     discount_price: r.discount_price,
+    // السعر الفعّال: لو للمنتج خيارات مُسعّرة، هذا سعر البداية (أرخص خيار)؛ وإلا سعر المنتج.
+    price_effective: ep.min,
+    price_from_options: ep.fromVariants,
+    price_range: priceRangeLabel(ep, (n) => String(n)),
     status: r.approval,
     sku: r.sku,
     category: r.main_category,
@@ -453,7 +486,8 @@ async function searchProducts(sb: Sb, input: any) {
     description_en: r.description_en,
     keywords_ar: r.keywords_ar,
     keywords_en: r.keywords_en,
-  }));
+    };
+  });
   return { count: items.length, items };
 }
 
@@ -575,6 +609,9 @@ async function productDetail(sb: Sb, input: any) {
   const { data: variants } = await sb.from("product_variants").select("variant_name, sku, color, size, price, stock_quantity").eq("parent_product_id", p.id).limit(40);
   const brand = p.brand_id ? (await firstRow(sb.from("brands").select("name").eq("id", p.brand_id)))?.name ?? null : null;
 
+  // السعر الفعّال: لو للمنتج خيارات مُسعّرة، السعر يبدأ من أرخص خيار؛ وإلا سعر المنتج.
+  const ep = effectivePrice(p.price, p.discount_price, (variants ?? []) as { price: number | null }[]);
+
   const byPlat = new Map((psRows ?? []).map((r: any) => [r.platform, r]));
   const stock = inv?.stock_quantity ?? p.stock_quantity ?? 0;
   const platforms = PLATFORMS.map((pl) => {
@@ -588,6 +625,7 @@ async function productDetail(sb: Sb, input: any) {
     snoonu_id: p.snoonu_id ?? null, rafeeq_product_id: p.rafeeq_product_id ?? null,
     category: p.main_category, sub_category: p.sub_category, type: p.product_type,
     color: p.color, size: p.size, price: p.price, discount_price: p.discount_price, cost: p.cost,
+    price_effective: ep.min, price_from_options: ep.fromVariants, price_range: priceRangeLabel(ep, (n) => String(n)),
     approval: p.approval ?? "—", stock, stock_status: p.stock_status, location: inv?.location ?? null,
     low_stock_threshold: inv?.low_stock_threshold ?? null, sold: inv?.sold_quantity ?? null,
     description_ar: p.description_ar, description_en: p.description_en,
