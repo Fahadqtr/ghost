@@ -13,7 +13,17 @@ export type MalakActionType =
   | "add_product"
   | "set_image"
   | "generate_image"
-  | "sync_availability"; // bulk: hide out-of-stock products still listed on channels + push 0 to Shopify
+  | "sync_availability" // bulk: hide out-of-stock products still listed on channels + push 0 to Shopify
+  | "bulk_approve"      // bulk: set approval on every product matching a filter
+  | "bulk_price";       // bulk: adjust price by a percentage on every product matching a filter
+
+// Filter for a bulk action; re-resolved at commit time so the executed set is
+// always current (and can't be forged — the whole action token is HMAC-signed).
+export interface MalakBulkFilter {
+  category?: string;
+  query?: string;
+  onlyPending?: boolean; // approval is null/empty
+}
 
 export interface MalakProductDraft {
   name_en: string;
@@ -41,7 +51,9 @@ export interface MalakAction {
   product?: MalakProductDraft;
   style?: string; // image generation style (hero / lifestyle)
   size?: string; // image generation size, e.g. 1024x1024 / 1024x1536
-  count?: number; // sync_availability: previewed number of products to fix
+  count?: number; // sync_availability / bulk_*: previewed number of products
+  filter?: MalakBulkFilter; // bulk_approve / bulk_price: the target set
+  pct?: number; // bulk_price: percentage adjustment (10 = +10%, -5 = -5%)
   ts: number;
 }
 

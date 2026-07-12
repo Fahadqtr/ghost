@@ -29,6 +29,24 @@ export function ordersWithin(orders: ShopifyOrderLite[], hours: number, now: Dat
   });
 }
 
+/** Best-selling products across a batch, by total quantity (desc). */
+export function topProducts(
+  orders: ShopifyOrderLite[],
+  limit = 5,
+): { title: string; sku?: string; qty: number; orders: number }[] {
+  const m = new Map<string, { title: string; sku?: string; qty: number; orders: number }>();
+  for (const o of orders) {
+    for (const it of o.items ?? []) {
+      const key = (it.sku && it.sku.trim()) || it.title || "—";
+      const cur = m.get(key) ?? { title: it.title || key, sku: it.sku, qty: 0, orders: 0 };
+      cur.qty += Number.isFinite(it.qty) ? it.qty : 0;
+      cur.orders += 1;
+      m.set(key, cur);
+    }
+  }
+  return [...m.values()].sort((a, b) => b.qty - a.qty).slice(0, Math.max(1, limit));
+}
+
 /** One-line morning summary, or "" when there were no orders. */
 export function morningOrdersLine(orders: ShopifyOrderLite[], now: Date): string {
   const day = ordersWithin(orders, 24, now);

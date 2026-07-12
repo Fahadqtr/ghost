@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ordersSummary, ordersWithin, morningOrdersLine, type ShopifyOrderLite } from "./orders-compute.ts";
+import { ordersSummary, ordersWithin, morningOrdersLine, topProducts, type ShopifyOrderLite } from "./orders-compute.ts";
 
 const order = (over: Partial<ShopifyOrderLite>): ShopifyOrderLite => ({
   id: "gid://1", name: "#1001", createdAt: "2026-07-07T08:00:00Z",
@@ -24,6 +24,21 @@ test("ordersWithin filters by the cutoff", () => {
   const old = order({ createdAt: "2026-07-05T12:00:00Z" });
   const bad = order({ createdAt: "garbage" });
   assert.deepEqual(ordersWithin([recent, old, bad], 24, now), [recent]);
+});
+
+test("topProducts ranks by total quantity and groups by sku/title", () => {
+  const os = [
+    order({ items: [{ title: "Serum", sku: "S1", qty: 2 }, { title: "Tint", sku: "T1", qty: 1 }] }),
+    order({ items: [{ title: "Serum", sku: "S1", qty: 3 }] }),
+    order({ items: [{ title: "Cushion", sku: "C1", qty: 5 }] }),
+  ];
+  const top = topProducts(os, 2);
+  assert.equal(top.length, 2);
+  assert.equal(top[0].sku, "S1");
+  assert.equal(top[0].qty, 5);
+  assert.equal(top[0].orders, 2);
+  assert.equal(top[1].sku, "C1");
+  assert.equal(top[1].qty, 5);
 });
 
 test("morning line summarizes the day or stays silent", () => {

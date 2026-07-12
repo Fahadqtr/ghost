@@ -178,6 +178,56 @@ async function commitSync(_sb: Sb): Promise<CommitOutcome | { error: string }> {
   };
 }
 
+// Re-resolve a bulk action's target set at commit time (same filter the prepare
+// step previewed) so the applied set is always live and can't be forged.
+function bulkResolve(sb: Sb, cols: string, f: { category?: string; query?: string; onlyPending?: boolean } | undefined) {
+  let q = sb.from("products").select(cols);
+  if (f?.category) q = q.ilike("main_category", `%${f.category}%`);
+  if (f?.query) q = q.ilike("name_en", `%${String(f.query).replace(/[%,()]/g, " ")}%`);
+  if (f?.onlyPending) q = q.or("approval.is.null,approval.eq.");
+  return q.limit(1000);
+}
+
+async function commitBulkApprove(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
+  const status = String(a.newValue ?? "");
+  if (!["Approved", "Rejected", "SentAI"].includes(status)) return { error: "حالة اعتماد غير صالحة." };
+  const { data } = await bulkResolve(sb, "id", a.filter);
+  const ids = ((data ?? []) as any[]).map((r) => r.id).filter(Boolean);
+  if (ids.length === 0) return { error: "ما في منتجات مطابقة الآن." };
+  let done = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { error } = await sb.from("products").update({ approval: status }).in("id", chunk);
+    if (error) return { error: error.message };
+    done += chunk.length;
+  }
+  return { message: `اعتماد جماعي: ${done} منتج → ${status}.`, field: "bulk_approve", newValue: `${status}×${done}` };
+}
+
+async function commitBulkPrice(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
+  const pct = Number(a.pct);
+  if (!Number.isFinite(pct) || pct === 0) return { error: "نسبة تعديل غير صالحة." };
+  const factor = 1 + pct / 100;
+  const { data } = await bulkResolve(sb, "id, price, cost", a.filter);
+  const rows = ((data ?? []) as any[]).filter((p) => Number.isFinite(Number(p.price)) && Number(p.price) > 0);
+  let applied = 0, skipped = 0;
+  for (const p of rows) {
+    const next = Math.round(Number(p.price) * factor * 100) / 100;
+    const cost = Number(p.cost);
+    // 🔴 Red line — never below cost, even in bulk. Skip (don't fail the batch).
+    if (Number.isFinite(cost) && cost > 0 && next < cost) { skipped++; continue; }
+    if (next <= 0) { skipped++; continue; }
+    const { error } = await sb.from("products").update({ price: next }).eq("id", p.id);
+    if (error) return { error: error.message };
+    applied++;
+  }
+  const dir = pct > 0 ? `+${pct}٪` : `${pct}٪`;
+  return {
+    message: `تعديل سعر جماعي (${dir}): عُدّل ${applied} منتج${skipped ? ` · تُخطّي ${skipped} (تحت التكلفة)` : ""}.`,
+    field: "bulk_price", newValue: `${dir}×${applied}`,
+  };
+}
+
 // Idempotency: was an identical write already logged in the last 30s? Used to
 // drop accidental double-taps. Best-effort — if the audit table is missing or
 // mismatched the query errors and we DON'T block the write (fail open).
@@ -280,6 +330,8 @@ export async function POST(req: Request) {
       case "add_product": out = await commitAddProduct(sb, action); break;
       case "set_image": out = await commitSetImage(sb, action); break;
       case "sync_availability": out = await commitSync(sb); break;
+      case "bulk_approve": out = await commitBulkApprove(sb, action); break;
+      case "bulk_price": out = await commitBulkPrice(sb, action); break;
       default: return Response.json({ error: "نوع عملية غير معروف." }, { status: 400 });
     }
     if ("error" in out) return Response.json({ error: out.error }, { status: 200 });
