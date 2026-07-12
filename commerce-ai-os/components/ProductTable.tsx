@@ -141,6 +141,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   const [removed, setRemoved] = useState<Set<string>>(new Set());
   const [busyDel, startDel] = useTransition();
   const [delNote, setDelNote] = useState("");
+  const [refreshing, startRefresh] = useTransition();
   const [showFilters, setShowFilters] = useState(false);
   const [quickId, setQuickId] = useState<string | null>(null);
   // Live edits (approval/status/availability) made from the list or the quick
@@ -188,9 +189,13 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           : stk === "in" ? (simpleMode ? n > 0 : n >= 10) : true);
       const matchesPlat = !plat || (plat === "active" ? ps === "Active" : ps !== "Active");
       const rr = p.rejection_reason ?? "";
+      const noImage = !p.image_url || p.image_url.trim() === "";
       const matchesGrp = !grp || (
-        grp === "new" ? (p.notes ?? "").startsWith("Imported from Snoonu sync")
-        : grp === "staff_pending" ? (!p.approval && (p.notes ?? "").startsWith("staff-new"))
+        grp === "no_image" ? noImage
+        : grp === "new" ? (p.notes ?? "").startsWith("Imported from Snoonu sync")
+        // Respect the live approval override so an approved product leaves the
+        // "pending" group immediately, without a full reload.
+        : grp === "staff_pending" ? (!ap && (p.notes ?? "").startsWith("staff-new"))
         : grp === "image" ? rr.includes("صورة")
         : grp === "unavail" ? rr.includes("غير متاح")
         : grp === "variants" ? p.variant_count > 0
@@ -319,6 +324,13 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
             ✕ {L("مسح الفلاتر", "Clear filters")}
           </button>
         ) : null}
+        {/* Re-fetch from the DB so edits made elsewhere (or that changed a
+            product's group) show up without a full page reload. */}
+        <button type="button" onClick={() => startRefresh(() => router.refresh())} disabled={refreshing}
+          title={L("تحديث القائمة من قاعدة البيانات", "Refresh the list from the database")}
+          className="btn-ghost shrink-0 whitespace-nowrap px-3 py-2 text-sm disabled:opacity-50">
+          {refreshing ? "…" : `↻ ${L("تحديث", "Refresh")}`}
+        </button>
         <span className="ms-auto whitespace-nowrap text-sm text-muted">
           {filtered.length === products.length ? L(`${products.length} منتج`, `${products.length} products`) : L(`${filtered.length} من ${products.length}`, `${filtered.length} of ${products.length}`)}
         </span>
@@ -338,6 +350,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         </select>
         <select className="input sm:max-w-56" value={grp} onChange={(e) => setGrp(e.target.value)}>
           <option value="">{L("كل المجموعات", "All groups")}</option>
+          <option value="no_image">{L("📷 بدون صورة", "📷 No image")}</option>
           <option value="staff_pending">{L("🆕 من الموظفين · بانتظار الاعتماد", "🆕 From staff · pending approval")}</option>
           <option value="variants">{L("🎚️ له خيارات", "🎚️ Has variants")}</option>
           <option value="new">{L("🆕 جديد · من سنونو", "🆕 New · from Snoonu")}</option>
