@@ -212,6 +212,20 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   const anyFilter = !!(q || cat || appr || stk || plat || grp);
   const clearFilters = () => { setQ(""); setCat(""); setAppr(""); setStk(""); setPlat(""); setGrp(""); };
 
+  // Select every product in the current filtered results (across all pages), and
+  // copy the results as a plain, paste-able list (SKU — EN — AR, one per line).
+  const [copyNote, setCopyNote] = useState("");
+  const selectAllFiltered = () => setSel(new Set(filtered.map((p) => p.id)));
+  const copyResults = async () => {
+    const text = filtered.map((p) => [p.sku, p.name_en, p.name_ar].filter(Boolean).join(" — ")).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyNote(L(`📋 نُسخت ${filtered.length} منتج`, `📋 Copied ${filtered.length} products`));
+    } catch {
+      setCopyNote(L("تعذّر النسخ — انسخ يدويًا من القائمة.", "Copy failed — select the text manually."));
+    }
+  };
+
   useEffect(() => { setPage(1); }, [q, cat, appr, stk, plat, grp]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -336,6 +350,20 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           className="btn-ghost shrink-0 whitespace-nowrap px-3 py-2 text-sm disabled:opacity-50">
           {refreshing ? "…" : `↻ ${L("تحديث", "Refresh")}`}
         </button>
+        {filtered.length > 0 ? (
+          <>
+            <button type="button" onClick={selectAllFiltered}
+              title={L("تحديد كل النتائج", "Select all results")}
+              className="btn-ghost shrink-0 whitespace-nowrap px-3 py-2 text-sm">
+              ☑️ {L("تحديد الكل", "Select all")} ({filtered.length})
+            </button>
+            <button type="button" onClick={copyResults}
+              title={L("نسخ قائمة النتائج (SKU والأسماء)", "Copy results (SKU + names)")}
+              className="btn-ghost shrink-0 whitespace-nowrap px-3 py-2 text-sm">
+              📋 {L("نسخ", "Copy")}
+            </button>
+          </>
+        ) : null}
         <span className="ms-auto whitespace-nowrap text-sm text-muted">
           {filtered.length === products.length ? L(`${products.length} منتج`, `${products.length} products`) : L(`${filtered.length} من ${products.length}`, `${filtered.length} of ${products.length}`)}
         </span>
@@ -387,6 +415,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         </div>
       ) : null}
       {delNote ? <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{delNote}</div> : null}
+      {copyNote ? <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{copyNote}</div> : null}
 
       {/* Cards (mobile) */}
       <div className="space-y-3 md:hidden">
