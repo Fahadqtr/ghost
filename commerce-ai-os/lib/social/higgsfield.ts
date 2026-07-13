@@ -1,14 +1,16 @@
 import "server-only";
 
-// Higgsfield image-to-video (DoP) — turns a product photo into a short vertical
-// reel clip. Env-gated: needs HIGGSFIELD_API_KEY (Key ID) + HIGGSFIELD_API_SECRET.
-// Auth is two headers per the official SDK: `hf-api-key` + `hf-secret`. Async:
-// POST /v1/image2video/dop with the options under a `params` wrapper → the
-// response carries a request id / polling_url → poll until a video url appears.
+// Higgsfield image-to-video — turns a product photo into a short vertical reel
+// clip. Env-gated: needs HIGGSFIELD_API_KEY (Key ID) + HIGGSFIELD_API_SECRET.
+// The model is chosen by HIGGSFIELD_VIDEO_MODEL (default "dop"; "kling" /
+// "seedance" for richer motion). Async: POST the model endpoint → the response
+// carries a request id / polling_url → poll /requests/{id}/status until a video
+// url appears.
 //
 // NOTE: the exact response shapes vary across Higgsfield API versions, so the
 // parsers below accept several field names and surface the raw error on
-// mismatch.
+// mismatch. Note Marketing-Studio (talking-avatar) reels are NOT in the public
+// API — those come in via the manual paste-URL flow.
 
 const BASE = (process.env.HIGGSFIELD_API_BASE || "https://platform.higgsfield.ai").replace(/\/$/, "");
 
@@ -23,15 +25,46 @@ function creds(): { id: string; secret: string } | null {
 export function higgsfieldConfigured(): boolean {
   return creds() !== null;
 }
-// Higgsfield auth is two separate headers (per the official SDK): the API key
-// id and the secret — NOT a combined Authorization bearer.
+// Higgsfield auth. The public REST docs use `Authorization: Key <id>:<secret>`;
+// the SDK uses `hf-api-key` + `hf-secret`. Sending all three is harmless and
+// works across both surfaces (the proven DoP call succeeded with the SDK pair).
 function authHeaders(): Record<string, string> {
   const c = creds();
   return {
+    Authorization: `Key ${c?.id ?? ""}:${c?.secret ?? ""}`,
     "hf-api-key": c?.id ?? "",
     "hf-secret": c?.secret ?? "",
     "User-Agent": "higgsfield-server-js/2.0",
   };
+}
+
+// Video model registry. The auto-generate button uses HIGGSFIELD_VIDEO_MODEL
+// (default "dop" — the proven, cheap camera-motion model). "kling"/"seedance"
+// give richer motion (and possibly native audio) via the documented path-based
+// endpoints. The manual Marketing-Studio paste flow is unaffected by this.
+interface VideoModel { path: string; body: (imageUrl: string, prompt: string) => unknown; }
+const DURATION = Math.max(3, Math.min(15, Number(process.env.HIGGSFIELD_VIDEO_SECONDS) || 5));
+const VIDEO_MODELS: Record<string, VideoModel> = {
+  // Proven surface: /v1/image2video/dop with the options under a `params` wrapper.
+  dop: {
+    path: "v1/image2video/dop",
+    body: (imageUrl, prompt) => ({
+      params: { model: "dop-turbo", prompt, aspect_ratio: "9:16", input_images: [{ type: "image_url", image_url: imageUrl }] },
+    }),
+  },
+  // Documented path-based endpoints with a flat body (image_url/prompt/duration).
+  kling: {
+    path: "kling-video/v2.1/pro/image-to-video",
+    body: (imageUrl, prompt) => ({ image_url: imageUrl, prompt, duration: DURATION, aspect_ratio: "9:16" }),
+  },
+  seedance: {
+    path: "bytedance/seedance/v1/pro/image-to-video",
+    body: (imageUrl, prompt) => ({ image_url: imageUrl, prompt, duration: DURATION, aspect_ratio: "9:16" }),
+  },
+};
+function selectedModel(): { key: string; model: VideoModel } {
+  const key = clean(process.env.HIGGSFIELD_VIDEO_MODEL).toLowerCase() || "dop";
+  return { key, model: VIDEO_MODELS[key] ?? VIDEO_MODELS.dop };
 }
 
 const pick = (o: any, ...keys: string[]): string | undefined => {
@@ -62,26 +95,19 @@ export interface HfSubmit { ok: boolean; requestId?: string; error?: string; }
 /** Submit an image→video job. Returns a request id to poll. */
 export async function submitReelJob(imageUrl: string, prompt: string): Promise<HfSubmit> {
   if (!higgsfieldConfigured()) return { ok: false, error: "Higgsfield غير مهيأ (HIGGSFIELD_API_KEY / HIGGSFIELD_API_SECRET)." };
+  const { key, model } = selectedModel();
   try {
-    const r = await fetch(`${BASE}/v1/image2video/dop`, {
+    const r = await fetch(`${BASE}/${model.path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      // The DoP endpoint wraps the generation options in a `params` object.
-      body: JSON.stringify({
-        params: {
-          model: "dop-turbo",
-          prompt,
-          aspect_ratio: "9:16",
-          input_images: [{ type: "image_url", image_url: imageUrl }],
-        },
-      }),
+      body: JSON.stringify(model.body(imageUrl, prompt)),
       cache: "no-store",
       signal: AbortSignal.timeout(30_000),
     });
     const body = await r.text();
     const j = ((): any => { try { return JSON.parse(body); } catch { return null; } })();
     if (!r.ok) {
-      console.error(`[higgsfield] submit HTTP ${r.status}:`, body.slice(0, 500));
+      console.error(`[higgsfield] submit(${key}) HTTP ${r.status}:`, body.slice(0, 500));
       return { ok: false, error: j ? errText(j, r.status) : `HTTP ${r.status} — ${body.slice(0, 300)}` };
     }
     const id = pick(j, "id", "request_id", "requestId", "request.id", "data.id", "data.request_id");
