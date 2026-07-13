@@ -90,6 +90,23 @@ export default function ProductForm({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // The edit page also has a separate ProductImages panel that persists the new
+  // primary photo server-side and then router.refresh()es. That refresh feeds a
+  // fresh `initial.image_url` in, but useState only reads it once — so without
+  // this sync the form keeps its stale (often empty) image_url and the next
+  // Save would overwrite the freshly-uploaded photo with a blank value, wiping
+  // it from the catalog. Adjust state during render when the server's primary
+  // image changes (React's recommended pattern), leaving in-form edits intact.
+  const [serverImage, setServerImage] = useState(initial?.image_url ?? "");
+  if ((initial?.image_url ?? "") !== serverImage) {
+    setServerImage(initial?.image_url ?? "");
+    setForm((f) => ({
+      ...f,
+      image_url: initial?.image_url ?? "",
+      image_filename: initial?.image_filename ?? f.image_filename,
+    }));
+  }
+
   const set = (k: keyof ProductInput, v: string) =>
     setForm((f) => ({ ...f, [k]: v }));
 
