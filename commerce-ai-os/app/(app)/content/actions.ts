@@ -300,14 +300,49 @@ export async function reelsWeekStatus(): Promise<
 // ---- Auto-generate a reel video (Higgsfield, in-system) -----------------
 import { submitReelJob, getReelJob, higgsfieldConfigured } from "@/lib/social/higgsfield";
 
+const IMG_BUCKET = "product-images";
+
+async function urlExists(url: string): Promise<boolean> {
+  try {
+    const r = await fetch(url, { method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(8_000) });
+    return r.ok;
+  } catch { return false; }
+}
+
+// Resolve a product's real photo even when products.image_url is empty (common
+// for imported rows): fall back to the primary product_images row, then to the
+// SKU-named file in the storage bucket (product-images/<sku>.jpg|png|webp),
+// probing that it actually exists. Returns "" when no image can be found.
+async function resolveProductImageUrl(sku: string): Promise<string> {
+  let db: any;
+  try { db = createAdminClient(); } catch { db = createClient(); }
+  const { data: prod } = await db
+    .from("products").select("id, image_url").eq("sku", sku).maybeSingle();
+  const direct = prod?.image_url ? String(prod.image_url).trim() : "";
+  if (/^https?:\/\//i.test(direct)) return direct;
+  if (prod?.id) {
+    const { data: pi } = await db
+      .from("product_images").select("url").eq("product_id", prod.id)
+      .order("is_primary", { ascending: false }).limit(1).maybeSingle();
+    const url = pi?.url ? String(pi.url).trim() : "";
+    if (/^https?:\/\//i.test(url)) return url;
+  }
+  // Storage convention: file saved under the SKU name. Try common extensions.
+  const clean = sku.replace(/[^a-zA-Z0-9_-]/g, "");
+  for (const ext of ["jpg", "png", "webp", "jpeg"]) {
+    const base = db.storage.from(IMG_BUCKET).getPublicUrl(`${clean}.${ext}`).data?.publicUrl;
+    if (base && (await urlExists(base))) return base;
+  }
+  return "";
+}
+
 // Submit an image→video job for a plan item (uses the product's real photo).
 export async function generateReelVideo(input: { sku: string | null; prompt: string }): Promise<{ error: string } | { requestId: string }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   if (!higgsfieldConfigured()) return { error: "Higgsfield غير مهيأ — أضف HIGGSFIELD_API_KEY و HIGGSFIELD_API_SECRET في Vercel ثم Redeploy." };
   if (!input.sku) return { error: "لا يوجد SKU للمنتج." };
-  const p = await fetchProduct(input.sku);
-  const imageUrl = p?.image_url ? String(p.image_url) : "";
+  const imageUrl = await resolveProductImageUrl(input.sku);
   if (!imageUrl) return { error: "ما فيه صورة لهذا المنتج — أضف صورة أولًا." };
   const r = await submitReelJob(imageUrl, input.prompt);
   if (!r.ok || !r.requestId) return { error: r.error || "فشل بدء التوليد." };
