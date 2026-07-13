@@ -84,16 +84,26 @@ export function matchDmProducts(products: DmProduct[], tokens: string[], max = 5
   return scored.slice(0, max).map((x) => x.p);
 }
 
+/** Storefront buy link for a product — a Shopify search permalink by SKU/name
+ *  that lands the customer on the item so they can order + pay on the site. */
+export function productBuyLink(p: DmProduct, storeDomain = "malikasuniverse.com"): string {
+  const domain = String(storeDomain || "malikasuniverse.com").replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  const q = (p.sku || p.name_en || p.name_ar || "").trim();
+  return q ? `https://${domain}/search?q=${encodeURIComponent(q)}` : "";
+}
+
 /** One prompt: history + matched products + store facts → strict JSON out. */
 export function buildDmPrompt(opts: {
   history: DmTurn[];
   products: DmProduct[];
   storeInfo: string;
+  storeDomain?: string;
 }): string {
   const lines = opts.products.map((p) => {
     const eff = Number(p.discount_price) > 0 ? p.discount_price : p.price;
     const stock = p.stock != null ? (p.stock > 0 ? "متوفر" : "نافد حاليًا") : "";
-    return `• ${p.name_en ?? ""}${p.name_ar ? ` | ${p.name_ar}` : ""} — ${eff != null ? `${eff} ر.ق` : "بدون سعر"}${stock ? ` — ${stock}` : ""}`;
+    const link = productBuyLink(p, opts.storeDomain);
+    return `• ${p.name_en ?? ""}${p.name_ar ? ` | ${p.name_ar}` : ""} — ${eff != null ? `${eff} ر.ق` : "بدون سعر"}${stock ? ` — ${stock}` : ""}${link ? ` — 🔗 ${link}` : ""}`;
   });
   const history = opts.history
     .slice(-10)
@@ -107,6 +117,7 @@ export function buildDmPrompt(opts: {
     "• استخدمي فقط معلومات المتجر والمنتجات المرفقة — لا تخترعي أسعارًا أو منتجات أو وعودًا.\n" +
     "• سؤال عن فئة أو «شنو عندكم» (بشرة، شعر، مكياج…) وفيه منتجات مرفقة: اعرضي ٢–٤ منها بأسعارها واسأليه أي نوع يناسبه — لا تماطلي ولا تحوّلي طالما فيه منتجات مرفقة.\n" +
     "• سؤال عن منتج/فئة وما في أي منتجات مرفقة نهائيًا: قولي إنك بتتأكدين من التوفر وبيرد عليه الفريق، وخلي handoff=true.\n" +
+    "• لما العميل يبي يطلب/يشتري أو يسأل «كيف أطلب»: أرسلي له رابط المنتج (🔗 المرفق مع المنتج) وقوليله يكمّل الطلب والدفع من الموقع مباشرة — بدون handoff.\n" +
     "• شكوى، مشكلة طلب سابق، طلب استرجاع، أو أي شي مو متأكدة منه 100%: ردّي رد لطيف إن الفريق بيتواصل معه، و handoff=true.\n" +
     "• لا تطلبي بيانات حساسة (بطاقات، كلمات مرور).\n\n" +
     `معلومات المتجر:\n${opts.storeInfo}\n\n` +

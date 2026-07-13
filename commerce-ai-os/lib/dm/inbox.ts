@@ -161,18 +161,46 @@ export async function connectDmChannel(): Promise<{ ok: boolean; log: string[] }
 }
 
 /** Find or create the conversation row for this sender. */
-export async function upsertDmConversation(admin: any, channel: string, externalId: string): Promise<{ id: string; auto_reply: boolean } | null> {
+export async function upsertDmConversation(admin: any, channel: string, externalId: string): Promise<{ id: string; auto_reply: boolean; username: string | null } | null> {
   const { data: found } = await admin
-    .from("dm_conversations").select("id, auto_reply")
+    .from("dm_conversations").select("id, auto_reply, username")
     .eq("channel", channel).eq("external_id", externalId).maybeSingle();
-  if (found) return { id: String(found.id), auto_reply: found.auto_reply !== false };
+  if (found) return { id: String(found.id), auto_reply: found.auto_reply !== false, username: found.username ?? null };
   const { data: made, error } = await admin
     .from("dm_conversations")
     .insert({ channel, external_id: externalId })
-    .select("id, auto_reply")
+    .select("id, auto_reply, username")
     .single();
   if (error || !made) { console.error("[dm-conv]", error?.message); return null; }
-  return { id: String(made.id), auto_reply: made.auto_reply !== false };
+  return { id: String(made.id), auto_reply: made.auto_reply !== false, username: made.username ?? null };
+}
+
+/**
+ * Fetch the sender's Instagram profile (username/name) so the inbox shows a
+ * real handle instead of a bare ID. Works on the Instagram-Login host for
+ * people who've messaged the business; falls back to the Facebook graph host.
+ */
+export async function fetchIgProfile(igsid: string): Promise<{ username?: string; name?: string } | null> {
+  const token = dmToken();
+  if (!token || !igsid) return null;
+  for (const base of [IG_GRAPH, GRAPH]) {
+    try {
+      const j = await graphGet(`/${encodeURIComponent(igsid)}?fields=name,username`, token, base);
+      if (j && (j.username || j.name)) return { username: j.username, name: j.name };
+    } catch { /* try the other host */ }
+  }
+  return null;
+}
+
+/** Backfill a conversation's display name from the IG profile (best-effort). */
+export async function ensureDmUsername(admin: any, conversationId: string, igsid: string): Promise<void> {
+  try {
+    const prof = await fetchIgProfile(igsid);
+    const name = (prof?.username || prof?.name || "").trim();
+    if (name) await admin.from("dm_conversations").update({ username: name }).eq("id", conversationId);
+  } catch (e) {
+    console.error("[dm-profile]", e instanceof Error ? e.message : e);
+  }
 }
 
 /** Store a message; returns false when `mid` was already seen (webhook retry). */
@@ -260,7 +288,7 @@ export async function autoReplyDm(admin: any, convo: { id: string; auto_reply: b
     const resp: any = await client.messages.create({
       model: process.env.DM_MODEL || process.env.STAFF_MALAK_MODEL || "claude-sonnet-5",
       max_tokens: 500,
-      messages: [{ role: "user", content: buildDmPrompt({ history, products, storeInfo: STORE_INFO }) }],
+      messages: [{ role: "user", content: buildDmPrompt({ history, products, storeInfo: STORE_INFO, storeDomain: process.env.STORE_DOMAIN || "malikasuniverse.com" }) }],
     });
     const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
     const verdict = parseDmReply(text);
