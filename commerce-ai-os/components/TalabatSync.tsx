@@ -6,6 +6,7 @@ import {
   computeTalabatDiff, buildTalabatPackage, verifyCatalogEntries, listTalabatQueue, markTalabatSent,
   type TalabatDiff, type VerifySummary, type TalabatQueueItem,
 } from "@/app/(app)/import-export/talabat-actions";
+import ProductThumb from "@/components/ProductThumb";
 
 // Talabat catalog gap-closer: upload Talabat's own export, see which of OUR
 // sellable products are missing over there, then download the "please add
@@ -258,12 +259,7 @@ export default function TalabatSync() {
             <div className="max-h-72 space-y-2 overflow-y-auto">
               {queue.map((m) => (
                 <div key={m.id} className="flex items-center gap-2 rounded-xl border border-[#efe3d6] bg-white/60 p-2">
-                  {m.image_url ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img src={m.image_url} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-lg border border-[#efe3d6] bg-white object-cover" />
-                  ) : (
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-amber-300 bg-amber-50 text-[10px] text-amber-700">بدون صورة</div>
-                  )}
+                  <ProductThumb imageUrl={m.image_url} sku={m.sku} />
                   <div className="min-w-0 flex-1 text-xs">
                     <p className="truncate font-semibold text-ink">{m.name_en || m.id}</p>
                     <p className="mt-0.5 text-muted">
@@ -353,12 +349,7 @@ export default function TalabatSync() {
                 {diff.missing.map((m) => (
                   <div key={m.product_id} className={`flex items-center gap-2 rounded-xl border border-[#efe3d6] p-2 ${excluded.has(m.product_id) ? "bg-slate-50 opacity-60" : "bg-white/60"}`}>
                     <input type="checkbox" checked={!excluded.has(m.product_id)} onChange={() => toggleRow(m.product_id)} className="h-4 w-4 shrink-0" />
-                    {m.image_url ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img src={m.image_url} alt="" loading="lazy" className="h-12 w-12 shrink-0 rounded-lg border border-[#efe3d6] bg-white object-cover" />
-                    ) : (
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-amber-300 bg-amber-50 text-[10px] text-amber-700">بدون صورة</div>
-                    )}
+                    <ProductThumb imageUrl={m.image_url} sku={m.sku} />
                     <div className="min-w-0 flex-1 text-xs">
                       <p className="truncate font-semibold text-ink">{m.name_en || m.product_id}</p>
                       <p className="mt-0.5 text-muted">
