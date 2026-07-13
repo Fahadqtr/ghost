@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { dmSearchTokens, matchDmProducts, matchDmProductsByCategory, detectCategories, buildDmPrompt, parseDmReply, type DmProduct } from "./respond-compute.ts";
+import { dmSearchTokens, matchDmProducts, matchDmProductsByCategory, detectCategories, productBuyLink, buildDmPrompt, parseDmReply, type DmProduct } from "./respond-compute.ts";
 
 const P = (over: Partial<DmProduct>): DmProduct => ({
   sku: "mk1", name_en: "Stanley H2.0 Tumbler", name_ar: "ستانلي تمبلر", price: 139, discount_price: null, stock: 4, ...over,
@@ -70,4 +70,15 @@ test("matchDmProductsByCategory returns category items, in-stock first", () => {
   assert.ok(skus.includes("b") && skus.includes("c"));
   assert.ok(!skus.includes("d")); // Toys isn't a skincare category
   assert.equal(hits[0].sku, "b"); // in-stock first
+});
+
+test("productBuyLink builds a storefront search permalink by SKU", () => {
+  assert.equal(productBuyLink(P({ sku: "mk1503" })), "https://malikasuniverse.com/search?q=mk1503");
+  assert.equal(productBuyLink(P({ sku: "x" }), "https://shop.example.com/"), "https://shop.example.com/search?q=x");
+  assert.equal(productBuyLink(P({ sku: null, name_en: null, name_ar: null })), "");
+});
+
+test("buildDmPrompt embeds the buy link with each product", () => {
+  const p = buildDmPrompt({ history: [], products: [P({ sku: "mk1503" })], storeInfo: "x" });
+  assert.match(p, /🔗 https:\/\/malikasuniverse\.com\/search\?q=mk1503/);
 });

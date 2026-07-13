@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { upsertDmConversation, insertDmMessage, autoReplyDm } from "@/lib/dm/inbox";
+import { upsertDmConversation, insertDmMessage, autoReplyDm, ensureDmUsername } from "@/lib/dm/inbox";
 
 // Meta webhook (Instagram DMs now; WhatsApp joins later on the same endpoint).
 // GET  = subscription verification (hub.challenge echo).
@@ -58,6 +58,9 @@ export async function POST(req: NextRequest) {
 
           const convo = await upsertDmConversation(admin, "instagram", senderId);
           if (!convo) continue;
+          // Backfill the customer's real IG name once (best-effort) so the
+          // inbox shows a handle instead of a bare numeric ID.
+          if (!convo.username) await ensureDmUsername(admin, convo.id, senderId).catch(() => {});
 
           if (!text) {
             // Attachment/voice/share — store a placeholder and hand off.
