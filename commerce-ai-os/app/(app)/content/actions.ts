@@ -171,3 +171,34 @@ export async function saveGeneratedContent(row: {
   if (error) return { error: error.message };
   return { ok: true };
 }
+
+// ---- Weekly Reels engine -------------------------------------------------
+// Build the week's 14-Reel plan (5 formats · 3/3/3/3/2) with English Higgsfield
+// prompts, Gulf-Arabic caption briefs, CTA type and 13:00/20:00 Doha slots.
+// Read-only: it plans + rotates real catalog products; queuing/generation is a
+// separate step. Rotation leads with the newest arrivals.
+import { buildWeeklyReelsPlan, type ReelPlanItem, type ReelPlanProduct } from "@/lib/social/reels-plan";
+
+export async function previewReelsWeek(conversionRatio = 0): Promise<{ error: string } | { items: ReelPlanItem[] }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  let db: any;
+  try { db = createAdminClient(); } catch { db = createClient(); }
+
+  // Rotation pool: newest arrivals first (falls back to name order), priced +
+  // not soft-deleted. The engine cycles this list across the 14 slots.
+  const { data, error } = await db
+    .from("products")
+    .select("sku, name_en, name_ar, created_at, price")
+    .not("sku", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(40);
+  if (error) return { error: error.message };
+  const pool: ReelPlanProduct[] = ((data ?? []) as any[])
+    .filter((p) => p.sku && Number(p.price) > 0)
+    .map((p) => ({ sku: p.sku, name_en: p.name_en, name_ar: p.name_ar }));
+  if (pool.length === 0) return { error: "ما في منتجات مسعّرة لبناء الخطة." };
+
+  const items = buildWeeklyReelsPlan(pool, new Date(), { conversionRatio });
+  return { items };
+}
