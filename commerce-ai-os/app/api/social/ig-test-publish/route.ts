@@ -1,21 +1,27 @@
-// One-tap end-to-end test: publish a single throwaway Reel to Instagram to
+// One-tap end-to-end test: publish a single throwaway post to Instagram to
 // confirm the full pipeline (container → publish) and Arabic RTL rendering,
 // BEFORE the cron is opened on the full schedule. Auth-gated + requires an
 // explicit ?confirm=yes so it can't fire by accident. Delete the test post
 // from Instagram afterwards.
-import { publishReelToInstagram } from "@/lib/social/instagram";
+//
+//   ?type=image (default) → a normal image post. Cleanest proof of publish +
+//                           Arabic RTL. Pass ?image=<public jpg/png url>.
+//   ?type=reel            → a Reel (needs a 9:16 H.264 MP4). Pass ?video=<url>.
+//   ?caption=<text>       → override the caption.
+import { publishToInstagram, publishReelToInstagram } from "@/lib/social/instagram";
 import { requireUser } from "@/lib/auth/requireUser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// A short public sample video. Pass ?video=<public mp4 url> to test a real one.
+// Stable, directly-served sample media.
+const SAMPLE_IMAGE = "https://images.unsplash.com/photo-1596462502278-27bfdc403348?w=1080&h=1080&fit=crop";
 const SAMPLE_VIDEO = "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
 const SAMPLE_CAPTION =
   "🌸 اختبار نشر — عالم ماليكا\n" +
-  "هذا ريل تجريبي للتأكد إن النشر التلقائي يشتغل. اطلبيه من اللينك بالبايو 💄✨\n\n" +
-  "Test reel — Malika's Universe. (delete me)\n" +
+  "هذا منشور تجريبي للتأكد إن النشر التلقائي يشتغل والعربي يظهر صح. 💄✨\n\n" +
+  "Test post — Malika's Universe. (delete me)\n" +
   "#قطر #ماليكا_يونيفرس #بيوتي #مكياج #Qatar";
 
 export async function GET(req: Request) {
@@ -25,17 +31,21 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   if (url.searchParams.get("confirm") !== "yes") {
     return Response.json({
-      note: "⚠️ هذا ينشر ريل تجريبي فعلي على حساب انستقرام. للتنفيذ افتح نفس الرابط مع ?confirm=yes — واحذف المنشور بعد التأكد. تقدر تمرّر ?video=<رابط mp4 عام> و?caption=<نص> لاختبار فيديو حقيقي.",
+      note: "⚠️ هذا ينشر منشورًا تجريبيًا فعليًا على انستقرام. للتنفيذ أضف ?confirm=yes — واحذف المنشور بعد التأكد. الافتراضي منشور صورة (يثبت النشر + العربي RTL). للريل: ?type=reel&video=<رابط mp4 عمودي 9:16>. لصورتك: ?image=<رابط>. للكابشن: ?caption=<نص>.",
     });
   }
 
-  const videoUrl = url.searchParams.get("video") || SAMPLE_VIDEO;
+  const type = url.searchParams.get("type") === "reel" ? "reel" : "image";
   const caption = url.searchParams.get("caption") || SAMPLE_CAPTION;
-  const r = await publishReelToInstagram(videoUrl, caption);
+
+  const r = type === "reel"
+    ? await publishReelToInstagram(url.searchParams.get("video") || SAMPLE_VIDEO, caption)
+    : await publishToInstagram(url.searchParams.get("image") || SAMPLE_IMAGE, caption);
+
   return Response.json({
-    ...r,
+    ...r, type,
     hint: r.ok
-      ? "✅ نُشر! افتح انستقرام وتأكد إن الريل ظهر والعربي يقرأ صح (RTL). احذف المنشور التجريبي بعدها."
+      ? "✅ نُشر! افتح انستقرام وتأكد إن المنشور ظهر والعربي يقرأ صح (RTL). احذف المنشور التجريبي بعدها."
       : "❌ فشل النشر — ألصق هذا الرد كامل.",
   });
 }

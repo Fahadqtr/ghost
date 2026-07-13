@@ -223,13 +223,15 @@ async function publishIg(params: Record<string, string>, pollAttempts = 6): Prom
       await new Promise((r) => setTimeout(r, attempt === 0 ? 1500 : 2000));
       try {
         const st = await fetch(
-          `${GRAPH}/${container.id}?fields=status_code&access_token=${encodeURIComponent(token)}`,
+          `${GRAPH}/${container.id}?fields=status_code,status&access_token=${encodeURIComponent(token)}`,
           { cache: "no-store", signal: AbortSignal.timeout(15_000) }
         );
-        const sj = (await st.json().catch(() => null)) as { status_code?: string } | null;
+        const sj = (await st.json().catch(() => null)) as { status_code?: string; status?: string } | null;
         const code = sj?.status_code;
         if (code === "FINISHED") { ready = true; break; }
-        if (code === "ERROR") return { ok: false, error: "فشلت معالجة الصورة عند Meta (تحقق من رابط/حجم الصورة)." };
+        // Surface Meta's specific reason (e.g. unsupported format / aspect ratio)
+        // instead of a generic message, so a bad media file is diagnosable.
+        if (code === "ERROR") return { ok: false, error: `فشلت معالجة الوسائط عند Meta: ${sj?.status || "تحقق من الصيغة/الأبعاد (Reels: 9:16، MP4/H.264)."}` };
       } catch { /* transient — keep polling */ }
     }
     if (!ready) return { ok: false, error: "الصورة ما جهزت عند Meta في الوقت المتاح — جرّب مرة ثانية." };
