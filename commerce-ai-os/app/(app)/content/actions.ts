@@ -189,14 +189,18 @@ export async function previewReelsWeek(conversionRatio = 0): Promise<{ error: st
   // not soft-deleted. The engine cycles this list across the 14 slots.
   const { data, error } = await db
     .from("products")
-    .select("sku, name_en, name_ar, created_at, price")
+    .select("sku, name_en, name_ar, created_at, price, image_url")
     .not("sku", "is", null)
     .order("created_at", { ascending: false })
-    .limit(40);
+    .limit(80);
   if (error) return { error: error.message };
-  const pool: ReelPlanProduct[] = ((data ?? []) as any[])
-    .filter((p) => p.sku && Number(p.price) > 0)
-    .map((p) => ({ sku: p.sku, name_en: p.name_en, name_ar: p.name_ar }));
+  const priced = ((data ?? []) as any[]).filter((p) => p.sku && Number(p.price) > 0);
+  // In-system video generation needs a product photo, so prefer products that
+  // have one — an imageless slot can't auto-generate. Fall back to the full
+  // priced list only if too few have images to fill the week.
+  const withImage = priced.filter((p) => p.image_url && String(p.image_url).trim());
+  const chosen = withImage.length >= 14 ? withImage : priced;
+  const pool: ReelPlanProduct[] = chosen.map((p) => ({ sku: p.sku, name_en: p.name_en, name_ar: p.name_ar }));
   if (pool.length === 0) return { error: "ما في منتجات مسعّرة لبناء الخطة." };
 
   const items = buildWeeklyReelsPlan(pool, new Date(), { conversionRatio });
