@@ -30,6 +30,7 @@ type Product = {
   rafeeq_product_id: string | null
   main_category: string | null
   approval: string | null
+  color: string | null
 }
 
 // ملاحظة: جدول product_variants فيه price فقط — ما فيه discount_price.
@@ -76,7 +77,7 @@ const ISSUES: IssueDef[] = [
   { key: 'zero_price', label: 'سعر صفر', desc: 'السعر = 0 وما في خيارات مُسعّرة — خطأ يطلّع المنتج مجّاني', severity: 'critical', test: (p, ctx) => p.price === 0 && !effOf(p, ctx).hasPrice },
   { key: 'no_price', label: 'بدون سعر', desc: 'price فاضي (null) وما في خيارات مُسعّرة', severity: 'critical', test: (p, ctx) => (p.price === null || p.price === undefined) && !effOf(p, ctx).hasPrice },
   { key: 'dup_sku', label: 'SKU مكرّر', desc: 'نفس الـSKU على أكثر من منتج — يخرّب المطابقة بين المنصّات', severity: 'critical', test: (p, ctx) => !!p.sku && ctx.dupSkus.has(p.sku) },
-  { key: 'dup_product', label: 'منتج مكرّر', desc: 'نفس الاسم أو الباركود على أكثر من منتج (SKU مختلف) — نظّف المكرّر بحذف أحدهما', severity: 'critical', test: (p, ctx) => ctx.dupProductIds.has(p.id) },
+  { key: 'dup_product', label: 'تكرار محتمل', desc: 'نفس الاسم والسعر واللون على أكثر من منتج — غالبًا تكرار (وقد يكون خيار لون/حجم). قارن واحذف التكرار الحقيقي فقط', severity: 'warning', test: (p, ctx) => ctx.dupProductIds.has(p.id) },
   {
     key: 'price_mismatch', label: 'فرق سعر بين المنصّات', desc: 'سعر المنصّة يختلف عن سعر النظام (النظام هو المصدر الرسمي)', severity: 'critical',
     test: (p, ctx) => {
@@ -174,7 +175,7 @@ export default function CatalogHealthPage() {
       const PAGE = 1000
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await supabase.from('products')
-          .select('id, sku, barcode, name_ar, name_en, image_url, price, discount_price, snoonu_id, rafeeq_product_id, main_category, approval')
+          .select('id, sku, barcode, name_ar, name_en, image_url, price, discount_price, snoonu_id, rafeeq_product_id, main_category, approval, color')
           .range(from, from + PAGE - 1)
         if (error) throw error
         if (!data || data.length === 0) break
@@ -223,20 +224,6 @@ export default function CatalogHealthPage() {
     for (const p of products) if (p.sku) skuCount.set(p.sku, (skuCount.get(p.sku) || 0) + 1)
     const dupSkus = new Set<string>()
     skuCount.forEach((n, sku) => { if (n > 1) dupSkus.add(sku) })
-    // Duplicate products: same normalized English name, OR same barcode, across
-    // more than one row (different SKUs) — the "same product entered twice" case.
-    const dupProductIds = new Set<string>()
-    const byKey = new Map<string, string[]>() // normalized key -> product ids
-    const normName = (s: string | null) => String(s ?? '').toLowerCase().replace(/[’‘'`´]/g, '').replace(/\s+/g, ' ').trim()
-    for (const p of products) {
-      const keys: string[] = []
-      const nm = normName(p.name_en)
-      if (nm.length >= 4) keys.push(`n:${nm}`)
-      const bc = String(p.barcode ?? '').trim()
-      if (bc) keys.push(`b:${bc}`)
-      for (const k of keys) { const arr = byKey.get(k) || []; arr.push(p.id); byKey.set(k, arr) }
-    }
-    byKey.forEach((ids) => { if (ids.length > 1) ids.forEach((id) => dupProductIds.add(id)) })
     const cpByProduct = new Map<string, ChannelProduct[]>()
     for (const cp of channelProducts) {
       const arr = cpByProduct.get(cp.product_id) || []
@@ -256,6 +243,31 @@ export default function CatalogHealthPage() {
     }
     const priceByProduct = new Map<string, EffectivePrice>()
     for (const p of products) priceByProduct.set(p.id, effectivePrice(p.price, p.discount_price, pricedByProduct.get(p.id)))
+
+    // Likely-duplicate products: the SAME item entered twice. Matching by name
+    // alone is too loose — colour/size variants share a name (e.g. a bonnet in
+    // pink vs brown). So group only when name AND effective-price signature AND
+    // colour all match (a shared non-empty barcode also counts, as a strong
+    // signal). Variants that differ in price or colour are NOT flagged.
+    const dupProductIds = new Set<string>()
+    const norm = (s: string | null) => String(s ?? '').toLowerCase().replace(/[’‘'`´]/g, '').replace(/\s+/g, ' ').trim()
+    const priceSig = (p: Product) => {
+      const vs = (pricedByProduct.get(p.id) || []).map((v) => v.price).filter((x): x is number => x != null)
+      if (vs.length) return 'v:' + [...vs].sort((a, b) => a - b).join(',')
+      const ep = priceByProduct.get(p.id)
+      return 's:' + (ep && ep.hasPrice ? (ep.min ?? p.price ?? '') : (p.price ?? ''))
+    }
+    const byKey = new Map<string, string[]>()
+    for (const p of products) {
+      const nm = norm(p.name_en)
+      const keys: string[] = []
+      if (nm.length >= 4) keys.push(`n:${nm}|${priceSig(p)}|${norm(p.color)}`)
+      const bc = String(p.barcode ?? '').trim()
+      if (bc) keys.push(`b:${bc}`)
+      for (const k of keys) { const arr = byKey.get(k) || []; arr.push(p.id); byKey.set(k, arr) }
+    }
+    byKey.forEach((ids) => { if (ids.length > 1) ids.forEach((id) => dupProductIds.add(id)) })
+
     return { dupSkus, dupProductIds, cpByProduct, variantStats, priceByProduct }
   }, [products, channelProducts, variants])
 
