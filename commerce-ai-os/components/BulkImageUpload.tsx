@@ -31,6 +31,21 @@ export default function BulkImageUpload({
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  // Copy the full list (SKU — name) of the products in this modal — handy when
+  // the names are truncated or you want to match them to image files.
+  const copyList = async () => {
+    const text = products.map((p) => [p.sku, p.name].filter(Boolean).join(" — ")).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setNote(L(`📋 نُسخت ${products.length} منتج`, `📋 Copied ${products.length} products`));
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setNote(L("تعذّر النسخ.", "Copy failed."));
+    }
+  };
 
   const pick = (id: string, file: File | undefined) => {
     if (!file) return;
@@ -85,8 +100,15 @@ export default function BulkImageUpload({
             <h2 className="text-sm font-bold text-ink">{L("إضافة صور للمنتجات المحدّدة", "Add images to selected products")}</h2>
             <p className="text-xs text-muted">{L(`${products.length} منتج · اختر صورة لكل واحد ثم احفظ الكل`, `${products.length} products · pick an image for each, then save all`)}</p>
           </div>
-          <button type="button" onClick={() => !saving && onClose()} aria-label={L("إغلاق", "Close")}
-            className="rounded-full p-1 text-lg leading-none text-slate-500 hover:bg-slate-100">✕</button>
+          <div className="flex items-center gap-1.5">
+            <button type="button" onClick={copyList}
+              title={L("نسخ قائمة المنتجات (SKU والأسماء)", "Copy product list (SKU + names)")}
+              className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200">
+              {copied ? L("✓ نُسخت", "✓ Copied") : L("📋 نسخ القائمة", "📋 Copy list")}
+            </button>
+            <button type="button" onClick={() => !saving && onClose()} aria-label={L("إغلاق", "Close")}
+              className="rounded-full p-1 text-lg leading-none text-slate-500 hover:bg-slate-100">✕</button>
+          </div>
         </div>
 
         <div className="flex-1 space-y-2 overflow-y-auto p-3">
@@ -101,8 +123,8 @@ export default function BulkImageUpload({
                   ) : <div className="flex h-full w-full items-center justify-center text-2xl text-slate-300">📦</div>}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-ink">{p.name || p.sku || "—"}</p>
-                  {p.sku ? <p className="truncate text-[11px] text-muted">SKU {p.sku}</p> : null}
+                  <p className="text-sm font-semibold text-ink">{p.name || p.sku || "—"}</p>
+                  {p.sku ? <p className="text-[11px] text-muted select-all">SKU {p.sku}</p> : null}
                   {st === "done" ? <p className="text-[11px] font-semibold text-emerald-600">{L("✓ محفوظة", "✓ Saved")}</p> : null}
                   {st === "error" ? <p className="text-[11px] font-semibold text-red-600">{errs[p.id]}</p> : null}
                 </div>
