@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setProductApproval } from "@/app/(app)/products/actions";
+import ProductThumb from "@/components/ProductThumb";
 
 // The approval center's main list: staff-submitted products awaiting the
 // owner. Approve fires the whole downstream (platforms task + Talabat queue)
@@ -62,12 +63,7 @@ export default function PendingProductsList({ items, locale = "ar" }: { items: P
         const eff = Number(p.discount_price) > 0 ? p.discount_price : p.price;
         return (
           <div key={p.id} className="flex items-center gap-3 rounded-xl border border-[#efe3d6] bg-white p-2.5">
-            {p.image_url ? (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img src={p.image_url} alt="" loading="lazy" className="h-14 w-14 shrink-0 rounded-lg border border-[#efe3d6] bg-white object-cover" />
-            ) : (
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-dashed border-amber-300 bg-amber-50 text-[10px] text-amber-700">{L("بدون صورة", "No photo")}</div>
-            )}
+            <ProductThumb imageUrl={p.image_url} sku={p.sku} sizeClass="h-14 w-14" label={L("بدون صورة", "No photo")} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-ink">{p.name_en || p.name_ar || p.sku || "—"}</p>
               <p className="mt-0.5 truncate text-xs text-muted">
