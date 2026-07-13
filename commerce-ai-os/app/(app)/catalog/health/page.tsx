@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { setVariantBarcodes, upsertVariants } from '@/app/(app)/inventory/actions'
 import { uploadProductImage } from '@/app/(app)/products/image-actions'
+import { deleteProductById } from './actions'
 import { effectivePrice, priceRangeLabel, type EffectivePrice, type PricedVariant } from '@/lib/products/price-compute'
 
 // ---------- الأنواع ----------
@@ -43,7 +44,7 @@ type ChannelProduct = {
 
 type IssueKey =
   | 'no_image' | 'no_barcode' | 'no_price' | 'zero_price' | 'no_name_ar'
-  | 'no_category' | 'dup_sku' | 'no_snoonu' | 'no_rafeeq' | 'no_channel_link'
+  | 'no_category' | 'dup_sku' | 'dup_product' | 'no_snoonu' | 'no_rafeeq' | 'no_channel_link'
   | 'price_mismatch' | 'not_approved'
 
 type IssueDef = {
@@ -56,6 +57,7 @@ type IssueDef = {
 
 type Ctx = {
   dupSkus: Set<string>
+  dupProductIds: Set<string>
   cpByProduct: Map<string, ChannelProduct[]>
   variantStats: Map<string, { total: number; withBc: number }>
   // Effective price per product: if the product has priced options, the price
@@ -74,6 +76,7 @@ const ISSUES: IssueDef[] = [
   { key: 'zero_price', label: 'سعر صفر', desc: 'السعر = 0 وما في خيارات مُسعّرة — خطأ يطلّع المنتج مجّاني', severity: 'critical', test: (p, ctx) => p.price === 0 && !effOf(p, ctx).hasPrice },
   { key: 'no_price', label: 'بدون سعر', desc: 'price فاضي (null) وما في خيارات مُسعّرة', severity: 'critical', test: (p, ctx) => (p.price === null || p.price === undefined) && !effOf(p, ctx).hasPrice },
   { key: 'dup_sku', label: 'SKU مكرّر', desc: 'نفس الـSKU على أكثر من منتج — يخرّب المطابقة بين المنصّات', severity: 'critical', test: (p, ctx) => !!p.sku && ctx.dupSkus.has(p.sku) },
+  { key: 'dup_product', label: 'منتج مكرّر', desc: 'نفس الاسم أو الباركود على أكثر من منتج (SKU مختلف) — نظّف المكرّر بحذف أحدهما', severity: 'critical', test: (p, ctx) => ctx.dupProductIds.has(p.id) },
   {
     key: 'price_mismatch', label: 'فرق سعر بين المنصّات', desc: 'سعر المنصّة يختلف عن سعر النظام (النظام هو المصدر الرسمي)', severity: 'critical',
     test: (p, ctx) => {
@@ -160,6 +163,7 @@ export default function CatalogHealthPage() {
   const [quickVal, setQuickVal] = useState<Record<string, string>>({})
   const [quickBusy, setQuickBusy] = useState<string | null>(null)
   const [imgBusy, setImgBusy] = useState<string | null>(null)
+  const [delBusy, setDelBusy] = useState<string | null>(null)
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true)
@@ -219,6 +223,20 @@ export default function CatalogHealthPage() {
     for (const p of products) if (p.sku) skuCount.set(p.sku, (skuCount.get(p.sku) || 0) + 1)
     const dupSkus = new Set<string>()
     skuCount.forEach((n, sku) => { if (n > 1) dupSkus.add(sku) })
+    // Duplicate products: same normalized English name, OR same barcode, across
+    // more than one row (different SKUs) — the "same product entered twice" case.
+    const dupProductIds = new Set<string>()
+    const byKey = new Map<string, string[]>() // normalized key -> product ids
+    const normName = (s: string | null) => String(s ?? '').toLowerCase().replace(/[’‘'`´]/g, '').replace(/\s+/g, ' ').trim()
+    for (const p of products) {
+      const keys: string[] = []
+      const nm = normName(p.name_en)
+      if (nm.length >= 4) keys.push(`n:${nm}`)
+      const bc = String(p.barcode ?? '').trim()
+      if (bc) keys.push(`b:${bc}`)
+      for (const k of keys) { const arr = byKey.get(k) || []; arr.push(p.id); byKey.set(k, arr) }
+    }
+    byKey.forEach((ids) => { if (ids.length > 1) ids.forEach((id) => dupProductIds.add(id)) })
     const cpByProduct = new Map<string, ChannelProduct[]>()
     for (const cp of channelProducts) {
       const arr = cpByProduct.get(cp.product_id) || []
@@ -238,7 +256,7 @@ export default function CatalogHealthPage() {
     }
     const priceByProduct = new Map<string, EffectivePrice>()
     for (const p of products) priceByProduct.set(p.id, effectivePrice(p.price, p.discount_price, pricedByProduct.get(p.id)))
-    return { dupSkus, cpByProduct, variantStats, priceByProduct }
+    return { dupSkus, dupProductIds, cpByProduct, variantStats, priceByProduct }
   }, [products, channelProducts, variants])
 
   const counts = useMemo(() => {
@@ -286,6 +304,12 @@ export default function CatalogHealthPage() {
         (p.sku || '').toLowerCase().includes(q) || (p.name_ar || '').toLowerCase().includes(q) ||
         (p.name_en || '').toLowerCase().includes(q) || (p.barcode || '').toLowerCase().includes(q) ||
         (variantBcByProduct.get(p.id) || []).some((b) => b.includes(q)))
+    }
+    // Duplicates: group the same product's rows next to each other so the owner
+    // can compare and delete the extra one.
+    if (activeIssue === 'dup_product') {
+      const key = (p: Product) => `${(p.name_en || '').toLowerCase().trim()}|${(p.barcode || '').trim()}`
+      list = [...list].sort((a, b) => key(a).localeCompare(key(b)) || (a.sku || '').localeCompare(b.sku || ''))
     }
     return list
   }, [activeIssue, counts, search, variantBcByProduct])
@@ -338,6 +362,22 @@ export default function CatalogHealthPage() {
       setBulkErr(e?.message || 'فشل الحفظ')
     } finally {
       setQuickBusy(null)
+    }
+  }
+
+  // حذف منتج مكرّر (بدون مغادرة الصفحة) — يشيل الصف من القائمة مباشرة.
+  const removeDuplicate = async (p: Product) => {
+    if (!confirm(`حذف «${p.name_en || p.name_ar || p.sku || 'المنتج'}» (${p.sku || '—'}) نهائيًا؟`)) return
+    setDelBusy(p.id); setBulkErr(null)
+    try {
+      const r = await deleteProductById(p.id)
+      if ('error' in r) { setBulkErr(r.error); return }
+      setProducts((prev) => prev.filter((x) => x.id !== p.id))
+      setLastUpdated(new Date())
+    } catch (e: any) {
+      setBulkErr(e?.message || 'فشل الحذف')
+    } finally {
+      setDelBusy(null)
     }
   }
 
@@ -668,7 +708,15 @@ export default function CatalogHealthPage() {
                         ) : null}
                       </td>
                       <td className="px-4 py-2.5">
-                        <button type="button" onClick={() => openFix(p)} className="text-sm font-semibold text-brand hover:underline">تصحيح ←</button>
+                        <div className="flex items-center justify-end gap-3">
+                          {activeIssue === 'dup_product' && (
+                            <button type="button" onClick={() => removeDuplicate(p)} disabled={delBusy === p.id}
+                              className="text-sm font-semibold text-red-600 hover:underline disabled:opacity-40">
+                              {delBusy === p.id ? '…' : '🗑 حذف'}
+                            </button>
+                          )}
+                          <button type="button" onClick={() => openFix(p)} className="text-sm font-semibold text-brand hover:underline">تصحيح ←</button>
+                        </div>
                       </td>
                     </tr>
                   ))}
