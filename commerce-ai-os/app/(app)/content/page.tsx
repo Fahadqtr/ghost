@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getT } from "@/lib/i18n-server";
 import ContentGenerator, { type PickProduct } from "@/components/ContentGenerator";
 import ReelsWeekPlan from "@/components/ReelsWeekPlan";
+import ReelsDashboard from "@/components/ReelsDashboard";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,7 @@ export default async function ContentPage() {
       </div>
 
       <ReelsWeekPlan locale={locale} />
+      <ReelsDashboard locale={locale} />
 
       {loadError ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
