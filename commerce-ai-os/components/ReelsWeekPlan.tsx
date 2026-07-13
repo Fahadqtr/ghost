@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { previewReelsWeek, queueReel } from "@/app/(app)/content/actions";
+import { previewReelsWeek, queueReel, generateReelVideo, pollReelVideo } from "@/app/(app)/content/actions";
 import type { ReelPlanItem } from "@/lib/social/reels-plan";
 import { qatarDayLabel, qatarTimeLabel } from "@/lib/social/schedule-compute";
 import type { Locale } from "@/lib/i18n";
@@ -20,6 +20,27 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
   const [vurl, setVurl] = useState<Record<number, string>>({});
   const [qstate, setQstate] = useState<Record<number, "idle" | "busy" | "done" | "error">>({});
   const [qerr, setQerr] = useState<Record<number, string>>({});
+  const [gen, setGen] = useState<Record<number, "idle" | "working" | "error">>({});
+  const [genErr, setGenErr] = useState<Record<number, string>>({});
+
+  // Auto-generate the reel video in-system (Higgsfield image→video from the
+  // product photo), then poll until ready and auto-fill the URL field.
+  const generate = async (it: ReelPlanItem) => {
+    if (!it.sku) { setGenErr((s) => ({ ...s, [it.index]: L("لا يوجد منتج", "No product") })); return; }
+    setGen((s) => ({ ...s, [it.index]: "working" })); setGenErr((s) => ({ ...s, [it.index]: "" }));
+    const r = await generateReelVideo({ sku: it.sku, prompt: it.promptEn });
+    if ("error" in r) { setGen((s) => ({ ...s, [it.index]: "error" })); setGenErr((s) => ({ ...s, [it.index]: r.error })); return; }
+    let attempts = 0;
+    const tick = async () => {
+      attempts++;
+      const p = await pollReelVideo(r.requestId);
+      if ("error" in p) { setGen((s) => ({ ...s, [it.index]: "error" })); setGenErr((s) => ({ ...s, [it.index]: p.error })); return; }
+      if (p.videoUrl) { setVurl((s) => ({ ...s, [it.index]: p.videoUrl! })); setGen((s) => ({ ...s, [it.index]: "idle" })); return; }
+      if (attempts > 40) { setGen((s) => ({ ...s, [it.index]: "error" })); setGenErr((s) => ({ ...s, [it.index]: L("طال وقت التوليد — جرّب مرة ثانية", "Timed out — try again") })); return; }
+      setTimeout(tick, 15000);
+    };
+    setTimeout(tick, 15000);
+  };
 
   const queue = async (it: ReelPlanItem) => {
     const url = (vurl[it.index] || "").trim();
@@ -113,15 +134,26 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
                   ✅ {L("تمت الجدولة — اعتمده من صفحة السوشال ثم ينشر تلقائيًا بوقته", "Queued — approve on /social, then it auto-publishes at its slot")}
                 </p>
               ) : (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <input value={vurl[it.index] ?? ""} onChange={(e) => setVurl((s) => ({ ...s, [it.index]: e.target.value }))}
-                    dir="ltr" placeholder={L("رابط الفيديو 9:16 (mp4)", "9:16 video URL (mp4)")}
-                    className="input min-w-0 flex-1 py-1 text-xs" />
-                  <button onClick={() => queue(it)} disabled={qstate[it.index] === "busy"}
-                    className="btn-primary shrink-0 px-3 py-1.5 text-xs disabled:opacity-50">
-                    {qstate[it.index] === "busy" ? "…" : `📅 ${L("جدولة", "Queue")}`}
-                  </button>
-                  {qerr[it.index] ? <span className="w-full text-[11px] text-red-600">{qerr[it.index]}</span> : null}
+                <div className="mt-2 space-y-1.5">
+                  {/* Auto-generate the video in-system, or paste a URL manually. */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={() => generate(it)} disabled={gen[it.index] === "working"}
+                      className="shrink-0 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                      {gen[it.index] === "working" ? `⏳ ${L("يولّد… (دقائق)", "generating… (min)")}` : `🎬 ${L("ولّد الفيديو تلقائيًا", "Auto-generate video")}`}
+                    </button>
+                    <span className="text-[11px] text-muted">{L("أو الصق رابطًا يدويًا ↓", "or paste a URL below ↓")}</span>
+                    {genErr[it.index] ? <span className="w-full text-[11px] text-red-600">{genErr[it.index]}</span> : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input value={vurl[it.index] ?? ""} onChange={(e) => setVurl((s) => ({ ...s, [it.index]: e.target.value }))}
+                      dir="ltr" placeholder={L("رابط الفيديو 9:16 (mp4)", "9:16 video URL (mp4)")}
+                      className="input min-w-0 flex-1 py-1 text-xs" />
+                    <button onClick={() => queue(it)} disabled={qstate[it.index] === "busy"}
+                      className="btn-primary shrink-0 px-3 py-1.5 text-xs disabled:opacity-50">
+                      {qstate[it.index] === "busy" ? "…" : `📅 ${L("جدولة", "Queue")}`}
+                    </button>
+                    {qerr[it.index] ? <span className="w-full text-[11px] text-red-600">{qerr[it.index]}</span> : null}
+                  </div>
                 </div>
               )}
             </div>
