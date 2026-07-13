@@ -247,8 +247,12 @@ export default function CatalogHealthPage() {
     // Likely-duplicate products: the SAME item entered twice. Matching by name
     // alone is too loose — colour/size variants share a name (e.g. a bonnet in
     // pink vs brown). So group only when name AND effective-price signature AND
-    // colour all match (a shared non-empty barcode also counts, as a strong
-    // signal). Variants that differ in price or colour are NOT flagged.
+    // colour all match. Even then, two DIFFERENT products can share a name+price
+    // (e.g. two serums photographed as different bottles) — so within a group we
+    // only flag members that have a partner they're NOT image-distinct from:
+    // sharing a photo, or one lacking a photo, reads as a real duplicate; two
+    // distinct photos read as two different products. A shared non-empty barcode
+    // always counts as a strong duplicate signal regardless of images.
     const dupProductIds = new Set<string>()
     const norm = (s: string | null) => String(s ?? '').toLowerCase().replace(/[’‘'`´]/g, '').replace(/\s+/g, ' ').trim()
     const priceSig = (p: Product) => {
@@ -257,16 +261,29 @@ export default function CatalogHealthPage() {
       const ep = priceByProduct.get(p.id)
       return 's:' + (ep && ep.hasPrice ? (ep.min ?? p.price ?? '') : (p.price ?? ''))
     }
-    const byKey = new Map<string, string[]>()
+    const img = (p: Product) => String(p.image_url ?? '').trim().split('?')[0] // ignore cache-bust query
+    // image-compatible = same photo, or at least one row has no photo.
+    const imgDupCompatible = (a: string, b: string) => !a || !b || a === b
+
+    const byName = new Map<string, Product[]>()
+    const byBarcode = new Map<string, string[]>()
     for (const p of products) {
       const nm = norm(p.name_en)
-      const keys: string[] = []
-      if (nm.length >= 4) keys.push(`n:${nm}|${priceSig(p)}|${norm(p.color)}`)
+      if (nm.length >= 4) {
+        const k = `${nm}|${priceSig(p)}|${norm(p.color)}`
+        const arr = byName.get(k) || []; arr.push(p); byName.set(k, arr)
+      }
       const bc = String(p.barcode ?? '').trim()
-      if (bc) keys.push(`b:${bc}`)
-      for (const k of keys) { const arr = byKey.get(k) || []; arr.push(p.id); byKey.set(k, arr) }
+      if (bc) { const arr = byBarcode.get(bc) || []; arr.push(p.id); byBarcode.set(bc, arr) }
     }
-    byKey.forEach((ids) => { if (ids.length > 1) ids.forEach((id) => dupProductIds.add(id)) })
+    byName.forEach((group) => {
+      if (group.length < 2) return
+      for (const p of group) {
+        const pi = img(p)
+        if (group.some((o) => o.id !== p.id && imgDupCompatible(pi, img(o)))) dupProductIds.add(p.id)
+      }
+    })
+    byBarcode.forEach((ids) => { if (ids.length > 1) ids.forEach((id) => dupProductIds.add(id)) })
 
     return { dupSkus, dupProductIds, cpByProduct, variantStats, priceByProduct }
   }, [products, channelProducts, variants])
