@@ -185,23 +185,25 @@ export async function previewReelsWeek(conversionRatio = 0): Promise<{ error: st
   let db: any;
   try { db = createAdminClient(); } catch { db = createClient(); }
 
-  // Rotation pool: newest arrivals first (falls back to name order), priced +
-  // not soft-deleted. The engine cycles this list across the 14 slots.
+  // Rotation pool: newest priced products THAT HAVE A PHOTO. In-system video
+  // generation needs the product image, so an imageless product can never fill
+  // a slot — we filter them out at the source (DB-level image_url not null)
+  // instead of falling back to the full list, so the plan never surfaces a
+  // "no photo" item. If fewer than 14 qualify, the engine just cycles them.
   const { data, error } = await db
     .from("products")
     .select("sku, name_en, name_ar, created_at, price, image_url")
     .not("sku", "is", null)
+    .not("image_url", "is", null)
     .order("created_at", { ascending: false })
-    .limit(80);
+    .limit(120);
   if (error) return { error: error.message };
-  const priced = ((data ?? []) as any[]).filter((p) => p.sku && Number(p.price) > 0);
-  // In-system video generation needs a product photo, so prefer products that
-  // have one — an imageless slot can't auto-generate. Fall back to the full
-  // priced list only if too few have images to fill the week.
-  const withImage = priced.filter((p) => p.image_url && String(p.image_url).trim());
-  const chosen = withImage.length >= 14 ? withImage : priced;
-  const pool: ReelPlanProduct[] = chosen.map((p) => ({ sku: p.sku, name_en: p.name_en, name_ar: p.name_ar }));
-  if (pool.length === 0) return { error: "ما في منتجات مسعّرة لبناء الخطة." };
+  const pool: ReelPlanProduct[] = ((data ?? []) as any[])
+    .filter((p) => p.sku && Number(p.price) > 0 && String(p.image_url ?? "").trim())
+    .map((p) => ({ sku: p.sku, name_en: p.name_en, name_ar: p.name_ar }));
+  if (pool.length === 0) {
+    return { error: "ما في منتجات عندها صورة لبناء الخطة — أضف صور للمنتجات (صفحة المنتجات) ثم أعِد البناء." };
+  }
 
   const items = buildWeeklyReelsPlan(pool, new Date(), { conversionRatio });
   return { items };
