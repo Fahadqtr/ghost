@@ -97,8 +97,8 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
       </div>
 
       <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
-        ⚠️ {L("النشر عبر الـAPI ما يدعم الأصوات الرائجة — الصيغ المؤمّنة (مراجعة/ASMR) بصوت أصلي تنشر تلقائيًا؛ اللي تحتاج ترند انشريها يدويًا من الجوال.",
-          "API publishing can't use trending audio — the safe formats (review/ASMR, original sound) auto-publish; trend-audio ones post manually from the phone.")}
+        💡 {L("مساران: زر «ولّد تلقائيًا» يسوي فيديو سريع من صورة المنتج (تحريك، للحجم). للجودة العالية (شخص يتكلم + صوت) ولّد الريل من تطبيق Higgsfield → Marketing Studio والصق رابطه في الخانة، ثم جدولة.",
+          "Two paths: “Auto-generate” makes a quick clip from the product photo (motion, for volume). For premium quality (a person talking + audio) generate the reel in the Higgsfield app → Marketing Studio and paste its URL below, then Queue.")}
       </p>
 
       {err ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p> : null}
@@ -141,12 +141,12 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
                       className="shrink-0 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
                       {gen[it.index] === "working" ? `⏳ ${L("يولّد… (دقائق)", "generating… (min)")}` : `🎬 ${L("ولّد الفيديو تلقائيًا", "Auto-generate video")}`}
                     </button>
-                    <span className="text-[11px] text-muted">{L("أو الصق رابطًا يدويًا ↓", "or paste a URL below ↓")}</span>
+                    <span className="text-[11px] text-muted">{L("أو الصق رابط Marketing Studio ↓", "or paste a Marketing Studio URL ↓")}</span>
                     {genErr[it.index] ? <span className="w-full text-[11px] text-red-600">{genErr[it.index]}</span> : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <input value={vurl[it.index] ?? ""} onChange={(e) => setVurl((s) => ({ ...s, [it.index]: e.target.value }))}
-                      dir="ltr" placeholder={L("رابط الفيديو 9:16 (mp4)", "9:16 video URL (mp4)")}
+                      dir="ltr" placeholder={L("رابط ريل جاهز 9:16 (Marketing Studio · mp4)", "finished 9:16 reel URL (Marketing Studio · mp4)")}
                       className="input min-w-0 flex-1 py-1 text-xs" />
                     <button onClick={() => queue(it)} disabled={qstate[it.index] === "busy"}
                       className="btn-primary shrink-0 px-3 py-1.5 text-xs disabled:opacity-50">
