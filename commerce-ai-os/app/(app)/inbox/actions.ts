@@ -115,6 +115,64 @@ export async function toggleDmAuto(conversationId: string, on: boolean): Promise
   return { ok: true as const };
 }
 
+/** Light count of conversations waiting on a human — for the nav badge (poll-friendly). */
+export async function dmNeedsHumanCount(): Promise<number> {
+  const unauth = await requireUser();
+  if (unauth) return 0;
+  const admin = adminClient();
+  if (!admin) return 0;
+  const { count, error } = await admin
+    .from("dm_conversations").select("id", { count: "exact", head: true }).eq("needs_human", true);
+  if (error) return 0;
+  return count ?? 0;
+}
+
+export interface DmMetrics {
+  totalConversations: number;
+  needsHuman: number;
+  autoOn: number;
+  inbound7d: number;
+  outbound7d: number;
+  aiReplies7d: number;
+  autoSharePct: number; // ملاك's share of outbound replies
+}
+
+/** Inbox KPIs: pipeline state + last-7-days message volume + automation share. */
+export async function dmMetrics(): Promise<{ ok: boolean; ready: boolean; data?: DmMetrics; error?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { ok: false, ready: true, error: unauth.error };
+  const admin = adminClient();
+  if (!admin) return { ok: false, ready: true, error: NO_DB };
+
+  const head = async (build: (q: any) => any): Promise<number> => {
+    const q = build(admin.from("dm_conversations").select("id", { count: "exact", head: true }));
+    const { count, error } = await q;
+    if (error) throw error;
+    return count ?? 0;
+  };
+
+  try {
+    const totalConversations = await head((q: any) => q);
+    const needsHuman = await head((q: any) => q.eq("needs_human", true));
+    const autoOn = await head((q: any) => q.neq("auto_reply", false));
+
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: msgs, error: mErr } = await admin
+      .from("dm_messages").select("direction, ai, created_at").gte("created_at", since).limit(5000);
+    if (mErr) throw mErr;
+    const rows = (msgs ?? []) as { direction: string; ai: boolean }[];
+    const inbound7d = rows.filter((m) => m.direction === "in").length;
+    const outbound7d = rows.filter((m) => m.direction === "out").length;
+    const aiReplies7d = rows.filter((m) => m.direction === "out" && m.ai === true).length;
+    const autoSharePct = outbound7d ? Math.round((aiReplies7d / outbound7d) * 100) : 0;
+
+    return { ok: true, ready: true, data: { totalConversations, needsHuman, autoOn, inbound7d, outbound7d, aiReplies7d, autoSharePct } };
+  } catch (e: any) {
+    if ((e as any)?.code === "42P01" || /dm_conversations|dm_messages/i.test(e?.message ?? "")) return { ok: true, ready: false };
+    return { ok: false, ready: true, error: e?.message ?? "خطأ" };
+  }
+}
+
 export async function resolveDmHuman(conversationId: string): Promise<{ ok: true } | { error: string }> {
   const unauth = await requireUser();
   if (unauth) return unauth;

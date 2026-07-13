@@ -2,12 +2,24 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { NAV_GROUPS, APP_NAME, APP_OWNER } from "@/lib/constants";
+import { dmNeedsHumanCount } from "@/app/(app)/inbox/actions";
 import type { Locale } from "@/lib/i18n";
 
 export default function Sidebar({ onNavigate, locale = "ar" }: { onNavigate?: () => void; locale?: Locale }) {
   const pathname = usePathname();
   const en = locale === "en";
+
+  // Live badge on «الوارد»: how many DMs are waiting on a human right now.
+  const [dmWaiting, setDmWaiting] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const load = () => dmNeedsHumanCount().then((n) => { if (alive) setDmWaiting(n); }).catch(() => {});
+    load();
+    const id = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, [pathname]);
 
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-[#efe3d6] bg-white">
@@ -42,7 +54,12 @@ export default function Sidebar({ onNavigate, locale = "ar" }: { onNavigate?: ()
                   }`}
                 >
                   <span className="text-base">{item.icon}</span>
-                  {en ? item.en : item.label}
+                  <span className="flex-1">{en ? item.en : item.label}</span>
+                  {item.href === "/inbox" && dmWaiting > 0 ? (
+                    <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold text-white" title={en ? "Awaiting a human reply" : "تنتظر رد بشري"}>
+                      {dmWaiting}
+                    </span>
+                  ) : null}
                 </Link>
               );
             })}

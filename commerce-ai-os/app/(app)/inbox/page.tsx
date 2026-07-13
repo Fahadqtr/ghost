@@ -1,5 +1,6 @@
 import { listDmConversations } from "./actions";
 import InboxClient from "@/components/InboxClient";
+import DmMetricsPanel from "@/components/DmMetricsPanel";
 import { getT } from "@/lib/i18n-server";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,10 @@ export default async function InboxPage() {
       {error ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">{error}</div>
       ) : (
-        <InboxClient initial={items} ready={ready} locale={locale} />
+        <>
+          <DmMetricsPanel locale={locale} />
+          <InboxClient initial={items} ready={ready} locale={locale} />
+        </>
       )}
     </div>
   );
