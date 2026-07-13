@@ -80,15 +80,22 @@ export async function submitReelJob(imageUrl: string, prompt: string): Promise<H
     });
     const body = await r.text();
     const j = ((): any => { try { return JSON.parse(body); } catch { return null; } })();
-    if (!r.ok) return { ok: false, error: j ? errText(j, r.status) : `HTTP ${r.status} — ${body.slice(0, 300)}` };
+    if (!r.ok) {
+      console.error(`[higgsfield] submit HTTP ${r.status}:`, body.slice(0, 500));
+      return { ok: false, error: j ? errText(j, r.status) : `HTTP ${r.status} — ${body.slice(0, 300)}` };
+    }
     const id = pick(j, "id", "request_id", "requestId", "request.id", "data.id", "data.request_id");
-    if (!id) return { ok: false, error: `ما رجع request_id من Higgsfield — الرد: ${body.slice(0, 300)}` };
+    if (!id) {
+      console.error("[higgsfield] submit ok but no id. body:", body.slice(0, 500));
+      return { ok: false, error: `ما رجع request_id من Higgsfield — الرد: ${body.slice(0, 300)}` };
+    }
     // Prefer the server-provided polling URL when present; getReelJob accepts a
     // full URL or a bare id. This carries the poll target through the existing
     // single-string channel without threading a second value to the client.
     const pollUrl = pick(j, "polling_url", "poll_url", "data.polling_url", "links.status");
     return { ok: true, requestId: pollUrl || id };
   } catch (e: any) {
+    console.error("[higgsfield] submit threw:", e?.message || e);
     return { ok: false, error: e?.message || "فشل إرسال طلب التوليد." };
   }
 }
@@ -108,7 +115,10 @@ export async function getReelJob(ref: string): Promise<HfStatus> {
     });
     const body = await r.text();
     const j = ((): any => { try { return JSON.parse(body); } catch { return null; } })();
-    if (!r.ok) return { ok: false, status: "failed", error: j ? errText(j, r.status) : `HTTP ${r.status} — ${body.slice(0, 300)}` };
+    if (!r.ok) {
+      console.error(`[higgsfield] status HTTP ${r.status}:`, body.slice(0, 500));
+      return { ok: false, status: "failed", error: j ? errText(j, r.status) : `HTTP ${r.status} — ${body.slice(0, 300)}` };
+    }
     const url = pick(j, "video.url", "results.raw.url", "jobs.0.results.raw.url", "result_url", "output.url");
     const raw = (pick(j, "status", "state") || "").toLowerCase();
     const status: HfStatus["status"] = url || raw.includes("complet") || raw.includes("success")
