@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { previewReelsWeek } from "@/app/(app)/content/actions";
+import { previewReelsWeek, queueReel } from "@/app/(app)/content/actions";
 import type { ReelPlanItem } from "@/lib/social/reels-plan";
 import { qatarDayLabel, qatarTimeLabel } from "@/lib/social/schedule-compute";
 import type { Locale } from "@/lib/i18n";
@@ -17,6 +17,22 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
+  const [vurl, setVurl] = useState<Record<number, string>>({});
+  const [qstate, setQstate] = useState<Record<number, "idle" | "busy" | "done" | "error">>({});
+  const [qerr, setQerr] = useState<Record<number, string>>({});
+
+  const queue = async (it: ReelPlanItem) => {
+    const url = (vurl[it.index] || "").trim();
+    if (!url) { setQerr((s) => ({ ...s, [it.index]: L("الصق رابط الفيديو أول", "Paste the video URL first") })); return; }
+    setQstate((s) => ({ ...s, [it.index]: "busy" })); setQerr((s) => ({ ...s, [it.index]: "" }));
+    try {
+      const r = await queueReel({ sku: it.sku, format: it.format, ctaType: it.ctaType, scheduledAtIso: it.scheduledAtIso, videoUrl: url });
+      if ("error" in r) { setQstate((s) => ({ ...s, [it.index]: "error" })); setQerr((s) => ({ ...s, [it.index]: r.error })); }
+      else setQstate((s) => ({ ...s, [it.index]: "done" }));
+    } catch (e: any) {
+      setQstate((s) => ({ ...s, [it.index]: "error" })); setQerr((s) => ({ ...s, [it.index]: e?.message || "خطأ" }));
+    }
+  };
 
   const build = async () => {
     setBusy(true); setErr(""); setNote("");
@@ -89,6 +105,25 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
                 <button onClick={() => copy(it.promptEn, L("📋 نُسخ البرومبت", "📋 Prompt copied"))}
                   className="shrink-0 rounded-md bg-slate-200 px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-300">📋</button>
               </div>
+
+              {/* Queue: paste the generated 9:16 video URL → schedules a Reel row
+                  (pending approval on /social); the cron publishes it at its slot. */}
+              {qstate[it.index] === "done" ? (
+                <p className="mt-2 rounded-lg bg-emerald-50 px-2 py-1.5 text-[11px] font-semibold text-emerald-800">
+                  ✅ {L("تمت الجدولة — اعتمده من صفحة السوشال ثم ينشر تلقائيًا بوقته", "Queued — approve on /social, then it auto-publishes at its slot")}
+                </p>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input value={vurl[it.index] ?? ""} onChange={(e) => setVurl((s) => ({ ...s, [it.index]: e.target.value }))}
+                    dir="ltr" placeholder={L("رابط الفيديو 9:16 (mp4)", "9:16 video URL (mp4)")}
+                    className="input min-w-0 flex-1 py-1 text-xs" />
+                  <button onClick={() => queue(it)} disabled={qstate[it.index] === "busy"}
+                    className="btn-primary shrink-0 px-3 py-1.5 text-xs disabled:opacity-50">
+                    {qstate[it.index] === "busy" ? "…" : `📅 ${L("جدولة", "Queue")}`}
+                  </button>
+                  {qerr[it.index] ? <span className="w-full text-[11px] text-red-600">{qerr[it.index]}</span> : null}
+                </div>
+              )}
             </div>
           ))}
         </div>

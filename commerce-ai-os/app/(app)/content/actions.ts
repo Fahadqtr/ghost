@@ -202,3 +202,45 @@ export async function previewReelsWeek(conversionRatio = 0): Promise<{ error: st
   const items = buildWeeklyReelsPlan(pool, new Date(), { conversionRatio });
   return { items };
 }
+
+// Queue one Reel from the weekly plan into social_posts: generate the Arabic
+// caption, then insert a scheduled, format-tagged row (pending owner approval
+// on /social). The existing publish cron posts it as a Reel at its slot.
+export async function queueReel(input: {
+  sku: string | null; format: string; ctaType: string; scheduledAtIso: string; videoUrl: string;
+}): Promise<{ error: string } | { ok: true }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const videoUrl = String(input.videoUrl || "").trim();
+  if (!/^https?:\/\/.+\.(mp4|mov|webm)(\?|$)/i.test(videoUrl)) {
+    return { error: "رابط فيديو غير صالح — لازم رابط عام mp4/mov/webm." };
+  }
+  let db: any;
+  try { db = createAdminClient(); } catch { db = createClient(); }
+
+  // Caption: reuse the Claude generator (Gulf Arabic + hashtags); fall back to a
+  // simple line if it's unavailable so queueing never hard-fails.
+  let caption = "🌸 عالم ماليكا";
+  let productId: string | null = null;
+  if (input.sku) {
+    const c = await generateCaption(input.sku).catch(() => null);
+    if (c && !("error" in c)) caption = [c.caption_ar, (c.hashtags || []).join(" ")].filter(Boolean).join("\n\n");
+    const { data: p } = await db.from("products").select("id").eq("sku", input.sku).maybeSingle();
+    productId = p?.id ?? null;
+  }
+
+  const row: Record<string, unknown> = {
+    product_id: productId, platform: "instagram", caption,
+    image_url: videoUrl, scene_url: videoUrl,
+    extras: { kind: "reel" }, status: "pending", approved: false,
+    scheduled_at: input.scheduledAtIso, format: input.format, cta_type: input.ctaType,
+  };
+  let { error } = await db.from("social_posts").insert(row);
+  // Graceful degrade if the format/cta_type columns aren't migrated yet on prod.
+  if (error && /(format|cta_type)/i.test(error.message)) {
+    const { format: _f, cta_type: _c, ...bare } = row;
+    ({ error } = await db.from("social_posts").insert(bare));
+  }
+  if (error) return { error: error.message };
+  return { ok: true };
+}
