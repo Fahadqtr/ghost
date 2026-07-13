@@ -1,5 +1,5 @@
 import "server-only";
-import { buildDmPrompt, parseDmReply, dmSearchTokens, matchDmProducts, type DmProduct, type DmTurn } from "./respond-compute";
+import { buildDmPrompt, parseDmReply, dmSearchTokens, matchDmProducts, detectCategories, matchDmProductsByCategory, type DmProduct, type DmTurn } from "./respond-compute";
 import { STORE_INFO } from "./store-info";
 
 // DM engine: store the incoming message, let «ملاك» answer from the catalog
@@ -204,7 +204,7 @@ async function loadCatalog(admin: any): Promise<DmProduct[]> {
   for (let from = 0; from < 4000; from += 1000) {
     const { data, error } = await admin
       .from("products")
-      .select("sku, name_en, name_ar, price, discount_price, approval, inventory(stock_quantity)")
+      .select("sku, name_en, name_ar, price, discount_price, main_category, approval, inventory(stock_quantity)")
       .eq("approval", "Approved")
       .range(from, from + 999);
     if (error) break;
@@ -212,6 +212,7 @@ async function loadCatalog(admin: any): Promise<DmProduct[]> {
       out.push({
         sku: p.sku ?? null, name_en: p.name_en ?? null, name_ar: p.name_ar ?? null,
         price: p.price ?? null, discount_price: p.discount_price ?? null,
+        category: p.main_category ?? null,
         stock: p.inventory?.[0]?.stock_quantity ?? null,
       });
     }
@@ -243,7 +244,16 @@ export async function autoReplyDm(admin: any, convo: { id: string; auto_reply: b
     const lastIn = [...history].reverse().find((t) => t.direction === "in")?.body ?? "";
 
     const catalog = await loadCatalog(admin);
-    const products = matchDmProducts(catalog, dmSearchTokens(lastIn));
+    // Specific-name matches first; if the customer is browsing a category
+    // ("منتجات للبشرة", "hair"…) top up with in-stock products from that
+    // category so «ملاك» can present options instead of stalling.
+    const specific = matchDmProducts(catalog, dmSearchTokens(lastIn));
+    let products = specific;
+    if (products.length < 3) {
+      const cats = detectCategories(lastIn);
+      const byCat = matchDmProductsByCategory(catalog, cats, 6).filter((p) => !specific.includes(p));
+      if (byCat.length) products = [...specific, ...byCat].slice(0, 6);
+    }
 
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic();

@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { dmSearchTokens, matchDmProducts, buildDmPrompt, parseDmReply, type DmProduct } from "./respond-compute.ts";
+import { dmSearchTokens, matchDmProducts, matchDmProductsByCategory, detectCategories, buildDmPrompt, parseDmReply, type DmProduct } from "./respond-compute.ts";
 
 const P = (over: Partial<DmProduct>): DmProduct => ({
   sku: "mk1", name_en: "Stanley H2.0 Tumbler", name_ar: "ستانلي تمبلر", price: 139, discount_price: null, stock: 4, ...over,
@@ -49,4 +49,25 @@ test("parseDmReply tolerates prose around the JSON and enforces reply", () => {
   assert.equal(parseDmReply('{"handoff":true}'), null);
   assert.equal(parseDmReply("no json"), null);
   assert.equal(parseDmReply('{"reply":"ok","handoff":true}')!.handoff, true);
+});
+
+test("detectCategories maps Arabic/English browse terms to catalog categories", () => {
+  assert.ok(detectCategories("شنو عندكم منتجات للبشرة").includes("Face Care"));
+  assert.ok(detectCategories("منتجات للبشرة").includes("Body Care"));
+  assert.ok(detectCategories("do you have hair products?").includes("Hair Care"));
+  assert.deepEqual(detectCategories("بكم ستانلي تمبلر"), []);
+});
+
+test("matchDmProductsByCategory returns category items, in-stock first", () => {
+  const products = [
+    P({ sku: "a", category: "Hair Care", stock: 0 }),
+    P({ sku: "b", category: "Face Care", stock: 3 }),
+    P({ sku: "c", category: "Face Care", stock: 0 }),
+    P({ sku: "d", category: "Toys", stock: 9 }),
+  ];
+  const hits = matchDmProductsByCategory(products, detectCategories("منتجات للبشرة"));
+  const skus = hits.map((h) => h.sku);
+  assert.ok(skus.includes("b") && skus.includes("c"));
+  assert.ok(!skus.includes("d")); // Toys isn't a skincare category
+  assert.equal(hits[0].sku, "b"); // in-stock first
 });

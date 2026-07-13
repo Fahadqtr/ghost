@@ -7,6 +7,7 @@ export interface DmProduct {
   price: number | null;
   discount_price: number | null;
   stock: number | null;
+  category?: string | null;
 }
 
 export interface DmTurn { direction: "in" | "out"; body: string }
@@ -26,6 +27,46 @@ export function dmSearchTokens(text: string): string[] {
       .map((w) => w.trim())
       .filter((w) => w.length >= 3 && !STOP.has(w)),
   )].slice(0, 12);
+}
+
+// Category browse: map what customers type (Arabic or English) to the catalog's
+// English category names, so "شنو عندكم منتجات للبشرة" surfaces Face/Body Care
+// products instead of stalling. Keyword (substring, lowercase) → categories.
+const CATEGORY_SYNONYMS: { keys: string[]; cats: string[] }[] = [
+  { keys: ["بشره", "بشرة", "سكin", "skincare", "skin care", "skin"], cats: ["Face Care", "Body Care", "Masks", "Sun Protection"] },
+  { keys: ["وجه", "face"], cats: ["Face Care", "Masks"] },
+  { keys: ["جسم", "بودي", "body"], cats: ["Body Care"] },
+  { keys: ["شعر", "hair"], cats: ["Hair Care"] },
+  { keys: ["مكياج", "ميك", "makeup", "cosmetic"], cats: ["Makeup"] },
+  { keys: ["رموش", "اظافر", "أظافر", "lash", "lashes", "nail", "nails"], cats: ["Lashes & Nails"] },
+  { keys: ["ماسك", "ماسكات", "قناع", "mask", "masks"], cats: ["Masks"] },
+  { keys: ["شمس", "واقي", "sun", "sunscreen", "spf"], cats: ["Sun Protection"] },
+  { keys: ["اسنان", "أسنان", "سنان", "dental", "teeth", "toothpaste"], cats: ["Dental Care"] },
+  { keys: ["رود", "rhode"], cats: ["Rhode Products Section"] },
+  { keys: ["تايلند", "تايلاند", "thailand", "thai"], cats: ["Thailand Products"] },
+  { keys: ["الكترون", "إلكترون", "electronic", "electronics"], cats: ["Electronics"] },
+  { keys: ["العاب", "ألعاب", "toy", "toys"], cats: ["Toys"] },
+  { keys: ["تخييم", "كامب", "camp", "camping", "outdoor"], cats: ["Summer And Camping Supplies"] },
+];
+
+/** Detect which catalog categories a customer message is asking about (if any). */
+export function detectCategories(text: string): string[] {
+  const t = String(text ?? "").toLowerCase();
+  const out = new Set<string>();
+  for (const { keys, cats } of CATEGORY_SYNONYMS) {
+    if (keys.some((k) => t.includes(k))) cats.forEach((c) => out.add(c));
+  }
+  return [...out];
+}
+
+/** Products in the given categories, in-stock first; top `max`. */
+export function matchDmProductsByCategory(products: DmProduct[], categories: string[], max = 6): DmProduct[] {
+  if (!categories.length) return [];
+  const set = new Set(categories.map((c) => c.toLowerCase()));
+  return products
+    .filter((p) => p.category && set.has(String(p.category).toLowerCase()))
+    .sort((a, b) => (Number(b.stock) > 0 ? 1 : 0) - (Number(a.stock) > 0 ? 1 : 0))
+    .slice(0, max);
 }
 
 /** Score catalog rows against the tokens; top `max` matches (score > 0). */
@@ -64,7 +105,8 @@ export function buildDmPrompt(opts: {
     "قواعدك:\n" +
     "• ردّي بنفس لغة العميل (عربي أو إنجليزي)، بأسلوب ودّي مختصر (سطر إلى ثلاثة) مع إيموجي خفيف.\n" +
     "• استخدمي فقط معلومات المتجر والمنتجات المرفقة — لا تخترعي أسعارًا أو منتجات أو وعودًا.\n" +
-    "• سؤال عن منتج غير موجود في القائمة المرفقة: قولي إنك بتتأكدين من التوفر وبيرد عليه الفريق، وخلي handoff=true.\n" +
+    "• سؤال عن فئة أو «شنو عندكم» (بشرة، شعر، مكياج…) وفيه منتجات مرفقة: اعرضي ٢–٤ منها بأسعارها واسأليه أي نوع يناسبه — لا تماطلي ولا تحوّلي طالما فيه منتجات مرفقة.\n" +
+    "• سؤال عن منتج/فئة وما في أي منتجات مرفقة نهائيًا: قولي إنك بتتأكدين من التوفر وبيرد عليه الفريق، وخلي handoff=true.\n" +
     "• شكوى، مشكلة طلب سابق، طلب استرجاع، أو أي شي مو متأكدة منه 100%: ردّي رد لطيف إن الفريق بيتواصل معه، و handoff=true.\n" +
     "• لا تطلبي بيانات حساسة (بطاقات، كلمات مرور).\n\n" +
     `معلومات المتجر:\n${opts.storeInfo}\n\n` +
