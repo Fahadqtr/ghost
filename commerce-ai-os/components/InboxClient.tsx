@@ -26,6 +26,29 @@ export default function InboxClient({ initial, ready, locale = "ar" }: {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [thread]);
 
+  // Live: quietly poll the open thread + the conversation list every 10s so new
+  // customer messages and «ملاك» replies appear without a manual refresh. We
+  // only replace state when something actually changed, so the reply box and
+  // the scroll position aren't disturbed on idle ticks.
+  useEffect(() => {
+    let alive = true;
+    const threadSig = (ts: DmMessageRow[]) => `${ts.length}:${ts[ts.length - 1]?.id ?? ""}`;
+    const listSig = (cs: DmConversationRow[]) =>
+      cs.map((c) => `${c.id}:${c.last_message_at}:${c.needs_human}:${c.auto_reply}:${c.username ?? ""}`).join("|");
+    const tick = async () => {
+      try {
+        if (sel) {
+          const t = await dmThread(sel.id);
+          if (alive && t.ok) setThread((prev) => (threadSig(prev) === threadSig(t.items) ? prev : t.items));
+        }
+        const r = await listDmConversations();
+        if (alive && r.ok) setConvos((prev) => (listSig(prev) === listSig(r.items) ? prev : r.items));
+      } catch { /* transient — try again next tick */ }
+    };
+    const id = setInterval(tick, 10000);
+    return () => { alive = false; clearInterval(id); };
+  }, [sel]);
+
   const refresh = () => start(async () => {
     const r = await listDmConversations();
     if (!r.ok) { setErr(r.error ?? ""); return; }
@@ -150,6 +173,9 @@ export default function InboxClient({ initial, ready, locale = "ar" }: {
           {needing ? <span className="ms-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">🙋 {needing} {L("تحتاج رد", "need a human")}</span> : null}
         </p>
         <div className="flex items-center gap-1">
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> {L("مباشر", "Live")}
+          </span>
           <button onClick={connect} disabled={busy} className="btn-ghost px-3 py-1 text-xs disabled:opacity-50">🔌 {L("فعّل الاستقبال", "Connect")}</button>
           <button onClick={refresh} disabled={busy} className="btn-ghost px-3 py-1 text-xs disabled:opacity-50">↻ {L("حدّث", "Refresh")}</button>
         </div>
