@@ -292,3 +292,29 @@ export async function reelsWeekStatus(): Promise<
   }
   return { queue, perFormat: formatWeeklyAverages(metricRows), toCut: formatsToCut(metricRows) };
 }
+
+// ---- Auto-generate a reel video (Higgsfield, in-system) -----------------
+import { submitReelJob, getReelJob, higgsfieldConfigured } from "@/lib/social/higgsfield";
+
+// Submit an image→video job for a plan item (uses the product's real photo).
+export async function generateReelVideo(input: { sku: string | null; prompt: string }): Promise<{ error: string } | { requestId: string }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  if (!higgsfieldConfigured()) return { error: "Higgsfield غير مهيأ — أضف HIGGSFIELD_API_KEY و HIGGSFIELD_API_SECRET في Vercel ثم Redeploy." };
+  if (!input.sku) return { error: "لا يوجد SKU للمنتج." };
+  const p = await fetchProduct(input.sku);
+  const imageUrl = p?.image_url ? String(p.image_url) : "";
+  if (!imageUrl) return { error: "ما فيه صورة لهذا المنتج — أضف صورة أولًا." };
+  const r = await submitReelJob(imageUrl, input.prompt);
+  if (!r.ok || !r.requestId) return { error: r.error || "فشل بدء التوليد." };
+  return { requestId: r.requestId };
+}
+
+// Poll a submitted job; returns the video URL once ready.
+export async function pollReelVideo(requestId: string): Promise<{ error: string } | { status: string; videoUrl?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const s = await getReelJob(requestId);
+  if (s.status === "failed") return { error: s.error || "فشل التوليد." };
+  return { status: s.status, videoUrl: s.videoUrl };
+}
