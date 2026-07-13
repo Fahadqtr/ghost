@@ -17,8 +17,10 @@ const GRAPH = "https://graph.facebook.com/v21.0";
 function cleanEnv(v: string | undefined): string {
   return String(v ?? "").trim().replace(/^["']|["']$/g, "").trim();
 }
-function igUserId(): string { return cleanEnv(process.env.INSTAGRAM_USER_ID); }
-function igToken(): string { return cleanEnv(process.env.INSTAGRAM_ACCESS_TOKEN); }
+// Accept BOTH the app's original names and the Meta-style aliases from the
+// rollout plan, so whichever the operator pasted into Vercel just works.
+function igUserId(): string { return cleanEnv(process.env.INSTAGRAM_USER_ID) || cleanEnv(process.env.IG_USER_ID); }
+function igToken(): string { return cleanEnv(process.env.INSTAGRAM_ACCESS_TOKEN) || cleanEnv(process.env.META_ACCESS_TOKEN); }
 
 export function instagramConfigured(): boolean {
   return Boolean(igUserId() && igToken());
@@ -28,6 +30,77 @@ export interface IgPublishResult {
   ok: boolean;
   mediaId?: string;
   error?: string;
+}
+
+export interface IgVerifyResult {
+  ok: boolean;
+  tokenPresent: boolean;
+  igUserId: string | null;
+  igUserIdSource: "env" | "derived" | null;
+  username: string | null;
+  containerId: string | null;
+  summary: string;
+  error?: string;
+  setEnv?: string; // e.g. "INSTAGRAM_USER_ID=1784..." when derived and not yet set
+}
+
+// Derive the IG business account id from the token (page → instagram account),
+// so the operator doesn't have to hunt for it manually.
+async function deriveIgUserId(token: string): Promise<{ id?: string; error?: string }> {
+  const r = await fetch(
+    `${GRAPH}/me/accounts?fields=name,instagram_business_account&access_token=${encodeURIComponent(token)}`,
+    { cache: "no-store", signal: AbortSignal.timeout(15_000) },
+  );
+  const j = (await r.json().catch(() => null)) as { data?: { instagram_business_account?: { id?: string } }[]; error?: { message?: string } } | null;
+  if (!r.ok) return { error: j?.error?.message || `HTTP ${r.status}` };
+  for (const p of j?.data ?? []) if (p?.instagram_business_account?.id) return { id: p.instagram_business_account.id };
+  return { error: "ما لقيت instagram_business_account على أي صفحة — تأكد إن حساب انستقرام Business ومربوط بصفحة فيسبوك." };
+}
+
+/**
+ * Phase 0 verification: confirm the token, resolve the IG user id (env or
+ * derived), read the username, and CREATE a Reels container (no publish) to
+ * prove content-publishing works. Nothing is posted.
+ */
+export async function verifyIgSetup(): Promise<IgVerifyResult> {
+  const base: IgVerifyResult = { ok: false, tokenPresent: false, igUserId: null, igUserIdSource: null, username: null, containerId: null, summary: "" };
+  const token = igToken();
+  if (!token) return { ...base, summary: "❌ ما فيه توكن. ضبط INSTAGRAM_ACCESS_TOKEN (أو META_ACCESS_TOKEN) في Vercel ثم Redeploy." };
+  base.tokenPresent = true;
+
+  let id = igUserId();
+  let source: "env" | "derived" = "env";
+  if (!id) {
+    const d = await deriveIgUserId(token);
+    if (d.error || !d.id) return { ...base, error: d.error, summary: `❌ التوكن موجود بس تعذّر جلب IG_USER_ID: ${d.error ?? "غير معروف"}` };
+    id = d.id; source = "derived";
+  }
+  base.igUserId = id; base.igUserIdSource = source;
+
+  // username
+  const u = await fetch(`${GRAPH}/${id}?fields=username&access_token=${encodeURIComponent(token)}`, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
+  const uj = (await u.json().catch(() => null)) as { username?: string; error?: { message?: string } } | null;
+  if (!u.ok) return { ...base, error: uj?.error?.message, summary: `❌ التوكن/الـID لا يعملان: ${uj?.error?.message ?? `HTTP ${u.status}`}` };
+  base.username = uj?.username ?? null;
+
+  // container test (create only — never publish)
+  const SAMPLE = "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+  const c = await fetch(`${GRAPH}/${id}/media`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ media_type: "REELS", video_url: SAMPLE, caption: "verification only — not published", access_token: token }),
+    cache: "no-store", signal: AbortSignal.timeout(20_000),
+  });
+  const cj = (await c.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
+  if (!c.ok || !cj?.id) {
+    return { ...base, error: cj?.error?.message, summary: `⚠️ التوكن يقرأ الحساب (@${base.username}) بس إنشاء الحاوية فشل: ${cj?.error?.message ?? `HTTP ${c.status}`} — تأكد من صلاحية instagram_content_publish.` };
+  }
+
+  const setEnv = source === "derived" ? `INSTAGRAM_USER_ID=${id}` : undefined;
+  return {
+    ...base, ok: true, containerId: cj.id,
+    setEnv,
+    summary: `✅ جاهز! الحساب @${base.username} · IG_USER_ID=${id}${source === "derived" ? " (مشتقّ تلقائيًا)" : ""} · نجح إنشاء حاوية Reels (${cj.id}). ${setEnv ? `أضف ${setEnv} في Vercel لتثبيته.` : ""} تقدر الحين تنشر ريل تجريبي.`,
+  };
 }
 
 export async function publishToInstagram(imageUrl: string, caption: string): Promise<IgPublishResult> {
