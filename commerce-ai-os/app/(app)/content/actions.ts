@@ -244,3 +244,51 @@ export async function queueReel(input: {
   if (error) return { error: error.message };
   return { ok: true };
 }
+
+// ---- Weekly Reels status/dashboard --------------------------------------
+import { fetchIgMediaStats } from "@/lib/social/instagram";
+import { formatWeeklyAverages, formatsToCut, type FormatWeekAvg } from "@/lib/social/reels-metrics";
+
+// Monday-anchored week bucket (UTC) for grouping posted reels by week.
+function reelWeekKey(iso: string | null): string {
+  const d = iso ? new Date(iso) : null;
+  if (!d || isNaN(d.getTime())) return "—";
+  const mon = (d.getUTCDay() + 6) % 7; // Mon=0
+  const m = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - mon));
+  return m.toISOString().slice(0, 10);
+}
+
+export interface ReelQueueRow { format: string; ctaType: string | null; scheduledAtIso: string | null; status: string; approved: boolean; }
+
+// The week's Reels pipeline (format-tagged social_posts) + per-format view
+// averages for posted ones + the Sunday cut recommendation. Read-only.
+export async function reelsWeekStatus(): Promise<
+  { error: string } | { queue: ReelQueueRow[]; perFormat: FormatWeekAvg[]; toCut: string[] }
+> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  let db: any;
+  try { db = createAdminClient(); } catch { db = createClient(); }
+
+  const { data, error } = await db
+    .from("social_posts")
+    .select("id, format, cta_type, scheduled_at, status, approved, external_id, posted_at")
+    .not("format", "is", null)
+    .order("scheduled_at", { ascending: true })
+    .limit(200);
+  if (error) return { error: error.message };
+  const rows = (data ?? []) as any[];
+
+  const queue: ReelQueueRow[] = rows.map((r) => ({
+    format: r.format, ctaType: r.cta_type ?? null, scheduledAtIso: r.scheduled_at ?? null,
+    status: r.status ?? "pending", approved: !!r.approved,
+  }));
+
+  const posted = rows.filter((r) => r.status === "posted" && r.external_id).slice(-24);
+  const metricRows: { format: string; week: string; views: number }[] = [];
+  for (const r of posted) {
+    const s = await fetchIgMediaStats(String(r.external_id)).catch(() => null);
+    if (s && s.ok) metricRows.push({ format: r.format, week: reelWeekKey(r.posted_at ?? r.scheduled_at), views: s.views });
+  }
+  return { queue, perFormat: formatWeeklyAverages(metricRows), toCut: formatsToCut(metricRows) };
+}
