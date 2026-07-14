@@ -16,12 +16,16 @@ create table if not exists public.reel_requests (
   product_name  text,
   style         text,                         -- Marketing Studio mode slug (e.g. ugc_gadget_saved_me)
   notes         text,                         -- Arabic direction / script notes for the reel
+  script        text,                         -- AI-written Gulf-Arabic voiceover script (spoken verbatim)
   scheduled_at  timestamptz,                  -- desired publish slot (optional)
   status        text not null default 'pending', -- pending | scheduled | cancelled
   video_url     text,                         -- the finished mp4 once generated
   created_at    timestamptz default now(),
   updated_at    timestamptz default now()
 );
+
+-- If the table already exists from an earlier version, add the script column.
+alter table public.reel_requests add column if not exists script text;
 
 create index if not exists reel_requests_status_idx on public.reel_requests (status, created_at desc);
 
