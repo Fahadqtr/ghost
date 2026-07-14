@@ -1,10 +1,10 @@
 import { getT } from "@/lib/i18n-server";
-import ModuleScaffold from "@/components/studio/ModuleScaffold";
+import StudioVideoEngine from "@/components/studio/StudioVideoEngine";
 
 export const dynamic = "force-dynamic";
 
-// Malika AI Studio → video (scaffold). Real engine wired in a later step.
+// Malika AI Studio → Video Engine. Step-2: FLORA-first preview flow.
 export default async function Page() {
   const { locale } = await getT();
-  return <ModuleScaffold slug="video" locale={locale} />;
+  return <StudioVideoEngine locale={locale} />;
 }

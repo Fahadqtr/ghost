@@ -57,9 +57,9 @@ export const STUDIO_MODULES: StudioModule[] = [
   },
   {
     slug: "video", labelAr: "محرك الفيديو", labelEn: "Video Engine", icon: "🎬",
-    descAr: "يولّد فيديو المنتج — FLORA للمنتجات، Higgsfield للـ UGC/المتكلّم.",
-    status: "partial",
-    wiring: "lib/video/provider-router.ts (submitProductVideo / pollProductVideo).",
+    descAr: "يولّد فيديو المنتج — FLORA للمنتجات، Higgsfield للـ UGC/المتكلّم. (معاينة تعمل الآن).",
+    status: "live",
+    wiring: "lib/video/providers.ts (FloraProvider) عبر provider-router + templates.ts.",
   },
   {
     slug: "voice", labelAr: "محرك الصوت", labelEn: "Voice Engine", icon: "🔊",
@@ -93,9 +93,9 @@ export const STUDIO_MODULES: StudioModule[] = [
   },
   {
     slug: "settings", labelAr: "الإعدادات", labelEn: "Settings", icon: "⚙️",
-    descAr: "المزوّدون والمفاتيح والإعدادات الافتراضية (VIDEO_PROVIDER، FLORA، ElevenLabs…).",
-    status: "partial",
-    wiring: "متغيرات البيئة + reelPipelineStatus (يعرض حالة كل محرك).",
+    descAr: "حالة المحركات وطريقة تفعيل FLORA (المفتاح في Vercel لأمانه).",
+    status: "live",
+    wiring: "videoEngineStatus (studio/actions.ts) + متغيرات البيئة.",
   },
 ];
 

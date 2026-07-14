@@ -36,7 +36,17 @@ export interface FloraSubmit { ok: boolean; runId?: string; error?: string; }
 export async function submitFloraRun(imageUrl: string, prompt: string, negativePrompt?: string): Promise<FloraSubmit> {
   if (!floraConfigured()) return { ok: false, error: "FLORA غير مهيأ — أضف FLORA_API_KEY و FLORA_TECHNIQUE_SLUG في Vercel." };
   try {
-    const inputs = buildFloraInputs({ imageUrl, prompt, negativePrompt, fieldIds: fieldIds() });
+    // Only send a prompt/negative input when the technique actually declares one
+    // (opt-in via env). A technique whose only input is the product image would
+    // reject unknown inputs, so image-only is the safe default.
+    const sendPrompt = clean(process.env.FLORA_SEND_PROMPT).toLowerCase() === "true";
+    const sendNeg = clean(process.env.FLORA_SEND_NEGATIVE).toLowerCase() === "true";
+    const inputs = buildFloraInputs({
+      imageUrl,
+      prompt: sendPrompt ? prompt : null,
+      negativePrompt: sendNeg ? negativePrompt : null,
+      fieldIds: fieldIds(),
+    });
     const r = await fetch(`${base()}/api/v1/techniques/${encodeURIComponent(slug())}/runs`, {
       method: "POST", headers: authHeaders(), body: JSON.stringify({ inputs, mode: "async" }),
       cache: "no-store", signal: AbortSignal.timeout(30_000),
