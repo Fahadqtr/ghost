@@ -46,6 +46,21 @@ test("background music sits under the voiceover at low volume, looped to duratio
   assert.equal(voice.volume, "100%");
 });
 
+test("auto-fits to the audio when duration is unknown (uploaded human voice)", () => {
+  const s: any = buildComposeSource({ videoUrl: "https://v/x.mp4", audioUrl: "https://a/human.mp3" });
+  assert.equal(s.duration, undefined); // composition length driven by the audio
+  assert.equal(s.elements[0].type, "video");
+  assert.equal(s.elements[0].loop, true);
+  assert.equal(s.elements[0].duration, undefined);
+  assert.ok(s.elements.some((e: any) => e.type === "audio" && e.source === "https://a/human.mp3"));
+});
+
+test("burned-in subtitle is added when provided", () => {
+  const s: any = buildComposeSource({ videoUrl: "https://v/x.mp4", audioUrl: "https://a/v.mp3", subtitle: "جرّبي دكتور بِن" });
+  const sub = s.elements.find((e: any) => e.type === "text" && e.text === "جرّبي دكتور بِن");
+  assert.ok(sub);
+});
+
 test("resolveReelDuration clamps to [MIN, MAX] and defaults when unknown", () => {
   assert.equal(resolveReelDuration(undefined), DEFAULT_REEL_SEC);
   assert.equal(resolveReelDuration(0), DEFAULT_REEL_SEC);

@@ -374,11 +374,13 @@ export async function reelPipelineStatus(): Promise<{ higgsfield: boolean; voice
 }
 
 /**
- * Take an already-generated (silent) product video, add an Arabic voiceover,
- * the Malika logo and an «اطلب الآن» CTA, and return a render to poll. The
- * voiceover step is skipped gracefully if ElevenLabs isn't configured.
+ * Assemble the final reel: take a (silent / b-roll) product video and lay a
+ * voiceover, background music, logo, «اطلب الآن» CTA and optional Arabic caption
+ * over it. The voice is EITHER a real uploaded human voice (`voiceUrl` — best for
+ * a natural Gulf dialect) OR, if none is given, an ElevenLabs synth of `scriptAr`.
+ * With an uploaded voice the composition auto-fits to its length.
  */
-export async function finalizeReel(input: { videoUrl: string; scriptAr?: string; ctaText?: string }):
+export async function finalizeReel(input: { videoUrl: string; scriptAr?: string; voiceUrl?: string; subtitle?: string; ctaText?: string }):
   Promise<{ error: string } | { renderId?: string; url?: string }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
@@ -388,8 +390,13 @@ export async function finalizeReel(input: { videoUrl: string; scriptAr?: string;
 
   let audioUrl: string | null = null;
   let durationSec: number | null = null;
+  const uploadedVoice = String(input.voiceUrl || "").trim();
   const script = String(input.scriptAr || "").trim();
-  if (script && voiceoverConfigured()) {
+  if (uploadedVoice) {
+    // Real human Gulf voice — use it as-is; the composition auto-fits to it.
+    if (!/^https?:\/\//i.test(uploadedVoice)) return { error: "رابط الصوت غير صالح." };
+    audioUrl = uploadedVoice;
+  } else if (script && voiceoverConfigured()) {
     const v = await synthArabicVoice(script);
     if (!v.ok) return { error: v.error || "فشل توليد الصوت." };
     audioUrl = v.url ?? null;
@@ -400,9 +407,29 @@ export async function finalizeReel(input: { videoUrl: string; scriptAr?: string;
     videoUrl, audioUrl, durationSec,
     ctaText: input.ctaText || "اطلب الآن 🌸",
     brandText: "ماليكاس يونيفرس · malikasuniverse.com",
+    subtitle: input.subtitle || null,
   });
   if (!r.ok) return { error: r.error || "فشل التركيب." };
   return { renderId: r.renderId, url: r.url };
+}
+
+/** Upload a human voice recording (mp3/m4a/wav) → returns a public URL to compose with. */
+export async function uploadReelVoice(form: FormData): Promise<{ error: string } | { url: string }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const file = form.get("voice");
+  if (!(file instanceof File) || !file.size) return { error: "لا يوجد ملف صوت." };
+  if (file.size > 15 * 1024 * 1024) return { error: "حجم الصوت كبير — الحد ١٥ ميجابايت." };
+  const ext = (file.name.split(".").pop() || "mp3").toLowerCase().replace(/[^a-z0-9]/g, "") || "mp3";
+  const type = file.type && /^audio\//.test(file.type) ? file.type : "audio/mpeg";
+  let db: any;
+  try { db = createAdminClient(); } catch (e: any) { return { error: e?.message || "الخادم غير مهيأ." }; }
+  const buf = Buffer.from(await file.arrayBuffer());
+  const path = `reels-voice/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await db.storage.from("product-images").upload(path, buf, { contentType: type, upsert: true });
+  if (error) return { error: `رفع الصوت فشل: ${error.message}` };
+  const url = db.storage.from("product-images").getPublicUrl(path).data.publicUrl;
+  return { url };
 }
 
 /** Poll a compose render; returns the final mp4 URL once ready. */
