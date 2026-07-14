@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import {
-  createReelRequest, listReelRequests, scheduleReelRequest, cancelReelRequest,
+  createReelRequest, listReelRequests, scheduleReelRequest, cancelReelRequest, draftReelScript,
   type ReelRequestRow,
 } from "@/app/(app)/content/reel-request-actions";
 import { REEL_STYLES, styleLabelAr } from "@/lib/social/reel-request-compute";
@@ -28,6 +28,8 @@ export default function ReelRequestPanel({ items, initial = [], locale = "ar" }:
   const [style, setStyle] = useState(REEL_STYLES[0].slug);
   const [when, setWhen] = useState("");
   const [notes, setNotes] = useState("");
+  const [script, setScript] = useState("");
+  const [scripting, setScripting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
@@ -51,12 +53,22 @@ export default function ReelRequestPanel({ items, initial = [], locale = "ar" }:
     setBusy(true); setErr(""); setMsg("");
     try {
       const iso = when ? new Date(when).toISOString() : null;
-      const r = await createReelRequest({ sku, productName, style, notes, scheduledAtIso: iso });
+      const r = await createReelRequest({ sku, productName, style, notes, script, scheduledAtIso: iso });
       if ("error" in r) setErr(r.error);
-      else { setMsg(L("✅ انحفظ الطلب — بيتولّد ويتجدول", "✅ Request saved — it'll be generated and scheduled")); setNotes(""); setWhen(""); await load(); }
+      else { setMsg(L("✅ انحفظ الطلب — بيتولّد ويتجدول", "✅ Request saved — it'll be generated and scheduled")); setNotes(""); setScript(""); setWhen(""); await load(); }
     } catch (e: any) {
       setErr(e?.message || L("تعذّر حفظ الطلب", "Failed to save the request"));
     } finally { setBusy(false); }
+  };
+
+  const writeScript = async () => {
+    if (!sku) { setErr(L("اختر منتجًا أولًا", "Pick a product first")); return; }
+    setScripting(true); setErr("");
+    try {
+      const r = await draftReelScript({ productName, style, notes, priceQar: selected?.price ?? null });
+      if ("error" in r) setErr(r.error);
+      else setScript(r.script);
+    } finally { setScripting(false); }
   };
 
   const copy = async (text: string, m: string) => {
@@ -117,6 +129,18 @@ export default function ReelRequestPanel({ items, initial = [], locale = "ar" }:
           <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={L("مثال: ركّزي على النتيجة السريعة", "e.g. focus on the fast result")}
             className="input mt-1 w-full py-1.5 text-sm" />
         </label>
+        <div className="sm:col-span-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-slate-600">{L("السيناريو (الكلام اللي تقوله)", "Script (what she says)")}</span>
+            <button onClick={writeScript} disabled={scripting || !sku}
+              className="rounded-md bg-violet-100 px-2.5 py-1 text-[11px] font-bold text-violet-700 disabled:opacity-50">
+              {scripting ? L("…يكتب", "…writing") : `✍️ ${L("اكتب بالذكاء", "Write with AI")}`}
+            </button>
+          </div>
+          <textarea value={script} onChange={(e) => setScript(e.target.value)} rows={4}
+            placeholder={L("٤ أسطر بلهجة خليجية — يكتبها الذكاء أو اكتبها بنفسك. تُقال حرفيًا.", "4 Gulf-Arabic lines — AI-written or your own. Spoken verbatim.")}
+            dir="rtl" className="input mt-1 w-full py-1.5 text-xs leading-relaxed" />
+        </div>
         <div className="sm:col-span-2 flex items-center gap-2">
           <button onClick={submit} disabled={busy} className="btn-primary px-4 py-1.5 text-sm disabled:opacity-50">
             {busy ? L("…", "…") : `🎬✨ ${L("اطلب الريل", "Request reel")}`}
@@ -144,6 +168,7 @@ export default function ReelRequestPanel({ items, initial = [], locale = "ar" }:
                     </span>
                   </div>
                   {r.notes ? <p className="mt-0.5 text-[11px] text-muted">{r.notes}</p> : null}
+                  {r.script ? <p className="mt-1 whitespace-pre-line rounded bg-violet-50 p-1.5 text-[11px] leading-relaxed text-violet-900" dir="rtl">✍️ {r.script}</p> : null}
                   {r.scheduledAtIso ? <p className="text-[11px] text-muted" dir="ltr">🕐 {new Date(r.scheduledAtIso).toLocaleString()}</p> : null}
                 </div>
                 <button onClick={() => copy(r.brief, L("📋 نُسخت وصفة التوليد", "📋 Generation brief copied"))}

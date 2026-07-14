@@ -3,8 +3,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
+import Anthropic from "@anthropic-ai/sdk";
 import { queueReel } from "./actions";
-import { buildReelBrief } from "@/lib/social/reel-request-compute";
+import { buildReelBrief, buildScriptPrompt } from "@/lib/social/reel-request-compute";
 
 // "Professional reel" request queue (Higgsfield Marketing Studio talking-avatar
 // UGC). The owner files a request (product + style + desired slot + notes); the
@@ -24,6 +25,7 @@ export interface ReelRequestRow {
   productName: string | null;
   style: string | null;
   notes: string | null;
+  script: string | null;
   scheduledAtIso: string | null;
   status: string;
   videoUrl: string | null;
@@ -31,22 +33,52 @@ export interface ReelRequestRow {
   createdAtIso: string | null;
 }
 
+/** Draft a Gulf-Arabic voiceover script via Claude (the avatar speaks it verbatim). */
+export async function draftReelScript(input: {
+  productName?: string | null; style?: string | null; notes?: string | null; priceQar?: number | null;
+}): Promise<{ error: string } | { script: string }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return { error: "ANTHROPIC_API_KEY غير مهيأ على الخادم." };
+  try {
+    const client = new Anthropic({ apiKey });
+    const resp = await client.messages.create({
+      model: process.env.STAFF_MALAK_MODEL || "claude-sonnet-4-6",
+      max_tokens: 500,
+      messages: [{ role: "user", content: buildScriptPrompt(input) }],
+    });
+    const text = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+    const script = text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 4).join("\n");
+    if (!script) return { error: "ما قدرت أكتب السيناريو — جرّب مرة ثانية." };
+    return { script };
+  } catch (e: any) {
+    return { error: `فشل توليد السيناريو: ${e?.message ?? "خطأ"}` };
+  }
+}
+
 export async function createReelRequest(input: {
   sku?: string | null; productName?: string | null; style?: string | null;
-  notes?: string | null; scheduledAtIso?: string | null;
+  notes?: string | null; script?: string | null; scheduledAtIso?: string | null;
 }): Promise<{ error: string } | { ok: true }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   if (!String(input.sku || input.productName || "").trim()) return { error: "اختر منتجًا أولًا." };
-  const row = {
+  const row: Record<string, unknown> = {
     sku: input.sku ?? null,
     product_name: input.productName ?? null,
     style: input.style ?? "ugc_gadget_saved_me",
     notes: (input.notes ?? "").trim() || null,
+    script: (input.script ?? "").trim() || null,
     scheduled_at: input.scheduledAtIso || null,
     status: "pending",
   };
-  const { error } = await db().from("reel_requests").insert(row);
+  let { error } = await db().from("reel_requests").insert(row);
+  // Graceful degrade if the script column isn't migrated yet.
+  if (error && /script/i.test(error.message)) {
+    const { script: _s, ...bare } = row;
+    ({ error } = await db().from("reel_requests").insert(bare));
+  }
   if (error) {
     if (isMissingTable(error.message)) return { error: "جدول الطلبات غير مهيأ بعد — شغّل supabase/reel_requests.sql." };
     return { error: error.message };
@@ -59,26 +91,37 @@ export async function listReelRequests(): Promise<{ error: string } | { rows: Re
   if (unauth) return unauth;
   const { data, error } = await db()
     .from("reel_requests")
-    .select("id, sku, product_name, style, notes, scheduled_at, status, video_url, created_at")
+    .select("id, sku, product_name, style, notes, script, scheduled_at, status, video_url, created_at")
     .order("created_at", { ascending: false })
     .limit(40);
   if (error) {
+    // Retry without the script column if it isn't migrated yet.
+    if (/script/i.test(error.message)) {
+      const retry = await db().from("reel_requests")
+        .select("id, sku, product_name, style, notes, scheduled_at, status, video_url, created_at")
+        .order("created_at", { ascending: false }).limit(40);
+      if (!retry.error) return { rows: mapRequestRows(retry.data) };
+    }
     if (isMissingTable(error.message)) return { rows: [] };
     return { error: error.message };
   }
-  const rows: ReelRequestRow[] = (data ?? []).map((r: any) => ({
+  return { rows: mapRequestRows(data) };
+}
+
+function mapRequestRows(data: any[]): ReelRequestRow[] {
+  return (data ?? []).map((r: any) => ({
     id: r.id,
     sku: r.sku ?? null,
     productName: r.product_name ?? null,
     style: r.style ?? null,
     notes: r.notes ?? null,
+    script: r.script ?? null,
     scheduledAtIso: r.scheduled_at ?? null,
     status: r.status ?? "pending",
     videoUrl: r.video_url ?? null,
-    brief: buildReelBrief({ productName: r.product_name, sku: r.sku, style: r.style, notes: r.notes, scheduledAtIso: r.scheduled_at }),
+    brief: buildReelBrief({ productName: r.product_name, sku: r.sku, style: r.style, notes: r.notes, script: r.script, scheduledAtIso: r.scheduled_at }),
     createdAtIso: r.created_at ?? null,
   }));
-  return { rows };
 }
 
 /** Attach the finished reel URL to a request and schedule it into social_posts. */

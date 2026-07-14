@@ -36,7 +36,24 @@ export interface ReelBriefInput {
   sku?: string | null;
   style?: string | null;
   notes?: string | null;
+  script?: string | null;
   scheduledAtIso?: string | null;
+}
+
+/** User prompt for Claude to draft a short Gulf-Arabic VO script for the reel. */
+export function buildScriptPrompt(input: { productName?: string | null; style?: string | null; notes?: string | null; priceQar?: number | null }): string {
+  const name = String(input.productName || "the product").trim();
+  const style = REEL_STYLES.find((x) => x.slug === input.style);
+  const notes = String(input.notes || "").trim();
+  return [
+    `Write the spoken voiceover script for a ${style ? style.labelEn : "UGC"} Instagram reel advertising «${name}»${input.priceQar != null ? ` (price ${input.priceQar} QAR)` : ""} for the Qatari beauty store Malika's Universe.`,
+    `Rules:`,
+    `- Exactly 4 short lines, one per scene, in NATURAL QATARI GULF ARABIC (Khaleeji) — spoken, warm, like a real Doha influencer. Not MSA, not formal.`,
+    `- Total ~30 words. Each line must be easy to pronounce clearly; avoid English letters, product codes, numbers, or hard abbreviations in the spoken lines.`,
+    `- Line 1 = a relatable hook/problem. Line 2 = introduce the product as the fix. Line 3 = how she uses it / the benefit. Line 4 = a warm CTA ending with: اطلبيه من ماليكاز يونيفرس، توصيل لكل قطر.`,
+    notes ? `- Owner direction: ${notes}` : ``,
+    `Return ONLY the 4 lines, each on its own line, no numbering, no quotes, no extra text.`,
+  ].filter(Boolean).join("\n");
 }
 
 /**
@@ -53,6 +70,13 @@ export function buildReelBrief(input: ReelBriefInput): string {
     `Format: vertical 9:16, ~15s, audio on, resolution 720p.`,
     `Spoken language: natural Gulf Arabic (Khaleeji). End with a warm CTA: order from Malika's Universe, delivery across Qatar.`,
   ];
+  const script = String(input.script || "").trim();
+  if (script) {
+    lines.push(
+      `Spoken script — the avatar must say these EXACT lines VERBATIM in clear Qatari Gulf Arabic (do not paraphrase, translate, or read codes/English aloud):`,
+      script,
+    );
+  }
   const notes = String(input.notes || "").trim();
   if (notes) lines.push(`Owner notes: ${notes}`);
   if (input.scheduledAtIso) lines.push(`Schedule for: ${input.scheduledAtIso}`);
