@@ -301,6 +301,7 @@ export async function reelsWeekStatus(): Promise<
 
 // ---- Auto-generate a reel video (Higgsfield, in-system) -----------------
 import { submitReelJob, getReelJob, higgsfieldConfigured } from "@/lib/social/higgsfield";
+import { DOP_PRODUCT_SUFFIX } from "@/lib/social/reel-request-compute";
 
 const IMG_BUCKET = "product-images";
 
@@ -346,7 +347,9 @@ export async function generateReelVideo(input: { sku: string | null; prompt: str
   if (!input.sku) return { error: "لا يوجد SKU للمنتج." };
   const imageUrl = await resolveProductImageUrl(input.sku);
   if (!imageUrl) return { error: "ما فيه صورة لهذا المنتج — أضف صورة أولًا." };
-  const r = await submitReelJob(imageUrl, input.prompt);
+  // Append the product-consistency guardrails so the clip doesn't morph the item.
+  const prompt = `${input.prompt} ${DOP_PRODUCT_SUFFIX}`.trim();
+  const r = await submitReelJob(imageUrl, prompt);
   if (!r.ok || !r.requestId) return { error: r.error || "فشل بدء التوليد." };
   return { requestId: r.requestId };
 }
