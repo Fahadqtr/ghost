@@ -8,8 +8,19 @@ import { buildComposeSource, type ComposeInput } from "./compose-compute";
 const BASE = "https://api.creatomate.com/v1";
 function apiKey(): string { return String(process.env.CREATOMATE_API_KEY ?? "").trim().replace(/^["']|["']$/g, ""); }
 export function composeConfigured(): boolean { return !!apiKey(); }
-export function malikaLogoUrl(): string { return String(process.env.MALIKA_LOGO_URL ?? "").trim(); }
-export function reelsMusicUrl(): string { return String(process.env.REELS_MUSIC_URL ?? "").trim(); }
+/**
+ * Read a URL env var defensively: trim, strip quotes, tolerate an accidental
+ * "KEY = value" paste, and only accept a real http(s) URL (else "" so the
+ * render skips that layer instead of failing on an invalid URL).
+ */
+function cleanUrl(v: string | undefined): string {
+  let s = String(v ?? "").trim().replace(/^["']|["']$/g, "").trim();
+  const m = /^[A-Za-z0-9_]+\s*=\s*(\S.*)$/.exec(s); // "MALIKA_LOGO_URL = https://…"
+  if (m) s = m[1].trim().replace(/^["']|["']$/g, "").trim();
+  return /^https?:\/\//i.test(s) ? s : "";
+}
+export function malikaLogoUrl(): string { return cleanUrl(process.env.MALIKA_LOGO_URL); }
+export function reelsMusicUrl(): string { return cleanUrl(process.env.REELS_MUSIC_URL); }
 
 const pick = (o: any, ...keys: string[]): string | undefined => {
   for (const k of keys) { const v = o?.[k]; if (v && typeof v !== "object") return String(v); }
