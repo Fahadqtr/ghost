@@ -17,9 +17,11 @@ export const DEFAULT_MAX_CAPTION_CHARS = 42; // keep lines short so they never o
  * single caption is too long for a 9:16 safe area.
  */
 export function splitCaptions(script: string, maxChars = DEFAULT_MAX_CAPTION_CHARS): string[] {
+  // Split on SENTENCE ends (. ! ؟ ? …) and newlines — NOT on commas, so a clause
+  // like «بسيط، عملي، ويستاهل» stays one caption instead of fragmenting.
   const pieces = String(script ?? "")
     .replace(/\s+/g, " ")
-    .split(/(?<=[.!؟?،…])\s+|\n+/)
+    .split(/(?<=[.!؟?…])\s+|\n+/)
     .map((s) => s.trim())
     .filter(Boolean);
   const out: string[] = [];
