@@ -19,13 +19,16 @@ export interface ComposeInput {
   durationSec?: number | null; // known voice length; when absent the comp auto-fits to the audio
 }
 
-/** Logo corner → Creatomate x/y (kept inside the 9:16 safe area). */
+// Small logo (~12% wide) with generous safe margins so it never crops or
+// overflows the 9:16 frame. Anchors are centred, so these are the logo's centre.
+export const LOGO_WIDTH_PCT = 12;
+/** Logo corner → Creatomate x/y centre (kept inside the 9:16 safe area). */
 export function logoCoords(pos?: LogoPosition | null): { x: string; y: string } {
   switch (pos) {
-    case "top-left": return { x: "17%", y: "8%" };
-    case "bottom-left": return { x: "17%", y: "92%" };
-    case "bottom-right": return { x: "83%", y: "92%" };
-    case "top-right": default: return { x: "83%", y: "8%" };
+    case "top-left": return { x: "13%", y: "9%" };
+    case "bottom-left": return { x: "13%", y: "70%" };   // above captions/CTA
+    case "bottom-right": return { x: "87%", y: "70%" };
+    case "top-right": default: return { x: "87%", y: "9%" };
   }
 }
 
@@ -66,23 +69,25 @@ export function buildComposeSource(opts: ComposeInput): Record<string, unknown> 
   if (opts.audioUrl) {
     elements.push({ type: "audio", track: 3, source: opts.audioUrl, volume: "100%" });
   }
-  // Brand logo — configurable corner (default top-right), small, inside safe area.
+  // Brand logo — configurable corner (default top-right), small (~12% wide) and
+  // fit:"contain" so its aspect ratio is preserved and it never crops/overflows.
   if (opts.logoUrl) {
     const lc = logoCoords(opts.logoPosition);
-    elements.push({ type: "image", track: 4, source: opts.logoUrl, width: "22%", x: lc.x, y: lc.y, x_anchor: "50%", y_anchor: "50%" });
+    elements.push({ type: "image", track: 4, source: opts.logoUrl, width: `${LOGO_WIDTH_PCT}%`, fit: "contain", x: lc.x, y: lc.y, x_anchor: "50%", y_anchor: "50%" });
   }
-  // «اطلب الآن» CTA — a clean bottom banner with a soft scrim + outline so text
-  // stays legible over any footage (looks more polished than a flat pill).
+  // «اطلبي الآن» CTA — a premium/minimal pill in the bottom safe area: smaller
+  // type, clear padding, subtle shadow. Never sits on the very edge and never
+  // covers the product or captions.
   const cta = String(opts.ctaText ?? "").trim();
   if (cta) {
     elements.push({
       type: "text", track: 5, text: cta,
-      y: "88%", width: "86%", x: "50%", x_anchor: "50%", y_anchor: "50%",
-      font_family: "Cairo", font_weight: "800", font_size: "8.5vmin",
+      y: "84%", width: "80%", x: "50%", x_anchor: "50%", y_anchor: "50%",
+      font_family: "Cairo", font_weight: "700", font_size: "6vmin",
       fill_color: "#ffffff",
-      shadow_color: "rgba(0,0,0,0.55)", shadow_blur: "2vmin", shadow_x: "0", shadow_y: "0.4vmin",
-      background_color: "rgba(124,58,237,0.92)",
-      background_x_padding: "7%", background_y_padding: "3.5%", background_border_radius: "36%",
+      shadow_color: "rgba(0,0,0,0.45)", shadow_blur: "1.6vmin", shadow_x: "0", shadow_y: "0.3vmin",
+      background_color: "rgba(124,58,237,0.94)",
+      background_x_padding: "5.5%", background_y_padding: "2.8%", background_border_radius: "40%",
       text_transform: "none",
     });
   }
@@ -98,14 +103,17 @@ export function buildComposeSource(opts: ComposeInput): Record<string, unknown> 
       text_transform: "none",
     });
   }
-  // Burned-in captions in the 9:16 safe area (mid-upper — never covers the
-  // product/face). Most reels are watched muted, so captions matter.
+  // Burned-in captions in the 9:16 safe area (lower-middle — above the CTA, never
+  // covers the product/face). A subtle dark scrim behind the text keeps Arabic
+  // readable over any footage. Most reels are watched muted, so captions matter.
   const captionStyle = {
-    y: "64%", width: "88%", x: "50%", x_anchor: "50%", y_anchor: "50%",
-    font_family: "Cairo", font_weight: "700", font_size: "5.4vmin",
+    y: "68%", width: "84%", x: "50%", x_anchor: "50%", y_anchor: "50%",
+    font_family: "Cairo", font_weight: "700", font_size: "5vmin",
     fill_color: "#ffffff",
-    stroke_color: "#000000", stroke_width: "0.4vmin",
-    shadow_color: "rgba(0,0,0,0.6)", shadow_blur: "2vmin", shadow_x: "0", shadow_y: "0.3vmin",
+    stroke_color: "#000000", stroke_width: "0.35vmin",
+    shadow_color: "rgba(0,0,0,0.55)", shadow_blur: "1.6vmin", shadow_x: "0", shadow_y: "0.3vmin",
+    background_color: "rgba(0,0,0,0.34)",
+    background_x_padding: "4%", background_y_padding: "2%", background_border_radius: "12%",
     text_transform: "none",
   } as const;
   const cues = Array.isArray(opts.captions) ? opts.captions.filter((c) => c && String(c.text ?? "").trim()) : [];
