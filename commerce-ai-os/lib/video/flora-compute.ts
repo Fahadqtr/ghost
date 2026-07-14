@@ -30,6 +30,22 @@ export function buildFloraInputs(opts: FloraRunInput): FloraInputField[] {
   return inputs;
 }
 
+/**
+ * Parse the required image-input id from a FLORA 400 validation body.
+ * FLORA auto-generates the input id from the canvas node (e.g. "imgi-271-9-jpg")
+ * and it changes whenever the technique is rebuilt, so we read it back from the
+ * error and retry — no hard-coded id needed.
+ * e.g. Missing required input "imgi-271-9-jpg" (imageUrl); Unknown input "input_image"
+ */
+export function parseMissingImageInputId(body: string | null | undefined): string | undefined {
+  let text = String(body ?? "");
+  // Prefer the clean (unescaped) message when the body is JSON.
+  try { const j: any = JSON.parse(text); const msg = j?.error?.message ?? j?.message; if (typeof msg === "string") text = msg; } catch { /* raw text */ }
+  // Tolerate JSON-escaped quotes (\") when parsing the raw body.
+  const m = /Missing required input\s+\\?"([^"\\]+)\\?"\s*\(\s*(?:imageUrl|IMAGE_URL)\s*\)/i.exec(text);
+  return m ? m[1] : undefined;
+}
+
 /** Normalise a FLORA run's status into our shared vocabulary. */
 export function floraStatus(raw: string | null | undefined, hasOutput: boolean):
   "pending" | "completed" | "failed" | "unknown" {
