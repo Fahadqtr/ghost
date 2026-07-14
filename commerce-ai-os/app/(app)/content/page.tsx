@@ -2,6 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getT } from "@/lib/i18n-server";
 import ContentGenerator, { type PickProduct } from "@/components/ContentGenerator";
 import ReelsWeekPlan from "@/components/ReelsWeekPlan";
+import ReelRequestPanel from "@/components/ReelRequestPanel";
+import { listReelRequests, type ReelRequestRow } from "@/app/(app)/content/reel-request-actions";
 import ReelsDashboard from "@/components/ReelsDashboard";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +42,10 @@ export default async function ContentPage() {
     if (!data || data.length < PAGE) break;
   }
 
+  // Existing professional-reel requests (empty until the table is migrated).
+  const rr = await listReelRequests();
+  const reelRequests: ReelRequestRow[] = "rows" in rr ? rr.rows : [];
+
   return (
     <div className="space-y-4">
       <div>
@@ -53,6 +59,7 @@ export default async function ContentPage() {
       </div>
 
       <ReelsWeekPlan locale={locale} />
+      <ReelRequestPanel items={items} initial={reelRequests} locale={locale} />
       <ReelsDashboard locale={locale} />
 
       {loadError ? (
