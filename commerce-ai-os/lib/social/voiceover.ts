@@ -12,6 +12,33 @@ function apiKey(): string { return String(process.env.ELEVENLABS_API_KEY ?? "").
 function voiceId(): string { return String(process.env.ELEVENLABS_VOICE_ID ?? "").trim().replace(/^["']|["']$/g, ""); }
 function modelId(): string { return String(process.env.ELEVENLABS_MODEL_ID ?? "").trim().replace(/^["']|["']$/g, "") || "eleven_multilingual_v2"; }
 export function voiceoverConfigured(): boolean { return !!apiKey() && !!voiceId(); }
+export function elevenVoiceId(): string { return voiceId(); }
+export function elevenModelId(): string { return modelId(); }
+
+export type VoiceConnState = "connected" | "not_connected" | "error";
+
+/**
+ * Live connection status for the studio Voice Engine. Validates the key AND the
+ * voice id in one call (GET /voices/{id}) so the studio can show Connected /
+ * Not Connected / Error precisely.
+ */
+export async function elevenStatus(): Promise<{ state: VoiceConnState; detail?: string; voiceId: string; model: string }> {
+  const vid = voiceId(); const model = modelId();
+  if (!apiKey()) return { state: "not_connected", detail: "لا يوجد ELEVENLABS_API_KEY.", voiceId: vid, model };
+  if (!vid) return { state: "not_connected", detail: "لا يوجد ELEVENLABS_VOICE_ID.", voiceId: vid, model };
+  try {
+    const r = await fetch(`${BASE}/voices/${encodeURIComponent(vid)}`, {
+      headers: { "xi-api-key": apiKey() }, cache: "no-store", signal: AbortSignal.timeout(12_000),
+    });
+    if (r.ok) return { state: "connected", voiceId: vid, model };
+    if (r.status === 401) return { state: "error", detail: "مفتاح ElevenLabs غير صالح.", voiceId: vid, model };
+    if (r.status === 404) return { state: "error", detail: "Voice ID غير موجود في حسابك.", voiceId: vid, model };
+    const t = await r.text();
+    return { state: "error", detail: `ElevenLabs HTTP ${r.status} — ${t.slice(0, 120)}`, voiceId: vid, model };
+  } catch (e: any) {
+    return { state: "error", detail: e?.message || "تعذّر الاتصال بـ ElevenLabs.", voiceId: vid, model };
+  }
+}
 
 /**
  * Synthesize Arabic speech; returns a public mp3 URL and its exact duration.

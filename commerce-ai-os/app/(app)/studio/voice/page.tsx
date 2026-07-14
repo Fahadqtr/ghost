@@ -1,10 +1,12 @@
 import { getT } from "@/lib/i18n-server";
-import ModuleScaffold from "@/components/studio/ModuleScaffold";
+import StudioVoiceEngine from "@/components/studio/StudioVoiceEngine";
+import { voiceEngineStatus } from "@/app/(app)/studio/voice-actions";
 
 export const dynamic = "force-dynamic";
 
-// Malika AI Studio → voice (scaffold). Real engine wired in a later step.
+// Malika AI Studio → Voice Engine (phase 3): ElevenLabs Gulf voice preview.
 export default async function Page() {
   const { locale } = await getT();
-  return <ModuleScaffold slug="voice" locale={locale} />;
+  const status = await voiceEngineStatus();
+  return <StudioVoiceEngine locale={locale} initialStatus={status} />;
 }
