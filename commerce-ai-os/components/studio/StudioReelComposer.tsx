@@ -167,8 +167,24 @@ export default function StudioReelComposer({ locale = "ar", status }: {
               </div>
             </div>
           </div>
+          {/* Duration sync — voice length drives the reel; the FLORA video loops
+              to fill it (no unnatural stretching). */}
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-lg bg-white/70 px-2 py-1.5">
+              <p className="text-[10px] text-violet-500">{L("الفيديو", "Video")}</p>
+              <p className="text-xs font-bold text-violet-900">{L("حلقة", "loops")}</p>
+            </div>
+            <div className="rounded-lg bg-white/70 px-2 py-1.5">
+              <p className="text-[10px] text-violet-500">{L("الصوت", "Voice")}</p>
+              <p className="text-xs font-bold text-violet-900">{prepared.durationSec ? `${prepared.durationSec.toFixed(1)}s` : "auto"}</p>
+            </div>
+            <div className="rounded-lg bg-white/70 px-2 py-1.5">
+              <p className="text-[10px] text-violet-500">{L("الريل النهائي", "Final")}</p>
+              <p className="text-xs font-bold text-violet-900">{prepared.finalDurationSec.toFixed(1)}s</p>
+            </div>
+          </div>
           <p className="text-[11px] text-violet-900">
-            {L("الشعار:", "Logo:")} {showLogo ? logoPosition : L("مخفي", "off")} · CTA: {cta || DEFAULT_CTA} · {L("موسيقى:", "Music:")} {useMusic ? "on" : "off"} · {L("مدة:", "duration:")} {prepared.durationSec ? `${prepared.durationSec.toFixed(1)}s` : "auto"}
+            {L("الشعار:", "Logo:")} {showLogo ? logoPosition : L("مخفي", "off")} · CTA: {cta || DEFAULT_CTA} · {L("موسيقى:", "Music:")} {useMusic ? "on" : "off"} · 1080×1920
             {prepared.brandLine ? ` · ${prepared.brandLine}` : ""}
           </p>
           <button onClick={compose} disabled={busy} className="btn-primary px-4 py-2 text-sm disabled:opacity-50">

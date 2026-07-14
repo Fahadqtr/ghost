@@ -40,7 +40,7 @@ test("buildBrandLine joins product + handle", () => {
 });
 
 test("logoCoords maps every corner, default top-right", () => {
-  assert.deepEqual(logoCoords("top-left"), { x: "17%", y: "8%" });
-  assert.deepEqual(logoCoords("bottom-right"), { x: "83%", y: "92%" });
-  assert.deepEqual(logoCoords(null), { x: "83%", y: "8%" });
+  assert.deepEqual(logoCoords("top-left"), { x: "13%", y: "9%" });
+  assert.deepEqual(logoCoords("bottom-right"), { x: "87%", y: "70%" });
+  assert.deepEqual(logoCoords(null), { x: "87%", y: "9%" });
 });

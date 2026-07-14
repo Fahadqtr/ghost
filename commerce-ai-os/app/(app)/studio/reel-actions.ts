@@ -6,6 +6,7 @@ import { requireUser } from "@/lib/auth/requireUser";
 import { synthArabicVoice } from "@/lib/social/voiceover";
 import { submitCompose, getCompose, composeConfigured, malikaLogoUrl, reelsMusicUrl } from "@/lib/social/compose";
 import type { CaptionCue, LogoPosition } from "@/lib/social/compose-compute";
+import { resolveReelDuration } from "@/lib/social/compose-compute";
 import {
   splitCaptions, timeCaptions, bilingualCaptions, buildBrandLine,
   DEFAULT_CTA, DEFAULT_LOGO_POSITION, type CaptionLanguage,
@@ -50,7 +51,8 @@ export interface ReelSettings {
 
 export interface ReelPrepared {
   audioUrl: string;
-  durationSec?: number;
+  durationSec?: number;      // measured voiceover length
+  finalDurationSec: number;  // the reel length (voice + short tail, bounded)
   captionLines: string[];
   cues: CaptionCue[];
   brandLine: string;
@@ -84,9 +86,10 @@ export async function prepareFinalReel(input: ReelSettings): Promise<{ error: st
     else if (lang === "ar_en" && enLines.length) captionLines = bilingualCaptions(arLines, enLines);
   }
 
-  const cues = timeCaptions(captionLines, voice.durationSec ?? 0);
+  const finalDurationSec = resolveReelDuration(voice.durationSec);
+  const cues = timeCaptions(captionLines, voice.durationSec ?? finalDurationSec);
   const brandLine = buildBrandLine(input.productName, input.handle);
-  return { audioUrl: voice.url, durationSec: voice.durationSec, captionLines, cues, brandLine };
+  return { audioUrl: voice.url, durationSec: voice.durationSec, finalDurationSec, captionLines, cues, brandLine };
 }
 
 /** Render the final reel via Creatomate from the prepared voice + caption plan. */
