@@ -101,10 +101,10 @@ export const STUDIO_MODULES: StudioModule[] = [
 
 /** Quick actions shown on the studio dashboard. */
 export const STUDIO_QUICK_ACTIONS = [
+  { href: "/studio/reel", labelAr: "إنشاء الريل النهائي", labelEn: "Final Reel", icon: "🎞️" },
   { href: "/studio/video", labelAr: "ريل جديد", labelEn: "New reel", icon: "✨" },
+  { href: "/studio/voice", labelAr: "الصوت", labelEn: "Voice", icon: "🔊" },
   { href: "/studio/products", labelAr: "المنتجات", labelEn: "Products", icon: "📦" },
-  { href: "/studio/templates", labelAr: "التمبلتات", labelEn: "Templates", icon: "🎛️" },
-  { href: "/studio/queue", labelAr: "قائمة الانتظار", labelEn: "Queue", icon: "⏳" },
   { href: "/studio/settings", labelAr: "الإعدادات", labelEn: "Settings", icon: "⚙️" },
 ] as const;
 
