@@ -3,7 +3,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { requireUser } from "@/lib/auth/requireUser";
 import { synthArabicVoice, elevenStatus, elevenVoiceId, elevenModelId, listGulfVoiceCandidates, type VoiceConnState, type VoiceDebug } from "@/lib/social/voiceover";
-import { buildGulfScriptPrompt, buildGulfDialectPrompt, buildGulfRewriteOnlyPrompt, cleanScriptLines, normalizeVoiceIds, AUDITION_TEST_LINE, type VoiceCandidate, type AuditionResult } from "@/lib/voice/voice-compute";
+import { buildGulfScriptPrompt, buildGulfDialectPrompt, buildGulfRewriteOnlyPrompt, cleanScriptLines, normalizeVoiceIds, addNaturalPauses, AUDITION_TEST_LINE, type VoiceCandidate, type AuditionResult } from "@/lib/voice/voice-compute";
 
 // Malika AI Studio → Voice Engine (phase 3). ElevenLabs is the ONLY voice
 // provider (no generic-Arabic fallback). Flow: write/generate a script → refine
@@ -107,6 +107,34 @@ export async function suggestGulfVoices(): Promise<{ error: string } | { voices:
   const r = await listGulfVoiceCandidates();
   if (!r.ok) return { error: r.error || "تعذّر جلب الأصوات." };
   return { voices: r.voices };
+}
+
+export interface ABClip { label: string; settings: { stability: number; style: number; speed: number }; text: string; audioUrl?: string; error?: string; debug?: VoiceDebug }
+
+/**
+ * Final A/B on the brand voice (voice id + model + text mode unchanged):
+ * A = current settings; B = the proposed settings (stability 0.45, style 0.20,
+ * speed 0.96) + natural pauses (no tashkeel). Same voice + line for both.
+ */
+export async function voiceAB(input: { voiceId: string; text?: string }): Promise<{ error: string } | { a: ABClip; b: ABClip }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const voiceId = String(input.voiceId || "").trim();
+  if (!voiceId) return { error: "أدخل Voice ID." };
+  const base = String(input.text || "").trim() || AUDITION_TEST_LINE;
+
+  const aSettings = { stability: 0.4, style: 0.35, speed: 1.0 };
+  const bSettings = { stability: 0.45, style: 0.20, speed: 0.96 };
+  const bText = addNaturalPauses(base); // only B gets natural pauses
+
+  const [ra, rb] = await Promise.all([
+    synthArabicVoice(base, { voiceId, ...aSettings }),
+    synthArabicVoice(bText, { voiceId, ...bSettings }),
+  ]);
+  return {
+    a: { label: "A · الإعداد الحالي", settings: aSettings, text: base, audioUrl: ra.url, error: ra.ok ? undefined : ra.error, debug: ra.debug },
+    b: { label: "B · الإعدادات الجديدة + وقفات", settings: bSettings, text: bText, audioUrl: rb.url, error: rb.ok ? undefined : rb.error, debug: rb.debug },
+  };
 }
 
 export interface DebugClip { label: string; variant: "raw" | "rewrite" | "normalized"; model: string; text: string; audioUrl?: string; error?: string; debug?: VoiceDebug }

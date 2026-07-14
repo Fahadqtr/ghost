@@ -79,11 +79,11 @@ export async function listGulfVoiceCandidates(): Promise<{ ok: boolean; voices: 
  */
 function envNum(v: string | undefined, def: number): number { const n = Number(String(v ?? "").trim()); return Number.isFinite(n) ? n : def; }
 
-export interface VoiceDebug { voiceId: string; modelId: string; stability: number; similarityBoost: number; style: number; useSpeakerBoost: boolean; languageCode: string | null; textLen: number }
+export interface VoiceDebug { voiceId: string; modelId: string; stability: number; similarityBoost: number; style: number; speed: number; useSpeakerBoost: boolean; languageCode: string | null; textLen: number }
 
 export async function synthArabicVoice(
   text: string,
-  opts?: { voiceId?: string; modelId?: string; stability?: number; style?: number; similarity?: number; speakerBoost?: boolean },
+  opts?: { voiceId?: string; modelId?: string; stability?: number; style?: number; similarity?: number; speed?: number; speakerBoost?: boolean },
 ): Promise<{ ok: boolean; url?: string; durationSec?: number; error?: string; debug?: VoiceDebug }> {
   // Voice id can be overridden (for the studio audition/compare); default = env.
   const vid = String(opts?.voiceId ?? "").trim() || voiceId();
@@ -94,10 +94,11 @@ export async function synthArabicVoice(
   const stability = opts?.stability ?? envNum(process.env.ELEVENLABS_STABILITY, 0.4);
   const style = opts?.style ?? envNum(process.env.ELEVENLABS_STYLE, 0.35);
   const similarity = opts?.similarity ?? envNum(process.env.ELEVENLABS_SIMILARITY, 0.85);
+  const speed = opts?.speed ?? envNum(process.env.ELEVENLABS_SPEED, 1.0);
   const speakerBoost = opts?.speakerBoost ?? true;
   // We deliberately do NOT send language_code — it isn't supported across all
   // models and can shift the accent. Log every request (never the API key).
-  const debug: VoiceDebug = { voiceId: vid, modelId: model, stability, similarityBoost: similarity, style, useSpeakerBoost: speakerBoost, languageCode: null, textLen: line.length };
+  const debug: VoiceDebug = { voiceId: vid, modelId: model, stability, similarityBoost: similarity, style, speed, useSpeakerBoost: speakerBoost, languageCode: null, textLen: line.length };
   console.log("[voiceover] tts request", JSON.stringify({ ...debug, textPreview: line.slice(0, 60) }));
   try {
     const r = await fetch(`${BASE}/text-to-speech/${encodeURIComponent(vid)}/with-timestamps`, {
@@ -106,7 +107,7 @@ export async function synthArabicVoice(
       body: JSON.stringify({
         text: line,
         model_id: model,
-        voice_settings: { stability, similarity_boost: similarity, style, use_speaker_boost: speakerBoost },
+        voice_settings: { stability, similarity_boost: similarity, style, speed, use_speaker_boost: speakerBoost },
       }),
       cache: "no-store",
       signal: AbortSignal.timeout(60_000),
