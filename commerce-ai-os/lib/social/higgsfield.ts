@@ -52,14 +52,17 @@ const VIDEO_MODELS: Record<string, VideoModel> = {
       params: { model: "dop-turbo", prompt, aspect_ratio: "9:16", input_images: [{ type: "image_url", image_url: imageUrl }] },
     }),
   },
-  // Documented path-based endpoints with a flat body (image_url/prompt/duration).
+  // Documented path-based endpoints with a flat body. We also REQUEST native
+  // audio (sound/generate_audio) — Higgsfield ignores unknown fields, so this
+  // is harmless where unsupported and gives sound where it is. (Marketing
+  // Studio's talking-avatar reels are still app-only, not on the API.)
   kling: {
     path: "kling-video/v2.1/pro/image-to-video",
-    body: (imageUrl, prompt) => ({ image_url: imageUrl, prompt, duration: DURATION, aspect_ratio: "9:16" }),
+    body: (imageUrl, prompt) => ({ image_url: imageUrl, prompt, duration: DURATION, aspect_ratio: "9:16", sound: "on", generate_audio: true }),
   },
   seedance: {
     path: "bytedance/seedance/v1/pro/image-to-video",
-    body: (imageUrl, prompt) => ({ image_url: imageUrl, prompt, duration: DURATION, aspect_ratio: "9:16" }),
+    body: (imageUrl, prompt) => ({ image_url: imageUrl, prompt, duration: DURATION, aspect_ratio: "9:16", generate_audio: true }),
   },
 };
 function selectedModel(): { key: string; model: VideoModel } {
