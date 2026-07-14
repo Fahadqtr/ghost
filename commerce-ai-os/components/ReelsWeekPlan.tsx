@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { previewReelsWeek, queueReel, generateReelVideo, pollReelVideo } from "@/app/(app)/content/actions";
+import { previewReelsWeek, queueReel, generateReelVideo, pollReelVideo, finalizeReel, pollReelCompose } from "@/app/(app)/content/actions";
 import type { ReelPlanItem } from "@/lib/social/reels-plan";
 import { qatarDayLabel, qatarTimeLabel } from "@/lib/social/schedule-compute";
 import ProductThumb from "@/components/ProductThumb";
@@ -15,6 +15,10 @@ const productUrl = (sku: string | null) =>
 // Ready Arabic UGC brief to paste into Marketing Studio's prompt.
 const marketingBriefAr = (name: string) =>
   `ريل UGC لمنتج «${name}». بنت خليجية في حمّام عصري بالدوحة: هوك بأول ١.٥ ثانية، تُظهر المنتج بوضوح (الليبل للكاميرا)، تفتحه وتطبّقه، تبيّن النضارة، ثم توصّي فيه. تتكلم بالعربي الخليجي. طاقة عالية، مظهر نظيف، بدون نص على الشاشة.`;
+// Natural Gulf-Arabic spoken script for the ElevenLabs voiceover on the
+// assembled reel — short, conversational, ends on the «اطلب الآن» CTA.
+const spokenAr = (name: string) =>
+  `عيونـي، لقيت لكم ${name || "المنتج"} من ماليكاس يونيفرس وصراحة خطف قلبي. النتيجة تبيّن من أول استخدام، ونضارة تدوم طول اليوم. اطلبيه الحين من ماليكاس يونيفرس والتوصيل لباب بيتك في قطر.`;
 
 // Weekly Reels plan: 14 Reels/week across 5 formats, each with an English
 // Higgsfield prompt (copy-paste), a Gulf-Arabic caption brief, a CTA type, and
@@ -32,6 +36,7 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
   const [qerr, setQerr] = useState<Record<number, string>>({});
   const [gen, setGen] = useState<Record<number, "idle" | "working" | "error">>({});
   const [genErr, setGenErr] = useState<Record<number, string>>({});
+  const [genPhase, setGenPhase] = useState<Record<number, string>>({});
 
   // Auto-generate the reel video in-system (Higgsfield image→video from the
   // product photo), then poll until ready and auto-fill the URL field.
@@ -50,6 +55,57 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
       setTimeout(tick, 15000);
     };
     setTimeout(tick, 15000);
+  };
+
+  // Full pipeline, no manual steps: generate the silent product video →
+  // Arabic voiceover → logo + «اطلب الآن» overlay (Creatomate) → fill the URL
+  // field with the finished reel. Phase labels keep the operator informed.
+  const genFull = async (it: ReelPlanItem) => {
+    if (!it.sku) { setGenErr((s) => ({ ...s, [it.index]: L("لا يوجد منتج", "No product") })); return; }
+    const set = (phase: string) => setGenPhase((s) => ({ ...s, [it.index]: phase }));
+    setGen((s) => ({ ...s, [it.index]: "working" }));
+    setGenErr((s) => ({ ...s, [it.index]: "" }));
+    const fail = (msg: string) => { setGen((s) => ({ ...s, [it.index]: "error" })); setGenErr((s) => ({ ...s, [it.index]: msg })); set(""); };
+
+    // 1) Higgsfield video from the product photo.
+    set(L("١/٣ يولّد الفيديو…", "1/3 video…"));
+    const r = await generateReelVideo({ sku: it.sku, prompt: it.promptEn });
+    if ("error" in r) return fail(r.error);
+
+    // 2) Poll the video, then finalize (voiceover + overlay), then poll the render.
+    let vAttempts = 0;
+    const waitVideo = async (): Promise<string | null> => new Promise((resolve) => {
+      const tick = async () => {
+        vAttempts++;
+        const p = await pollReelVideo(r.requestId);
+        if ("error" in p) { fail(p.error); return resolve(null); }
+        if (p.videoUrl) return resolve(p.videoUrl);
+        if (vAttempts > 40) { fail(L("طال وقت توليد الفيديو", "Video timed out")); return resolve(null); }
+        setTimeout(tick, 15000);
+      };
+      setTimeout(tick, 15000);
+    });
+    const videoUrl = await waitVideo();
+    if (!videoUrl) return;
+
+    set(L("٢/٣ صوت عربي + لوقو + «اطلب الآن»…", "2/3 voice + logo + CTA…"));
+    const f = await finalizeReel({ videoUrl, scriptAr: spokenAr(it.productName ?? ""), ctaText: "اطلب الآن 🌸" });
+    if ("error" in f) return fail(f.error);
+    if (f.url) { setVurl((s) => ({ ...s, [it.index]: f.url! })); setGen((s) => ({ ...s, [it.index]: "idle" })); set(""); return; }
+    if (!f.renderId) return fail(L("لم يرجع رابط التركيب", "No render returned"));
+
+    set(L("٣/٣ يركّب الريل…", "3/3 composing…"));
+    let cAttempts = 0;
+    const renderId = f.renderId;
+    const waitCompose = async () => {
+      cAttempts++;
+      const p = await pollReelCompose(renderId);
+      if ("error" in p) return fail(p.error);
+      if (p.url) { setVurl((s) => ({ ...s, [it.index]: p.url! })); setGen((s) => ({ ...s, [it.index]: "idle" })); set(""); return; }
+      if (cAttempts > 40) return fail(L("طال وقت التركيب", "Compose timed out"));
+      setTimeout(waitCompose, 15000);
+    };
+    setTimeout(waitCompose, 15000);
   };
 
   const queue = async (it: ReelPlanItem) => {
@@ -107,8 +163,8 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
       </div>
 
       <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800">
-        💡 {L("مساران: زر «ولّد تلقائيًا» يسوي فيديو سريع من صورة المنتج (تحريك، للحجم). للجودة العالية (شخص يتكلم + صوت) ولّد الريل من تطبيق Higgsfield → Marketing Studio والصق رابطه في الخانة، ثم جدولة.",
-          "Two paths: “Auto-generate” makes a quick clip from the product photo (motion, for volume). For premium quality (a person talking + audio) generate the reel in the Higgsfield app → Marketing Studio and paste its URL below, then Queue.")}
+        💡 {L("زر «ريل كامل» يسوي كل شي تلقائيًا: فيديو من صورة المنتج + صوت عربي طبيعي + لوقو ماليكاس + «اطلب الآن» على الشاشة — بدون أي تدخل. يحتاج مفاتيح ElevenLabs و Creatomate في Vercel. للـ UGC (شخص يتكلم) استخدم Marketing Studio تحت.",
+          "The “Full reel” button does everything automatically: video from the product photo + natural Arabic voice + Malika logo + on-screen “Order now” — hands-off. Needs the ElevenLabs & Creatomate keys in Vercel. For UGC (a person talking) use Marketing Studio below.")}
       </p>
 
       {err ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p> : null}
@@ -176,9 +232,15 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
                 <div className="mt-2 space-y-1.5">
                   {/* Auto-generate the video in-system, or paste a URL manually. */}
                   <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={() => genFull(it)} disabled={gen[it.index] === "working"}
+                      className="shrink-0 rounded-md bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                      {gen[it.index] === "working"
+                        ? `⏳ ${genPhase[it.index] || L("يشتغل…", "working…")}`
+                        : `🎬✨ ${L("ريل كامل (صوت+لوقو+اطلب الآن)", "Full reel (voice+logo+CTA)")}`}
+                    </button>
                     <button onClick={() => generate(it)} disabled={gen[it.index] === "working"}
-                      className="shrink-0 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
-                      {gen[it.index] === "working" ? `⏳ ${L("يولّد… (دقائق)", "generating… (min)")}` : `🎬 ${L("ولّد الفيديو تلقائيًا", "Auto-generate video")}`}
+                      className="shrink-0 rounded-md bg-violet-100 px-3 py-1.5 text-xs font-bold text-violet-700 disabled:opacity-50">
+                      🎬 {L("فيديو فقط (بدون صوت)", "Video only (silent)")}
                     </button>
                     <span className="text-[11px] text-muted">{L("أو الصق رابط Marketing Studio ↓", "or paste a Marketing Studio URL ↓")}</span>
                     {genErr[it.index] ? <span className="w-full text-[11px] text-red-600">{genErr[it.index]}</span> : null}

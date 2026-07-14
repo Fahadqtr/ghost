@@ -359,3 +359,48 @@ export async function pollReelVideo(requestId: string): Promise<{ error: string 
   if (s.status === "failed") return { error: s.error || "فشل التوليد." };
   return { status: s.status, videoUrl: s.videoUrl };
 }
+
+// ---- Full reel assembly: video + Arabic voiceover + logo/CTA ------------
+import { synthArabicVoice, voiceoverConfigured } from "@/lib/social/voiceover";
+import { submitCompose, getCompose, composeConfigured } from "@/lib/social/compose";
+
+/** Whether the full-assembly pipeline is wired (for the UI to enable the button). */
+export async function reelPipelineStatus(): Promise<{ higgsfield: boolean; voice: boolean; compose: boolean }> {
+  await requireUser();
+  return { higgsfield: higgsfieldConfigured(), voice: voiceoverConfigured(), compose: composeConfigured() };
+}
+
+/**
+ * Take an already-generated (silent) product video, add an Arabic voiceover,
+ * the Malika logo and an «اطلب الآن» CTA, and return a render to poll. The
+ * voiceover step is skipped gracefully if ElevenLabs isn't configured.
+ */
+export async function finalizeReel(input: { videoUrl: string; scriptAr?: string; ctaText?: string }):
+  Promise<{ error: string } | { renderId?: string; url?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const videoUrl = String(input.videoUrl || "").trim();
+  if (!/^https?:\/\//i.test(videoUrl)) return { error: "رابط فيديو غير صالح للتركيب." };
+  if (!composeConfigured()) return { error: "Creatomate غير مهيأ — أضف CREATOMATE_API_KEY (واختياري MALIKA_LOGO_URL) في Vercel." };
+
+  let audioUrl: string | null = null;
+  const script = String(input.scriptAr || "").trim();
+  if (script && voiceoverConfigured()) {
+    const v = await synthArabicVoice(script);
+    if (!v.ok) return { error: v.error || "فشل توليد الصوت." };
+    audioUrl = v.url ?? null;
+  }
+
+  const r = await submitCompose({ videoUrl, audioUrl, ctaText: input.ctaText || "اطلب الآن 🌸" });
+  if (!r.ok) return { error: r.error || "فشل التركيب." };
+  return { renderId: r.renderId, url: r.url };
+}
+
+/** Poll a compose render; returns the final mp4 URL once ready. */
+export async function pollReelCompose(renderId: string): Promise<{ error: string } | { status: string; url?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const s = await getCompose(renderId);
+  if (s.status === "failed") return { error: s.error || "فشل التركيب." };
+  return { status: s.status, url: s.url };
+}
