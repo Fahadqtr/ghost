@@ -77,29 +77,34 @@ export async function listGulfVoiceCandidates(): Promise<{ ok: boolean; voices: 
  */
 function envNum(v: string | undefined, def: number): number { const n = Number(String(v ?? "").trim()); return Number.isFinite(n) ? n : def; }
 
+export interface VoiceDebug { voiceId: string; modelId: string; stability: number; similarityBoost: number; style: number; useSpeakerBoost: boolean; languageCode: string | null; textLen: number }
+
 export async function synthArabicVoice(
   text: string,
-  opts?: { voiceId?: string; stability?: number; style?: number },
-): Promise<{ ok: boolean; url?: string; durationSec?: number; error?: string }> {
+  opts?: { voiceId?: string; modelId?: string; stability?: number; style?: number; similarity?: number; speakerBoost?: boolean },
+): Promise<{ ok: boolean; url?: string; durationSec?: number; error?: string; debug?: VoiceDebug }> {
   // Voice id can be overridden (for the studio audition/compare); default = env.
   const vid = String(opts?.voiceId ?? "").trim() || voiceId();
   if (!apiKey() || !vid) return { ok: false, error: "ElevenLabs غير مهيأ (ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID)." };
   const line = String(text ?? "").trim().slice(0, 800);
   if (!line) return { ok: false, error: "لا يوجد نص للصوت." };
+  const model = String(opts?.modelId ?? "").trim() || modelId();
+  const stability = opts?.stability ?? envNum(process.env.ELEVENLABS_STABILITY, 0.4);
+  const style = opts?.style ?? envNum(process.env.ELEVENLABS_STYLE, 0.35);
+  const similarity = opts?.similarity ?? envNum(process.env.ELEVENLABS_SIMILARITY, 0.85);
+  const speakerBoost = opts?.speakerBoost ?? true;
+  // We deliberately do NOT send language_code — it isn't supported across all
+  // models and can shift the accent. Log every request (never the API key).
+  const debug: VoiceDebug = { voiceId: vid, modelId: model, stability, similarityBoost: similarity, style, useSpeakerBoost: speakerBoost, languageCode: null, textLen: line.length };
+  console.log("[voiceover] tts request", JSON.stringify({ ...debug, textPreview: line.slice(0, 60) }));
   try {
-    // Delivery: lower stability = more expressive, higher similarity + style +
-    // speaker boost. Defaults keep the existing pipeline unchanged; env or opts
-    // can push it more expressive (less flat) without touching callers.
-    const stability = opts?.stability ?? envNum(process.env.ELEVENLABS_STABILITY, 0.4);
-    const style = opts?.style ?? envNum(process.env.ELEVENLABS_STYLE, 0.35);
-    const similarity = envNum(process.env.ELEVENLABS_SIMILARITY, 0.85);
     const r = await fetch(`${BASE}/text-to-speech/${encodeURIComponent(vid)}/with-timestamps`, {
       method: "POST",
       headers: { "xi-api-key": apiKey(), "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
         text: line,
-        model_id: modelId(),
-        voice_settings: { stability, similarity_boost: similarity, style, use_speaker_boost: true },
+        model_id: model,
+        voice_settings: { stability, similarity_boost: similarity, style, use_speaker_boost: speakerBoost },
       }),
       cache: "no-store",
       signal: AbortSignal.timeout(60_000),
@@ -107,7 +112,7 @@ export async function synthArabicVoice(
     if (!r.ok) {
       const t = await r.text();
       console.error("[voiceover] HTTP", r.status, t.slice(0, 400));
-      return { ok: false, error: `ElevenLabs HTTP ${r.status} — ${t.slice(0, 200)}` };
+      return { ok: false, error: `ElevenLabs HTTP ${r.status} — ${t.slice(0, 200)}`, debug };
     }
     const j: any = await r.json();
     const b64 = j?.audio_base64;
@@ -124,7 +129,7 @@ export async function synthArabicVoice(
     const { error: up } = await admin.storage.from(BUCKET).upload(path, buf, { contentType: "audio/mpeg", upsert: true });
     if (up) { console.error("[voiceover] upload", up.message); return { ok: false, error: `رفع الصوت فشل: ${up.message}` }; }
     const url = admin.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
-    return { ok: true, url, durationSec: Number.isFinite(durationSec) ? durationSec : undefined };
+    return { ok: true, url, durationSec: Number.isFinite(durationSec) ? durationSec : undefined, debug };
   } catch (e: any) {
     console.error("[voiceover] threw", e?.message || e);
     return { ok: false, error: e?.message || "فشل توليد الصوت." };

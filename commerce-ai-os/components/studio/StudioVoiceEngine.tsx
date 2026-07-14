@@ -3,7 +3,8 @@
 import { useState } from "react";
 import {
   draftVoiceScript, refineGulfScript, generateVoicePreview,
-  auditionVoices, suggestGulfVoices, type VoiceStatus,
+  auditionVoices, suggestGulfVoices, voiceDebug,
+  type VoiceStatus, type VoiceDebugReport,
 } from "@/app/(app)/studio/voice-actions";
 import { AUDITION_TEST_LINE, GULF_VOICE_BRIEF, type VoiceCandidate, type AuditionResult } from "@/lib/voice/voice-compute";
 import type { Locale } from "@/lib/i18n";
@@ -31,6 +32,12 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
   const [sugBusy, setSugBusy] = useState(false);
   const [sugErr, setSugErr] = useState("");
   const [suggestions, setSuggestions] = useState<VoiceCandidate[]>([]);
+
+  // Debug state
+  const [dbgVoiceId, setDbgVoiceId] = useState("");
+  const [dbgBusy, setDbgBusy] = useState(false);
+  const [dbgErr, setDbgErr] = useState("");
+  const [dbg, setDbg] = useState<VoiceDebugReport | null>(null);
 
   const badge = {
     connected: { ar: "متصل", en: "Connected", cls: "bg-emerald-100 text-emerald-700" },
@@ -70,6 +77,14 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
     finally { setSugBusy(false); }
   };
   const applyCandidate = (id: string) => setVidsText((cur) => (parseVids(cur).includes(id) ? cur : (cur.trim() ? cur.trim() + "\n" : "") + id));
+
+  const runDebug = async () => {
+    const vid = dbgVoiceId.trim();
+    if (!vid) { setDbgErr(L("أدخل Voice ID", "Enter a Voice ID")); return; }
+    setDbgBusy(true); setDbgErr(""); setDbg(null);
+    try { const r = await voiceDebug({ voiceId: vid, text: auditText }); if ("error" in r) setDbgErr(r.error); else setDbg(r); }
+    finally { setDbgBusy(false); }
+  };
 
   return (
     <div className="space-y-4">
@@ -163,6 +178,48 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
               ))}
             </div>
             <p className="text-[11px] text-violet-900">{L("عجبك صوت؟ حطّ الـ Voice ID حقه في", "Like a voice? Set its Voice ID as")} <code dir="ltr">ELEVENLABS_VOICE_ID</code> {L("في Vercel ثم Redeploy — يصير صوت البراند الثابت.", "in Vercel then Redeploy — it becomes the fixed brand voice.")}</p>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Voice Debug — why the library preview is right but our TTS is off. */}
+      <div className="card space-y-3 border-amber-200 bg-amber-50/40">
+        <p className="text-sm font-bold text-amber-800">🐞 {L("تشخيص الصوت (Debug)", "Voice Debug")}</p>
+        <p className="text-[11px] text-amber-900">{L("نفس الصوت ونفس الجملة عبر مصفوفة: RAW / إعادة صياغة+تشكيل / إعادة صياغة فقط × موديلين — بإعدادات محايدة قريبة من المعاينة، وبدون language_code. عشان نعرف وين اللهجة تتغيّر.", "Same voice + line across a matrix: RAW / rewrite+tashkeel / rewrite-only × two models — with neutral settings close to the preview and no language_code. To see where the accent changes.")}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input value={dbgVoiceId} onChange={(e) => setDbgVoiceId(e.target.value)} dir="ltr" placeholder="Voice ID"
+            className="min-w-[12rem] flex-1 rounded-lg border border-amber-200 bg-white px-3 py-1.5 font-mono text-xs" />
+          <button onClick={runDebug} disabled={dbgBusy || !connected} className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50">
+            {dbgBusy ? `⏳ ${L("يشغّل…", "running…")}` : `🐞 ${L("شغّل التشخيص", "Run debug")}`}
+          </button>
+        </div>
+        <p className="text-[10px] text-muted">{L("يستخدم جملة الاختبار أعلاه · ٦ توليدات (٣ نصوص × موديلين)", "Uses the test line above · 6 generations (3 texts × 2 models)")}</p>
+        {dbgErr ? <p className="rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-700">{dbgErr}</p> : null}
+
+        {dbg ? (
+          <div className="space-y-3">
+            {/* text diff */}
+            <div className="space-y-1 rounded-lg bg-white p-2 text-[11px]" dir="rtl">
+              <p><b>{L("النص الأصلي", "Original")}:</b> {dbg.texts.original}</p>
+              <p><b>C · {L("إعادة صياغة فقط", "rewrite only")}:</b> {dbg.texts.rewritten}</p>
+              <p><b>B · {L("إعادة صياغة + تشكيل", "rewrite + tashkeel")}:</b> {dbg.texts.normalized}</p>
+              <p className="text-amber-700" dir="ltr">settings: stability {dbg.settings.stability} · style {dbg.settings.style} · similarity {dbg.settings.similarity} · speaker_boost {String(dbg.settings.speakerBoost)} · language_code null</p>
+            </div>
+            {/* clips */}
+            <div className="grid gap-2 sm:grid-cols-2">
+              {dbg.clips.map((c, i) => {
+                const mism = c.debug && c.debug.voiceId !== dbg.selectedVoiceId;
+                return (
+                  <div key={i} className="space-y-1 rounded-lg border border-amber-200 bg-white p-2">
+                    <p className="text-[11px] font-semibold text-ink" dir="ltr">{c.label}</p>
+                    {c.debug ? <p className={`font-mono text-[10px] ${mism ? "text-red-600" : "text-muted"}`} dir="ltr">sent: {c.debug.voiceId}{mism ? " ⚠️ MISMATCH" : " ✓"} · {c.debug.modelId}</p> : null}
+                    <p className="text-[11px] text-slate-700" dir="rtl">{c.text}</p>
+                    {c.audioUrl ? <audio src={c.audioUrl} controls className="h-8 w-full" /> : <p className="text-[10px] text-red-600">{c.error}</p>}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-amber-900">{L("اسمع الستة: أي نص+موديل أقرب للمعاينة الأصلية؟ لو RAW أقرب من B → التشكيل يفسد اللهجة. لو v2 يختلف عن v3 → المشكلة الموديل.", "Compare all six: which text+model is closest to the library preview? If RAW beats B → tashkeel distorts the accent. If v2 ≠ v3 → it's the model.")}</p>
           </div>
         ) : null}
       </div>

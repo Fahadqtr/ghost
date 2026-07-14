@@ -2,8 +2,8 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { requireUser } from "@/lib/auth/requireUser";
-import { synthArabicVoice, elevenStatus, elevenVoiceId, elevenModelId, listGulfVoiceCandidates, type VoiceConnState } from "@/lib/social/voiceover";
-import { buildGulfScriptPrompt, buildGulfDialectPrompt, cleanScriptLines, normalizeVoiceIds, type VoiceCandidate, type AuditionResult } from "@/lib/voice/voice-compute";
+import { synthArabicVoice, elevenStatus, elevenVoiceId, elevenModelId, listGulfVoiceCandidates, type VoiceConnState, type VoiceDebug } from "@/lib/social/voiceover";
+import { buildGulfScriptPrompt, buildGulfDialectPrompt, buildGulfRewriteOnlyPrompt, cleanScriptLines, normalizeVoiceIds, AUDITION_TEST_LINE, type VoiceCandidate, type AuditionResult } from "@/lib/voice/voice-compute";
 
 // Malika AI Studio → Voice Engine (phase 3). ElevenLabs is the ONLY voice
 // provider (no generic-Arabic fallback). Flow: write/generate a script → refine
@@ -103,4 +103,57 @@ export async function suggestGulfVoices(): Promise<{ error: string } | { voices:
   const r = await listGulfVoiceCandidates();
   if (!r.ok) return { error: r.error || "تعذّر جلب الأصوات." };
   return { voices: r.voices };
+}
+
+export interface DebugClip { label: string; variant: "raw" | "rewrite" | "normalized"; model: string; text: string; audioUrl?: string; error?: string; debug?: VoiceDebug }
+export interface VoiceDebugReport {
+  selectedVoiceId: string;
+  texts: { original: string; rewritten: string; normalized: string };
+  settings: { stability: number; style: number; similarity: number; speakerBoost: boolean; languageCode: null };
+  clips: DebugClip[];
+}
+
+/**
+ * Voice Debug: prove WHY the library preview is right but our TTS is off. Same
+ * voice id + line, across a matrix — text variant (A raw / B rewrite+tashkeel /
+ * C rewrite-only) × model (eleven_multilingual_v2, eleven_v3) — with FIXED
+ * neutral settings (close to the library preview) and NO language_code. All
+ * automatic dialect/MSA/phonetic behaviour is off for RAW. Nothing is adopted.
+ */
+export async function voiceDebug(input: { voiceId: string; text?: string }): Promise<{ error: string } | VoiceDebugReport> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const voiceId = String(input.voiceId || "").trim();
+  if (!voiceId) return { error: "أدخل Voice ID." };
+  const original = String(input.text || "").trim() || AUDITION_TEST_LINE;
+
+  // B = current pipeline (Gulf rewrite + light tashkeel); C = rewrite only (no tashkeel).
+  const bRes = await claude(buildGulfDialectPrompt(original));
+  const cRes = await claude(buildGulfRewriteOnlyPrompt(original));
+  const normalized = "error" in bRes ? original : (cleanScriptLines(bRes.text) || original);
+  const rewritten = "error" in cRes ? original : (cleanScriptLines(cRes.text) || original);
+
+  // Neutral settings that mimic the ElevenLabs library preview (isolate text+model).
+  const settings = { stability: 0.5, style: 0, similarity: 0.75, speakerBoost: true, languageCode: null } as const;
+  const variants: { label: string; variant: DebugClip["variant"]; text: string }[] = [
+    { label: "A · RAW (no rewrite/normalize)", variant: "raw", text: original },
+    { label: "B · rewrite + tashkeel (current)", variant: "normalized", text: normalized },
+    { label: "C · rewrite only (no tashkeel)", variant: "rewrite", text: rewritten },
+  ];
+  const models = ["eleven_multilingual_v2", "eleven_v3"];
+
+  const clips: DebugClip[] = [];
+  for (const m of models) {
+    // one model at a time; variants concurrently (3) to respect limits
+    const part = await Promise.all(variants.map(async (v): Promise<DebugClip> => {
+      const r = await synthArabicVoice(v.text, {
+        voiceId, modelId: m, stability: settings.stability, style: settings.style,
+        similarity: settings.similarity, speakerBoost: settings.speakerBoost,
+      });
+      return { label: `${v.label} · ${m}`, variant: v.variant, model: m, text: v.text, audioUrl: r.url, error: r.ok ? undefined : r.error, debug: r.debug };
+    }));
+    clips.push(...part);
+  }
+
+  return { selectedVoiceId: voiceId, texts: { original, rewritten, normalized }, settings, clips };
 }
