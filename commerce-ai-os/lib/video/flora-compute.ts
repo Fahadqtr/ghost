@@ -17,13 +17,16 @@ export interface FloraRunInput {
 /** Build the `inputs` array for a technique run. Only includes provided fields. */
 export function buildFloraInputs(opts: FloraRunInput): FloraInputField[] {
   const ids = opts.fieldIds ?? {};
+  // Input `type` uses FLORA's camelCase enum: imageUrl | videoUrl | text
+  // (the public-API-reference docs show IMAGE_URL/TEXT, but the live API
+  // rejects those — it validates against imageUrl/text).
   const inputs: FloraInputField[] = [
-    { id: ids.image || "input_image", type: "IMAGE_URL", value: opts.imageUrl },
+    { id: ids.image || "input_image", type: "imageUrl", value: opts.imageUrl },
   ];
   const prompt = String(opts.prompt ?? "").trim();
-  if (prompt) inputs.push({ id: ids.prompt || "visual_prompt", type: "TEXT", value: prompt });
+  if (prompt) inputs.push({ id: ids.prompt || "visual_prompt", type: "text", value: prompt });
   const neg = String(opts.negativePrompt ?? "").trim();
-  if (neg) inputs.push({ id: ids.negative || "negative_prompt", type: "TEXT", value: neg });
+  if (neg) inputs.push({ id: ids.negative || "negative_prompt", type: "text", value: neg });
   return inputs;
 }
 
