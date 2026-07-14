@@ -63,9 +63,9 @@ export const STUDIO_MODULES: StudioModule[] = [
   },
   {
     slug: "voice", labelAr: "محرك الصوت", labelEn: "Voice Engine", icon: "🔊",
-    descAr: "تعليق صوتي عربي (ElevenLabs) أو رفع صوت خليجي حقيقي.",
-    status: "partial",
-    wiring: "lib/social/voiceover.ts (synthArabicVoice) + uploadReelVoice.",
+    descAr: "سكربت خليجي + معاينة صوت ElevenLabs داخل الستوديو. (يعمل الآن).",
+    status: "live",
+    wiring: "studio/voice-actions.ts + lib/social/voiceover.ts (synthArabicVoice) + voice-compute.ts.",
   },
   {
     slug: "translate", labelAr: "محرك الترجمة", labelEn: "Translation Engine", icon: "🌐",
