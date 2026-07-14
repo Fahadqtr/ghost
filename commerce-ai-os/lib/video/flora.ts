@@ -4,14 +4,14 @@ import { buildFloraInputs, floraStatus, firstFloraOutputUrl } from "./flora-comp
 // FLORA image→video client. Runs a saved canvas "technique" by slug.
 // Env-gated: FLORA_API_KEY (sk_live_…) + FLORA_TECHNIQUE_SLUG (the technique you
 // build+save on the FLORA canvas, e.g. malikas-product-commercial-v1).
-// Optional: FLORA_API_BASE (default https://api.flora.ai), and the technique's
+// Optional: FLORA_API_BASE (default https://app.flora.ai), and the technique's
 // input field ids if they differ from the defaults.
 // Ref: docs.flora.ai — POST /api/v1/techniques/{slug}/runs ; GET …/runs/{runId}.
 
 function clean(v: string | undefined): string { return String(v ?? "").trim().replace(/^["']|["']$/g, "").trim(); }
 function apiKey(): string { return clean(process.env.FLORA_API_KEY); }
 function slug(): string { return clean(process.env.FLORA_TECHNIQUE_SLUG); }
-function base(): string { return (clean(process.env.FLORA_API_BASE) || "https://api.flora.ai").replace(/\/$/, ""); }
+function base(): string { return (clean(process.env.FLORA_API_BASE) || "https://app.flora.ai").replace(/\/$/, ""); }
 function fieldIds() {
   return {
     image: clean(process.env.FLORA_INPUT_IMAGE_ID) || undefined,
