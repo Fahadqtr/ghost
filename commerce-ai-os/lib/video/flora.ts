@@ -33,6 +33,85 @@ const pick = (o: any, ...keys: string[]): string | undefined => {
 
 export interface FloraSubmit { ok: boolean; runId?: string; error?: string; }
 
+function parseJson(t: string): any { try { return JSON.parse(t); } catch { return null; } }
+
+/** Fetch the source image bytes (our Supabase public URL is server-side fetchable). */
+async function fetchSourceImage(imageUrl: string): Promise<{ bytes: Buffer; contentType: string; filename: string } | null> {
+  try {
+    const r = await fetch(imageUrl, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
+    if (!r.ok) { console.error("[flora:asset] source fetch HTTP", r.status); return null; }
+    const bytes = Buffer.from(await r.arrayBuffer());
+    const ct = (r.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+    const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : "jpg";
+    return { bytes, contentType: ct, filename: `studio-product.${ext}` };
+  } catch (e: any) { console.error("[flora:asset] source fetch threw", e?.message || e); return null; }
+}
+
+/**
+ * Upload an image to FLORA and return a FLORA-hosted URL usable as an imageUrl
+ * input. FLORA rejects arbitrary external URLs at import (SSRF policy), so runs
+ * driven by an external URL fail at $0 — the image must live on FLORA's storage.
+ * Presigned pattern: POST /assets → PUT bytes → POST /assets/{id}/complete →
+ * GET /assets/{id}. Endpoint is undocumented, so responses are parsed defensively
+ * and each step is logged; returns null on any failure (caller falls back).
+ */
+export async function uploadFloraAsset(imageUrl: string): Promise<string | null> {
+  const img = await fetchSourceImage(imageUrl);
+  if (!img) return null;
+  try {
+    // 1) initiate — send common field-name variants; extras are typically ignored.
+    const initBody = {
+      filename: img.filename, name: img.filename, fileName: img.filename,
+      contentType: img.contentType, mimeType: img.contentType, mimetype: img.contentType,
+      size: img.bytes.length, byteSize: img.bytes.length, fileSize: img.bytes.length, type: "image",
+    };
+    const initR = await fetch(`${base()}/api/v1/assets`, {
+      method: "POST", headers: authHeaders(), body: JSON.stringify(initBody),
+      cache: "no-store", signal: AbortSignal.timeout(30_000),
+    });
+    const initT = await initR.text();
+    console.error("[flora:asset] init", initR.status, initT.slice(0, 600));
+    if (!initR.ok) return null;
+    const ij = parseJson(initT);
+    const assetId = pick(ij, "id", "assetId", "asset_id", "data.id", "data.assetId", "asset.id");
+    const uploadUrl = pick(ij, "uploadUrl", "upload_url", "presignedUrl", "signedUrl", "url", "data.uploadUrl", "data.url");
+    const uploadMethod = (pick(ij, "method", "uploadMethod", "data.method") || "PUT").toUpperCase();
+    if (!assetId) { console.error("[flora:asset] no assetId in init"); return null; }
+
+    // 2) upload the bytes to the presigned destination (if one was returned).
+    if (uploadUrl) {
+      const putR = await fetch(uploadUrl, {
+        method: uploadMethod === "POST" ? "POST" : "PUT",
+        headers: { "Content-Type": img.contentType }, body: img.bytes as any,
+        signal: AbortSignal.timeout(60_000),
+      });
+      console.error("[flora:asset] upload", putR.status);
+    }
+
+    // 3) complete
+    const compR = await fetch(`${base()}/api/v1/assets/${encodeURIComponent(assetId)}/complete`, {
+      method: "POST", headers: authHeaders(), body: JSON.stringify({}),
+      cache: "no-store", signal: AbortSignal.timeout(30_000),
+    });
+    const compT = await compR.text();
+    console.error("[flora:asset] complete", compR.status, compT.slice(0, 600));
+
+    // 4) resolve the hosted URL (from complete, else GET the asset).
+    const urlKeys = ["url", "publicUrl", "downloadUrl", "cdnUrl", "signedUrl", "src", "asset.url", "data.url", "data.publicUrl", "data.downloadUrl"];
+    let finalUrl = pick(parseJson(compT), ...urlKeys);
+    if (!finalUrl) {
+      const getR = await fetch(`${base()}/api/v1/assets/${encodeURIComponent(assetId)}`, {
+        headers: authHeaders(), cache: "no-store", signal: AbortSignal.timeout(20_000),
+      });
+      const getT = await getR.text();
+      console.error("[flora:asset] get", getR.status, getT.slice(0, 600));
+      finalUrl = pick(parseJson(getT), ...urlKeys);
+    }
+    console.error("[flora:asset] finalUrl", finalUrl || "(none)");
+    return finalUrl || null;
+  } catch (e: any) { console.error("[flora:asset] threw", e?.message || e); return null; }
+}
+
 /** POST a technique run with the given inputs; returns the raw response + parsed body. */
 async function postFloraRun(inputs: FloraInputField[]): Promise<{ r: Response; body: string; j: any }> {
   const r = await fetch(`${base()}/api/v1/techniques/${encodeURIComponent(slug())}/runs`, {
@@ -53,8 +132,17 @@ export async function submitFloraRun(imageUrl: string, prompt: string, negativeP
     // reject unknown inputs, so image-only is the safe default.
     const sendPrompt = clean(process.env.FLORA_SEND_PROMPT).toLowerCase() === "true";
     const sendNeg = clean(process.env.FLORA_SEND_NEGATIVE).toLowerCase() === "true";
+    // FLORA rejects external image URLs at import, so host the image on FLORA
+    // first and pass that URL. On upload failure, fall back to the original URL
+    // (no regression). Disable with FLORA_UPLOAD_IMAGE=false.
+    let effectiveImageUrl = imageUrl;
+    if (clean(process.env.FLORA_UPLOAD_IMAGE).toLowerCase() !== "false") {
+      const hosted = await uploadFloraAsset(imageUrl);
+      if (hosted) effectiveImageUrl = hosted;
+      else console.error("[flora] asset upload failed — falling back to source URL");
+    }
     const build = (imageId?: string): FloraInputField[] => buildFloraInputs({
-      imageUrl,
+      imageUrl: effectiveImageUrl,
       prompt: sendPrompt ? prompt : null,
       negativePrompt: sendNeg ? negativePrompt : null,
       fieldIds: { ...fieldIds(), ...(imageId ? { image: imageId } : {}) },
