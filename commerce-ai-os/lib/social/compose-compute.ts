@@ -5,6 +5,7 @@
 export interface ComposeInput {
   videoUrl: string;
   audioUrl?: string | null;
+  musicUrl?: string | null;
   logoUrl?: string | null;
   ctaText?: string | null;
   brandText?: string | null;
@@ -30,20 +31,25 @@ export function buildComposeSource(opts: ComposeInput): Record<string, unknown> 
     // never runs out and leaves a black screen while the voiceover keeps going.
     { type: "video", track: 1, source: opts.videoUrl, fit: "cover", volume: "0%", loop: true, duration },
   ];
+  // Soft background music bed (low volume so the voiceover stays on top), looped
+  // and trimmed to the composition — gives a produced, less-bare feel.
+  if (opts.musicUrl) {
+    elements.push({ type: "audio", track: 2, source: opts.musicUrl, volume: "16%", loop: true, duration });
+  }
   // Arabic voiceover on its own track (replaces the silent/AI audio).
   if (opts.audioUrl) {
-    elements.push({ type: "audio", track: 2, source: opts.audioUrl });
+    elements.push({ type: "audio", track: 3, source: opts.audioUrl, volume: "100%" });
   }
   // Brand logo, top corner, small.
   if (opts.logoUrl) {
-    elements.push({ type: "image", track: 3, source: opts.logoUrl, width: "22%", x: "83%", y: "8%", x_anchor: "50%", y_anchor: "50%" });
+    elements.push({ type: "image", track: 4, source: opts.logoUrl, width: "22%", x: "83%", y: "8%", x_anchor: "50%", y_anchor: "50%" });
   }
   // «اطلب الآن» CTA — a clean bottom banner with a soft scrim + outline so text
   // stays legible over any footage (looks more polished than a flat pill).
   const cta = String(opts.ctaText ?? "").trim();
   if (cta) {
     elements.push({
-      type: "text", track: 4, text: cta,
+      type: "text", track: 5, text: cta,
       y: "88%", width: "86%", x: "50%", x_anchor: "50%", y_anchor: "50%",
       font_family: "Cairo", font_weight: "800", font_size: "8.5vmin",
       fill_color: "#ffffff",
@@ -57,7 +63,7 @@ export function buildComposeSource(opts: ComposeInput): Record<string, unknown> 
   const brand = String(opts.brandText ?? "").trim();
   if (brand) {
     elements.push({
-      type: "text", track: 5, text: brand,
+      type: "text", track: 6, text: brand,
       y: "77%", width: "86%", x: "50%", x_anchor: "50%", y_anchor: "50%",
       font_family: "Cairo", font_weight: "700", font_size: "5vmin",
       fill_color: "#ffffff",

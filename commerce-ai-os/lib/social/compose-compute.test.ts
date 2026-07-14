@@ -34,6 +34,18 @@ test("optional brand line is added as a fifth element", () => {
   assert.deepEqual(texts, ["اطلب الآن", "ماليكاس يونيفرس"]);
 });
 
+test("background music sits under the voiceover at low volume, looped to duration", () => {
+  const s: any = buildComposeSource({ videoUrl: "https://v/x.mp4", audioUrl: "https://a/voice.mp3", musicUrl: "https://m/bed.mp3", durationSec: 10 });
+  const audios = s.elements.filter((e: any) => e.type === "audio");
+  assert.equal(audios.length, 2);
+  const music = audios.find((e: any) => e.source === "https://m/bed.mp3");
+  const voice = audios.find((e: any) => e.source === "https://a/voice.mp3");
+  assert.equal(music.volume, "16%");
+  assert.equal(music.loop, true);
+  assert.equal(music.duration, s.duration);
+  assert.equal(voice.volume, "100%");
+});
+
 test("resolveReelDuration clamps to [MIN, MAX] and defaults when unknown", () => {
   assert.equal(resolveReelDuration(undefined), DEFAULT_REEL_SEC);
   assert.equal(resolveReelDuration(0), DEFAULT_REEL_SEC);
