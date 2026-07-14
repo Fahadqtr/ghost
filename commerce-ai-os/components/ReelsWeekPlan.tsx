@@ -16,9 +16,10 @@ const productUrl = (sku: string | null) =>
 const marketingBriefAr = (name: string) =>
   `ريل UGC لمنتج «${name}». بنت خليجية في حمّام عصري بالدوحة: هوك بأول ١.٥ ثانية، تُظهر المنتج بوضوح (الليبل للكاميرا)، تفتحه وتطبّقه، تبيّن النضارة، ثم توصّي فيه. تتكلم بالعربي الخليجي. طاقة عالية، مظهر نظيف، بدون نص على الشاشة.`;
 // Natural Gulf-Arabic spoken script for the ElevenLabs voiceover on the
-// assembled reel — short, conversational, ends on the «اطلب الآن» CTA.
+// assembled reel — short, conversational, ends on the «اطلب الآن» CTA. Kept
+// to ~3 short lines (~10–13s) so the delivery stays natural, not rushed.
 const spokenAr = (name: string) =>
-  `عيونـي، لقيت لكم ${name || "المنتج"} من ماليكاس يونيفرس وصراحة خطف قلبي. النتيجة تبيّن من أول استخدام، ونضارة تدوم طول اليوم. اطلبيه الحين من ماليكاس يونيفرس والتوصيل لباب بيتك في قطر.`;
+  `تعرفين ${name || "هذا المنتج"}؟ من أول استخدام النتيجة تبيّن، ونضارة تدوم طول اليوم. عندنا في ماليكاس يونيفرس، والتوصيل لباب بيتك في قطر. اطلبيه الحين.`;
 
 // Weekly Reels plan: 14 Reels/week across 5 formats, each with an English
 // Higgsfield prompt (copy-paste), a Gulf-Arabic caption brief, a CTA type, and

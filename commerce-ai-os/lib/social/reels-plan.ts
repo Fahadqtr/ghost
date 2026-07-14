@@ -26,27 +26,27 @@ export const REELS_PER_WEEK = 14;
 export const REEL_FORMATS: ReelFormat[] = [
   {
     key: "entertainment", labelAr: "ترفيهي / تحدّي", perWeek: 3, apiAudioSafe: false, defaultCta: "growth",
-    promptEn: (p) => `Vertical 9:16, 8 seconds. A stylish young Gulf woman in a modern Doha setting does a fast, fun beauty challenge featuring ${p}. Punchy visual hook in the first 1.5 seconds, quick cuts, trendy energetic vibe, bright soft lighting, no on-screen text.`,
+    promptEn: (p) => `Vertical 9:16 commercial beauty ad, cinematic. A stylish young Gulf woman in an elegant modern Doha apartment playfully shows off ${p}. Shot on a cinema camera, 50mm lens, shallow depth of field, soft natural window light, realistic skin texture, professional color grade, smooth gimbal motion. Strong visual hook in the first 1.5 seconds, high-end and aspirational, photorealistic, no on-screen text, no captions.`,
     captionGuideAr: "هوك تحدّي مرح بأول سطر · طاقة عالية · دعوة للمشاركة (جرّبيها ووريينا).",
   },
   {
     key: "street_interview", labelAr: "مقابلة شارع", perWeek: 3, apiAudioSafe: false, defaultCta: "growth",
-    promptEn: (p) => `Vertical 9:16, 12 seconds, candid street-interview style in an upscale Doha mall. A friendly host asks a shopper to rate ${p} out of 10; genuine reaction, handheld camera, natural lighting, no on-screen text.`,
+    promptEn: (p) => `Vertical 9:16, cinematic candid street-interview in an upscale Doha mall. A warm host shows ${p} to a well-dressed shopper who reacts with genuine delight. Handheld documentary feel with subtle stabilization, natural ambient light, realistic faces and skin, shallow depth of field, professional color grade, photorealistic, no on-screen text, no captions.`,
     captionGuideAr: "ابدئي بـ«كم تعطينه من ١٠؟» · فضول · دعوة للتعليق برأيهم.",
   },
   {
     key: "unboxing", labelAr: "فتح علبة", perWeek: 3, apiAudioSafe: false, defaultCta: "growth",
-    promptEn: (p) => `Vertical 9:16, 10 seconds. Close-up unboxing of ${p}: hands opening premium packaging, satisfying reveal, macro detail shots, soft studio lighting, clean aesthetic, no on-screen text.`,
+    promptEn: (p) => `Vertical 9:16 luxury unboxing, cinematic. Elegant manicured hands slowly open the premium packaging of ${p} on a clean marble surface with soft rose styling. Macro detail shots, 100mm macro lens, gentle rack focus, soft diffused studio lighting, glossy realistic materials, professional color grade, high-end product-film aesthetic, photorealistic, no on-screen text, no captions.`,
     captionGuideAr: "هوك «شوفوا وش وصلنا» · تشويق الفتح · دعوة للحفظ/المتابعة للجديد.",
   },
   {
     key: "review", labelAr: "مراجعة (تعليق صوتي)", perWeek: 3, apiAudioSafe: true, defaultCta: "growth",
-    promptEn: (p) => `Vertical 9:16, 12 seconds. A confident Gulf beauty creator holds and demonstrates ${p} to camera as if giving an honest voiceover review; warm flattering light, tight framing on the product, no on-screen text.`,
+    promptEn: (p) => `Vertical 9:16, cinematic beauty review. A confident, natural-looking Gulf beauty creator holds and demonstrates ${p} to camera as if giving an honest voiceover review. Warm flattering key light, tight flattering framing, realistic skin and expressions, shallow depth of field, subtle camera movement, professional color grade, premium and trustworthy, photorealistic, no on-screen text, no captions.`,
     captionGuideAr: "هوك مشكلة يحلّها المنتج · رأي صادق بفائدة · دعوة واضحة (اطلبيه).",
   },
   {
     key: "asmr", labelAr: "ASMR", perWeek: 2, apiAudioSafe: true, defaultCta: "growth",
-    promptEn: (p) => `Vertical 9:16, 10 seconds. Pure ASMR of ${p}: gentle tapping, swatching and texture close-ups, macro lens, crisp original sound, calming premium mood, no on-screen text.`,
+    promptEn: (p) => `Vertical 9:16 cinematic ASMR product film of ${p}: gentle tapping, swatching and texture close-ups. Extreme macro lens, silky slow motion, soft directional lighting, glistening realistic textures, shallow depth of field, professional color grade, calming premium mood, photorealistic, no on-screen text, no captions.`,
     captionGuideAr: "هوك حسّي هادئ · وصف الملمس/الإحساس · دعوة للحفظ.",
   },
 ];
