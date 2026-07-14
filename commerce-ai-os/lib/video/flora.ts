@@ -35,6 +35,22 @@ export interface FloraSubmit { ok: boolean; runId?: string; error?: string; }
 
 function parseJson(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 
+/** The FLORA workspace id (ws_…) required by the asset API — env or first workspace. */
+async function floraWorkspaceId(): Promise<string | null> {
+  const env = clean(process.env.FLORA_WORKSPACE_ID);
+  if (env) return env;
+  try {
+    const r = await fetch(`${base()}/api/v1/workspaces`, { headers: authHeaders(), cache: "no-store", signal: AbortSignal.timeout(15_000) });
+    const t = await r.text();
+    console.error("[flora:asset] workspaces", r.status, t.slice(0, 400));
+    if (!r.ok) return null;
+    const j = parseJson(t);
+    const arr: any[] = Array.isArray(j) ? j : (Array.isArray(j?.data) ? j.data : (Array.isArray(j?.workspaces) ? j.workspaces : []));
+    for (const w of arr) { const id = pick(w, "id", "workspaceId", "workspace_id"); if (id && String(id).startsWith("ws_")) return String(id); }
+    return arr[0] ? (pick(arr[0], "id", "workspaceId") || null) : null;
+  } catch (e: any) { console.error("[flora:asset] workspaces threw", e?.message || e); return null; }
+}
+
 /** Fetch the source image bytes (our Supabase public URL is server-side fetchable). */
 async function fetchSourceImage(imageUrl: string): Promise<{ bytes: Buffer; contentType: string; filename: string } | null> {
   try {
@@ -59,8 +75,11 @@ export async function uploadFloraAsset(imageUrl: string): Promise<string | null>
   const img = await fetchSourceImage(imageUrl);
   if (!img) return null;
   try {
-    // 1) initiate — send common field-name variants; extras are typically ignored.
+    const workspaceId = await floraWorkspaceId();
+    // 1) initiate a signed-url upload (FLORA rejects non-allowlisted source URLs,
+    // so we upload the bytes ourselves). workspace_id (ws_…) is required.
     const initBody = {
+      source: "signed-url", workspace_id: workspaceId, workspaceId,
       filename: img.filename, name: img.filename, fileName: img.filename,
       contentType: img.contentType, mimeType: img.contentType, mimetype: img.contentType,
       size: img.bytes.length, byteSize: img.bytes.length, fileSize: img.bytes.length, type: "image",
