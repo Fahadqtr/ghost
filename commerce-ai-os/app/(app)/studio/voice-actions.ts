@@ -47,13 +47,17 @@ export async function draftVoiceScript(input: { topic?: string; productName?: st
   return { script };
 }
 
-/** Rewrite a script into natural Qatari Gulf with TTS-safe pronunciation. */
+/**
+ * Rewrite a script into natural Qatari Gulf — NO tashkeel. The Voice Debug
+ * showed the rewrite-only (no-tashkeel) text renders a truer Gulf accent than
+ * the tashkeel'd variant, so the studio refine uses the plain Gulf rewrite.
+ */
 export async function refineGulfScript(script: string): Promise<{ error: string } | { script: string }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const s = String(script || "").trim();
   if (!s) return { error: "اكتب سكربت أول." };
-  const r = await claude(buildGulfDialectPrompt(s));
+  const r = await claude(buildGulfRewriteOnlyPrompt(s));
   if ("error" in r) return r;
   const refined = cleanScriptLines(r.text);
   if (!refined) return { error: "ما قدرت أحسّن النص — جرّب مرة ثانية." };

@@ -11,7 +11,9 @@ const BUCKET = "product-images"; // reuse the existing public bucket
 
 function apiKey(): string { return String(process.env.ELEVENLABS_API_KEY ?? "").trim().replace(/^["']|["']$/g, ""); }
 function voiceId(): string { return String(process.env.ELEVENLABS_VOICE_ID ?? "").trim().replace(/^["']|["']$/g, ""); }
-function modelId(): string { return String(process.env.ELEVENLABS_MODEL_ID ?? "").trim().replace(/^["']|["']$/g, "") || "eleven_multilingual_v2"; }
+// eleven_v3 renders the Gulf accent noticeably better than multilingual_v2
+// (confirmed via the studio Voice Debug). Override with ELEVENLABS_MODEL_ID.
+function modelId(): string { return String(process.env.ELEVENLABS_MODEL_ID ?? "").trim().replace(/^["']|["']$/g, "") || "eleven_v3"; }
 export function voiceoverConfigured(): boolean { return !!apiKey() && !!voiceId(); }
 export function elevenVoiceId(): string { return voiceId(); }
 export function elevenModelId(): string { return modelId(); }

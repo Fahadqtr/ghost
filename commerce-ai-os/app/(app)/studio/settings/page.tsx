@@ -60,7 +60,7 @@ export default async function Page() {
         <ul className="space-y-1 text-[11px] text-muted" dir="ltr">
           <li><code>ELEVENLABS_API_KEY</code> — {L("مفتاح ElevenLabs", "your ElevenLabs key")}</li>
           <li><code>ELEVENLABS_VOICE_ID</code> — {L("صوت خليجي (قابل للتغيير)", "a Gulf voice (changeable)")}</li>
-          <li className="text-violet-700">{L("اختياري:", "Optional:")} <code>ELEVENLABS_MODEL_ID</code> ({L("افتراضي", "default")} eleven_multilingual_v2)</li>
+          <li className="text-violet-700">{L("اختياري:", "Optional:")} <code>ELEVENLABS_MODEL_ID</code> ({L("افتراضي", "default")} eleven_v3) · <code>ELEVENLABS_STABILITY</code> · <code>ELEVENLABS_STYLE</code></li>
         </ul>
       </div>
 
