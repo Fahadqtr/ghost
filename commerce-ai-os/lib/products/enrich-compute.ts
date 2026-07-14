@@ -59,8 +59,26 @@ export function buildEnrichPrompt(p: EnrichInput, categories: readonly string[],
       ? "• image_matches = هل الصورة تطابق اسم/وصف المنتج؟ (true/false).\n"
       : "• image_matches = null (لا صورة).\n") +
     "• notes = ملاحظة قصيرة جدًا عن أي تعارض (صورة لا تطابق، أو عربي كان مخالفًا للإنجليزي)، وإلا اتركها فارغة.\n\n" +
-    "أجب بـ JSON صحيح فقط بدون أي نص إضافي."
+    "مهم: أرجِع JSON **صالحًا** فقط بدون أي نص إضافي، وداخل النصوص استخدم \\n المهرّبة للأسطر الجديدة (لا تضع أسطرًا حقيقية تكسر JSON)."
   );
+}
+
+// Models often put real line breaks inside the description string, which makes
+// the JSON invalid. Escape raw control chars that appear INSIDE string values
+// (leave structural whitespace alone) so JSON.parse can recover.
+export function repairJsonControls(s: string): string {
+  let out = "", inStr = false, esc = false;
+  for (const ch of s) {
+    if (esc) { out += ch; esc = false; continue; }
+    if (ch === "\\") { out += ch; esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; out += ch; continue; }
+    if (inStr && (ch === "\n" || ch === "\r" || ch === "\t")) {
+      out += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : "\\t";
+      continue;
+    }
+    out += ch;
+  }
+  return out;
 }
 
 /** Tolerant parse: first {...} block; category blanked if not in the list. */
@@ -68,7 +86,10 @@ export function parseEnrichResult(text: string, categories: readonly string[]): 
   const m = String(text ?? "").match(/\{[\s\S]*\}/);
   if (!m) return null;
   let j: Record<string, unknown>;
-  try { j = JSON.parse(m[0]); } catch { return null; }
+  try { j = JSON.parse(m[0]); }
+  catch {
+    try { j = JSON.parse(repairJsonControls(m[0])); } catch { return null; }
+  }
   const s = (x: unknown) => (x == null ? "" : String(x).trim());
   const bool = (x: unknown): boolean | null =>
     x === true || x === "true" ? true : x === false || x === "false" ? false : null;

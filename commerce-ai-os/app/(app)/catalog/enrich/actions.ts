@@ -52,6 +52,17 @@ export async function listEnrichTargets(all = false): Promise<{ ok: boolean; ite
 
 const ALLOWED_IMG = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
+// Detect the real image type from the file's magic bytes — the server's
+// Content-Type header often lies (a .jpg URL serving a PNG), and Anthropic
+// rejects a base64 image whose declared media type doesn't match the bytes.
+function sniffImageMediaType(buf: Buffer): string | null {
+  if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length >= 4 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return "image/gif";
+  if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return null;
+}
+
 export interface EnrichOutcome {
   ok: boolean;
   filled: string[];               // fields written this run
@@ -88,9 +99,11 @@ export async function enrichProduct(id: string, overwrite = false): Promise<Enri
       const url = assertSafeImageUrl(rawUrl);
       const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (r.ok) {
+        const buf = Buffer.from(await r.arrayBuffer());
         const ct = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-        const media_type = ALLOWED_IMG.has(ct) ? ct : "image/jpeg";
-        const b64 = Buffer.from(await r.arrayBuffer()).toString("base64");
+        // Trust the bytes over the header; fall back to the header, then jpeg.
+        const media_type = sniffImageMediaType(buf) || (ALLOWED_IMG.has(ct) ? ct : "image/jpeg");
+        const b64 = buf.toString("base64");
         if (b64) imageBlock = { type: "image", source: { type: "base64", media_type, data: b64 } };
       }
     } catch { /* proceed without the image */ }
@@ -110,7 +123,7 @@ export async function enrichProduct(id: string, overwrite = false): Promise<Enri
     content.push({ type: "text", text: buildEnrichPrompt(input, CATEGORIES, !!imageBlock) });
     const resp = await client.messages.create({
       model: process.env.STAFF_MALAK_MODEL || "claude-sonnet-5",
-      max_tokens: 1400,
+      max_tokens: 2000,
       messages: [{ role: "user", content }],
     });
     const text = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
