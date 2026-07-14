@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { REEL_STYLES, styleLabelAr, reelProductUrl, buildReelBrief, buildScriptPrompt } from "./reel-request-compute.ts";
+import {
+  REEL_STYLES, styleLabelAr, reelProductUrl, buildReelBrief, buildScriptPrompt,
+  REEL_NEGATIVE_PROMPT, REEL_MASTER_REFERENCE, REEL_SHOT_STRUCTURE, REEL_CAMERA,
+} from "./reel-request-compute.ts";
 
 test("styleLabelAr resolves known slugs and falls back", () => {
   assert.equal(styleLabelAr("ugc_gadget_saved_me"), "توصية: غيّر روتيني");
@@ -23,9 +26,19 @@ test("buildReelBrief includes product, style, Arabic + CTA, notes and schedule",
   assert.match(b, /SKU mk1196/);
   assert.match(b, /This gadget saved me \(ugc_gadget_saved_me\)/);
   assert.match(b, /Gulf Arabic/);
-  assert.match(b, /Malika's Universe/);
   assert.match(b, /Owner notes: ركّزي على النتيجة السريعة/);
   assert.match(b, /Schedule for: 2026-07-15T10:00:00.000Z/);
+});
+
+test("buildReelBrief embeds master references, 5-shot structure, camera + negatives", () => {
+  const b = buildReelBrief({ productName: "Dr Pen", style: "ugc" });
+  assert.match(b, /STRICT MASTER PRODUCT REFERENCE/);
+  assert.match(b, /MASTER CHARACTER REFERENCE/);
+  assert.match(b, /SHOT 1/);
+  assert.match(b, /SHOT 5/);
+  assert.match(b, /No serum dropper/);
+  assert.match(b, /No product morphing/);
+  assert.match(b, /subtle push-in/);
 });
 
 test("buildReelBrief omits notes/schedule when absent", () => {
@@ -41,14 +54,24 @@ test("buildReelBrief embeds a verbatim script when provided", () => {
   assert.match(b, /سطر ثاني/);
 });
 
-test("buildScriptPrompt asks for 4 Qatari lines with the fixed CTA", () => {
+test("buildScriptPrompt asks for 4 white-Gulf lines, no dialect mixing, with the fixed CTA", () => {
   const p = buildScriptPrompt({ productName: "Dr Pen", style: "ugc_gadget_saved_me", notes: "ركّزي على التوفير", priceQar: 123.5 });
   assert.match(p, /Dr Pen/);
-  assert.match(p, /QATARI GULF ARABIC/);
+  assert.match(p, /WHITE GULF ARABIC/);
+  assert.match(p, /NEVER Egyptian, Levantine, Moroccan/);
   assert.match(p, /4 short lines/);
-  assert.match(p, /اطلبيه من ماليكاز يونيفرس، توصيل لكل قطر/);
+  assert.match(p, /دكتور بِن/);
+  assert.match(p, /اطلبيه من متجر ماليكاز يونيفرس، توصيل لكل قطر/);
   assert.match(p, /Owner direction: ركّزي على التوفير/);
   assert.match(p, /123.5 QAR/);
+});
+
+test("negative prompt + master reference + camera constants carry the guardrails", () => {
+  assert.match(REEL_NEGATIVE_PROMPT, /No serum dropper/);
+  assert.match(REEL_NEGATIVE_PROMPT, /No extra fingers/);
+  assert.match(REEL_MASTER_REFERENCE, /same shape, colour, size/);
+  assert.match(REEL_SHOT_STRUCTURE, /SHOT 3/);
+  assert.match(REEL_CAMERA, /gentle handheld stabilization/);
 });
 
 test("every style has a slug, Arabic and English label", () => {
