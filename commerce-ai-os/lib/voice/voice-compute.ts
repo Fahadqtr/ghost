@@ -47,6 +47,48 @@ export function buildGulfDialectPrompt(script: string): string {
   ].join("\n");
 }
 
+// The reference line used to audition/compare candidate voices — a natural,
+// short, spoken Qatari sentence (real Khaleeji, not MSA with swapped words).
+export const AUDITION_TEST_LINE =
+  "ودّج تضيفين شي مميز لروتين العناية ببشرتج؟ شوفي هالمنتج... بسيط، عملي، ويستاهل يكون عندج.";
+
+// What we want the brand voice to BE (the dialect must come from the voice,
+// not from forcing Gulf words onto a non-Gulf speaker).
+export const GULF_VOICE_BRIEF = [
+  "Female",
+  "Native Gulf Arabic",
+  "Natural in Qatar",
+  "Warm and conversational",
+  "Premium beauty-ad style",
+  "Not formal MSA",
+  "Not Egyptian",
+  "Not Levantine",
+  "Not robotic",
+];
+
+// Shared shapes for the Voice Audition UI (pure so the client can import them).
+export interface VoiceCandidate { voiceId: string; name: string; accent?: string; description?: string; previewUrl?: string; gender?: string }
+export interface AuditionResult { voiceId: string; audioUrl?: string; error?: string }
+
+/** Trim, drop blanks/duplicates, cap to `max` voice ids. */
+export function normalizeVoiceIds(ids: (string | null | undefined)[], max = 3): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of ids) {
+    const v = String(raw ?? "").trim();
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** True when an accent/description string reads as a Gulf/Khaleeji dialect. */
+export function isGulfAccent(s: string | null | undefined): boolean {
+  return /gulf|khaleeji|khaliji|khaleej|saudi|emirati|qatari|kuwaiti|bahraini|omani/i.test(String(s ?? ""));
+}
+
 /** Normalise a model's script output: strip numbering/bullets/quotes, drop blanks, cap lines. */
 export function cleanScriptLines(text: string, maxLines = 6): string {
   return String(text ?? "")

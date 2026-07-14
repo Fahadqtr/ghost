@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildGulfScriptPrompt, buildGulfDialectPrompt, cleanScriptLines } from "./voice-compute.ts";
+import { buildGulfScriptPrompt, buildGulfDialectPrompt, cleanScriptLines, normalizeVoiceIds, isGulfAccent, AUDITION_TEST_LINE } from "./voice-compute.ts";
 
 test("buildGulfScriptPrompt enforces Gulf dialect + pronunciation, includes product/topic", () => {
   const p = buildGulfScriptPrompt({ topic: "خصم رمضان", productName: "دكتور بِن" });
@@ -36,4 +36,21 @@ test("cleanScriptLines strips numbering, bullets and quotes and drops blanks", (
 test("cleanScriptLines caps the number of lines", () => {
   const raw = Array.from({ length: 10 }, (_, i) => `سطر ${i}`).join("\n");
   assert.equal(cleanScriptLines(raw, 3).split("\n").length, 3);
+});
+
+test("normalizeVoiceIds trims, dedupes and caps", () => {
+  assert.deepEqual(normalizeVoiceIds([" a ", "a", "", "b", "c", "d"], 3), ["a", "b", "c"]);
+  assert.deepEqual(normalizeVoiceIds([null, undefined, "  "]), []);
+});
+
+test("isGulfAccent detects Gulf/Khaleeji dialects only", () => {
+  assert.equal(isGulfAccent("Gulf"), true);
+  assert.equal(isGulfAccent("saudi arabian"), true);
+  assert.equal(isGulfAccent("khaleeji"), true);
+  assert.equal(isGulfAccent("Egyptian"), false);
+  assert.equal(isGulfAccent(null), false);
+});
+
+test("AUDITION_TEST_LINE is the Qatari reference sentence", () => {
+  assert.match(AUDITION_TEST_LINE, /ببشرتج/);
 });
