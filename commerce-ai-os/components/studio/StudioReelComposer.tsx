@@ -3,8 +3,10 @@
 import { useState } from "react";
 import {
   prepareFinalReel, composeFinalReel, pollFinalReel, saveStudioReel, draftReelScript,
+  generateReelShots, pollReelShot,
   type ReelPrepared,
 } from "@/app/(app)/studio/reel-actions";
+import { uploadStudioImage } from "@/app/(app)/studio/actions";
 import {
   LOGO_POSITIONS, DEFAULT_LOGO_POSITION, DEFAULT_CTA, type CaptionLanguage,
 } from "@/lib/studio/caption-compute";
@@ -15,9 +17,11 @@ type Phase = "idle" | "preparing" | "preview" | "composing" | "ready" | "error";
 
 // Final Reel Composer: FLORA video + brand voice → timed Arabic captions + logo
 // + CTA + (optional ducked) music → Instagram-ready 1080×1920 mp4 (Creatomate).
+type ShotState = { key: string; label: string; state: "generating" | "done" | "failed"; url?: string };
+
 export default function StudioReelComposer({ locale = "ar", status }: {
   locale?: Locale;
-  status: { creatomate: boolean; logo: boolean; music: boolean };
+  status: { creatomate: boolean; logo: boolean; music: boolean; flora: boolean };
 }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
@@ -32,6 +36,12 @@ export default function StudioReelComposer({ locale = "ar", status }: {
   const [productDescription, setProductDescription] = useState("");
   const [handle, setHandle] = useState("");
   const [useMusic, setUseMusic] = useState(false);
+
+  const [productImageUrl, setProductImageUrl] = useState("");
+  const [shotCount, setShotCount] = useState(3);
+  const [shotBusy, setShotBusy] = useState(false);
+  const [shotErr, setShotErr] = useState("");
+  const [shots, setShots] = useState<ShotState[]>([]);
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [step, setStep] = useState("");
@@ -51,6 +61,43 @@ export default function StudioReelComposer({ locale = "ar", status }: {
     setScriptBusy(false);
     if ("error" in r) { setErr(r.error); return; }
     setScript(r.script);
+  };
+
+  const uploadImage = async (file: File) => {
+    setShotErr("");
+    const fd = new FormData(); fd.set("image", file);
+    const r = await uploadStudioImage(fd);
+    if ("error" in r) { setShotErr(r.error); return; }
+    setProductImageUrl(r.url);
+  };
+
+  // DEFAULT reel path: generate 3–4 DIFFERENT shots of the product, poll them,
+  // then fill the shot list (sequenced to the voice). No looped single clip.
+  const mark = (key: string, state: ShotState["state"], url?: string) =>
+    setShots((prev) => prev.map((s) => (s.key === key ? { ...s, state, ...(url ? { url } : {}) } : s)));
+
+  const genShots = async () => {
+    if (!/^https?:\/\//i.test(productImageUrl)) { setShotErr(L("ارفع صورة المنتج أولاً.", "Upload the product image first.")); return; }
+    setShotBusy(true); setShotErr(""); setVideoUrlsText(""); setShots([]);
+    const r = await generateReelShots(productImageUrl, shotCount);
+    if ("error" in r) { setShotErr(r.error); setShotBusy(false); return; }
+    setShots(r.shots.map((j) => ({ key: j.key, label: en ? j.labelEn : j.labelAr, state: j.requestId ? "generating" : "failed" })));
+    const collected: Record<string, string> = {};
+    await Promise.all(r.shots.map(async (j) => {
+      if (!j.requestId) return;
+      for (let a = 0; a < 90; a++) {
+        const p = await pollReelShot(j.requestId);
+        if ("error" in p) { mark(j.key, "failed"); return; }
+        if ("videoUrl" in p && p.videoUrl) { collected[j.key] = p.videoUrl; mark(j.key, "done", p.videoUrl); return; }
+        await new Promise((res) => setTimeout(res, 4000));
+      }
+      mark(j.key, "failed");
+    }));
+    // Keep the planned order (hero → detail → [lifestyle] → cta).
+    const ordered = r.shots.map((j) => collected[j.key]).filter(Boolean);
+    setVideoUrlsText(ordered.join("\n"));
+    setShotBusy(false);
+    if (!ordered.length) setShotErr(L("ما نجحت أي لقطة — الصق روابط يدويًا أو جرّب مرة ثانية.", "No shot succeeded — paste URLs manually or retry."));
   };
 
   const prepare = async () => {
@@ -116,11 +163,48 @@ export default function StudioReelComposer({ locale = "ar", status }: {
 
       {/* Inputs */}
       <div className="card space-y-3">
+        {/* DEFAULT: generate several different shots of the product (hero →
+            detail → CTA) instead of looping one clip. */}
+        <div className="space-y-2 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+          <p className="text-xs font-bold text-violet-800">🎬 {L("توليد لقطات المنتج (افتراضي)", "Generate product shots (default)")}</p>
+          <p className="text-[10px] text-violet-700">{L("يولّد 3 لقطات مختلفة لنفس المنتج (لقطة بطل، تفاصيل/حركة، ختام) ويرتّبها على مدة الصوت — إعلان متنوع مب فيديو واحد مكرر.", "Generates 3 different shots of the product (hero, detail/motion, CTA) sequenced to the voice — a varied ad, not one looped clip.")}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="btn-ghost cursor-pointer px-2 py-1 text-[11px]">
+              📷 {L("صورة المنتج", "Product image")}
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadImage(f); }} />
+            </label>
+            {productImageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- user-uploaded preview; Next/Image adds no value here
+              <img src={productImageUrl} alt="" className="h-9 w-9 rounded object-cover" />
+            ) : <span className="text-[10px] text-muted">{L("لم تُرفع صورة", "no image")}</span>}
+            <select value={shotCount} onChange={(e) => setShotCount(Number(e.target.value))} className="rounded-lg border border-[#efe3d6] px-2 py-1 text-[11px]">
+              <option value={3}>{L("٣ لقطات", "3 shots")}</option>
+              <option value={4}>{L("٤ لقطات (صوت أطول)", "4 shots (longer voice)")}</option>
+            </select>
+            <button onClick={genShots} disabled={shotBusy || !status.flora || !productImageUrl}
+              className="btn-primary px-3 py-1 text-[11px] disabled:opacity-50">
+              {shotBusy ? `⏳ ${L("يولّد اللقطات…", "Generating shots…")}` : `🎬 ${L("ولّد اللقطات", "Generate shots")}`}
+            </button>
+          </div>
+          {!status.flora ? <p className="text-[10px] text-amber-700">{L("FLORA غير مهيأ — الصق روابط اللقطات يدويًا بالأسفل.", "FLORA not configured — paste shot URLs manually below.")}</p> : null}
+          {shots.length ? (
+            <ul className="space-y-1">
+              {shots.map((s) => (
+                <li key={s.key} className="flex items-center gap-2 text-[11px]">
+                  <span>{s.state === "done" ? "✅" : s.state === "failed" ? "❌" : "⏳"}</span>
+                  <span className="text-ink">{s.label}</span>
+                  <span className="text-muted">{s.state === "generating" ? L("يولّد…", "generating…") : s.state === "failed" ? L("فشل", "failed") : L("جاهزة", "ready")}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {shotErr ? <p className="rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">{shotErr}</p> : null}
+        </div>
         <div className="space-y-1">
-          <label className="text-xs font-bold text-ink">{L("روابط لقطات FLORA (كل رابط بسطر)", "FLORA shot URLs (one per line)")}</label>
+          <label className="text-xs font-bold text-ink">{L("روابط لقطات FLORA (أو الصقها يدويًا — كل رابط بسطر)", "FLORA shot URLs (or paste manually — one per line)")}</label>
           <textarea value={videoUrlsText} onChange={(e) => setVideoUrlsText(e.target.value)} rows={3} dir="ltr" placeholder={"https://media.flora.ai/shot1…\nhttps://media.flora.ai/shot2…"}
             className="w-full rounded-lg border border-[#efe3d6] px-3 py-1.5 font-mono text-[11px] leading-relaxed" />
-          <p className="text-[10px] text-muted">{L("لقطتان أو ثلاث أفضل — تُرتّب تلقائياً حسب مدة الصوت بدل تكرار لقطة واحدة.", "2–3 shots is best — they're sequenced to the voice length instead of looping one clip.")}</p>
+          <p className="text-[10px] text-muted">{L("تُرتّب تلقائياً حسب مدة الصوت. لقطة واحدة فقط = تتكرر كـ fallback.", "Sequenced to the voice length. A single shot loops only as a fallback.")}</p>
         </div>
         {/* Product-aware script: name + description → tailored Gulf script. */}
         <div className="grid gap-2 sm:grid-cols-2">

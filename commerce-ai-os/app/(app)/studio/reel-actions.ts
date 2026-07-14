@@ -11,6 +11,9 @@ import {
   splitCaptions, timeCaptions, bilingualCaptions, buildBrandLine, alignCaptions, ctaWindow,
   DEFAULT_CTA, DEFAULT_LOGO_POSITION, type CaptionLanguage,
 } from "@/lib/studio/caption-compute";
+import { submitProductVideo, pollProductVideo } from "@/lib/video/provider-router";
+import { floraConfigured } from "@/lib/video/flora";
+import { planReelShots, shotCountForDuration, MIN_SHOTS, MAX_SHOTS, type ShotKey } from "@/lib/video/shot-plan";
 
 // Malika AI Studio → Final Reel Composer (phase 4). Takes a FLORA product video
 // + the approved brand voice, then layers timed Arabic captions, the Malika logo,
@@ -32,9 +35,53 @@ async function claudeText(prompt: string, maxTokens = 500): Promise<string | nul
 }
 
 /** Which engines the composer needs. */
-export async function composerStatus(): Promise<{ creatomate: boolean; logo: boolean; music: boolean }> {
+export async function composerStatus(): Promise<{ creatomate: boolean; logo: boolean; music: boolean; flora: boolean }> {
   await requireUser();
-  return { creatomate: composeConfigured(), logo: !!malikaLogoUrl(), music: !!reelsMusicUrl() };
+  return { creatomate: composeConfigured(), logo: !!malikaLogoUrl(), music: !!reelsMusicUrl(), flora: floraConfigured() };
+}
+
+export interface ShotJob { key: ShotKey; labelAr: string; labelEn: string; requestId?: string; error?: string }
+
+/**
+ * DEFAULT reel behaviour: generate several DIFFERENT FLORA shots of the SAME
+ * product (hero → detail → [lifestyle] → CTA) from one product image, so the
+ * final reel looks like a real, varied ad instead of one looped clip. Each shot
+ * is a separate FLORA run; the client polls them, then they're sequenced across
+ * the voice length. Looping a single clip is only a fallback (when generation
+ * isn't available or only one shot succeeds).
+ */
+export async function generateReelShots(imageUrl: string, count?: number): Promise<{ error: string } | { shots: ShotJob[] }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const img = String(imageUrl || "").trim();
+  if (!/^https?:\/\//i.test(img)) return { error: "ارفع صورة المنتج أو ضع رابطًا صالحًا أولاً." };
+  if (!floraConfigured()) return { error: "FLORA غير مهيأ (FLORA_API_KEY / FLORA_TECHNIQUE_SLUG) — أو الصق روابط اللقطات يدويًا." };
+  const n = Math.max(MIN_SHOTS, Math.min(MAX_SHOTS, Math.round(count || 0) || MIN_SHOTS));
+  const specs = planReelShots(n);
+  // Fire all shot generations; each is an independent FLORA run.
+  const shots = await Promise.all(specs.map(async (s): Promise<ShotJob> => {
+    const r = await submitProductVideo({ imageUrl: img, prompt: s.prompt, kind: "luxury_product_ad" });
+    return r.ok && r.requestId
+      ? { key: s.key, labelAr: s.labelAr, labelEn: s.labelEn, requestId: r.requestId }
+      : { key: s.key, labelAr: s.labelAr, labelEn: s.labelEn, error: r.error || "فشل بدء اللقطة" };
+  }));
+  if (shots.every((s) => !s.requestId)) return { error: shots.find((s) => s.error)?.error || "فشل توليد اللقطات." };
+  return { shots };
+}
+
+/** Poll a single generated shot; returns the FLORA video URL once ready. */
+export async function pollReelShot(requestId: string): Promise<{ error: string } | { status: string; videoUrl?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const s = await pollProductVideo(requestId);
+  if (s.status === "failed") return { error: s.error || "فشلت اللقطة." };
+  return { status: s.status, videoUrl: s.videoUrl };
+}
+
+/** Suggested shot count for a voiceover length (3 default, 4 for longer voice). */
+export async function suggestedShotCount(voiceSec?: number): Promise<number> {
+  await requireUser();
+  return shotCountForDuration(voiceSec);
 }
 
 export interface ReelSettings {
