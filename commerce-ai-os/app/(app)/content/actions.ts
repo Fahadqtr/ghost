@@ -300,7 +300,9 @@ export async function reelsWeekStatus(): Promise<
 }
 
 // ---- Auto-generate a reel video (Higgsfield, in-system) -----------------
-import { submitReelJob, getReelJob, higgsfieldConfigured } from "@/lib/social/higgsfield";
+import { higgsfieldConfigured } from "@/lib/social/higgsfield";
+import { floraConfigured } from "@/lib/video/flora";
+import { submitProductVideo, pollProductVideo } from "@/lib/video/provider-router";
 import { DOP_PRODUCT_SUFFIX } from "@/lib/social/reel-request-compute";
 
 const IMG_BUCKET = "product-images";
@@ -340,25 +342,29 @@ async function resolveProductImageUrl(sku: string): Promise<string> {
 }
 
 // Submit an image→video job for a plan item (uses the product's real photo).
-export async function generateReelVideo(input: { sku: string | null; prompt: string }): Promise<{ error: string } | { requestId: string }> {
+// Routes through the provider router: product videos prefer FLORA (best product
+// fidelity) and fall back to Higgsfield until FLORA is configured. `kind` lets a
+// caller force a talking/UGC clip onto Higgsfield.
+export async function generateReelVideo(input: { sku: string | null; prompt: string; kind?: string }): Promise<{ error: string } | { requestId: string; note?: string }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
-  if (!higgsfieldConfigured()) return { error: "Higgsfield غير مهيأ — أضف HIGGSFIELD_API_KEY و HIGGSFIELD_API_SECRET في Vercel ثم Redeploy." };
+  if (!higgsfieldConfigured() && !floraConfigured()) return { error: "لا يوجد محرك فيديو مهيأ — أضف FLORA_API_KEY (للمنتجات) أو HIGGSFIELD_API_KEY في Vercel ثم Redeploy." };
   if (!input.sku) return { error: "لا يوجد SKU للمنتج." };
   const imageUrl = await resolveProductImageUrl(input.sku);
   if (!imageUrl) return { error: "ما فيه صورة لهذا المنتج — أضف صورة أولًا." };
   // Append the product-consistency guardrails so the clip doesn't morph the item.
   const prompt = `${input.prompt} ${DOP_PRODUCT_SUFFIX}`.trim();
-  const r = await submitReelJob(imageUrl, prompt);
+  const r = await submitProductVideo({ imageUrl, prompt, kind: input.kind ?? "product_showcase" });
   if (!r.ok || !r.requestId) return { error: r.error || "فشل بدء التوليد." };
-  return { requestId: r.requestId };
+  return { requestId: r.requestId, note: r.note };
 }
 
-// Poll a submitted job; returns the video URL once ready.
+// Poll a submitted job; returns the video URL once ready. Handles both FLORA
+// and Higgsfield jobs (the requestId is provider-tagged).
 export async function pollReelVideo(requestId: string): Promise<{ error: string } | { status: string; videoUrl?: string }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
-  const s = await getReelJob(requestId);
+  const s = await pollProductVideo(requestId);
   if (s.status === "failed") return { error: s.error || "فشل التوليد." };
   return { status: s.status, videoUrl: s.videoUrl };
 }
@@ -368,9 +374,9 @@ import { synthArabicVoice, voiceoverConfigured } from "@/lib/social/voiceover";
 import { submitCompose, getCompose, composeConfigured } from "@/lib/social/compose";
 
 /** Whether the full-assembly pipeline is wired (for the UI to enable the button). */
-export async function reelPipelineStatus(): Promise<{ higgsfield: boolean; voice: boolean; compose: boolean }> {
+export async function reelPipelineStatus(): Promise<{ flora: boolean; higgsfield: boolean; voice: boolean; compose: boolean }> {
   await requireUser();
-  return { higgsfield: higgsfieldConfigured(), voice: voiceoverConfigured(), compose: composeConfigured() };
+  return { flora: floraConfigured(), higgsfield: higgsfieldConfigured(), voice: voiceoverConfigured(), compose: composeConfigured() };
 }
 
 /**
