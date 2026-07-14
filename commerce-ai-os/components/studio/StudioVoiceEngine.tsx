@@ -3,8 +3,8 @@
 import { useState } from "react";
 import {
   draftVoiceScript, refineGulfScript, generateVoicePreview,
-  auditionVoices, suggestGulfVoices, voiceDebug,
-  type VoiceStatus, type VoiceDebugReport,
+  auditionVoices, suggestGulfVoices, voiceDebug, voiceAB,
+  type VoiceStatus, type VoiceDebugReport, type ABClip,
 } from "@/app/(app)/studio/voice-actions";
 import { AUDITION_TEST_LINE, GULF_VOICE_BRIEF, type VoiceCandidate, type AuditionResult } from "@/lib/voice/voice-compute";
 import type { Locale } from "@/lib/i18n";
@@ -38,6 +38,12 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
   const [dbgBusy, setDbgBusy] = useState(false);
   const [dbgErr, setDbgErr] = useState("");
   const [dbg, setDbg] = useState<VoiceDebugReport | null>(null);
+
+  // A/B state
+  const [abVoiceId, setAbVoiceId] = useState(initialStatus.voiceId || "");
+  const [abBusy, setAbBusy] = useState(false);
+  const [abErr, setAbErr] = useState("");
+  const [ab, setAb] = useState<{ a: ABClip; b: ABClip } | null>(null);
 
   const badge = {
     connected: { ar: "متصل", en: "Connected", cls: "bg-emerald-100 text-emerald-700" },
@@ -84,6 +90,14 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
     setDbgBusy(true); setDbgErr(""); setDbg(null);
     try { const r = await voiceDebug({ voiceId: vid, text: auditText }); if ("error" in r) setDbgErr(r.error); else setDbg(r); }
     finally { setDbgBusy(false); }
+  };
+
+  const runAB = async () => {
+    const vid = abVoiceId.trim();
+    if (!vid) { setAbErr(L("أدخل Voice ID", "Enter a Voice ID")); return; }
+    setAbBusy(true); setAbErr(""); setAb(null);
+    try { const r = await voiceAB({ voiceId: vid, text: auditText }); if ("error" in r) setAbErr(r.error); else setAb(r); }
+    finally { setAbBusy(false); }
   };
 
   return (
@@ -222,6 +236,33 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
             <p className="text-[11px] text-amber-900">{L("اسمع الستة: أي نص+موديل أقرب للمعاينة الأصلية؟ لو RAW أقرب من B → التشكيل يفسد اللهجة. لو v2 يختلف عن v3 → المشكلة الموديل.", "Compare all six: which text+model is closest to the library preview? If RAW beats B → tashkeel distorts the accent. If v2 ≠ v3 → it's the model.")}</p>
           </div>
         ) : null}
+      </div>
+
+      {/* Final A/B — current settings vs proposed settings, same voice + line. */}
+      <div className="card space-y-3 border-emerald-200 bg-emerald-50/40">
+        <p className="text-sm font-bold text-emerald-800">🅰️🅱️ {L("مقارنة نهائية A/B", "Final A/B")}</p>
+        <p className="text-[11px] text-emerald-900">{L("نفس الصوت ونفس الجملة. A = الإعداد الحالي · B = الإعدادات الجديدة (stability 0.45 · style 0.20 · speed 0.96) + وقفات طبيعية بدون تشكيل.", "Same voice + line. A = current · B = new (stability 0.45 · style 0.20 · speed 0.96) + natural pauses, no tashkeel.")}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input value={abVoiceId} onChange={(e) => setAbVoiceId(e.target.value)} dir="ltr" placeholder="Voice ID"
+            className="min-w-[12rem] flex-1 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 font-mono text-xs" />
+          <button onClick={runAB} disabled={abBusy || !connected} className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50">
+            {abBusy ? `⏳ ${L("يولّد A/B…", "generating…")}` : `🔊 ${L("ولّد A/B", "Generate A/B")}`}
+          </button>
+        </div>
+        {abErr ? <p className="rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-700">{abErr}</p> : null}
+        {ab ? (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {[ab.a, ab.b].map((c, i) => (
+              <div key={i} className="space-y-1 rounded-lg border border-emerald-200 bg-white p-2">
+                <p className="text-[11px] font-bold text-ink" dir="rtl">{c.label}</p>
+                <p className="font-mono text-[10px] text-muted" dir="ltr">stability {c.settings.stability} · style {c.settings.style} · speed {c.settings.speed}</p>
+                <p className="whitespace-pre-line text-[11px] text-slate-700" dir="rtl">{c.text}</p>
+                {c.audioUrl ? <audio src={c.audioUrl} controls className="h-8 w-full" /> : <p className="text-[10px] text-red-600">{c.error}</p>}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <p className="text-[11px] text-emerald-900">{L("عجبك B؟ ثبّته في Vercel:", "Prefer B? Set in Vercel:")} <code dir="ltr">ELEVENLABS_STABILITY=0.45</code> · <code dir="ltr">ELEVENLABS_STYLE=0.2</code> · <code dir="ltr">ELEVENLABS_SPEED=0.96</code> {L("ثم Redeploy.", "then Redeploy.")}</p>
       </div>
 
       {/* ── Script → voice preview (uses the current brand voice) ── */}

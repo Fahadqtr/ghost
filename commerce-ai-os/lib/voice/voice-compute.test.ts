@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildGulfScriptPrompt, buildGulfDialectPrompt, cleanScriptLines, normalizeVoiceIds, isGulfAccent, AUDITION_TEST_LINE } from "./voice-compute.ts";
+import { buildGulfScriptPrompt, buildGulfDialectPrompt, cleanScriptLines, normalizeVoiceIds, isGulfAccent, addNaturalPauses, AUDITION_TEST_LINE } from "./voice-compute.ts";
 
 test("buildGulfScriptPrompt enforces Gulf dialect + pronunciation, includes product/topic", () => {
   const p = buildGulfScriptPrompt({ topic: "خصم رمضان", productName: "دكتور بِن" });
@@ -53,4 +53,11 @@ test("isGulfAccent detects Gulf/Khaleeji dialects only", () => {
 
 test("AUDITION_TEST_LINE is the Qatari reference sentence", () => {
   assert.match(AUDITION_TEST_LINE, /ببشرتج/);
+});
+
+test("addNaturalPauses breaks sentences into lines without changing words", () => {
+  const out = addNaturalPauses("شوفي هالمنتج؟ بسيط وعملي. ويستاهل");
+  assert.equal(out, "شوفي هالمنتج؟\nبسيط وعملي.\nويستاهل");
+  // no tashkeel / no added characters beyond newlines
+  assert.equal(out.replace(/\n/g, " "), "شوفي هالمنتج؟ بسيط وعملي. ويستاهل");
 });

@@ -107,6 +107,18 @@ export function buildGulfRewriteOnlyPrompt(script: string): string {
   ].join("\n");
 }
 
+/**
+ * Add natural pauses WITHOUT any tashkeel/phonetics: put each sentence on its
+ * own line (ElevenLabs treats a line break as a short pause). Words are never
+ * changed — only sentence boundaries become pauses.
+ */
+export function addNaturalPauses(text: string): string {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*([.؟?!])\s+/g, "$1\n")
+    .split("\n").map((s) => s.trim()).filter(Boolean).join("\n");
+}
+
 /** Normalise a model's script output: strip numbering/bullets/quotes, drop blanks, cap lines. */
 export function cleanScriptLines(text: string, maxLines = 6): string {
   return String(text ?? "")
