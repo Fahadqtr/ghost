@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isGulfAccent, type VoiceCandidate } from "@/lib/voice/voice-compute";
 
 // Arabic voiceover via ElevenLabs — text → natural Gulf/Arabic speech (mp3),
 // uploaded to storage so the composer (Creatomate) can pull a public URL.
@@ -41,24 +42,64 @@ export async function elevenStatus(): Promise<{ state: VoiceConnState; detail?: 
 }
 
 /**
+ * Fetch candidate female Arabic voices from the ElevenLabs voice library so the
+ * owner can audition and pick a native Gulf speaker. Gulf/Khaleeji accents are
+ * surfaced first. Read-only discovery — nothing is adopted automatically.
+ */
+export async function listGulfVoiceCandidates(): Promise<{ ok: boolean; voices: VoiceCandidate[]; error?: string }> {
+  if (!apiKey()) return { ok: false, voices: [], error: "لا يوجد ELEVENLABS_API_KEY." };
+  try {
+    const params = new URLSearchParams({ gender: "female", language: "ar", page_size: "40" });
+    const r = await fetch(`${BASE}/shared-voices?${params.toString()}`, {
+      headers: { "xi-api-key": apiKey() }, cache: "no-store", signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) { const t = await r.text(); return { ok: false, voices: [], error: `ElevenLabs HTTP ${r.status} — ${t.slice(0, 140)}` }; }
+    const j: any = await r.json();
+    const arr: any[] = Array.isArray(j?.voices) ? j.voices : [];
+    const voices: VoiceCandidate[] = arr
+      .map((v: any): VoiceCandidate => ({
+        voiceId: v?.voice_id, name: v?.name, accent: v?.accent, description: v?.description,
+        previewUrl: v?.preview_url, gender: v?.gender,
+      }))
+      .filter((v) => !!v.voiceId);
+    // Gulf/Khaleeji accents first, then the rest.
+    voices.sort((a, b) => Number(isGulfAccent(b.accent) || isGulfAccent(b.description)) - Number(isGulfAccent(a.accent) || isGulfAccent(a.description)));
+    return { ok: true, voices: voices.slice(0, 12) };
+  } catch (e: any) {
+    return { ok: false, voices: [], error: e?.message || "تعذّر جلب الأصوات." };
+  }
+}
+
+/**
  * Synthesize Arabic speech; returns a public mp3 URL and its exact duration.
  * Uses the /with-timestamps endpoint so we know how long the clip is — the
  * composer needs it to size the video (otherwise it runs long → black screen).
  */
-export async function synthArabicVoice(text: string): Promise<{ ok: boolean; url?: string; durationSec?: number; error?: string }> {
-  if (!voiceoverConfigured()) return { ok: false, error: "ElevenLabs غير مهيأ (ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID)." };
+function envNum(v: string | undefined, def: number): number { const n = Number(String(v ?? "").trim()); return Number.isFinite(n) ? n : def; }
+
+export async function synthArabicVoice(
+  text: string,
+  opts?: { voiceId?: string; stability?: number; style?: number },
+): Promise<{ ok: boolean; url?: string; durationSec?: number; error?: string }> {
+  // Voice id can be overridden (for the studio audition/compare); default = env.
+  const vid = String(opts?.voiceId ?? "").trim() || voiceId();
+  if (!apiKey() || !vid) return { ok: false, error: "ElevenLabs غير مهيأ (ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID)." };
   const line = String(text ?? "").trim().slice(0, 800);
   if (!line) return { ok: false, error: "لا يوجد نص للصوت." };
   try {
-    const r = await fetch(`${BASE}/text-to-speech/${encodeURIComponent(voiceId())}/with-timestamps`, {
+    // Delivery: lower stability = more expressive, higher similarity + style +
+    // speaker boost. Defaults keep the existing pipeline unchanged; env or opts
+    // can push it more expressive (less flat) without touching callers.
+    const stability = opts?.stability ?? envNum(process.env.ELEVENLABS_STABILITY, 0.4);
+    const style = opts?.style ?? envNum(process.env.ELEVENLABS_STYLE, 0.35);
+    const similarity = envNum(process.env.ELEVENLABS_SIMILARITY, 0.85);
+    const r = await fetch(`${BASE}/text-to-speech/${encodeURIComponent(vid)}/with-timestamps`, {
       method: "POST",
       headers: { "xi-api-key": apiKey(), "Content-Type": "application/json", Accept: "application/json" },
-      // Settings tuned for warmer, more natural delivery (less flat/robotic):
-      // lower stability = more expressive, higher similarity + style + speaker boost.
       body: JSON.stringify({
         text: line,
         model_id: modelId(),
-        voice_settings: { stability: 0.4, similarity_boost: 0.85, style: 0.35, use_speaker_boost: true },
+        voice_settings: { stability, similarity_boost: similarity, style, use_speaker_boost: true },
       }),
       cache: "no-store",
       signal: AbortSignal.timeout(60_000),

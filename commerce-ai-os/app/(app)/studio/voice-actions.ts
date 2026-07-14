@@ -2,8 +2,8 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { requireUser } from "@/lib/auth/requireUser";
-import { synthArabicVoice, elevenStatus, elevenVoiceId, elevenModelId, type VoiceConnState } from "@/lib/social/voiceover";
-import { buildGulfScriptPrompt, buildGulfDialectPrompt, cleanScriptLines } from "@/lib/voice/voice-compute";
+import { synthArabicVoice, elevenStatus, elevenVoiceId, elevenModelId, listGulfVoiceCandidates, type VoiceConnState } from "@/lib/social/voiceover";
+import { buildGulfScriptPrompt, buildGulfDialectPrompt, cleanScriptLines, normalizeVoiceIds, type VoiceCandidate, type AuditionResult } from "@/lib/voice/voice-compute";
 
 // Malika AI Studio → Voice Engine (phase 3). ElevenLabs is the ONLY voice
 // provider (no generic-Arabic fallback). Flow: write/generate a script → refine
@@ -61,12 +61,41 @@ export async function refineGulfScript(script: string): Promise<{ error: string 
 }
 
 /** Generate a voice preview (mp3) from the final text — ElevenLabs only, no fallback. */
-export async function generateVoicePreview(input: { text: string }): Promise<{ error: string } | { audioUrl: string; durationSec?: number }> {
+export async function generateVoicePreview(input: { text: string; voiceId?: string }): Promise<{ error: string } | { audioUrl: string; durationSec?: number }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const text = String(input.text || "").trim();
   if (!text) return { error: "لا يوجد نص للصوت." };
-  const r = await synthArabicVoice(text);
+  const voiceId = String(input.voiceId || "").trim() || undefined;
+  const r = await synthArabicVoice(text, voiceId ? { voiceId } : undefined);
   if (!r.ok || !r.url) return { error: r.error || "فشل توليد الصوت." };
   return { audioUrl: r.url, durationSec: r.durationSec };
+}
+
+/**
+ * Voice Audition: synth the SAME line with up to 3 candidate voice ids so the
+ * owner can compare and pick. Slightly more expressive settings (lower stability,
+ * higher style) to avoid a flat read. Nothing is adopted automatically.
+ */
+export async function auditionVoices(input: { text: string; voiceIds: string[] }): Promise<{ error: string } | { results: AuditionResult[] }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const text = String(input.text || "").trim();
+  if (!text) return { error: "لا يوجد نص للاختبار." };
+  const ids = normalizeVoiceIds(input.voiceIds, 3);
+  if (!ids.length) return { error: "أدخل Voice ID واحد على الأقل." };
+  const results = await Promise.all(ids.map(async (voiceId): Promise<AuditionResult> => {
+    const r = await synthArabicVoice(text, { voiceId, stability: 0.3, style: 0.45 });
+    return r.ok && r.url ? { voiceId, audioUrl: r.url } : { voiceId, error: r.error || "فشل التوليد." };
+  }));
+  return { results };
+}
+
+/** Suggest native Gulf female voices from the ElevenLabs library to audition. */
+export async function suggestGulfVoices(): Promise<{ error: string } | { voices: VoiceCandidate[] }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const r = await listGulfVoiceCandidates();
+  if (!r.ok) return { error: r.error || "تعذّر جلب الأصوات." };
+  return { voices: r.voices };
 }
