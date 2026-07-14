@@ -26,8 +26,12 @@ const pick = (o: any, ...keys: string[]): string | undefined => {
   for (const k of keys) { const v = o?.[k]; if (v && typeof v !== "object") return String(v); }
   return undefined;
 };
+const pickNum = (o: any, ...keys: string[]): number | undefined => {
+  for (const k of keys) { const v = Number(o?.[k]); if (Number.isFinite(v) && v > 0) return v; }
+  return undefined;
+};
 
-export interface ComposeSubmit { ok: boolean; renderId?: string; url?: string; error?: string; }
+export interface ComposeSubmit { ok: boolean; renderId?: string; url?: string; width?: number; height?: number; durationSec?: number; error?: string; }
 
 /** Submit a compose render. May return a final url immediately, else a renderId to poll. */
 export async function submitCompose(opts: ComposeInput): Promise<ComposeSubmit> {
@@ -51,9 +55,12 @@ export async function submitCompose(opts: ComposeInput): Promise<ComposeSubmit> 
     const one = Array.isArray(j) ? j[0] : j;
     const url = pick(one, "url");
     const id = pick(one, "id");
+    const width = pickNum(one, "width");
+    const height = pickNum(one, "height");
+    const durationSec = pickNum(one, "duration");
     const status = (pick(one, "status") || "").toLowerCase();
-    if (url && (status === "succeeded" || status === "")) return { ok: true, url };
-    if (id) return { ok: true, renderId: id };
+    if (url && (status === "succeeded" || status === "")) return { ok: true, url, width, height, durationSec };
+    if (id) return { ok: true, renderId: id, width, height, durationSec };
     return { ok: false, error: `رد Creatomate غير متوقع: ${body.slice(0, 200)}` };
   } catch (e: any) {
     console.error("[compose] threw", e?.message || e);
@@ -61,7 +68,7 @@ export async function submitCompose(opts: ComposeInput): Promise<ComposeSubmit> 
   }
 }
 
-export interface ComposeStatus { ok: boolean; status: "pending" | "completed" | "failed" | "unknown"; url?: string; error?: string; }
+export interface ComposeStatus { ok: boolean; status: "pending" | "completed" | "failed" | "unknown"; url?: string; width?: number; height?: number; durationSec?: number; error?: string; }
 
 /** Poll a compose render until the final mp4 is ready. */
 export async function getCompose(renderId: string): Promise<ComposeStatus> {
@@ -79,7 +86,7 @@ export async function getCompose(renderId: string): Promise<ComposeStatus> {
       ? "completed"
       : raw.includes("fail") || raw.includes("error") ? "failed"
       : "pending";
-    return { ok: true, status, url, error: status === "failed" ? (pick(j, "error_message", "error") || "فشل التركيب") : undefined };
+    return { ok: true, status, url, width: pickNum(j, "width"), height: pickNum(j, "height"), durationSec: pickNum(j, "duration"), error: status === "failed" ? (pick(j, "error_message", "error") || "فشل التركيب") : undefined };
   } catch (e: any) {
     return { ok: false, status: "unknown", error: e?.message };
   }

@@ -81,10 +81,12 @@ function envNum(v: string | undefined, def: number): number { const n = Number(S
 
 export interface VoiceDebug { voiceId: string; modelId: string; stability: number; similarityBoost: number; style: number; speed: number; useSpeakerBoost: boolean; languageCode: string | null; textLen: number }
 
+export interface VoiceAlignment { chars: string[]; starts: number[]; ends: number[] }
+
 export async function synthArabicVoice(
   text: string,
   opts?: { voiceId?: string; modelId?: string; stability?: number; style?: number; similarity?: number; speed?: number; speakerBoost?: boolean },
-): Promise<{ ok: boolean; url?: string; durationSec?: number; error?: string; debug?: VoiceDebug }> {
+): Promise<{ ok: boolean; url?: string; durationSec?: number; alignment?: VoiceAlignment; error?: string; debug?: VoiceDebug }> {
   // Voice id can be overridden (for the studio audition/compare); default = env.
   const vid = String(opts?.voiceId ?? "").trim() || voiceId();
   if (!apiKey() || !vid) return { ok: false, error: "ElevenLabs غير مهيأ (ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID)." };
@@ -122,17 +124,21 @@ export async function synthArabicVoice(
     if (!b64 || typeof b64 !== "string") return { ok: false, error: "الصوت رجع فارغًا." };
     const buf = Buffer.from(b64, "base64");
     if (!buf.length) return { ok: false, error: "الصوت رجع فارغًا." };
-    // Duration = the last character-end time from the alignment (seconds).
-    const ends: number[] = j?.alignment?.character_end_times_seconds
-      ?? j?.normalized_alignment?.character_end_times_seconds ?? [];
-    const durationSec = Array.isArray(ends) && ends.length ? Number(ends[ends.length - 1]) : undefined;
+    // Character-level alignment → exact duration AND precise caption sync.
+    const al = j?.alignment ?? j?.normalized_alignment ?? {};
+    const chars: string[] = Array.isArray(al?.characters) ? al.characters : [];
+    const starts: number[] = Array.isArray(al?.character_start_times_seconds) ? al.character_start_times_seconds : [];
+    const ends: number[] = Array.isArray(al?.character_end_times_seconds) ? al.character_end_times_seconds : [];
+    const durationSec = ends.length ? Number(ends[ends.length - 1]) : undefined;
+    const alignment: VoiceAlignment | undefined =
+      chars.length && chars.length === starts.length && chars.length === ends.length ? { chars, starts, ends } : undefined;
     let admin: any;
     try { admin = createAdminClient(); } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "الخادم غير مهيأ." }; }
     const path = `reels-audio/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
     const { error: up } = await admin.storage.from(BUCKET).upload(path, buf, { contentType: "audio/mpeg", upsert: true });
     if (up) { console.error("[voiceover] upload", up.message); return { ok: false, error: `رفع الصوت فشل: ${up.message}` }; }
     const url = admin.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
-    return { ok: true, url, durationSec: Number.isFinite(durationSec) ? durationSec : undefined, debug };
+    return { ok: true, url, durationSec: Number.isFinite(durationSec) ? durationSec : undefined, alignment, debug };
   } catch (e: any) {
     console.error("[voiceover] threw", e?.message || e);
     return { ok: false, error: e?.message || "فشل توليد الصوت." };

@@ -5,10 +5,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
 import { synthArabicVoice } from "@/lib/social/voiceover";
 import { submitCompose, getCompose, composeConfigured, malikaLogoUrl, reelsMusicUrl } from "@/lib/social/compose";
-import type { CaptionCue, LogoPosition } from "@/lib/social/compose-compute";
-import { resolveReelDuration } from "@/lib/social/compose-compute";
+import type { CaptionCue, LogoPosition, ReelQA } from "@/lib/social/compose-compute";
+import { resolveReelDuration, reelQA, REEL_WIDTH, REEL_HEIGHT } from "@/lib/social/compose-compute";
 import {
-  splitCaptions, timeCaptions, bilingualCaptions, buildBrandLine,
+  splitCaptions, timeCaptions, bilingualCaptions, buildBrandLine, alignCaptions, ctaWindow,
   DEFAULT_CTA, DEFAULT_LOGO_POSITION, type CaptionLanguage,
 } from "@/lib/studio/caption-compute";
 
@@ -39,12 +39,14 @@ export async function composerStatus(): Promise<{ creatomate: boolean; logo: boo
 
 export interface ReelSettings {
   videoUrl: string;
+  videoUrls?: string[];      // multiple FLORA shots (sequenced across the timeline)
   script: string;
   language?: CaptionLanguage;
   cta?: string;
   logoPosition?: LogoPosition;
   showLogo?: boolean;
   productName?: string;
+  productDescription?: string;
   handle?: string;
   useMusic?: boolean;
 }
@@ -55,7 +57,30 @@ export interface ReelPrepared {
   finalDurationSec: number;  // the reel length (voice + short tail, bounded)
   captionLines: string[];
   cues: CaptionCue[];
+  syncedToVoice: boolean;    // captions timed from real ElevenLabs timestamps?
   brandLine: string;
+}
+
+/**
+ * Product-aware script: writes a short Gulf-Arabic reel script grounded in the
+ * ACTUAL product name + description — never a generic template. Used before the
+ * voice is synthesized so the audio/captions match the product.
+ */
+export async function draftReelScript(productName: string, productDescription?: string): Promise<{ error: string } | { script: string }> {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const name = String(productName || "").trim();
+  const desc = String(productDescription || "").trim();
+  if (!name && !desc) return { error: "اكتب اسم المنتج أو وصفه أولاً." };
+  const prompt = `اكتب سكربت قصير لريل إنستغرام باللهجة الخليجية (قطر) لمنتج عناية بالبشرة من متجر مالكا.
+اعتمد حرفياً على بيانات المنتج التالية ولا تستخدم كلامًا عامًا لا يخصه:
+- الاسم: ${name || "—"}
+- الوصف: ${desc || "—"}
+الشروط: أنثوي ودافئ وراقٍ، جملتان إلى ثلاث جمل قصيرة فقط (يُقرأ في 8–12 ثانية)، بدون تشكيل، بدون إيموجي، اذكر فائدة المنتج الفعلية، وأنهِ بدعوة لطيفة للشراء. أعطني النص فقط.`;
+  const out = await claudeText(prompt, 400);
+  const script = String(out ?? "").trim();
+  if (!script) return { error: "تعذّر توليد السكربت (تأكد من ANTHROPIC_API_KEY)." };
+  return { script };
 }
 
 /**
@@ -66,60 +91,100 @@ export interface ReelPrepared {
 export async function prepareFinalReel(input: ReelSettings): Promise<{ error: string } | ReelPrepared> {
   const unauth = await requireUser();
   if (unauth) return unauth;
-  const videoUrl = String(input.videoUrl || "").trim();
-  const script = String(input.script || "").trim();
-  if (!/^https?:\/\//i.test(videoUrl)) return { error: "رابط فيديو FLORA غير صالح." };
-  if (!script) return { error: "لا يوجد سكربت." };
+  const shots = (input.videoUrls?.length ? input.videoUrls : [input.videoUrl])
+    .map((u) => String(u || "").trim()).filter((u) => /^https?:\/\//i.test(u));
+  if (!shots.length) return { error: "رابط فيديو FLORA غير صالح." };
+
+  // Product-aware script: if none was pasted but we have product data, write one
+  // grounded in the actual product — never a generic template.
+  let script = String(input.script || "").trim();
+  if (!script && (input.productName || input.productDescription)) {
+    const drafted = await draftReelScript(input.productName || "", input.productDescription);
+    if (!("error" in drafted)) script = drafted.script;
+  }
+  if (!script) return { error: "لا يوجد سكربت (اكتب اسم المنتج ووصفه ثم «اكتب السكربت»)." };
 
   // 1) Brand voice (uses the adopted voice/model/settings — nothing changed).
   const voice = await synthArabicVoice(script);
   if (!voice.ok || !voice.url) return { error: voice.error || "فشل توليد الصوت." };
 
-  // 2) Caption lines by language.
+  // 2) Arabic caption lines drive the timing (they match the audio stream).
   const lang = input.language || "ar";
   const arLines = splitCaptions(script);
+  const finalDurationSec = resolveReelDuration(voice.durationSec);
+
+  // Precise sync from the real ElevenLabs character timestamps; fall back to
+  // duration-weighted timing if the alignment isn't usable.
+  const aligned = voice.alignment ? alignCaptions(arLines, voice.alignment) : null;
+  const syncedToVoice = !!aligned;
+  const arCues = aligned ?? timeCaptions(arLines, voice.durationSec ?? finalDurationSec);
+
+  // 3) Display language: keep the Arabic cue TIMES, swap the display text.
   let captionLines = arLines;
+  let cues = arCues;
   if (lang !== "ar") {
     const en = await claudeText(`Translate each of these Arabic caption lines to short, natural marketing English. Return ONLY the English lines, one per line, same count and order:\n${arLines.join("\n")}`);
     const enLines = splitCaptions(String(en ?? ""));
     if (lang === "en" && enLines.length) captionLines = enLines;
     else if (lang === "ar_en" && enLines.length) captionLines = bilingualCaptions(arLines, enLines);
+    // Reuse the synced Arabic times for the displayed lines (1:1 by line).
+    cues = captionLines.map((text, i) => ({ text, time: arCues[i]?.time ?? 0, duration: arCues[i]?.duration ?? 1 }));
   }
 
-  const finalDurationSec = resolveReelDuration(voice.durationSec);
-  const cues = timeCaptions(captionLines, voice.durationSec ?? finalDurationSec);
   const brandLine = buildBrandLine(input.productName, input.handle);
-  return { audioUrl: voice.url, durationSec: voice.durationSec, finalDurationSec, captionLines, cues, brandLine };
+  return { audioUrl: voice.url, durationSec: voice.durationSec, finalDurationSec, captionLines, cues, syncedToVoice, brandLine };
 }
 
 /** Render the final reel via Creatomate from the prepared voice + caption plan. */
 export async function composeFinalReel(input: ReelSettings & { audioUrl: string; durationSec?: number; cues: CaptionCue[]; brandLine: string }):
-  Promise<{ error: string } | { renderId?: string; url?: string }> {
+  Promise<{ error: string; qa?: ReelQA } | { renderId?: string; url?: string; qa?: ReelQA }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   if (!composeConfigured()) return { error: "Creatomate غير مهيأ (CREATOMATE_API_KEY في Vercel)." };
 
+  const shots = (input.videoUrls?.length ? input.videoUrls : [input.videoUrl])
+    .map((u) => String(u || "").trim()).filter((u) => /^https?:\/\//i.test(u));
+  const finalDur = resolveReelDuration(input.durationSec);
+
   const r = await submitCompose({
-    videoUrl: input.videoUrl,
+    videoUrl: shots[0] || input.videoUrl,
+    videoUrls: shots,
     audioUrl: input.audioUrl,
     durationSec: input.durationSec ?? null,
     captions: input.cues,
     ctaText: (input.cta ?? DEFAULT_CTA).trim() || DEFAULT_CTA,
+    ctaWindow: ctaWindow(finalDur),
     brandText: input.brandLine || null,
     logoUrl: input.showLogo === false ? null : (malikaLogoUrl() || null),
     logoPosition: input.logoPosition ?? DEFAULT_LOGO_POSITION,
     musicUrl: input.useMusic ? (reelsMusicUrl() || null) : null,
   });
   if (!r.ok) return { error: r.error || "فشل التركيب." };
-  return { renderId: r.renderId, url: r.url };
+  // If Creatomate returned a final URL synchronously, QA it now.
+  if (r.url) {
+    const qa = reelQA({ width: r.width, height: r.height, durationSec: r.durationSec }, input.durationSec);
+    if (!qa.pass && r.width && r.height && (r.width < REEL_WIDTH || r.height < REEL_HEIGHT)) {
+      return { error: `الناتج ${r.width}×${r.height} أقل من ${REEL_WIDTH}×${REEL_HEIGHT} — فشل التصدير.`, qa };
+    }
+    return { url: r.url, qa };
+  }
+  return { renderId: r.renderId };
 }
 
-/** Poll the final render. */
-export async function pollFinalReel(renderId: string): Promise<{ error: string } | { status: string; url?: string }> {
+/** Poll the final render + run Final QA (resolution / duration) on completion. */
+export async function pollFinalReel(renderId: string, voiceSec?: number): Promise<{ error: string } | { status: string; url?: string; qa?: ReelQA }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const s = await getCompose(renderId);
   if (s.status === "failed") return { error: s.error || "فشل التركيب." };
+  if (s.status === "completed" && s.url) {
+    const qa = reelQA({ width: s.width, height: s.height, durationSec: s.durationSec }, voiceSec ?? null);
+    // A low-res proxy (smaller than 1080×1920) is a failure, not a Final.
+    if (s.width && s.height && (s.width < REEL_WIDTH || s.height < REEL_HEIGHT)) {
+      return { error: `الناتج ${s.width}×${s.height} أقل من ${REEL_WIDTH}×${REEL_HEIGHT} — فشل التصدير.` };
+    }
+    return { status: s.status, url: s.url, qa };
+  }
   return { status: s.status, url: s.url };
 }
 
