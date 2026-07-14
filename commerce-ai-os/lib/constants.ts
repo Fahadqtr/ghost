@@ -135,6 +135,7 @@ export const NAV_GROUPS = [
     { href: "/inbox", label: "الوارد (دايركت)", en: "Inbox (DMs)", icon: "💬" },
     { href: "/social", label: "محتوى السوشيال", en: "Social content", icon: "📣" },
     { href: "/content", label: "مولّد المحتوى", en: "Content generator", icon: "🎬" },
+    { href: "/studio", label: "استوديو ماليكا · Malika AI Studio", en: "Malika AI Studio", icon: "🎨" },
   ] },
   {
     title: "المنصات", titleEn: "Channels",
