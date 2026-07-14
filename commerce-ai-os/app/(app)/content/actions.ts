@@ -384,14 +384,20 @@ export async function finalizeReel(input: { videoUrl: string; scriptAr?: string;
   if (!composeConfigured()) return { error: "Creatomate غير مهيأ — أضف CREATOMATE_API_KEY (واختياري MALIKA_LOGO_URL) في Vercel." };
 
   let audioUrl: string | null = null;
+  let durationSec: number | null = null;
   const script = String(input.scriptAr || "").trim();
   if (script && voiceoverConfigured()) {
     const v = await synthArabicVoice(script);
     if (!v.ok) return { error: v.error || "فشل توليد الصوت." };
     audioUrl = v.url ?? null;
+    durationSec = v.durationSec ?? null;
   }
 
-  const r = await submitCompose({ videoUrl, audioUrl, ctaText: input.ctaText || "اطلب الآن 🌸" });
+  const r = await submitCompose({
+    videoUrl, audioUrl, durationSec,
+    ctaText: input.ctaText || "اطلب الآن 🌸",
+    brandText: "ماليكاس يونيفرس · malikasuniverse.com",
+  });
   if (!r.ok) return { error: r.error || "فشل التركيب." };
   return { renderId: r.renderId, url: r.url };
 }
