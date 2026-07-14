@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { VIDEO_KINDS, DEFAULT_VIDEO_KIND, videoKindDef, resolveProvider } from "./routing.ts";
-import { buildFloraInputs, floraStatus, firstFloraOutputUrl } from "./flora-compute.ts";
+import { buildFloraInputs, floraStatus, firstFloraOutputUrl, parseMissingImageInputId } from "./flora-compute.ts";
 
 test("product kinds default to FLORA, talking kinds to Higgsfield", () => {
   assert.equal(resolveProvider("product_cinematic"), "flora");
@@ -37,6 +37,13 @@ test("buildFloraInputs sends the image, and prompt/negative only when present", 
   assert.equal(b.length, 3);
   assert.deepEqual(b[1], { id: "visual_prompt", type: "text", value: "cinematic" });
   assert.deepEqual(b[2], { id: "negative_prompt", type: "text", value: "no morph" });
+});
+
+test("parseMissingImageInputId reads the required image id from a FLORA 400", () => {
+  const body = '{"error":{"code":"input_validation_error","message":"Missing required input \\"imgi-46-ffed6b51-6903\\" (imageUrl); Unknown input \\"input_image\\""}}';
+  assert.equal(parseMissingImageInputId(body), "imgi-46-ffed6b51-6903");
+  assert.equal(parseMissingImageInputId('{"error":{"message":"all good"}}'), undefined);
+  assert.equal(parseMissingImageInputId(null), undefined);
 });
 
 test("buildFloraInputs honours custom technique field ids", () => {
