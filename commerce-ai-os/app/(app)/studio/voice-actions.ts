@@ -73,21 +73,26 @@ export async function generateVoicePreview(input: { text: string; voiceId?: stri
 }
 
 /**
- * Voice Audition: synth the SAME line with up to 3 candidate voice ids so the
- * owner can compare and pick. Slightly more expressive settings (lower stability,
- * higher style) to avoid a flat read. Nothing is adopted automatically.
+ * Voice Audition: synth the SAME line with the candidate voice ids (up to 12) so
+ * the owner can compare and pick. Slightly more expressive settings (lower
+ * stability, higher style) to avoid a flat read. Runs in small concurrent chunks
+ * to respect ElevenLabs limits. Nothing is adopted automatically.
  */
 export async function auditionVoices(input: { text: string; voiceIds: string[] }): Promise<{ error: string } | { results: AuditionResult[] }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const text = String(input.text || "").trim();
   if (!text) return { error: "لا يوجد نص للاختبار." };
-  const ids = normalizeVoiceIds(input.voiceIds, 3);
+  const ids = normalizeVoiceIds(input.voiceIds, 12);
   if (!ids.length) return { error: "أدخل Voice ID واحد على الأقل." };
-  const results = await Promise.all(ids.map(async (voiceId): Promise<AuditionResult> => {
-    const r = await synthArabicVoice(text, { voiceId, stability: 0.3, style: 0.45 });
-    return r.ok && r.url ? { voiceId, audioUrl: r.url } : { voiceId, error: r.error || "فشل التوليد." };
-  }));
+  const results: AuditionResult[] = [];
+  for (let i = 0; i < ids.length; i += 3) {
+    const part = await Promise.all(ids.slice(i, i + 3).map(async (voiceId): Promise<AuditionResult> => {
+      const r = await synthArabicVoice(text, { voiceId, stability: 0.3, style: 0.45 });
+      return r.ok && r.url ? { voiceId, audioUrl: r.url } : { voiceId, error: r.error || "فشل التوليد." };
+    }));
+    results.push(...part);
+  }
   return { results };
 }
 
