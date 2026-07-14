@@ -5,6 +5,7 @@ import {
   createReelRequest, listReelRequests, scheduleReelRequest, cancelReelRequest, draftReelScript,
   type ReelRequestRow,
 } from "@/app/(app)/content/reel-request-actions";
+import { finalizeReel, pollReelCompose, uploadReelVoice } from "@/app/(app)/content/actions";
 import { REEL_STYLES, styleLabelAr } from "@/lib/social/reel-request-compute";
 import type { PickProduct } from "@/components/ContentGenerator";
 import ProductThumb from "@/components/ProductThumb";
@@ -37,6 +38,8 @@ export default function ReelRequestPanel({ items, initial = [], locale = "ar" }:
   const [note, setNote] = useState("");
   const [urlById, setUrlById] = useState<Record<string, string>>({});
   const [rowBusy, setRowBusy] = useState<Record<string, boolean>>({});
+  const [voiceById, setVoiceById] = useState<Record<string, string>>({});
+  const [rowPhase, setRowPhase] = useState<Record<string, string>>({});
 
   const selected = items.find((p) => p.sku === sku) || null;
   const productName = selected ? (selected.name_ar || selected.name_en || selected.sku) : "";
@@ -74,6 +77,45 @@ export default function ReelRequestPanel({ items, initial = [], locale = "ar" }:
   const copy = async (text: string, m: string) => {
     try { await navigator.clipboard.writeText(text); setNote(m); setTimeout(() => setNote(""), 1500); }
     catch { setNote(L("تعذّر النسخ", "Copy failed")); }
+  };
+
+  const pickVoice = async (id: string, file: File | undefined) => {
+    if (!file) return;
+    setRowBusy((s) => ({ ...s, [id]: true })); setRowPhase((s) => ({ ...s, [id]: L("…يرفع الصوت", "…uploading voice") }));
+    try {
+      const fd = new FormData(); fd.set("voice", file);
+      const r = await uploadReelVoice(fd);
+      if ("error" in r) setNote(r.error);
+      else { setVoiceById((s) => ({ ...s, [id]: r.url })); setNote(L("🎙️ انرفع الصوت — اضغط «ركّب بصوتي»", "🎙️ Voice uploaded — tap “Compose with my voice”")); }
+    } finally { setRowBusy((s) => ({ ...s, [id]: false })); setRowPhase((s) => ({ ...s, [id]: "" })); }
+  };
+
+  // Compose the b-roll video + the uploaded human Gulf voice + music + caption
+  // into the final reel, then drop the finished URL into the schedule field.
+  const composeWithVoice = async (r: ReelRequestRow) => {
+    const videoUrl = (urlById[r.id] || "").trim();
+    const voiceUrl = voiceById[r.id];
+    if (!videoUrl) { setNote(L("الصق رابط الفيديو (b-roll) أول", "Paste the b-roll video URL first")); return; }
+    if (!voiceUrl) { setNote(L("ارفع صوتك الخليجي أول", "Upload your Gulf voice first")); return; }
+    setRowBusy((s) => ({ ...s, [r.id]: true })); setRowPhase((s) => ({ ...s, [r.id]: L("…يركّب", "…composing") }));
+    const done = (msg: string) => { setNote(msg); setRowBusy((s) => ({ ...s, [r.id]: false })); setRowPhase((s) => ({ ...s, [r.id]: "" })); };
+    try {
+      const f = await finalizeReel({ videoUrl, voiceUrl, subtitle: r.script || undefined });
+      if ("error" in f) return done(f.error);
+      if (f.url) { setUrlById((s) => ({ ...s, [r.id]: f.url! })); return done(L("✅ انركّب — اضغط «جدولة»", "✅ Composed — tap “Schedule”")); }
+      if (!f.renderId) return done(L("لم يرجع رابط", "No URL returned"));
+      let n = 0;
+      const renderId = f.renderId;
+      const tick = async () => {
+        n++;
+        const p = await pollReelCompose(renderId);
+        if ("error" in p) return done(p.error);
+        if (p.url) { setUrlById((s) => ({ ...s, [r.id]: p.url! })); return done(L("✅ انركّب — اضغط «جدولة»", "✅ Composed — tap “Schedule”")); }
+        if (n > 40) return done(L("طال وقت التركيب", "Compose timed out"));
+        setTimeout(tick, 10000);
+      };
+      setTimeout(tick, 10000);
+    } catch (e: any) { done(e?.message || "خطأ"); }
   };
 
   const schedule = async (id: string) => {
@@ -178,18 +220,33 @@ export default function ReelRequestPanel({ items, initial = [], locale = "ar" }:
               </div>
 
               {r.status === "pending" ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
+                <div className="mt-2 space-y-1.5">
                   <input value={urlById[r.id] ?? ""} onChange={(e) => setUrlById((s) => ({ ...s, [r.id]: e.target.value }))}
-                    dir="ltr" placeholder={L("الصق رابط الريل الجاهز mp4", "paste the finished reel mp4 URL")}
-                    className="input min-w-0 flex-1 py-1 text-xs" />
-                  <button onClick={() => schedule(r.id)} disabled={rowBusy[r.id]}
-                    className="btn-primary shrink-0 px-3 py-1.5 text-xs disabled:opacity-50">
-                    {rowBusy[r.id] ? "…" : `📅 ${L("جدولة", "Schedule")}`}
-                  </button>
-                  <button onClick={() => cancel(r.id)} disabled={rowBusy[r.id]}
-                    className="shrink-0 rounded-md bg-slate-100 px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-200">
-                    {L("إلغاء", "Cancel")}
-                  </button>
+                    dir="ltr" placeholder={L("الصق رابط الفيديو (b-roll أو mp4 جاهز)", "paste the video URL (b-roll or finished mp4)")}
+                    className="input w-full py-1 text-xs" />
+                  {/* Real Gulf voice: upload → compose voice+music+caption onto the video. */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="shrink-0 cursor-pointer rounded-md bg-slate-100 px-2 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-200">
+                      🎙️ {voiceById[r.id] ? L("صوت ✓", "voice ✓") : L("ارفع صوتك الخليجي", "Upload Gulf voice")}
+                      <input type="file" accept="audio/*" className="hidden"
+                        onChange={(e) => pickVoice(r.id, e.target.files?.[0])} />
+                    </label>
+                    <button onClick={() => composeWithVoice(r)} disabled={rowBusy[r.id]}
+                      className="shrink-0 rounded-md bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                      {rowBusy[r.id] && rowPhase[r.id] ? `⏳ ${rowPhase[r.id]}` : `🎬 ${L("ركّب بصوتي", "Compose with my voice")}`}
+                    </button>
+                    <span className="text-[10px] text-muted">{L("أو الصق رابط جاهز وجدوله مباشرة ↓", "or paste a finished URL and schedule directly ↓")}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={() => schedule(r.id)} disabled={rowBusy[r.id]}
+                      className="btn-primary shrink-0 px-3 py-1.5 text-xs disabled:opacity-50">
+                      {rowBusy[r.id] && !rowPhase[r.id] ? "…" : `📅 ${L("جدولة", "Schedule")}`}
+                    </button>
+                    <button onClick={() => cancel(r.id)} disabled={rowBusy[r.id]}
+                      className="shrink-0 rounded-md bg-slate-100 px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-200">
+                      {L("إلغاء", "Cancel")}
+                    </button>
+                  </div>
                 </div>
               ) : r.videoUrl ? (
                 <a href={r.videoUrl} target="_blank" rel="noreferrer" dir="ltr"

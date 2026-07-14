@@ -1,15 +1,17 @@
 // Pure builder for the Creatomate render "source" — the composition JSON that
-// layers the generated 9:16 video with the Arabic voiceover, the Malika logo,
-// and an «اطلب الآن» call-to-action. DB/API-free so it can be unit-tested.
+// layers the generated 9:16 video with a voiceover (AI or a real uploaded human
+// voice), background music, the Malika logo, an «اطلب الآن» CTA, and optional
+// on-screen Arabic captions. DB/API-free so it can be unit-tested.
 
 export interface ComposeInput {
   videoUrl: string;
-  audioUrl?: string | null;
+  audioUrl?: string | null;   // voiceover (ElevenLabs synth OR an uploaded human voice)
   musicUrl?: string | null;
   logoUrl?: string | null;
   ctaText?: string | null;
   brandText?: string | null;
-  durationSec?: number | null;
+  subtitle?: string | null;   // burned-in Arabic caption text
+  durationSec?: number | null; // known voice length; when absent the comp auto-fits to the audio
 }
 
 // Clamp the final reel length: never shorter than 6s, never a runaway clip.
@@ -25,18 +27,27 @@ export function resolveReelDuration(durationSec?: number | null): number {
 
 /** Build a 1080×1920 mp4 composition source for Creatomate. */
 export function buildComposeSource(opts: ComposeInput): Record<string, unknown> {
-  const duration = resolveReelDuration(opts.durationSec);
+  // Known duration → bound + set it. Unknown but we have audio (e.g. an uploaded
+  // human voice we can't measure) → omit duration so Creatomate auto-fits the
+  // composition to the audio track; the looping video fills whatever that is.
+  const hasDur = !!(opts.durationSec && opts.durationSec > 0);
+  const autoFit = !hasDur && !!opts.audioUrl;
+  const duration = hasDur ? resolveReelDuration(opts.durationSec) : (autoFit ? undefined : DEFAULT_REEL_SEC);
+
+  const withDur = (el: Record<string, unknown>): Record<string, unknown> =>
+    duration ? { ...el, duration } : el;
+
   const elements: Record<string, unknown>[] = [
-    // The product video fills the frame and LOOPS for the whole duration, so it
-    // never runs out and leaves a black screen while the voiceover keeps going.
-    { type: "video", track: 1, source: opts.videoUrl, fit: "cover", volume: "0%", loop: true, duration },
+    // The product video fills the frame and LOOPS so it never runs out and leaves
+    // a black screen while the voiceover keeps going.
+    withDur({ type: "video", track: 1, source: opts.videoUrl, fit: "cover", volume: "0%", loop: true }),
   ];
-  // Soft background music bed (low volume so the voiceover stays on top), looped
-  // and trimmed to the composition — gives a produced, less-bare feel.
+  // Soft background music bed (low volume so the voiceover stays on top), looped.
   if (opts.musicUrl) {
-    elements.push({ type: "audio", track: 2, source: opts.musicUrl, volume: "16%", loop: true, duration });
+    elements.push(withDur({ type: "audio", track: 2, source: opts.musicUrl, volume: "16%", loop: true }));
   }
-  // Arabic voiceover on its own track (replaces the silent/AI audio).
+  // Voiceover on its own track (AI synth or a real uploaded human voice). When
+  // auto-fitting, this track drives the composition length.
   if (opts.audioUrl) {
     elements.push({ type: "audio", track: 3, source: opts.audioUrl, volume: "100%" });
   }
@@ -71,5 +82,21 @@ export function buildComposeSource(opts: ComposeInput): Record<string, unknown> 
       text_transform: "none",
     });
   }
-  return { output_format: "mp4", width: 1080, height: 1920, duration, elements };
+  // Optional burned-in Arabic caption (mid-upper, safe margins, doesn't cover the
+  // product/face). Useful because most reels are watched muted.
+  const sub = String(opts.subtitle ?? "").trim();
+  if (sub) {
+    elements.push({
+      type: "text", track: 7, text: sub,
+      y: "64%", width: "88%", x: "50%", x_anchor: "50%", y_anchor: "50%",
+      font_family: "Cairo", font_weight: "700", font_size: "5.4vmin",
+      fill_color: "#ffffff",
+      stroke_color: "#000000", stroke_width: "0.4vmin",
+      shadow_color: "rgba(0,0,0,0.6)", shadow_blur: "2vmin", shadow_x: "0", shadow_y: "0.3vmin",
+      text_transform: "none",
+    });
+  }
+  const source: Record<string, unknown> = { output_format: "mp4", width: 1080, height: 1920, elements };
+  if (duration) source.duration = duration;
+  return source;
 }
