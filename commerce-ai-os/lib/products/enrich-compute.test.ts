@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { missingFields, buildEnrichPrompt, parseEnrichResult, type EnrichInput } from "./enrich-compute.ts";
+import { missingFields, buildEnrichPrompt, parseEnrichResult, repairJsonControls, type EnrichInput } from "./enrich-compute.ts";
 
 const CATS = ["Face Care", "Hair Care", "Makeup"] as const;
 
@@ -45,4 +45,16 @@ test("parseEnrichResult blanks a category outside the list and null image verdic
   assert.equal(r!.main_category, "");
   assert.equal(r!.imageMatches, null);
   assert.equal(parseEnrichResult("no json", CATS), null);
+});
+
+test("parseEnrichResult recovers when the model puts real newlines in the description", () => {
+  // Invalid JSON: a literal newline inside the description string.
+  const raw = '{"name_ar":"كريم","description_ar":"سطر أول\n🔸 نقطة","main_category":"Face Care"}';
+  assert.throws(() => JSON.parse(raw)); // confirms the raw is invalid
+  const r = parseEnrichResult(raw, CATS);
+  assert.ok(r);
+  assert.match(r!.description_ar, /سطر أول/);
+  assert.match(r!.description_ar, /🔸 نقطة/);
+  // repair leaves already-escaped content intact
+  assert.equal(repairJsonControls('"a\\nb"'), '"a\\nb"');
 });
