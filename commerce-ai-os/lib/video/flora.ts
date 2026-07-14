@@ -93,18 +93,26 @@ export async function uploadFloraAsset(imageUrl: string): Promise<string | null>
     if (!initR.ok) return null;
     const ij = parseJson(initT);
     const assetId = pick(ij, "id", "assetId", "asset_id", "data.id", "data.assetId", "asset.id");
-    const uploadUrl = pick(ij, "uploadUrl", "upload_url", "presignedUrl", "signedUrl", "url", "data.uploadUrl", "data.url");
-    const uploadMethod = (pick(ij, "method", "uploadMethod", "data.method") || "PUT").toUpperCase();
+    const hostedUrl = pick(ij, "url", "data.url"); // final media.flora.ai URL
+    const up: any = ij?.upload || ij?.data?.upload || null;
     if (!assetId) { console.error("[flora:asset] no assetId in init"); return null; }
 
-    // 2) upload the bytes to the presigned destination (if one was returned).
-    if (uploadUrl) {
-      const putR = await fetch(uploadUrl, {
-        method: uploadMethod === "POST" ? "POST" : "PUT",
-        headers: { "Content-Type": img.contentType }, body: img.bytes as any,
-        signal: AbortSignal.timeout(60_000),
-      });
-      console.error("[flora:asset] upload", putR.status);
+    // 2) upload the bytes. FLORA returns an ImageKit signed upload: a multipart
+    // POST to `upload.url` with `form_fields` + the file under `file_field`.
+    if (up && up.url) {
+      const method = String(up.method || "POST").toUpperCase();
+      if (method === "POST") {
+        const fields = up.form_fields || up.formFields || up.fields || {};
+        const fileField = up.file_field || up.fileField || "file";
+        const fd = new FormData();
+        for (const [k, v] of Object.entries(fields)) fd.append(k, String(v));
+        fd.append(fileField, new Blob([new Uint8Array(img.bytes)], { type: img.contentType }), img.filename);
+        const upR = await fetch(String(up.url), { method: "POST", body: fd, signal: AbortSignal.timeout(60_000) });
+        console.error("[flora:asset] upload", upR.status, (await upR.text()).slice(0, 200));
+      } else {
+        const putR = await fetch(String(up.url), { method: "PUT", headers: { "Content-Type": img.contentType }, body: img.bytes as any, signal: AbortSignal.timeout(60_000) });
+        console.error("[flora:asset] upload PUT", putR.status);
+      }
     }
 
     // 3) complete
@@ -115,9 +123,9 @@ export async function uploadFloraAsset(imageUrl: string): Promise<string | null>
     const compT = await compR.text();
     console.error("[flora:asset] complete", compR.status, compT.slice(0, 600));
 
-    // 4) resolve the hosted URL (from complete, else GET the asset).
+    // 4) resolve the hosted URL — prefer the media.flora.ai url from init.
     const urlKeys = ["url", "publicUrl", "downloadUrl", "cdnUrl", "signedUrl", "src", "asset.url", "data.url", "data.publicUrl", "data.downloadUrl"];
-    let finalUrl = pick(parseJson(compT), ...urlKeys);
+    let finalUrl = hostedUrl || pick(parseJson(compT), ...urlKeys);
     if (!finalUrl) {
       const getR = await fetch(`${base()}/api/v1/assets/${encodeURIComponent(assetId)}`, {
         headers: authHeaders(), cache: "no-store", signal: AbortSignal.timeout(20_000),
