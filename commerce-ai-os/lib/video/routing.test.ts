@@ -32,11 +32,11 @@ test("every video kind has labels and a provider", () => {
 
 test("buildFloraInputs sends the image, and prompt/negative only when present", () => {
   const a = buildFloraInputs({ imageUrl: "https://i/p.jpg" });
-  assert.deepEqual(a, [{ id: "input_image", type: "IMAGE_URL", value: "https://i/p.jpg" }]);
+  assert.deepEqual(a, [{ id: "input_image", type: "imageUrl", value: "https://i/p.jpg" }]);
   const b = buildFloraInputs({ imageUrl: "https://i/p.jpg", prompt: "cinematic", negativePrompt: "no morph" });
   assert.equal(b.length, 3);
-  assert.deepEqual(b[1], { id: "visual_prompt", type: "TEXT", value: "cinematic" });
-  assert.deepEqual(b[2], { id: "negative_prompt", type: "TEXT", value: "no morph" });
+  assert.deepEqual(b[1], { id: "visual_prompt", type: "text", value: "cinematic" });
+  assert.deepEqual(b[2], { id: "negative_prompt", type: "text", value: "no morph" });
 });
 
 test("buildFloraInputs honours custom technique field ids", () => {
