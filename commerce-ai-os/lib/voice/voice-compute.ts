@@ -89,6 +89,24 @@ export function isGulfAccent(s: string | null | undefined): boolean {
   return /gulf|khaleeji|khaliji|khaleej|saudi|emirati|qatari|kuwaiti|bahraini|omani/i.test(String(s ?? ""));
 }
 
+/**
+ * Debug variant: rewrite to natural Gulf ONLY — NO tashkeel, NO phonetic
+ * spelling, NO diacritics. Used to test whether the pronunciation normalizer
+ * (added tashkeel) is what distorts the accent vs. the plain Gulf text.
+ */
+export function buildGulfRewriteOnlyPrompt(script: string): string {
+  const s = String(script || "").trim();
+  return [
+    `Rewrite the following into natural WHITE GULF ARABIC suitable for Qatar.`,
+    GULF_VOICE_RULES,
+    `IMPORTANT: return PLAIN Arabic with NO tashkeel, NO diacritics, NO phonetic respelling, NO English. Keep it exactly as a native speaker would type it casually.`,
+    `Return ONLY the Arabic text — each sentence on its own line, no numbering, no quotes, no commentary.`,
+    ``,
+    `Script:`,
+    s,
+  ].join("\n");
+}
+
 /** Normalise a model's script output: strip numbering/bullets/quotes, drop blanks, cap lines. */
 export function cleanScriptLines(text: string, maxLines = 6): string {
   return String(text ?? "")
