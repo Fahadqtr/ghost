@@ -9,6 +9,7 @@ const BASE = "https://api.creatomate.com/v1";
 function apiKey(): string { return String(process.env.CREATOMATE_API_KEY ?? "").trim().replace(/^["']|["']$/g, ""); }
 export function composeConfigured(): boolean { return !!apiKey(); }
 export function malikaLogoUrl(): string { return String(process.env.MALIKA_LOGO_URL ?? "").trim(); }
+export function reelsMusicUrl(): string { return String(process.env.REELS_MUSIC_URL ?? "").trim(); }
 
 const pick = (o: any, ...keys: string[]): string | undefined => {
   for (const k of keys) { const v = o?.[k]; if (v && typeof v !== "object") return String(v); }
@@ -21,7 +22,11 @@ export interface ComposeSubmit { ok: boolean; renderId?: string; url?: string; e
 export async function submitCompose(opts: ComposeInput): Promise<ComposeSubmit> {
   if (!composeConfigured()) return { ok: false, error: "Creatomate غير مهيأ (CREATOMATE_API_KEY)." };
   try {
-    const source = buildComposeSource({ ...opts, logoUrl: opts.logoUrl ?? (malikaLogoUrl() || null) });
+    const source = buildComposeSource({
+      ...opts,
+      logoUrl: opts.logoUrl ?? (malikaLogoUrl() || null),
+      musicUrl: opts.musicUrl ?? (reelsMusicUrl() || null),
+    });
     const r = await fetch(`${BASE}/renders`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey()}`, "Content-Type": "application/json" },
