@@ -4,7 +4,17 @@ import { useState } from "react";
 import { previewReelsWeek, queueReel, generateReelVideo, pollReelVideo } from "@/app/(app)/content/actions";
 import type { ReelPlanItem } from "@/lib/social/reels-plan";
 import { qatarDayLabel, qatarTimeLabel } from "@/lib/social/schedule-compute";
+import ProductThumb from "@/components/ProductThumb";
 import type { Locale } from "@/lib/i18n";
+
+// Where Marketing Studio lives (Higgsfield app) + how to hand a product to it.
+const MARKETING_STUDIO_URL = "https://higgsfield.ai/";
+const STORE_DOMAIN = "malikasuniverse.com";
+const productUrl = (sku: string | null) =>
+  sku ? `https://${STORE_DOMAIN}/search?q=${encodeURIComponent(sku)}` : `https://${STORE_DOMAIN}`;
+// Ready Arabic UGC brief to paste into Marketing Studio's prompt.
+const marketingBriefAr = (name: string) =>
+  `ريل UGC لمنتج «${name}». بنت خليجية في حمّام عصري بالدوحة: هوك بأول ١.٥ ثانية، تُظهر المنتج بوضوح (الليبل للكاميرا)، تفتحه وتطبّقه، تبيّن النضارة، ثم توصّي فيه. تتكلم بالعربي الخليجي. طاقة عالية، مظهر نظيف، بدون نص على الشاشة.`;
 
 // Weekly Reels plan: 14 Reels/week across 5 formats, each with an English
 // Higgsfield prompt (copy-paste), a Gulf-Arabic caption brief, a CTA type, and
@@ -125,6 +135,35 @@ export default function ReelsWeekPlan({ locale = "ar" }: { locale?: Locale }) {
                 <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-slate-700">{it.promptEn}</p>
                 <button onClick={() => copy(it.promptEn, L("📋 نُسخ البرومبت", "📋 Prompt copied"))}
                   className="shrink-0 rounded-md bg-slate-200 px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-300">📋</button>
+              </div>
+
+              {/* Premium path: everything needed to make this reel in the Higgsfield
+                  app's Marketing Studio (a talking-avatar UGC ad), then paste the URL
+                  back below. Product image + product URL + a ready Arabic brief. */}
+              <div className="mt-2 space-y-1.5 rounded-lg border border-violet-200 bg-violet-50/50 p-2">
+                <p className="text-[11px] font-bold text-violet-800">🎬 {L("جودة عالية عبر Marketing Studio (تطبيق Higgsfield)", "Premium via Marketing Studio (Higgsfield app)")}</p>
+                <div className="flex items-center gap-2">
+                  <ProductThumb imageUrl={null} sku={it.sku} sizeClass="h-12 w-12" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] text-muted">{L("١) الصق رابط المنتج في «Add product»:", "1) Paste the product URL in “Add product”:")}</p>
+                    <div className="flex items-center gap-1">
+                      <span className="truncate text-[10px] text-slate-700" dir="ltr">{productUrl(it.sku)}</span>
+                      <button onClick={() => copy(productUrl(it.sku), L("📋 نُسخ رابط المنتج", "📋 Product URL copied"))}
+                        className="shrink-0 rounded bg-white px-1.5 py-0.5 text-[10px] font-bold text-violet-700 ring-1 ring-violet-200">📋</button>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-start gap-1">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] text-muted">{L("٢) الصق الوصفة في البرومبت:", "2) Paste the brief into the prompt:")}</p>
+                    <p className="text-[10px] leading-relaxed text-slate-700">{marketingBriefAr(it.productName ?? "")}</p>
+                  </div>
+                  <button onClick={() => copy(marketingBriefAr(it.productName ?? ""), L("📋 نُسخت الوصفة", "📋 Brief copied"))}
+                    className="shrink-0 rounded bg-white px-1.5 py-0.5 text-[10px] font-bold text-violet-700 ring-1 ring-violet-200">📋</button>
+                </div>
+                <p className="text-[10px] text-muted">{L("٣) الإعدادات: 9:16 · الصوت On · العربية → Generate، وبعدها الصق رابط mp4 تحت.", "3) Settings: 9:16 · Audio On · Arabic → Generate, then paste the mp4 URL below.")}</p>
+                <a href={MARKETING_STUDIO_URL} target="_blank" rel="noreferrer"
+                  className="inline-block rounded-md bg-violet-600 px-3 py-1.5 text-[11px] font-bold text-white">🎬 {L("افتح Marketing Studio", "Open Marketing Studio")}</a>
               </div>
 
               {/* Queue: paste the generated 9:16 video URL → schedules a Reel row
