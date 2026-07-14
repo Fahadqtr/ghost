@@ -24,7 +24,7 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
 
   // Audition state
   const [auditText, setAuditText] = useState(AUDITION_TEST_LINE);
-  const [vids, setVids] = useState<string[]>(["", "", ""]);
+  const [vidsText, setVidsText] = useState("");
   const [auditBusy, setAuditBusy] = useState(false);
   const [auditErr, setAuditErr] = useState("");
   const [results, setResults] = useState<AuditionResult[]>([]);
@@ -56,11 +56,12 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
     finally { setBusy(""); }
   };
 
+  const parseVids = (s: string) => s.split(/[\s,]+/).map((v) => v.trim()).filter(Boolean);
   const runAudition = async () => {
-    const chosen = vids.map((v) => v.trim()).filter(Boolean);
-    if (!chosen.length) { setAuditErr(L("أدخل Voice ID واحد على الأقل", "Enter at least one Voice ID")); return; }
+    const ids = parseVids(vidsText);
+    if (!ids.length) { setAuditErr(L("الصق Voice ID واحد على الأقل", "Paste at least one Voice ID")); return; }
     setAuditBusy(true); setAuditErr(""); setResults([]);
-    try { const r = await auditionVoices({ text: auditText, voiceIds: vids }); if ("error" in r) setAuditErr(r.error); else setResults(r.results); }
+    try { const r = await auditionVoices({ text: auditText, voiceIds: ids }); if ("error" in r) setAuditErr(r.error); else setResults(r.results); }
     finally { setAuditBusy(false); }
   };
   const loadSuggestions = async () => {
@@ -68,13 +69,7 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
     try { const r = await suggestGulfVoices(); if ("error" in r) setSugErr(r.error); else setSuggestions(r.voices); }
     finally { setSugBusy(false); }
   };
-  const applyCandidate = (id: string) => setVids((cur) => {
-    if (cur.includes(id)) return cur;
-    const i = cur.findIndex((v) => !v.trim());
-    if (i === -1) { const n = [...cur]; n[n.length - 1] = id; return n; }
-    const n = [...cur]; n[i] = id; return n;
-  });
-  const setVid = (i: number, v: string) => setVids((cur) => { const n = [...cur]; n[i] = v; return n; });
+  const applyCandidate = (id: string) => setVidsText((cur) => (parseVids(cur).includes(id) ? cur : (cur.trim() ? cur.trim() + "\n" : "") + id));
 
   return (
     <div className="space-y-4">
@@ -113,20 +108,19 @@ export default function StudioVoiceEngine({ locale = "ar", initialStatus }: { lo
             className="w-full rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm leading-loose" />
         </div>
 
-        {/* Candidate voice ids */}
-        <div className="space-y-2">
-          <label className="text-[11px] font-bold text-violet-800">{L("٣ Voice IDs مرشحة", "3 candidate Voice IDs")}</label>
-          {vids.map((v, i) => (
-            <input key={i} value={v} onChange={(e) => setVid(i, e.target.value)} dir="ltr"
-              placeholder={`Voice ID ${i + 1}`}
-              className="w-full rounded-lg border border-violet-200 bg-white px-3 py-1.5 font-mono text-xs" />
-          ))}
+        {/* Candidate voice ids — paste several, one per line (up to 12) */}
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-violet-800">{L("Voice IDs المرشحة (واحد بكل سطر — حتى ١٢)", "Candidate Voice IDs (one per line — up to 12)")}</label>
+          <textarea value={vidsText} onChange={(e) => setVidsText(e.target.value)} rows={4} dir="ltr"
+            placeholder={"Voice ID 1\nVoice ID 2\nVoice ID 3"}
+            className="w-full rounded-lg border border-violet-200 bg-white px-3 py-2 font-mono text-xs" />
+          <p className="text-[10px] text-muted">{parseVids(vidsText).length} {L("صوت — كل توليد يخصم كريدت", "voices — each costs credits")}</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={runAudition} disabled={auditBusy || !connected}
             className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50">
-            {auditBusy ? `⏳ ${L("يولّد…", "generating…")}` : `🔊 ${L("ولّد ٣ للمقارنة", "Generate 3 to compare")}`}
+            {auditBusy ? `⏳ ${L("يولّد…", "generating…")}` : `🔊 ${L("ولّد الكل للمقارنة", "Generate all to compare")}`}
           </button>
           <button onClick={loadSuggestions} disabled={sugBusy || !connected}
             className="btn-ghost px-3 py-1.5 text-xs disabled:opacity-50">
