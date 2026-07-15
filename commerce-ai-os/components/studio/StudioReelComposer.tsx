@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   prepareFinalReel, composeFinalReel, pollFinalReel, saveStudioReel, draftReelScript,
-  generateReelShots, pollReelShot,
+  generateReelShots, pollReelShot, verifyFloraTechnique,
   type ReelPrepared,
 } from "@/app/(app)/studio/reel-actions";
 import { uploadStudioImage } from "@/app/(app)/studio/actions";
@@ -42,6 +42,8 @@ export default function StudioReelComposer({ locale = "ar", status }: {
   const [shotBusy, setShotBusy] = useState(false);
   const [shotErr, setShotErr] = useState("");
   const [shots, setShots] = useState<ShotState[]>([]);
+  const [techCheck, setTechCheck] = useState<string>("");
+  const [techBusy, setTechBusy] = useState(false);
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [step, setStep] = useState("");
@@ -61,6 +63,19 @@ export default function StudioReelComposer({ locale = "ar", status }: {
     setScriptBusy(false);
     if ("error" in r) { setErr(r.error); return; }
     setScript(r.script);
+  };
+
+  const verifyTechnique = async () => {
+    setTechBusy(true); setTechCheck("");
+    const c = await verifyFloraTechnique();
+    setTechBusy(false);
+    if (!c.configured) { setTechCheck(L("FLORA غير مهيأ.", "FLORA not configured.")); return; }
+    if (!c.ok) { setTechCheck(c.detail || L("تعذّر التحقق — راجع نشر التقنية يدويًا.", "Couldn't verify — check the published technique.")); return; }
+    if (c.acceptsPrompt) {
+      setTechCheck(L(`✅ التقنية تستقبل مدخل الحركة (${c.matchedInputId}). فعّل FLORA_SEND_PROMPT=true.`, `✅ Technique accepts a motion input (${c.matchedInputId}). Set FLORA_SEND_PROMPT=true.`));
+    } else {
+      setTechCheck(L(`⚠️ ما فيه مدخل نصي منشور. المدخلات: ${(c.inputs || []).map((i) => i.id).join("، ") || "—"}. أضف visual_prompt واربطه بعقدة Kling.`, `⚠️ No text input published. Inputs: ${(c.inputs || []).map((i) => i.id).join(", ") || "—"}. Add visual_prompt wired to the Kling node.`));
+    }
   };
 
   const uploadImage = async (file: File) => {
@@ -187,6 +202,13 @@ export default function StudioReelComposer({ locale = "ar", status }: {
             </button>
           </div>
           {!status.flora ? <p className="text-[10px] text-amber-700">{L("FLORA غير مهيأ — الصق روابط اللقطات يدويًا بالأسفل.", "FLORA not configured — paste shot URLs manually below.")}</p> : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={verifyTechnique} disabled={techBusy || !status.flora}
+              className="btn-ghost px-2 py-0.5 text-[10px] disabled:opacity-50">
+              {techBusy ? `⏳ ${L("يتحقق…", "Checking…")}` : `🔎 ${L("تحقق أن التقنية تستقبل visual_prompt", "Verify technique accepts visual_prompt")}`}
+            </button>
+            {techCheck ? <span className="text-[10px] text-violet-900">{techCheck}</span> : null}
+          </div>
           {shots.length ? (
             <ul className="space-y-1">
               {shots.map((s) => (
