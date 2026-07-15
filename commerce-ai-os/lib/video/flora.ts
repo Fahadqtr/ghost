@@ -1,6 +1,6 @@
 import "server-only";
-import { buildFloraInputs, floraStatus, firstFloraOutputUrl, parseMissingImageInputId } from "./flora-compute";
-import type { FloraInputField } from "./flora-compute";
+import { buildFloraInputs, floraStatus, firstFloraOutputUrl, parseMissingImageInputId, parseTechniqueInputs, hasPromptInput } from "./flora-compute";
+import type { FloraInputField, TechniqueInput } from "./flora-compute";
 
 // FLORA image→video client. Runs a saved canvas "technique" by slug.
 // Env-gated: FLORA_API_KEY (sk_live_…) + FLORA_TECHNIQUE_SLUG (the technique you
@@ -137,6 +137,47 @@ export async function uploadFloraAsset(imageUrl: string): Promise<string | null>
     console.error("[flora:asset] finalUrl", finalUrl || "(none)");
     return finalUrl || null;
   } catch (e: any) { console.error("[flora:asset] threw", e?.message || e); return null; }
+}
+
+export interface FloraTechniqueCheck {
+  ok: boolean;
+  configured: boolean;
+  slug: string;
+  sendPromptEnabled: boolean;      // FLORA_SEND_PROMPT env
+  promptInputId: string;           // the id we send the prompt under (visual_prompt by default)
+  inputs?: TechniqueInput[];
+  acceptsPrompt?: boolean;         // does the published technique expose a usable text input?
+  matchedInputId?: string;
+  detail?: string;
+}
+
+/**
+ * Read-only verification: does the PUBLISHED technique expose a text input we can
+ * drive as the motion prompt (e.g. visual_prompt)? Lets us confirm the wiring
+ * before turning on FLORA_SEND_PROMPT. Tries GET /techniques/{slug}; if FLORA
+ * exposes no metadata endpoint, returns ok:false with a hint (no run is started,
+ * so it never costs a generation).
+ */
+export async function checkFloraTechnique(): Promise<FloraTechniqueCheck> {
+  const promptInputId = clean(process.env.FLORA_INPUT_PROMPT_ID) || "visual_prompt";
+  const sendPromptEnabled = clean(process.env.FLORA_SEND_PROMPT).toLowerCase() === "true";
+  const base_ = { configured: floraConfigured(), slug: slug(), sendPromptEnabled, promptInputId };
+  if (!floraConfigured()) return { ok: false, ...base_, detail: "FLORA غير مهيأ (FLORA_API_KEY / FLORA_TECHNIQUE_SLUG)." };
+  try {
+    const r = await fetch(`${base()}/api/v1/techniques/${encodeURIComponent(slug())}`, {
+      headers: authHeaders(), cache: "no-store", signal: AbortSignal.timeout(15_000),
+    });
+    const body = await r.text();
+    console.error("[flora] technique meta", r.status, body.slice(0, 400));
+    if (!r.ok) return { ok: false, ...base_, detail: `تعذّر جلب بيانات التقنية (HTTP ${r.status}). تحقق يدويًا أن المدخل منشور.` };
+    const j = parseJson(body);
+    const inputs = parseTechniqueInputs(j);
+    if (!inputs.length) return { ok: false, ...base_, detail: "لم تُرجع FLORA قائمة مدخلات — تحقق يدويًا من نشر visual_prompt." };
+    const m = hasPromptInput(inputs, promptInputId);
+    return { ok: true, ...base_, inputs, acceptsPrompt: m.ok, matchedInputId: m.matched?.id };
+  } catch (e: any) {
+    return { ok: false, ...base_, detail: e?.message || "تعذّر الاتصال بـ FLORA." };
+  }
 }
 
 /** POST a technique run with the given inputs; returns the raw response + parsed body. */

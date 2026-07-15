@@ -12,7 +12,7 @@ import {
   DEFAULT_CTA, DEFAULT_LOGO_POSITION, type CaptionLanguage,
 } from "@/lib/studio/caption-compute";
 import { submitProductVideo, pollProductVideo } from "@/lib/video/provider-router";
-import { floraConfigured } from "@/lib/video/flora";
+import { floraConfigured, checkFloraTechnique, type FloraTechniqueCheck } from "@/lib/video/flora";
 import { planReelShots, shotCountForDuration, MIN_SHOTS, MAX_SHOTS, type ShotKey } from "@/lib/video/shot-plan";
 
 // Malika AI Studio → Final Reel Composer (phase 4). Takes a FLORA product video
@@ -82,6 +82,17 @@ export async function pollReelShot(requestId: string): Promise<{ error: string }
 export async function suggestedShotCount(voiceSec?: number): Promise<number> {
   await requireUser();
   return shotCountForDuration(voiceSec);
+}
+
+/**
+ * Read-only check: does the published FLORA technique accept a motion-prompt
+ * input (visual_prompt)? Use to confirm the wiring BEFORE enabling
+ * FLORA_SEND_PROMPT — it starts no run, so it never costs a generation.
+ */
+export async function verifyFloraTechnique(): Promise<FloraTechniqueCheck> {
+  const unauth = await requireUser();
+  if (unauth) return { ok: false, configured: false, slug: "", sendPromptEnabled: false, promptInputId: "visual_prompt", detail: "unauthorized" };
+  return checkFloraTechnique();
 }
 
 export interface ReelSettings {

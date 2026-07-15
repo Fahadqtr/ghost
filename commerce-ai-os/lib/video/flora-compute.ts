@@ -64,3 +64,40 @@ export function firstFloraOutputUrl(outputs: any): string | undefined {
   const any = outputs.find((o: any) => typeof o?.url === "string");
   return any?.url;
 }
+
+export interface TechniqueInput { id: string; type: string }
+
+/**
+ * Pull the declared inputs from a technique-metadata response. The exact shape
+ * is undocumented, so we look in the common places (inputs / data.inputs /
+ * technique.inputs / schema.inputs) and read id+type defensively. Used to verify
+ * a published technique actually exposes a text input (e.g. visual_prompt)
+ * BEFORE turning on FLORA_SEND_PROMPT.
+ */
+export function parseTechniqueInputs(json: any): TechniqueInput[] {
+  const arr: any =
+    json?.inputs ?? json?.data?.inputs ?? json?.technique?.inputs ??
+    json?.schema?.inputs ?? json?.data?.technique?.inputs ?? null;
+  const list: any[] = Array.isArray(arr) ? arr : (arr && typeof arr === "object" ? Object.values(arr) : []);
+  const out: TechniqueInput[] = [];
+  for (const it of list) {
+    if (!it || typeof it !== "object") continue;
+    const id = it.id ?? it.name ?? it.key ?? it.inputId ?? it.slug;
+    const type = it.type ?? it.inputType ?? it.kind ?? "";
+    if (id) out.push({ id: String(id), type: String(type) });
+  }
+  return out;
+}
+
+/** Does the technique expose a text input usable as the motion prompt? */
+export function hasPromptInput(inputs: TechniqueInput[], preferredId?: string): { ok: boolean; matched?: TechniqueInput } {
+  const wanted = String(preferredId || "").trim().toLowerCase();
+  // Prefer an exact id match (e.g. visual_prompt), else any text-typed input,
+  // else an input whose id looks prompt-like.
+  const byId = wanted ? inputs.find((i) => i.id.toLowerCase() === wanted) : undefined;
+  if (byId) return { ok: true, matched: byId };
+  const byType = inputs.find((i) => /text|string|prompt/i.test(i.type));
+  if (byType) return { ok: true, matched: byType };
+  const byName = inputs.find((i) => /prompt|visual|motion|text/i.test(i.id));
+  return byName ? { ok: true, matched: byName } : { ok: false };
+}
