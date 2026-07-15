@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
@@ -169,6 +170,21 @@ export async function calendarStatus(): Promise<{ state: "connected" | "not_conn
   if (!gcalConfigured()) return { state: "not_connected", detail: "أضف GOOGLE_SERVICE_ACCOUNT_JSON و GOOGLE_CALENDAR_ID في Vercel." };
   const s = await gcalStatus();
   return { state: s.state, detail: s.detail, calendarId: s.calendarId, email: s.email };
+}
+
+/**
+ * The private ICS subscribe URL for TickTick / Google / Apple Calendar. The URL
+ * carries the unguessable TASKS_ICS_TOKEN (calendar apps fetch without a login).
+ */
+export async function tasksIcsSubscription(): Promise<{ configured: boolean; url?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { configured: false };
+  const token = String(process.env.TASKS_ICS_TOKEN ?? "").trim().replace(/^["']|["']$/g, "");
+  if (!token) return { configured: false };
+  const h = await headers();
+  const host = h.get("x-forwarded-host") || h.get("host") || "";
+  const proto = h.get("x-forwarded-proto") || "https";
+  return { configured: true, url: host ? `${proto}://${host}/api/calendar/${token}` : undefined };
 }
 
 /** Push every task that has a due date to the calendar (bulk reconcile). */
