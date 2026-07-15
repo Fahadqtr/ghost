@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { calendarStatus, syncAllTasksToCalendar } from "@/app/(app)/tasks/actions";
+import { calendarStatus, syncAllTasksToCalendar, tasksIcsSubscription } from "@/app/(app)/tasks/actions";
 
 // Google Calendar link card for the tasks page: shows connection status, the
 // service-account email to share the calendar with, and a bulk "sync all" button.
@@ -13,12 +13,19 @@ export default function TasksCalendarCard({ locale = "ar" }: { locale?: "ar" | "
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState("");
+  const [ics, setIcs] = useState<{ configured: boolean; url?: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // load() sets state only AFTER an await, so the mount effect never setStates
   // synchronously (avoids the cascading-render warning). refresh() is for the button.
   const load = async () => {
     try { setStatus(await calendarStatus()); } catch { setStatus({ state: "error", detail: L("تعذّر الفحص.", "Check failed.") }); }
+    try { setIcs(await tasksIcsSubscription()); } catch { /* optional */ }
     setLoading(false);
+  };
+  const copyIcs = async () => {
+    if (!ics?.url) return;
+    try { await navigator.clipboard.writeText(ics.url); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
   };
   const refresh = () => { setLoading(true); void load(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
@@ -78,6 +85,27 @@ export default function TasksCalendarCard({ locale = "ar" }: { locale?: "ar" | "
       ) : null}
 
       {result ? <p className="text-[11px] text-emerald-700" dir="auto">{result}</p> : null}
+
+      {/* TickTick / any-calendar subscribe link (ICS). Works read-only in TickTick,
+          Google Calendar, Apple Calendar, Outlook — same URL. */}
+      <div className="mt-1 space-y-1 border-t border-[#f2ead9] pt-2">
+        <p className="text-xs font-semibold text-ink">🔗 {L("اشترك في TickTick / أي تقويم", "Subscribe in TickTick / any calendar")}</p>
+        {ics?.configured && ics.url ? (
+          <>
+            <div className="flex items-center gap-2">
+              <input readOnly value={ics.url} dir="ltr" onFocus={(e) => e.target.select()}
+                className="w-full truncate rounded-lg border border-[#efe3d6] bg-white px-2 py-1 font-mono text-[10px]" />
+              <button onClick={copyIcs} className="btn-ghost shrink-0 px-2 py-1 text-[11px]">{copied ? L("نُسخ ✓", "Copied ✓") : L("نسخ", "Copy")}</button>
+            </div>
+            <p className="text-[10px] text-muted">{L(
+              "في TickTick: Settings → Calendar → Subscribe → URL، والصق الرابط. يُظهر المهام اللي لها تاريخ (المفتوحة). للكل أضِف ?all=1.",
+              "In TickTick: Settings → Calendar → Subscribe → URL, paste this. Shows open dated tasks. Add ?all=1 for all.",
+            )}</p>
+          </>
+        ) : (
+          <p className="text-[11px] text-amber-800" dir="ltr">Set <code>TASKS_ICS_TOKEN</code> (any random secret) in Vercel + Redeploy to enable the subscribe link.</p>
+        )}
+      </div>
     </div>
   );
 }
