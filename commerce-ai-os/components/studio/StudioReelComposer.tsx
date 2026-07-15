@@ -129,7 +129,7 @@ export default function StudioReelComposer({ locale = "ar", status }: {
     setStep(L("يضيف الشعار والكابشن…", "Adding branding & captions…"));
     const r = await composeFinalReel({ ...settings(), audioUrl: prepared.audioUrl, durationSec: prepared.durationSec, cues: prepared.cues, brandLine: prepared.brandLine });
     if ("error" in r) { setPhase("error"); setErr(r.error); if (r.qa) setQa(r.qa); return; }
-    if (r.url) { setFinalUrl(r.url); setQa(r.qa ?? null); setPhase("ready"); void save(r.url); return; }
+    if (r.url) { setFinalUrl(r.url); setQa(r.qa ?? null); setPhase("ready"); if (qaResOk(r.qa)) void save(r.url); return; }
     const renderId = r.renderId!;
     setStep(L("يمزج الصوت ويصدّر…", "Mixing audio & exporting…"));
     let attempts = 0;
@@ -137,12 +137,15 @@ export default function StudioReelComposer({ locale = "ar", status }: {
       attempts++;
       const p = await pollFinalReel(renderId, prepared.durationSec);
       if ("error" in p) { setPhase("error"); setErr(p.error); return; }
-      if (p.url) { setFinalUrl(p.url); setQa(p.qa ?? null); setPhase("ready"); void save(p.url); return; }
+      if (p.url) { setFinalUrl(p.url); setQa(p.qa ?? null); setPhase("ready"); if (qaResOk(p.qa)) void save(p.url); return; }
       if (attempts > 60) { setPhase("error"); setErr(L("طال وقت التصدير — جرّب مرة ثانية", "Export timed out — try again")); return; }
       setTimeout(tick, 5000);
     };
     setTimeout(tick, 5000);
   };
+
+  // Only a verified 1080×1920 render is a real final — never save a low-res proxy.
+  const qaResOk = (q?: ReelQA | null) => !!q?.checks.find((c) => /1080/.test(c.label))?.ok;
 
   const save = async (url: string) => {
     const r = await saveStudioReel({
@@ -358,18 +361,29 @@ export default function StudioReelComposer({ locale = "ar", status }: {
         </div>
       ) : null}
 
-      {/* Result */}
-      {finalUrl ? (
-        <div className="card space-y-2 border-emerald-200 bg-emerald-50/40">
-          <p className="text-sm font-bold text-emerald-800">✅ {L("الريل جاهز", "Reel ready")} · 1080×1920 · MP4</p>
-          <video src={finalUrl} controls className="w-full max-w-sm rounded-xl" />
-          <div className="flex flex-wrap items-center gap-3">
-            <a href={finalUrl} target="_blank" rel="noreferrer" className="btn-primary px-3 py-1.5 text-xs">⬇️ {L("تحميل", "Download")}</a>
-            {saved ? <span className="text-[11px] text-emerald-700">{saved}</span> : null}
+      {/* Result — the header reports the ACTUAL exported resolution (from QA),
+          never a hard-coded 1080×1920. A sub-1080×1920 render is flagged as NOT
+          ad-ready so a low-res proxy is never mistaken for the final. */}
+      {finalUrl ? (() => {
+        const resCheck = qa?.checks.find((c) => /1080/.test(c.label));
+        const resOk = resCheck?.ok ?? false;              // unknown dims → treat as not verified
+        const dims = resCheck?.detail || L("غير معروفة", "unknown");
+        return (
+          <div className={`card space-y-2 ${resOk ? "border-emerald-200 bg-emerald-50/40" : "border-red-200 bg-red-50/40"}`}>
+            {resOk ? (
+              <p className="text-sm font-bold text-emerald-800">✅ {L("الريل جاهز", "Reel ready")} · {dims} · MP4</p>
+            ) : (
+              <p className="text-sm font-bold text-red-800">⚠️ {L(`الدقة ${dims} أقل من 1080×1920 — مب صالح للإعلان. أعد التصدير.`, `Resolution ${dims} is below 1080×1920 — not ad-ready. Re-export.`)}</p>
+            )}
+            <video src={finalUrl} controls className="w-full max-w-sm rounded-xl" />
+            <div className="flex flex-wrap items-center gap-3">
+              <a href={finalUrl} target="_blank" rel="noreferrer" className={`px-3 py-1.5 text-xs ${resOk ? "btn-primary" : "btn-ghost"}`}>⬇️ {L("تحميل", "Download")}</a>
+              {saved ? <span className="text-[11px] text-emerald-700">{saved}</span> : null}
+            </div>
+            <a href={finalUrl} target="_blank" rel="noreferrer" dir="ltr" className="block truncate text-[11px] text-violet-700 underline">{finalUrl}</a>
           </div>
-          <a href={finalUrl} target="_blank" rel="noreferrer" dir="ltr" className="block truncate text-[11px] text-violet-700 underline">{finalUrl}</a>
-        </div>
-      ) : null}
+        );
+      })() : null}
     </div>
   );
 }
