@@ -9,7 +9,58 @@ import {
 } from "@/lib/snoonu-diff";
 import { clean } from "@/lib/malak/talabat-export.mjs";
 
+import { buildCodeIndex, fillCodes, type FillItem, type FillResult, type CatalogCodeRow } from "@/lib/snoonu-fill";
+
 export type { SnoonuExportRow, SnoonuDiff } from "@/lib/snoonu-diff";
+export type { FillItem, FillResult } from "@/lib/snoonu-fill";
+
+export interface SnoonuFillResponse {
+  ok: boolean;
+  error?: string;
+  results: FillResult[];
+  counts: { rows: number; bySpi: number; byName: number; filled: number; unmatched: number };
+}
+
+/**
+ * Fill the SKU + Barcode for uploaded Snoonu sheet rows FROM OUR CATALOG.
+ * Read-only (cookie client). Matches each row by SPI (snoonu_id) first, then by
+ * product name. Returns per-row {sku, barcode} aligned to the input so the
+ * client can write them back into the same workbook.
+ */
+export async function snoonuFillCodes(items: FillItem[]): Promise<SnoonuFillResponse> {
+  const empty = { ok: false, results: [], counts: { rows: 0, bySpi: 0, byName: 0, filled: 0, unmatched: 0 } };
+  if (!Array.isArray(items) || !items.length) return { ...empty, error: "لا توجد صفوف في الملف." };
+
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ...empty, error: "غير مسجّل الدخول." };
+
+  try {
+    // Pull the catalog codes (snoonu_id + sku + barcode + names), paged.
+    const rows: CatalogCodeRow[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from("products")
+        .select("snoonu_id, sku, barcode, name_en, name_ar")
+        .range(from, from + 999);
+      if (error) return { ...empty, error: `تعذّر قراءة الكتالوج: ${error.message}` };
+      rows.push(...((data ?? []) as CatalogCodeRow[]));
+      if ((data ?? []).length < 1000) break;
+    }
+
+    const index = buildCodeIndex(rows);
+    const results = fillCodes(items, index);
+    let bySpi = 0, byName = 0, filled = 0;
+    for (const r of results) {
+      if (r.matched === "spi") bySpi++;
+      else if (r.matched === "name") byName++;
+      if (r.sku || r.barcode) filled++;
+    }
+    return { ok: true, results, counts: { rows: items.length, bySpi, byName, filled, unmatched: items.length - filled } };
+  } catch (e) {
+    return { ...empty, error: e instanceof Error ? e.message : "خطأ غير متوقع أثناء التعبئة." };
+  }
+}
 
 // Detect which optional columns exist on `products`; returns the active field
 // list + which optional columns are present/absent.
