@@ -137,15 +137,16 @@ function Gate({ onIn, locale }: { onIn: (name: string, perms: StaffPermission[])
         <h1 className="text-xl font-bold text-ink">{L("صفحة الموظفين", "Employee page")}</h1>
         <p className="text-sm text-muted">Malika&apos;s Universe</p>
       </div>
-      <label className="block text-sm font-medium text-ink">{L("رمزك", "Your code")}
-        <input className="input mt-1 w-full tracking-[0.4em]" value={pin} onChange={(e) => setPin(e.target.value)}
-          type="password" inputMode="numeric" placeholder="••••" autoFocus onKeyDown={(e) => e.key === "Enter" && submit()} />
+      <label className="block text-sm font-medium text-ink">{L("اسمك", "Your name")} <span className="text-red-500">*</span>
+        <input className="input mt-1 w-full" value={nm} onChange={(e) => setNm(e.target.value)}
+          placeholder={L("مثال: أحمد", "e.g. Ahmad")} autoFocus onKeyDown={(e) => e.key === "Enter" && submit()} />
       </label>
-      <label className="block text-sm font-medium text-ink">{L("اسمك", "Your name")} <span className="font-normal text-muted">{L("(اختياري — يُملأ من رمزك)", "(optional — filled from your code)")}</span>
-        <input className="input mt-1 w-full" value={nm} onChange={(e) => setNm(e.target.value)} placeholder={L("مثال: أحمد", "e.g. Ahmad")} />
+      <label className="block text-sm font-medium text-ink">{L("رمزك", "Your code")} <span className="text-red-500">*</span>
+        <input className="input mt-1 w-full tracking-[0.4em]" value={pin} onChange={(e) => setPin(e.target.value)}
+          type="password" inputMode="numeric" placeholder="••••" onKeyDown={(e) => e.key === "Enter" && submit()} />
       </label>
       {err ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p> : null}
-      <button className="btn-primary w-full py-3 text-base disabled:opacity-50" disabled={busy || !pin} onClick={submit}>
+      <button className="btn-primary w-full py-3 text-base disabled:opacity-50" disabled={busy || !pin || !nm.trim()} onClick={submit}>
         {busy ? "..." : L("دخول", "Sign in")}
       </button>
     </div>

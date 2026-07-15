@@ -7,6 +7,7 @@ import { rateLimit, clientIpFrom } from "@/lib/ratelimit";
 import { applyMovement, editMovementQty, deleteMovement } from "@/lib/inventory/movements";
 import { signStaff, verifyStaff, STAFF_COOKIE } from "@/lib/staff/session";
 import { hashPin } from "@/lib/staff/pin";
+import { staffNameMatches } from "@/lib/staff/name-compute";
 import { parsePermissions, hasPerm, DEFAULT_PERMISSIONS, type StaffPermission } from "@/lib/staff/permissions";
 import { CATEGORIES } from "@/lib/constants";
 import { listComments, insertComment, uploadCommentAttachment } from "@/lib/tasks/commentStore";
@@ -75,6 +76,8 @@ const NO_DB = "الخادم غير مهيأ للمخزون (SUPABASE_SERVICE_ROL
 
 export async function staffLogin(name: string, pin: string): Promise<{ error: string } | { ok: true; name: string; perms: StaffPermission[] }> {
   const code = String(pin || "").trim();
+  const nm = String(name || "").trim().slice(0, 40);
+  if (!nm) return { error: "أدخل اسمك." };        // name (username) is required
   if (!code) return { error: "أدخل الرمز." };
 
   // Brute-force brake on the public PIN gate: per-IP fixed window via Upstash
@@ -114,6 +117,10 @@ export async function staffLogin(name: string, pin: string): Promise<{ error: st
     }
     if (m) {
       if (!m.active) return { error: "هذا الحساب معطّل — راجع المدير." };
+      // The name is a required username: it must match the code's employee, so
+      // a code alone is no longer enough. Kept lenient (case/spacing/Arabic
+      // spelling variants). Generic error so we don't reveal which field failed.
+      if (!staffNameMatches(nm, m.name)) return { error: "الاسم أو الرمز غير صحيح." };
       resolved = String(m.name);
       staffId = m.id ? String(m.id) : null;
       perms = parsePermissions(m.permissions);
@@ -123,8 +130,6 @@ export async function staffLogin(name: string, pin: string): Promise<{ error: st
   // 2) Fall back to the shared STAFF_PIN (with a typed name) for backward compat
   // / a quick setup before any employees are registered.
   if (!resolved && process.env.STAFF_PIN && pinOk(code)) {
-    const nm = String(name || "").trim().slice(0, 40);
-    if (!nm) return { error: "اكتب اسمك أولاً." };
     resolved = nm;
     perms = [...DEFAULT_PERMISSIONS];
   }
