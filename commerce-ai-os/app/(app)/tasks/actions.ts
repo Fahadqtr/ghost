@@ -8,6 +8,8 @@ import { listComments, insertComment, uploadCommentAttachment } from "@/lib/task
 import type { TaskComment, CommentAttachment } from "@/lib/tasks/comments";
 import { materializeRoutines, mapRoutine, type Routine } from "@/lib/tasks/routines";
 import { computeWeeklyReport, type WeeklyReport } from "@/lib/tasks/weekly-report";
+import { syncTaskRow, removeTaskEvent, syncAllTasks, type SyncSummary } from "@/lib/tasks/calendarSync";
+import { gcalStatus, gcalConfigured } from "@/lib/integrations/gcal";
 
 export type { WeeklyReport, MemberWeekStats } from "@/lib/tasks/weekly-report";
 
@@ -102,11 +104,13 @@ export async function createTask(input: {
     status: "open",
     created_by: await adminEmail(),
   };
-  const { error } = await admin.from("staff_tasks").insert(row);
+  const { data: created, error } = await admin.from("staff_tasks").insert(row).select("*").single();
   if (error) {
     if ((error as any).code === "42P01") return { error: "الجدول غير موجود — شغّل supabase/staff_tasks.sql أولاً." };
     return { error: error.message };
   }
+  // Push to Google Calendar (best-effort — never blocks task creation).
+  if (created) { try { await syncTaskRow(admin, created); } catch { /* logged in sync */ } }
   revalidatePath("/tasks");
   revalidatePath("/dashboard");
   return { ok: true as const };
@@ -131,8 +135,10 @@ export async function updateTask(id: string, patch: {
     if (patch.status === "done") { p.completed_at = new Date().toISOString(); p.completed_by = await adminEmail(); }
     else { p.completed_at = null; p.completed_by = null; }
   }
-  const { error } = await admin.from("staff_tasks").update(p).eq("id", id);
+  const { data: updated, error } = await admin.from("staff_tasks").update(p).eq("id", id).select("*").single();
   if (error) return { error: error.message };
+  // Reflect the change on the calendar (title/date/status/assignee may have moved).
+  if (updated) { try { await syncTaskRow(admin, updated); } catch { /* logged in sync */ } }
   revalidatePath("/tasks");
   revalidatePath("/dashboard");
   return { ok: true as const };
@@ -143,11 +149,35 @@ export async function deleteTask(id: string) {
   if (unauth) return unauth;
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
+  // Grab the calendar event id before the row is gone, then remove its event.
+  let victim: any = null;
+  try { victim = (await admin.from("staff_tasks").select("id, gcal_event_id").eq("id", id).single()).data; } catch { /* column may not exist */ }
   const { error } = await admin.from("staff_tasks").delete().eq("id", id);
   if (error) return { error: error.message };
+  if (victim) { try { await removeTaskEvent(admin, victim); } catch { /* logged in sync */ } }
   revalidatePath("/tasks");
   revalidatePath("/dashboard");
   return { ok: true as const };
+}
+
+/* ── Google Calendar link ──────────────────────────────────────────────── */
+
+/** Connection status for the Google Calendar card (Connected / Not connected / Error). */
+export async function calendarStatus(): Promise<{ state: "connected" | "not_connected" | "error"; detail?: string; calendarId?: string; email?: string }> {
+  const unauth = await requireUser();
+  if (unauth) return { state: "error", detail: unauth.error };
+  if (!gcalConfigured()) return { state: "not_connected", detail: "أضف GOOGLE_SERVICE_ACCOUNT_JSON و GOOGLE_CALENDAR_ID في Vercel." };
+  const s = await gcalStatus();
+  return { state: s.state, detail: s.detail, calendarId: s.calendarId, email: s.email };
+}
+
+/** Push every task that has a due date to the calendar (bulk reconcile). */
+export async function syncAllTasksToCalendar(): Promise<{ error: string } | SyncSummary> {
+  const unauth = await requireUser();
+  if (unauth) return { error: unauth.error };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  return syncAllTasks(admin);
 }
 
 /* ── Weekly performance report (last 7 days vs the 7 before) ───────────── */

@@ -2,6 +2,7 @@ import { listTasks, listRoutines } from "./actions";
 import { listStaff } from "../team/actions";
 import TasksClient from "./TasksClient";
 import WeeklyTaskReport from "@/components/WeeklyTaskReport";
+import TasksCalendarCard from "@/components/TasksCalendarCard";
 import { getT } from "@/lib/i18n-server";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,7 @@ export default async function TasksPage() {
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">{error}</div>
       ) : (
         <>
+          <TasksCalendarCard locale={locale === "en" ? "en" : "ar"} />
           <WeeklyTaskReport locale={locale} />
           <TasksClient initialTasks={tasks} staff={staff} locale={locale} initialRoutines={routinesRes.routines} routinesReady={routinesRes.ready} />
         </>
