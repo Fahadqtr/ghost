@@ -369,14 +369,16 @@ interface CustomersQuery {
 }
 
 /** All customers (highest spend first), paged up to `limit`. Needs the app's
- *  read_customers scope — a scope error surfaces so the UI can explain it. */
+ *  read_customers scope — a scope error surfaces so the UI can explain it.
+ *  Shopify's CustomerSortKeys has no TOTAL_SPENT, so we fetch (newest first) and
+ *  sort by amountSpent client-side. */
 export async function fetchShopifyCustomers(limit = 250): Promise<{ customers?: ShopifyCustomerLite[]; error?: string }> {
   const out: ShopifyCustomerLite[] = [];
   let cursor: string | null = null;
   for (let page = 0; page < 20 && out.length < limit; page++) {
     const resp: { data?: CustomersQuery; error?: string } = await shopifyGraphQL<CustomersQuery>(
       `query($cursor: String) {
-        customers(first: 100, after: $cursor, sortKey: TOTAL_SPENT, reverse: true) {
+        customers(first: 100, after: $cursor, sortKey: CREATED_AT, reverse: true) {
           nodes {
             id displayName email phone numberOfOrders
             amountSpent { amount currencyCode }
@@ -406,6 +408,8 @@ export async function fetchShopifyCustomers(limit = 250): Promise<{ customers?: 
     if (!data?.pageInfo?.hasNextPage) break;
     cursor = data.pageInfo.endCursor;
   }
+  // Highest spend first (Shopify can't sort by total spent server-side).
+  out.sort((a, b) => b.spent - a.spent);
   return { customers: out.slice(0, limit) };
 }
 
