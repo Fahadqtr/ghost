@@ -134,3 +134,49 @@ export async function applyReconciledToShopify(
   revalidatePath("/platforms/shopify");
   return { ok: true, channelRows, shopify };
 }
+
+export interface SystemOosResult {
+  ok?: boolean; error?: string;
+  outSkus: number;
+  channelRows: number;
+  shopify: { configured: boolean; pushed?: number; failed?: number; message?: string };
+}
+
+// Push the OUT-OF-STOCK products already recorded in the system (any overlay
+// platform's platform_status.availability = 'OutOfStock') to Shopify — set stock
+// 0 + mark Not Listed — WITHOUT re-uploading any file. This is the "apply the
+// out-of-stock that's already in the system onto Shopify" one-tap.
+export async function applySystemOutOfStockToShopify(): Promise<SystemOosResult> {
+  const base: SystemOosResult = { outSkus: 0, channelRows: 0, shopify: { configured: false } };
+  const sb = createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ...base, error: "غير مسجّل الدخول." };
+
+  // Product ids flagged out-of-stock on ANY overlay platform (Pure Seoul, Talabat…).
+  const outIds = new Set<string>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb.from("platform_status")
+      .select("product_id").eq("availability", "OutOfStock").range(from, from + PAGE - 1);
+    if (error) {
+      if (/availability/.test(error.message)) {
+        return { ...base, error: "عمود availability غير موجود — شغّل: alter table platform_status add column if not exists availability text;" };
+      }
+      return { ...base, error: error.message };
+    }
+    for (const r of data ?? []) { const pid = (r as { product_id?: string }).product_id; if (pid) outIds.add(String(pid)); }
+    if ((data ?? []).length < PAGE) break;
+  }
+  if (outIds.size === 0) return { ...base, ok: true, error: "ما في منتجات نافدة مخزّنة في النظام." };
+
+  // Resolve their SKUs.
+  const ids = [...outIds];
+  const skus: string[] = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data } = await sb.from("products").select("sku").in("id", ids.slice(i, i + 300));
+    for (const p of (data ?? []) as { sku?: string }[]) if (p.sku) skus.push(String(p.sku));
+  }
+  if (skus.length === 0) return { ...base, ok: true, error: "المنتجات النافدة ما لها SKU." };
+
+  const r = await applyReconciledToShopify([...new Set(skus)]);
+  return { ok: r.ok, error: r.error, outSkus: new Set(skus).size, channelRows: r.channelRows, shopify: r.shopify };
+}

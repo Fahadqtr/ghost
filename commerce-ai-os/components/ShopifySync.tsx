@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { computeShopifyDiff, applyShopifyPrices, applyShopifyContent, syncShopifyInventory, pushProductsToShopify, importShopifyProducts, listShopifyMissingImages, pushShopifyImages, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
+import { applySystemOutOfStockToShopify } from "@/app/(app)/import-export/availability-actions";
 
 // One-tap live reconcile against the Shopify store: pull products over the
 // Admin API, diff vs our catalog (source of truth), then push price fixes
@@ -47,6 +48,22 @@ export default function ShopifySync() {
       const r = await applyShopifyContent([...selected]);
       if (!r.ok) { setApplyMsg(`❌ ${r.error}`); return; }
       setApplyMsg(`✅ تزامن ${r.updated} منتج${r.failed.length ? ` — فشل ${r.failed.length}: ${r.failed.map((f) => f.name).join("، ").slice(0, 200)}` : ""} — اضغط «قارن الآن» للتحديث`);
+    });
+  };
+
+  const [oosMsg, setOosMsg] = useState("");
+  const applyOos = () => {
+    if (!confirm("طبّق كل المنتجات النافدة المخزّنة في النظام (Pure Seoul · Talabat…) على Shopify؟\nيضبط مخزون 0 + يلغي الإدراج للنافد. لا يحتاج رفع ملف.")) return;
+    setOosMsg("…يطبّق النافد على شوبي فاي");
+    start(async () => {
+      const r = await applySystemOutOfStockToShopify();
+      if (r.error && !r.ok) { setOosMsg(`❌ ${r.error}`); return; }
+      const s = r.shopify;
+      setOosMsg(
+        s.configured
+          ? `✅ نافد النظام: ${r.outSkus} · دُفع لشوبي فاي ${s.pushed ?? 0}${s.failed ? ` · فشل ${s.failed}` : ""} · أُلغي إدراج ${r.channelRows}`
+          : `أُلغي الإدراج بالنظام لـ ${r.channelRows} — لكن الدفع الحقيقي لشوبي فاي غير مفعّل: ${s.message ?? ""}`,
+      );
     });
   };
 
@@ -154,9 +171,13 @@ export default function ShopifySync() {
           <button type="button" className="btn-ghost text-sm disabled:opacity-50" onClick={pushImages} disabled={busy}>
             🖼️ ارفع الصور الناقصة
           </button>
+          <button type="button" className="btn-ghost text-sm disabled:opacity-50" onClick={applyOos} disabled={busy}>
+            🚫 طبّق النافد (من النظام)
+          </button>
         </div>
         <p className="text-xs text-muted">مزامنة المخزون تصير تلقائيًا كل ليلة (3 فجرًا) — الزر للتزامن الفوري. طلبات المتجر الجديدة تُخصم من مخزون الكتالوج أولًا قبل الدفع.</p>
         {invMsg ? <p className="text-xs text-muted">{invMsg}</p> : null}
+        {oosMsg ? <p className="text-xs text-muted">{oosMsg}</p> : null}
         {imgMsg ? <p className="text-xs text-muted">{imgMsg}</p> : null}
         {error ? <pre className="whitespace-pre-wrap rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</pre> : null}
       </div>
