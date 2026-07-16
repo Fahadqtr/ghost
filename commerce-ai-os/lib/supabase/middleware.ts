@@ -11,7 +11,18 @@ import { NextResponse, type NextRequest } from "next/server";
 // `/api/cron` runs on a schedule with no user cookie — redirecting it to /login
 // would 307 the job away from its handler; it authenticates itself with the
 // CRON_SECRET bearer token instead.
-const PUBLIC_PATHS = ["/login", "/auth", "/staff", "/api/cron", "/api/webhooks"];
+// `/rewards` + `/api/rewards` are the customer-facing Beauty Rewards loyalty
+// flow, opened from a printed QR by people who have no account — they must be
+// public (the writes are guarded by the service-role key inside lib/loyalty).
+const PUBLIC_PATHS = [
+  "/login",
+  "/auth",
+  "/staff",
+  "/rewards",
+  "/api/cron",
+  "/api/webhooks",
+  "/api/rewards",
+];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });

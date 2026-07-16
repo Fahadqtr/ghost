@@ -130,6 +130,7 @@ export const NAV_GROUPS = [
   },
   { title: "العملاء", titleEn: "Customers", items: [
     { href: "/crm", label: "العملاء (CRM)", en: "Customers (CRM)", icon: "🧑‍🤝‍🧑" },
+    { href: "/loyalty", label: "مكافآت الجمال", en: "Beauty Rewards", icon: "❤️" },
   ] },
   { title: "التسويق", titleEn: "Marketing", items: [
     { href: "/inbox", label: "الوارد (دايركت)", en: "Inbox (DMs)", icon: "💬" },
