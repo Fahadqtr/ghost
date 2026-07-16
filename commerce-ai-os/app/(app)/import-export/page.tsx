@@ -82,6 +82,13 @@ export default async function ImportExportPage() {
         </div>
         <span className="text-brand">→</span>
       </Link>
+      <Link href="/import-export/talabat-orders" className="card flex items-center justify-between hover:bg-slate-50">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">🧾 {L("طلبات Talabat", "Talabat orders")}</h3>
+          <p className="text-xs text-muted">{L("استقبل طلبات Talabat مباشرة عبر Webhook — سجّل الرابط في بوابة التاجر وشوف الطلبات الواردة.", "Receive Talabat orders live via webhook — register the URL in the Vendor Portal and see incoming orders.")}</p>
+        </div>
+        <span className="text-brand">→</span>
+      </Link>
       <Link href="/import-export/snoonu-sync" className="card flex items-center justify-between hover:bg-slate-50">
         <div>
           <h3 className="text-sm font-semibold text-ink">🔄 Snoonu Sync</h3>
