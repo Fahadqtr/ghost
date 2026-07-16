@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
-import { comparePureSeoul, applyPureSeoulAvailability, setPureSeoulIds, type PSCompare, type PSItem } from "@/app/(app)/import-export/pure-seoul-actions";
+import { comparePureSeoul, applyPureSeoulAvailability, setPureSeoulIds, addPureSeoulNewProducts, type PSCompare, type PSItem } from "@/app/(app)/import-export/pure-seoul-actions";
 
-type PSRowLite = { id: string; global_id: string; name_en: string; name_ar: string; price: string; approval: string; branchStatus: string; stock: string };
+type PSRowLite = { id: string; global_id: string; name_en: string; name_ar: string; description_en: string; description_ar: string; price: string; approval: string; branchStatus: string; stock: string };
 
 // CSV download helper (client-side blob).
 function downloadCsv(name: string, headers: string[], rows: (string | number | null | undefined)[][]) {
@@ -35,6 +35,23 @@ export default function PureSeoulSync() {
       alert(e instanceof Error ? e.message : "تعذّر الربط.");
     } finally {
       setMapping(false);
+    }
+  };
+  // Add Pure Seoul EXCLUSIVES (no catalog match) as new products carrying pure_seoul_id.
+  const [adding, setAdding] = useState(false);
+  const [addMsg, setAddMsg] = useState<string | null>(null);
+  const addExclusives = async () => {
+    if (!psRows.length) return;
+    if (!confirm("أضف المنتجات الحصرية (اللي ما لها مقابل في مليكاس) للكتالوج؟\nيتولّد لكل منتج SKU + باركود ويُخزَّن معرّف Pure Seoul.")) return;
+    setAdding(true); setAddMsg(null);
+    try {
+      const r = await addPureSeoulNewProducts(psRows);
+      if (r.error) { setAddMsg(null); alert(r.error); return; }
+      setAddMsg(`✓ تم — أُضيف ${r.added} منتج حصري (بـ SKU + باركود + معرّف Pure Seoul) · تم تخطّي ${r.skipped} (موجود مسبقاً)${r.failed ? ` · فشل ${r.failed}` : ""}.`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "تعذّرت الإضافة.");
+    } finally {
+      setAdding(false);
     }
   };
   // "Apply availability to the system" (auto-fill OutOfStock/InStock on PS).
@@ -98,6 +115,8 @@ export default function PureSeoulSync() {
       const gidKey = pick(["global_id"]);
       const nameEnKey = pick(["name_en"], (h) => /product name \(en\)/.test(h));
       const nameArKey = pick(["name_ar"], (h) => /product name \(ar\)/.test(h));
+      const descEnKey = pick(["description_en"], (h) => /product description \(en\)/.test(h));
+      const descArKey = pick(["description_ar"], (h) => /product description \(ar\)/.test(h));
       const priceKey = pick(["price"], (h) => h.includes("price"));
       const approvalKey = pick(["approval"]);
       const bsKey = headers.find((h) => low(h).endsWith("branchstatus")) || headers.find((h) => low(h).startsWith("availability"));
@@ -119,6 +138,8 @@ export default function PureSeoulSync() {
           global_id: gidKey ? String(r[gidKey] ?? "") : "",
           name_en: nameEnKey ? String(r[nameEnKey] ?? "") : "",
           name_ar: nameArKey ? String(r[nameArKey] ?? "") : "",
+          description_en: descEnKey ? String(r[descEnKey] ?? "") : "",
+          description_ar: descArKey ? String(r[descArKey] ?? "") : "",
           price: priceKey ? String(r[priceKey] ?? "") : "",
           approval: approvalKey ? String(r[approvalKey] ?? "") : "",
           branchStatus,
@@ -166,6 +187,19 @@ export default function PureSeoulSync() {
             <button onClick={mapIds} disabled={mapping || psRows.length === 0}
               className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50">
               {mapping ? "…يربط" : `اربط المعرّفات (${c.matched})`}
+            </button>
+          </div>
+
+          {/* Add Pure Seoul exclusives (no catalog match) as new products. */}
+          <div className="card flex flex-col gap-2 border-amber-200 bg-amber-50/60 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">➕ أضف الحصرية للكتالوج</h3>
+              <p className="text-xs text-muted">المنتجات الموجودة على Pure Seoul وغير موجودة في مليكاس ({c.extraOnPS}) — تنضاف بـ SKU + باركود + معرّف Pure Seoul. الموجود مسبقاً يُتخطّى.</p>
+              {addMsg ? <p className="mt-1 text-xs font-medium text-emerald-700">{addMsg}</p> : null}
+            </div>
+            <button onClick={addExclusives} disabled={adding || psRows.length === 0}
+              className="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
+              {adding ? "…يضيف" : `أضف الحصرية (${c.extraOnPS})`}
             </button>
           </div>
 

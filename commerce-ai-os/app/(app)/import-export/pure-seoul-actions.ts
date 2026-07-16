@@ -112,6 +112,8 @@ export interface PSRow {
   global_id?: string;
   name_en?: string;
   name_ar?: string;
+  description_en?: string;
+  description_ar?: string;
   price?: string;
   approval?: string;
   branchStatus?: string;
@@ -377,4 +379,119 @@ export async function setPureSeoulIds(rows: PSRow[]): Promise<PsIdMapResult> {
 
   revalidatePath("/import-export/pure-seoul");
   return { ok: failed === 0, mapped: mapped - failed, alreadySet, unmatched, failed };
+}
+
+export interface AddPsResult {
+  ok: boolean; error?: string;
+  added: number;    // new exclusive products created
+  skipped: number;  // already in the catalog (name match) or already linked
+  failed: number;
+}
+
+// Add Pure Seoul EXCLUSIVES to the catalog — products that don't confidently
+// match any existing product by name (so they're genuinely not in Malika yet).
+// Each new product gets an mk#### SKU + unique EAN-13 barcode (same scheme as the
+// Snoonu sync) and carries pure_seoul_id = its Pure Seoul SPI (NOT snoonu_id,
+// which stays empty until it's listed on Malika's own Snoonu). Service-role
+// write. Requires supabase/pure_seoul_id.sql.
+export async function addPureSeoulNewProducts(rows: PSRow[]): Promise<AddPsResult> {
+  const base: AddPsResult = { ok: false, added: 0, skipped: 0, failed: 0 };
+  if (!rows?.length) return { ...base, error: "ما في صفوف في الملف." };
+
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { ...base, error: "غير مسجّل الدخول." };
+
+  let admin: ReturnType<typeof createAdminClient>;
+  try { admin = createAdminClient(); }
+  catch (e) { return { ...base, error: e instanceof Error ? e.message : "الخادم غير مهيأ." }; }
+
+  // Read the catalog: name index + existing pure_seoul_ids + max mk# + barcodes.
+  const cat: any[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await admin.from("products").select("id, name_en, name_ar, pure_seoul_id, sku, barcode").range(f, f + 999);
+    if (error) {
+      if (/pure_seoul_id/.test(error.message)) return { ...base, error: "شغّل supabase/pure_seoul_id.sql في Supabase أول." };
+      return { ...base, error: error.message };
+    }
+    cat.push(...(data ?? []));
+    if ((data ?? []).length < 1000) break;
+  }
+
+  const existingPsId = new Set<string>();
+  const byName = new Map<string, boolean>();
+  const catTok = cat.map((c) => ({ t: tokset(c.name_en) })).filter((x) => x.t.size);
+  let maxMk = 0;
+  const usedBarcodes = new Set<string>();
+  for (const p of cat) {
+    if (S(p.pure_seoul_id)) existingPsId.add(S(p.pure_seoul_id));
+    for (const n of [norm(p.name_en), norm(p.name_ar)]) if (n) byName.set(n, true);
+    const m = /^mk(\d+)$/i.exec(S(p.sku));
+    if (m) maxMk = Math.max(maxMk, parseInt(m[1], 10));
+    const bc = S(p.barcode); if (bc) usedBarcodes.add(bc);
+  }
+
+  const nextSku = () => `mk${++maxMk}`;
+  const ean13Check = (d12: string) => {
+    let sum = 0; for (let i = 0; i < 12; i++) sum += (+d12[i]) * (i % 2 === 0 ? 1 : 3);
+    return String((10 - (sum % 10)) % 10);
+  };
+  let bcSeq = 1;
+  const nextBarcode = () => {
+    for (;;) { const b = "29" + String(bcSeq++).padStart(10, "0"); const bc = b + ean13Check(b); if (!usedBarcodes.has(bc)) { usedBarcodes.add(bc); return bc; } }
+  };
+  const cleanName = (v: unknown) => S(v).replace(/^[^\p{L}\p{N}]+/u, "").trim();
+  const num = (v: unknown) => { const t = S(v); if (t === "") return null; const n = Number(t); return isNaN(n) ? null : n; };
+
+  // A PS row is a NEW exclusive when its SPI isn't already linked AND its name
+  // doesn't confidently match any existing product (exact → subset → strong).
+  const seen = new Set<string>();
+  const toInsert: Record<string, unknown>[] = [];
+  let skipped = 0;
+  for (const r of rows) {
+    const spi = S(r.global_id) || S(r.id);
+    if (!spi || seen.has(spi)) continue;
+    seen.add(spi);
+    if (existingPsId.has(spi)) { skipped++; continue; }
+    const nn = norm(r.name_en) || norm(r.name_ar);
+    if (nn && byName.has(nn)) { skipped++; continue; }
+    const tt = tokset(r.name_en);
+    let nameMatch = false;
+    if (tt.size) for (const x of catTok) {
+      if (isSubset(tt, x.t) || isSubset(x.t, tt) || jaccard(tt, x.t) >= 0.72) { nameMatch = true; break; }
+    }
+    if (nameMatch) { skipped++; continue; }
+    toInsert.push({
+      sku: nextSku(),
+      barcode: nextBarcode(),
+      pure_seoul_id: spi,
+      name_en: cleanName(r.name_en),
+      name_ar: cleanName(r.name_ar),
+      description_en: S(r.description_en) || null,
+      description_ar: S(r.description_ar) || null,
+      price: num(r.price),
+      main_category: "Uncategorized",
+      notes: "Imported from Pure Seoul — exclusive; set category / image.",
+    });
+  }
+
+  if (toInsert.length === 0) return { ok: true, added: 0, skipped, failed: 0 };
+
+  let added = 0, failed = 0;
+  const newIds: string[] = [];
+  for (let i = 0; i < toInsert.length; i += 200) {
+    const part = toInsert.slice(i, i + 200);
+    const { data, error } = await admin.from("products").insert(part).select("id");
+    if (error) { failed += part.length; continue; }
+    added += data?.length ?? 0;
+    for (const p of data ?? []) newIds.push(p.id);
+  }
+  // Seed inventory rows (stock 0) so they show on the Inventory page.
+  for (let i = 0; i < newIds.length; i += 200) {
+    const part = newIds.slice(i, i + 200).map((product_id) => ({ product_id, stock_quantity: 0, low_stock_threshold: 5, sold_quantity: 0 }));
+    await admin.from("inventory").insert(part);
+  }
+
+  revalidatePath("/products");
+  revalidatePath("/import-export/pure-seoul");
+  return { ok: failed === 0, added, skipped, failed };
 }
