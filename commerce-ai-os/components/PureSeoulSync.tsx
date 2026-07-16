@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
-import { comparePureSeoul, applyPureSeoulAvailability, type PSCompare, type PSItem } from "@/app/(app)/import-export/pure-seoul-actions";
+import { comparePureSeoul, applyPureSeoulAvailability, setPureSeoulIds, type PSCompare, type PSItem } from "@/app/(app)/import-export/pure-seoul-actions";
+
+type PSRowLite = { id: string; global_id: string; name_en: string; name_ar: string; price: string; approval: string; branchStatus: string; stock: string };
 
 // CSV download helper (client-side blob).
 function downloadCsv(name: string, headers: string[], rows: (string | number | null | undefined)[][]) {
@@ -17,6 +19,24 @@ export default function PureSeoulSync() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [res, setRes] = useState<PSCompare | null>(null);
+  // Last-parsed rows, kept so we can persist the Pure Seoul SPI → catalog map.
+  const [psRows, setPsRows] = useState<PSRowLite[]>([]);
+  const [mapping, setMapping] = useState(false);
+  const [mapMsg, setMapMsg] = useState<string | null>(null);
+  const mapIds = async () => {
+    if (!psRows.length) return;
+    if (!confirm(`اربط معرّفات Pure Seoul (SPI) بمنتجات مليكاس المطابقة بالاسم؟\nصفوف: ${psRows.length}`)) return;
+    setMapping(true); setMapMsg(null);
+    try {
+      const r = await setPureSeoulIds(psRows);
+      if (r.error) { setMapMsg(null); alert(r.error); return; }
+      setMapMsg(`✓ تم الربط — جديد ${r.mapped} · موجود ${r.alreadySet} · بدون مطابقة ${r.unmatched}${r.failed ? ` · فشل ${r.failed}` : ""}. التصديرات الجاية بتطابق بالمعرّف مباشرة.`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "تعذّر الربط.");
+    } finally {
+      setMapping(false);
+    }
+  };
   // "Apply availability to the system" (auto-fill OutOfStock/InStock on PS).
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState<string | null>(null);
@@ -105,6 +125,7 @@ export default function PureSeoulSync() {
           stock: stockKey ? String(r[stockKey] ?? "") : "",
         };
       });
+      setPsRows(rows);
       const out = await comparePureSeoul(rows);
       if (!out.ok) setError(out.error ?? "فشلت المقارنة.");
       setRes(out);
@@ -134,6 +155,20 @@ export default function PureSeoulSync() {
 
       {res?.ok && c ? (
         <>
+          {/* Bridge Pure Seoul's SPI onto the catalog (products.pure_seoul_id) so
+              future syncs/fills match by id instead of by name. */}
+          <div className="card flex flex-col gap-2 border-brand/30 bg-brand/5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">🔗 ربط معرّفات Pure Seoul بالكتالوج</h3>
+              <p className="text-xs text-muted">Pure Seoul شركة منفصلة بـ SPI مختلف. اربطه مرة بالاسم → بعدها التطابق بالمعرّف مباشرة (بدون تخمين).</p>
+              {mapMsg ? <p className="mt-1 text-xs font-medium text-emerald-700">{mapMsg}</p> : null}
+            </div>
+            <button onClick={mapIds} disabled={mapping || psRows.length === 0}
+              className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50">
+              {mapping ? "…يربط" : `اربط المعرّفات (${c.matched})`}
+            </button>
+          </div>
+
           {/* Publish bar: the curated list to push to Pure Seoul on Snoonu. */}
           <div className="card flex flex-col gap-2 border-emerald-200 bg-emerald-50/60 sm:flex-row sm:items-center sm:justify-between">
             <div>
