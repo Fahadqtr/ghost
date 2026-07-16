@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { PLATFORMS } from "@/lib/constants";
-import { pushStockToShopify } from "@/app/(app)/inventory/actions";
+import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, setInventoryQuantities } from "@/lib/shopify/admin";
 import {
   reconcile,
   type PlatformUpload,
@@ -124,11 +124,33 @@ export async function applyReconciledToShopify(
     }
   }
 
-  // Real, env-gated push of 0 stock to Shopify.
-  const res = await pushStockToShopify(skus.map((sku) => ({ sku, quantity: 0 })));
-  const shopify = res.configured
-    ? { configured: true, pushed: res.pushed, failed: res.failed }
-    : { configured: false, message: res.message };
+  // Push 0 stock to Shopify via the OAuth Admin API — the SAME path the price
+  // diff and the nightly inventory sync already use (so it needs no extra token).
+  let shopify: { configured: boolean; pushed?: number; failed?: number; message?: string };
+  if (!shopifyConfigured()) {
+    shopify = { configured: false, message: "شوبي فاي غير مربوط." };
+  } else {
+    const [remote, loc] = await Promise.all([fetchAllShopifyProducts(), fetchPrimaryLocationId()]);
+    if (remote.error || loc.error || !loc.locationId) {
+      shopify = { configured: true, pushed: 0, failed: skus.length, message: remote.error || loc.error };
+    } else {
+      const wanted = new Set(skus.map((s) => s.toLowerCase()));
+      const items: { inventoryItemId: string; quantity: number }[] = [];
+      for (const p of remote.products ?? []) {
+        for (const v of p.variants) {
+          if (v.sku && v.inventoryItemId && wanted.has(v.sku.toLowerCase())) items.push({ inventoryItemId: v.inventoryItemId, quantity: 0 });
+        }
+      }
+      if (items.length === 0) {
+        shopify = { configured: true, pushed: 0, failed: 0 };
+      } else {
+        const r = await setInventoryQuantities(loc.locationId, items);
+        shopify = r.ok
+          ? { configured: true, pushed: r.updated, failed: 0 }
+          : { configured: true, pushed: r.updated, failed: items.length - r.updated, message: r.error };
+      }
+    }
+  }
 
   revalidatePath("/channels");
   revalidatePath("/platforms/shopify");
