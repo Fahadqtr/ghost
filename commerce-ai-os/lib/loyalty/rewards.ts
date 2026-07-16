@@ -4,8 +4,8 @@
 // (/api/rewards/*) and the admin server actions call in through here.
 import { createAdminClient } from "@/lib/supabase/admin";
 
-/** Hearts needed to earn one free product. Matches the printed card. */
-export const STAMPS_REQUIRED = 5;
+/** Hearts needed to earn one free product. */
+export const STAMPS_REQUIRED = 6;
 
 export const REVIEW_BUCKET = "loyalty-reviews";
 
@@ -177,6 +177,52 @@ export async function listPending(): Promise<PendingSubmission[]> {
     imageUrl: r.image_url,
     createdAt: r.created_at,
     stamps: Math.min(r.loyalty_customers?.stamps ?? 0, STAMPS_REQUIRED),
+  }));
+}
+
+export type CustomerRecord = {
+  id: string;
+  name: string;
+  phone: string;
+  stamps: number; // hearts in the current card (0..required)
+  cyclesCompleted: number; // rewards earned & redeemed over time
+  rewardReady: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * Every rewards customer, most recently active first — for the customers table.
+ * Optional case-insensitive search over name / phone.
+ */
+export async function listCustomers(search?: string): Promise<CustomerRecord[]> {
+  const admin = createAdminClient();
+  let query = admin
+    .from("loyalty_customers")
+    .select("id, name, phone, stamps, cycles_completed, reward_ready_at, created_at, updated_at")
+    .order("updated_at", { ascending: false })
+    .limit(500);
+
+  const term = (search ?? "").trim();
+  if (term) {
+    const digits = term.replace(/\D/g, "");
+    // match name OR phone; if the term has digits, also match the phone fragment
+    const ors = [`name.ilike.%${term}%`];
+    if (digits) ors.push(`phone.ilike.%${digits}%`);
+    query = query.or(ors.join(","));
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    name: r.name,
+    phone: r.phone,
+    stamps: Math.min(r.stamps, STAMPS_REQUIRED),
+    cyclesCompleted: r.cycles_completed,
+    rewardReady: r.stamps >= STAMPS_REQUIRED,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
   }));
 }
 
