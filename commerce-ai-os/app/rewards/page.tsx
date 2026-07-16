@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "بطاقة مكافآت الجمال · Malika's Universe",
-  description: "اجمعي خمس ختمات عبر تقييماتك في سنونو واحصلي على منتج مجاناً.",
+  description: "اجمعي ست ختمات عبر تقييماتك في سنونو واحصلي على منتج مجاناً.",
 };
 
 // Let customers zoom the card if they want (the admin app locks zoom; here we

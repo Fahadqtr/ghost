@@ -193,7 +193,7 @@ function RegisterView(props: {
       <h1 className="text-2xl font-bold text-[#d17c93]">بطاقة مكافآت الجمال</h1>
       <p className="mt-1 text-sm text-[#8a7a6a]">لأن جمالك يستحق المكافأة.</p>
       <p className="mx-auto mt-4 max-w-xs text-sm leading-relaxed text-[#6b5b4b]">
-        اجمعي <b>خمس ختمات</b> واختاري أي منتج من المتجر مجاناً. سجّلي بياناتك
+        اجمعي <b>ست ختمات</b> واختاري أي منتج من المتجر مجاناً. سجّلي بياناتك
         وارفقي صورة تقييمك في سنونو لتحصلي على ختمة.
       </p>
 
@@ -256,7 +256,7 @@ function CardView(props: {
       </p>
 
       {/* hearts */}
-      <div className="my-6 flex items-center justify-center gap-1.5">
+      <div className="my-6 flex flex-wrap items-center justify-center gap-1.5">
         {hearts.map((filled, i) => (
           <Heart key={i} filled={filled} index={i} />
         ))}
@@ -264,7 +264,7 @@ function CardView(props: {
 
       {state.rewardReady ? (
         <div className="rounded-2xl bg-[#fbeef0] p-4">
-          <p className="text-base font-bold text-[#d17c93]">🎉 مبروك! أكملتِ الختمات الخمس</p>
+          <p className="text-base font-bold text-[#d17c93]">🎉 مبروك! أكملتِ الختمات الست</p>
           <p className="mt-1 text-sm text-[#6b5b4b]">
             اختاري أي منتج من المتجر مجاناً — أبرزي هذه البطاقة عند الطلب.
           </p>

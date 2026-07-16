@@ -4,7 +4,7 @@ export function Heart({ filled, index }: { filled: boolean; index: number }) {
   return (
     <svg
       viewBox="0 0 32 29"
-      className="h-12 w-12 sm:h-14 sm:w-14"
+      className="h-11 w-11 sm:h-12 sm:w-12"
       style={filled ? { animation: `heartPop 0.45s ease-out ${index * 0.06}s both` } : undefined}
       aria-hidden
     >

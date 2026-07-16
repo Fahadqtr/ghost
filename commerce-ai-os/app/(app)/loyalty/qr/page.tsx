@@ -42,7 +42,7 @@ export default async function RewardsQrPage() {
         </p>
         <h1 className="mt-2 text-2xl font-bold text-[#d17c93]">بطاقة مكافآت الجمال</h1>
         <p className="mt-1 text-sm text-[#8a7a6a]">
-          امسحي الباركود، سجّلي تقييمك في سنونو، واجمعي ٥ ختمات = منتج مجاني 🎁
+          امسحي الباركود، سجّلي تقييمك في سنونو، واجمعي ٦ ختمات = منتج مجاني 🎁
         </p>
 
         <div

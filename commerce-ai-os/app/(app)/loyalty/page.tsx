@@ -27,12 +27,20 @@ export default async function LoyaltyAdminPage() {
             راجعي صور تقييمات سنونو — كل اعتماد يختم ختمة. تكتمل {STAMPS_REQUIRED} = هدية.
           </p>
         </div>
-        <Link
-          href="/loyalty/qr"
-          className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-        >
-          🔳 باركود الطباعة
-        </Link>
+        <div className="flex shrink-0 gap-2">
+          <Link
+            href="/loyalty/customers"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            👥 الزبائن
+          </Link>
+          <Link
+            href="/loyalty/qr"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            🔳 باركود الطباعة
+          </Link>
+        </div>
       </div>
 
       {error ? (
