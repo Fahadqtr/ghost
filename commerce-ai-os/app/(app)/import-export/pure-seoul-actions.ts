@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { computePureSeoulIdMap, type CatalogNameRow } from "@/lib/pure-seoul-map-compute";
 
 // Pure Seoul is an INDEPENDENT platform selling the same products as Malika. Its
 // approval/rejection lives in the shared `platform_status` overlay (platform =
@@ -200,12 +202,27 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
     const all: any[] = [];
     for (let f = 0; ; f += 1000) {
       const { data, error } = await sb.from("products")
-        .select("id, snoonu_id, sku, name_en, price, main_category").range(f, f + 999);
-      if (error) return { ...empty, error: error.message };
+        .select("id, snoonu_id, pure_seoul_id, sku, name_en, price, main_category").range(f, f + 999);
+      if (error) {
+        // Tolerate a catalog that hasn't run the pure_seoul_id migration yet.
+        if (/pure_seoul_id/.test(error.message)) {
+          const retry = await sb.from("products").select("id, snoonu_id, sku, name_en, price, main_category").range(f, f + 999);
+          if (retry.error) return { ...empty, error: retry.error.message };
+          all.push(...(retry.data ?? []));
+          if ((retry.data ?? []).length < 1000) break;
+          continue;
+        }
+        return { ...empty, error: error.message };
+      }
       all.push(...(data ?? []));
       if ((data ?? []).length < 1000) break;
     }
 
+    // Pure Seoul is a separate merchant, so its SPI lives in products.pure_seoul_id
+    // (bridged by an earlier name-map). Match by that id first — exact and stable —
+    // then fall back to name for anything not yet bridged.
+    const byPsId = new Map<string, any>();
+    for (const p of all) if (S(p.pure_seoul_id)) byPsId.set(S(p.pure_seoul_id), p);
     const byId = new Map<string, any>();
     for (const p of all) if (S(p.snoonu_id)) byId.set(S(p.snoonu_id), p);
     const byName = new Map<string, any>();
@@ -228,7 +245,7 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
       if (S(r.approval) === "Rejected") psRejected++;
       const bs = S(r.branchStatus).toLowerCase();
       if (bs === "inactive") psInactive++;
-      const m = byId.get(S(r.global_id)) || byName.get(norm(r.name_en));
+      const m = byPsId.get(S(r.global_id) || S(r.id)) || byId.get(S(r.global_id)) || byName.get(norm(r.name_en));
       if (m) {
         matched++;
         matchedMalika.add(m);
@@ -304,4 +321,60 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
   } catch (e) {
     return { ...empty, error: e instanceof Error ? e.message : "خطأ غير متوقع." };
   }
+}
+
+export interface PsIdMapResult {
+  ok: boolean; error?: string;
+  mapped: number;      // catalog products newly stamped with a pure_seoul_id
+  alreadySet: number;  // already carried the same id
+  unmatched: number;   // PS rows with no confident catalog match
+  failed: number;      // write failures
+}
+
+// Persist Pure Seoul's SPI(UniqueIdentifier) onto the matching catalog product
+// (products.pure_seoul_id), matched BY NAME (exact → subset → strong). Run once
+// from a Pure Seoul export; afterwards comparePureSeoul/fills match by id exactly.
+// Service-role write (the column is protected). Requires supabase/pure_seoul_id.sql.
+export async function setPureSeoulIds(rows: PSRow[]): Promise<PsIdMapResult> {
+  const base: PsIdMapResult = { ok: false, mapped: 0, alreadySet: 0, unmatched: 0, failed: 0 };
+  if (!rows?.length) return { ...base, error: "ما في صفوف في الملف." };
+
+  const { data: { user } } = await createClient().auth.getUser();
+  if (!user) return { ...base, error: "غير مسجّل الدخول." };
+
+  let admin: ReturnType<typeof createAdminClient>;
+  try { admin = createAdminClient(); }
+  catch (e) { return { ...base, error: e instanceof Error ? e.message : "الخادم غير مهيأ." }; }
+
+  // Read catalog names + existing pure_seoul_id (paged).
+  const cat: CatalogNameRow[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await admin.from("products").select("id, name_en, name_ar, pure_seoul_id").range(f, f + 999);
+    if (error) {
+      if (/pure_seoul_id/.test(error.message)) return { ...base, error: "شغّل supabase/pure_seoul_id.sql في Supabase أول." };
+      return { ...base, error: error.message };
+    }
+    cat.push(...((data ?? []) as CatalogNameRow[]));
+    if ((data ?? []).length < 1000) break;
+  }
+
+  // Pure Seoul SPI = global_id when present (NonFoodProducts export), else id
+  // (AllExportData "SPI(UniqueIdentifier)").
+  const psRows = rows.map((r) => ({ spi: S(r.global_id) || S(r.id), nameEn: S(r.name_en), nameAr: S(r.name_ar) }));
+  const { pairs, mapped, alreadySet, unmatched } = computePureSeoulIdMap(psRows, cat);
+
+  // Write in concurrent chunks (one targeted update per product — never touches
+  // any other column).
+  let failed = 0;
+  for (let i = 0; i < pairs.length; i += 80) {
+    const part = pairs.slice(i, i + 80);
+    const results = await Promise.all(
+      part.map((p) => admin.from("products").update({ pure_seoul_id: p.pure_seoul_id }).eq("id", p.product_id)
+        .then((r: any) => Boolean(r.error)))
+    );
+    failed += results.filter(Boolean).length;
+  }
+
+  revalidatePath("/import-export/pure-seoul");
+  return { ok: failed === 0, mapped: mapped - failed, alreadySet, unmatched, failed };
 }
