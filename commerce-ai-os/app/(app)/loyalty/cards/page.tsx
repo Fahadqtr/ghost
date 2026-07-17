@@ -63,17 +63,21 @@ export default async function LoyaltyCardsPage({
         </div>
       </div>
 
-      {/* mm units so the printed size is exact (85×55mm = standard business card) */}
+      {/* On SCREEN the sheet is responsive (1 col on phones, so it never
+          overflows the viewport). On PRINT it is forced to an exact 85×55mm
+          two-up A4 layout regardless of screen size. */}
       <style>{`
         .cards-grid {
           display: grid;
-          grid-template-columns: repeat(2, 85mm);
+          grid-template-columns: 1fr;   /* phones: single column */
           gap: 4mm;
           justify-content: center;
         }
         .rw-card {
-          width: 85mm;
-          height: 55mm;
+          width: 100%;
+          max-width: 85mm;
+          aspect-ratio: 85 / 55;         /* keep the exact card shape on screen */
+          margin: 0 auto;
           box-sizing: border-box;
           border: 1px dashed #e2c9a0;
           background: #ffffff;
@@ -85,10 +89,14 @@ export default async function LoyaltyCardsPage({
           object-fit: contain;   /* full artwork, never distorted */
           display: block;
         }
+        @media (min-width: 640px) {
+          .cards-grid { grid-template-columns: repeat(2, 85mm); }
+          .rw-card { width: 85mm; height: 55mm; max-width: none; aspect-ratio: auto; }
+        }
         @media print {
           @page { size: A4; margin: 8mm; }
-          .cards-grid { gap: 3mm; }
-          .rw-card { border-color: #d8d8d8; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .cards-grid { grid-template-columns: repeat(2, 85mm); gap: 3mm; }
+          .rw-card { width: 85mm; height: 55mm; max-width: none; aspect-ratio: auto; border-color: #d8d8d8; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
       `}</style>
     </div>
