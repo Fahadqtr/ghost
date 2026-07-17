@@ -22,6 +22,7 @@ type RewardState = {
   lastStatus: "pending" | "approved" | "rejected" | null;
   prizes: PrizeOption[];
   chosenPrizeId: string | null;
+  voucherCode: string | null;
 };
 
 const LS_KEY = "malika_rewards_id";
@@ -304,6 +305,31 @@ function CardView(props: {
         </p>
       )}
 
+      {/* prize voucher card — shown once she picks a prize */}
+      {chosen && (
+        <div
+          className="mt-4 rounded-2xl border-2 border-[#d9b45f] bg-white p-4 text-center"
+          style={{ boxShadow: "0 12px 30px -14px rgba(180,120,90,.4)" }}
+        >
+          <p className="text-[11px] font-semibold tracking-[0.3em] text-[#c9a24b]">🎁 بطاقة جائزتك</p>
+          {chosen.imageUrl && (
+            <div className="mx-auto mt-2 w-28 overflow-hidden rounded-xl border border-[#f0dcc6]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={chosen.imageUrl} alt={chosen.name || "الجائزة"} className="aspect-square w-full object-cover" />
+            </div>
+          )}
+          {chosen.name && <p className="mt-2 text-base font-bold text-[#1f1a17]">{chosen.name}</p>}
+          {state.voucherCode && (
+            <p dir="ltr" className="mt-1 text-sm font-bold tracking-wider text-[#d17c93]">
+              {state.voucherCode}
+            </p>
+          )}
+          <p className="mt-2 text-xs text-[#8a7a6a]">
+            📩 أرسلناها لك على واتساب · أبرزيها عند الاستلام
+          </p>
+        </div>
+      )}
+
       {/* pending / status feedback */}
       {props.justSubmitted && (
         <p className="mt-4 rounded-xl bg-[#fff6e9] px-3 py-2 text-sm text-[#a9791f]">
@@ -329,7 +355,7 @@ function CardView(props: {
           <p className="mb-2 text-sm font-bold text-[#d17c93]">
             {state.rewardReady
               ? chosen
-                ? "جائزتك المختارة 🎁"
+                ? "لتغيير جائزتك 🎁"
                 : "اختاري جائزتك 🎁"
               : "جوائز تقدرين تكسبينها 🎁"}
           </p>
@@ -373,22 +399,24 @@ function CardView(props: {
         </div>
       )}
 
-      {/* upload — a styled label triggers the hidden file input (no ref needed) */}
-      <label
-        className={`mt-5 block w-full cursor-pointer rounded-xl py-3 text-center text-sm font-bold text-white shadow-md transition active:scale-[.99] ${
-          props.uploading ? "opacity-60" : ""
-        }`}
-        style={{ background: "linear-gradient(90deg,#e59aad,#d17c93)" }}
-      >
-        {props.uploading ? "جارٍ الرفع…" : "📷 رفع صورة تقييم سنونو"}
-        <input
-          type="file"
-          accept="image/*"
-          className="hidden"
-          disabled={props.uploading}
-          onChange={props.onUpload}
-        />
-      </label>
+      {/* upload — hidden once the card is complete (nothing more to collect) */}
+      {!state.rewardReady && (
+        <label
+          className={`mt-5 block w-full cursor-pointer rounded-xl py-3 text-center text-sm font-bold text-white shadow-md transition active:scale-[.99] ${
+            props.uploading ? "opacity-60" : ""
+          }`}
+          style={{ background: "linear-gradient(90deg,#e59aad,#d17c93)" }}
+        >
+          {props.uploading ? "جارٍ الرفع…" : "📷 رفع صورة تقييم سنونو"}
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            disabled={props.uploading}
+            onChange={props.onUpload}
+          />
+        </label>
+      )}
 
       <button
         onClick={props.onSwitch}
