@@ -27,14 +27,14 @@ export default async function LoyaltyCustomersPage({
 
   return (
     <div className="mx-auto max-w-4xl p-4 sm:p-6">
-      <div className="mb-4 flex items-center justify-between gap-2">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-800">زبائن مكافآت الجمال</h1>
           <p className="text-sm text-slate-500">
             {rows.length} زبونة · {totalHearts} ختمة حالية · {totalRewards} هدية مُستبدَلة
           </p>
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex flex-wrap gap-2 sm:shrink-0">
           <a
             href="/api/loyalty/customers/export"
             className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
