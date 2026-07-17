@@ -15,6 +15,7 @@ import {
   addPrize,
   setPrizeActive,
   deletePrize,
+  sendVoucherWhatsApp,
   PRIZE_BUCKET,
 } from "@/lib/loyalty/rewards";
 
@@ -103,4 +104,13 @@ export async function deletePrizeAction(id: string) {
   await requireUser();
   await deletePrize(id);
   revalidatePath("/loyalty/prizes");
+}
+
+/** Send the win-confirmation WhatsApp to a customer. Reports the send result. */
+export async function sendVoucherAction(
+  customerId: string
+): Promise<{ configured: boolean; ok: boolean; error?: string }> {
+  await requireUser();
+  const res = await sendVoucherWhatsApp(customerId);
+  return { configured: res.configured, ok: res.ok, error: res.error };
 }

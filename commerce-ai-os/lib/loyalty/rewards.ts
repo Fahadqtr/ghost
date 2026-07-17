@@ -346,6 +346,74 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
   return next;
 }
 
+// --- Prize voucher (win) ----------------------------------------------------
+
+export type Voucher = {
+  customerId: string;
+  name: string;
+  phone: string;
+  ready: boolean; // card is complete
+  code: string; // printable voucher code
+  prizeName: string | null;
+  prizeImage: string | null;
+  issuedAt: string; // ISO — when the voucher was viewed/generated
+};
+
+/** Deterministic, human-readable voucher code for a completed card. */
+function voucherCode(id: string, cycle: number): string {
+  return `MU-${id.replace(/-/g, "").slice(0, 6).toUpperCase()}-${cycle + 1}`;
+}
+
+/** Build the win voucher for a customer (must have completed the card). */
+export async function getVoucher(customerId: string): Promise<Voucher> {
+  const admin = createAdminClient();
+  const { data: c } = await admin
+    .from("loyalty_customers")
+    .select("id, name, phone, stamps, cycles_completed, chosen_prize_id")
+    .eq("id", customerId)
+    .maybeSingle();
+  if (!c) throw new Error("العميلة غير موجودة.");
+
+  let prizeName: string | null = null;
+  let prizeImage: string | null = null;
+  if (c.chosen_prize_id) {
+    const { data: p } = await admin
+      .from("loyalty_prizes")
+      .select("name, image_url")
+      .eq("id", c.chosen_prize_id)
+      .maybeSingle();
+    if (p) {
+      prizeName = p.name ?? "";
+      prizeImage = p.image_url;
+    }
+  }
+
+  return {
+    customerId: c.id,
+    name: c.name,
+    phone: c.phone,
+    ready: c.stamps >= STAMPS_REQUIRED,
+    code: voucherCode(c.id, c.cycles_completed),
+    prizeName,
+    prizeImage,
+    issuedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Send the customer a WhatsApp confirming their won prize + voucher code.
+ * Returns the send result (so the admin UI can report configured/ok/error).
+ */
+export async function sendVoucherWhatsApp(customerId: string) {
+  const v = await getVoucher(customerId);
+  if (!v.ready) throw new Error("لم تكتمل الختمات بعد.");
+  const prizeLine = v.prizeName
+    ? `جائزتك: ${v.prizeName}`
+    : "جائزتك المجانية جاهزة";
+  const msg = `🎉 مبروك ${v.name}! أكملتِ بطاقة مكافآت الجمال. ${prizeLine}. رقم القسيمة: ${v.code}. أبرزي هذه الرسالة عند الاستلام 💝`;
+  return sendWhatsAppTo(v.phone, msg);
+}
+
 /**
  * Edit a customer's details from the admin table. Any of name / phone / stamps
  * may be updated. Phone is re-normalized and must stay unique; stamps is clamped

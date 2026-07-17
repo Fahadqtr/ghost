@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import type { PendingSubmission, ReadyCustomer } from "@/lib/loyalty/rewards";
 import { approveAction, rejectAction, redeemAction } from "./actions";
@@ -66,18 +67,26 @@ export default function LoyaltyClient({
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={() =>
-                    run(c.id, async () => {
-                      if (confirm(`تأكيد استبدال هدية ${c.name}؟ ستبدأ بطاقة جديدة.`))
-                        await redeemAction(c.id);
-                    })
-                  }
-                  disabled={isPending && busyId === c.id}
-                  className="shrink-0 rounded-lg bg-pink-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-pink-700 disabled:opacity-50"
-                >
-                  تم التسليم — بطاقة جديدة
-                </button>
+                <div className="flex shrink-0 flex-col items-stretch gap-1.5">
+                  <Link
+                    href={`/loyalty/voucher/${c.id}`}
+                    className="rounded-lg border border-pink-300 bg-white px-3 py-1.5 text-center text-xs font-bold text-pink-700 hover:bg-pink-50"
+                  >
+                    🎁 قسيمة + واتساب
+                  </Link>
+                  <button
+                    onClick={() =>
+                      run(c.id, async () => {
+                        if (confirm(`تأكيد استبدال هدية ${c.name}؟ ستبدأ بطاقة جديدة.`))
+                          await redeemAction(c.id);
+                      })
+                    }
+                    disabled={isPending && busyId === c.id}
+                    className="rounded-lg bg-pink-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-pink-700 disabled:opacity-50"
+                  >
+                    تم التسليم — بطاقة جديدة
+                  </button>
+                </div>
               </div>
             ))}
           </div>
