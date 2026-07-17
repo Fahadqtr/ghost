@@ -17,7 +17,7 @@ export default async function LoyaltyPrizesPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
-      <div className="mb-4 flex items-center justify-between gap-2">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-800">جوائز مكافآت الجمال</h1>
           <p className="text-sm text-slate-500">

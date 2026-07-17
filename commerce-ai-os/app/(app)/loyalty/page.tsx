@@ -20,14 +20,14 @@ export default async function LoyaltyAdminPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
-      <div className="mb-4 flex items-center justify-between gap-2">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-800">مكافآت الجمال</h1>
           <p className="text-sm text-slate-500">
             راجعي صور تقييمات سنونو — كل اعتماد يختم ختمة. تكتمل {STAMPS_REQUIRED} = هدية.
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap gap-2 sm:shrink-0 sm:justify-end">
           <Link
             href="/loyalty/prizes"
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
