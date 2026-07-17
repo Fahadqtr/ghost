@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { listCustomers, STAMPS_REQUIRED } from "@/lib/loyalty/rewards";
+import CustomersTable from "./CustomersTable";
 
 export const dynamic = "force-dynamic";
 
@@ -33,12 +34,20 @@ export default async function LoyaltyCustomersPage({
             {rows.length} زبونة · {totalHearts} ختمة حالية · {totalRewards} هدية مُستبدَلة
           </p>
         </div>
-        <Link
-          href="/loyalty"
-          className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-        >
-          ← المراجعة
-        </Link>
+        <div className="flex shrink-0 gap-2">
+          <a
+            href="/api/loyalty/customers/export"
+            className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
+          >
+            ⬇️ تصدير Excel
+          </a>
+          <Link
+            href="/loyalty"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            ← المراجعة
+          </Link>
+        </div>
       </div>
 
       {/* search (plain GET form — no client JS needed) */}
@@ -71,47 +80,7 @@ export default async function LoyaltyCustomersPage({
           {q ? "لا نتائج مطابقة." : "لا يوجد زبائن بعد."}
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-          <table className="w-full text-right text-sm">
-            <thead className="border-b border-slate-100 bg-slate-50 text-xs text-slate-500">
-              <tr>
-                <th className="px-4 py-3 font-semibold">الاسم</th>
-                <th className="px-4 py-3 font-semibold">رقم الجوال</th>
-                <th className="px-4 py-3 font-semibold">القلوب</th>
-                <th className="px-4 py-3 font-semibold">الهدايا</th>
-                <th className="px-4 py-3 font-semibold">آخر نشاط</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-b border-slate-50 last:border-0">
-                  <td className="px-4 py-3 font-semibold text-slate-800">
-                    {r.name}
-                    {r.rewardReady && (
-                      <span className="mr-2 rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">
-                        🎁 جاهزة
-                      </span>
-                    )}
-                  </td>
-                  <td dir="ltr" className="px-4 py-3 text-right text-slate-500">{r.phone}</td>
-                  <td className="px-4 py-3">
-                    <span className="whitespace-nowrap" title={`${r.stamps} من ${STAMPS_REQUIRED}`}>
-                      {"❤".repeat(r.stamps)}
-                      <span className="text-slate-200">{"❤".repeat(STAMPS_REQUIRED - r.stamps)}</span>
-                      <span className="ms-1 text-xs text-slate-400">
-                        {r.stamps}/{STAMPS_REQUIRED}
-                      </span>
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{r.cyclesCompleted}</td>
-                  <td className="px-4 py-3 text-xs text-slate-400">
-                    {new Date(r.updatedAt).toLocaleDateString("ar")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <CustomersTable rows={rows} required={STAMPS_REQUIRED} />
       )}
     </div>
   );
