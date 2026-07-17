@@ -3,6 +3,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { effectivePrice, priceRangeLabel, type PricedVariant } from "@/lib/products/price-compute";
 import ProductImageActions from "@/components/ProductImageActions";
+import ProductCopyAll from "@/components/ProductCopyAll";
+import { buildProductCopyText } from "@/lib/products/copy-text";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +55,23 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   const priceLabel = priceRangeLabel(priceEff, (n) => `${n} QAR`);
 
   const brandName = (brands ?? []).find((b: any) => b.id === product.brand_id)?.name ?? null;
+
+  // Full "copy everything" text (title + descriptions + codes + price + options).
+  const copyText = buildProductCopyText(
+    {
+      name_en: product.name_en, name_ar: product.name_ar,
+      sku: product.sku, barcode: product.barcode, snoonu_id: product.snoonu_id,
+      brand: brandName,
+      main_category: product.main_category, sub_category: product.sub_category, product_type: product.product_type,
+      color: product.color, size: product.size,
+      price: product.price, discount_price: product.discount_price,
+      stock: inv?.stock_quantity ?? product.stock_quantity, stock_status: product.stock_status,
+      description_en: product.description_en, description_ar: product.description_ar,
+      keywords_en: product.keywords_en, keywords_ar: product.keywords_ar,
+      notes: product.notes,
+    },
+    (variants ?? []) as any[],
+  );
   const statusByChannel = (channels ?? []).map((c: any) => ({
     name: c.name,
     status: (links ?? []).find((l: any) => l.channel_id === c.id)?.channel_status ?? "Not Listed",
@@ -72,7 +91,10 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
             ) : null}
           </p>
         </div>
-        <Link href={`/products/${product.id}/edit`} className="btn-primary w-full sm:w-auto">Edit</Link>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <ProductCopyAll text={copyText} />
+          <Link href={`/products/${product.id}/edit`} className="btn-primary w-full sm:w-auto">Edit</Link>
+        </div>
       </div>
 
       {/* Image */}
