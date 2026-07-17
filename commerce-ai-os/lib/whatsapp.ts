@@ -91,6 +91,11 @@ export async function sendWhatsAppImageTo(
   const to = normalizeWaNumber(toRaw);
   if (!token || !phoneId || !to) return { configured: false, ok: false };
   if (!imageUrl) return sendWhatsAppTo(toRaw, caption); // no image → fall back to text
+  // A raw image message is business-INITIATED media: Meta only delivers it
+  // inside the 24h window. When an approved text template is configured (the
+  // proactive path), send the caption through it so the confirmation actually
+  // reaches the customer; the native image is kept for the in-session case.
+  if (process.env.WHATSAPP_TEMPLATE_NAME) return sendWhatsAppTo(toRaw, caption);
 
   const body = {
     messaging_product: "whatsapp",
