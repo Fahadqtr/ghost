@@ -27,7 +27,13 @@ export default async function LoyaltyAdminPage() {
             راجعي صور تقييمات سنونو — كل اعتماد يختم ختمة. تكتمل {STAMPS_REQUIRED} = هدية.
           </p>
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          <Link
+            href="/loyalty/prizes"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            🎁 الجوائز
+          </Link>
           <Link
             href="/loyalty/customers"
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"

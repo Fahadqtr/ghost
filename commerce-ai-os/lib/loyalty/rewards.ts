@@ -9,8 +9,15 @@ import { sendWhatsAppTo } from "@/lib/whatsapp";
 export const STAMPS_REQUIRED = 6;
 
 export const REVIEW_BUCKET = "loyalty-reviews";
+export const PRIZE_BUCKET = "loyalty-prizes";
 
 export type SubmissionStatus = "pending" | "approved" | "rejected";
+
+export type PrizeOption = {
+  id: string;
+  name: string;
+  imageUrl: string;
+};
 
 export type RewardState = {
   name: string;
@@ -21,6 +28,8 @@ export type RewardState = {
   cyclesCompleted: number;
   pending: number; // screenshots awaiting review
   lastStatus: SubmissionStatus | null; // status of the most recent submission
+  prizes: PrizeOption[]; // active prizes the customer can pick from
+  chosenPrizeId: string | null; // which prize they selected (after completing)
 };
 
 export type PendingSubmission = {
@@ -69,7 +78,7 @@ export async function getOrCreateState(
       { phone, name, updated_at: new Date().toISOString() },
       { onConflict: "phone" }
     )
-    .select("id, name, phone, stamps, cycles_completed, reward_ready_at")
+    .select("id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id")
     .single();
   if (error || !customer) throw new Error(error?.message ?? "تعذّر إنشاء البطاقة.");
 
@@ -83,7 +92,7 @@ export async function getStateByPhone(rawPhone: string): Promise<RewardState | n
   const admin = createAdminClient();
   const { data: customer } = await admin
     .from("loyalty_customers")
-    .select("id, name, phone, stamps, cycles_completed, reward_ready_at")
+    .select("id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id")
     .eq("phone", phone)
     .maybeSingle();
   if (!customer) return null;
@@ -97,6 +106,7 @@ type CustomerRow = {
   stamps: number;
   cycles_completed: number;
   reward_ready_at: string | null;
+  chosen_prize_id: string | null;
 };
 
 async function stateFor(
@@ -117,6 +127,8 @@ async function stateFor(
     .limit(1)
     .maybeSingle();
 
+  const prizes = await listActivePrizes();
+
   return {
     name: customer.name,
     phone: customer.phone,
@@ -126,6 +138,8 @@ async function stateFor(
     cyclesCompleted: customer.cycles_completed,
     pending: pending ?? 0,
     lastStatus: (last?.status as SubmissionStatus | undefined) ?? null,
+    prizes,
+    chosenPrizeId: customer.chosen_prize_id,
   };
 }
 
@@ -227,6 +241,111 @@ export async function listCustomers(search?: string): Promise<CustomerRecord[]> 
   }));
 }
 
+// --- Prizes -----------------------------------------------------------------
+
+export type PrizeRecord = {
+  id: string;
+  name: string;
+  imageUrl: string;
+  imagePath: string;
+  active: boolean;
+  sortOrder: number;
+};
+
+/** Active prizes for the customer card, in display order. */
+export async function listActivePrizes(): Promise<PrizeOption[]> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("loyalty_prizes")
+    .select("id, name, image_url")
+    .eq("active", true)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true })
+    .limit(50);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => ({ id: r.id, name: r.name ?? "", imageUrl: r.image_url }));
+}
+
+/** Every prize (active + hidden) for the admin manager. */
+export async function listAllPrizes(): Promise<PrizeRecord[]> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("loyalty_prizes")
+    .select("id, name, image_url, image_path, active, sort_order")
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true })
+    .limit(200);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    name: r.name ?? "",
+    imageUrl: r.image_url,
+    imagePath: r.image_path,
+    active: r.active,
+    sortOrder: r.sort_order,
+  }));
+}
+
+/** Insert a prize (image already uploaded to the prizes bucket). */
+export async function addPrize(name: string, imagePath: string, imageUrl: string): Promise<void> {
+  const admin = createAdminClient();
+  const { error } = await admin.from("loyalty_prizes").insert({
+    name: (name ?? "").trim().slice(0, 100),
+    image_path: imagePath,
+    image_url: imageUrl,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Show / hide a prize on the customer card without deleting it. */
+export async function setPrizeActive(id: string, active: boolean): Promise<void> {
+  const admin = createAdminClient();
+  const { error } = await admin.from("loyalty_prizes").update({ active }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Delete a prize. Customers who chose it fall back to null (FK on delete). */
+export async function deletePrize(id: string): Promise<void> {
+  const admin = createAdminClient();
+  const { error } = await admin.from("loyalty_prizes").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * A completed customer picks their prize. Only allowed once the card is full,
+ * and only for an active prize. Records the choice for the owner to fulfill.
+ */
+export async function chooseReward(rawPhone: string, prizeId: string): Promise<RewardState> {
+  const phone = normalizePhone(rawPhone);
+  if (!phone) throw new Error("رقم الجوال غير صحيح.");
+  const admin = createAdminClient();
+
+  const { data: customer } = await admin
+    .from("loyalty_customers")
+    .select("id, stamps")
+    .eq("phone", phone)
+    .maybeSingle();
+  if (!customer) throw new Error("العميلة غير موجودة.");
+  if (customer.stamps < STAMPS_REQUIRED) throw new Error("لم تكتمل الختمات بعد.");
+
+  const { data: prize } = await admin
+    .from("loyalty_prizes")
+    .select("id, active")
+    .eq("id", prizeId)
+    .maybeSingle();
+  if (!prize || !prize.active) throw new Error("الجائزة غير متاحة.");
+
+  const { error } = await admin
+    .from("loyalty_customers")
+    .update({ chosen_prize_id: prizeId, updated_at: new Date().toISOString() })
+    .eq("id", customer.id);
+  if (error) throw new Error(error.message);
+
+  const next = await getStateByPhone(phone);
+  if (!next) throw new Error("تعذّر تحديث الحالة.");
+  return next;
+}
+
 /**
  * Edit a customer's details from the admin table. Any of name / phone / stamps
  * may be updated. Phone is re-normalized and must stay unique; stamps is clamped
@@ -277,6 +396,8 @@ export type ReadyCustomer = {
   phone: string;
   stamps: number;
   readyAt: string | null;
+  chosenPrizeName: string | null; // what the customer picked (null = not chosen yet)
+  chosenPrizeImage: string | null;
 };
 
 /** Customers who completed a card and are waiting to redeem their free product. */
@@ -284,18 +405,36 @@ export async function listRewardReady(): Promise<ReadyCustomer[]> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("loyalty_customers")
-    .select("id, name, phone, stamps, reward_ready_at")
+    .select("id, name, phone, stamps, reward_ready_at, chosen_prize_id")
     .gte("stamps", STAMPS_REQUIRED)
     .order("reward_ready_at", { ascending: true })
     .limit(200);
   if (error) throw new Error(error.message);
-  return (data ?? []).map((r: any) => ({
-    id: r.id,
-    name: r.name,
-    phone: r.phone,
-    stamps: r.stamps,
-    readyAt: r.reward_ready_at,
-  }));
+  const rows = data ?? [];
+
+  // Resolve chosen prizes in one lookup (avoids relying on the FK embed name).
+  const prizeIds = [...new Set(rows.map((r: any) => r.chosen_prize_id).filter(Boolean))];
+  const prizeMap = new Map<string, { name: string; imageUrl: string }>();
+  if (prizeIds.length) {
+    const { data: prizes } = await admin
+      .from("loyalty_prizes")
+      .select("id, name, image_url")
+      .in("id", prizeIds);
+    for (const p of prizes ?? []) prizeMap.set(p.id, { name: p.name ?? "", imageUrl: p.image_url });
+  }
+
+  return rows.map((r: any) => {
+    const prize = r.chosen_prize_id ? prizeMap.get(r.chosen_prize_id) : undefined;
+    return {
+      id: r.id,
+      name: r.name,
+      phone: r.phone,
+      stamps: r.stamps,
+      readyAt: r.reward_ready_at,
+      chosenPrizeName: prize?.name ?? null,
+      chosenPrizeImage: prize?.imageUrl ?? null,
+    };
+  });
 }
 
 /**
@@ -390,6 +529,7 @@ export async function redeemReward(customerId: string): Promise<void> {
     .update({
       stamps: 0,
       reward_ready_at: null,
+      chosen_prize_id: null, // fresh card → no prize chosen yet
       cycles_completed: customer.cycles_completed + 1,
       updated_at: new Date().toISOString(),
     })
