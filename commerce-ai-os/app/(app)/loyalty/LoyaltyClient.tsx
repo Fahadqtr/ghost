@@ -45,9 +45,26 @@ export default function LoyaltyClient({
                 key={c.id}
                 className="flex items-center justify-between gap-3 rounded-xl border border-pink-200 bg-pink-50 px-4 py-3"
               >
-                <div>
-                  <p className="text-sm font-semibold text-slate-800">{c.name}</p>
-                  <p dir="ltr" className="text-xs text-slate-500">{c.phone}</p>
+                <div className="flex items-center gap-3">
+                  {c.chosenPrizeImage && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={c.chosenPrizeImage}
+                      alt={c.chosenPrizeName ?? "الجائزة"}
+                      className="h-12 w-12 rounded-lg border border-pink-200 object-cover"
+                    />
+                  )}
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">{c.name}</p>
+                    <p dir="ltr" className="text-xs text-slate-500">{c.phone}</p>
+                    <p className="text-xs font-semibold text-pink-700">
+                      {c.chosenPrizeName
+                        ? `اختارت: ${c.chosenPrizeName || "جائزة"}`
+                        : c.chosenPrizeImage
+                        ? "اختارت جائزة"
+                        : "لم تختر جائزة بعد"}
+                    </p>
+                  </div>
                 </div>
                 <button
                   onClick={() =>

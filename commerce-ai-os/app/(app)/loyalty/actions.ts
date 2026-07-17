@@ -5,12 +5,17 @@
 // here as defense in depth before touching the service-role helpers.
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   approveSubmission,
   rejectSubmission,
   redeemReward,
   updateCustomer,
   deleteCustomer,
+  addPrize,
+  setPrizeActive,
+  deletePrize,
+  PRIZE_BUCKET,
 } from "@/lib/loyalty/rewards";
 
 async function requireUser() {
@@ -51,4 +56,51 @@ export async function deleteCustomerAction(id: string) {
   await requireUser();
   await deleteCustomer(id);
   revalidatePath("/loyalty/customers");
+}
+
+// --- Prizes ---
+
+const PRIZE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const PRIZE_EXT: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+/** Upload a prize image + name. Returns an error string (not throw) for the UI. */
+export async function addPrizeAction(formData: FormData): Promise<{ error?: string }> {
+  await requireUser();
+  const name = String(formData.get("name") ?? "");
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "اختاري صورة الجائزة." };
+  if (file.size > PRIZE_MAX_BYTES)
+    return { error: `الصورة كبيرة (${(file.size / 1048576).toFixed(1)}MB). الحد 10MB.` };
+  const ext = PRIZE_EXT[file.type];
+  if (!ext) return { error: `نوع غير مدعوم "${file.type || "?"}". استخدمي JPG أو PNG.` };
+
+  const admin = createAdminClient();
+  const path = `prize_${Date.now()}_${Math.floor(Math.random() * 1e4)}.${ext}`;
+  const buf = Buffer.from(await file.arrayBuffer());
+  const { error: upErr } = await admin.storage
+    .from(PRIZE_BUCKET)
+    .upload(path, buf, { contentType: file.type, upsert: false, cacheControl: "3600" });
+  if (upErr) return { error: `فشل رفع الصورة: ${upErr.message}` };
+
+  const imageUrl = admin.storage.from(PRIZE_BUCKET).getPublicUrl(path).data.publicUrl;
+  await addPrize(name, path, imageUrl);
+  revalidatePath("/loyalty/prizes");
+  return {};
+}
+
+export async function setPrizeActiveAction(id: string, active: boolean) {
+  await requireUser();
+  await setPrizeActive(id, active);
+  revalidatePath("/loyalty/prizes");
+}
+
+export async function deletePrizeAction(id: string) {
+  await requireUser();
+  await deletePrize(id);
+  revalidatePath("/loyalty/prizes");
 }

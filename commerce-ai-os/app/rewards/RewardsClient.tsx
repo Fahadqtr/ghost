@@ -8,6 +8,8 @@
 import { useEffect, useState } from "react";
 import { Heart } from "./Heart";
 
+type PrizeOption = { id: string; name: string; imageUrl: string };
+
 type RewardState = {
   name: string;
   phone: string;
@@ -17,6 +19,8 @@ type RewardState = {
   cyclesCompleted: number;
   pending: number;
   lastStatus: "pending" | "approved" | "rejected" | null;
+  prizes: PrizeOption[];
+  chosenPrizeId: string | null;
 };
 
 const LS_KEY = "malika_rewards_id";
@@ -108,6 +112,23 @@ export default function RewardsClient() {
     }
   }
 
+  async function onChoosePrize(prizeId: string) {
+    if (!state) return;
+    setError(null);
+    try {
+      const res = await fetch("/api/rewards/choose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: state.phone, prizeId }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) setError(data.error || "تعذّر اختيار الجائزة.");
+      else setState(data.state);
+    } catch {
+      setError("تعذّر الاتصال. حاولي مرة ثانية.");
+    }
+  }
+
   function switchCustomer() {
     localStorage.removeItem(LS_KEY);
     setState(null);
@@ -133,6 +154,7 @@ export default function RewardsClient() {
               uploading={uploading}
               justSubmitted={justSubmitted}
               onUpload={onUpload}
+              onChoosePrize={onChoosePrize}
               onSwitch={switchCustomer}
               error={error}
             />
@@ -241,12 +263,14 @@ function CardView(props: {
   uploading: boolean;
   justSubmitted: boolean;
   onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onChoosePrize: (prizeId: string) => void;
   onSwitch: () => void;
   error: string | null;
 }) {
   const { state } = props;
   const hearts = Array.from({ length: state.required }, (_, i) => i < state.stamps);
   const remaining = Math.max(0, state.required - state.stamps);
+  const chosen = state.prizes.find((p) => p.id === state.chosenPrizeId) ?? null;
 
   return (
     <div className="text-center">
@@ -264,9 +288,13 @@ function CardView(props: {
 
       {state.rewardReady ? (
         <div className="rounded-2xl bg-[#fbeef0] p-4">
-          <p className="text-base font-bold text-[#d17c93]">🎉 مبروك! أكملتِ الختمات الست</p>
+          <p className="text-base font-bold text-[#d17c93]">🎉 مبروك! أكملتِ ختماتك</p>
           <p className="mt-1 text-sm text-[#6b5b4b]">
-            اختاري أي منتج من المتجر مجاناً — أبرزي هذه البطاقة عند الطلب.
+            {chosen
+              ? "اخترتِ جائزتك — أبرزي هذه البطاقة عند الطلب."
+              : state.prizes.length
+              ? "اختاري جائزتك من الأسفل 👇"
+              : "اختاري أي منتج من المتجر مجاناً — أبرزي هذه البطاقة عند الطلب."}
           </p>
         </div>
       ) : (
@@ -295,6 +323,56 @@ function CardView(props: {
       )}
 
       {props.error && <p className="mt-3 text-sm text-red-500">{props.error}</p>}
+
+      {/* prizes — preview of what she can win; a selectable chooser once complete */}
+      {state.prizes.length > 0 && (
+        <div className="mt-5">
+          <p className="mb-2 text-sm font-bold text-[#d17c93]">
+            {state.rewardReady
+              ? chosen
+                ? "جائزتك المختارة 🎁"
+                : "اختاري جائزتك 🎁"
+              : "جوائز تقدرين تكسبينها 🎁"}
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {state.prizes.map((p) => {
+              const isChosen = p.id === state.chosenPrizeId;
+              const selectable = state.rewardReady;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={!selectable}
+                  onClick={() => selectable && props.onChoosePrize(p.id)}
+                  className={`relative overflow-hidden rounded-xl border bg-white transition ${
+                    isChosen
+                      ? "border-[#d17c93] ring-2 ring-[#e59aad]"
+                      : "border-[#f0dcc6]"
+                  } ${selectable ? "cursor-pointer active:scale-95" : "cursor-default opacity-90"}`}
+                >
+                  <div className="aspect-square bg-[#faf3ee]">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.imageUrl} alt={p.name || "جائزة"} className="h-full w-full object-cover" />
+                  </div>
+                  {p.name && (
+                    <p className="truncate px-1 py-1 text-[10px] font-semibold text-[#6b5b4b]">{p.name}</p>
+                  )}
+                  {isChosen && (
+                    <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#d17c93] text-[11px] text-white">
+                      ✓
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {state.rewardReady && chosen && (
+            <p className="mt-2 text-xs text-[#8a7a6a]">
+              تقدرين تغيّرين اختيارك قبل الاستلام.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* upload — a styled label triggers the hidden file input (no ref needed) */}
       <label
