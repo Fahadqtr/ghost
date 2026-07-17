@@ -3,7 +3,7 @@
 // must never be imported into a Client Component. The public API routes
 // (/api/rewards/*) and the admin server actions call in through here.
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendWhatsAppTo } from "@/lib/whatsapp";
+import { sendWhatsAppTo, sendWhatsAppImageTo } from "@/lib/whatsapp";
 
 /** Hearts needed to earn one free product. */
 export const STAMPS_REQUIRED = 6;
@@ -30,6 +30,7 @@ export type RewardState = {
   lastStatus: SubmissionStatus | null; // status of the most recent submission
   prizes: PrizeOption[]; // active prizes the customer can pick from
   chosenPrizeId: string | null; // which prize they selected (after completing)
+  voucherCode: string | null; // printable code once the card is complete
 };
 
 export type PendingSubmission = {
@@ -140,6 +141,10 @@ async function stateFor(
     lastStatus: (last?.status as SubmissionStatus | undefined) ?? null,
     prizes,
     chosenPrizeId: customer.chosen_prize_id,
+    voucherCode:
+      customer.stamps >= STAMPS_REQUIRED
+        ? voucherCode(customer.id, customer.cycles_completed)
+        : null,
   };
 }
 
@@ -340,6 +345,19 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
     .update({ chosen_prize_id: prizeId, updated_at: new Date().toISOString() })
     .eq("id", customer.id);
   if (error) throw new Error(error.message);
+
+  // Send the prize card to the customer's WhatsApp (best-effort — never blocks).
+  try {
+    const v = await getVoucher(customer.id);
+    const caption =
+      `🎁 مبروك ${v.name}! جائزتك من مكافآت الجمال: ${v.prizeName || "منتج مجاني"}.\n` +
+      `رقم القسيمة: ${v.code}\n` +
+      `أبرزي هذه البطاقة عند الاستلام 💝`;
+    if (v.prizeImage) await sendWhatsAppImageTo(v.phone, v.prizeImage, caption);
+    else await sendWhatsAppTo(v.phone, caption);
+  } catch {
+    /* notification failure must never fail the choice */
+  }
 
   const next = await getStateByPhone(phone);
   if (!next) throw new Error("تعذّر تحديث الحالة.");
@@ -554,7 +572,8 @@ export async function approveSubmission(submissionId: string): Promise<void> {
   const shown = Math.min(nextStamps, STAMPS_REQUIRED);
   const msg =
     shown >= STAMPS_REQUIRED
-      ? `🎉 مبروك ${customer.name}! أكملتِ ${STAMPS_REQUIRED} ختمات في مكافآت الجمال — اختاري أي منتج من المتجر مجاناً 💝`
+      ? `🎉🌷 مبروك ${customer.name}! أكملتِ قلوبك الـ${STAMPS_REQUIRED} في بطاقة مكافآت الجمال — Malika's Universe.\n` +
+        `جمالك استحق المكافأة 💝 افتحي بطاقتك واختاري جائزتك الحين، وبتوصلك على واتساب.`
       : `❤ تم ختم قلب لكِ يا ${customer.name}! صار عندك ${shown} من ${STAMPS_REQUIRED} في بطاقة مكافآت الجمال. ${STAMPS_REQUIRED - shown} باقية على هديتك 🌷`;
   try {
     await sendWhatsAppTo(customer.phone, msg);

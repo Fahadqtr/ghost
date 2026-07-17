@@ -75,3 +75,44 @@ export async function sendWhatsAppTo(toRaw: string, text: string): Promise<WaSen
 export async function sendWhatsAppAlert(text: string): Promise<WaSendResult> {
   return sendWhatsAppTo(process.env.WHATSAPP_TO ?? "", text);
 }
+
+/**
+ * Send an IMAGE (by public URL) with a caption to a customer — used to deliver
+ * the prize card. Best-effort; same Meta window/template caveats as text.
+ * Delivered as a native WhatsApp image message so the customer gets the visual.
+ */
+export async function sendWhatsAppImageTo(
+  toRaw: string,
+  imageUrl: string,
+  caption: string
+): Promise<WaSendResult> {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const to = normalizeWaNumber(toRaw);
+  if (!token || !phoneId || !to) return { configured: false, ok: false };
+  if (!imageUrl) return sendWhatsAppTo(toRaw, caption); // no image → fall back to text
+
+  const body = {
+    messaging_product: "whatsapp",
+    to,
+    type: "image",
+    image: { link: imageUrl, caption },
+  };
+
+  try {
+    const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneId}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      const j = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+      return { configured: true, ok: false, mode: "text", error: j?.error?.message || `HTTP ${res.status}` };
+    }
+    return { configured: true, ok: true, mode: "text" };
+  } catch (e) {
+    return { configured: true, ok: false, mode: "text", error: e instanceof Error ? e.message : "send failed" };
+  }
+}
