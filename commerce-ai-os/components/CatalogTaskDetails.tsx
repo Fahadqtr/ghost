@@ -15,6 +15,7 @@ export interface CatalogTaskPayload {
   variantName?: string;
   images?: string[];    // photo-task: all shots (first = primary)
   options?: { name?: string; price?: string; stock?: string }[]; // photo-task: the product's options
+  platforms?: string[]; // manual "add" task: the exact platforms the manager picked
 }
 
 const FIELD_AR: Record<string, string> = {
@@ -69,24 +70,29 @@ export default function CatalogTaskDetails({ payload, productId, manager = false
   ].filter((f) => f.value);
 
   // The product's OPTIONS (variants) — every task carries them so each option
-  // gets registered on the manual platforms with its own codes. One line per
-  // option, copyable alone, and folded into «نسخ الكل».
+  // gets registered on the manual platforms with its own codes. Each field of
+  // each option is copyable ON ITS OWN (SKU alone, barcode alone…), and the
+  // whole set folds into «نسخ الكل».
   const variants = (Array.isArray(snap.variants) ? (snap.variants as Record<string, unknown>[]) : [])
     .map((v) => ({
-      text: [
-        s(v.variant_name),
-        s(v.sku) && `SKU ${s(v.sku)}`,
-        s(v.barcode) && `باركود ${s(v.barcode)}`,
-        s(v.color) && `لون ${s(v.color)}`,
-        s(v.size) && `مقاس ${s(v.size)}`,
-        Number(v.price) > 0 && `السعر ${s(v.price)}`,
-      ].filter(Boolean).join(" · "),
+      title: s(v.variant_name),
+      cells: [
+        { label: "الخيار", value: s(v.variant_name), dir: "rtl" as const },
+        { label: "SKU", value: s(v.sku), dir: "ltr" as const },
+        { label: "الباركود", value: s(v.barcode), dir: "ltr" as const },
+        { label: "اللون", value: s(v.color) },
+        { label: "المقاس", value: s(v.size) },
+        { label: "السعر", value: Number(v.price) > 0 ? s(v.price) : "" },
+      ].filter((c) => c.value),
     }))
-    .filter((v) => v.text);
+    .filter((v) => v.cells.length);
 
   const copyAll = () => {
     const lines = fields.map((f) => `${f.label}: ${f.value}`);
-    if (variants.length) lines.push(`الخيارات (${variants.length}):`, ...variants.map((v) => `- ${v.text}`));
+    if (variants.length) {
+      lines.push(`الخيارات (${variants.length}):`);
+      for (const v of variants) lines.push(`- ${v.cells.map((c) => `${c.label} ${c.value}`).join(" · ")}`);
+    }
     copy("__all", lines.join("\n"));
   };
 
@@ -193,27 +199,46 @@ export default function CatalogTaskDetails({ payload, productId, manager = false
         ))}
       </div>
 
-      {/* The product's OPTIONS (variants) — each copyable on its own */}
+      {/* The product's OPTIONS (variants) — EACH field copyable on its own */}
       {variants.length ? (
-        <div className="space-y-1 rounded-lg bg-violet-50 p-2.5 ring-1 ring-violet-200">
-          <p className="text-[11px] font-bold text-violet-800">🎚️ الخيارات ({variants.length}) — سجّل كل خيار بأكواده:</p>
+        <div className="space-y-2 rounded-lg bg-violet-50 p-2.5 ring-1 ring-violet-200">
+          <p className="text-[11px] font-bold text-violet-800">🎚️ الخيارات ({variants.length}) — انسخ كل خانة لحالها:</p>
           {variants.map((v, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <p className="min-w-0 flex-1 text-xs text-violet-900" dir="rtl">• {v.text}</p>
-              <button
-                type="button"
-                onClick={() => copy(`var-${i}`, v.text)}
-                className={`shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold ring-1 ${copiedKey === `var-${i}` ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-white text-violet-800 ring-violet-300"}`}
-              >
-                {copiedKey === `var-${i}` ? "✅" : "📋"}
-              </button>
+            <div key={i} className="space-y-1 rounded-lg bg-white p-2 ring-1 ring-violet-200">
+              {v.title ? <p className="text-[11px] font-bold text-violet-900" dir="rtl">🎚️ {v.title}</p> : null}
+              <div className="flex flex-wrap gap-1.5">
+                {v.cells.map((c, j) => {
+                  const key = `var-${i}-${j}`;
+                  return (
+                    <button
+                      key={j}
+                      type="button"
+                      onClick={() => copy(key, c.value)}
+                      title={`${c.label}: ${c.value}`}
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] ring-1 ${copiedKey === key ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-[#faf6f0] text-ink ring-[#e5d5c0]"}`}
+                    >
+                      <span className="text-[9px] font-bold text-muted">{c.label}</span>
+                      <span dir={c.dir}>{c.value}</span>
+                      <span>{copiedKey === key ? "✅" : "📋"}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           ))}
         </div>
       ) : null}
 
-      {/* Where the manual update goes (a photo-task isn't in the catalog yet) */}
-      {payload.action !== "bulk" && payload.action !== "new_product" ? (
+      {/* Where the manual update goes. A manual "add" task lists EXACTLY the
+          platforms the manager picked; otherwise the default manual set. */}
+      {payload.platforms?.length ? (
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="font-semibold text-ink">📌 أضِفه يدويًا في:</span>
+          {payload.platforms.map((p) => (
+            <span key={p} className="rounded-full bg-white px-2 py-0.5 text-muted ring-1 ring-[#efe3d6]">☐ {p}</span>
+          ))}
+        </div>
+      ) : payload.action !== "bulk" && payload.action !== "new_product" ? (
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
           <span className="font-semibold text-ink">📌 حدّث يدويًا في:</span>
           {["سنونو مليكاز", "سنونو بيور سيول", "رفيق"].map((p) => (
