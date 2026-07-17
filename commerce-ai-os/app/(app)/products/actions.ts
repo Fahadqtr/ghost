@@ -579,13 +579,19 @@ export async function deleteProduct(id: string) {
   // Full snapshot BEFORE deleting — the auto-task carries it so the assignee
   // can remove the product from the manual platforms too.
   const { data: doomed } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
+  // Capture the options BEFORE deleting the variant rows, so the removal task
+  // still lists every option to pull off the manual platforms.
+  const { data: doomedVariants } = await supabase
+    .from("product_variants")
+    .select("variant_name, sku, barcode, color, size, price")
+    .eq("parent_product_id", id);
   // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).
   await supabase.from("product_variants").delete().eq("parent_product_id", id);
   await supabase.from("channel_products").delete().eq("product_id", id);
   await supabase.from("inventory").delete().eq("product_id", id);
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) return { error: error.message };
-  await logCatalogTask({ action: "delete", productId: id, snapshot: (doomed ?? {}) as Record<string, unknown> });
+  await logCatalogTask({ action: "delete", productId: id, snapshot: { ...(doomed ?? {}), variants: doomedVariants ?? [] } as Record<string, unknown> });
   revalidatePath("/products");
   revalidatePath("/inventory");
   redirect("/products");
