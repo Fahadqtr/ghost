@@ -7,6 +7,7 @@
 // 3. Upload a screenshot of a new review → it queues for the owner's approval.
 import { useEffect, useState } from "react";
 import { Heart } from "./Heart";
+import BrandLogo from "@/components/BrandLogo";
 
 type PrizeOption = { id: string; name: string; imageUrl: string };
 
@@ -189,9 +190,7 @@ function Card({ children }: { children: React.ReactNode }) {
       <span className="pointer-events-none absolute -right-3 -top-3 text-4xl opacity-30 select-none">🌸</span>
       <span className="pointer-events-none absolute -bottom-3 -left-3 text-4xl opacity-30 select-none">🌸</span>
       <div className="mb-4 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-[#d9b45f] font-serif text-2xl text-[#c9a24b]">
-          M
-        </div>
+        <BrandLogo className="mx-auto h-14 w-auto text-[#1f1a17]" />
         <p className="mt-1 text-[11px] font-semibold tracking-[0.35em] text-[#c9a24b]">
           MALIKA&apos;S UNIVERSE
         </p>

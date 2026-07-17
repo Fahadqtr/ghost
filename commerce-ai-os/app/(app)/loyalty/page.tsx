@@ -41,6 +41,12 @@ export default async function LoyaltyAdminPage() {
             👥 الزبائن
           </Link>
           <Link
+            href="/loyalty/cards"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            🖨️ بطاقات الطلبات
+          </Link>
+          <Link
             href="/loyalty/qr"
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
