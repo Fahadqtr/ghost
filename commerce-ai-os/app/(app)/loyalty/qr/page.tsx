@@ -2,6 +2,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import QRCode from "qrcode";
 import PrintButton from "./PrintButton";
+import BrandLogo from "@/components/BrandLogo";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,8 @@ export default async function RewardsQrPage() {
       </div>
 
       <div className="qr-print rounded-3xl border-2 border-[#d9b45f] bg-white p-8 text-center shadow-sm">
-        <p className="text-[11px] font-semibold tracking-[0.35em] text-[#c9a24b]">
+        <BrandLogo className="mx-auto h-16 w-auto text-[#1f1a17]" />
+        <p className="mt-1 text-[11px] font-semibold tracking-[0.35em] text-[#c9a24b]">
           MALIKA&apos;S UNIVERSE
         </p>
         <h1 className="mt-2 text-2xl font-bold text-[#d17c93]">بطاقة مكافآت الجمال</h1>
