@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { effectivePrice, priceRangeLabel, type PricedVariant } from "@/lib/products/price-compute";
+import ProductImageActions from "@/components/ProductImageActions";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +89,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
                 className="block h-full w-full object-contain"
               />
             </div>
+            <ProductImageActions url={heroUrl} name={product.sku || product.name_en || "product"} />
             {galleryUrls.length > 1 ? (
               <div className="flex flex-wrap gap-2">
                 {galleryUrls.map((u, i) => (
