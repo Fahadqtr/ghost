@@ -68,8 +68,26 @@ export default function CatalogTaskDetails({ payload, productId, manager = false
     { key: "description_ar", label: "الوصف AR", value: s(snap.description_ar), dir: "rtl" as const, long: true },
   ].filter((f) => f.value);
 
+  // The product's OPTIONS (variants) — every task carries them so each option
+  // gets registered on the manual platforms with its own codes. One line per
+  // option, copyable alone, and folded into «نسخ الكل».
+  const variants = (Array.isArray(snap.variants) ? (snap.variants as Record<string, unknown>[]) : [])
+    .map((v) => ({
+      text: [
+        s(v.variant_name),
+        s(v.sku) && `SKU ${s(v.sku)}`,
+        s(v.barcode) && `باركود ${s(v.barcode)}`,
+        s(v.color) && `لون ${s(v.color)}`,
+        s(v.size) && `مقاس ${s(v.size)}`,
+        Number(v.price) > 0 && `السعر ${s(v.price)}`,
+      ].filter(Boolean).join(" · "),
+    }))
+    .filter((v) => v.text);
+
   const copyAll = () => {
-    copy("__all", fields.map((f) => `${f.label}: ${f.value}`).join("\n"));
+    const lines = fields.map((f) => `${f.label}: ${f.value}`);
+    if (variants.length) lines.push(`الخيارات (${variants.length}):`, ...variants.map((v) => `- ${v.text}`));
+    copy("__all", lines.join("\n"));
   };
 
   return (
@@ -174,6 +192,25 @@ export default function CatalogTaskDetails({ payload, productId, manager = false
           </div>
         ))}
       </div>
+
+      {/* The product's OPTIONS (variants) — each copyable on its own */}
+      {variants.length ? (
+        <div className="space-y-1 rounded-lg bg-violet-50 p-2.5 ring-1 ring-violet-200">
+          <p className="text-[11px] font-bold text-violet-800">🎚️ الخيارات ({variants.length}) — سجّل كل خيار بأكواده:</p>
+          {variants.map((v, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <p className="min-w-0 flex-1 text-xs text-violet-900" dir="rtl">• {v.text}</p>
+              <button
+                type="button"
+                onClick={() => copy(`var-${i}`, v.text)}
+                className={`shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold ring-1 ${copiedKey === `var-${i}` ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-white text-violet-800 ring-violet-300"}`}
+              >
+                {copiedKey === `var-${i}` ? "✅" : "📋"}
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {/* Where the manual update goes (a photo-task isn't in the catalog yet) */}
       {payload.action !== "bulk" && payload.action !== "new_product" ? (
