@@ -31,11 +31,19 @@ export interface WaSendResult {
   error?: string;
 }
 
-/** Send one alert line to the owner's WhatsApp. Best-effort: never throws. */
-export async function sendWhatsAppAlert(text: string): Promise<WaSendResult> {
+/**
+ * Send one line to an ARBITRARY WhatsApp number (e.g. a rewards customer).
+ * Best-effort: never throws, no-ops when unconfigured or the number is empty.
+ *
+ * Meta deliverability caveat (not ours to bypass): a business-INITIATED message
+ * to a customer only lands via an APPROVED template — set WHATSAPP_TEMPLATE_NAME.
+ * Free-form text (no template) is delivered only inside the 24h window after the
+ * customer last messaged the business, so it's mainly useful for testing.
+ */
+export async function sendWhatsAppTo(toRaw: string, text: string): Promise<WaSendResult> {
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  const to = normalizeWaNumber(process.env.WHATSAPP_TO ?? "");
+  const to = normalizeWaNumber(toRaw);
   if (!token || !phoneId || !to) return { configured: false, ok: false };
 
   const templateName = process.env.WHATSAPP_TEMPLATE_NAME;
@@ -61,4 +69,9 @@ export async function sendWhatsAppAlert(text: string): Promise<WaSendResult> {
   } catch (e) {
     return { configured: true, ok: false, mode, error: e instanceof Error ? e.message : "send failed" };
   }
+}
+
+/** Send one alert line to the owner's WhatsApp (WHATSAPP_TO). Best-effort. */
+export async function sendWhatsAppAlert(text: string): Promise<WaSendResult> {
+  return sendWhatsAppTo(process.env.WHATSAPP_TO ?? "", text);
 }

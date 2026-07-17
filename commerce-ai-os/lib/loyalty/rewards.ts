@@ -3,6 +3,7 @@
 // must never be imported into a Client Component. The public API routes
 // (/api/rewards/*) and the admin server actions call in through here.
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sendWhatsAppTo } from "@/lib/whatsapp";
 
 /** Hearts needed to earn one free product. */
 export const STAMPS_REQUIRED = 6;
@@ -226,6 +227,50 @@ export async function listCustomers(search?: string): Promise<CustomerRecord[]> 
   }));
 }
 
+/**
+ * Edit a customer's details from the admin table. Any of name / phone / stamps
+ * may be updated. Phone is re-normalized and must stay unique; stamps is clamped
+ * to 0..required and re-arms or clears the reward-ready flag accordingly.
+ */
+export async function updateCustomer(
+  id: string,
+  fields: { name?: string; phone?: string; stamps?: number }
+): Promise<void> {
+  const admin = createAdminClient();
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+  if (fields.name !== undefined) {
+    const name = fields.name.trim().replace(/\s+/g, " ").slice(0, 80);
+    if (!name) throw new Error("الاسم مطلوب.");
+    patch.name = name;
+  }
+  if (fields.phone !== undefined) {
+    const phone = normalizePhone(fields.phone);
+    if (!phone) throw new Error("رقم الجوال غير صحيح.");
+    patch.phone = phone;
+  }
+  if (fields.stamps !== undefined) {
+    const stamps = Math.max(0, Math.min(Math.floor(fields.stamps), STAMPS_REQUIRED));
+    patch.stamps = stamps;
+    // keep reward_ready_at consistent with the new count
+    patch.reward_ready_at = stamps >= STAMPS_REQUIRED ? new Date().toISOString() : null;
+  }
+
+  const { error } = await admin.from("loyalty_customers").update(patch).eq("id", id);
+  if (error) {
+    // 23505 = unique_violation on phone
+    if ((error as any).code === "23505") throw new Error("رقم الجوال مستخدم لزبونة أخرى.");
+    throw new Error(error.message);
+  }
+}
+
+/** Delete a customer and all their submissions (cascade via the FK). */
+export async function deleteCustomer(id: string): Promise<void> {
+  const admin = createAdminClient();
+  const { error } = await admin.from("loyalty_customers").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
 export type ReadyCustomer = {
   id: string;
   name: string;
@@ -271,7 +316,7 @@ export async function approveSubmission(submissionId: string): Promise<void> {
 
   const { data: customer } = await admin
     .from("loyalty_customers")
-    .select("id, stamps, reward_ready_at")
+    .select("id, name, phone, stamps, reward_ready_at")
     .eq("id", sub.customer_id)
     .single();
   if (!customer) throw new Error("العميلة غير موجودة.");
@@ -296,6 +341,19 @@ export async function approveSubmission(submissionId: string): Promise<void> {
     .update({ status: "approved", reviewed_at: new Date().toISOString() })
     .eq("id", submissionId);
   if (sErr) throw new Error(sErr.message);
+
+  // Congratulate the customer on WhatsApp (best-effort — never blocks approval;
+  // no-ops unless WhatsApp is configured, and delivery follows Meta's rules).
+  const shown = Math.min(nextStamps, STAMPS_REQUIRED);
+  const msg =
+    shown >= STAMPS_REQUIRED
+      ? `🎉 مبروك ${customer.name}! أكملتِ ${STAMPS_REQUIRED} ختمات في مكافآت الجمال — اختاري أي منتج من المتجر مجاناً 💝`
+      : `❤ تم ختم قلب لكِ يا ${customer.name}! صار عندك ${shown} من ${STAMPS_REQUIRED} في بطاقة مكافآت الجمال. ${STAMPS_REQUIRED - shown} باقية على هديتك 🌷`;
+  try {
+    await sendWhatsAppTo(customer.phone, msg);
+  } catch {
+    /* best-effort: a notification failure must never fail the approval */
+  }
 }
 
 /** Reject a submission (no heart). Optional note explains why. */

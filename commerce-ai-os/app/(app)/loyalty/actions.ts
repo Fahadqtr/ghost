@@ -9,6 +9,8 @@ import {
   approveSubmission,
   rejectSubmission,
   redeemReward,
+  updateCustomer,
+  deleteCustomer,
 } from "@/lib/loyalty/rewards";
 
 async function requireUser() {
@@ -34,4 +36,19 @@ export async function redeemAction(customerId: string) {
   await requireUser();
   await redeemReward(customerId);
   revalidatePath("/loyalty");
+}
+
+export async function updateCustomerAction(
+  id: string,
+  fields: { name?: string; phone?: string; stamps?: number }
+) {
+  await requireUser();
+  await updateCustomer(id, fields);
+  revalidatePath("/loyalty/customers");
+}
+
+export async function deleteCustomerAction(id: string) {
+  await requireUser();
+  await deleteCustomer(id);
+  revalidatePath("/loyalty/customers");
 }
