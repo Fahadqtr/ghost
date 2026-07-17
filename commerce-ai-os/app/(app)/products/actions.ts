@@ -518,10 +518,11 @@ const ALLOWED_IMG = new Set(["image/jpeg", "image/png", "image/gif", "image/webp
  *  (shared prompt/parser in lib/products/draft-compute). The form decides
  *  what to apply. */
 export async function describeProductFromImage(
-  imageUrl: string
+  imageUrl: string,
+  instructions?: string,
 ): Promise<{
   error?: string;
-  data?: { name_en: string; name_ar: string; description_en: string; description_ar: string; keywords_en: string; keywords_ar: string; main_category: string };
+  data?: { name_en: string; name_ar: string; description_en: string; description_ar: string; keywords_en: string; keywords_ar: string; main_category: string; variants?: { variant_name: string; color: string; size: string }[] };
 }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -559,7 +560,7 @@ export async function describeProductFromImage(
           role: "user",
           content: [
             { type: "image", source: { type: "base64", media_type, data: b64 } } as any,
-            { type: "text", text: buildDraftPrompt(CATEGORIES) },
+            { type: "text", text: buildDraftPrompt(CATEGORIES, instructions) },
           ],
         },
       ],

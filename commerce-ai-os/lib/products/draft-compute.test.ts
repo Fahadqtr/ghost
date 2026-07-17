@@ -55,3 +55,31 @@ test("no JSON at all → null (callers fall back to EMPTY_DRAFT)", () => {
 test("malformed JSON → null instead of throwing", () => {
   assert.equal(parseProductDraft('{"name_en": unquoted}', CATS), null);
 });
+
+// ---- seller instructions + variants -------------------------------------------
+
+test("seller instructions are embedded in the prompt", () => {
+  const p = buildDraftPrompt(CATS, "هذا كفر جوال لونه وردي");
+  assert.ok(p.includes("ملاحظة البائع"));
+  assert.ok(p.includes("هذا كفر جوال لونه وردي"));
+});
+
+test("prompt asks for a variants array (empty when none)", () => {
+  assert.ok(buildDraftPrompt(CATS).includes("variants"));
+});
+
+test("parses variants and drops fully-empty ones", () => {
+  const d = parseProductDraft(
+    '{"name_en":"Case","variants":[{"variant_name":"Pink","color":"Pink","size":""},{"color":"Blue"},{"variant_name":"","color":"","size":""}]}',
+    CATS,
+  )!;
+  assert.equal(d.variants.length, 2);
+  assert.equal(d.variants[0].variant_name, "Pink");
+  assert.equal(d.variants[1].variant_name, "Blue"); // falls back to color when name missing
+});
+
+test("variants default to an empty array when absent", () => {
+  const d = parseProductDraft('{"name_en":"X"}', CATS)!;
+  assert.deepEqual(d.variants, []);
+  assert.deepEqual(EMPTY_DRAFT.variants, []);
+});
