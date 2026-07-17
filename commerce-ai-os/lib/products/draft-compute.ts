@@ -5,6 +5,12 @@
 // never drift apart. No Anthropic/Supabase imports — the callers own the model
 // call; this module owns what to ask and how to read the answer.
 
+export interface DraftVariant {
+  variant_name: string; // e.g. "Pink" / "Size M"
+  color: string;
+  size: string;
+}
+
 export interface ProductDraft {
   name_en: string;
   name_ar: string;
@@ -13,11 +19,12 @@ export interface ProductDraft {
   keywords_en: string;
   keywords_ar: string;
   main_category: string; // "" when the model's pick isn't in the allowed list
+  variants?: DraftVariant[]; // options the seller asked for (empty/absent when none)
 }
 
 export const EMPTY_DRAFT: ProductDraft = {
   name_en: "", name_ar: "", description_en: "", description_ar: "",
-  keywords_en: "", keywords_ar: "", main_category: "",
+  keywords_en: "", keywords_ar: "", main_category: "", variants: [],
 };
 
 // A real catalog entry, shown to the model as the target style.
@@ -37,11 +44,18 @@ export const HOUSE_STYLE_EXAMPLE = JSON.stringify({
   main_category: "Rhode Products Section",
 }, null, 0);
 
-/** The vision prompt: analyze the product photo, answer JSON in house style. */
-export function buildDraftPrompt(categories: readonly string[]): string {
+/**
+ * The vision prompt: analyze the product photo, answer JSON in house style.
+ * `instructions` is the seller's free-text note — corrections or context the
+ * photo alone can't convey (the real color, that it's a phone case, that it
+ * comes in several color options…). When present it OVERRIDES what the photo
+ * seems to show, and may ask for options (variants).
+ */
+export function buildDraftPrompt(categories: readonly string[], instructions?: string): string {
+  const note = String(instructions ?? "").trim();
   return (
     "أنت مساعد كتالوج لمتجر Malika's Universe (جمال وكورية، قطر). حلّل صورة المنتج وأرجِع JSON فقط بهذه الحقول بالضبط:\n" +
-    '{"name_en":"","name_ar":"","description_en":"","description_ar":"","keywords_en":"","keywords_ar":"","main_category":""}\n\n' +
+    '{"name_en":"","name_ar":"","description_en":"","description_ar":"","keywords_en":"","keywords_ar":"","main_category":"","variants":[]}\n\n' +
     "اتبع أسلوب متجرنا بدقة:\n" +
     "• name_ar = الاسم بالعربية ثم مسافة وشرطة ثم الاسم بالإنجليزية (مثل: «... - Rhode Guava Spritz Set»).\n" +
     "• name_en = اسم إنجليزي واضح ومختصر.\n" +
@@ -49,7 +63,11 @@ export function buildDraftPrompt(categories: readonly string[]): string {
     "• description_en = جملة افتتاحية، ثم نقاط تبدأ كل واحدة بـ ✔️ وسطر جديد، ثم «Color: ...»، ثم «Includes: ...».\n" +
     "• استخدم أسطر جديدة فعلية (\\n) داخل الوصف.\n" +
     "• keywords = 5 إلى 8 كلمات مفصولة بفواصل.\n" +
-    `• main_category = الأنسب من هذه القائمة فقط: ${categories.join(", ")}.\n\n` +
+    `• main_category = الأنسب من هذه القائمة فقط: ${categories.join(", ")}.\n` +
+    '• variants = مصفوفة الخيارات إذا ذكر البائع أن للمنتج خيارات (ألوان/مقاسات)، كل عنصر بهذا الشكل {"variant_name":"","color":"","size":""}. إذا ما في خيارات اترك المصفوفة فارغة [].\n\n' +
+    (note
+      ? "⚠️ ملاحظة البائع (اعتمدها فوق ما تظهره الصورة، وصحّح اللون/النوع/الاسم بناءً عليها، وإذا ذكر خيارات ولّد variants):\n«" + note + "»\n\n"
+      : "") +
     "مثال كامل بالأسلوب المطلوب بالضبط:\n" + HOUSE_STYLE_EXAMPLE + "\n\n" +
     "أجب بـ JSON صحيح فقط بدون أي نص إضافي."
   );
@@ -68,6 +86,12 @@ export function parseProductDraft(text: string, categories: readonly string[]): 
   try { j = JSON.parse(m[0]); } catch { return null; }
   const s = (x: unknown) => (x == null ? "" : String(x).trim());
   const cat = s(j.main_category);
+  const variants = (Array.isArray(j.variants) ? j.variants : [])
+    .map((v) => {
+      const o = (v ?? {}) as Record<string, unknown>;
+      return { variant_name: s(o.variant_name) || s(o.color) || s(o.size), color: s(o.color), size: s(o.size) };
+    })
+    .filter((v) => v.variant_name || v.color || v.size);
   return {
     name_en: s(j.name_en),
     name_ar: s(j.name_ar),
@@ -76,5 +100,6 @@ export function parseProductDraft(text: string, categories: readonly string[]): 
     keywords_en: s(j.keywords_en),
     keywords_ar: s(j.keywords_ar),
     main_category: categories.includes(cat) ? cat : "",
+    variants,
   };
 }

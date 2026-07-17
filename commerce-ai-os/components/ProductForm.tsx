@@ -222,27 +222,46 @@ export default function ProductForm({
   // --- AI: title + description from the product image ------------------------
   const [aiBusy, setAiBusy] = useState(false);
   const [aiMsg, setAiMsg] = useState<string | null>(null);
+  // Seller's note to steer/fix the generation — e.g. "هذا كفر لونه وردي" or
+  // "فيه خيارات ألوان: أحمر، أزرق". When set, we REGENERATE (overwrite the
+  // AI-owned fields) since the seller is correcting a wrong draft.
+  const [aiHint, setAiHint] = useState("");
   const describeFromImage = async (urlOverride?: string) => {
     const url = (urlOverride ?? form.image_url).trim();
     if (!url) { setAiMsg("أضف Image URL أولاً."); return; }
+    const hint = aiHint.trim();
     setAiBusy(true);
     setAiMsg(null);
-    const res = await describeProductFromImage(url);
+    const res = await describeProductFromImage(url, hint || undefined);
     setAiBusy(false);
     if (res.error) { setAiMsg(res.error); return; }
     const d = res.data!;
-    // Fill empty fields; don't clobber anything the user already typed.
-    setForm((f) => ({
-      ...f,
-      name_en: f.name_en.trim() || d.name_en,
-      name_ar: f.name_ar.trim() || d.name_ar,
-      description_en: f.description_en.trim() || d.description_en,
-      description_ar: f.description_ar.trim() || d.description_ar,
-      keywords_en: f.keywords_en.trim() || d.keywords_en,
-      keywords_ar: f.keywords_ar.trim() || d.keywords_ar,
-      main_category: f.main_category.trim() || d.main_category,
-    }));
-    setAiMsg("تم توليد العنوان والوصف والفئة ✓");
+    // With a hint the seller is fixing the draft → overwrite the AI-owned
+    // fields. Without one (first tap), only fill what's still empty so we never
+    // clobber anything typed by hand.
+    const pick = (typed: string, gen: string) => (hint ? (gen || typed) : (typed.trim() || gen));
+    setForm((f) => {
+      // Options: adopt the generated variants when the seller asked for them
+      // and the form has no real variants yet.
+      const hasRealVariant = f.variants.some((v) => v.variant_name.trim() || v.color.trim() || v.size.trim());
+      const variants = (d.variants?.length && !hasRealVariant)
+        ? d.variants.map((v) => ({ ...EMPTY_VARIANT, variant_name: v.variant_name, color: v.color, size: v.size }))
+        : f.variants;
+      return {
+        ...f,
+        name_en: pick(f.name_en, d.name_en),
+        name_ar: pick(f.name_ar, d.name_ar),
+        description_en: pick(f.description_en, d.description_en),
+        description_ar: pick(f.description_ar, d.description_ar),
+        keywords_en: pick(f.keywords_en, d.keywords_en),
+        keywords_ar: pick(f.keywords_ar, d.keywords_ar),
+        main_category: pick(f.main_category, d.main_category),
+        variants,
+      };
+    });
+    const addedOpts = d.variants?.length ? ` · ${d.variants.length} خيار` : "";
+    setAiMsg(`تم توليد العنوان والوصف والفئة ✓${addedOpts}`);
+    if (hint) setAiHint("");
   };
 
   // --- AI: edit the product photo (same engine as the staff tab) -------------
@@ -440,10 +459,20 @@ export default function ProductForm({
               onClick={() => void describeFromImage()}
               disabled={aiBusy || !form.image_url.trim()}
             >
-              {aiBusy ? "…يحلّل الصورة" : "✨ توليد العنوان والوصف من الصورة"}
+              {aiBusy ? "…يحلّل الصورة" : aiHint.trim() ? "✨ أعد التوليد بالملاحظة" : "✨ توليد العنوان والوصف من الصورة"}
             </button>
             {aiMsg ? <span className="text-xs text-muted">{aiMsg}</span> : null}
           </div>
+          {/* Seller's note to fix/steer the draft: correct a wrong color/type,
+              or ask for options. Regenerates over the AI-owned fields. */}
+          <textarea
+            dir="rtl"
+            className="input mt-2 min-h-16 w-full text-sm"
+            value={aiHint}
+            onChange={(e) => setAiHint(e.target.value)}
+            placeholder="صحّح التوليد أو أضِف معلومة — مثال: «هذا كفر جوال لونه وردي»، أو «فيه خيارات ألوان: أحمر، أزرق، أسود»"
+          />
+          <p className="mt-1 text-[11px] text-muted">اكتب ملاحظتك ثم اضغط «أعد التوليد بالملاحظة» — تصحّح العنوان والوصف وتولّد الخيارات إذا ذكرتها.</p>
           {form.image_url.trim() ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <input
