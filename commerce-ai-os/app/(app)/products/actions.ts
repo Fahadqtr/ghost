@@ -381,6 +381,40 @@ export async function setProductsApproval(ids: string[], approval: string, reaso
   return { ok: failed === 0, updated, failed };
 }
 
+// Turn selected catalog products into manual "add to platforms" tasks — one
+// task per product, each carrying its FULL snapshot and the exact platforms the
+// manager picked, so an employee can add it by hand on those platforms and tick
+// them off. Best-effort logging never blocks; returns how many tasks opened.
+export async function createAddToPlatformTasks(
+  productIds: string[],
+  platforms: string[],
+): Promise<{ ok?: true; created: number; error?: string }> {
+  if (!(await isSignedIn())) return { error: "Not signed in.", created: 0 };
+  const ids = [...new Set((productIds ?? []).filter(Boolean))];
+  const plats = [...new Set((platforms ?? []).map((p) => String(p ?? "").trim()).filter(Boolean))];
+  if (ids.length === 0) return { error: "No products selected.", created: 0 };
+  if (plats.length === 0) return { error: "No platforms selected.", created: 0 };
+
+  const supabase = createClient();
+  let created = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { data: rows } = await supabase.from("products").select("*").in("id", chunk);
+    for (const row of (rows ?? []) as Record<string, unknown>[]) {
+      await logCatalogTask({
+        action: "add",
+        productId: String(row.id),
+        snapshot: row,
+        platforms: plats,
+        extraPayload: { platforms: plats },
+      });
+      created += 1;
+    }
+  }
+  if (created > 0) revalidatePath("/tasks");
+  return { ok: true, created };
+}
+
 export interface MatchedProduct { id: string; sku: string | null; name_en: string | null; approval: string | null }
 
 // Match pasted lines (Snoonu names or SKUs) to catalog products, so the user can

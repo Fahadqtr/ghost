@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import { CATEGORIES } from "@/lib/constants";
-import { setProductApproval } from "@/app/(app)/products/actions";
+import { setProductApproval, createAddToPlatformTasks } from "@/app/(app)/products/actions";
 import { archiveAndDeleteProducts } from "@/app/(app)/products/archive/actions";
 import ProductQuickView from "@/components/ProductQuickView";
 import BulkImageUpload from "@/components/BulkImageUpload";
@@ -14,6 +14,17 @@ import type { Locale } from "@/lib/i18n";
 const PAGE_SIZE = 50;
 const CHANNELS = ["Shopify", "Snoonu", "Talabat", "Rafeeq"] as const;
 const qar = (n: number) => `${n} QAR`;
+
+// Manual platforms an employee adds products to by hand (the «حوّل لمهام» flow).
+// Each task's footer lists exactly the ones picked, each with a tick-box. The
+// stored label is Arabic (tasks are Arabic-facing); the picker shows both.
+const ADD_PLATFORMS = [
+  { label: "سنونو مليكاز", en: "Snoonu Malikas" },
+  { label: "سنونو بيور سيول", en: "Snoonu Pure Seoul" },
+  { label: "طلبات", en: "Talabat" },
+  { label: "رفيق", en: "Rafeeq" },
+  { label: "شوبي فاي", en: "Shopify" },
+] as const;
 
 export interface ProductRow {
   id: string;
@@ -152,6 +163,11 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   const [stockOv, setStockOv] = useState<Record<string, number>>({});
   const [imgOv, setImgOv] = useState<Record<string, string>>({});
   const [bulkImg, setBulkImg] = useState(false);
+  // "Convert to manual tasks" modal: pick which platforms an employee should add
+  // the selected products to (one task per product, carrying full details).
+  const [taskModal, setTaskModal] = useState(false);
+  const [taskPlats, setTaskPlats] = useState<Set<string>>(new Set());
+  const [busyTask, startTask] = useTransition();
   const effAppr = (p: ProductRow) => (p.id in apprOv ? apprOv[p.id] : p.approval);
   const effImg = (p: ProductRow) => (p.id in imgOv ? imgOv[p.id] : p.image_url);
   const effStatus = (p: ProductRow) => (p.id in statOv ? statOv[p.id] : p.platform_status);
@@ -410,6 +426,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           <div className="flex items-center gap-2">
             <button onClick={() => setSel(new Set())} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">{L("إلغاء التحديد", "Clear")}</button>
             <button onClick={() => setBulkImg(true)} className="rounded-md bg-brand px-3 py-1.5 text-xs font-bold text-white">{L(`📷 أضف صور (${sel.size})`, `📷 Add images (${sel.size})`)}</button>
+            <button onClick={() => { setTaskPlats(new Set()); setTaskModal(true); }} className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-bold text-white">{L(`🗂 حوّل لمهام (${sel.size})`, `🗂 To tasks (${sel.size})`)}</button>
             <button disabled={busyDel} onClick={deleteSelected} className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">{busyDel ? "…" : L(`🗑 حذف المحدّد (${sel.size})`, `🗑 Delete selected (${sel.size})`)}</button>
           </div>
         </div>
@@ -615,6 +632,54 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
           onClose={() => setBulkImg(false)}
           onSaved={(urls) => setImgOv((s) => ({ ...s, ...urls }))}
         />
+      ) : null}
+
+      {taskModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => !busyTask && setTaskModal(false)}>
+          <div className="w-full max-w-md space-y-4 rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h3 className="text-base font-bold text-ink">{L(`🗂 حوّل ${sel.size} منتج لمهام`, `🗂 ${sel.size} products → tasks`)}</h3>
+              <p className="mt-1 text-sm text-muted">{L("اختَر المنصّات اللي لازم الموظف يضيف المنتجات فيها يدويًا. تنفتح مهمة لكل منتج بكل تفاصيله.", "Pick the platforms an employee must add these to by hand. One task per product opens, with full details.")}</p>
+            </div>
+            <div className="space-y-1.5">
+              {ADD_PLATFORMS.map((o) => {
+                const on = taskPlats.has(o.label);
+                return (
+                  <label key={o.label} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm ${on ? "border-violet-300 bg-violet-50" : "border-slate-200 bg-white"}`}>
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => setTaskPlats((s) => { const n = new Set(s); if (n.has(o.label)) n.delete(o.label); else n.add(o.label); return n; })}
+                      className="h-4 w-4"
+                    />
+                    <span className="font-medium text-ink" dir="rtl">{o.label}</span>
+                    <span className="text-xs text-muted">{o.en}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button onClick={() => setTaskModal(false)} disabled={busyTask} className="btn-ghost px-3 py-2 text-sm disabled:opacity-50">{L("إلغاء", "Cancel")}</button>
+              <button
+                disabled={busyTask || taskPlats.size === 0}
+                onClick={() => {
+                  const ids = [...sel];
+                  const plats = [...taskPlats];
+                  startTask(async () => {
+                    const res = await createAddToPlatformTasks(ids, plats);
+                    if (res.error) { setDelNote(res.error); return; }
+                    setTaskModal(false);
+                    setSel(new Set());
+                    setDelNote(L(`✅ فُتحت ${res.created} مهمة إضافة — تلقاها في صفحة المهام.`, `✅ Opened ${res.created} add-tasks — see the Tasks page.`));
+                  });
+                }}
+                className="rounded-md bg-violet-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+              >
+                {busyTask ? "…" : L(`افتح المهام (${sel.size})`, `Open tasks (${sel.size})`)}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {quickId ? (() => {
