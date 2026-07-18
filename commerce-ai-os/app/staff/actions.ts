@@ -713,7 +713,7 @@ export async function staffGenerateProductDraft(base64: string, mediaType: strin
 
 // AI-draft title/description for an ALREADY-stored photo (a supervisor's
 // new-product task) — same prompt/parser as the upload path, no re-upload.
-export async function staffDraftFromImageUrl(imageUrl: string): Promise<{ draft: ProductDraft } | { error: string }> {
+export async function staffDraftFromImageUrl(imageUrl: string, instructions?: string): Promise<{ draft: ProductDraft } | { error: string }> {
   const who = await currentStaff();
   if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
   if (!hasPerm(who.perms, "add_product")) return { error: "ما عندك صلاحية إضافة منتج." };
@@ -739,7 +739,9 @@ export async function staffDraftFromImageUrl(imageUrl: string): Promise<{ draft:
       model, max_tokens: 1200,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: mt, data: b64 } } as any,
-        { type: "text", text: buildDraftPrompt(CATEGORIES) },
+        // The employee's note (correct a wrong color/type, ask for options) is
+        // folded into the prompt and overrides what the photo seems to show.
+        { type: "text", text: buildDraftPrompt(CATEGORIES, instructions) },
       ] }],
     });
     const text = (resp.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
