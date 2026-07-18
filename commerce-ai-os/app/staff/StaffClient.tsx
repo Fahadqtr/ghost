@@ -781,7 +781,9 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
   const [draft, setDraft] = useState<ProductDraft>({ name_en: "", name_ar: "", description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", main_category: "" });
   const [price, setPrice] = useState(seed?.price ?? ""); // the supervisor's price arrives pre-filled
   const [stock, setStock] = useState("0");
-  const [vars, setVars] = useState<{ name: string; price: string; stock: string }[]>(seed?.options ?? []);
+  const [vars, setVars] = useState<{ name: string; name_en: string; price: string; stock: string }[]>(
+    (seed?.options ?? []).map((o) => ({ name: o.name, name_en: "", price: o.price, stock: o.stock })),
+  );
   const seedImages = seed?.images?.length ? seed.images : (seed ? [seed.imageUrl] : []);
   const [created, setCreated] = useState<CreatedProduct | null>(null);
   const [err, setErr] = useState("");
@@ -848,8 +850,9 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
           if (hasReal) return list;
           return d.variants!.map((v) => ({
             name: (v.variant_name || v.color || v.size || "").trim(),
+            name_en: (v.variant_name_en || "").trim(),
             price: "", stock: "0",
-          })).filter((v) => v.name);
+          })).filter((v) => v.name || v.name_en);
         });
       }
       setAiHint("");
@@ -890,7 +893,7 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
       try {
         const r = await staffAddProduct({
           ...draft, price, stock_quantity: stock, image_url: imageUrl, sourceTaskId: seed?.taskId,
-          variants: vars.filter((v) => v.name.trim()),
+          variants: vars.filter((v) => v.name.trim() || v.name_en.trim()),
           extraImageUrls: seedImages.filter((u) => u !== imageUrl),
         });
         if ("error" in r) { setErr(r.error); return; }
@@ -907,7 +910,7 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
     setDraft({ name_en: "", name_ar: "", description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", main_category: "" });
   };
 
-  const setVar = (i: number, k: "name" | "price" | "stock", v: string) =>
+  const setVar = (i: number, k: "name" | "name_en" | "price" | "stock", v: string) =>
     setVars((list) => list.map((row, j) => (j === i ? { ...row, [k]: v } : row)));
 
   const setD = (k: keyof ProductDraft, v: string) => setDraft((d) => ({ ...d, [k]: v }));
@@ -1032,26 +1035,32 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
           <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-2.5">
             <p className="text-xs font-bold text-violet-800">🎚️ {L("له خيارات؟ (ألوان / أحجام…)", "Has options? (colors / sizes…)")}</p>
             {vars.length > 0 ? (
-              <div className="mt-2 space-y-1.5">
-                <div className="flex gap-1.5 text-[10px] font-semibold text-muted">
-                  <span className="flex-1">{L("اسم الخيار", "Option name")}</span>
-                  <span className="w-20 text-center">{L("السعر (فاضي = سعر المنتج)", "Price")}</span>
-                  <span className="w-16 text-center">{L("الكمية", "Qty")}</span>
-                  <span className="w-6" />
-                </div>
+              <div className="mt-2 space-y-2">
                 {vars.map((v, i) => (
-                  <div key={i} className="flex items-center gap-1.5">
-                    <input className="input flex-1 py-1.5 text-sm" value={v.name} onChange={(e) => setVar(i, "name", e.target.value)}
-                      placeholder={L(`مثال: أحمر`, `e.g. Red`)} />
-                    <input className="input w-20 py-1.5 text-center text-sm" inputMode="decimal" value={v.price} onChange={(e) => setVar(i, "price", e.target.value)} placeholder="—" />
-                    <input className="input w-16 py-1.5 text-center text-sm" inputMode="numeric" value={v.stock} onChange={(e) => setVar(i, "stock", e.target.value)} />
-                    <button type="button" onClick={() => setVars((list) => list.filter((_, j) => j !== i))}
-                      className="w-6 text-center text-sm text-red-500">✕</button>
+                  <div key={i} className="rounded-lg border border-violet-200 bg-white p-2">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold text-violet-700">{L(`الخيار ${i + 1}`, `Option ${i + 1}`)}</span>
+                      <button type="button" onClick={() => setVars((list) => list.filter((_, j) => j !== i))}
+                        className="text-sm text-red-500">✕</button>
+                    </div>
+                    {/* Bilingual option name — Arabic for سنونو/رفيق, English for Shopify */}
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <input className="input py-1.5 text-sm" dir="rtl" value={v.name} onChange={(e) => setVar(i, "name", e.target.value)}
+                        placeholder={L("الاسم عربي — مثال: أحمر", "Name AR — e.g. أحمر")} />
+                      <input className="input py-1.5 text-sm" dir="ltr" value={v.name_en} onChange={(e) => setVar(i, "name_en", e.target.value)}
+                        placeholder={L("الاسم إنجليزي — مثال: Red", "Name EN — e.g. Red")} />
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <input className="input flex-1 py-1.5 text-center text-sm" inputMode="decimal" value={v.price} onChange={(e) => setVar(i, "price", e.target.value)}
+                        placeholder={L("السعر (فاضي = سعر المنتج)", "Price (blank = product)")} />
+                      <input className="input w-20 py-1.5 text-center text-sm" inputMode="numeric" value={v.stock} onChange={(e) => setVar(i, "stock", e.target.value)}
+                        placeholder={L("الكمية", "Qty")} />
+                    </div>
                   </div>
                 ))}
               </div>
             ) : null}
-            <button type="button" onClick={() => setVars((list) => [...list, { name: "", price: "", stock: "0" }])}
+            <button type="button" onClick={() => setVars((list) => [...list, { name: "", name_en: "", price: "", stock: "0" }])}
               className="mt-2 w-full rounded-lg border border-dashed border-violet-300 py-1.5 text-xs font-medium text-violet-700">
               ➕ {L("أضف خيار", "Add an option")}
             </button>
@@ -1099,11 +1108,13 @@ function CopyFieldsPanel({ product, locale, onAgain }: { product: CreatedProduct
     { key: "price", label: L("السعر", "Price"), value: product.price != null ? String(product.price) : "" },
     { key: "kw_ar", label: L("كلمات مفتاحية (عربي)", "Keywords (AR)"), value: product.keywords_ar },
     { key: "kw_en", label: L("كلمات مفتاحية (إنجليزي)", "Keywords (EN)"), value: product.keywords_en },
-    ...(product.variants ?? []).map((v, i) => ({
-      key: `var-${i}`,
-      label: `🎚️ ${L("خيار", "Option")}: ${v.name}`,
-      value: `${v.barcode}${v.price != null ? ` · ${v.price} ${L("ر.ق", "QAR")}` : ""}${v.stock ? ` · ×${v.stock}` : ""}`,
-    })),
+    // Options: each NAME is copied on its own (Arabic for سنونو/رفيق, English
+    // for Shopify), with the auto-barcode as its own separate row.
+    ...(product.variants ?? []).flatMap((v, i) => [
+      { key: `var-${i}-ar`, label: `🎚️ ${L("خيار (عربي)", "Option (AR)")} ${i + 1}`, value: v.name },
+      { key: `var-${i}-en`, label: `🎚️ ${L("خيار (إنجليزي)", "Option (EN)")} ${i + 1}`, value: v.name_en },
+      { key: `var-${i}-bc`, label: `${L("باركود الخيار", "Option barcode")} ${i + 1}`, value: v.barcode },
+    ]),
   ].filter((f) => f.value);
 
   const allText = fields.map((f) => `${f.label}: ${f.value}`).join("\n");

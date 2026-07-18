@@ -19,6 +19,7 @@ import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
 export interface VariantInput {
   id?: string;
   variant_name: string;
+  variant_name_en: string;
   sku: string;
   barcode: string;
   color: string;
@@ -133,10 +134,11 @@ function friendlyWriteError(
 
 function toVariantRows(parentId: string, variants: VariantInput[]) {
   return variants
-    .filter((v) => str(v.variant_name) || str(v.sku))
+    .filter((v) => str(v.variant_name) || str(v.variant_name_en) || str(v.sku))
     .map((v) => ({
       parent_product_id: parentId,
       variant_name: str(v.variant_name),
+      variant_name_en: str(v.variant_name_en),
       sku: str(v.sku),
       barcode: str(v.barcode),
       color: str(v.color),
@@ -522,7 +524,7 @@ export async function describeProductFromImage(
   instructions?: string,
 ): Promise<{
   error?: string;
-  data?: { name_en: string; name_ar: string; description_en: string; description_ar: string; keywords_en: string; keywords_ar: string; main_category: string; variants?: { variant_name: string; color: string; size: string }[] };
+  data?: { name_en: string; name_ar: string; description_en: string; description_ar: string; keywords_en: string; keywords_ar: string; main_category: string; variants?: { variant_name: string; variant_name_en: string; color: string; size: string }[] };
 }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const apiKey = process.env.ANTHROPIC_API_KEY;

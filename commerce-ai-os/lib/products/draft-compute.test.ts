@@ -78,6 +78,16 @@ test("parses variants and drops fully-empty ones", () => {
   assert.equal(d.variants[1].variant_name, "Blue"); // falls back to color when name missing
 });
 
+test("parses bilingual variant names (variant_name + variant_name_en)", () => {
+  const d = parseProductDraft(
+    '{"name_en":"Case","variants":[{"variant_name":"آيفون 16","variant_name_en":"iPhone 16"}]}',
+    CATS,
+  )!;
+  assert.equal(d.variants.length, 1);
+  assert.equal(d.variants[0].variant_name, "آيفون 16");
+  assert.equal(d.variants[0].variant_name_en, "iPhone 16");
+});
+
 test("variants default to an empty array when absent", () => {
   const d = parseProductDraft('{"name_en":"X"}', CATS)!;
   assert.deepEqual(d.variants, []);

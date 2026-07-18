@@ -6,7 +6,8 @@
 // call; this module owns what to ask and how to read the answer.
 
 export interface DraftVariant {
-  variant_name: string; // e.g. "Pink" / "Size M"
+  variant_name: string; // Arabic/primary option name, e.g. "أحمر" / "آيفون 16"
+  variant_name_en: string; // English option name, e.g. "Red" / "iPhone 16"
   color: string;
   size: string;
 }
@@ -64,7 +65,7 @@ export function buildDraftPrompt(categories: readonly string[], instructions?: s
     "• استخدم أسطر جديدة فعلية (\\n) داخل الوصف.\n" +
     "• keywords = 5 إلى 8 كلمات مفصولة بفواصل.\n" +
     `• main_category = الأنسب من هذه القائمة فقط: ${categories.join(", ")}.\n` +
-    '• variants = مصفوفة الخيارات إذا ذكر البائع أن للمنتج خيارات (ألوان/مقاسات)، كل عنصر بهذا الشكل {"variant_name":"","color":"","size":""}. إذا ما في خيارات اترك المصفوفة فارغة [].\n\n' +
+    '• variants = مصفوفة الخيارات إذا ذكر البائع أن للمنتج خيارات (ألوان/مقاسات)، كل عنصر بهذا الشكل {"variant_name":"","variant_name_en":"","color":"","size":""} حيث variant_name = اسم الخيار بالعربية و variant_name_en = نفس الخيار بالإنجليزية. إذا ما في خيارات اترك المصفوفة فارغة [].\n\n' +
     (note
       ? "⚠️ ملاحظة البائع (اعتمدها فوق ما تظهره الصورة، وصحّح اللون/النوع/الاسم بناءً عليها، وإذا ذكر خيارات ولّد variants):\n«" + note + "»\n\n"
       : "") +
@@ -89,9 +90,14 @@ export function parseProductDraft(text: string, categories: readonly string[]): 
   const variants = (Array.isArray(j.variants) ? j.variants : [])
     .map((v) => {
       const o = (v ?? {}) as Record<string, unknown>;
-      return { variant_name: s(o.variant_name) || s(o.color) || s(o.size), color: s(o.color), size: s(o.size) };
+      return {
+        variant_name: s(o.variant_name) || s(o.color) || s(o.size),
+        variant_name_en: s(o.variant_name_en),
+        color: s(o.color),
+        size: s(o.size),
+      };
     })
-    .filter((v) => v.variant_name || v.color || v.size);
+    .filter((v) => v.variant_name || v.variant_name_en || v.color || v.size);
   return {
     name_en: s(j.name_en),
     name_ar: s(j.name_ar),

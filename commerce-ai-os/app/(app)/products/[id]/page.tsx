@@ -204,6 +204,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
               <thead>
                 <tr className="border-b border-slate-200 text-left text-xs uppercase text-muted">
                   <th className="px-3 py-2 font-medium">Variant</th>
+                  <th className="px-3 py-2 font-medium">Variant (EN)</th>
                   <th className="px-3 py-2 font-medium">SKU</th>
                   <th className="px-3 py-2 font-medium">Barcode</th>
                   <th className="px-3 py-2 font-medium">Color</th>
@@ -215,6 +216,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
                 {(variants ?? []).map((v: any) => (
                   <tr key={v.id} className="border-b border-slate-100">
                     <td className="px-3 py-2 text-ink">{v.variant_name ?? "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{v.variant_name_en ?? "—"}</td>
                     <td className="px-3 py-2 text-slate-600">{v.sku ?? "—"}</td>
                     <td className="px-3 py-2 font-mono text-slate-600">{v.barcode ?? "—"}</td>
                     <td className="px-3 py-2 text-slate-600">{v.color ?? "—"}</td>
