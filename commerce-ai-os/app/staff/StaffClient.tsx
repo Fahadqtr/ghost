@@ -786,6 +786,10 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
   const [created, setCreated] = useState<CreatedProduct | null>(null);
   const [err, setErr] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
+  // Employee's note to fix/steer the AI draft (wrong color/type, or "has color
+  // options") — regenerates the title/description/category and options.
+  const [aiHint, setAiHint] = useState("");
+  const [regenBusy, setRegenBusy] = useState(false);
   const [busy, start] = useTransition();
 
   // Draft the fields from the task's photo (async — never blocks the form).
@@ -812,6 +816,47 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
     });
   };
   const editImage = () => runEdit(editPrompt);
+
+  // Regenerate the title/description/category (and options) from the stored
+  // photo using the employee's note. The note overrides what the photo seems to
+  // show and can ask for options; generated options fill the list when empty.
+  const regenerate = async () => {
+    const hint = aiHint.trim();
+    if (!imageUrl || !hint || regenBusy) return;
+    setErr("");
+    setRegenBusy(true);
+    try {
+      const r = await staffDraftFromImageUrl(imageUrl, hint);
+      if ("error" in r) { setErr(r.error); return; }
+      const d = r.draft;
+      // The employee is correcting the draft → overwrite the AI-owned fields.
+      setDraft((cur) => ({
+        ...cur,
+        name_en: d.name_en || cur.name_en,
+        name_ar: d.name_ar || cur.name_ar,
+        description_en: d.description_en || cur.description_en,
+        description_ar: d.description_ar || cur.description_ar,
+        keywords_en: d.keywords_en || cur.keywords_en,
+        keywords_ar: d.keywords_ar || cur.keywords_ar,
+        main_category: d.main_category || cur.main_category,
+      }));
+      // Adopt generated options when the employee asked for them and the list
+      // has none yet (name from variant_name, else color/size).
+      if (d.variants?.length) {
+        setVars((list) => {
+          const hasReal = list.some((v) => v.name.trim());
+          if (hasReal) return list;
+          return d.variants!.map((v) => ({
+            name: (v.variant_name || v.color || v.size || "").trim(),
+            price: "", stock: "0",
+          })).filter((v) => v.name);
+        });
+      }
+      setAiHint("");
+    } finally {
+      setRegenBusy(false);
+    }
+  };
 
   // One-tap staging presets — premium-brand looks (the product itself stays intact).
   const EDIT_PRESETS = [
@@ -935,6 +980,33 @@ function AddProductTab({ locale, seed = null }: { locale: Locale; seed?: Product
             <p className="text-xs text-violet-600">✨ {L("جاري توليد الاسم والوصف من صورة المهمة…", "Drafting title & description from the task photo…")}</p>
           ) : null}
           <p className="text-xs text-emerald-700">{L("✓ جاهز — راجع وعدّل ثم أضِف. الكود والباركود يتولّدان تلقائيًا.", "✓ Ready — review, edit, then add. SKU & barcode auto-generate.")}</p>
+
+          {/* Fix/steer the AI draft with a note — corrects a wrong color/type or
+              asks for options, then regenerates the title/description/options. */}
+          {imageUrl ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-2.5">
+              <p className="mb-1 text-xs font-semibold text-amber-800">✨ {L("صحّح التوليد بملاحظة", "Fix the draft with a note")}</p>
+              <textarea
+                dir="rtl"
+                className="input min-h-14 w-full text-sm"
+                value={aiHint}
+                onChange={(e) => setAiHint(e.target.value)}
+                placeholder={L("مثال: «هذا كفر جوال لونه وردي»، أو «فيه خيارات ألوان: أحمر، أزرق»", "e.g. \"this is a pink phone case\", or \"has color options: red, blue\"")}
+              />
+              <div className="mt-1.5 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void regenerate()}
+                  disabled={regenBusy || !aiHint.trim()}
+                  className="btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
+                >
+                  {regenBusy ? "…" : L("✨ أعد التوليد بالملاحظة", "✨ Regenerate with note")}
+                </button>
+                <span className="text-[11px] text-muted">{L("تعدّل العنوان والوصف والفئة، وتولّد الخيارات إذا ذكرتها.", "Updates title/description/category, and creates options if you mention them.")}</span>
+              </div>
+            </div>
+          ) : null}
+
           <Field label={L("الاسم (عربي)", "Name (AR)")} value={draft.name_ar} onChange={(v) => setD("name_ar", v)} dir="rtl" />
           <Field label={L("الاسم (إنجليزي)", "Name (EN)")} value={draft.name_en} onChange={(v) => setD("name_en", v)} dir="ltr" />
           <Field label={L("الوصف (عربي)", "Description (AR)")} value={draft.description_ar} onChange={(v) => setD("description_ar", v)} dir="rtl" area />
