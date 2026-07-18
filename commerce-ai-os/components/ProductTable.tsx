@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import BarcodeScanner from "@/components/BarcodeScanner";
 import { CATEGORIES } from "@/lib/constants";
@@ -141,6 +141,11 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   const L = (ar: string, e: string) => (en ? e : ar);
   const router = useRouter();
   const [q, setQ] = useState("");
+  // Filtering thousands of products on every keystroke blocks the main thread
+  // (Speed Insights flagged ~276ms INP). Defer the query used for the heavy
+  // filter so the input itself stays instant; the list catches up in an
+  // interruptible render.
+  const dq = useDeferredValue(q);
   const [scanning, setScanning] = useState(false);
   const [cat, setCat] = useState("");
   const [appr, setAppr] = useState("");
@@ -186,7 +191,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
     });
 
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
+    const needle = dq.trim().toLowerCase();
     return products.filter((p) => {
       const matchesQ =
         !needle ||
@@ -223,7 +228,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         : true);
       return !removed.has(p.id) && matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
     });
-  }, [products, q, cat, appr, stk, plat, grp, removed, simpleMode, apprOv, statOv, stockOv, imgOv]);
+  }, [products, dq, cat, appr, stk, plat, grp, removed, simpleMode, apprOv, statOv, stockOv, imgOv]);
 
   const anyFilter = !!(q || cat || appr || stk || plat || grp);
   const clearFilters = () => { setQ(""); setCat(""); setAppr(""); setStk(""); setPlat(""); setGrp(""); };
