@@ -402,7 +402,7 @@ function openSettings(){
 
     <div style="border-top:1px solid var(--line);margin:16px 0 10px"></div>
     <h3 style="font-size:14px">الحساب</h3>
-    <div class="hint" style="margin-bottom:10px">مسجّل الدخول: <b>${esc(currentUserEmail||'—')}</b></div>
+    <div class="hint" style="margin-bottom:10px">مسجّل الدخول: <b>${esc((currentUserEmail||'—').replace('@shift.local',''))}</b></div>
     <div class="field"><label>تغيير كلمة المرور</label><input id="s-pw" type="password" placeholder="كلمة مرور جديدة (6 أحرف فأكثر)"></div>
     <button class="btn block ghost" onclick="doChangePassword()">تحديث كلمة المرور</button>
     <button class="btn block danger" style="margin-top:8px" onclick="doLogout()">تسجيل الخروج</button>
@@ -460,10 +460,12 @@ function pullAndRender(){ Cloud.pull().then(()=>{ document.getElementById('hSub'
 /* -------------------- الدخول والتشغيل -------------------- */
 function showLogin(){ document.getElementById('login').classList.add('open'); }
 function hideLogin(){ document.getElementById('login').classList.remove('open'); }
+const USER_DOMAIN='@shift.local';   // اسم المستخدم بلا @ يُكمَّل بهذا النطاق
 async function doLogin(){
-  const email=val('lg-email').trim(), pw=val('lg-pass');
+  let email=val('lg-email').trim(); const pw=val('lg-pass');
   const err=document.getElementById('lg-err'); err.textContent='';
-  if(!email||!pw){ err.textContent='أدخل البريد وكلمة المرور'; return; }
+  if(!email||!pw){ err.textContent='أدخل اسم المستخدم وكلمة المرور'; return; }
+  if(!email.includes('@')) email=email.toLowerCase()+USER_DOMAIN;
   const btn=document.getElementById('lg-btn'); btn.disabled=true; btn.textContent='جارٍ الدخول…';
   const { error }=await Cloud.signIn(email, pw);
   btn.disabled=false; btn.textContent='دخول';
