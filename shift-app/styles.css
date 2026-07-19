@@ -41,6 +41,17 @@ button{cursor:pointer;border:none;background:none}
 
 /* Screens */
 main{padding:14px;max-width:900px;margin:0 auto}
+
+/* تحسين الشكل على الكمبيوتر: توسيط المحتوى وشريطي الرأس والتنقّل ضمن عرض مريح */
+@media (min-width:1040px){
+  body{padding-bottom:84px}
+  main{max-width:1000px;padding:20px 16px}
+  .app-header{padding-inline:calc((100% - 1000px)/2)}
+  .nav{padding-inline:calc((100% - 1000px)/2)}
+  .nav button{max-width:200px;margin:0 auto}
+  .stats{grid-template-columns:repeat(4,1fr)}
+  .login-card{box-shadow:0 20px 60px rgba(0,0,0,.25)}
+}
 .screen{display:none;animation:fade .18s ease}
 .screen.active{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
