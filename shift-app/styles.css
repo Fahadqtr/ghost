@@ -120,6 +120,8 @@ table.sched .daycell.jump{outline:3px solid var(--gold);outline-offset:-3px;anim
 .d-ليل{background:var(--indigo-l);color:#3730a3}
 .d-راحة{background:#fff;color:var(--rest)}
 .d-leave{background:var(--red-l);color:#991b1b;font-size:10px}
+/* إجازة قيد الانتظار: باهتة ومخطّطة الحدود */
+.daycell.pending{background:repeating-linear-gradient(45deg,#fff5f6,#fff5f6 4px,#fde8ec 4px,#fde8ec 8px);color:#b45; border:1px dashed #eaa}
 .d-empty{background:#fafafa;color:#cbd5e1}
 .daycell.edited::after{content:"";position:absolute;top:2px;left:2px;width:6px;height:6px;border-radius:50%;background:var(--teal)}
 .daycell{position:relative}
