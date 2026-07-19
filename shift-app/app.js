@@ -353,8 +353,8 @@ function editLeave(id){
     <div class="field"><label>نوع الإجازة</label>
       <div class="pick">${s.leaveTypes.map(t=>`<button data-t="${t}" class="${(l?l.type:s.leaveTypes[0])===t?'on':''}" onclick="pickType(this)">${t}</button>`).join('')}</div></div>
     <div class="two">
-      <div class="field"><label>من تاريخ</label><input id="l-from" type="date" value="${l?l.from:s.scheduleStart}" oninput="updLeaveHint()"></div>
-      <div class="field"><label>إلى تاريخ</label><input id="l-to" type="date" value="${l?l.to:s.scheduleStart}" oninput="updLeaveHint()"></div>
+      <div class="field"><label>من تاريخ</label><input id="l-from" type="date" value="${l?l.from:toISO(today())}" oninput="updLeaveHint()"></div>
+      <div class="field"><label>إلى تاريخ</label><input id="l-to" type="date" value="${l?l.to:toISO(today())}" oninput="updLeaveHint()"></div>
     </div>
     <div class="field"><label>الحالة</label>
       <div class="pick">${s.statuses.map(t=>`<button data-t="${t}" class="${(l?l.status:'معتمد')===t?'on':''}" onclick="pickStatus(this)">${t}</button>`).join('')}</div></div>
