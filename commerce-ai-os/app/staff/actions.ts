@@ -849,7 +849,8 @@ export async function staffCreatePhotoTask(input: {
 }
 
 export type AddVariantInput = {
-  name: string;                   // e.g. "أحمر" / "Large"
+  name: string;                   // Arabic/primary option name, e.g. "أحمر"
+  name_en?: string;               // English option name, e.g. "Red"
   price?: string | number;        // empty = product price applies
   stock?: string | number;
 };
@@ -873,7 +874,7 @@ export type CreatedProduct = {
   description_en: string; description_ar: string;
   keywords_en: string; keywords_ar: string;
   main_category: string; price: number | null; stock: number; image_url: string;
-  variants: { name: string; barcode: string; price: number | null; stock: number }[];
+  variants: { name: string; name_en: string; barcode: string; price: number | null; stock: number }[];
 };
 
 export async function staffAddProduct(input: AddProductInput): Promise<{ product: CreatedProduct } | { error: string }> {
@@ -896,10 +897,11 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
   const varInputs = (input.variants ?? [])
     .map((v) => ({
       name: String(v?.name || "").trim(),
+      name_en: String(v?.name_en || "").trim(),
       price: v?.price === "" || v?.price == null ? null : Number(v.price),
       stock: Math.max(0, Math.floor(Number(v?.stock) || 0)),
     }))
-    .filter((v) => v.name);
+    .filter((v) => v.name || v.name_en);
   if (varInputs.some((v) => v.price != null && (Number.isNaN(v.price) || v.price < 0))) {
     return { error: "سعر أحد الخيارات غير صحيح." };
   }
@@ -958,12 +960,13 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
     const vBarcode = await genUniqueBarcode(admin);
     const vErr = (await admin.from("product_variants").insert({
       parent_product_id: id,
-      variant_name: v.name,
+      variant_name: v.name || v.name_en,
+      variant_name_en: v.name_en || null,
       barcode: vBarcode,
       price: v.price,
       stock_quantity: v.stock,
     })).error;
-    if (!vErr) createdVariants.push({ name: v.name, barcode: vBarcode, price: v.price, stock: v.stock });
+    if (!vErr) createdVariants.push({ name: v.name || v.name_en, name_en: v.name_en, barcode: vBarcode, price: v.price, stock: v.stock });
   }
   if (varInputs.length && createdVariants.length < varInputs.length) {
     console.error("[staffAddProduct] some variants failed to save", { want: varInputs.length, got: createdVariants.length });

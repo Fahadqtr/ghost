@@ -17,7 +17,7 @@ export interface CopyProduct {
 }
 
 export interface CopyVariant {
-  variant_name?: string | null; sku?: string | null; barcode?: string | null;
+  variant_name?: string | null; variant_name_en?: string | null; sku?: string | null; barcode?: string | null;
   color?: string | null; size?: string | null; price?: number | string | null;
 }
 
@@ -59,12 +59,12 @@ export function buildProductCopyText(p: CopyProduct, variants: CopyVariant[] = [
   if (has(p.keywords_ar)) push("Keywords (AR)", p.keywords_ar);
   if (has(p.notes)) { lines.push(""); push("ملاحظات / Notes", p.notes); }
 
-  const vs = (variants ?? []).filter((v) => has(v.variant_name) || has(v.sku) || has(v.barcode));
+  const vs = (variants ?? []).filter((v) => has(v.variant_name) || has(v.variant_name_en) || has(v.sku) || has(v.barcode));
   if (vs.length) {
     lines.push("", `الخيارات / Options (${vs.length}):`);
     for (const v of vs) {
       const bits = [
-        has(v.variant_name) && s(v.variant_name),
+        [has(v.variant_name) && s(v.variant_name), has(v.variant_name_en) && s(v.variant_name_en)].filter(Boolean).join(" / "),
         has(v.sku) && `SKU ${s(v.sku)}`,
         has(v.barcode) && `باركود ${s(v.barcode)}`,
         has(v.color) && `لون ${s(v.color)}`,

@@ -75,9 +75,10 @@ export default function CatalogTaskDetails({ payload, productId, manager = false
   // whole set folds into «نسخ الكل».
   const variants = (Array.isArray(snap.variants) ? (snap.variants as Record<string, unknown>[]) : [])
     .map((v) => ({
-      title: s(v.variant_name),
+      title: s(v.variant_name) || s(v.variant_name_en),
       cells: [
-        { label: "الخيار", value: s(v.variant_name), dir: "rtl" as const },
+        { label: "الخيار (عربي)", value: s(v.variant_name), dir: "rtl" as const },
+        { label: "الخيار (إنجليزي)", value: s(v.variant_name_en), dir: "ltr" as const },
         { label: "SKU", value: s(v.sku), dir: "ltr" as const },
         { label: "الباركود", value: s(v.barcode), dir: "ltr" as const },
         { label: "اللون", value: s(v.color) },

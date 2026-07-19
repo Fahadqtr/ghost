@@ -59,6 +59,7 @@ export default async function EditProductPage({
       (v: any): VariantInput => ({
         id: v.id,
         variant_name: s(v.variant_name),
+        variant_name_en: s(v.variant_name_en),
         sku: s(v.sku),
         barcode: s(v.barcode),
         color: s(v.color),

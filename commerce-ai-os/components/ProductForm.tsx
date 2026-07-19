@@ -18,6 +18,7 @@ import { prepareImage, dataUrlToFile } from "@/lib/imagePrep";
 
 const EMPTY_VARIANT: VariantInput = {
   variant_name: "",
+  variant_name_en: "",
   sku: "",
   barcode: "",
   color: "",
@@ -243,9 +244,9 @@ export default function ProductForm({
     setForm((f) => {
       // Options: adopt the generated variants when the seller asked for them
       // and the form has no real variants yet.
-      const hasRealVariant = f.variants.some((v) => v.variant_name.trim() || v.color.trim() || v.size.trim());
+      const hasRealVariant = f.variants.some((v) => v.variant_name.trim() || v.variant_name_en.trim() || v.color.trim() || v.size.trim());
       const variants = (d.variants?.length && !hasRealVariant)
-        ? d.variants.map((v) => ({ ...EMPTY_VARIANT, variant_name: v.variant_name, color: v.color, size: v.size }))
+        ? d.variants.map((v) => ({ ...EMPTY_VARIANT, variant_name: v.variant_name, variant_name_en: v.variant_name_en, color: v.color, size: v.size }))
         : f.variants;
       return {
         ...f,
@@ -530,8 +531,9 @@ export default function ProductForm({
         ) : (
           <div className="space-y-2">
             {form.variants.map((v, i) => (
-              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-7">
-                <input className="input" placeholder="Variant name" value={v.variant_name} onChange={(e) => setVariant(i, "variant_name", e.target.value)} />
+              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-8">
+                <input className="input" dir="rtl" placeholder="اسم الخيار (عربي)" value={v.variant_name} onChange={(e) => setVariant(i, "variant_name", e.target.value)} />
+                <input className="input" placeholder="Variant name (EN)" value={v.variant_name_en} onChange={(e) => setVariant(i, "variant_name_en", e.target.value)} />
                 <input className="input" placeholder="SKU" value={v.sku} onChange={(e) => setVariant(i, "sku", e.target.value)} />
                 <input className="input" placeholder="Barcode" data-vbc={i} value={v.barcode} onChange={(e) => setVariant(i, "barcode", e.target.value)} onKeyDown={(e) => onBarcodeEnter(e, i + 1)} />
                 <input className="input" placeholder="Color" value={v.color} onChange={(e) => setVariant(i, "color", e.target.value)} />
