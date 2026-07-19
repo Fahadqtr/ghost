@@ -32,6 +32,15 @@ jobs:
         with:
           enablement: true
 
+      - name: كسر التخزين المؤقت (إضافة رقم إصدار لكل ملف)
+        # يضيف ?v=<رقم الإصدار> لروابط الملفات المحلية في index.html،
+        # فيجلب المتصفح دائماً أحدث نسخة عند كل نشر دون مسح يدوي للكاش.
+        run: |
+          VER="${GITHUB_SHA::8}"
+          sed -i -E "s@(href=\"styles\.css)\"@\1?v=${VER}\"@; s@(src=\"(seed|config|cloud|app)\.js)\"@\1?v=${VER}\"@g" shift-app/index.html
+          echo "نسخة الكاش: ${VER}"
+          grep -E "styles\.css|app\.js" shift-app/index.html || true
+
       - name: رفع محتوى التطبيق
         uses: actions/upload-pages-artifact@v3
         with:
