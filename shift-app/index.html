@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="الورديات">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="styles.css">
+<title>إدارة الورديات — العمليات الجمركية</title>
+</head>
+<body>
+
+<header class="app-header">
+  <div>
+    <h1 id="hTitle">إدارة الورديات</h1>
+    <div class="sub" id="hSub">قسم العمليات الجمركية</div>
+  </div>
+  <button class="hbtn" id="btnSettings" title="الإعدادات">⚙️</button>
+</header>
+
+<main>
+  <!-- لوحة المعلومات -->
+  <section class="screen active" id="scr-dash"></section>
+  <!-- الموظفون -->
+  <section class="screen" id="scr-emps"></section>
+  <!-- جدول الورديات -->
+  <section class="screen" id="scr-sched"></section>
+  <!-- الإجازات -->
+  <section class="screen" id="scr-leaves"></section>
+  <!-- كشف يومي -->
+  <section class="screen" id="scr-daily"></section>
+</main>
+
+<button class="fab" id="fab" title="إضافة">＋</button>
+
+<nav class="nav">
+  <button data-nav="dash" class="active"><span class="ic">🏠</span>الرئيسية</button>
+  <button data-nav="emps"><span class="ic">👥</span>الموظفون</button>
+  <button data-nav="sched"><span class="ic">🗓️</span>الجدول</button>
+  <button data-nav="leaves"><span class="ic">🏖️</span>الإجازات</button>
+  <button data-nav="daily"><span class="ic">📋</span>كشف يومي</button>
+</nav>
+
+<div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+<div class="toast" id="toast"></div>
+
+<script src="seed.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
