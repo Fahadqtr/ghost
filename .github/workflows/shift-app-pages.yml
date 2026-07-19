@@ -1,0 +1,42 @@
+name: نشر تطبيق الورديات على GitHub Pages
+
+# ينشر محتوى مجلد shift-app/ كموقع GitHub Pages.
+# الرابط الناتج: https://<user>.github.io/ghost/
+on:
+  push:
+    branches: [master]
+    paths: ['shift-app/**', '.github/workflows/shift-app-pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: سحب المستودع
+        uses: actions/checkout@v4
+
+      - name: تهيئة Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: رفع محتوى التطبيق
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: shift-app
+
+      - name: النشر
+        id: deployment
+        uses: actions/deploy-pages@v4
