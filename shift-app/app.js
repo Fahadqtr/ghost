@@ -12,7 +12,9 @@ const AR_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو
 /* الحالة الابتدائية (تُملأ من السحابة بعد الدخول) */
 let state = { employees: [], leaves: [], overrides: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)) };
 let currentUserEmail = '';
+let currentEmpNo = '';  // الرقم الوظيفي للموظف المسجّل (لدور العرض)
 let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
+let highlightDate = null; // تاريخ يُبرَز في الجدول (زر أقرب وردية)
 
 /* -------------------- أدوات التاريخ -------------------- */
 function toISO(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -194,16 +196,18 @@ function ensureMonth(){
 function renderSched(){
   ensureMonth();
   const el=document.getElementById('scr-sched'), {y,m}=schedMonth, days=new Date(y,m+1,0).getDate();
+  const todayISO=toISO(today());
   let head='';
   for(let d=1;d<=days;d++){
-    const wd=new Date(y,m,d).getDay(), wknd=(wd===5||wd===6);
-    head+=`<th class="${wknd?'wknd':''} ${wd===5?'fridaycol':''}"><div>${AR_DAYS[wd].slice(0,3)}</div><div style="font-weight:800">${d}</div></th>`;
+    const iso=toISO(new Date(y,m,d)), wd=new Date(y,m,d).getDay(), wknd=(wd===5||wd===6);
+    head+=`<th class="${wknd?'wknd':''} ${wd===5?'fridaycol':''} ${iso===todayISO?'today':''}"><div>${AR_DAYS[wd].slice(0,3)}</div><div style="font-weight:800">${d}</div></th>`;
   }
   const rows=state.employees.map(e=>{
     let tds='';
     for(let d=1;d<=days;d++){
       const iso=toISO(new Date(y,m,d)), cv=cellValue(e,iso);
-      tds+=`<td class="daycell ${classFor(cv.value)} ${cv.source==='manual'?'edited':''}" onclick="editCell('${e.id}','${iso}')">${labelShort(cv.value)}</td>`;
+      const marks=(cv.source==='manual'?'edited ':'')+(iso===todayISO?'today ':'')+(iso===highlightDate?'jump':'');
+      tds+=`<td class="daycell ${classFor(cv.value)} ${marks}" onclick="editCell('${e.id}','${iso}')">${labelShort(cv.value)}</td>`;
     }
     return `<tr><td class="namecol">${e.name}<div class="meta" style="font-weight:400;font-size:11px">${e.no}</div></td>${tds}</tr>`;
   }).join('');
@@ -220,6 +224,10 @@ function renderSched(){
       <div class="m">${AR_MONTHS[m]} ${y}</div>
       <button class="btn ghost sm" onclick="moveMonth(-1)">السابق ›</button>
     </div>
+    <div class="sched-actions">
+      <button class="btn sm" onclick="goToday()">اليوم</button>
+      <button class="btn gold sm" onclick="jumpNearestShift()">⦿ أقرب وردية</button>
+    </div>
     <div class="tablewrap">
       <table class="sched">
         <thead><tr><th class="namecol">الاسم</th>${head}</tr></thead>
@@ -228,7 +236,7 @@ function renderSched(){
       </table>
     </div>
     <div class="leg">
-      <span><i style="background:var(--teal-l)"></i>صباح</span>
+      <span><i style="background:var(--morning-l)"></i>صباح</span>
       <span><i style="background:var(--amber-l)"></i>عصر</span>
       <span><i style="background:var(--indigo-l)"></i>ليل</span>
       <span><i style="background:#fff;border:1px solid var(--line)"></i>راحة</span>
@@ -236,6 +244,11 @@ function renderSched(){
       <span><i style="background:var(--teal);border-radius:50%"></i>تعديل يدوي</span>
     </div>
     ${isViewer?'<p class="hint">عرض فقط — جدول الورديات.</p>':'<p class="hint">اضغط على أي خانة لتغيير الوردية يدوياً. التعديل اليدوي يتجاوز الدورة والإجازات.</p>'}`;
+  // مرّر أفقياً إلى الوردية المُبرَزة أو إلى اليوم
+  setTimeout(()=>{
+    const t=el.querySelector('.daycell.jump') || el.querySelector('td.today') || el.querySelector('th.today');
+    if(t) t.scrollIntoView({inline:'center', block:'nearest'});
+  },0);
 }
 function labelShort(v){
   if(v==='') return '';
@@ -243,7 +256,21 @@ function labelShort(v){
   const map={'سنوية':'سنوية','عارض':'عارض','دورية':'دورية','مرضية':'مرضية','مرافق مريض':'مرافق','غياب':'غياب'};
   return map[v]||v;
 }
-function moveMonth(dir){ let {y,m}=schedMonth; m+=dir; if(m>11){m=0;y++;} if(m<0){m=11;y--;} schedMonth={y,m}; renderSched(); }
+function moveMonth(dir){ let {y,m}=schedMonth; m+=dir; if(m>11){m=0;y++;} if(m<0){m=11;y--;} schedMonth={y,m}; highlightDate=null; renderSched(); }
+function viewerEmp(){ return currentEmpNo ? state.employees.find(e=>e.no===currentEmpNo) : null; }
+function goToday(){ const t=today(); schedMonth={y:t.getFullYear(),m:t.getMonth()}; highlightDate=null; renderSched(); }
+// أقرب وردية قادمة: للموظف ورديته هو، وللمشرف أقرب يوم عمل للفريق
+function jumpNearestShift(){
+  const ve=viewerEmp(), start=today(); let target=null, shift='';
+  for(let i=0;i<3660;i++){
+    const iso=toISO(addDays(start,i));
+    if(ve){ const v=cellValue(ve,iso).value; if(WORK_SHIFTS.includes(v)){ target=iso; shift=v; break; } }
+    else { const st=dayStats(iso); if(st.working>0){ target=iso; shift=st.counts.صباح?'صباح':(st.counts.عصر?'عصر':'ليل'); break; } }
+  }
+  if(!target){ toast('لا توجد ورديات قادمة'); return; }
+  const d=parseISO(target); schedMonth={y:d.getFullYear(),m:d.getMonth()}; highlightDate=target; renderSched();
+  toast('أقرب وردية: '+fmtDate(target)+(shift?' — '+shift:''));
+}
 function editCell(empId, iso){
   if(isViewer) return;   // الموظف لا يعدّل
   const e=empById(empId); if(!e) return;
@@ -505,6 +532,7 @@ async function startApp(){
     const u=data&&data.user;
     isViewer = !(u && u.app_metadata && u.app_metadata.role==='admin');
     currentUserEmail = u ? ((u.user_metadata&&u.user_metadata.full_name) || (u.email||'').replace(USER_DOMAIN,'')) : '';
+    currentEmpNo = (u && u.user_metadata && u.user_metadata.emp_no) || '';
   }catch(e){ isViewer=false; }
   applyRole();
   const hadCache=loadCache();

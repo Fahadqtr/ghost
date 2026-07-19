@@ -1,5 +1,8 @@
 :root{
-  --teal:#0f766e; --teal-d:#0b5e57; --teal-l:#ccfbf1;
+  /* الهوية العنّابية — الجمارك القطرية */
+  --teal:#8A1538; --teal-d:#6d102c; --teal-l:#f6e1e8;
+  --gold:#b8912e; --gold-l:#f7edd4;
+  --morning:#0e7490; --morning-l:#cffafe; --morning-d:#155e75;
   --amber:#f59e0b; --amber-l:#fef3c7;
   --indigo:#6366f1; --indigo-l:#e0e7ff;
   --rest:#94a3b8; --rest-l:#f1f5f9;
@@ -28,6 +31,10 @@ button{cursor:pointer;border:none;background:none}
   display:flex;align-items:center;justify-content:space-between;gap:10px;
   box-shadow:var(--shadow);
 }
+.app-header .brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand-logo{width:40px;height:40px;border-radius:10px;background:#fff;display:grid;place-items:center;flex:none;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.brand-logo img{width:100%;height:100%;object-fit:contain}
+.brand-logo .crest{color:var(--teal);font-size:20px;font-weight:900}
 .app-header h1{font-size:17px;margin:0;font-weight:700}
 .app-header .sub{font-size:12px;opacity:.85;margin-top:2px}
 .hbtn{color:#fff;font-size:20px;padding:6px 8px;border-radius:10px;background:rgba(255,255,255,.14)}
@@ -61,7 +68,7 @@ h2.title{font-size:16px;margin:0 0 12px}
 
 /* Badges */
 .badge{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap}
-.b-صباح{background:var(--teal-l);color:var(--teal-d)}
+.b-صباح{background:var(--morning-l);color:var(--morning-d)}
 .b-عصر{background:var(--amber-l);color:#92400e}
 .b-ليل{background:var(--indigo-l);color:#3730a3}
 .b-راحة{background:var(--rest-l);color:#475569}
@@ -92,6 +99,10 @@ h2.title{font-size:16px;margin:0 0 12px}
 /* Schedule table */
 .sched-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
 .sched-bar .m{font-weight:800;font-size:15px;text-align:center;flex:1}
+.sched-actions{display:flex;gap:8px;margin-bottom:10px}
+.sched-actions .btn{flex:1}
+.btn.gold{background:var(--gold);color:#3a2c00}
+.btn.gold:active{background:#a07f26}
 .tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:var(--radius);background:var(--card)}
 table.sched{border-collapse:collapse;width:max-content;min-width:100%;font-size:12px}
 table.sched th,table.sched td{border:1px solid var(--line);padding:0;text-align:center;white-space:nowrap}
@@ -100,7 +111,11 @@ table.sched .namecol{position:sticky;right:0;background:var(--card);z-index:3;te
 table.sched thead .namecol{z-index:4;background:#f1f5f9}
 table.sched .daycell{width:44px;height:40px;cursor:pointer;font-weight:700}
 table.sched .daycell:active{outline:2px solid var(--teal)}
-.d-صباح{background:var(--teal-l);color:var(--teal-d)}
+table.sched th.today{background:var(--teal);color:#fff}
+table.sched td.today{box-shadow:inset 0 0 0 2px var(--teal)}
+table.sched .daycell.jump{outline:3px solid var(--gold);outline-offset:-3px;animation:pulse 1s ease 2}
+@keyframes pulse{0%,100%{outline-color:var(--gold)}50%{outline-color:var(--teal)}}
+.d-صباح{background:var(--morning-l);color:var(--morning-d)}
 .d-عصر{background:var(--amber-l);color:#92400e}
 .d-ليل{background:var(--indigo-l);color:#3730a3}
 .d-راحة{background:#fff;color:var(--rest)}

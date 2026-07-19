@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
-<meta name="theme-color" content="#0f766e">
+<meta name="theme-color" content="#8A1538">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="الورديات">
@@ -16,9 +16,15 @@
 <body>
 
 <header class="app-header">
-  <div>
-    <h1 id="hTitle">إدارة الورديات</h1>
-    <div class="sub" id="hSub">قسم العمليات الجمركية</div>
+  <div class="brand">
+    <div class="brand-logo">
+      <img src="icons/customs-logo.png" alt="شعار الجمارك" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
+      <span class="crest" style="display:none">⚖</span>
+    </div>
+    <div>
+      <h1 id="hTitle">إدارة الورديات</h1>
+      <div class="sub" id="hSub">قسم العمليات الجمركية</div>
+    </div>
   </div>
   <div style="display:flex;align-items:center;gap:8px">
     <span class="sync" id="syncBadge"></span>
