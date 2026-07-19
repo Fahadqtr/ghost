@@ -213,11 +213,17 @@ function renderSched(){
   }).join('');
   const shiftRows=WORK_SHIFTS.map(sh=>{
     let cells='';
-    for(let d=1;d<=days;d++){ cells+=`<td>${dayStats(toISO(new Date(y,m,d))).counts[sh]}</td>`; }
-    return `<tr><td class="namecol">${sh}</td>${cells}</tr>`;
+    for(let d=1;d<=days;d++){
+      const c=dayStats(toISO(new Date(y,m,d))).counts[sh];
+      cells+=`<td class="fcount ${c>0?'f-'+sh:'fzero'} ${toISO(new Date(y,m,d))===todayISO?'today':''}">${c>0?c:'·'}</td>`;
+    }
+    return `<tr class="shift-row"><td class="namecol"><span class="fdot dot-${sh}"></span>${sh}</td>${cells}</tr>`;
   }).join('');
   let totalCells='';
-  for(let d=1;d<=days;d++){ const w=dayStats(toISO(new Date(y,m,d))).working; totalCells+=`<td class="${w<state.settings.minWorkers?'low':''}">${w}</td>`; }
+  for(let d=1;d<=days;d++){
+    const iso=toISO(new Date(y,m,d)), w=dayStats(iso).working, low=w<state.settings.minWorkers;
+    totalCells+=`<td class="${low?'low':(w>0?'ok':'')} ${iso===todayISO?'today':''}">${w}</td>`;
+  }
   el.innerHTML=`
     <div class="sched-bar">
       <button class="btn ghost sm" onclick="moveMonth(1)">‹ التالي</button>
@@ -232,7 +238,7 @@ function renderSched(){
       <table class="sched">
         <thead><tr><th class="namecol">الاسم</th>${head}</tr></thead>
         <tbody>${rows||''}</tbody>
-        <tfoot>${shiftRows}<tr><td class="namecol">إجمالي العاملين</td>${totalCells}</tr></tfoot>
+        <tfoot>${shiftRows}<tr class="total-row"><td class="namecol">إجمالي العاملين</td>${totalCells}</tr></tfoot>
       </table>
     </div>
     <div class="leg">
@@ -540,6 +546,10 @@ async function startApp(){
   if(!isViewer) await Cloud.flush();
   try{ await Cloud.pull(); }
   catch(e){ if(!hadCache) toast('تعذّر تحميل البيانات — تحقق من الاتصال'); }
+  // تعافٍ ذاتي: إن جاءت القراءات فارغة (رمز جلسة منتهٍ) جدّد الجلسة وأعد المحاولة مرّة
+  if(state.employees.length===0){
+    try{ await Cloud.sb.auth.refreshSession(); await Cloud.pull(); }catch(e){}
+  }
   document.getElementById('hSub').textContent=state.settings.department;
   Cloud.subscribe(onRemoteChange);
   updateSyncBadge();

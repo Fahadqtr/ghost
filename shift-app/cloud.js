@@ -47,8 +47,18 @@ const Cloud = {
     this.sb = window.supabase.createClient(SHIFT_CONFIG.url, SHIFT_CONFIG.key, {
       auth: { persistSession: true, autoRefreshToken: true }
     });
+    // عند تجديد الرمز أو الدخول: أعد التحميل بالرمز الصالح
+    this.sb.auth.onAuthStateChange((event)=>{
+      if(event==='TOKEN_REFRESHED' || event==='SIGNED_IN'){
+        if(typeof pullAndRender==='function') pullAndRender();
+      }
+    });
     window.addEventListener('online',  ()=>{ this.online=true;  updateSyncBadge(); this.flush().then(()=>pullAndRender()); });
     window.addEventListener('offline', ()=>{ this.online=false; updateSyncBadge(); });
+    // جدّد الجلسة عند عودة التطبيق للواجهة (قد يكون الرمز انتهى)
+    document.addEventListener('visibilitychange', ()=>{
+      if(document.visibilityState==='visible') this.sb.auth.refreshSession().catch(()=>{});
+    });
   },
 
   async getSession(){ const { data } = await this.sb.auth.getSession(); return data.session; },
