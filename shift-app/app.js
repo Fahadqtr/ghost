@@ -430,7 +430,7 @@ function dailyRows(iso){
     if(v===''||v===REST) return;
     if(WORK_SHIFTS.includes(v)){
       const h=shiftHours(v);
-      rows.push({ name:e.name, no:e.no, in:h.start, inSig:'', out:h.end, outSig:'', note:v });
+      rows.push({ name:e.name, no:e.no, in:h.start, inSig:'', out:h.end, outSig:'', note:'' });
     }else{
       rows.push({ name:e.name, no:e.no, in:'،،،،', inSig:'،،،،', out:'،،،،', outSig:'،،،،', note:'إجازة '+v });
     }
