@@ -37,14 +37,17 @@ function rotationShift(emp, iso){
   const cycle=s.workDays+s.restDays, pos=((diff%cycle)+cycle)%cycle;
   return pos<s.workDays ? shiftPattern()[pos] : REST;
 }
-function approvedLeave(empId, iso){
-  return state.leaves.find(l=>l.empId===empId && l.status==='معتمد' && iso>=l.from && iso<=l.to);
+// أي إجازة (معتمدة أو قيد الانتظار) تغطّي اليوم — تُفضَّل المعتمدة، وتُستبعد المرفوضة
+function leaveOn(empId, iso){
+  const covering=state.leaves.filter(l=>l.empId===empId && l.status!=='مرفوض' && iso>=l.from && iso<=l.to);
+  if(!covering.length) return null;
+  return covering.find(l=>l.status==='معتمد') || covering[0];
 }
 function cellValue(emp, iso){
   const ov=state.overrides[emp.id];
   if(ov && ov[iso]) return { value: ov[iso], source:'manual' };
-  const lv=approvedLeave(emp.id, iso);
-  if(lv) return { value: lv.type, source:'leave' };
+  const lv=leaveOn(emp.id, iso);
+  if(lv) return { value: lv.type, source:'leave', pending: lv.status!=='معتمد' };
   return { value: rotationShift(emp,iso), source:'auto' };
 }
 function isLeaveValue(v){ return state.settings.leaveTypes.includes(v); }
@@ -206,7 +209,7 @@ function renderSched(){
     let tds='';
     for(let d=1;d<=days;d++){
       const iso=toISO(new Date(y,m,d)), cv=cellValue(e,iso);
-      const marks=(cv.source==='manual'?'edited ':'')+(iso===todayISO?'today ':'')+(iso===highlightDate?'jump':'');
+      const marks=(cv.source==='manual'?'edited ':'')+(cv.pending?'pending ':'')+(iso===todayISO?'today ':'')+(iso===highlightDate?'jump':'');
       tds+=`<td class="daycell ${classFor(cv.value)} ${marks}" onclick="editCell('${e.id}','${iso}')">${labelShort(cv.value)}</td>`;
     }
     return `<tr><td class="namecol">${e.name}<div class="meta" style="font-weight:400;font-size:11px">${e.no}</div></td>${tds}</tr>`;
@@ -254,7 +257,8 @@ function renderSched(){
       <span><i style="background:var(--amber-l)"></i>عصر</span>
       <span><i style="background:var(--indigo-l)"></i>ليل</span>
       <span><i style="background:#fff;border:1px solid var(--line)"></i>راحة</span>
-      <span><i style="background:var(--red-l)"></i>إجازة</span>
+      <span><i style="background:var(--red-l)"></i>إجازة معتمدة</span>
+      <span><i style="background:repeating-linear-gradient(45deg,#fff5f6,#fff5f6 2px,#fde8ec 2px,#fde8ec 4px);border:1px dashed #eaa"></i>قيد الانتظار</span>
       <span><i style="background:var(--teal);border-radius:50%"></i>تعديل يدوي</span>
     </div>
     ${isViewer?'<p class="hint">عرض فقط — جدول الورديات.</p>':'<p class="hint">اضغط على أي خانة لتغيير الوردية يدوياً. التعديل اليدوي يتجاوز الدورة والإجازات.</p>'}`;
