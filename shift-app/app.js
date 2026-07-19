@@ -588,7 +588,16 @@ document.getElementById('btnSettings').addEventListener('click', openSettings);
 
 boot();
 
-/* service worker للعمل دون إنترنت */
+/* service worker للعمل دون إنترنت + إعادة تحميل تلقائية عند وجود نسخة جديدة */
 if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+  let swRefreshing=false;
+  navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+    if(swRefreshing) return; swRefreshing=true; location.reload();
+  });
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js').then((reg)=>{
+      // افحص وجود تحديث عند كل فتح
+      reg.update().catch(()=>{});
+    }).catch(()=>{});
+  });
 }
