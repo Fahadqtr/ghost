@@ -466,6 +466,7 @@ function dailyTableHtml(iso){
 function dailyDocHtml(iso){
   const s=state.settings;
   return `<div style="text-align:center;margin-bottom:10px;font-family:'Segoe UI',Tahoma,sans-serif">
+      ${s.logo?`<div style="margin-bottom:6px"><img src="${s.logo}" style="max-width:100%;max-height:90px"></div>`:''}
       <div style="font-weight:bold;font-size:16px">${s.department}</div>
       <div style="font-size:14px">كشف الحضور والانصراف اليومي</div>
       <div style="font-size:13px;margin-top:4px"><b>${AR_DAYS[parseISO(iso).getDay()]}</b> — ${fmtDate(iso)}</div>
@@ -508,6 +509,18 @@ function wTc(text, o){ o=o||{};
   const run=(o.vm==='continue')?'':`<w:r><w:rPr><w:rtl/>${o.bold?'<w:b/>':''}<w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlesc(text)}</w:t></w:r>`;
   return `<w:tc>${tcPr}<w:p><w:pPr><w:bidi/><w:jc w:val="${o.align||'center'}"/></w:pPr>${run}</w:p></w:tc>`;
 }
+// يفكّ شعار الإعدادات (data URL) إلى بايتات ويحسب أبعاده بوحدة EMU لملف Word
+function logoInfo(){
+  const durl=state.settings.logo; if(!durl || typeof durl!=='string') return null;
+  const c=durl.indexOf(','); if(c<0) return null;
+  let bin; try{ bin=atob(durl.slice(c+1)); }catch(e){ return null; }
+  const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  const EMU=9525, maxCx=5486400; // 96dpi، وأقصى عرض ~6 بوصة
+  let cx=Math.round((state.settings.logoW||300)*EMU), cy=Math.round((state.settings.logoH||100)*EMU);
+  if(cx>maxCx){ cy=Math.round(cy*maxCx/cx); cx=maxCx; }
+  if(cx<1||cy<1) return null;
+  return { bytes, cx, cy };
+}
 function dailyDocx(iso){
   const s=state.settings, rows=dailyRows(iso);
   const hd='e9edf2';
@@ -526,24 +539,34 @@ function dailyDocx(iso){
   const p=(t,sz,bold)=>`<w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rtl/>${bold?'<w:b/>':''}<w:sz w:val="${sz}"/></w:rPr><w:t xml:space="preserve">${xmlesc(t)}</w:t></w:r></w:p>`;
   const sign=`<w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rtl/><w:sz w:val="22"/></w:rPr><w:t xml:space="preserve">توقيع المشرف: ____________________</w:t></w:r></w:p>`;
   const clsText=(state.settings.docHeader||'C1 Internal - تصنيف الوثيقة: للإستخدام الداخلي');
+  // شعار اختياري: يُضمَّن في رأس الصفحة إن رفعه المستخدم
+  const logo=logoInfo();
+  const logoPara = logo ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="60"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${logo.cx}" cy="${logo.cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="logo"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="logo"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${logo.cx}" cy="${logo.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>` : '';
   const hdr=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:bidi/><w:spacing w:after="0"/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rtl/><w:color w:val="000000"/><w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlesc(clsText)}</w:t></w:r></w:p></w:hdr>`;
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">${logoPara}<w:p><w:pPr><w:bidi/><w:spacing w:after="0"/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rtl/><w:color w:val="000000"/><w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlesc(clsText)}</w:t></w:r></w:p></w:hdr>`;
   const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>`
     +p(s.department,30,1)+p('كشف الحضور والانصراف اليومي',26,0)+p(AR_DAYS[parseISO(iso).getDay()]+' — '+fmtDate(iso),24,1)
     +'<w:p/>'+tbl+'<w:p/>'+sign
     +'<w:sectPr><w:headerReference w:type="default" r:id="rId101"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708"/><w:bidi/></w:sectPr></w:body></w:document>';
-  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>';
+  const imgDefaults = logo ? '<Default Extension="png" ContentType="image/png"/>' : '';
+  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'+imgDefaults+'<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>';
   const rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
   const drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId101" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>';
+  const hrels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/></Relationships>';
   const te=new TextEncoder();
-  return zipStore([
+  const files=[
     {name:'[Content_Types].xml', data:te.encode(ct)},
     {name:'_rels/.rels', data:te.encode(rels)},
     {name:'word/_rels/document.xml.rels', data:te.encode(drels)},
     {name:'word/header1.xml', data:te.encode(hdr)},
     {name:'word/document.xml', data:te.encode(doc)}
-  ]);
+  ];
+  if(logo){
+    files.push({name:'word/_rels/header1.xml.rels', data:te.encode(hrels)});
+    files.push({name:'word/media/logo.png', data:logo.bytes});
+  }
+  return zipStore(files);
 }
 function downloadDailyWord(){
   const iso=dailyDate||toISO(today());
@@ -601,6 +624,14 @@ function openSettings(){
     <button class="btn block ghost" style="margin-top:8px" onclick="refreshFromCloud()">↻ تحديث من السحابة</button>
 
     <div style="border-top:1px solid var(--line);margin:16px 0 10px"></div>
+    <h3 style="font-size:14px">شعار الكشف (يظهر أعلى ملف Word)</h3>
+    ${s.logo?`<div style="text-align:center;margin-bottom:8px"><img src="${s.logo}" style="max-width:100%;max-height:80px;border:1px solid var(--line);border-radius:8px;padding:4px;background:#fff"></div>`:'<p class="hint" style="margin-bottom:8px">لا يوجد شعار — ارفع صورة الشعار الرسمي (QATAR CUSTOMS).</p>'}
+    <input id="s-logo" type="file" accept="image/*" style="display:none" onchange="pickLogo(this)">
+    <button class="btn block ghost" onclick="document.getElementById('s-logo').click()">📷 ${s.logo?'تغيير الشعار':'رفع شعار'}</button>
+    ${s.logo?'<button class="btn block danger" style="margin-top:8px" onclick="removeLogo()">حذف الشعار</button>':''}
+    <p class="hint" style="margin-top:6px">يُخزّن في حسابك السحابي الخاص ويتزامن بين أجهزتك — لا يُحفظ في المستودع العام.</p>
+
+    <div style="border-top:1px solid var(--line);margin:16px 0 10px"></div>
     <h3 style="font-size:14px">الحساب</h3>
     <div class="hint" style="margin-bottom:10px">مسجّل الدخول: <b>${esc((currentUserEmail||'—').replace('@shift.local',''))}</b></div>
     <div class="field"><label>تغيير كلمة المرور</label><input id="s-pw" type="password" placeholder="كلمة مرور جديدة (6 أحرف فأكثر)"></div>
@@ -621,6 +652,30 @@ function saveSettings(){
   s.startShift=sheet._start||s.startShift;
   s.scheduleStart=val('s-sched')||s.scheduleStart;
   Data.saveSettings(); closeSheet(); document.getElementById('hSub').textContent=s.department; renderScreen(current); toast('تم حفظ الإعدادات');
+}
+/* رفع شعار الكشف: يُصغَّر ويُخزَّن كـ data URL في الإعدادات (سحابة المستخدم الخاصة) */
+function pickLogo(input){
+  const f=input.files&&input.files[0]; if(!f){ return; }
+  const rd=new FileReader();
+  rd.onload=()=>{
+    const img=new Image();
+    img.onload=()=>{
+      const maxW=700, scale=Math.min(1, maxW/img.naturalWidth);
+      const w=Math.max(1,Math.round(img.naturalWidth*scale)), h=Math.max(1,Math.round(img.naturalHeight*scale));
+      const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      state.settings.logo=cv.toDataURL('image/png');
+      state.settings.logoW=w; state.settings.logoH=h;
+      Data.saveSettings(); toast('تم حفظ الشعار'); openSettings();
+    };
+    img.onerror=()=>toast('تعذّر قراءة الصورة');
+    img.src=rd.result;
+  };
+  rd.readAsDataURL(f);
+}
+function removeLogo(){
+  delete state.settings.logo; delete state.settings.logoW; delete state.settings.logoH;
+  Data.saveSettings(); toast('تم حذف الشعار'); openSettings();
 }
 async function refreshFromCloud(){
   closeSheet(); toast('جارٍ التحديث…');
