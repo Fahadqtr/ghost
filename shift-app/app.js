@@ -497,6 +497,8 @@ async function doLogin(){
 }
 async function startApp(){
   hideLogin();
+  // تحديث الجلسة حتى يحمل الرمز أحدث الصلاحيات (app_metadata.role)
+  try{ await Cloud.sb.auth.refreshSession(); }catch(e){}
   // تحديد الدور من الحساب
   try{
     const { data }=await Cloud.sb.auth.getUser();
