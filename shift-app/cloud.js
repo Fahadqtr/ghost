@@ -18,6 +18,18 @@ function rowToLeave(r){ return { id:r.id, empId:r.emp_id, type:r.type, from:r.fr
 function saveCache(){
   try{ localStorage.setItem(CACHE_KEY, JSON.stringify(state)); }catch(e){}
 }
+
+// دمج إعدادات السحابة مع الافتراضية — لضمان وجود القوائم الأساسية دائماً
+function mergeSettings(db){
+  const def = JSON.parse(JSON.stringify(window.SEED.settings));
+  if(!db || typeof db !== 'object') return def;
+  const out = Object.assign({}, def, db);
+  if(!Array.isArray(out.leaveTypes) || !out.leaveTypes.length) out.leaveTypes = def.leaveTypes;
+  if(!Array.isArray(out.statuses)   || !out.statuses.length)   out.statuses   = def.statuses;
+  if(!out.shiftTimes || !Object.keys(out.shiftTimes).length)   out.shiftTimes = def.shiftTimes;
+  if(!Array.isArray(out.holidays)) out.holidays = def.holidays;
+  return out;
+}
 function loadCache(){
   try{
     const raw = localStorage.getItem(CACHE_KEY);
@@ -59,7 +71,7 @@ const Cloud = {
     state.leaves    = (l.data||[]).map(rowToLeave);
     state.overrides = {};
     (o.data||[]).forEach(r=>{ (state.overrides[r.emp_id] = state.overrides[r.emp_id] || {})[r.day] = r.value; });
-    state.settings  = (s.data && s.data.data) ? s.data.data : JSON.parse(JSON.stringify(window.SEED.settings));
+    state.settings  = mergeSettings(s.data && s.data.data);
     saveCache();
   },
 
