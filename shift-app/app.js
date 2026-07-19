@@ -486,13 +486,14 @@ function renderDaily(){
   const el=document.getElementById('scr-daily'), iso=dailyDate;
   el.innerHTML=`
     <h2 class="title no-print">كشف الحضور اليومي</h2>
-    <div class="card no-print"><div class="field" style="margin:0"><label>اختر التاريخ</label>
-      <input type="date" value="${iso}" onchange="dailyDate=this.value;renderDaily()"></div></div>
+    <div class="card no-print"><div class="field" style="margin:0 0 10px"><label>اختر التاريخ</label>
+      <input type="date" value="${iso}" onchange="dailyDate=this.value;renderDaily()"></div>
+      <button class="btn block" onclick="downloadDailyWord()">⬇️ تحميل ملف Word (وارد)</button>
+      <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / حفظ PDF</button>
+    </div>
     <div class="card daily-doc">
       <div class="tablewrap" style="border:none">${dailyDocHtml(iso)}</div>
-    </div>
-    <button class="btn block no-print" onclick="downloadDailyWord()">⬇️ تحميل ملف Word (وارد)</button>
-    <button class="btn block ghost no-print" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / حفظ PDF</button>`;
+    </div>`;
 }
 
 /* -------------------- الإعدادات -------------------- */
