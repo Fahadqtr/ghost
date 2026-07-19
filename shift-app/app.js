@@ -422,15 +422,18 @@ function shiftHours(sh){
   const parts=(state.settings.shiftTimes[sh]||'').split('←');
   return { start:(parts[0]||'').trim(), end:(parts[1]||'').trim() };
 }
-// صفوف الكشف: العاملون (بأوقات ورديتهم) والمُجازون (نوع الإجازة)؛ تُستبعد الراحة/غير المباشرين
+// صفوف الكشف: يظهر كل الموظفين مثل النموذج الأصلي.
+// العامل: أوقات ورديته (التوقيع فارغ). المُجاز: ،،،، ونوع الإجازة بالملاحظات.
+// الراحة: ،،،، وكلمة «راحة» بالملاحظات. الملاحظات تُملأ لغير العاملين فقط.
 function dailyRows(iso){
   const rows=[];
   state.employees.forEach(e=>{
     const v=cellValue(e,iso).value;
-    if(v===''||v===REST) return;
     if(WORK_SHIFTS.includes(v)){
       const h=shiftHours(v);
       rows.push({ name:e.name, no:e.no, in:h.start, inSig:'', out:h.end, outSig:'', note:'' });
+    }else if(v===REST || v===''){
+      rows.push({ name:e.name, no:e.no, in:'،،،،', inSig:'،،،،', out:'،،،،', outSig:'،،،،', note:'راحة' });
     }else{
       rows.push({ name:e.name, no:e.no, in:'،،،،', inSig:'،،،،', out:'،،،،', outSig:'،،،،', note:'إجازة '+v });
     }
