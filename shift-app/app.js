@@ -588,16 +588,7 @@ document.getElementById('btnSettings').addEventListener('click', openSettings);
 
 boot();
 
-/* service worker للعمل دون إنترنت + إعادة تحميل تلقائية عند وجود نسخة جديدة */
-if('serviceWorker' in navigator){
-  let swRefreshing=false;
-  navigator.serviceWorker.addEventListener('controllerchange', ()=>{
-    if(swRefreshing) return; swRefreshing=true; location.reload();
-  });
-  window.addEventListener('load',()=>{
-    navigator.serviceWorker.register('sw.js').then((reg)=>{
-      // افحص وجود تحديث عند كل فتح
-      reg.update().catch(()=>{});
-    }).catch(()=>{});
-  });
-}
+/* لم نعد نستخدم Service Worker (التطبيق يحتاج الإنترنت للمزامنة).
+   المتصفح يُحدّث أي تسجيل قديم إلى نسخة sw.js ذاتية الإزالة التي تنظّف نفسها والكاش.
+   لا نُعيد التسجيل هنا حتى لا يحدث تكرار تحميل. ننظّف الكاش فقط كإجراء إضافي. */
+if(window.caches){ caches.keys().then((ks)=>ks.forEach((k)=>caches.delete(k))).catch(()=>{}); }
