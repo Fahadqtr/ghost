@@ -480,7 +480,10 @@ async function startApp(){
   try{ await Cloud.pull(); }
   catch(e){ if(!hadCache) toast('تعذّر تحميل البيانات — تحقق من الاتصال'); }
   document.getElementById('hSub').textContent=state.settings.department;
-  Cloud.currentEmail().then(em=>{ currentUserEmail=em; });
+  Cloud.sb.auth.getUser().then(({data})=>{
+    const u=data&&data.user;
+    currentUserEmail = u ? ((u.user_metadata&&u.user_metadata.full_name) || (u.email||'').replace(USER_DOMAIN,'')) : '';
+  });
   Cloud.subscribe(onRemoteChange);
   updateSyncBadge();
   nav('dash');
