@@ -470,16 +470,82 @@ function dailyDocHtml(iso){
     ${dailyTableHtml(iso)}
     <div style="margin-top:18px;font-size:13px;font-family:'Segoe UI',Tahoma,sans-serif">توقيع المشرف: ____________________</div>`;
 }
+/* ---- مولّد ملف .docx حقيقي (يفتح على الجوال والكمبيوتر) ---- */
+function xmlesc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+const _CRC=(()=>{ let t=[]; for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=c&1?0xEDB88320^(c>>>1):c>>>1; t[n]=c>>>0; } return t; })();
+function crc32(u8){ let c=0xFFFFFFFF; for(let i=0;i<u8.length;i++) c=_CRC[(c^u8[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+function zipStore(files){ // files:[{name,data(Uint8Array)}] بدون ضغط
+  const te=new TextEncoder(), chunks=[]; let offset=0; const cen=[];
+  const b=(n,len)=>{ const a=new Uint8Array(len); let v=n>>>0; for(let i=0;i<len;i++){ a[i]=v&255; v=Math.floor(v/256); } return a; };
+  const push=a=>{ chunks.push(a); offset+=a.length; };
+  files.forEach(f=>{
+    const name=te.encode(f.name), data=f.data, crc=crc32(data), start=offset;
+    push(b(0x04034b50,4)); push(b(20,2)); push(b(0,2)); push(b(0,2)); push(b(0,2)); push(b(0x21,2));
+    push(b(crc,4)); push(b(data.length,4)); push(b(data.length,4)); push(b(name.length,2)); push(b(0,2));
+    push(name); push(data);
+    cen.push({name,crc,size:data.length,start});
+  });
+  const cdStart=offset;
+  cen.forEach(c=>{
+    push(b(0x02014b50,4)); push(b(20,2)); push(b(20,2)); push(b(0,2)); push(b(0,2)); push(b(0,2)); push(b(0x21,2));
+    push(b(c.crc,4)); push(b(c.size,4)); push(b(c.size,4)); push(b(c.name.length,2)); push(b(0,2)); push(b(0,2));
+    push(b(0,2)); push(b(0,2)); push(b(0,4)); push(b(c.start,4)); push(c.name);
+  });
+  const cdSize=offset-cdStart, cdOffset=cdStart;
+  push(b(0x06054b50,4)); push(b(0,2)); push(b(0,2)); push(b(cen.length,2)); push(b(cen.length,2));
+  push(b(cdSize,4)); push(b(cdOffset,4)); push(b(0,2));
+  let total=chunks.reduce((s,a)=>s+a.length,0), out=new Uint8Array(total), p=0;
+  chunks.forEach(a=>{ out.set(a,p); p+=a.length; });
+  return out;
+}
+function wTc(text, o){ o=o||{};
+  const tcPr='<w:tcPr>'+(o.w?`<w:tcW w:w="${o.w}" w:type="dxa"/>`:'')
+    +(o.span?`<w:gridSpan w:val="${o.span}"/>`:'')+(o.vm?`<w:vMerge w:val="${o.vm}"/>`:'')
+    +(o.shd?`<w:shd w:val="clear" w:color="auto" w:fill="${o.shd}"/>`:'')+'<w:vAlign w:val="center"/></w:tcPr>';
+  const run=(o.vm==='continue')?'':`<w:r><w:rPr><w:rtl/>${o.bold?'<w:b/>':''}<w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlesc(text)}</w:t></w:r>`;
+  return `<w:tc>${tcPr}<w:p><w:pPr><w:bidi/><w:jc w:val="${o.align||'center'}"/></w:pPr>${run}</w:p></w:tc>`;
+}
+function dailyDocx(iso){
+  const s=state.settings, rows=dailyRows(iso);
+  const hd='e9edf2';
+  const grid=[600,2400,1300,1150,900,1150,900,1500].map(w=>`<w:gridCol w:w="${w}"/>`).join('');
+  const head1='<w:tr>'+wTc('م',{vm:'restart',shd:hd,bold:1})+wTc('الاسم',{vm:'restart',shd:hd,bold:1})
+    +wTc('الرقم الوظيفي',{vm:'restart',shd:hd,bold:1})+wTc('الحضور',{span:2,shd:hd,bold:1})
+    +wTc('الانصراف',{span:2,shd:hd,bold:1})+wTc('ملاحظات',{vm:'restart',shd:hd,bold:1})+'</w:tr>';
+  const head2='<w:tr>'+wTc('',{vm:'continue'})+wTc('',{vm:'continue'})+wTc('',{vm:'continue'})
+    +wTc('الساعة',{shd:hd,bold:1})+wTc('التوقيع',{shd:hd,bold:1})+wTc('الساعة',{shd:hd,bold:1})+wTc('التوقيع',{shd:hd,bold:1})
+    +wTc('',{vm:'continue'})+'</w:tr>';
+  const body=rows.length? rows.map((r,i)=>'<w:tr>'+wTc(String(i+1))+wTc(r.name,{align:'right',bold:1})+wTc(r.no)
+    +wTc(r.in)+wTc(r.inSig)+wTc(r.out)+wTc(r.outSig)+wTc(r.note)+'</w:tr>').join('')
+    : '<w:tr>'+wTc('لا يوجد موظفون على رأس العمل',{span:8})+'</w:tr>';
+  const border='<w:tblBorders>'+['top','left','bottom','right','insideH','insideV'].map(x=>`<w:${x} w:val="single" w:sz="6" w:space="0" w:color="333333"/>`).join('')+'</w:tblBorders>';
+  const tbl=`<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:bidiVisual/>${border}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${head1}${head2}${body}</w:tbl>`;
+  const p=(t,sz,bold)=>`<w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rtl/>${bold?'<w:b/>':''}<w:sz w:val="${sz}"/></w:rPr><w:t xml:space="preserve">${xmlesc(t)}</w:t></w:r></w:p>`;
+  const sign=`<w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rtl/><w:sz w:val="22"/></w:rPr><w:t xml:space="preserve">توقيع المشرف: ____________________</w:t></w:r></w:p>`;
+  const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`
+    +p(s.department,30,1)+p('كشف الحضور والانصراف اليومي',26,0)+p(AR_DAYS[parseISO(iso).getDay()]+' — '+fmtDate(iso),24,1)
+    +'<w:p/>'+tbl+'<w:p/>'+sign
+    +'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/><w:bidi/></w:sectPr></w:body></w:document>';
+  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+  const rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+  const te=new TextEncoder();
+  return zipStore([
+    {name:'[Content_Types].xml', data:te.encode(ct)},
+    {name:'_rels/.rels', data:te.encode(rels)},
+    {name:'word/document.xml', data:te.encode(doc)}
+  ]);
+}
 function downloadDailyWord(){
   const iso=dailyDate||toISO(today());
-  const html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">'
-    +'<head><meta charset="utf-8"><style>@page{size:A4;margin:1.5cm} body{direction:rtl;font-family:"Segoe UI",Tahoma,sans-serif}</style></head>'
-    +'<body dir="rtl">'+dailyDocHtml(iso)+'</body></html>';
-  const blob=new Blob(['﻿'+html], {type:'application/msword'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download='كشف_يومي_'+iso+'.doc'; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
-  toast('تم تنزيل ملف Word');
+  try{
+    const data=dailyDocx(iso);
+    const blob=new Blob([data], {type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='كشف_يومي_'+iso+'.docx'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
+    toast('تم تنزيل ملف Word');
+  }catch(e){ toast('تعذّر إنشاء الملف'); }
 }
 function renderDaily(){
   if(!dailyDate) dailyDate=toISO(today());
