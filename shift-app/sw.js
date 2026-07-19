@@ -1,7 +1,7 @@
 // Service worker — offline support for the shift-management PWA.
-// شبكة أولاً لملفات التطبيق (HTML/CSS/JS) حتى تظهر أحدث نسخة دائماً عند وجود إنترنت،
-// والكاش احتياطي للعمل دون إنترنت. الأيقونات والمكتبة الخارجية: كاش أولاً.
-const CACHE = 'shift-app-v3';
+// شبكة أولاً مع تجاوز كاش المتصفح (cache:'reload') لملفات التطبيق حتى تظهر أحدث نسخة فوراً،
+// والكاش احتياطي فقط للعمل دون إنترنت. الأيقونات والمكتبة الخارجية: كاش أولاً.
+const CACHE = 'shift-app-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -37,9 +37,9 @@ self.addEventListener('fetch', (e) => {
   const isShell = e.request.mode === 'navigate' || /\.(css|js|webmanifest)$/.test(url.pathname);
 
   if (isShell) {
-    // شبكة أولاً: أحدث نسخة، مع تحديث الكاش، والرجوع للكاش دون إنترنت
+    // اجلب من الخادم متجاوزاً كاش المتصفح؛ حدّث الكاش؛ وارجع للكاش دون إنترنت فقط
     e.respondWith(
-      fetch(e.request)
+      fetch(url.href, { cache: 'reload', credentials: 'same-origin' })
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
@@ -48,7 +48,6 @@ self.addEventListener('fetch', (e) => {
         .catch(() => caches.match(e.request).then((hit) => hit || caches.match('./index.html')))
     );
   } else {
-    // كاش أولاً للأصول الثابتة (أيقونات/مكتبة)
     e.respondWith(
       caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
         const copy = res.clone();
