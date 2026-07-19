@@ -1,59 +1,16 @@
-// Service worker — offline support for the shift-management PWA.
-// شبكة أولاً مع تجاوز كاش المتصفح (cache:'reload') لملفات التطبيق حتى تظهر أحدث نسخة فوراً،
-// والكاش احتياطي فقط للعمل دون إنترنت. الأيقونات والمكتبة الخارجية: كاش أولاً.
-const CACHE = 'shift-app-v4';
-const ASSETS = [
-  './',
-  './index.html',
-  './styles.css',
-  './seed.js',
-  './config.js',
-  './cloud.js',
-  './app.js',
-  './manifest.webmanifest',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'
-];
-
-self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE)
-      .then((c) => Promise.all(ASSETS.map((u) => c.add(u).catch(() => {}))))
-      .then(() => self.skipWaiting())
-  );
-});
+// Service worker ذاتي الإزالة:
+// يُلغي نفسه ويمسح كل الكاش القديم ثم يعيد تحميل التبويبات،
+// فتزول طبقة التخزين العنيدة وتظهر التحديثات دائماً دون مسح يدوي.
+self.addEventListener('install', () => self.skipWaiting());
 
 self.addEventListener('activate', (e) => {
-  e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
-});
-
-self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET') return;
-  const url = new URL(e.request.url);
-  const isShell = e.request.mode === 'navigate' || /\.(css|js|webmanifest)$/.test(url.pathname);
-
-  if (isShell) {
-    // اجلب من الخادم متجاوزاً كاش المتصفح؛ حدّث الكاش؛ وارجع للكاش دون إنترنت فقط
-    e.respondWith(
-      fetch(url.href, { cache: 'reload', credentials: 'same-origin' })
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-          return res;
-        })
-        .catch(() => caches.match(e.request).then((hit) => hit || caches.match('./index.html')))
-    );
-  } else {
-    e.respondWith(
-      caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-        return res;
-      }))
-    );
-  }
+  e.waitUntil((async () => {
+    try { await self.registration.unregister(); } catch (err) {}
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch (err) {}
+    const clients = await self.clients.matchAll({ type: 'window' });
+    clients.forEach((c) => { try { c.navigate(c.url); } catch (err) {} });
+  })());
 });
