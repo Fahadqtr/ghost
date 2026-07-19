@@ -125,8 +125,24 @@ table.sched .daycell.jump{outline:3px solid var(--gold);outline-offset:-3px;anim
 .daycell{position:relative}
 .fridaycol{background:#fff7ed}
 .wknd th{color:var(--red)}
-table.sched tfoot td{background:#f8fafc;font-weight:700;color:var(--muted);padding:5px 4px}
-table.sched tfoot td.low{background:var(--red-l);color:var(--red)}
+table.sched tfoot td{background:#f8fafc;font-weight:700;color:var(--muted);padding:6px 4px;font-variant-numeric:tabular-nums}
+/* ملخّص الورديات: كل وردية بلونها، والأصفار باهتة */
+table.sched tfoot .shift-row .namecol{background:#fff;font-weight:700}
+table.sched td.fcount{font-weight:800;font-size:12px}
+table.sched td.f-صباح{background:var(--morning-l);color:var(--morning-d)}
+table.sched td.f-عصر{background:var(--amber-l);color:#92400e}
+table.sched td.f-ليل{background:var(--indigo-l);color:#3730a3}
+table.sched td.fzero{color:#cbd5e1;background:#fcfcfd;font-weight:400}
+.fdot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-inline-end:6px;vertical-align:middle}
+.fdot.dot-صباح{background:var(--morning)}
+.fdot.dot-عصر{background:var(--amber)}
+.fdot.dot-ليل{background:var(--indigo)}
+/* صف الإجمالي مميّز */
+table.sched tfoot .total-row td{background:#fbeef3;font-weight:800;color:var(--teal-d);border-top:2px solid var(--teal)}
+table.sched tfoot .total-row .namecol{background:var(--teal);color:#fff;border-top:2px solid var(--teal)}
+table.sched tfoot .total-row td.ok{color:var(--teal-d)}
+table.sched tfoot .total-row td.low{background:var(--red-l);color:var(--red)}
+table.sched tfoot td.today{box-shadow:inset 0 0 0 2px var(--teal)}
 .leg{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px}
 .leg span{display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
 .leg i{width:12px;height:12px;border-radius:3px;display:inline-block}
