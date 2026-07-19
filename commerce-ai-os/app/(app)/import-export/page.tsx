@@ -4,6 +4,7 @@ import { getT } from "@/lib/i18n-server";
 import ImageHealth from "@/components/ImageHealth";
 import ExcelImport from "@/components/ExcelImport";
 import ImageUpload from "@/components/ImageUpload";
+import CatalogImageBySku from "@/components/CatalogImageBySku";
 import ExportButtons from "@/components/ExportButtons";
 import TalabatExport, { type CatCount } from "@/components/TalabatExport";
 
@@ -106,6 +107,7 @@ export default async function ImportExportPage() {
       <ImageHealth />
       <ExcelImport locale={locale} />
       <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} locale={locale} />
+      <CatalogImageBySku locale={locale} />
       <TalabatExport categories={categories} newCount={newCount ?? 0} locale={locale} />
       <ExportButtons imageCount={imageCount ?? 0} locale={locale} />
     </div>

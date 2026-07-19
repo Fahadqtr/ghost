@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
 import { editProductImageCore } from "@/lib/products/imageEdit";
-import { storePrimaryProductImage } from "@/lib/products/imageStore";
+import { storePrimaryProductImage, storePrimaryProductImageBySku } from "@/lib/products/imageStore";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 const EXT: Record<string, string> = {
@@ -38,6 +38,26 @@ export async function uploadProductImage(formData: FormData) {
   const r = await storePrimaryProductImage(admin, productId, file as File);
   if ("error" in r) return r;
   revalidate(productId);
+  return r;
+}
+
+// Bulk "apply images by SKU": one file per call, matched to the catalog product
+// whose SKU equals the (client-derived) filename. The client loops the folder
+// and streams progress. Returns { ok, url, productId, name } on success, or
+// { error, code } — code "no_product" means that SKU isn't in the catalog.
+export async function applyCatalogImageBySku(formData: FormData) {
+  if (!(await isSignedIn())) return { error: "Not signed in.", code: "auth" as const };
+
+  const file = formData.get("file");
+  const sku = String(formData.get("sku") || "");
+  if (!(file instanceof File) || file.size === 0) return { error: "No file selected." };
+
+  let admin;
+  try { admin = createAdminClient(); }
+  catch (e) { return { error: e instanceof Error ? e.message : "Service role unavailable." }; }
+
+  const r = await storePrimaryProductImageBySku(admin, sku, file, "كتالوج: رفع بالـ SKU");
+  if ("ok" in r) revalidate(r.productId);
   return r;
 }
 
