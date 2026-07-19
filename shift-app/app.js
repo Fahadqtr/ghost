@@ -417,36 +417,82 @@ function rejectLeave(id){ setLeaveStatus(id,'مرفوض'); }
 
 /* -------------------- كشف يومي -------------------- */
 let dailyDate=null;
+// ساعات بداية/نهاية الوردية من الإعدادات
+function shiftHours(sh){
+  const parts=(state.settings.shiftTimes[sh]||'').split('←');
+  return { start:(parts[0]||'').trim(), end:(parts[1]||'').trim() };
+}
+// صفوف الكشف: العاملون (بأوقات ورديتهم) والمُجازون (نوع الإجازة)؛ تُستبعد الراحة/غير المباشرين
+function dailyRows(iso){
+  const rows=[];
+  state.employees.forEach(e=>{
+    const v=cellValue(e,iso).value;
+    if(v===''||v===REST) return;
+    if(WORK_SHIFTS.includes(v)){
+      const h=shiftHours(v);
+      rows.push({ name:e.name, no:e.no, in:h.start, inSig:'', out:h.end, outSig:'', note:v });
+    }else{
+      rows.push({ name:e.name, no:e.no, in:'،،،،', inSig:'،،،،', out:'،،،،', outSig:'،،،،', note:'إجازة '+v });
+    }
+  });
+  return rows;
+}
+// جدول الكشف بأنماط مضمّنة (يصلح للعرض والطباعة وملف Word)
+function dailyTableHtml(iso){
+  const rows=dailyRows(iso);
+  const c='border:1px solid #333;padding:5px 4px;text-align:center;font-size:12px';
+  const cn='border:1px solid #333;padding:5px 8px;text-align:right;font-size:12px;white-space:nowrap;font-weight:bold';
+  const th='border:1px solid #333;padding:6px 4px;text-align:center;font-size:12px;background:#e9edf2;font-weight:bold';
+  const body=rows.length? rows.map((r,i)=>`<tr>
+      <td style="${c}">${i+1}</td><td style="${cn}">${r.name}</td><td style="${c}">${r.no}</td>
+      <td style="${c}">${r.in}</td><td style="${c}">${r.inSig}</td>
+      <td style="${c}">${r.out}</td><td style="${c}">${r.outSig}</td>
+      <td style="${c}">${r.note}</td></tr>`).join('')
+    : `<tr><td style="${c}" colspan="8">لا يوجد موظفون على رأس العمل</td></tr>`;
+  return `<table style="width:100%;border-collapse:collapse" dir="rtl">
+    <thead>
+      <tr>
+        <th style="${th}" rowspan="2">م</th><th style="${th}" rowspan="2">الاسم</th><th style="${th}" rowspan="2">الرقم الوظيفي</th>
+        <th style="${th}" colspan="2">الحضور</th><th style="${th}" colspan="2">الانصراف</th><th style="${th}" rowspan="2">ملاحظات</th>
+      </tr>
+      <tr><th style="${th}">الساعة</th><th style="${th}">التوقيع</th><th style="${th}">الساعة</th><th style="${th}">التوقيع</th></tr>
+    </thead>
+    <tbody>${body}</tbody>
+  </table>`;
+}
+function dailyDocHtml(iso){
+  const s=state.settings;
+  return `<div style="text-align:center;margin-bottom:10px;font-family:'Segoe UI',Tahoma,sans-serif">
+      <div style="font-weight:bold;font-size:16px">${s.department}</div>
+      <div style="font-size:14px">كشف الحضور والانصراف اليومي</div>
+      <div style="font-size:13px;margin-top:4px"><b>${AR_DAYS[parseISO(iso).getDay()]}</b> — ${fmtDate(iso)}</div>
+    </div>
+    ${dailyTableHtml(iso)}
+    <div style="margin-top:18px;font-size:13px;font-family:'Segoe UI',Tahoma,sans-serif">توقيع المشرف: ____________________</div>`;
+}
+function downloadDailyWord(){
+  const iso=dailyDate||toISO(today());
+  const html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">'
+    +'<head><meta charset="utf-8"><style>@page{size:A4;margin:1.5cm} body{direction:rtl;font-family:"Segoe UI",Tahoma,sans-serif}</style></head>'
+    +'<body dir="rtl">'+dailyDocHtml(iso)+'</body></html>';
+  const blob=new Blob(['﻿'+html], {type:'application/msword'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='كشف_يومي_'+iso+'.doc'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast('تم تنزيل ملف Word');
+}
 function renderDaily(){
   if(!dailyDate) dailyDate=toISO(today());
-  const el=document.getElementById('scr-daily'), iso=dailyDate, st=dayStats(iso);
-  const rows=state.employees.map((e,i)=>{
-    const v=cellValue(e,iso).value, cls=v===''?'':(isLeaveValue(v)?'b-leave':'b-'+(WORK_SHIFTS.includes(v)?v:'راحة'));
-    return `<div class="daily-emp"><div style="width:22px;color:var(--muted)">${i+1}</div>
-      <div class="grow"><div class="name">${e.name}</div><div class="meta">${e.no}</div></div>
-      <span class="badge ${cls}">${v||'—'}</span></div>`;
-  }).join('');
+  const el=document.getElementById('scr-daily'), iso=dailyDate;
   el.innerHTML=`
-    <h2 class="title">كشف الوردية اليومي</h2>
+    <h2 class="title no-print">كشف الحضور اليومي</h2>
     <div class="card no-print"><div class="field" style="margin:0"><label>اختر التاريخ</label>
       <input type="date" value="${iso}" onchange="dailyDate=this.value;renderDaily()"></div></div>
-    <div class="card">
-      <div style="text-align:center;border-bottom:2px solid var(--teal);padding-bottom:8px;margin-bottom:8px">
-        <div style="font-weight:800">${state.settings.department}</div>
-        <div style="font-size:13px;color:var(--muted)">كشف الوردية اليومي</div>
-        <div style="font-size:13px;margin-top:4px"><b>${AR_DAYS[parseISO(iso).getDay()]}</b> — ${fmtDate(iso)}</div>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:10px;font-size:12px">
-        <span class="badge b-صباح">صباح ${st.counts.صباح}</span>
-        <span class="badge b-عصر">عصر ${st.counts.عصر}</span>
-        <span class="badge b-ليل">ليل ${st.counts.ليل}</span>
-        <span class="badge b-راحة">راحة ${st.counts.راحة}</span>
-        <span class="badge b-leave">مُجاز ${st.onLeave}</span>
-      </div>
-      ${rows||'<div class="empty">لا يوجد موظفون</div>'}
-      <div style="margin-top:16px;font-size:13px;color:var(--muted)">توقيع المشرف: ____________________</div>
+    <div class="card daily-doc">
+      <div class="tablewrap" style="border:none">${dailyDocHtml(iso)}</div>
     </div>
-    <button class="btn block no-print" onclick="window.print()">🖨️ طباعة / حفظ PDF</button>`;
+    <button class="btn block no-print" onclick="downloadDailyWord()">⬇️ تحميل ملف Word (وارد)</button>
+    <button class="btn block ghost no-print" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / حفظ PDF</button>`;
 }
 
 /* -------------------- الإعدادات -------------------- */
