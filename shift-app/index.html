@@ -20,7 +20,10 @@
     <h1 id="hTitle">إدارة الورديات</h1>
     <div class="sub" id="hSub">قسم العمليات الجمركية</div>
   </div>
-  <button class="hbtn" id="btnSettings" title="الإعدادات">⚙️</button>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span class="sync" id="syncBadge"></span>
+    <button class="hbtn" id="btnSettings" title="الإعدادات">⚙️</button>
+  </div>
 </header>
 
 <main>
@@ -49,7 +52,26 @@
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
 
+<!-- شاشة تسجيل الدخول -->
+<div class="login" id="login">
+  <div class="login-card">
+    <div class="login-logo">🗓️</div>
+    <h2>إدارة الورديات</h2>
+    <p class="login-sub">قسم العمليات الجمركية</p>
+    <div class="field"><label>البريد الإلكتروني</label>
+      <input id="lg-email" type="email" inputmode="email" autocomplete="username" placeholder="name@example.com"></div>
+    <div class="field"><label>كلمة المرور</label>
+      <input id="lg-pass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+    <div class="hint bad" id="lg-err"></div>
+    <button class="btn block" id="lg-btn" onclick="doLogin()">دخول</button>
+    <p class="hint" style="text-align:center;margin-top:14px">البيانات مشتركة ومحمية — الدخول للمصرّح لهم فقط.</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="seed.js"></script>
+<script src="config.js"></script>
+<script src="cloud.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
