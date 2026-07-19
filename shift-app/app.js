@@ -540,6 +540,10 @@ async function startApp(){
   if(!isViewer) await Cloud.flush();
   try{ await Cloud.pull(); }
   catch(e){ if(!hadCache) toast('تعذّر تحميل البيانات — تحقق من الاتصال'); }
+  // تعافٍ ذاتي: إن جاءت القراءات فارغة (رمز جلسة منتهٍ) جدّد الجلسة وأعد المحاولة مرّة
+  if(state.employees.length===0){
+    try{ await Cloud.sb.auth.refreshSession(); await Cloud.pull(); }catch(e){}
+  }
   document.getElementById('hSub').textContent=state.settings.department;
   Cloud.subscribe(onRemoteChange);
   updateSyncBadge();
