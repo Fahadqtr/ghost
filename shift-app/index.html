@@ -52,19 +52,31 @@
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
 
-<!-- شاشة تسجيل الدخول -->
+<!-- شاشات تسجيل الدخول -->
 <div class="login" id="login">
-  <div class="login-card">
+  <!-- دخول المشرفين -->
+  <div class="login-card" id="login-admin">
     <div class="login-logo">🗓️</div>
     <h2>إدارة الورديات</h2>
-    <p class="login-sub">قسم العمليات الجمركية</p>
+    <p class="login-sub">دخول المشرفين — قسم العمليات الجمركية</p>
     <div class="field"><label>اسم المستخدم</label>
       <input id="lg-email" type="text" autocapitalize="none" autocorrect="off" autocomplete="username" placeholder="مثال: salemm"></div>
     <div class="field"><label>كلمة المرور</label>
       <input id="lg-pass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
     <div class="hint bad" id="lg-err"></div>
     <button class="btn block" id="lg-btn" onclick="doLogin()">دخول</button>
-    <p class="hint" style="text-align:center;margin-top:14px">البيانات مشتركة ومحمية — الدخول للمصرّح لهم فقط.</p>
+    <button class="linkbtn" onclick="showEmpLogin()">دخول الموظفين بالرقم الوظيفي ←</button>
+  </div>
+  <!-- دخول الموظفين (عرض فقط) -->
+  <div class="login-card" id="login-emp" style="display:none">
+    <div class="login-logo">👁️</div>
+    <h2>عرض الورديات</h2>
+    <p class="login-sub">للموظفين — الدخول بالرقم الوظيفي</p>
+    <div class="field"><label>الرقم الوظيفي</label>
+      <input id="lg-empno" type="text" inputmode="numeric" autocomplete="off" placeholder="مثال: 4756"></div>
+    <div class="hint bad" id="lg-emperr"></div>
+    <button class="btn block" id="lg-empbtn" onclick="doEmpLogin()">عرض الجدول</button>
+    <button class="linkbtn" onclick="showAdminLogin()">→ دخول المشرفين</button>
   </div>
 </div>
 

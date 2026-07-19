@@ -12,6 +12,7 @@ const AR_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو
 /* الحالة الابتدائية (تُملأ من السحابة بعد الدخول) */
 let state = { employees: [], leaves: [], overrides: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)) };
 let currentUserEmail = '';
+let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
 
 /* -------------------- أدوات التاريخ -------------------- */
 function toISO(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -234,7 +235,7 @@ function renderSched(){
       <span><i style="background:var(--red-l)"></i>إجازة</span>
       <span><i style="background:var(--teal);border-radius:50%"></i>تعديل يدوي</span>
     </div>
-    <p class="hint">اضغط على أي خانة لتغيير الوردية يدوياً. التعديل اليدوي يتجاوز الدورة والإجازات.</p>`;
+    ${isViewer?'<p class="hint">عرض فقط — جدول الورديات.</p>':'<p class="hint">اضغط على أي خانة لتغيير الوردية يدوياً. التعديل اليدوي يتجاوز الدورة والإجازات.</p>'}`;
 }
 function labelShort(v){
   if(v==='') return '';
@@ -244,6 +245,7 @@ function labelShort(v){
 }
 function moveMonth(dir){ let {y,m}=schedMonth; m+=dir; if(m>11){m=0;y++;} if(m<0){m=11;y--;} schedMonth={y,m}; renderSched(); }
 function editCell(empId, iso){
+  if(isViewer) return;   // الموظف لا يعدّل
   const e=empById(empId); if(!e) return;
   const cur=cellValue(e,iso), auto=rotationShift(e,iso), opts=[...WORK_SHIFTS, REST, ...state.settings.leaveTypes];
   openSheet(`
@@ -383,6 +385,15 @@ function renderDaily(){
 /* -------------------- الإعدادات -------------------- */
 function openSettings(){
   const s=state.settings;
+  if(isViewer){
+    openSheet(`
+      <h3>حسابي<button class="x" onclick="closeSheet()">×</button></h3>
+      <div class="hint" style="margin-bottom:12px">مسجّل الدخول: <b>${esc((currentUserEmail||'—'))}</b> — صلاحية عرض فقط</div>
+      <button class="btn block ghost" onclick="refreshFromCloud()">↻ تحديث من السحابة</button>
+      <button class="btn block danger" style="margin-top:8px" onclick="doLogout()">تسجيل الخروج</button>
+    `);
+    return;
+  }
   openSheet(`
     <h3>الإعدادات<button class="x" onclick="closeSheet()">×</button></h3>
     <div class="field"><label>اسم القسم</label><input id="s-dep" value="${esc(s.department)}"></div>
@@ -460,6 +471,18 @@ function pullAndRender(){ Cloud.pull().then(()=>{ document.getElementById('hSub'
 /* -------------------- الدخول والتشغيل -------------------- */
 function showLogin(){ document.getElementById('login').classList.add('open'); }
 function hideLogin(){ document.getElementById('login').classList.remove('open'); }
+function showEmpLogin(){ document.getElementById('login-admin').style.display='none'; document.getElementById('login-emp').style.display=''; }
+function showAdminLogin(){ document.getElementById('login-emp').style.display='none'; document.getElementById('login-admin').style.display=''; }
+async function doEmpLogin(){
+  const no=val('lg-empno').trim(); const err=document.getElementById('lg-emperr'); err.textContent='';
+  if(!no){ err.textContent='أدخل الرقم الوظيفي'; return; }
+  const btn=document.getElementById('lg-empbtn'); btn.disabled=true; btn.textContent='جارٍ الفتح…';
+  const { error }=await Cloud.signIn('e'+no+USER_DOMAIN, no);
+  btn.disabled=false; btn.textContent='عرض الجدول';
+  if(error){ err.textContent='الرقم الوظيفي غير صحيح'; return; }
+  await startApp();
+}
+function applyRole(){ document.body.classList.toggle('viewer', isViewer); }
 const USER_DOMAIN='@shift.local';   // اسم المستخدم بلا @ يُكمَّل بهذا النطاق
 async function doLogin(){
   let email=val('lg-email').trim(); const pw=val('lg-pass');
@@ -474,19 +497,23 @@ async function doLogin(){
 }
 async function startApp(){
   hideLogin();
+  // تحديد الدور من الحساب
+  try{
+    const { data }=await Cloud.sb.auth.getUser();
+    const u=data&&data.user;
+    isViewer = !(u && u.app_metadata && u.app_metadata.role==='admin');
+    currentUserEmail = u ? ((u.user_metadata&&u.user_metadata.full_name) || (u.email||'').replace(USER_DOMAIN,'')) : '';
+  }catch(e){ isViewer=false; }
+  applyRole();
   const hadCache=loadCache();
   document.getElementById('hSub').textContent=state.settings.department;
-  await Cloud.flush();
+  if(!isViewer) await Cloud.flush();
   try{ await Cloud.pull(); }
   catch(e){ if(!hadCache) toast('تعذّر تحميل البيانات — تحقق من الاتصال'); }
   document.getElementById('hSub').textContent=state.settings.department;
-  Cloud.sb.auth.getUser().then(({data})=>{
-    const u=data&&data.user;
-    currentUserEmail = u ? ((u.user_metadata&&u.user_metadata.full_name) || (u.email||'').replace(USER_DOMAIN,'')) : '';
-  });
   Cloud.subscribe(onRemoteChange);
   updateSyncBadge();
-  nav('dash');
+  nav(isViewer ? 'sched' : 'dash');
 }
 async function boot(){
   if(!window.supabase){
@@ -498,7 +525,9 @@ async function boot(){
   updateSyncBadge();
   let sess=null;
   try{ sess=await Cloud.getSession(); }catch(e){}
-  if(sess) await startApp(); else showLogin();
+  if(sess){ await startApp(); return; }
+  showLogin();
+  if(/[?&]staff\b/.test(location.search)) showEmpLogin();
 }
 
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>nav(b.dataset.nav)));
