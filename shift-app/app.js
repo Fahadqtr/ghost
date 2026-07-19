@@ -96,6 +96,7 @@ function renderDash(){
   const perEmp={}; state.employees.forEach(e=>perEmp[e.id]=0);
   state.leaves.filter(l=>l.status==='معتمد').forEach(l=>{ if(perEmp[l.empId]!=null) perEmp[l.empId]+=inclusiveDays(l.from,l.to); });
   const pending=state.leaves.filter(l=>l.status==='قيد الانتظار').length;
+  const pendingLeaves=state.leaves.filter(l=>l.status==='قيد الانتظار').sort((a,b)=>a.from<b.from?-1:1);
   el.innerHTML=`
     <div class="card" style="background:linear-gradient(135deg,var(--teal-l),#fff)">
       <div style="font-size:13px;color:var(--muted)">${AR_DAYS[today().getDay()]} — ${fmtDate(iso)}</div>
@@ -106,6 +107,20 @@ function renderDash(){
       <div class="stat ${st.onLeave>s.maxLeavesPerDay?'warn':''}"><div class="n">${st.onLeave}</div><div class="l">مُجازون اليوم • الحد ${s.maxLeavesPerDay}</div></div>
       <div class="stat"><div class="n">${state.employees.length}</div><div class="l">إجمالي الموظفين</div></div>
       <div class="stat ${pending?'warn':''}"><div class="n">${pending}</div><div class="l">طلبات قيد الانتظار</div></div>
+    </div>
+    <div class="card">
+      <h3>طلبات بانتظار الاعتماد (${pendingLeaves.length})</h3>
+      ${pendingLeaves.length? pendingLeaves.map(l=>{
+        const e=empById(l.empId);
+        return `<div class="row">
+          <div class="avatar">${initials(e?e.name:'?')}</div>
+          <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${inclusiveDays(l.from,l.to)} يوم</div></div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn sm" onclick="approveLeave('${l.id}')">✓ اعتماد</button>
+            <button class="btn sm danger" onclick="rejectLeave('${l.id}')">✗ رفض</button>
+          </div>
+        </div>`;
+      }).join('') : '<div class="empty">لا توجد طلبات معلّقة</div>'}
     </div>
     <div class="card">
       <h3>توزيع ورديات اليوم</h3>
@@ -392,6 +407,13 @@ function deleteLeave(id){
   state.leaves=state.leaves.filter(x=>x.id!==id);
   Data.delLeave(id); renderLeaves(); toast('تم الحذف');
 }
+function setLeaveStatus(id, status){
+  const l=state.leaves.find(x=>x.id===id); if(!l) return;
+  l.status=status; Data.upsertLeave(l); renderScreen(current);
+  toast(status==='معتمد'?'✓ تم اعتماد الإجازة':'تم رفض الطلب');
+}
+function approveLeave(id){ setLeaveStatus(id,'معتمد'); }
+function rejectLeave(id){ setLeaveStatus(id,'مرفوض'); }
 
 /* -------------------- كشف يومي -------------------- */
 let dailyDate=null;
