@@ -67,3 +67,31 @@ export async function storePrimaryProductImage(
     return { error: e instanceof Error ? e.message : "Unexpected upload error." };
   }
 }
+
+// Bulk-apply variant: match the target product by SKU (the catalog's image
+// filename convention), then reuse the exact same store-as-primary logic. Used
+// by the "apply images by SKU" tool, where the operator drops a folder of
+// <sku>.jpg files and each one is attached to its product automatically.
+// `code: "no_product"` lets the caller separate "no such SKU" (expected — the
+// product may not be in the catalog) from a genuine upload failure.
+export async function storePrimaryProductImageBySku(
+  admin: any,
+  sku: string,
+  file: File,
+  actor?: string,
+): Promise<{ ok: true; url: string; productId: string; name: string } | { error: string; code?: "no_product" }> {
+  const clean = String(sku || "").trim();
+  if (!clean) return { error: "Missing SKU.", code: "no_product" };
+  if (!(file instanceof File) || file.size === 0) return { error: "No file selected." };
+
+  const { data: rows, error } = await admin
+    .from("products").select("id, name_en, name_ar").eq("sku", clean).limit(2);
+  if (error) return { error: error.message };
+  if (!rows || rows.length === 0) return { error: `No catalog product with SKU "${clean}".`, code: "no_product" };
+  if (rows.length > 1) return { error: `More than one catalog product has SKU "${clean}".` };
+
+  const prod = rows[0];
+  const r = await storePrimaryProductImage(admin, prod.id, file, actor);
+  if ("error" in r) return r;
+  return { ok: true, url: r.url, productId: prod.id, name: prod.name_en || prod.name_ar || clean };
+}
