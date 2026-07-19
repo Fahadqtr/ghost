@@ -143,6 +143,11 @@ table.sched tfoot .total-row .namecol{background:var(--teal);color:#fff;border-t
 table.sched tfoot .total-row td.ok{color:var(--teal-d)}
 table.sched tfoot .total-row td.low{background:var(--red-l);color:var(--red)}
 table.sched tfoot td.today{box-shadow:inset 0 0 0 2px var(--teal)}
+/* بطاقة الملخّص المنفصلة */
+.summary-card{padding:12px;margin-top:12px}
+.summary-card h3{margin:0 0 10px;font-size:14px;color:var(--muted);font-weight:700}
+.summary-card .tablewrap{border:none}
+.summary-card table.sched tfoot td{background:#fff}
 .leg{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px}
 .leg span{display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
 .leg i{width:12px;height:12px;border-radius:3px;display:inline-block}

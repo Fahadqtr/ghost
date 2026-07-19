@@ -238,8 +238,16 @@ function renderSched(){
       <table class="sched">
         <thead><tr><th class="namecol">الاسم</th>${head}</tr></thead>
         <tbody>${rows||''}</tbody>
-        <tfoot>${shiftRows}<tr class="total-row"><td class="namecol">إجمالي العاملين</td>${totalCells}</tr></tfoot>
       </table>
+    </div>
+    <div class="card summary-card">
+      <h3>ملخّص التغطية اليومية</h3>
+      <div class="tablewrap">
+        <table class="sched">
+          <thead><tr><th class="namecol">الوردية</th>${head}</tr></thead>
+          <tfoot>${shiftRows}<tr class="total-row"><td class="namecol">إجمالي العاملين</td>${totalCells}</tr></tfoot>
+        </table>
+      </div>
     </div>
     <div class="leg">
       <span><i style="background:var(--morning-l)"></i>صباح</span>
