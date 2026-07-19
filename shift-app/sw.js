@@ -1,18 +1,26 @@
 // Service worker — offline caching for the shift-management PWA.
-const CACHE = 'shift-app-v1';
+const CACHE = 'shift-app-v2';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './seed.js',
+  './config.js',
+  './cloud.js',
   './app.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
-  './icons/icon-512.png'
+  './icons/icon-512.png',
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE)
+      // cache each asset independently so one failure (e.g. the CDN) doesn't abort install
+      .then((c) => Promise.all(ASSETS.map((u) => c.add(u).catch(() => {}))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
