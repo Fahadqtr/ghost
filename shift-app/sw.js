@@ -1,5 +1,7 @@
-// Service worker — offline caching for the shift-management PWA.
-const CACHE = 'shift-app-v2';
+// Service worker — offline support for the shift-management PWA.
+// شبكة أولاً لملفات التطبيق (HTML/CSS/JS) حتى تظهر أحدث نسخة دائماً عند وجود إنترنت،
+// والكاش احتياطي للعمل دون إنترنت. الأيقونات والمكتبة الخارجية: كاش أولاً.
+const CACHE = 'shift-app-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -17,7 +19,6 @@ const ASSETS = [
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE)
-      // cache each asset independently so one failure (e.g. the CDN) doesn't abort install
       .then((c) => Promise.all(ASSETS.map((u) => c.add(u).catch(() => {}))))
       .then(() => self.skipWaiting())
   );
@@ -30,14 +31,30 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// Cache-first for our own assets; network fallback otherwise.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
-      const copy = res.clone();
-      caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-      return res;
-    }).catch(() => caches.match('./index.html')))
-  );
+  const url = new URL(e.request.url);
+  const isShell = e.request.mode === 'navigate' || /\.(css|js|webmanifest)$/.test(url.pathname);
+
+  if (isShell) {
+    // شبكة أولاً: أحدث نسخة، مع تحديث الكاش، والرجوع للكاش دون إنترنت
+    e.respondWith(
+      fetch(e.request)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match(e.request).then((hit) => hit || caches.match('./index.html')))
+    );
+  } else {
+    // كاش أولاً للأصول الثابتة (أيقونات/مكتبة)
+    e.respondWith(
+      caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        return res;
+      }))
+    );
+  }
 });
