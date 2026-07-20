@@ -444,8 +444,10 @@ function dailyRows(iso){
       const h=shiftHours(v);
       rows.push({ name:e.name, no:e.no, in:h.start, inSig:fn, out:h.end, outSig:fn, note:'', red:false });
     }else if(v===REST || v===''){
-      rows.push({ name:e.name, no:e.no, in:'—', inSig:'—', out:'—', outSig:'—', note:'راحة', red:true });
+      // راحة: بدون أي ملاحظة (كالمداوم) — فقط شرطات في خانات الوقت
+      rows.push({ name:e.name, no:e.no, in:'—', inSig:'—', out:'—', outSig:'—', note:'', red:false });
     }else{
+      // إجازة فقط: يُكتب نوعها بالأحمر
       rows.push({ name:e.name, no:e.no, in:'—', inSig:'—', out:'—', outSig:'—', note:v, red:true });
     }
   });
@@ -530,7 +532,7 @@ function wTc(text, o){ o=o||{};
   const tcPr='<w:tcPr>'+(o.w?`<w:tcW w:w="${o.w}" w:type="dxa"/>`:'')
     +(o.span?`<w:gridSpan w:val="${o.span}"/>`:'')+(o.vm?`<w:vMerge w:val="${o.vm}"/>`:'')
     +(o.shd?`<w:shd w:val="clear" w:color="auto" w:fill="${o.shd}"/>`:'')+'<w:vAlign w:val="center"/></w:tcPr>';
-  const run=(o.vm==='continue')?'':`<w:r><w:rPr><w:rtl/>${o.bold?'<w:b/>':''}${o.color?`<w:color w:val="${o.color}"/>`:''}<w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlesc(text)}</w:t></w:r>`;
+  const run=(o.vm==='continue')?'':`<w:r><w:rPr><w:rtl/>${o.bold?'<w:b/>':''}${o.color?`<w:color w:val="${o.color}"/>`:''}<w:sz w:val="22"/></w:rPr><w:t xml:space="preserve">${xmlesc(text)}</w:t></w:r>`;
   return `<w:tc>${tcPr}<w:p><w:pPr><w:bidi/><w:jc w:val="${o.align||'center'}"/></w:pPr>${run}</w:p></w:tc>`;
 }
 // فقرة عنوان/توقيع بخيارات (غامق/تحته خط/لون/حجم/محاذاة)
@@ -560,7 +562,7 @@ function logoInfo(){
 function dailyDocx(iso){
   const s=state.settings, rows=dailyRows(iso);
   const hd='e9edf2';
-  const grid=[600,2400,1300,1150,900,1150,900,1500].map(w=>`<w:gridCol w:w="${w}"/>`).join('');
+  const grid=[500,2450,1200,1150,1150,1150,1150,1638].map(w=>`<w:gridCol w:w="${w}"/>`).join(''); // مجموع 9638 = عرض الصفحة
   const head1='<w:tr>'+wTc('م',{vm:'restart',shd:hd,bold:1})+wTc('الاسم',{vm:'restart',shd:hd,bold:1})
     +wTc('الرقم الوظيفي',{vm:'restart',shd:hd,bold:1})+wTc('الحضور',{span:2,shd:hd,bold:1})
     +wTc('الانصراف',{span:2,shd:hd,bold:1})+wTc('ملاحظات',{vm:'restart',shd:hd,bold:1})+'</w:tr>';
@@ -571,17 +573,17 @@ function dailyDocx(iso){
     +wTc(r.in)+wTc(r.inSig)+wTc(r.out)+wTc(r.outSig)+wTc(r.note,{color:r.red?RED:'',bold:r.red?1:0})+'</w:tr>').join('')
     : '<w:tr>'+wTc('لا يوجد موظفون على رأس العمل',{span:8})+'</w:tr>';
   const border='<w:tblBorders>'+['top','left','bottom','right','insideH','insideV'].map(x=>`<w:${x} w:val="single" w:sz="6" w:space="0" w:color="333333"/>`).join('')+'</w:tblBorders>';
-  const tbl=`<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:bidiVisual/>${border}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${head1}${head2}${body}</w:tbl>`;
+  const tbl=`<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/>${border}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${head1}${head2}${body}</w:tbl>`;
   // صندوق العنوان (مطابق للنموذج): سطر أسود، سطر أحمر، ثم اليوم/التاريخ/الشفت
   const dow=parseISO(iso).getDay(), sup=docSupervisor();
   const titleInner = wPar('كشف الحضور والانصراف اليومي / '+docLocation(),{bold:1,sz:26})
     + wPar(s.department+' / '+docTeam()+(sup?' '+sup:''),{bold:1,sz:26,color:RED})
     + wPar('اليوم : '+AR_DAYS[dow]+'      التاريخ : '+fmtSlash(iso)+'      دوام الشفت : '+dayShiftLabel(iso),{sz:22,after:0});
-  const titleBox = `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="9600"/></w:tblGrid><w:tr>${wBoxCell(titleInner,9600)}</w:tr></w:tbl>`;
+  const titleBox = `<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="9638"/></w:tblGrid><w:tr>${wBoxCell(titleInner,9638)}</w:tr></w:tbl>`;
   // صندوقا التوقيع جنباً إلى جنب: مسؤول الوردية (يمين، بالاسم) ورئيس القسم (يسار)
-  const supInner = wPar('توقيع مسؤول الوردية',{bold:1,u:1,sz:22}) + wPar(sup||' ',{bold:1,sz:24,after:0});
-  const chiefInner = wPar('توقيع رئيس قسم العمليات الجمركية',{bold:1,u:1,sz:22}) + wPar(' ',{sz:24,after:0});
-  const sigBox = `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="4200"/><w:gridCol w:w="1200"/><w:gridCol w:w="4200"/></w:tblGrid><w:tr>${wBoxCell(supInner,4200)}${wGapCell(1200)}${wBoxCell(chiefInner,4200)}</w:tr></w:tbl>`;
+  const supInner = wPar('توقيع مسؤول الوردية',{bold:1,u:1,sz:22,after:280}) + wPar(sup||' ',{bold:1,sz:24,after:120});
+  const chiefInner = wPar('توقيع رئيس قسم العمليات الجمركية',{bold:1,u:1,sz:22,after:280}) + wPar(' ',{sz:24,after:120});
+  const sigBox = `<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="1638"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr>${wBoxCell(supInner,4000)}${wGapCell(1638)}${wBoxCell(chiefInner,4000)}</w:tr></w:tbl>`;
   // شعار اختياري: يُضمَّن في رأس الصفحة إن رفعه المستخدم (بدون أي نص تصنيف)
   const logo=logoInfo();
   const logoPara = logo ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="0"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${logo.cx}" cy="${logo.cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="logo"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="logo"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${logo.cx}" cy="${logo.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>` : '';
