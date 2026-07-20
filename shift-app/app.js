@@ -595,7 +595,7 @@ function dailyRows(iso){
 function dailyTableHtml(iso){
   const rows=dailyRows(iso);
   const c='border:1px solid #333;padding:9px 5px;text-align:center;font-size:13px';
-  const cn='border:1px solid #333;padding:9px 8px;text-align:right;font-size:13px;white-space:nowrap;font-weight:bold';
+  const cn='border:1px solid #333;padding:9px 8px;text-align:center;font-size:13px;white-space:nowrap;font-weight:bold';
   const th='border:1px solid #333;padding:9px 5px;text-align:center;font-size:13px;background:#e9edf2;font-weight:bold';
   const cNote='border:1px solid #333;padding:9px 5px;text-align:center;font-size:13px;color:#C00000;font-weight:bold';
   const body=rows.length? rows.map((r,i)=>`<tr>
@@ -633,7 +633,7 @@ function dailyDocHtml(iso){
         <div style="margin-top:16px">&nbsp;</div>
       </div>
     </div>`;
-  return `${s.logo?`<div style="text-align:center;margin-bottom:10px"><img src="${s.logo}" style="max-width:100%;max-height:90px"></div>`:''}
+  return `${s.logo?`<div style="text-align:center;margin-bottom:20px"><img src="${s.logo}" style="max-width:100%;max-height:90px"></div>`:''}
     ${title}
     ${dailyTableHtml(iso)}
     ${sig}`;
@@ -709,7 +709,7 @@ function dailyDocx(iso){
   const head2='<w:tr>'+RHh+wTc('',{vm:'continue'})+wTc('',{vm:'continue'})+wTc('',{vm:'continue'})
     +wTc('الساعة',{shd:hd,bold:1})+wTc('التوقيع',{shd:hd,bold:1})+wTc('الساعة',{shd:hd,bold:1})+wTc('التوقيع',{shd:hd,bold:1})
     +wTc('',{vm:'continue'})+'</w:tr>';
-  const body=rows.length? rows.map((r,i)=>'<w:tr>'+RHb+wTc(String(i+1))+wTc(r.name,{align:'right',bold:1})+wTc(r.no)
+  const body=rows.length? rows.map((r,i)=>'<w:tr>'+RHb+wTc(String(i+1))+wTc(r.name,{bold:1})+wTc(r.no)
     +wTc(r.in)+wTc(r.inSig)+wTc(r.out)+wTc(r.outSig)+wTc(r.note,{color:r.red?RED:'',bold:r.red?1:0})+'</w:tr>').join('')
     : '<w:tr>'+RHb+wTc('لا يوجد موظفون على رأس العمل',{span:8})+'</w:tr>';
   const border='<w:tblBorders>'+['top','left','bottom','right','insideH','insideV'].map(x=>`<w:${x} w:val="single" w:sz="6" w:space="0" w:color="333333"/>`).join('')+'</w:tblBorders>';
@@ -730,10 +730,12 @@ function dailyDocx(iso){
   const logoPara = logo ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="0"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${logo.cx}" cy="${logo.cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="logo"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="logo"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${logo.cx}" cy="${logo.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>` : '';
   const hdr=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">${logoPara||'<w:p/>'}</w:hdr>`;
+  // هامش علوي أوسع عند وجود الشعار حتى تنزل ترويسة الكشف بمسافة أسفل الشعار
+  const topMar = logo ? Math.round(708 + logo.cy/635 + 420) : 1134;
   const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>`
-    +titleBox+'<w:p/>'+tbl+'<w:p/>'+sigBox
-    +'<w:sectPr><w:headerReference w:type="default" r:id="rId101"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708"/><w:bidi/></w:sectPr></w:body></w:document>';
+    +titleBox+'<w:p/>'+tbl+'<w:p><w:pPr><w:spacing w:after="120"/></w:pPr></w:p>'+sigBox
+    +`<w:sectPr><w:headerReference w:type="default" r:id="rId101"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="${topMar}" w:right="1134" w:bottom="1134" w:left="1134" w:header="708"/><w:bidi/></w:sectPr></w:body></w:document>`;
   const imgDefaults = logo ? '<Default Extension="png" ContentType="image/png"/>' : '';
   const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'+imgDefaults+'<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>';
   const rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
