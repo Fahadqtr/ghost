@@ -108,6 +108,30 @@ const Cloud = {
     saveCache();
   },
 
+  /* قراءة سجل التعديلات (مستقلة تماماً: لا تدخل الطابور، وأي خطأ لا يؤثّر على المزامنة)
+     - owner: يمرّر team اختيارياً (فارغ = كل الورديات)
+     - admin: يُتجاهل team ويُقصَر تلقائياً على ورديته عبر RLS */
+  async fetchAudit(opts){
+    opts = opts || {};
+    try{
+      let q = this.sb.from('audit_log').select('*')
+        .order('id', { ascending: false })
+        .limit(Math.min(Math.max(opts.limit || 30, 1), 100));
+      if(opts.team)   q = q.eq('team', opts.team);
+      if(opts.action) q = q.eq('action', opts.action);
+      if(opts.entity) q = q.eq('entity', opts.entity);
+      if(opts.actor)  q = q.ilike('actor_name', '%' + opts.actor + '%');
+      if(opts.from)   q = q.gte('at', opts.from);
+      if(opts.to)     q = q.lte('at', opts.to);
+      if(opts.before) q = q.lt('id', opts.before);
+      const { data, error } = await q;
+      if(error) return { rows: [], error: error.message || 'error' };
+      return { rows: data || [] };
+    }catch(e){
+      return { rows: [], error: (e && e.message) || String(e) };
+    }
+  },
+
   /* الاشتراك في التغييرات اللحظية من الأجهزة الأخرى */
   subscribe(cb){
     this.sb.channel('shift-sync')
