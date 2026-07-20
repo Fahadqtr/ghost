@@ -792,6 +792,21 @@ function renderDaily(){
       <div class="tablewrap" style="border:none">${dailyDocHtml(iso)}</div>
     </div>`;
 }
+// قائمة أوقات جاهزة (كل نصف ساعة) بصيغة 12 ساعة عربية
+function timeOptions(){
+  const out=[];
+  for(let h=0;h<24;h++){ for(const m of [0,30]){
+    const ap=h<12?'ص':'م'; let hh=h%12; if(hh===0) hh=12;
+    out.push(hh+':'+String(m).padStart(2,'0')+' '+ap);
+  }}
+  return out;
+}
+function timeSelect(id, cur){
+  const opts=timeOptions(), has=opts.indexOf(cur)>=0;
+  const extra=(cur && !has)?`<option value="${esc(cur)}" selected>${esc(cur)}</option>`:'';
+  const body=opts.map(t=>`<option value="${t}" ${t===cur?'selected':''}>${t}</option>`).join('');
+  return `<select id="${id}"><option value="" ${cur?'':'selected'}>—</option>${extra}${body}</select>`;
+}
 // تعديل توقيتات الدخول/الخروج لأي موظف قبل التنزيل أو الطباعة
 function editDailyTimes(){
   const iso=dailyDate||toISO(today()), ov=dailyTimes[iso]||{};
@@ -801,8 +816,8 @@ function editDailyTimes(){
     return `<div style="border-bottom:1px solid var(--line);padding:10px 0">
       <div class="name" style="margin-bottom:6px">${esc(e.name)} <span class="meta">(${e.no})</span></div>
       <div class="two">
-        <div class="field" style="margin:0"><label>الدخول</label><input id="dt-in-${e.id}" value="${esc(inV)}" placeholder="مثال: 9:00 م"></div>
-        <div class="field" style="margin:0"><label>الخروج</label><input id="dt-out-${e.id}" value="${esc(outV)}" placeholder="مثال: 6:00 ص"></div>
+        <div class="field" style="margin:0"><label>الدخول</label>${timeSelect('dt-in-'+e.id, inV)}</div>
+        <div class="field" style="margin:0"><label>الخروج</label>${timeSelect('dt-out-'+e.id, outV)}</div>
       </div>
     </div>`;
   }).join('');
