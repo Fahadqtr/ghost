@@ -956,7 +956,41 @@ document.getElementById('btnSettings').addEventListener('click', openSettings);
 
 boot();
 
-/* لم نعد نستخدم Service Worker (التطبيق يحتاج الإنترنت للمزامنة).
-   المتصفح يُحدّث أي تسجيل قديم إلى نسخة sw.js ذاتية الإزالة التي تنظّف نفسها والكاش.
-   لا نُعيد التسجيل هنا حتى لا يحدث تكرار تحميل. ننظّف الكاش فقط كإجراء إضافي. */
-if(window.caches){ caches.keys().then((ks)=>ks.forEach((k)=>caches.delete(k))).catch(()=>{}); }
+/* -------------------- التثبيت كتطبيق (PWA) -------------------- */
+// service worker بسياسة «الشبكة أولاً» — يجعل التطبيق قابلاً للتثبيت ويعمل دون إنترنت دون نُسخ قديمة
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+}
+let deferredInstall=null;
+function isStandalone(){ return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true; }
+function isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream; }
+function showInstallBar(msg){
+  const bar=document.getElementById('installBar'); if(!bar||isStandalone()) return;
+  if(localStorage.getItem('installDismissed')==='1') return;
+  if(msg) document.getElementById('installText').textContent=msg;
+  bar.style.display='flex';
+}
+function hideInstallBar(){ const b=document.getElementById('installBar'); if(b) b.style.display='none'; }
+function dismissInstall(){ localStorage.setItem('installDismissed','1'); hideInstallBar(); }
+async function doInstall(){
+  if(deferredInstall){
+    deferredInstall.prompt();
+    try{ await deferredInstall.userChoice; }catch(e){}
+    deferredInstall=null; hideInstallBar();
+  } else if(isIOS()){
+    openSheet(`
+      <h3>تثبيت التطبيق على الآيفون<button class="x" onclick="closeSheet()">×</button></h3>
+      <ol style="line-height:2;padding-inline-start:18px;font-size:14px">
+        <li>افتح الرابط في متصفح <b>Safari</b>.</li>
+        <li>اضغط زر المشاركة <b>⬆️</b> بالأسفل.</li>
+        <li>اختر <b>«إضافة إلى الشاشة الرئيسية»</b>.</li>
+        <li>اضغط <b>«إضافة»</b> — تظهر أيقونة التطبيق على الشاشة.</li>
+      </ol>`);
+  } else {
+    toast('افتح قائمة المتصفح ثم «تثبيت التطبيق»');
+  }
+}
+window.addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); deferredInstall=e; showInstallBar(); });
+window.addEventListener('appinstalled', ()=>{ deferredInstall=null; hideInstallBar(); toast('تم تثبيت التطبيق'); });
+// آيفون: لا يوجد حدث تلقائي — أظهر شريط الإرشاد
+if(isIOS() && !isStandalone()) setTimeout(()=>showInstallBar('ثبّت التطبيق على جهازك'), 1200);

@@ -1,16 +1,54 @@
-// Service worker ذاتي الإزالة:
-// يُلغي نفسه ويمسح كل الكاش القديم ثم يعيد تحميل التبويبات،
-// فتزول طبقة التخزين العنيدة وتظهر التحديثات دائماً دون مسح يدوي.
-self.addEventListener('install', () => self.skipWaiting());
+/* ============================================================
+   Service Worker — يجعل التطبيق قابلاً للتثبيت ويعمل دون إنترنت،
+   دون التسبّب في نُسخ قديمة عالقة:
+   استراتيجية «الشبكة أولاً» — يجلب دائماً أحدث نسخة من الشبكة،
+   ويستخدم النسخة المخزّنة فقط عند انقطاع الإنترنت.
+   ============================================================ */
+'use strict';
+const CACHE = 'shiftapp-v1';
+const SHELL = [
+  './', './index.html', './styles.css',
+  './seed.js', './config.js', './cloud.js', './qr.js', './app.js',
+  './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'
+];
+
+self.addEventListener('install', (e) => {
+  self.skipWaiting();
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL).catch(() => {})));
+});
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    try { await self.registration.unregister(); } catch (err) {}
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  let url;
+  try { url = new URL(req.url); } catch (err) { return; }
+  // نطاق التطبيق فقط؛ نترك Supabase/الشبكات الأخرى تمرّ مباشرة
+  if (url.origin !== self.location.origin) return;
+
+  e.respondWith((async () => {
     try {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((k) => caches.delete(k)));
-    } catch (err) {}
-    const clients = await self.clients.matchAll({ type: 'window' });
-    clients.forEach((c) => { try { c.navigate(c.url); } catch (err) {} });
+      const fresh = await fetch(req);            // الشبكة أولاً — نسخة حديثة دائماً
+      if (fresh && fresh.status === 200) {
+        const cache = await caches.open(CACHE);
+        cache.put(req, fresh.clone());           // خزّن نسخة احتياطية للعمل دون إنترنت
+      }
+      return fresh;
+    } catch (err) {                              // لا إنترنت → النسخة المخزّنة
+      const cached = await caches.match(req);
+      if (cached) return cached;
+      if (req.mode === 'navigate') {
+        const idx = await caches.match('./index.html');
+        if (idx) return idx;
+      }
+      throw err;
+    }
   })());
 });

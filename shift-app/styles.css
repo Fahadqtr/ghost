@@ -226,3 +226,16 @@ body.viewer .daycell:active{outline:none}
   .screen{display:none!important}
   .screen.active{display:block!important}
 }
+
+/* شريط تثبيت التطبيق */
+.install-bar{
+  display:none; position:fixed; left:12px; right:12px; bottom:calc(64px + env(safe-area-inset-bottom,0));
+  z-index:70; align-items:center; gap:10px;
+  background:var(--teal); color:#fff; border-radius:14px; padding:10px 12px;
+  box-shadow:0 8px 24px rgba(0,0,0,.25); font-size:14px;
+}
+.install-bar .grow{flex:1}
+.install-bar .btn.sm{background:#fff;color:var(--teal);font-weight:800;border:none}
+.install-bar .install-x{background:transparent;border:none;color:#fff;font-size:20px;line-height:1;cursor:pointer;padding:0 4px}
+body.viewer .install-bar{bottom:calc(64px + env(safe-area-inset-bottom,0))}
+@media(min-width:1040px){ .install-bar{left:auto;right:24px;max-width:360px} }
