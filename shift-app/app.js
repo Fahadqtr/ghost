@@ -20,6 +20,7 @@ let state = { employees: [], leaves: [], overrides: {}, pointShifts: {}, setting
 let currentUserEmail = '';
 let currentEmpNo = '';  // الرقم الوظيفي للموظف المسجّل (لدور العرض)
 let currentUsername = ''; // اسم مستخدم الدخول (للمشرف: salemm / fahdaziz)
+let currentTeam = 'w1';   // وردية المستخدم الحالي (عزل البيانات)
 let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
 let highlightDate = null; // تاريخ يُبرَز في الجدول (زر أقرب وردية)
 
@@ -1301,6 +1302,7 @@ async function startApp(){
     currentUserEmail = u ? ((u.user_metadata&&u.user_metadata.full_name) || (u.email||'').replace(USER_DOMAIN,'')) : '';
     currentEmpNo = (u && u.user_metadata && u.user_metadata.emp_no) || '';
     currentUsername = u ? (u.email||'').split('@')[0] : '';
+    currentTeam = (u && u.app_metadata && u.app_metadata.team) || 'w1';
   }catch(e){ isViewer=false; }
   applyRole();
   const hadCache=loadCache();

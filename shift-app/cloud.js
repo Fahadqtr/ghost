@@ -10,9 +10,10 @@ const CACHE_KEY = 'shiftApp.cache.v2';
 const OUTBOX_KEY = 'shiftApp.outbox.v1';
 
 /* تحويل بين صيغة الواجهة وصيغة قاعدة البيانات */
-function empToRow(e){ return { id:e.id, name:e.name, emp_no:e.no||'', cycle_start:e.cycleStart, sort_order:e.sort||0 }; }
+function team(){ return (typeof currentTeam!=='undefined' && currentTeam) ? currentTeam : 'w1'; }
+function empToRow(e){ return { id:e.id, name:e.name, emp_no:e.no||'', cycle_start:e.cycleStart, sort_order:e.sort||0, team:team() }; }
 function rowToEmp(r){ return { id:r.id, name:r.name, no:r.emp_no||'', cycleStart:r.cycle_start, sort:r.sort_order||0 }; }
-function leaveToRow(l){ return { id:l.id, emp_id:l.empId, type:l.type, from_date:l.from, to_date:l.to, status:l.status, notes:l.notes||'' }; }
+function leaveToRow(l){ return { id:l.id, emp_id:l.empId, type:l.type, from_date:l.from, to_date:l.to, status:l.status, notes:l.notes||'', team:team() }; }
 function rowToLeave(r){ return { id:r.id, empId:r.emp_id, type:r.type, from:r.from_date, to:r.to_date, status:r.status, notes:r.notes||'' }; }
 
 function saveCache(){
@@ -73,7 +74,7 @@ const Cloud = {
       this.sb.from('employees').select('*').order('sort_order'),
       this.sb.from('leaves').select('*'),
       this.sb.from('overrides').select('*'),
-      this.sb.from('settings').select('data').eq('id',1).maybeSingle(),
+      this.sb.from('settings').select('data').eq('team',team()).maybeSingle(),
       this.sb.from('point_shifts').select('*')
     ]);
     const err = e.error || l.error || o.error || s.error || p.error;
@@ -109,8 +110,8 @@ const Cloud = {
     else if(op.t==='lv_del') r=await sb.from('leaves').delete().eq('id',op.id);
     else if(op.t==='ov_up')  r=await sb.from('overrides').upsert(op.row, { onConflict:'emp_id,day' });
     else if(op.t==='ov_del') r=await sb.from('overrides').delete().eq('emp_id',op.emp_id).eq('day',op.day);
-    else if(op.t==='set')    r=await sb.from('settings').upsert({ id:1, data:op.data });
-    else if(op.t==='ps_up')  r=await sb.from('point_shifts').upsert(op.row, { onConflict:'day,shift' });
+    else if(op.t==='set')    r=await sb.from('settings').upsert({ team:op.team||team(), data:op.data }, { onConflict:'team' });
+    else if(op.t==='ps_up')  r=await sb.from('point_shifts').upsert(op.row, { onConflict:'team,day,shift' });
     return r && r.error;
   },
 
@@ -137,12 +138,12 @@ const Data = {
   delEmp(id){ Cloud.enqueue({ t:'emp_del', id }); saveCache(); },
   upsertLeave(l){ Cloud.enqueue({ t:'lv_up', row: leaveToRow(l) }); saveCache(); },
   delLeave(id){ Cloud.enqueue({ t:'lv_del', id }); saveCache(); },
-  setOverride(empId, day, value){ Cloud.enqueue({ t:'ov_up', row:{ emp_id:empId, day, value } }); saveCache(); },
+  setOverride(empId, day, value){ Cloud.enqueue({ t:'ov_up', row:{ emp_id:empId, day, value, team:team() } }); saveCache(); },
   delOverride(empId, day){ Cloud.enqueue({ t:'ov_del', emp_id:empId, day }); saveCache(); },
-  saveSettings(){ Cloud.enqueue({ t:'set', data: state.settings }); saveCache(); },
+  saveSettings(){ Cloud.enqueue({ t:'set', data: state.settings, team:team() }); saveCache(); },
   savePointShift(day, shift, ps){
     (state.pointShifts = state.pointShifts || {})[day+'|'+shift] = ps;
-    Cloud.enqueue({ t:'ps_up', row:{ day, shift, point_name: ps.pointName||'النقطة الأمنية', emp_order: ps.empOrder||[], approved: !!ps.approved, approved_by: ps.approvedBy||'', approved_title: ps.approvedTitle||'' } });
+    Cloud.enqueue({ t:'ps_up', row:{ day, shift, team:team(), point_name: ps.pointName||'النقطة الأمنية', emp_order: ps.empOrder||[], approved: !!ps.approved, approved_by: ps.approvedBy||'', approved_title: ps.approvedTitle||'' } });
     saveCache();
   }
 };
