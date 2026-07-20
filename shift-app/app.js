@@ -252,20 +252,25 @@ async function saveDeptHead(){
 // قائمة التعاميم المحفوظة (الأحدث أولاً)
 function noticeList(){ return (state.settings.notices||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0)); }
 function noticeDate(ts){ try{ const d=new Date(ts); return d.getDate()+' '+AR_MONTHS[d.getMonth()]+' '+d.getFullYear(); }catch(e){ return ''; } }
-// بطاقة التعاميم في الرئيسية (للمسؤولين للرجوع إليها)
+// التعاميم التي يراها المستخدم الحالي: الموظف يرى «للجميع» فقط، المسؤول/رئيس القسم يرى الكل
+function noticeAud(n){ return (n && n.audience==='all') ? 'all' : 'admins'; }
+function visibleNotices(){ return noticeList().filter(n=> !isViewer || noticeAud(n)==='all'); }
+function audLabel(a){ return a==='all' ? 'للجميع' : 'للمسؤولين'; }
+// بطاقة التعاميم (في الرئيسية للمسؤولين، وفي شاشة الجدول للموظفين)
 function noticesCardHtml(){
-  const list=noticeList(); if(!list.length) return '';
+  const list=visibleNotices(); if(!list.length) return '';
   return `<div class="card">
     <h3>📢 تعاميم رئيس القسم (${list.length})</h3>
     ${list.map(n=>`<div style="border-right:3px solid var(--teal);background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0">
       <div style="white-space:pre-wrap;font-size:14px;line-height:1.7">${esc(n.text)}</div>
-      <div class="meta" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center">
-        <span>${esc(n.by||'رئيس القسم')} • ${noticeDate(n.ts)}</span>
+      <div class="meta" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span>${esc(n.by||'رئيس القسم')} • ${noticeDate(n.ts)}${isOwner?' • '+audLabel(noticeAud(n)):''}</span>
         ${isOwner?`<button class="btn sm danger" onclick="deleteNotice(${Number(n.ts)||0})">🗑 حذف</button>`:''}
       </div>
     </div>`).join('')}
   </div>`;
 }
+function pickAudience(btn){ btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); sheet._audience=btn.dataset.a; }
 function openAnnounce(){
   const list=noticeList();
   openSheet(`
@@ -273,6 +278,11 @@ function openAnnounce(){
     <p class="hint" style="margin-bottom:10px">تظهر لمشرفي كل الورديات في شاشة منبثقة عند الدخول، وتبقى محفوظة في الرئيسية للرجوع إليها.</p>
     <div class="field"><label>تعميم جديد</label>
       <textarea id="an-text" rows="4" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب التعميم هنا…"></textarea></div>
+    <div class="field"><label>يظهر لـ</label>
+      <div class="pick" id="an-aud">
+        <button type="button" data-a="admins" class="on" onclick="pickAudience(this)">المسؤولين فقط</button>
+        <button type="button" data-a="all" onclick="pickAudience(this)">كل الموظفين والمسؤولين</button>
+      </div></div>
     <div class="hint bad" id="an-err" style="margin-bottom:6px"></div>
     <button class="btn block" id="an-btn" onclick="sendAnnounce()">📢 إرسال التعميم</button>
     ${list.length?`
@@ -280,19 +290,20 @@ function openAnnounce(){
       <h3 style="font-size:14px">التعاميم المحفوظة (${list.length})</h3>
       ${list.map(n=>`<div style="background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0">
         <div style="white-space:pre-wrap;font-size:13px;line-height:1.6">${esc(n.text)}</div>
-        <div class="meta" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center">
-          <span>${noticeDate(n.ts)}</span>
+        <div class="meta" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span>${noticeDate(n.ts)} • ${audLabel(noticeAud(n))}</span>
           <button class="btn sm danger" onclick="deleteNotice(${Number(n.ts)||0})">🗑 حذف</button></div>
       </div>`).join('')}
       <button class="btn block ghost" style="margin-top:8px" onclick="clearAllNotices()">مسح كل التعاميم</button>`:''}
   `);
+  sheet._audience='admins';
 }
 async function sendAnnounce(){
   const text=val('an-text').trim(); const err=document.getElementById('an-err'); err.textContent='';
   if(!text){ err.textContent='اكتب نص التعميم'; return; }
   const btn=document.getElementById('an-btn'); btn.disabled=true; btn.textContent='جارٍ الإرسال…';
   const list=(state.settings.notices||[]).slice();
-  list.push({ text, ts: Date.now(), by: docDeptHead()||'رئيس القسم' });
+  list.push({ text, ts: Date.now(), by: docDeptHead()||'رئيس القسم', audience: (sheet._audience==='all'?'all':'admins') });
   const trimmed=list.slice(-30);   // احتفظ بآخر 30 تعميماً
   try{
     const { error }=await Cloud.broadcast({ notices: trimmed });
@@ -352,14 +363,15 @@ function toggleDailyApproval(iso){
 }
 // شاشة منبثقة بالتعميم للمسؤولين (تُعرض مرة واحدة لكل تعميم)
 function maybeShowNotice(){
-  const n=noticeList()[0]; if(!n || !n.text || !n.ts) return;   // أحدث تعميم
-  if(localStorage.getItem('noticeSeen')===String(n.ts)) return;
+  const n=visibleNotices()[0]; if(!n || !n.text || !n.ts) return false;   // أحدث تعميم يخصّ المستخدم
+  if(localStorage.getItem('noticeSeen')===String(n.ts)) return false;
   localStorage.setItem('noticeSeen', String(n.ts));
   openSheet(`
     <h3>📢 تعميم${n.by?' من '+esc(n.by):''}<button class="x" onclick="closeSheet()">×</button></h3>
     <div style="white-space:pre-wrap;font-size:15px;line-height:1.7;padding:6px 2px">${esc(n.text)}</div>
     <button class="btn block" style="margin-top:14px" onclick="closeSheet()">حسناً</button>
   `);
+  return true;
 }
 async function switchTeam(t){
   if(!t || t===currentTeam) return;
@@ -600,6 +612,7 @@ function renderSched(){
     totalCells+=`<td class="${low?'low':(w>0?'ok':'')} ${iso===todayISO?'today':''}">${w}</td>`;
   }
   el.innerHTML=`
+    ${isViewer?noticesCardHtml():''}
     <div class="sched-bar">
       <button class="btn ghost sm" onclick="moveMonth(1)">‹ التالي</button>
       <div class="m">${AR_MONTHS[m]} ${y}</div>
@@ -1587,8 +1600,10 @@ async function startApp(){
   Cloud.subscribe(onRemoteChange);
   updateSyncBadge();
   nav(isViewer ? 'sched' : 'dash');
-  if(isViewer){ try{ showMyPointPopup(); }catch(e){} }
-  else if(!isOwner){ try{ maybeShowNotice(); }catch(e){} }   // المشرفون: تظهر لهم تعاميم رئيس القسم
+  // تعميم موجّه للجميع يظهر منبثقاً؛ للموظف إن لم يظهر تعميم نعرض وقت استلام النقطة
+  let noticeShown=false;
+  try{ noticeShown=maybeShowNotice(); }catch(e){}
+  if(isViewer && !noticeShown){ try{ showMyPointPopup(); }catch(e){} }
 }
 async function boot(){
   if(!window.supabase){
