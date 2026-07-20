@@ -14,6 +14,9 @@ function docLocation(){ return (state.settings.location||'جمارك مطار ح
 function docTeam(){ return (state.settings.teamName||'الوردية الأولى'); }
 function docSupervisor(){ return (state.settings.supervisor||''); }
 function docAssistant(){ return (state.settings.assistant||''); }
+function docDeptHead(){ return (state.settings.deptHead||''); }               // اسم رئيس القسم (مشترك لكل الورديات)
+// اعتماد رئيس القسم لكشف يوم معيّن (مخزّن ضمن إعدادات الوردية)
+function dailyApproved(iso){ const a=state.settings.dailyApproved; return !!(a && a[iso]); }
 
 /* الحالة الابتدائية (تُملأ من السحابة بعد الدخول) */
 let state = { employees: [], leaves: [], overrides: {}, pointShifts: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)) };
@@ -164,26 +167,155 @@ function currentTeamName(){
   const t=allTeams.find(x=>x.team===currentTeam);
   return t ? t.name : (state.settings.teamName||currentTeam);
 }
+let ownerOverview=null;   // ملخّص كل الورديات (يُحمَّل عند فتح لوحة رئيس القسم)
 function ownerBarHtml(){
   return `<div class="card" style="border:2px solid var(--teal);background:linear-gradient(135deg,#e9f7f5,#fff)">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <span style="font-size:20px">👑</span>
-      <div class="grow"><div class="name" style="font-weight:800">لوحة المالك</div>
+      <div class="grow"><div class="name" style="font-weight:800">لوحة رئيس القسم</div>
         <div class="meta">تتابع جميع الورديات وجداولها وكشوفاتها</div></div>
+    </div>
+    <div class="field" style="margin-bottom:10px"><label>اسم رئيس القسم (يظهر في اعتماد الجداول والكشوفات)</label>
+      <div style="display:flex;gap:8px">
+        <input id="owner-head" value="${esc(docDeptHead())}" placeholder="اكتب اسم رئيس القسم" style="flex:1">
+        <button class="btn sm" onclick="saveDeptHead()">حفظ</button>
+      </div>
     </div>
     <label class="meta" style="display:block;margin-bottom:4px">الوردية المعروضة الآن</label>
     <select id="owner-team" onchange="switchTeam(this.value)" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff">
       ${allTeams.map(t=>`<option value="${esc(t.team)}" ${t.team===currentTeam?'selected':''}>${esc(t.name)} (${esc(t.team)})</option>`).join('')}
     </select>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-      <button class="btn sm" onclick="openAddTeam()">＋ إضافة وردية جديدة</button>
-      <button class="btn sm ghost" onclick="reloadTeams()">↻ تحديث القائمة</button>
+      <button class="btn sm" onclick="openAddTeam()">＋ إضافة وردية</button>
+      <button class="btn sm ghost" onclick="editTeamData()">✏️ تعديل بيانات الوردية</button>
+      <button class="btn sm ghost" onclick="openAnnounce()">📢 إرسال تعميم للمسؤولين</button>
+      <button class="btn sm ghost" onclick="reloadTeams()">↻ تحديث</button>
+      ${currentTeam!=='w1'?`<button class="btn sm danger" onclick="deleteTeamConfirm()">🗑️ حذف الوردية</button>`:''}
     </div>
+  </div>
+  <div class="card">
+    <h3>متابعة جميع الورديات</h3>
+    ${ownerOverviewHtml()}
   </div>`;
 }
+function ownerOverviewHtml(){
+  if(ownerOverview===null){ loadOwnerOverview(); return '<div class="empty">جارٍ تحميل ملخّص الورديات…</div>'; }
+  if(!ownerOverview.length) return '<div class="empty">لا توجد ورديات</div>';
+  return ownerOverview.map(o=>`
+    <div class="row" style="align-items:stretch">
+      <div class="grow">
+        <div class="name">${esc(o.name)} <span class="meta">(${esc(o.team)})</span>${o.team===currentTeam?' <span class="badge b-ok">معروضة</span>':''}</div>
+        <div class="meta" style="margin-top:2px">👥 ${o.emps} موظف • 🏖️ ${o.onleave} بإجازة اليوم • ${o.pending?('⏳ '+o.pending+' طلب معلّق'):'لا طلبات معلّقة'} • 🛡️ ${o.points} نقطة معتمدة</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${o.team!==currentTeam?`<button class="btn sm" onclick="switchTeam('${esc(o.team)}')">فتح</button>`:'<span class="badge b-ok" style="text-align:center">مفتوحة</span>'}
+      </div>
+    </div>`).join('');
+}
+async function loadOwnerOverview(){
+  try{
+    const iso=toISO(today());
+    const [emps,lvs,pts]=await Promise.all([
+      Cloud.sb.from('employees').select('team'),
+      Cloud.sb.from('leaves').select('team,status,from_date,to_date'),
+      Cloud.sb.from('point_shifts').select('team,approved').eq('day',iso)
+    ]);
+    const map={};
+    allTeams.forEach(t=>map[t.team]={team:t.team,name:t.name,emps:0,pending:0,onleave:0,points:0});
+    (emps.data||[]).forEach(r=>{ if(map[r.team]) map[r.team].emps++; });
+    (lvs.data||[]).forEach(r=>{ const m=map[r.team]; if(!m) return;
+      if(r.status==='قيد الانتظار') m.pending++;
+      if(r.status==='معتمد' && r.from_date<=iso && r.to_date>=iso) m.onleave++; });
+    (pts.data||[]).forEach(r=>{ if(map[r.team]&&r.approved) map[r.team].points++; });
+    ownerOverview=Object.values(map);
+  }catch(e){ ownerOverview=[]; }
+  if(current==='dash' && isOwner) renderDash();
+}
 async function reloadTeams(){
-  try{ allTeams = await Cloud.listTeams(); toast('تم تحديث قائمة الورديات'); renderDash(); }
+  try{ allTeams = await Cloud.listTeams(); ownerOverview=null; toast('تم تحديث قائمة الورديات'); renderDash(); }
   catch(e){ toast('تعذّر تحميل الورديات'); }
+}
+// حفظ اسم رئيس القسم وبثّه لكل الورديات (يظهر في اعتماد كل الكشوفات)
+async function saveDeptHead(){
+  const name=val('owner-head').trim();
+  try{
+    const { error }=await Cloud.broadcast({ deptHead: name });
+    if(error) throw error;
+    state.settings.deptHead=name; saveCache();
+    toast('تم حفظ اسم رئيس القسم');
+  }catch(e){ toast('تعذّر الحفظ'); }
+}
+// إرسال تعميم لكل المسؤولين — يظهر لهم بشاشة منبثقة عند فتح البرنامج
+function openAnnounce(){
+  const cur=state.settings.notice&&state.settings.notice.text||'';
+  openSheet(`
+    <h3>تعميم للمسؤولين<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">تظهر الرسالة لمشرفي كل الورديات في شاشة منبثقة عند فتحهم للبرنامج.</p>
+    <div class="field"><label>نص التعميم</label>
+      <textarea id="an-text" rows="4" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب التعميم هنا…">${esc(cur)}</textarea></div>
+    <div class="hint bad" id="an-err" style="margin-bottom:6px"></div>
+    <button class="btn block" id="an-btn" onclick="sendAnnounce()">📢 إرسال التعميم</button>
+    ${cur?`<button class="btn block ghost" style="margin-top:8px" onclick="clearAnnounce()">مسح التعميم الحالي</button>`:''}
+  `);
+}
+async function sendAnnounce(){
+  const text=val('an-text').trim(); const err=document.getElementById('an-err'); err.textContent='';
+  if(!text){ err.textContent='اكتب نص التعميم'; return; }
+  const btn=document.getElementById('an-btn'); btn.disabled=true; btn.textContent='جارٍ الإرسال…';
+  const notice={ text, ts: Date.now(), by: docDeptHead()||'رئيس القسم' };
+  try{
+    const { error }=await Cloud.broadcast({ notice });
+    if(error) throw error;
+    state.settings.notice=notice; saveCache(); closeSheet(); toast('تم إرسال التعميم للمسؤولين');
+  }catch(e){ btn.disabled=false; btn.textContent='📢 إرسال التعميم'; err.textContent='تعذّر الإرسال'; }
+}
+async function clearAnnounce(){
+  try{ await Cloud.broadcast({ notice: null }); state.settings.notice=null; saveCache(); closeSheet(); toast('تم مسح التعميم'); }
+  catch(e){ toast('تعذّر المسح'); }
+}
+// تعديل بيانات الوردية المعروضة (يفتح الإعدادات)
+function editTeamData(){ openSettings(); }
+// حذف الوردية المعروضة بالكامل
+function deleteTeamConfirm(){
+  if(currentTeam==='w1'){ toast('لا يمكن حذف الوردية الأساسية'); return; }
+  const nm=currentTeamName();
+  openSheet(`
+    <h3>حذف الوردية<button class="x" onclick="closeSheet()">×</button></h3>
+    <p style="margin:10px 0">سيتم حذف وردية «<b>${esc(nm)}</b>» نهائياً بكل بياناتها: الموظفون، الإجازات، الجداول، النقطة، وحسابات الدخول الخاصة بها.</p>
+    <p class="hint bad" style="margin-bottom:12px">لا يمكن التراجع عن هذا الإجراء.</p>
+    <button class="btn block danger" id="del-btn" onclick="doDeleteTeam()">نعم، احذف الوردية نهائياً</button>
+    <button class="btn block ghost" style="margin-top:8px" onclick="closeSheet()">إلغاء</button>
+  `);
+}
+async function doDeleteTeam(){
+  const code=currentTeam; const btn=document.getElementById('del-btn'); if(btn){ btn.disabled=true; btn.textContent='جارٍ الحذف…'; }
+  try{
+    const { error }=await Cloud.deleteTeam(code);
+    if(error) throw error;
+    closeSheet();
+    allTeams = await Cloud.listTeams(); ownerOverview=null;
+    currentTeam='w1'; localStorage.setItem(OWNER_TEAM_KEY,'w1');
+    try{ await Cloud.pull(); }catch(e){}
+    document.getElementById('hSub').textContent=state.settings.department;
+    renderScreen(current); toast('تم حذف الوردية');
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='نعم، احذف الوردية نهائياً'; } toast('تعذّر الحذف'); }
+}
+// اعتماد رئيس القسم لكشف يوم معيّن
+function toggleDailyApproval(iso){
+  const a=state.settings.dailyApproved=state.settings.dailyApproved||{};
+  const on=!a[iso]; if(on) a[iso]=true; else delete a[iso];
+  Data.saveSettings(); renderDaily(); toast(on?'تم اعتماد الكشف — يظهر اسم رئيس القسم':'أُلغي الاعتماد');
+}
+// شاشة منبثقة بالتعميم للمسؤولين (تُعرض مرة واحدة لكل تعميم)
+function maybeShowNotice(){
+  const n=state.settings.notice; if(!n || !n.text || !n.ts) return;
+  if(localStorage.getItem('noticeSeen')===String(n.ts)) return;
+  localStorage.setItem('noticeSeen', String(n.ts));
+  openSheet(`
+    <h3>📢 تعميم${n.by?' من '+esc(n.by):''}<button class="x" onclick="closeSheet()">×</button></h3>
+    <div style="white-space:pre-wrap;font-size:15px;line-height:1.7;padding:6px 2px">${esc(n.text)}</div>
+    <button class="btn block" style="margin-top:14px" onclick="closeSheet()">حسناً</button>
+  `);
 }
 async function switchTeam(t){
   if(!t || t===currentTeam) return;
@@ -735,7 +867,8 @@ function dailyDocHtml(iso){
       </div>
       <div style="${box};width:44%">
         <div style="font-weight:bold;text-decoration:underline">توقيع رئيس قسم العمليات الجمركية</div>
-        <div style="margin-top:16px">&nbsp;</div>
+        <div style="margin-top:16px;font-weight:bold">${(dailyApproved(iso)&&docDeptHead())?esc(docDeptHead())+(dailyApproved(iso)?' ✔':''):'&nbsp;'}</div>
+        ${dailyApproved(iso)?'<div style="font-size:11px;color:#0a7d34;margin-top:2px">معتمد</div>':''}
       </div>
     </div>`;
   return `${s.logo?`<div style="text-align:center;margin-bottom:20px"><img src="${s.logo}" style="max-width:100%;max-height:90px"></div>`:''}
@@ -827,8 +960,11 @@ function dailyDocx(iso){
     + wPar('اليوم : '+AR_DAYS[dow]+'      التاريخ : '+fmtSlash(iso)+'      دوام الشفت : '+dayShiftLabel(iso),{sz:22,after:0});
   const titleBox = `<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="9638"/></w:tblGrid><w:tr>${wBoxCell(titleInner,9638)}</w:tr></w:tbl>`;
   // صندوقا التوقيع جنباً إلى جنب: مسؤول الوردية (يمين، بالاسم) ورئيس القسم (يسار)
+  const chiefName = dailyApproved(iso) ? docDeptHead() : '';
   const supInner = wPar('توقيع مسؤول الوردية',{bold:1,u:1,sz:22,after:280}) + wPar(sup||' ',{bold:1,sz:24,after:120});
-  const chiefInner = wPar('توقيع رئيس قسم العمليات الجمركية',{bold:1,u:1,sz:22,after:280}) + wPar(' ',{sz:24,after:120});
+  const chiefInner = wPar('توقيع رئيس قسم العمليات الجمركية',{bold:1,u:1,sz:22,after:280})
+    + wPar(chiefName||' ',{bold:1,sz:24,after:dailyApproved(iso)?40:120})
+    + (dailyApproved(iso)?wPar('معتمد ✔',{bold:1,sz:20,color:'0A7D34',after:120}):'');
   const sigBox = `<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="1638"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr>${wBoxCell(supInner,4000)}${wGapCell(1638)}${wBoxCell(chiefInner,4000)}</w:tr></w:tbl>`;
   // شعار اختياري: يُضمَّن في رأس الصفحة إن رفعه المستخدم (بدون أي نص تصنيف)
   const logo=logoInfo();
@@ -911,6 +1047,7 @@ function renderDaily(){
     <div class="card no-print"><div class="field" style="margin:0 0 10px"><label>اختر التاريخ</label>
       <input type="date" value="${iso}" onchange="dailyDate=this.value;renderDaily()"></div>
       ${!isViewer?`<button class="btn block ghost" style="margin-bottom:8px" onclick="editDailyTimes()">✏️ تعديل توقيتات الدخول/الخروج</button>`:''}
+      ${isOwner?`<button class="btn block ${dailyApproved(iso)?'':'ghost'}" style="margin-bottom:8px" onclick="toggleDailyApproval('${iso}')">${dailyApproved(iso)?'✔ معتمد من رئيس القسم — اضغط للإلغاء':'✅ اعتماد رئيس القسم لهذا الكشف'}</button>`:''}
       <button class="btn block ghost" style="margin-bottom:8px" onclick="showDailyNotes()">📝 عرض الملاحظات</button>
       <button class="btn block" onclick="downloadDailyWord()">⬇️ تحميل ملف Word (وارد)</button>
       <button class="btn block ghost" style="margin-top:8px" onclick="shareDailyImage()">📤 مشاركة كصورة (واتساب)</button>
@@ -1047,7 +1184,7 @@ function pointDocHtml(day,shift){
   const box='border:2px solid #333;border-radius:14px;padding:12px 14px;text-align:center;font-family:\'Segoe UI\',Tahoma,sans-serif';
   const sig=`<div style="display:flex;justify-content:space-between;gap:18px;margin-top:22px;font-family:'Segoe UI',Tahoma,sans-serif">
       <div style="${box};width:44%"><div style="font-weight:bold;text-decoration:underline">${esc(apTitle)}</div><div style="margin-top:14px;font-weight:bold">${apName?esc(apName):'&nbsp;'}</div></div>
-      <div style="${box};width:44%"><div style="font-weight:bold;text-decoration:underline">رئيس قسم العمليات الجمركية</div><div style="margin-top:14px;font-weight:bold">&nbsp;</div></div>
+      <div style="${box};width:44%"><div style="font-weight:bold;text-decoration:underline">رئيس قسم العمليات الجمركية</div><div style="margin-top:14px;font-weight:bold">${(pp.approved&&docDeptHead())?esc(docDeptHead()):'&nbsp;'}</div></div>
     </div>`;
   return `${s.logo?`<div style="text-align:center;margin-bottom:20px"><img src="${s.logo}" style="max-width:100%;max-height:90px"></div>`:''}
     <div style="${box};margin-bottom:14px">
@@ -1075,8 +1212,9 @@ function pointDocx(day,shift){
   const totalP = wPar('مجموع ساعات العمل: '+total,{bold:1,sz:24});
   // صندوقان أسفل الجدول: المُعتمِد (يمين) ورئيس القسم (يسار)
   const apTitle=p.approvedTitle||('مسؤول '+docTeam()), apName=p.approvedBy||docSupervisor();
+  const chiefName = p.approved ? docDeptHead() : '';
   const supInner = wPar(apTitle,{bold:1,u:1,sz:22,after:280}) + wPar(apName||' ',{bold:1,sz:24,after:120});
-  const asstInner = wPar('رئيس قسم العمليات الجمركية',{bold:1,u:1,sz:22,after:280}) + wPar(' ',{sz:24,after:120});
+  const asstInner = wPar('رئيس قسم العمليات الجمركية',{bold:1,u:1,sz:22,after:280}) + wPar(chiefName||' ',{bold:1,sz:24,after:120});
   const sigBox = `<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="1638"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr>${wBoxCell(supInner,4000)}${wGapCell(1638)}${wBoxCell(asstInner,4000)}</w:tr></w:tbl>`;
   // شعار الجمارك في رأس الصفحة
   const logo=logoInfo();
@@ -1405,6 +1543,7 @@ async function startApp(){
   updateSyncBadge();
   nav(isViewer ? 'sched' : 'dash');
   if(isViewer){ try{ showMyPointPopup(); }catch(e){} }
+  else if(!isOwner){ try{ maybeShowNotice(); }catch(e){} }   // المشرفون: تظهر لهم تعاميم رئيس القسم
 }
 async function boot(){
   if(!window.supabase){

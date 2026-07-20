@@ -75,6 +75,10 @@ const Cloud = {
       p_admin_name: adminName, p_assistant: assistant||''
     });
   },
+  /* بثّ حقول مشتركة لكل الورديات — اسم رئيس القسم أو تعميم (للمالك فقط) */
+  async broadcast(patch){ return await this.sb.rpc('owner_broadcast', { p_patch: patch }); },
+  /* حذف وردية بكل بياناتها (للمالك فقط) */
+  async deleteTeam(code){ return await this.sb.rpc('delete_team', { p_team: code }); },
 
   async getSession(){ const { data } = await this.sb.auth.getSession(); return data.session; },
   async currentEmail(){ const { data } = await this.sb.auth.getUser(); return data.user ? data.user.email : ''; },
