@@ -13,6 +13,7 @@ const RED = 'C00000'; // لون الملاحظات/العنوان الأحمر �
 function docLocation(){ return (state.settings.location||'جمارك مطار حمد الدولي'); }
 function docTeam(){ return (state.settings.teamName||'الوردية الأولى'); }
 function docSupervisor(){ return (state.settings.supervisor||''); }
+function docAssistant(){ return (state.settings.assistant||''); }
 
 /* الحالة الابتدائية (تُملأ من السحابة بعد الدخول) */
 let state = { employees: [], leaves: [], overrides: {}, pointShifts: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)) };
@@ -910,15 +911,21 @@ function pointTableHtml(day,shift){
     <th style="${th}">وقت الحضور</th><th style="${th}">وقت الانصراف</th><th style="${th}">وقت العمل</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 function pointDocHtml(day,shift){
-  const p=getPoint(day,shift), w=shiftWindow(shift), total=w?fmtDur(w.end-w.start):'—', sh=shiftHours(shift);
+  const s=state.settings, w=shiftWindow(shift), total=w?fmtDur(w.end-w.start):'—', sh=shiftHours(shift);
   const box='border:2px solid #333;border-radius:14px;padding:12px 14px;text-align:center;font-family:\'Segoe UI\',Tahoma,sans-serif';
-  return `<div style="${box};margin-bottom:14px">
+  const sig=`<div style="display:flex;justify-content:space-between;gap:18px;margin-top:22px;font-family:'Segoe UI',Tahoma,sans-serif">
+      <div style="${box};width:44%"><div style="font-weight:bold;text-decoration:underline">مسؤول ${esc(docTeam())}</div><div style="margin-top:14px;font-weight:bold">${docSupervisor()?esc(docSupervisor()):'&nbsp;'}</div></div>
+      <div style="${box};width:44%"><div style="font-weight:bold;text-decoration:underline">مساعد مسؤول ${esc(docTeam())}</div><div style="margin-top:14px;font-weight:bold">${docAssistant()?esc(docAssistant()):'&nbsp;'}</div></div>
+    </div>`;
+  return `${s.logo?`<div style="text-align:center;margin-bottom:20px"><img src="${s.logo}" style="max-width:100%;max-height:90px"></div>`:''}
+    <div style="${box};margin-bottom:14px">
       <div style="font-weight:bold;font-size:15px">استلام النقطة الأمنية / ${esc(docLocation())}</div>
-      <div style="font-weight:bold;font-size:15px;color:#C00000;margin-top:6px">${esc(state.settings.department)} — ${esc(p.pointName)}</div>
+      <div style="font-weight:bold;font-size:15px;color:#C00000;margin-top:6px">${esc(s.department)} / ${esc(docTeam())}</div>
       <div style="font-size:13px;margin-top:8px">اليوم : <b>${AR_DAYS[parseISO(day).getDay()]}</b> &nbsp;&nbsp; التاريخ : ${fmtSlash(day)} &nbsp;&nbsp; الوردية : ${esc(shift)} (${esc(sh.start)} - ${esc(sh.end)})</div>
     </div>
     ${pointTableHtml(day,shift)}
-    <div style="text-align:center;margin-top:10px;font-weight:bold">مجموع ساعات العمل: ${total}</div>`;
+    <div style="text-align:center;margin-top:10px;font-weight:bold">مجموع ساعات العمل: ${total}</div>
+    ${sig}`;
 }
 // ملف Word للنقطة
 function pointDocx(day,shift){
@@ -931,23 +938,41 @@ function pointDocx(day,shift){
   const cellMar='<w:tblCellMar><w:top w:w="90" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="90" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar>';
   const tbl=`<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/>${border}${cellMar}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${head}${body}</w:tbl>`;
   const title = wPar('استلام النقطة الأمنية / '+docLocation(),{bold:1,sz:28})
-    + wPar(s.department+' — '+p.pointName,{bold:1,sz:26,color:RED})
+    + wPar(s.department+' / '+docTeam(),{bold:1,sz:26,color:RED})
     + wPar('اليوم : '+AR_DAYS[parseISO(day).getDay()]+'      التاريخ : '+fmtSlash(day)+'      الوردية : '+shift+' ('+sh.start+' - '+sh.end+')',{sz:22,after:0});
   const totalP = wPar('مجموع ساعات العمل: '+total,{bold:1,sz:24});
+  // صندوقا مسؤول الوردية ومساعده أسفل الجدول
+  const supInner = wPar('مسؤول '+docTeam(),{bold:1,u:1,sz:22,after:280}) + wPar(docSupervisor()||' ',{bold:1,sz:24,after:120});
+  const asstInner = wPar('مساعد مسؤول '+docTeam(),{bold:1,u:1,sz:22,after:280}) + wPar(docAssistant()||' ',{bold:1,sz:24,after:120});
+  const sigBox = `<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="1638"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr>${wBoxCell(supInner,4000)}${wGapCell(1638)}${wBoxCell(asstInner,4000)}</w:tr></w:tbl>`;
+  // شعار الجمارك في رأس الصفحة
+  const logo=logoInfo();
+  const logoPara = logo ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="0"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${logo.cx}" cy="${logo.cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="logo"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="logo"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${logo.cx}" cy="${logo.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>` : '';
+  const hdr=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">${logoPara||'<w:p/>'}</w:hdr>`;
+  const topMar = logo ? Math.round(708 + logo.cy/635 + 420) : 1134;
   const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`
-    +title+'<w:p/>'+tbl+'<w:p/>'+totalP
-    +'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/><w:bidi/></w:sectPr></w:body></w:document>';
-  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>`
+    +title+'<w:p/>'+tbl+'<w:p/>'+totalP+'<w:p/>'+sigBox
+    +`<w:sectPr><w:headerReference w:type="default" r:id="rId101"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="${topMar}" w:right="1134" w:bottom="1134" w:left="1134" w:header="708"/><w:bidi/></w:sectPr></w:body></w:document>`;
+  const imgDefaults = logo ? '<Default Extension="png" ContentType="image/png"/>' : '';
+  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'+imgDefaults+'<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>';
   const rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
-  const drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+  const drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId101" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>';
+  const hrels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/></Relationships>';
   const te=new TextEncoder();
-  return zipStore([
+  const files=[
     {name:'[Content_Types].xml', data:te.encode(ct)},
     {name:'_rels/.rels', data:te.encode(rels)},
     {name:'word/_rels/document.xml.rels', data:te.encode(drels)},
+    {name:'word/header1.xml', data:te.encode(hdr)},
     {name:'word/document.xml', data:te.encode(doc)}
-  ]);
+  ];
+  if(logo){
+    files.push({name:'word/_rels/header1.xml.rels', data:te.encode(hrels)});
+    files.push({name:'word/media/logo.png', data:logo.bytes});
+  }
+  return zipStore(files);
 }
 function downloadPointWord(){
   try{
@@ -1052,9 +1077,10 @@ function openSettings(){
     <div style="border-top:1px solid var(--line);margin:16px 0 10px"></div>
     <h3 style="font-size:14px">ترويسة الكشف (تظهر في ملف Word)</h3>
     <div class="field"><label>الموقع/الجهة</label><input id="s-loc" value="${esc(docLocation())}" placeholder="جمارك مطار حمد الدولي"></div>
+    <div class="field"><label>اسم الوردية</label><input id="s-team" value="${esc(docTeam())}" placeholder="الوردية الأولى"></div>
     <div class="two">
-      <div class="field"><label>اسم الوردية</label><input id="s-team" value="${esc(docTeam())}" placeholder="الوردية الأولى"></div>
       <div class="field"><label>مسؤول الوردية</label><input id="s-sup" value="${esc(docSupervisor())}" placeholder="اسم المسؤول"></div>
+      <div class="field"><label>مساعد مسؤول الوردية</label><input id="s-asst" value="${esc(docAssistant())}" placeholder="اسم المساعد"></div>
     </div>
 
     <button class="btn block" onclick="saveSettings()">حفظ الإعدادات</button>
@@ -1091,6 +1117,7 @@ function saveSettings(){
   s.location=val('s-loc').trim();
   s.teamName=val('s-team').trim();
   s.supervisor=val('s-sup').trim();
+  s.assistant=val('s-asst').trim();
   Data.saveSettings(); closeSheet(); document.getElementById('hSub').textContent=s.department; renderScreen(current); toast('تم حفظ الإعدادات');
 }
 /* رفع شعار الكشف: يُصغَّر ويُخزَّن كـ data URL في الإعدادات (سحابة المستخدم الخاصة) */
