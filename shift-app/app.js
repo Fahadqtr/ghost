@@ -15,7 +15,7 @@ function docTeam(){ return (state.settings.teamName||'الوردية الأول�
 function docSupervisor(){ return (state.settings.supervisor||''); }
 
 /* الحالة الابتدائية (تُملأ من السحابة بعد الدخول) */
-let state = { employees: [], leaves: [], overrides: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)) };
+let state = { employees: [], leaves: [], overrides: {}, pointShifts: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)) };
 let currentUserEmail = '';
 let currentEmpNo = '';  // الرقم الوظيفي للموظف المسجّل (لدور العرض)
 let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
@@ -76,7 +76,7 @@ function dayStats(iso){
 }
 
 /* -------------------- التنقّل -------------------- */
-const screens=['dash','emps','sched','leaves','daily'];
+const screens=['dash','emps','sched','leaves','daily','point'];
 let current='dash';
 function nav(to){
   current=to;
@@ -92,6 +92,7 @@ function renderScreen(to){
   else if(to==='sched') renderSched();
   else if(to==='leaves') renderLeaves();
   else if(to==='daily') renderDaily();
+  else if(to==='point') renderPoint();
 }
 
 /* -------------------- لوحة المعلومات -------------------- */
@@ -875,6 +876,150 @@ function saveDailyTimesEdit(){
 function resetDailyTimes(){
   const iso=dailyDate||toISO(today());
   delete dailyTimes[iso]; saveDailyTimes(); closeSheet(); renderDaily(); toast('تمت الإعادة للافتراضي');
+}
+
+/* -------------------- النقطة الأمنية -------------------- */
+let pointDate=null, pointShift=null;
+function parseArTime(t){ t=String(t||'').trim(); const m=t.match(/(\d{1,2}):(\d{2})\s*(ص|م)/); if(!m) return null; let h=(+m[1])%12; if(m[3]==='م') h+=12; return h*60+(+m[2]); }
+function fmtArTime(mins){ mins=((mins%1440)+1440)%1440; let h=Math.floor(mins/60), mm=mins%60; const ap=h<12?'ص':'م'; let hh=h%12; if(hh===0) hh=12; return hh+':'+String(mm).padStart(2,'0')+' '+ap; }
+function fmtDur(m){ return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')+':00'; }
+function shiftWindow(sh){ const h=shiftHours(sh); let s=parseArTime(h.start), e=parseArTime(h.end); if(s==null||e==null) return null; if(e<=s) e+=1440; return {start:s,end:e}; }
+function pointKey(day,shift){ return day+'|'+shift; }
+function getPoint(day,shift){ const p=(state.pointShifts||{})[pointKey(day,shift)]; return p?{empOrder:(p.empOrder||[]).slice(),approved:!!p.approved,pointName:p.pointName||'النقطة الأمنية'}:{empOrder:[],approved:false,pointName:'النقطة الأمنية'}; }
+function pointSlots(sh, empIds){ const w=shiftWindow(sh); if(!w||!empIds.length) return []; const total=w.end-w.start, per=Math.floor(total/empIds.length); const out=[]; let t=w.start; empIds.forEach((id,i)=>{ const st=t, en=(i===empIds.length-1)?w.end:t+per; out.push({empId:id, start:st, end:en, in:fmtArTime(st), out:fmtArTime(en), mins:en-st}); t=en; }); return out; }
+function empsOnShift(iso, sh){ return state.employees.filter(e=>cellValue(e,iso).value===sh); }
+function pointRows(day,shift){ const p=getPoint(day,shift); return pointSlots(shift,p.empOrder).map((s,i)=>{ const e=empById(s.empId); return { i:i+1, name:e?e.name:'— (محذوف)', no:e?e.no:'', in:s.in, out:s.out, dur:fmtDur(s.mins) }; }); }
+function updatePoint(mut){ const ps=getPoint(pointDate,pointShift); mut(ps); Data.savePointShift(pointDate, pointShift, ps); renderPoint(); }
+function setPointShift(sh){ pointShift=sh; renderPoint(); }
+function fillPointFromShift(){ updatePoint(ps=>{ ps.empOrder = empsOnShift(pointDate,pointShift).map(e=>e.id); }); toast('تمّت التعبئة من عاملي الوردية'); }
+function addToPoint(sel){ const id=sel.value; if(!id) return; updatePoint(ps=>{ if(ps.empOrder.indexOf(id)<0) ps.empOrder.push(id); }); }
+function removeFromPoint(id){ updatePoint(ps=>{ ps.empOrder = ps.empOrder.filter(x=>x!==id); }); }
+function movePoint(id,dir){ updatePoint(ps=>{ const i=ps.empOrder.indexOf(id), j=i+dir; if(i<0||j<0||j>=ps.empOrder.length) return; const a=ps.empOrder; [a[i],a[j]]=[a[j],a[i]]; }); }
+function approvePoint(){ const p=getPoint(pointDate,pointShift); if(!p.empOrder.length){ toast('أضف موظفين أولاً'); return; } updatePoint(ps=>{ ps.approved=true; }); toast('✓ تم اعتماد الجدول'); }
+function unapprovePoint(){ updatePoint(ps=>{ ps.approved=false; }); toast('أُلغي الاعتماد — يمكن التعديل'); }
+
+// جدول النقطة بأنماط مضمّنة (معاينة/طباعة)
+function pointTableHtml(day,shift){
+  const rows=pointRows(day,shift);
+  const c='border:1px solid #333;padding:8px 5px;text-align:center;font-size:13px';
+  const th='border:1px solid #333;padding:8px 5px;text-align:center;font-size:13px;background:#e9edf2;font-weight:bold';
+  const body=rows.length? rows.map(r=>`<tr><td style="${c}">${r.i}</td><td style="${c};font-weight:bold">${r.name}</td><td style="${c}">${r.no}</td><td style="${c}">${r.in}</td><td style="${c}">${r.out}</td><td style="${c}">${r.dur}</td></tr>`).join('')
+    : `<tr><td style="${c}" colspan="6">لا يوجد موظفون على النقطة</td></tr>`;
+  return `<table style="width:100%;border-collapse:collapse" dir="rtl"><thead><tr>
+    <th style="${th}">م</th><th style="${th}">اسم الموظف</th><th style="${th}">رقم الوظيفة</th>
+    <th style="${th}">وقت الحضور</th><th style="${th}">وقت الانصراف</th><th style="${th}">وقت العمل</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+function pointDocHtml(day,shift){
+  const p=getPoint(day,shift), w=shiftWindow(shift), total=w?fmtDur(w.end-w.start):'—', sh=shiftHours(shift);
+  const box='border:2px solid #333;border-radius:14px;padding:12px 14px;text-align:center;font-family:\'Segoe UI\',Tahoma,sans-serif';
+  return `<div style="${box};margin-bottom:14px">
+      <div style="font-weight:bold;font-size:15px">استلام النقطة الأمنية / ${esc(docLocation())}</div>
+      <div style="font-weight:bold;font-size:15px;color:#C00000;margin-top:6px">${esc(state.settings.department)} — ${esc(p.pointName)}</div>
+      <div style="font-size:13px;margin-top:8px">اليوم : <b>${AR_DAYS[parseISO(day).getDay()]}</b> &nbsp;&nbsp; التاريخ : ${fmtSlash(day)} &nbsp;&nbsp; الوردية : ${esc(shift)} (${esc(sh.start)} - ${esc(sh.end)})</div>
+    </div>
+    ${pointTableHtml(day,shift)}
+    <div style="text-align:center;margin-top:10px;font-weight:bold">مجموع ساعات العمل: ${total}</div>`;
+}
+// ملف Word للنقطة
+function pointDocx(day,shift){
+  const s=state.settings, rows=pointRows(day,shift), w=shiftWindow(shift), total=w?fmtDur(w.end-w.start):'—', sh=shiftHours(shift), p=getPoint(day,shift), hd='e9edf2';
+  const grid=[600,3000,1500,1846,1846,846].map(x=>`<w:gridCol w:w="${x}"/>`).join('');
+  const RH='<w:trPr><w:trHeight w:val="560" w:hRule="atLeast"/></w:trPr>';
+  const head='<w:tr>'+RH+wTc('م',{shd:hd,bold:1})+wTc('اسم الموظف',{shd:hd,bold:1})+wTc('رقم الوظيفة',{shd:hd,bold:1})+wTc('وقت الحضور',{shd:hd,bold:1})+wTc('وقت الانصراف',{shd:hd,bold:1})+wTc('وقت العمل',{shd:hd,bold:1})+'</w:tr>';
+  const body=rows.length? rows.map(r=>'<w:tr>'+RH+wTc(String(r.i))+wTc(r.name,{bold:1})+wTc(r.no)+wTc(r.in)+wTc(r.out)+wTc(r.dur)+'</w:tr>').join('') : '<w:tr>'+RH+wTc('لا يوجد موظفون على النقطة',{span:6})+'</w:tr>';
+  const border='<w:tblBorders>'+['top','left','bottom','right','insideH','insideV'].map(x=>`<w:${x} w:val="single" w:sz="6" w:space="0" w:color="333333"/>`).join('')+'</w:tblBorders>';
+  const cellMar='<w:tblCellMar><w:top w:w="90" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="90" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar>';
+  const tbl=`<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/>${border}${cellMar}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${head}${body}</w:tbl>`;
+  const title = wPar('استلام النقطة الأمنية / '+docLocation(),{bold:1,sz:28})
+    + wPar(s.department+' — '+p.pointName,{bold:1,sz:26,color:RED})
+    + wPar('اليوم : '+AR_DAYS[parseISO(day).getDay()]+'      التاريخ : '+fmtSlash(day)+'      الوردية : '+shift+' ('+sh.start+' - '+sh.end+')',{sz:22,after:0});
+  const totalP = wPar('مجموع ساعات العمل: '+total,{bold:1,sz:24});
+  const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`
+    +title+'<w:p/>'+tbl+'<w:p/>'+totalP
+    +'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/><w:bidi/></w:sectPr></w:body></w:document>';
+  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+  const rels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+  const drels='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+  const te=new TextEncoder();
+  return zipStore([
+    {name:'[Content_Types].xml', data:te.encode(ct)},
+    {name:'_rels/.rels', data:te.encode(rels)},
+    {name:'word/_rels/document.xml.rels', data:te.encode(drels)},
+    {name:'word/document.xml', data:te.encode(doc)}
+  ]);
+}
+function downloadPointWord(){
+  try{
+    const data=pointDocx(pointDate,pointShift);
+    const blob=new Blob([data], {type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+    const url=URL.createObjectURL(blob), a=document.createElement('a');
+    a.href=url; a.download='النقطة_'+pointShift+'_'+pointDate+'.docx'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1500); toast('تم تنزيل الجدول');
+  }catch(e){ toast('تعذّر إنشاء الملف'); }
+}
+function renderPoint(){
+  if(!pointDate) pointDate=toISO(today());
+  const ds=dayShiftLabel(pointDate);
+  if(!pointShift) pointShift = WORK_SHIFTS.includes(ds)?ds:'صباح';
+  if(isViewer) return renderPointViewer();
+  const el=document.getElementById('scr-point'), p=getPoint(pointDate,pointShift), sh=shiftHours(pointShift), locked=p.approved;
+  const slots=pointRows(pointDate,pointShift);
+  const assigned=p.empOrder;
+  const others=state.employees.filter(e=>assigned.indexOf(e.id)<0);
+  el.innerHTML=`
+    <h2 class="title no-print">النقطة الأمنية</h2>
+    <div class="card no-print">
+      <div class="field" style="margin:0 0 10px"><label>التاريخ</label><input type="date" value="${pointDate}" onchange="pointDate=this.value;pointShift=null;renderPoint()"></div>
+      <div class="field" style="margin:0"><label>الوردية</label>
+        <div class="pick">${WORK_SHIFTS.map(x=>`<button class="${pointShift===x?'on':''}" onclick="setPointShift('${x}')">${x}</button>`).join('')}</div></div>
+      <div class="hint" style="margin-top:8px">وقت الوردية: <b>${esc(sh.start)}</b> إلى <b>${esc(sh.end)}</b> — يُقسَّم بالتساوي على الموظفين.</div>
+    </div>
+    <div class="card no-print">
+      <h3>الموظفون على النقطة (${assigned.length}) ${locked?'<span class="badge b-ok">معتمد</span>':''}</h3>
+      ${assigned.length? assigned.map((id,idx)=>{ const e=empById(id), s=slots[idx]; return `<div class="row">
+          <div class="grow"><div class="name">${e?esc(e.name):'— (محذوف)'} <span class="meta">(${e?e.no:''})</span></div>
+            <div class="meta">⏱️ ${s?s.in+' → '+s.out+' ('+s.dur+')':''}</div></div>
+          ${locked?'':`<div style="display:flex;gap:4px">
+            <button class="icon-btn" onclick="movePoint('${id}',-1)">↑</button>
+            <button class="icon-btn" onclick="movePoint('${id}',1)">↓</button>
+            <button class="icon-btn danger" onclick="removeFromPoint('${id}')">✕</button></div>`}
+        </div>`; }).join('') : '<div class="empty">لا يوجد موظفون — أضف من الأسفل</div>'}
+      ${locked?'':`<div class="two" style="margin-top:10px">
+        <div class="field" style="margin:0"><label>إضافة موظف</label><select onchange="addToPoint(this)"><option value="">اختر…</option>${others.map(e=>`<option value="${e.id}">${esc(e.name)} (${e.no})</option>`).join('')}</select></div>
+        <div class="field" style="margin:0;display:flex;align-items:flex-end"><button class="btn block ghost" onclick="fillPointFromShift()">↻ عاملو الوردية</button></div>
+      </div>`}
+    </div>
+    <div class="card no-print">
+      ${locked
+        ? `<button class="btn block" onclick="downloadPointWord()">⬇️ تنزيل الجدول (Word)</button>
+           <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / PDF</button>
+           <button class="btn block danger" style="margin-top:8px" onclick="unapprovePoint()">✎ إلغاء الاعتماد للتعديل</button>`
+        : `<button class="btn block" onclick="approvePoint()">✓ اعتماد الجدول</button>
+           <p class="hint" style="text-align:center;margin-top:8px">بعد الاعتماد يظهر للموظفين ويمكن تنزيله.</p>`}
+    </div>
+    <div class="card daily-doc"><div class="doc-fit" id="docFit"><div class="doc-page" id="docPage">${pointDocHtml(pointDate,pointShift)}</div></div></div>`;
+  fitDocPage();
+}
+function renderPointViewer(){
+  const el=document.getElementById('scr-point'), me=viewerEmp(), day=pointDate;
+  let cards='';
+  if(me){
+    WORK_SHIFTS.forEach(sh=>{
+      const p=getPoint(day,sh); if(!p.approved) return;
+      const slots=pointSlots(sh,p.empOrder); const idx=p.empOrder.indexOf(me.id); if(idx<0) return;
+      const s=slots[idx], prevId=idx>0?p.empOrder[idx-1]:null, prev=prevId?empById(prevId):null, nextId=idx<p.empOrder.length-1?p.empOrder[idx+1]:null, next=nextId?empById(nextId):null;
+      cards+=`<div class="card">
+        <h3>${esc(p.pointName)} — وردية ${esc(sh)}</h3>
+        <div class="row"><div class="grow"><div class="name">وقتك على النقطة</div><div class="meta">من <b>${s.in}</b> إلى <b>${s.out}</b> (${s.dur})</div></div><span class="badge b-ok">معتمد</span></div>
+        <div class="meta" style="margin-top:6px">↩️ تستلم من: <b>${prev?esc(prev.name):'بداية الوردية'}</b>${prevId?' — الساعة '+s.in:''}</div>
+        <div class="meta" style="margin-top:2px">↪️ تسلّم إلى: <b>${next?esc(next.name):'نهاية الوردية'}</b>${nextId?' — الساعة '+s.out:''}</div>
+      </div>`;
+    });
+  }
+  el.innerHTML=`<h2 class="title">نقطتي الأمنية</h2>
+    <div class="card"><div class="field" style="margin:0"><label>التاريخ</label><input type="date" value="${day}" onchange="pointDate=this.value;renderPoint()"></div></div>
+    ${cards || '<div class="card"><div class="empty">لا يوجد توزيع معتمد لك في هذا اليوم</div></div>'}`;
 }
 
 /* -------------------- الإعدادات -------------------- */
