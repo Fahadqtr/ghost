@@ -19,6 +19,7 @@ function docAssistant(){ return (state.settings.assistant||''); }
 let state = { employees: [], leaves: [], overrides: {}, pointShifts: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)) };
 let currentUserEmail = '';
 let currentEmpNo = '';  // الرقم الوظيفي للموظف المسجّل (لدور العرض)
+let currentUsername = ''; // اسم مستخدم الدخول (للمشرف: salemm / fahdaziz)
 let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
 let highlightDate = null; // تاريخ يُبرَز في الجدول (زر أقرب وردية)
 
@@ -159,6 +160,7 @@ function renderDash(){
   const soon=state.leaves.filter(l=>l.status==='معتمد' && daysBetween(iso,l.from)>=0 && daysBetween(iso,l.from)<=7);
   const nb=nextShiftBlock();
   const nbLeaves=nb ? state.leaves.filter(l=>l.status!=='مرفوض' && l.from<=nb.end && l.to>=nb.start).sort((a,b)=>a.from<b.from?-1:1) : [];
+  const pointToday=WORK_SHIFTS.map(sh=>({shift:sh, p:getPoint(iso,sh), rows:pointRows(iso,sh)})).filter(x=>x.p.empOrder.length);
   const perEmp={}; state.employees.forEach(e=>perEmp[e.id]=0);
   state.leaves.filter(l=>l.status==='معتمد').forEach(l=>{ if(perEmp[l.empId]!=null) perEmp[l.empId]+=inclusiveDays(l.from,l.to); });
   const pending=state.leaves.filter(l=>l.status==='قيد الانتظار').length;
@@ -191,6 +193,14 @@ function renderDash(){
           </div>
         </div>`;
       }).join('') : '<div class="empty">لا توجد طلبات معلّقة</div>'}
+    </div>
+    <div class="card">
+      <h3>جدول المستلمين على النقطة اليوم</h3>
+      ${pointToday.length? pointToday.map(x=>`
+        <div style="margin:4px 0 10px">
+          <div class="name" style="margin-bottom:4px">وردية ${esc(x.shift)} ${x.p.approved?'<span class="badge b-ok">معتمد</span>':'<span class="badge b-pending">غير معتمد</span>'}</div>
+          ${x.rows.map(r=>`<div class="row"><div class="grow"><div class="name" style="font-size:14px">${esc(r.name)} <span class="meta">(${r.no})</span></div></div><div class="meta">⏱️ ${r.in} → ${r.out}</div></div>`).join('')}
+        </div>`).join('') : '<div class="empty">لا يوجد توزيع نقطة اليوم — أنشئه من تبويب «النقطة»</div>'}
     </div>
     <div class="card">
       <h3>إجازات الوردية القادمة${nb?` <span class="meta" style="font-weight:600">(${fmtDate(nb.start)} ← ${fmtDate(nb.end)})</span>`:''}</h3>
@@ -886,7 +896,12 @@ function fmtArTime(mins){ mins=((mins%1440)+1440)%1440; let h=Math.floor(mins/60
 function fmtDur(m){ return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')+':00'; }
 function shiftWindow(sh){ const h=shiftHours(sh); let s=parseArTime(h.start), e=parseArTime(h.end); if(s==null||e==null) return null; if(e<=s) e+=1440; return {start:s,end:e}; }
 function pointKey(day,shift){ return day+'|'+shift; }
-function getPoint(day,shift){ const p=(state.pointShifts||{})[pointKey(day,shift)]; return p?{empOrder:(p.empOrder||[]).slice(),approved:!!p.approved,pointName:p.pointName||'النقطة الأمنية'}:{empOrder:[],approved:false,pointName:'النقطة الأمنية'}; }
+function getPoint(day,shift){ const p=(state.pointShifts||{})[pointKey(day,shift)]; return p?{empOrder:(p.empOrder||[]).slice(),approved:!!p.approved,pointName:p.pointName||'النقطة الأمنية',approvedBy:p.approvedBy||'',approvedTitle:p.approvedTitle||''}:{empOrder:[],approved:false,pointName:'النقطة الأمنية',approvedBy:'',approvedTitle:''}; }
+// المُعتمِد الافتراضي حسب المستخدم الحالي (سالم = مسؤول، فهد = مساعد)
+function approverDefaultRole(){ return currentUsername==='fahdaziz' ? 'asst' : 'sup'; }
+function approverInfo(role){ return role==='asst'
+  ? { title:'مساعد مسؤول '+docTeam(), name:docAssistant() }
+  : { title:'مسؤول '+docTeam(), name:docSupervisor() }; }
 function pointSlots(sh, empIds){ const w=shiftWindow(sh); if(!w||!empIds.length) return []; const total=w.end-w.start, per=Math.floor(total/empIds.length); const out=[]; let t=w.start; empIds.forEach((id,i)=>{ const st=t, en=(i===empIds.length-1)?w.end:t+per; out.push({empId:id, start:st, end:en, in:fmtArTime(st), out:fmtArTime(en), mins:en-st}); t=en; }); return out; }
 function empsOnShift(iso, sh){ return state.employees.filter(e=>cellValue(e,iso).value===sh); }
 function pointRows(day,shift){ const p=getPoint(day,shift); return pointSlots(shift,p.empOrder).map((s,i)=>{ const e=empById(s.empId); return { i:i+1, name:e?e.name:'— (محذوف)', no:e?e.no:'', in:s.in, out:s.out, dur:fmtDur(s.mins) }; }); }
@@ -896,7 +911,7 @@ function fillPointFromShift(){ updatePoint(ps=>{ ps.empOrder = empsOnShift(point
 function addToPoint(sel){ const id=sel.value; if(!id) return; updatePoint(ps=>{ if(ps.empOrder.indexOf(id)<0) ps.empOrder.push(id); }); }
 function removeFromPoint(id){ updatePoint(ps=>{ ps.empOrder = ps.empOrder.filter(x=>x!==id); }); }
 function movePoint(id,dir){ updatePoint(ps=>{ const i=ps.empOrder.indexOf(id), j=i+dir; if(i<0||j<0||j>=ps.empOrder.length) return; const a=ps.empOrder; [a[i],a[j]]=[a[j],a[i]]; }); }
-function approvePoint(){ const p=getPoint(pointDate,pointShift); if(!p.empOrder.length){ toast('أضف موظفين أولاً'); return; } updatePoint(ps=>{ ps.approved=true; }); toast('✓ تم اعتماد الجدول'); }
+function approvePoint(){ const p=getPoint(pointDate,pointShift); if(!p.empOrder.length){ toast('أضف موظفين أولاً'); return; } const ai=approverInfo(val('pt-approver')||approverDefaultRole()); updatePoint(ps=>{ ps.approved=true; ps.approvedTitle=ai.title; ps.approvedBy=ai.name; }); toast('✓ تم اعتماد الجدول'); }
 function unapprovePoint(){ updatePoint(ps=>{ ps.approved=false; }); toast('أُلغي الاعتماد — يمكن التعديل'); }
 
 // جدول النقطة بأنماط مضمّنة (معاينة/طباعة)
@@ -912,10 +927,11 @@ function pointTableHtml(day,shift){
 }
 function pointDocHtml(day,shift){
   const s=state.settings, w=shiftWindow(shift), total=w?fmtDur(w.end-w.start):'—', sh=shiftHours(shift);
+  const pp=getPoint(day,shift), apTitle=pp.approvedTitle||('مسؤول '+docTeam()), apName=pp.approvedBy||docSupervisor();
   const box='border:2px solid #333;border-radius:14px;padding:12px 14px;text-align:center;font-family:\'Segoe UI\',Tahoma,sans-serif';
   const sig=`<div style="display:flex;justify-content:space-between;gap:18px;margin-top:22px;font-family:'Segoe UI',Tahoma,sans-serif">
-      <div style="${box};width:44%"><div style="font-weight:bold;text-decoration:underline">مسؤول ${esc(docTeam())}</div><div style="margin-top:14px;font-weight:bold">${docSupervisor()?esc(docSupervisor()):'&nbsp;'}</div></div>
-      <div style="${box};width:44%"><div style="font-weight:bold;text-decoration:underline">مساعد مسؤول ${esc(docTeam())}</div><div style="margin-top:14px;font-weight:bold">${docAssistant()?esc(docAssistant()):'&nbsp;'}</div></div>
+      <div style="${box};width:44%"><div style="font-weight:bold;text-decoration:underline">${esc(apTitle)}</div><div style="margin-top:14px;font-weight:bold">${apName?esc(apName):'&nbsp;'}</div></div>
+      <div style="${box};width:44%"><div style="font-weight:bold;text-decoration:underline">رئيس قسم العمليات الجمركية</div><div style="margin-top:14px;font-weight:bold">&nbsp;</div></div>
     </div>`;
   return `${s.logo?`<div style="text-align:center;margin-bottom:20px"><img src="${s.logo}" style="max-width:100%;max-height:90px"></div>`:''}
     <div style="${box};margin-bottom:14px">
@@ -941,9 +957,10 @@ function pointDocx(day,shift){
     + wPar(s.department+' / '+docTeam(),{bold:1,sz:26,color:RED})
     + wPar('اليوم : '+AR_DAYS[parseISO(day).getDay()]+'      التاريخ : '+fmtSlash(day)+'      الوردية : '+shift+' ('+sh.start+' - '+sh.end+')',{sz:22,after:0});
   const totalP = wPar('مجموع ساعات العمل: '+total,{bold:1,sz:24});
-  // صندوقا مسؤول الوردية ومساعده أسفل الجدول
-  const supInner = wPar('مسؤول '+docTeam(),{bold:1,u:1,sz:22,after:280}) + wPar(docSupervisor()||' ',{bold:1,sz:24,after:120});
-  const asstInner = wPar('مساعد مسؤول '+docTeam(),{bold:1,u:1,sz:22,after:280}) + wPar(docAssistant()||' ',{bold:1,sz:24,after:120});
+  // صندوقان أسفل الجدول: المُعتمِد (يمين) ورئيس القسم (يسار)
+  const apTitle=p.approvedTitle||('مسؤول '+docTeam()), apName=p.approvedBy||docSupervisor();
+  const supInner = wPar(apTitle,{bold:1,u:1,sz:22,after:280}) + wPar(apName||' ',{bold:1,sz:24,after:120});
+  const asstInner = wPar('رئيس قسم العمليات الجمركية',{bold:1,u:1,sz:22,after:280}) + wPar(' ',{sz:24,after:120});
   const sigBox = `<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="1638"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr>${wBoxCell(supInner,4000)}${wGapCell(1638)}${wBoxCell(asstInner,4000)}</w:tr></w:tbl>`;
   // شعار الجمارك في رأس الصفحة
   const logo=logoInfo();
@@ -1017,11 +1034,17 @@ function renderPoint(){
     </div>
     <div class="card no-print">
       ${locked
-        ? `<button class="btn block" onclick="downloadPointWord()">⬇️ تنزيل الجدول (Word)</button>
+        ? `<div class="hint" style="margin-bottom:8px">مُعتمَد بواسطة: <b>${esc(p.approvedTitle||('مسؤول '+docTeam()))} — ${esc(p.approvedBy||docSupervisor())}</b></div>
+           <button class="btn block" onclick="downloadPointWord()">⬇️ تنزيل الجدول (Word)</button>
            <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / PDF</button>
            <button class="btn block danger" style="margin-top:8px" onclick="unapprovePoint()">✎ إلغاء الاعتماد للتعديل</button>`
-        : `<button class="btn block" onclick="approvePoint()">✓ اعتماد الجدول</button>
-           <p class="hint" style="text-align:center;margin-top:8px">بعد الاعتماد يظهر للموظفين ويمكن تنزيله.</p>`}
+        : `<div class="field" style="margin:0 0 8px"><label>يعتمد باسم</label>
+             <select id="pt-approver">
+               <option value="sup" ${approverDefaultRole()==='sup'?'selected':''}>مسؤول ${esc(docTeam())} — ${esc(docSupervisor())}</option>
+               <option value="asst" ${approverDefaultRole()==='asst'?'selected':''}>مساعد مسؤول ${esc(docTeam())} — ${esc(docAssistant())}</option>
+             </select></div>
+           <button class="btn block" onclick="approvePoint()">✓ اعتماد الجدول</button>
+           <p class="hint" style="text-align:center;margin-top:8px">بعد الاعتماد يظهر للموظفين ويُحفظ باسم المُعتمِد.</p>`}
     </div>
     <div class="card daily-doc"><div class="doc-fit" id="docFit"><div class="doc-page" id="docPage">${pointDocHtml(pointDate,pointShift)}</div></div></div>`;
   fitDocPage();
@@ -1217,6 +1240,7 @@ async function startApp(){
     isViewer = !(u && u.app_metadata && u.app_metadata.role==='admin');
     currentUserEmail = u ? ((u.user_metadata&&u.user_metadata.full_name) || (u.email||'').replace(USER_DOMAIN,'')) : '';
     currentEmpNo = (u && u.user_metadata && u.user_metadata.emp_no) || '';
+    currentUsername = u ? (u.email||'').split('@')[0] : '';
   }catch(e){ isViewer=false; }
   applyRole();
   const hadCache=loadCache();
