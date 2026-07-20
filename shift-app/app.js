@@ -275,7 +275,7 @@ function noticesCardHtml(){
 function showNotice(ts){
   const n=(state.settings.notices||[]).find(x=>Number(x.ts)===Number(ts)); if(!n) return;
   openSheet(`
-    <h3>📢 تعميم${n.by?' من '+esc(n.by):''}<button class="x" onclick="closeSheet()">×</button></h3>
+    <h3>📢 تعميم<button class="x" onclick="closeSheet()">×</button></h3>
     <div class="meta" style="margin-bottom:10px">${noticeDate(n.ts)}${isOwner?' • '+audLabel(noticeAud(n)):''}</div>
     <div style="white-space:pre-wrap;font-size:15px;line-height:1.9;padding:6px 2px">${esc(n.text)}</div>
     ${isOwner?`<button class="btn block danger" style="margin-top:16px" onclick="deleteNotice(${Number(n.ts)||0})">🗑 حذف التعميم</button>`:''}
@@ -380,7 +380,7 @@ function maybeShowNotice(){
   if(localStorage.getItem('noticeSeen')===String(n.ts)) return false;
   localStorage.setItem('noticeSeen', String(n.ts));
   openSheet(`
-    <h3>📢 تعميم${n.by?' من '+esc(n.by):''}<button class="x" onclick="closeSheet()">×</button></h3>
+    <h3>📢 تعميم<button class="x" onclick="closeSheet()">×</button></h3>
     <div style="white-space:pre-wrap;font-size:15px;line-height:1.7;padding:6px 2px">${esc(n.text)}</div>
     <button class="btn block" style="margin-top:14px" onclick="closeSheet()">حسناً</button>
   `);
