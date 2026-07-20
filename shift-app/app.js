@@ -561,10 +561,20 @@ function rejectLeave(id){ setLeaveStatus(id,'مرفوض'); }
 
 /* -------------------- كشف يومي -------------------- */
 let dailyDate=null;
-// ساعات بداية/نهاية الوردية من الإعدادات
+// تعديلات يدوية لتوقيتات الكشف قبل التنزيل/الطباعة: { "YYYY-MM-DD": { empId: {in, out} } }
+let dailyTimes = (function(){ try{ return JSON.parse(localStorage.getItem('shiftApp.dailyTimes.v1')||'{}'); }catch(e){ return {}; } })();
+function saveDailyTimes(){ try{ localStorage.setItem('shiftApp.dailyTimes.v1', JSON.stringify(dailyTimes)); }catch(e){} }
+// ساعات بداية/نهاية الوردية من الإعدادات (تُزال أي ملاحظة بين قوسين مثل «(اليوم التالي)»)
 function shiftHours(sh){
   const parts=(state.settings.shiftTimes[sh]||'').split('←');
-  return { start:(parts[0]||'').trim(), end:(parts[1]||'').trim() };
+  const clean=s=>String(s||'').replace(/\s*\([^)]*\)\s*$/,'').trim();
+  return { start:clean(parts[0]), end:clean(parts[1]) };
+}
+// التوقيت الافتراضي لموظف في يوم (من الوردية) — فارغ لغير العامل
+function defaultTimes(e,iso){
+  const v=cellValue(e,iso).value;
+  if(WORK_SHIFTS.includes(v)){ const h=shiftHours(v); return { in:h.start, out:h.end }; }
+  return { in:'', out:'' };
 }
 // وردية اليوم (لعرضها في العنوان): أول وردية عمل بين الموظفين، وإلا «راحة»
 function dayShiftLabel(iso){
@@ -572,21 +582,22 @@ function dayShiftLabel(iso){
   return REST;
 }
 // صفوف الكشف: يظهر كل الموظفين مثل النموذج الأصلي.
-// العامل: أوقات ورديته والتوقيع باسمه الأول. المُجاز/الراحة: «—» ونوع الإجازة بالأحمر في الملاحظات.
+// العامل (أو من له توقيت يدوي): أوقاته والتوقيع باسمه الأول. المُجاز: نوعه بالأحمر. الراحة: «—».
 function dailyRows(iso){
-  const rows=[];
+  const rows=[], ov=dailyTimes[iso]||{};
   state.employees.forEach(e=>{
     const v=cellValue(e,iso).value;
     const fn=String(e.name||'').trim().split(/\s+/)[0]||'';
-    if(WORK_SHIFTS.includes(v)){
-      const h=shiftHours(v);
-      rows.push({ name:e.name, no:e.no, in:h.start, inSig:fn, out:h.end, outSig:fn, note:'', red:false });
-    }else if(v===REST || v===''){
-      // راحة: بدون أي ملاحظة (كالمداوم) — فقط شرطات في خانات الوقت
-      rows.push({ name:e.name, no:e.no, in:'—', inSig:'—', out:'—', outSig:'—', note:'', red:false });
+    const working=WORK_SHIFTS.includes(v), dh=working?shiftHours(v):{start:'',end:''};
+    const o=ov[e.id]||{};
+    const inT = ('in' in o) ? o.in : dh.start;
+    const outT = ('out' in o) ? o.out : dh.end;
+    const hasTime = !!inT || !!outT;
+    const note = (!working && v!==REST && v!=='') ? v : '';   // نوع الإجازة فقط
+    if(hasTime){
+      rows.push({ name:e.name, no:e.no, in:inT||'—', inSig:fn, out:outT||'—', outSig:fn, note, red:!!note });
     }else{
-      // إجازة فقط: يُكتب نوعها بالأحمر
-      rows.push({ name:e.name, no:e.no, in:'—', inSig:'—', out:'—', outSig:'—', note:v, red:true });
+      rows.push({ name:e.name, no:e.no, in:'—', inSig:'—', out:'—', outSig:'—', note, red:!!note });
     }
   });
   return rows;
@@ -773,12 +784,52 @@ function renderDaily(){
     <h2 class="title no-print">كشف الحضور اليومي</h2>
     <div class="card no-print"><div class="field" style="margin:0 0 10px"><label>اختر التاريخ</label>
       <input type="date" value="${iso}" onchange="dailyDate=this.value;renderDaily()"></div>
+      ${!isViewer?`<button class="btn block ghost" style="margin-bottom:8px" onclick="editDailyTimes()">✏️ تعديل توقيتات الدخول/الخروج</button>`:''}
       <button class="btn block" onclick="downloadDailyWord()">⬇️ تحميل ملف Word (وارد)</button>
       <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / حفظ PDF</button>
     </div>
     <div class="card daily-doc">
       <div class="tablewrap" style="border:none">${dailyDocHtml(iso)}</div>
     </div>`;
+}
+// تعديل توقيتات الدخول/الخروج لأي موظف قبل التنزيل أو الطباعة
+function editDailyTimes(){
+  const iso=dailyDate||toISO(today()), ov=dailyTimes[iso]||{};
+  const list=state.employees.map(e=>{
+    const d=defaultTimes(e,iso), o=ov[e.id]||{};
+    const inV=('in' in o)?o.in:d.in, outV=('out' in o)?o.out:d.out;
+    return `<div style="border-bottom:1px solid var(--line);padding:10px 0">
+      <div class="name" style="margin-bottom:6px">${esc(e.name)} <span class="meta">(${e.no})</span></div>
+      <div class="two">
+        <div class="field" style="margin:0"><label>الدخول</label><input id="dt-in-${e.id}" value="${esc(inV)}" placeholder="مثال: 9:00 م"></div>
+        <div class="field" style="margin:0"><label>الخروج</label><input id="dt-out-${e.id}" value="${esc(outV)}" placeholder="مثال: 6:00 ص"></div>
+      </div>
+    </div>`;
+  }).join('');
+  openSheet(`
+    <h3>توقيتات ${fmtDate(iso)}<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:6px">عدّل دخول/خروج أي موظف قبل التنزيل أو الطباعة. اتركها فارغة أو كما هي للوقت الافتراضي.</p>
+    <div style="max-height:52vh;overflow:auto;margin-bottom:10px">${list}</div>
+    <button class="btn block" onclick="saveDailyTimesEdit()">حفظ التوقيتات</button>
+    <button class="btn block ghost" style="margin-top:8px" onclick="resetDailyTimes()">إعادة للافتراضي</button>
+  `);
+}
+function saveDailyTimesEdit(){
+  const iso=dailyDate||toISO(today()), map={};
+  state.employees.forEach(e=>{
+    const d=defaultTimes(e,iso);
+    const inV=(val('dt-in-'+e.id)||'').trim(), outV=(val('dt-out-'+e.id)||'').trim();
+    const o={};
+    if(inV!==d.in) o.in=inV;
+    if(outV!==d.out) o.out=outV;
+    if(Object.keys(o).length) map[e.id]=o;
+  });
+  if(Object.keys(map).length) dailyTimes[iso]=map; else delete dailyTimes[iso];
+  saveDailyTimes(); closeSheet(); renderDaily(); toast('تم حفظ التوقيتات');
+}
+function resetDailyTimes(){
+  const iso=dailyDate||toISO(today());
+  delete dailyTimes[iso]; saveDailyTimes(); closeSheet(); renderDaily(); toast('تمت الإعادة للافتراضي');
 }
 
 /* -------------------- الإعدادات -------------------- */
