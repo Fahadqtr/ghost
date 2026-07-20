@@ -790,6 +790,38 @@ function downloadDailyWord(){
     toast('تم تنزيل ملف Word');
   }catch(e){ toast('تعذّر إنشاء الملف'); }
 }
+/* ---- مشاركة الجدول كصورة (للواتساب وغيره) ---- */
+let _h2cLoad=null;
+function loadH2C(){
+  if(window.html2canvas) return Promise.resolve();
+  if(_h2cLoad) return _h2cLoad;
+  _h2cLoad=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js'; s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+  return _h2cLoad;
+}
+async function shareSheetImage(innerHtml, filename){
+  toast('جارٍ تجهيز الصورة…');
+  try{ await loadH2C(); }catch(e){ toast('تعذّر تحميل أداة الصورة — تحقق من الإنترنت'); return; }
+  const wrap=document.createElement('div');
+  wrap.setAttribute('dir','rtl');
+  wrap.style.cssText='position:fixed;top:0;right:-10000px;width:760px;background:#fff;padding:22px;font-family:\'Segoe UI\',Tahoma,sans-serif';
+  wrap.innerHTML=innerHtml;
+  document.body.appendChild(wrap);
+  try{
+    const canvas=await window.html2canvas(wrap, {scale:2, backgroundColor:'#ffffff', useCORS:true, logging:false});
+    try{ wrap.remove(); }catch(e){}
+    const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));
+    if(!blob){ toast('تعذّر إنشاء الصورة'); return; }
+    const file=new File([blob], filename+'.png', {type:'image/png'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      try{ await navigator.share({ files:[file], title:filename }); }catch(e){}
+    }else{
+      const url=URL.createObjectURL(blob), a=document.createElement('a'); a.href=url; a.download=filename+'.png'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1500);
+      toast('تم حفظ الصورة — أرسلها عبر واتساب');
+    }
+  }catch(e){ try{ wrap.remove(); }catch(_){}; toast('تعذّر إنشاء الصورة'); }
+}
+function shareDailyImage(){ const iso=dailyDate||toISO(today()); shareSheetImage(dailyDocHtml(iso), 'كشف_يومي_'+iso); }
+function sharePointImage(){ shareSheetImage(pointDocHtml(pointDate,pointShift), 'النقطة_'+pointShift+'_'+pointDate); }
 function renderDaily(){
   if(!dailyDate) dailyDate=toISO(today());
   const el=document.getElementById('scr-daily'), iso=dailyDate;
@@ -800,6 +832,7 @@ function renderDaily(){
       ${!isViewer?`<button class="btn block ghost" style="margin-bottom:8px" onclick="editDailyTimes()">✏️ تعديل توقيتات الدخول/الخروج</button>`:''}
       <button class="btn block ghost" style="margin-bottom:8px" onclick="showDailyNotes()">📝 عرض الملاحظات</button>
       <button class="btn block" onclick="downloadDailyWord()">⬇️ تحميل ملف Word (وارد)</button>
+      <button class="btn block ghost" style="margin-top:8px" onclick="shareDailyImage()">📤 مشاركة كصورة (واتساب)</button>
       <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / حفظ PDF</button>
     </div>
     <div class="card daily-doc">
@@ -1038,6 +1071,7 @@ function renderPoint(){
       ${locked
         ? `<div class="hint" style="margin-bottom:8px">مُعتمَد بواسطة: <b>${esc(p.approvedTitle||('مسؤول '+docTeam()))} — ${esc(p.approvedBy||docSupervisor())}</b></div>
            <button class="btn block" onclick="downloadPointWord()">⬇️ تنزيل الجدول (Word)</button>
+           <button class="btn block ghost" style="margin-top:8px" onclick="sharePointImage()">📤 مشاركة كصورة (واتساب)</button>
            <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / PDF</button>
            <button class="btn block danger" style="margin-top:8px" onclick="unapprovePoint()">✎ إلغاء الاعتماد للتعديل</button>`
         : `<div class="field" style="margin:0 0 8px"><label>يعتمد باسم</label>
