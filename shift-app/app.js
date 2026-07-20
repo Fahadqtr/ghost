@@ -256,19 +256,33 @@ function noticeDate(ts){ try{ const d=new Date(ts); return d.getDate()+' '+AR_MO
 function noticeAud(n){ return (n && n.audience==='all') ? 'all' : 'admins'; }
 function visibleNotices(){ return noticeList().filter(n=> !isViewer || noticeAud(n)==='all'); }
 function audLabel(a){ return a==='all' ? 'للجميع' : 'للمسؤولين'; }
-// بطاقة التعاميم (في الرئيسية للمسؤولين، وفي شاشة الجدول للموظفين)
+// مقتطف قصير من نص التعميم للبطاقة الصغيرة
+function noticePreview(t){ const s=String(t||'').replace(/\s+/g,' ').trim(); return s.length>40 ? s.slice(0,40)+'…' : (s||'تعميم'); }
+// بطاقة التعاميم: بطاقات صغيرة قابلة للنقر (في الرئيسية للمسؤولين، وشاشة الجدول للموظفين)
 function noticesCardHtml(){
   const list=visibleNotices(); if(!list.length) return '';
   return `<div class="card">
     <h3>📢 تعاميم رئيس القسم (${list.length})</h3>
-    ${list.map(n=>`<div style="border-right:3px solid var(--teal);background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0">
-      <div style="white-space:pre-wrap;font-size:14px;line-height:1.7">${esc(n.text)}</div>
-      <div class="meta" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <span>${esc(n.by||'رئيس القسم')} • ${noticeDate(n.ts)}${isOwner?' • '+audLabel(noticeAud(n)):''}</span>
-        ${isOwner?`<button class="btn sm danger" onclick="deleteNotice(${Number(n.ts)||0})">🗑 حذف</button>`:''}
+    ${list.map(n=>`<div onclick="showNotice(${Number(n.ts)||0})" style="cursor:pointer;border-right:3px solid var(--teal);background:var(--bg);border-radius:10px;padding:10px 12px;margin:6px 0;display:flex;align-items:center;gap:10px">
+      <span style="font-size:18px">📢</span>
+      <div class="grow" style="min-width:0">
+        <div class="name" style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(noticePreview(n.text))}</div>
+        <div class="meta">${esc(n.by||'رئيس القسم')} • ${noticeDate(n.ts)}${isOwner?' • '+audLabel(noticeAud(n)):''}</div>
       </div>
+      <span class="meta" style="font-size:20px;font-weight:800">‹</span>
     </div>`).join('')}
   </div>`;
+}
+// بطاقة كبيرة بالنص الكامل عند النقر على تعميم
+function showNotice(ts){
+  const n=(state.settings.notices||[]).find(x=>Number(x.ts)===Number(ts)); if(!n) return;
+  openSheet(`
+    <h3>📢 تعميم${n.by?' من '+esc(n.by):''}<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="meta" style="margin-bottom:10px">${noticeDate(n.ts)}${isOwner?' • '+audLabel(noticeAud(n)):''}</div>
+    <div style="white-space:pre-wrap;font-size:15px;line-height:1.9;padding:6px 2px">${esc(n.text)}</div>
+    ${isOwner?`<button class="btn block danger" style="margin-top:16px" onclick="deleteNotice(${Number(n.ts)||0})">🗑 حذف التعميم</button>`:''}
+    <button class="btn block ghost" style="margin-top:8px" onclick="closeSheet()">إغلاق</button>
+  `);
 }
 function pickAudience(btn){ btn.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('on')); btn.classList.add('on'); sheet._audience=btn.dataset.a; }
 function openAnnounce(){
@@ -288,11 +302,13 @@ function openAnnounce(){
     ${list.length?`
       <div style="border-top:1px solid var(--line);margin:16px 0 8px"></div>
       <h3 style="font-size:14px">التعاميم المحفوظة (${list.length})</h3>
-      ${list.map(n=>`<div style="background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0">
-        <div style="white-space:pre-wrap;font-size:13px;line-height:1.6">${esc(n.text)}</div>
-        <div class="meta" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;gap:8px">
-          <span>${noticeDate(n.ts)} • ${audLabel(noticeAud(n))}</span>
-          <button class="btn sm danger" onclick="deleteNotice(${Number(n.ts)||0})">🗑 حذف</button></div>
+      ${list.map(n=>`<div onclick="showNotice(${Number(n.ts)||0})" style="cursor:pointer;background:var(--bg);border-radius:8px;padding:10px 12px;margin:6px 0;display:flex;align-items:center;gap:10px">
+        <span style="font-size:16px">📢</span>
+        <div class="grow" style="min-width:0">
+          <div class="name" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(noticePreview(n.text))}</div>
+          <div class="meta">${noticeDate(n.ts)} • ${audLabel(noticeAud(n))}</div>
+        </div>
+        <span class="meta" style="font-size:18px;font-weight:800">‹</span>
       </div>`).join('')}
       <button class="btn block ghost" style="margin-top:8px" onclick="clearAllNotices()">مسح كل التعاميم</button>`:''}
   `);
@@ -316,8 +332,7 @@ async function deleteNotice(ts){
   try{
     const { error }=await Cloud.broadcast({ notices: list });
     if(error) throw error;
-    state.settings.notices=list; saveCache(); renderScreen(current);
-    if(overlay.classList.contains('open')) openAnnounce();
+    state.settings.notices=list; saveCache(); closeSheet(); renderScreen(current);
     toast('تم حذف التعميم');
   }catch(e){ toast('تعذّر الحذف'); }
 }
