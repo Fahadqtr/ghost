@@ -58,6 +58,14 @@
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
 
+<!-- شريط تثبيت التطبيق -->
+<div id="installBar" class="install-bar">
+  <span class="ic">📲</span>
+  <span id="installText" class="grow">ثبّت التطبيق على جهازك</span>
+  <button class="btn sm" onclick="doInstall()">تثبيت</button>
+  <button class="install-x" onclick="dismissInstall()" aria-label="إغلاق">×</button>
+</div>
+
 <!-- شاشات تسجيل الدخول -->
 <div class="login" id="login">
   <!-- دخول المشرفين -->
