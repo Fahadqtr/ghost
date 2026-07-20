@@ -808,8 +808,10 @@ function renderDaily(){
   fitDocPage();
 }
 // تصغير المعاينة لتناسب عرض الشاشة (تظهر الصفحة كاملة كمعاينة طباعة)
+// نستهدف صفحة الشاشة النشِطة فقط (الكشف اليومي والنقطة يشتركان في نفس البنية)
 function fitDocPage(){
-  const page=document.getElementById('docPage'); if(!page) return;
+  const page=(document.querySelector('.screen.active .doc-page')) || document.getElementById('docPage');
+  if(!page) return;
   const fit=page.parentElement, avail=fit.clientWidth, natural=760;
   const s=Math.min(1, avail/natural);
   page.style.transform = s<1 ? 'scale('+s+')' : 'none';
@@ -1300,7 +1302,7 @@ async function boot(){
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>nav(b.dataset.nav)));
 document.getElementById('fab').addEventListener('click',()=>{ if(current==='emps') editEmp(''); else if(current==='leaves') editLeave(''); });
 document.getElementById('btnSettings').addEventListener('click', openSettings);
-window.addEventListener('resize', ()=>{ if(current==='daily') fitDocPage(); });
+window.addEventListener('resize', ()=>{ if(current==='daily'||current==='point') fitDocPage(); });
 
 boot();
 
