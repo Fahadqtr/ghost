@@ -95,6 +95,46 @@ function renderScreen(to){
 }
 
 /* -------------------- لوحة المعلومات -------------------- */
+/* -------- رابط ورمز QR لدخول الموظفين -------- */
+function staffUrl(){ return location.origin + location.pathname + '?staff'; }
+function qrSrc(data, size){ return 'https://api.qrserver.com/v1/create-qr-code/?size='+size+'x'+size+'&margin=12&ecc=M&data='+encodeURIComponent(data); }
+function copyStaffLink(){
+  const u=staffUrl();
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(u).then(()=>toast('تم نسخ الرابط')).catch(()=>toast(u)); }
+  else toast(u);
+}
+function showStaffQR(){
+  const u=staffUrl();
+  openSheet(`
+    <h3>رمز دخول الموظفين<button class="x" onclick="closeSheet()">×</button></h3>
+    <div style="text-align:center">
+      <img src="${qrSrc(u,300)}" alt="QR" style="width:250px;height:250px;max-width:100%;border:1px solid var(--line);border-radius:12px;padding:8px;background:#fff" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+      <div style="display:none;color:var(--muted);font-size:13px">تعذّر توليد الرمز الآن — استخدم الرابط بالأسفل.</div>
+      <p class="meta" style="margin-top:10px">يمسح الموظف الرمز بكاميرا الجوال ← تفتح صفحة الدخول ← يُدخل رقمه الوظيفي.</p>
+      <div style="direction:ltr;font-size:12px;word-break:break-all;background:var(--bg);border-radius:8px;padding:8px;margin-top:8px">${u}</div>
+    </div>
+    <button class="btn block" style="margin-top:12px" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
+    <button class="btn block ghost" style="margin-top:8px" onclick="printStaffCard()">🖨️ طباعة البطاقة</button>
+  `);
+}
+function printStaffCard(){
+  const u=staffUrl();
+  const html=`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>دخول الموظفين</title>
+    <style>body{font-family:'Segoe UI',Tahoma,sans-serif;text-align:center;padding:40px;color:#111}
+    h1{color:#8A1538;font-size:22px;margin-bottom:4px} p{font-size:15px} img{width:320px;height:320px;margin:18px auto;display:block}
+    .u{direction:ltr;font-size:13px;word-break:break-all;color:#444}</style></head>
+    <body><h1>دخول الموظفين — عرض الورديات</h1>
+    <p>امسح الرمز بكاميرا الجوال ثم أدخل رقمك الوظيفي</p>
+    <img src="${qrSrc(u,600)}" alt="QR">
+    <p class="u">${u}</p></body></html>`;
+  const f=document.createElement('iframe');
+  f.style.position='fixed'; f.style.right='-9999px'; f.style.bottom='0'; f.style.width='0'; f.style.height='0'; f.style.border='0';
+  document.body.appendChild(f);
+  const d=f.contentWindow.document; d.open(); d.write(html); d.close();
+  const go=()=>{ try{ f.contentWindow.focus(); f.contentWindow.print(); }catch(e){} setTimeout(()=>{ try{ f.remove(); }catch(e){} },1500); };
+  const img=d.images[0];
+  if(img && !img.complete){ img.onload=go; img.onerror=go; setTimeout(go,3000); } else go();
+}
 function renderDash(){
   const iso=toISO(today()), st=dayStats(iso), s=state.settings, low=st.working<s.minWorkers;
   const el=document.getElementById('scr-dash');
@@ -127,6 +167,14 @@ function renderDash(){
           </div>
         </div>`;
       }).join('') : '<div class="empty">لا توجد طلبات معلّقة</div>'}
+    </div>
+    <div class="card">
+      <h3>دخول الموظفين (عرض فقط)</h3>
+      <div class="meta" style="margin-bottom:8px">شارك الرابط أو رمز QR مع الموظفين — يدخلون بالرقم الوظيفي ويشاهدون الجدول والكشف فقط.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn sm" onclick="showStaffQR()">📱 عرض رمز QR</button>
+        <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
+      </div>
     </div>
     <div class="card">
       <h3>توزيع ورديات اليوم</h3>
