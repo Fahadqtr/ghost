@@ -789,8 +789,17 @@ function renderDaily(){
       <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / حفظ PDF</button>
     </div>
     <div class="card daily-doc">
-      <div class="tablewrap" style="border:none">${dailyDocHtml(iso)}</div>
+      <div class="doc-fit" id="docFit"><div class="doc-page" id="docPage">${dailyDocHtml(iso)}</div></div>
     </div>`;
+  fitDocPage();
+}
+// تصغير المعاينة لتناسب عرض الشاشة (تظهر الصفحة كاملة كمعاينة طباعة)
+function fitDocPage(){
+  const page=document.getElementById('docPage'); if(!page) return;
+  const fit=page.parentElement, avail=fit.clientWidth, natural=760;
+  const s=Math.min(1, avail/natural);
+  page.style.transform = s<1 ? 'scale('+s+')' : 'none';
+  fit.style.height = s<1 ? (page.offsetHeight*s)+'px' : 'auto';
 }
 // قائمة أوقات جاهزة (كل نصف ساعة) بصيغة 12 ساعة عربية
 function timeOptions(){
@@ -1049,6 +1058,7 @@ async function boot(){
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>nav(b.dataset.nav)));
 document.getElementById('fab').addEventListener('click',()=>{ if(current==='emps') editEmp(''); else if(current==='leaves') editLeave(''); });
 document.getElementById('btnSettings').addEventListener('click', openSettings);
+window.addEventListener('resize', ()=>{ if(current==='daily') fitDocPage(); });
 
 boot();
 
