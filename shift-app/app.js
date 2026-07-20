@@ -387,6 +387,7 @@ function clearCell(empId, iso){
 /* -------------------- الإجازات -------------------- */
 let leaveFilter='الكل';
 function renderLeaves(){
+  if(isViewer) return renderMyLeaves();
   const el=document.getElementById('scr-leaves'), iso=toISO(today());
   const list=state.leaves.slice().sort((a,b)=>a.from<b.from?1:-1);
   const filtered=leaveFilter==='الكل'?list:list.filter(l=>l.status===leaveFilter);
@@ -415,6 +416,62 @@ function renderLeaves(){
     <button class="btn block" onclick="editLeave('')">＋ حجز إجازة جديدة</button>`;
 }
 function setLeaveFilter(f){ leaveFilter=f; renderLeaves(); }
+
+/* ---- طلبات إجازة الموظف (عرض فقط + تقديم طلب) ---- */
+function renderMyLeaves(){
+  const el=document.getElementById('scr-leaves'), me=viewerEmp();
+  const mine = me ? state.leaves.filter(l=>l.empId===me.id).sort((a,b)=>a.from<b.from?1:-1) : [];
+  el.innerHTML=`<h2 class="title">طلبات الإجازة</h2>
+    ${me?'':'<div class="card"><div class="empty">لم يتم التعرّف على حسابك — أعد الدخول بالرقم الوظيفي</div></div>'}
+    <div class="card" style="padding:6px 12px">
+      ${mine.length? mine.map(l=>{
+        const days=inclusiveDays(l.from,l.to), canCancel=l.status==='قيد الانتظار';
+        return `<div class="row">
+          <div class="grow">
+            <div class="name">${l.type}</div>
+            <div class="meta">${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${days} يوم${l.notes?' • '+esc(l.notes):''}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+            <span class="badge ${l.status==='معتمد'?'b-ok':l.status==='مرفوض'?'b-rej':'b-pending'}">${l.status}</span>
+            ${canCancel?`<button class="icon-btn danger" onclick="cancelMyLeave('${l.id}')">🗑️</button>`:''}
+          </div>
+        </div>`;
+      }).join('') : '<div class="empty">لا توجد طلبات — قدّم طلبك من الزر بالأسفل</div>'}
+    </div>
+    ${me?'<button class="btn block" onclick="requestLeave()">＋ تقديم طلب إجازة</button>':''}`;
+}
+function requestLeave(){
+  const s=state.settings;
+  openSheet(`
+    <h3>تقديم طلب إجازة<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="field"><label>نوع الإجازة</label>
+      <div class="pick">${s.leaveTypes.map(t=>`<button data-t="${t}" class="${s.leaveTypes[0]===t?'on':''}" onclick="pickType(this)">${t}</button>`).join('')}</div></div>
+    <div class="two">
+      <div class="field"><label>من تاريخ</label><input id="l-from" type="date" value="${toISO(today())}" oninput="updLeaveHint()"></div>
+      <div class="field"><label>إلى تاريخ</label><input id="l-to" type="date" value="${toISO(today())}" oninput="updLeaveHint()"></div>
+    </div>
+    <div class="field"><label>ملاحظات</label><input id="l-notes" placeholder="اختياري"></div>
+    <div class="hint" id="l-hint"></div>
+    <p class="hint">يُرسَل الطلب إلى المشرف للاعتماد.</p>
+    <button class="btn block" style="margin-top:10px" onclick="submitLeaveRequest()">إرسال الطلب</button>
+  `);
+  sheet._type=s.leaveTypes[0]; updLeaveHint();
+}
+function submitLeaveRequest(){
+  const me=viewerEmp(); if(!me){ toast('تعذّر تحديد حسابك'); return; }
+  const from=val('l-from'), to=val('l-to');
+  if(!from||!to){ toast('حدد التواريخ'); return; }
+  if(to<from){ toast('تاريخ النهاية قبل البداية'); return; }
+  const rec={ id:uid(), empId:me.id, type:sheet._type, from, to, status:'قيد الانتظار', notes:val('l-notes').trim() };
+  state.leaves.push(rec); Data.upsertLeave(rec);
+  closeSheet(); renderScreen(current); toast('تم إرسال الطلب للاعتماد');
+}
+function cancelMyLeave(id){
+  const l=state.leaves.find(x=>x.id===id); if(!l || l.status!=='قيد الانتظار') return;
+  if(!confirm('إلغاء طلب الإجازة؟')) return;
+  state.leaves=state.leaves.filter(x=>x.id!==id);
+  Data.delLeave(id); renderMyLeaves(); toast('تم إلغاء الطلب');
+}
 function coverageCheck(l){
   if(l.status!=='معتمد') return {ok:true, text:'الطلب '+l.status};
   let worst=0, worstDay=l.from, d=parseISO(l.from), end=parseISO(l.to);
