@@ -202,7 +202,8 @@ table.sched tfoot td.today{box-shadow:inset 0 0 0 2px var(--teal)}
 
 /* وضع الموظف (عرض فقط): إخفاء الأقسام والتعديل */
 body.viewer .nav button[data-nav="dash"],
-body.viewer .nav button[data-nav="emps"]{display:none}
+body.viewer .nav button[data-nav="emps"],
+body.viewer .nav button[data-nav="daily"]{display:none}
 body.viewer #fab{display:none!important}
 body.viewer .daycell{cursor:default}
 body.viewer .daycell:active{outline:none}
