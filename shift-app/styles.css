@@ -217,8 +217,14 @@ body.viewer .daycell:active{outline:none}
 
 /* Daily sheet print */
 .daily-emp{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line)}
-.daily-doc{padding:14px}
-@media print{ .daily-doc table th{background:#e9edf2!important;-webkit-print-color-adjust:exact;print-color-adjust:exact} }
+.daily-doc{padding:14px;overflow:hidden}
+.doc-fit{overflow:hidden}
+.doc-page{width:760px;transform-origin:top right}
+@media print{
+  .daily-doc table th{background:#e9edf2!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .doc-page{transform:none!important;width:auto!important}
+  .doc-fit{height:auto!important;overflow:visible!important}
+}
 @media print{
   .app-header,.nav,.fab,.sched-bar .btn,.no-print{display:none!important}
   body{padding:0;background:#fff}
