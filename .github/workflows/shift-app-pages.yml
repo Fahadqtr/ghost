@@ -37,7 +37,7 @@ jobs:
         # فيجلب المتصفح دائماً أحدث نسخة عند كل نشر دون مسح يدوي للكاش.
         run: |
           VER="${GITHUB_SHA::8}"
-          sed -i -E "s@(href=\"styles\.css)\"@\1?v=${VER}\"@; s@(src=\"(seed|config|cloud|app)\.js)\"@\1?v=${VER}\"@g" shift-app/index.html
+          sed -i -E "s@(href=\"styles\.css)\"@\1?v=${VER}\"@; s@(src=\"(seed|config|cloud|qr|app)\.js)\"@\1?v=${VER}\"@g" shift-app/index.html
           echo "نسخة الكاش: ${VER}"
           grep -E "styles\.css|app\.js" shift-app/index.html || true
 

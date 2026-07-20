@@ -97,19 +97,26 @@ function renderScreen(to){
 /* -------------------- لوحة المعلومات -------------------- */
 /* -------- رابط ورمز QR لدخول الموظفين -------- */
 function staffUrl(){ return location.origin + location.pathname + '?staff'; }
-function qrSrc(data, size){ return 'https://api.qrserver.com/v1/create-qr-code/?size='+size+'x'+size+'&margin=12&ecc=M&data='+encodeURIComponent(data); }
 function copyStaffLink(){
   const u=staffUrl();
   if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(u).then(()=>toast('تم نسخ الرابط')).catch(()=>toast(u)); }
   else toast(u);
 }
+// يولّد صورة PNG (data URL) لرمز QR محلياً بدون إنترنت
+function staffQrDataUrl(scale){
+  try{
+    const cv=document.createElement('canvas');
+    window.QR.draw(cv, staffUrl(), {scale:scale||8, margin:4});
+    return cv.toDataURL('image/png');
+  }catch(e){ return ''; }
+}
 function showStaffQR(){
-  const u=staffUrl();
+  const u=staffUrl(), png=staffQrDataUrl(8);
   openSheet(`
     <h3>رمز دخول الموظفين<button class="x" onclick="closeSheet()">×</button></h3>
     <div style="text-align:center">
-      <img src="${qrSrc(u,300)}" alt="QR" style="width:250px;height:250px;max-width:100%;border:1px solid var(--line);border-radius:12px;padding:8px;background:#fff" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
-      <div style="display:none;color:var(--muted);font-size:13px">تعذّر توليد الرمز الآن — استخدم الرابط بالأسفل.</div>
+      ${png?`<img src="${png}" alt="QR" style="width:250px;height:250px;max-width:100%;image-rendering:pixelated;border:1px solid var(--line);border-radius:12px;padding:8px;background:#fff">`
+           :'<div style="color:var(--muted);font-size:13px">تعذّر توليد الرمز — استخدم الرابط بالأسفل.</div>'}
       <p class="meta" style="margin-top:10px">يمسح الموظف الرمز بكاميرا الجوال ← تفتح صفحة الدخول ← يُدخل رقمه الوظيفي.</p>
       <div style="direction:ltr;font-size:12px;word-break:break-all;background:var(--bg);border-radius:8px;padding:8px;margin-top:8px">${u}</div>
     </div>
@@ -118,22 +125,20 @@ function showStaffQR(){
   `);
 }
 function printStaffCard(){
-  const u=staffUrl();
+  const u=staffUrl(), png=staffQrDataUrl(10);
   const html=`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>دخول الموظفين</title>
     <style>body{font-family:'Segoe UI',Tahoma,sans-serif;text-align:center;padding:40px;color:#111}
-    h1{color:#8A1538;font-size:22px;margin-bottom:4px} p{font-size:15px} img{width:320px;height:320px;margin:18px auto;display:block}
+    h1{color:#8A1538;font-size:22px;margin-bottom:4px} p{font-size:15px} img{width:320px;height:320px;image-rendering:pixelated;margin:18px auto;display:block}
     .u{direction:ltr;font-size:13px;word-break:break-all;color:#444}</style></head>
     <body><h1>دخول الموظفين — عرض الورديات</h1>
     <p>امسح الرمز بكاميرا الجوال ثم أدخل رقمك الوظيفي</p>
-    <img src="${qrSrc(u,600)}" alt="QR">
+    ${png?`<img src="${png}" alt="QR">`:''}
     <p class="u">${u}</p></body></html>`;
   const f=document.createElement('iframe');
   f.style.position='fixed'; f.style.right='-9999px'; f.style.bottom='0'; f.style.width='0'; f.style.height='0'; f.style.border='0';
   document.body.appendChild(f);
   const d=f.contentWindow.document; d.open(); d.write(html); d.close();
-  const go=()=>{ try{ f.contentWindow.focus(); f.contentWindow.print(); }catch(e){} setTimeout(()=>{ try{ f.remove(); }catch(e){} },1500); };
-  const img=d.images[0];
-  if(img && !img.complete){ img.onload=go; img.onerror=go; setTimeout(go,3000); } else go();
+  setTimeout(()=>{ try{ f.contentWindow.focus(); f.contentWindow.print(); }catch(e){} setTimeout(()=>{ try{ f.remove(); }catch(e){} },1500); }, 250);
 }
 function renderDash(){
   const iso=toISO(today()), st=dayStats(iso), s=state.settings, low=st.working<s.minWorkers;
