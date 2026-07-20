@@ -249,32 +249,73 @@ async function saveDeptHead(){
   }catch(e){ toast('تعذّر الحفظ'); }
 }
 // إرسال تعميم لكل المسؤولين — يظهر لهم بشاشة منبثقة عند فتح البرنامج
+// قائمة التعاميم المحفوظة (الأحدث أولاً)
+function noticeList(){ return (state.settings.notices||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0)); }
+function noticeDate(ts){ try{ const d=new Date(ts); return d.getDate()+' '+AR_MONTHS[d.getMonth()]+' '+d.getFullYear(); }catch(e){ return ''; } }
+// بطاقة التعاميم في الرئيسية (للمسؤولين للرجوع إليها)
+function noticesCardHtml(){
+  const list=noticeList(); if(!list.length) return '';
+  return `<div class="card">
+    <h3>📢 تعاميم رئيس القسم (${list.length})</h3>
+    ${list.map(n=>`<div style="border-right:3px solid var(--teal);background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0">
+      <div style="white-space:pre-wrap;font-size:14px;line-height:1.7">${esc(n.text)}</div>
+      <div class="meta" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center">
+        <span>${esc(n.by||'رئيس القسم')} • ${noticeDate(n.ts)}</span>
+        ${isOwner?`<button class="btn sm danger" onclick="deleteNotice(${Number(n.ts)||0})">🗑 حذف</button>`:''}
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
 function openAnnounce(){
-  const cur=state.settings.notice&&state.settings.notice.text||'';
+  const list=noticeList();
   openSheet(`
-    <h3>تعميم للمسؤولين<button class="x" onclick="closeSheet()">×</button></h3>
-    <p class="hint" style="margin-bottom:10px">تظهر الرسالة لمشرفي كل الورديات في شاشة منبثقة عند فتحهم للبرنامج.</p>
-    <div class="field"><label>نص التعميم</label>
-      <textarea id="an-text" rows="4" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب التعميم هنا…">${esc(cur)}</textarea></div>
+    <h3>تعاميم المسؤولين<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">تظهر لمشرفي كل الورديات في شاشة منبثقة عند الدخول، وتبقى محفوظة في الرئيسية للرجوع إليها.</p>
+    <div class="field"><label>تعميم جديد</label>
+      <textarea id="an-text" rows="4" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب التعميم هنا…"></textarea></div>
     <div class="hint bad" id="an-err" style="margin-bottom:6px"></div>
     <button class="btn block" id="an-btn" onclick="sendAnnounce()">📢 إرسال التعميم</button>
-    ${cur?`<button class="btn block ghost" style="margin-top:8px" onclick="clearAnnounce()">مسح التعميم الحالي</button>`:''}
+    ${list.length?`
+      <div style="border-top:1px solid var(--line);margin:16px 0 8px"></div>
+      <h3 style="font-size:14px">التعاميم المحفوظة (${list.length})</h3>
+      ${list.map(n=>`<div style="background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0">
+        <div style="white-space:pre-wrap;font-size:13px;line-height:1.6">${esc(n.text)}</div>
+        <div class="meta" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center">
+          <span>${noticeDate(n.ts)}</span>
+          <button class="btn sm danger" onclick="deleteNotice(${Number(n.ts)||0})">🗑 حذف</button></div>
+      </div>`).join('')}
+      <button class="btn block ghost" style="margin-top:8px" onclick="clearAllNotices()">مسح كل التعاميم</button>`:''}
   `);
 }
 async function sendAnnounce(){
   const text=val('an-text').trim(); const err=document.getElementById('an-err'); err.textContent='';
   if(!text){ err.textContent='اكتب نص التعميم'; return; }
   const btn=document.getElementById('an-btn'); btn.disabled=true; btn.textContent='جارٍ الإرسال…';
-  const notice={ text, ts: Date.now(), by: docDeptHead()||'رئيس القسم' };
+  const list=(state.settings.notices||[]).slice();
+  list.push({ text, ts: Date.now(), by: docDeptHead()||'رئيس القسم' });
+  const trimmed=list.slice(-30);   // احتفظ بآخر 30 تعميماً
   try{
-    const { error }=await Cloud.broadcast({ notice });
+    const { error }=await Cloud.broadcast({ notices: trimmed });
     if(error) throw error;
-    state.settings.notice=notice; saveCache(); closeSheet(); toast('تم إرسال التعميم للمسؤولين');
+    state.settings.notices=trimmed; saveCache(); closeSheet(); renderScreen(current); toast('تم إرسال التعميم للمسؤولين');
   }catch(e){ btn.disabled=false; btn.textContent='📢 إرسال التعميم'; err.textContent='تعذّر الإرسال'; }
 }
-async function clearAnnounce(){
-  try{ await Cloud.broadcast({ notice: null }); state.settings.notice=null; saveCache(); closeSheet(); toast('تم مسح التعميم'); }
-  catch(e){ toast('تعذّر المسح'); }
+async function deleteNotice(ts){
+  const list=(state.settings.notices||[]).filter(n=>Number(n.ts)!==Number(ts));
+  try{
+    const { error }=await Cloud.broadcast({ notices: list });
+    if(error) throw error;
+    state.settings.notices=list; saveCache(); renderScreen(current);
+    if(overlay.classList.contains('open')) openAnnounce();
+    toast('تم حذف التعميم');
+  }catch(e){ toast('تعذّر الحذف'); }
+}
+async function clearAllNotices(){
+  try{
+    const { error }=await Cloud.broadcast({ notices: [] });
+    if(error) throw error;
+    state.settings.notices=[]; saveCache(); closeSheet(); renderScreen(current); toast('تم مسح كل التعاميم');
+  }catch(e){ toast('تعذّر المسح'); }
 }
 // تعديل بيانات الوردية المعروضة (يفتح الإعدادات)
 function editTeamData(){ openSettings(); }
@@ -311,7 +352,7 @@ function toggleDailyApproval(iso){
 }
 // شاشة منبثقة بالتعميم للمسؤولين (تُعرض مرة واحدة لكل تعميم)
 function maybeShowNotice(){
-  const n=state.settings.notice; if(!n || !n.text || !n.ts) return;
+  const n=noticeList()[0]; if(!n || !n.text || !n.ts) return;   // أحدث تعميم
   if(localStorage.getItem('noticeSeen')===String(n.ts)) return;
   localStorage.setItem('noticeSeen', String(n.ts));
   openSheet(`
@@ -382,6 +423,7 @@ function renderDash(){
   const pendingLeaves=state.leaves.filter(l=>l.status==='قيد الانتظار').sort((a,b)=>a.from<b.from?-1:1);
   el.innerHTML=`
     ${isOwner?ownerBarHtml():''}
+    ${!isViewer?noticesCardHtml():''}
     <div class="card" style="background:linear-gradient(135deg,var(--teal-l),#fff)">
       <div style="font-size:13px;color:var(--muted)">${AR_DAYS[today().getDay()]} — ${fmtDate(iso)}</div>
       <div style="font-weight:800;font-size:18px;margin-top:2px">حالة اليوم</div>
