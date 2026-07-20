@@ -785,6 +785,7 @@ function renderDaily(){
     <div class="card no-print"><div class="field" style="margin:0 0 10px"><label>اختر التاريخ</label>
       <input type="date" value="${iso}" onchange="dailyDate=this.value;renderDaily()"></div>
       ${!isViewer?`<button class="btn block ghost" style="margin-bottom:8px" onclick="editDailyTimes()">✏️ تعديل توقيتات الدخول/الخروج</button>`:''}
+      <button class="btn block ghost" style="margin-bottom:8px" onclick="showDailyNotes()">📝 عرض الملاحظات</button>
       <button class="btn block" onclick="downloadDailyWord()">⬇️ تحميل ملف Word (وارد)</button>
       <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / حفظ PDF</button>
     </div>
@@ -815,6 +816,25 @@ function timeSelect(id, cur){
   const extra=(cur && !has)?`<option value="${esc(cur)}" selected>${esc(cur)}</option>`:'';
   const body=opts.map(t=>`<option value="${t}" ${t===cur?'selected':''}>${t}</option>`).join('');
   return `<select id="${id}"><option value="" ${cur?'':'selected'}>—</option>${extra}${body}</select>`;
+}
+// عرض ملاحظات اليوم في نافذة منبثقة (نوع الإجازة + ملاحظات الحجز إن وُجدت)
+function showDailyNotes(){
+  const iso=dailyDate||toISO(today()), ov=dailyTimes[iso]||{};
+  const items=[];
+  state.employees.forEach(e=>{
+    const lv=leaveOn(e.id, iso), o=ov[e.id]||{};
+    const custom=('note' in o)?String(o.note||''):'';
+    let text=custom;
+    if(!text && lv){ text = lv.type + (lv.notes ? ' — '+lv.notes : ''); }
+    if(text) items.push({ name:e.name, no:e.no, text });
+  });
+  openSheet(`
+    <h3>ملاحظات ${fmtDate(iso)}<button class="x" onclick="closeSheet()">×</button></h3>
+    ${items.length? items.map(i=>`<div style="border-bottom:1px solid var(--line);padding:10px 0">
+        <div class="name">${esc(i.name)} <span class="meta">(${i.no})</span></div>
+        <div style="color:#C00000;font-weight:600;margin-top:2px">${esc(i.text)}</div>
+      </div>`).join('') : '<div class="empty">لا توجد ملاحظات لهذا اليوم</div>'}
+  `);
 }
 // تعديل توقيتات الدخول/الخروج لأي موظف قبل التنزيل أو الطباعة
 function editDailyTimes(){
