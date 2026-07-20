@@ -8,6 +8,11 @@ const WORK_SHIFTS = ['صباح', 'عصر', 'ليل'];
 const REST = 'راحة';
 const AR_DAYS = ['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
 const AR_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+const RED = 'C00000'; // لون الملاحظات/العنوان الأحمر في الكشف
+// قيم افتراضية لترويسة الكشف (قابلة للتعديل من الإعدادات)
+function docLocation(){ return (state.settings.location||'جمارك مطار حمد الدولي'); }
+function docTeam(){ return (state.settings.teamName||'الوردية الأولى'); }
+function docSupervisor(){ return (state.settings.supervisor||''); }
 
 /* الحالة الابتدائية (تُملأ من السحابة بعد الدخول) */
 let state = { employees: [], leaves: [], overrides: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)) };
@@ -23,6 +28,7 @@ function today(){ const n=new Date(); return new Date(n.getFullYear(),n.getMonth
 function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
 function daysBetween(a,b){ return Math.round((parseISO(b)-parseISO(a))/86400000); }
 function fmtDate(iso){ const d=parseISO(iso); return d.getDate()+' '+AR_MONTHS[d.getMonth()]+' '+d.getFullYear(); }
+function fmtSlash(iso){ const d=parseISO(iso); return d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0'); }
 function inclusiveDays(from,to){ return daysBetween(from,to)+1; }
 
 /* -------------------- منطق الورديات -------------------- */
@@ -422,20 +428,25 @@ function shiftHours(sh){
   const parts=(state.settings.shiftTimes[sh]||'').split('←');
   return { start:(parts[0]||'').trim(), end:(parts[1]||'').trim() };
 }
+// وردية اليوم (لعرضها في العنوان): أول وردية عمل بين الموظفين، وإلا «راحة»
+function dayShiftLabel(iso){
+  for(const e of state.employees){ const v=cellValue(e,iso).value; if(WORK_SHIFTS.includes(v)) return v; }
+  return REST;
+}
 // صفوف الكشف: يظهر كل الموظفين مثل النموذج الأصلي.
-// العامل: أوقات ورديته (التوقيع فارغ). المُجاز: ،،،، ونوع الإجازة بالملاحظات.
-// الراحة: ،،،، وكلمة «راحة» بالملاحظات. الملاحظات تُملأ لغير العاملين فقط.
+// العامل: أوقات ورديته والتوقيع باسمه الأول. المُجاز/الراحة: «—» ونوع الإجازة بالأحمر في الملاحظات.
 function dailyRows(iso){
   const rows=[];
   state.employees.forEach(e=>{
     const v=cellValue(e,iso).value;
+    const fn=String(e.name||'').trim().split(/\s+/)[0]||'';
     if(WORK_SHIFTS.includes(v)){
       const h=shiftHours(v);
-      rows.push({ name:e.name, no:e.no, in:h.start, inSig:'', out:h.end, outSig:'', note:'' });
+      rows.push({ name:e.name, no:e.no, in:h.start, inSig:fn, out:h.end, outSig:fn, note:'', red:false });
     }else if(v===REST || v===''){
-      rows.push({ name:e.name, no:e.no, in:'،،،،', inSig:'،،،،', out:'،،،،', outSig:'،،،،', note:'راحة' });
+      rows.push({ name:e.name, no:e.no, in:'—', inSig:'—', out:'—', outSig:'—', note:'راحة', red:true });
     }else{
-      rows.push({ name:e.name, no:e.no, in:'،،،،', inSig:'،،،،', out:'،،،،', outSig:'،،،،', note:'إجازة '+v });
+      rows.push({ name:e.name, no:e.no, in:'—', inSig:'—', out:'—', outSig:'—', note:v, red:true });
     }
   });
   return rows;
@@ -446,11 +457,12 @@ function dailyTableHtml(iso){
   const c='border:1px solid #333;padding:5px 4px;text-align:center;font-size:12px';
   const cn='border:1px solid #333;padding:5px 8px;text-align:right;font-size:12px;white-space:nowrap;font-weight:bold';
   const th='border:1px solid #333;padding:6px 4px;text-align:center;font-size:12px;background:#e9edf2;font-weight:bold';
+  const cNote='border:1px solid #333;padding:5px 4px;text-align:center;font-size:12px;color:#C00000;font-weight:bold';
   const body=rows.length? rows.map((r,i)=>`<tr>
       <td style="${c}">${i+1}</td><td style="${cn}">${r.name}</td><td style="${c}">${r.no}</td>
       <td style="${c}">${r.in}</td><td style="${c}">${r.inSig}</td>
       <td style="${c}">${r.out}</td><td style="${c}">${r.outSig}</td>
-      <td style="${c}">${r.note}</td></tr>`).join('')
+      <td style="${r.red?cNote:c}">${r.note}</td></tr>`).join('')
     : `<tr><td style="${c}" colspan="8">لا يوجد موظفون على رأس العمل</td></tr>`;
   return `<table style="width:100%;border-collapse:collapse" dir="rtl">
     <thead>
@@ -464,15 +476,27 @@ function dailyTableHtml(iso){
   </table>`;
 }
 function dailyDocHtml(iso){
-  const s=state.settings;
-  return `<div style="text-align:center;margin-bottom:10px;font-family:'Segoe UI',Tahoma,sans-serif">
-      ${s.logo?`<div style="margin-bottom:6px"><img src="${s.logo}" style="max-width:100%;max-height:90px"></div>`:''}
-      <div style="font-weight:bold;font-size:16px">${s.department}</div>
-      <div style="font-size:14px">كشف الحضور والانصراف اليومي</div>
-      <div style="font-size:13px;margin-top:4px"><b>${AR_DAYS[parseISO(iso).getDay()]}</b> — ${fmtDate(iso)}</div>
-    </div>
+  const s=state.settings, dow=parseISO(iso).getDay(), sup=docSupervisor();
+  const box='border:2px solid #333;border-radius:14px;padding:12px 14px;text-align:center;font-family:\'Segoe UI\',Tahoma,sans-serif';
+  const title=`<div style="${box};margin-bottom:14px">
+      <div style="font-weight:bold;font-size:15px">كشف الحضور والانصراف اليومي / ${esc(docLocation())}</div>
+      <div style="font-weight:bold;font-size:15px;color:#C00000;margin-top:6px">${esc(s.department)} / ${esc(docTeam())}${sup?' '+esc(sup):''}</div>
+      <div style="font-size:13px;margin-top:8px">اليوم : <b>${AR_DAYS[dow]}</b> &nbsp;&nbsp; التاريخ : ${fmtSlash(iso)} &nbsp;&nbsp; دوام الشفت : ${esc(dayShiftLabel(iso))}</div>
+    </div>`;
+  const sig=`<div style="display:flex;justify-content:space-between;gap:18px;margin-top:22px;font-family:'Segoe UI',Tahoma,sans-serif">
+      <div style="${box};width:44%">
+        <div style="font-weight:bold;text-decoration:underline">توقيع مسؤول الوردية</div>
+        <div style="margin-top:16px;font-weight:bold">${sup?esc(sup):'&nbsp;'}</div>
+      </div>
+      <div style="${box};width:44%">
+        <div style="font-weight:bold;text-decoration:underline">توقيع رئيس قسم العمليات الجمركية</div>
+        <div style="margin-top:16px">&nbsp;</div>
+      </div>
+    </div>`;
+  return `${s.logo?`<div style="text-align:center;margin-bottom:10px"><img src="${s.logo}" style="max-width:100%;max-height:90px"></div>`:''}
+    ${title}
     ${dailyTableHtml(iso)}
-    <div style="margin-top:18px;font-size:13px;font-family:'Segoe UI',Tahoma,sans-serif">توقيع المشرف: ____________________</div>`;
+    ${sig}`;
 }
 /* ---- مولّد ملف .docx حقيقي (يفتح على الجوال والكمبيوتر) ---- */
 function xmlesc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -506,9 +530,21 @@ function wTc(text, o){ o=o||{};
   const tcPr='<w:tcPr>'+(o.w?`<w:tcW w:w="${o.w}" w:type="dxa"/>`:'')
     +(o.span?`<w:gridSpan w:val="${o.span}"/>`:'')+(o.vm?`<w:vMerge w:val="${o.vm}"/>`:'')
     +(o.shd?`<w:shd w:val="clear" w:color="auto" w:fill="${o.shd}"/>`:'')+'<w:vAlign w:val="center"/></w:tcPr>';
-  const run=(o.vm==='continue')?'':`<w:r><w:rPr><w:rtl/>${o.bold?'<w:b/>':''}<w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlesc(text)}</w:t></w:r>`;
+  const run=(o.vm==='continue')?'':`<w:r><w:rPr><w:rtl/>${o.bold?'<w:b/>':''}${o.color?`<w:color w:val="${o.color}"/>`:''}<w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlesc(text)}</w:t></w:r>`;
   return `<w:tc>${tcPr}<w:p><w:pPr><w:bidi/><w:jc w:val="${o.align||'center'}"/></w:pPr>${run}</w:p></w:tc>`;
 }
+// فقرة عنوان/توقيع بخيارات (غامق/تحته خط/لون/حجم/محاذاة)
+function wPar(text, o){ o=o||{};
+  const rpr=`<w:rPr><w:rtl/>${o.bold?'<w:b/>':''}${o.u?'<w:u w:val="single"/>':''}${o.color?`<w:color w:val="${o.color}"/>`:''}<w:sz w:val="${o.sz||22}"/></w:rPr>`;
+  const run=text?`<w:r>${rpr}<w:t xml:space="preserve">${xmlesc(text)}</w:t></w:r>`:'';
+  return `<w:p><w:pPr><w:bidi/><w:jc w:val="${o.align||'center'}"/><w:spacing w:after="${o.after==null?60:o.after}"/></w:pPr>${run}</w:p>`;
+}
+// خلية بإطار (صندوق) تحوي فقرات جاهزة
+function wBoxCell(inner, w){
+  const bd='<w:tcBorders>'+['top','left','bottom','right'].map(x=>`<w:${x} w:val="single" w:sz="14" w:space="0" w:color="333333"/>`).join('')+'</w:tcBorders>';
+  return `<w:tc><w:tcPr>${w?`<w:tcW w:w="${w}" w:type="dxa"/>`:''}${bd}<w:vAlign w:val="center"/></w:tcPr>${inner}</w:tc>`;
+}
+function wGapCell(w){ return `<w:tc><w:tcPr>${w?`<w:tcW w:w="${w}" w:type="dxa"/>`:''}</w:tcPr><w:p/></w:tc>`; }
 // يفكّ شعار الإعدادات (data URL) إلى بايتات ويحسب أبعاده بوحدة EMU لملف Word
 function logoInfo(){
   const durl=state.settings.logo; if(!durl || typeof durl!=='string') return null;
@@ -532,22 +568,28 @@ function dailyDocx(iso){
     +wTc('الساعة',{shd:hd,bold:1})+wTc('التوقيع',{shd:hd,bold:1})+wTc('الساعة',{shd:hd,bold:1})+wTc('التوقيع',{shd:hd,bold:1})
     +wTc('',{vm:'continue'})+'</w:tr>';
   const body=rows.length? rows.map((r,i)=>'<w:tr>'+wTc(String(i+1))+wTc(r.name,{align:'right',bold:1})+wTc(r.no)
-    +wTc(r.in)+wTc(r.inSig)+wTc(r.out)+wTc(r.outSig)+wTc(r.note)+'</w:tr>').join('')
+    +wTc(r.in)+wTc(r.inSig)+wTc(r.out)+wTc(r.outSig)+wTc(r.note,{color:r.red?RED:'',bold:r.red?1:0})+'</w:tr>').join('')
     : '<w:tr>'+wTc('لا يوجد موظفون على رأس العمل',{span:8})+'</w:tr>';
   const border='<w:tblBorders>'+['top','left','bottom','right','insideH','insideV'].map(x=>`<w:${x} w:val="single" w:sz="6" w:space="0" w:color="333333"/>`).join('')+'</w:tblBorders>';
   const tbl=`<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:bidiVisual/>${border}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${head1}${head2}${body}</w:tbl>`;
-  const p=(t,sz,bold)=>`<w:p><w:pPr><w:bidi/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rtl/>${bold?'<w:b/>':''}<w:sz w:val="${sz}"/></w:rPr><w:t xml:space="preserve">${xmlesc(t)}</w:t></w:r></w:p>`;
-  const sign=`<w:p><w:pPr><w:bidi/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rtl/><w:sz w:val="22"/></w:rPr><w:t xml:space="preserve">توقيع المشرف: ____________________</w:t></w:r></w:p>`;
-  const clsText=(state.settings.docHeader||'C1 Internal - تصنيف الوثيقة: للإستخدام الداخلي');
-  // شعار اختياري: يُضمَّن في رأس الصفحة إن رفعه المستخدم
+  // صندوق العنوان (مطابق للنموذج): سطر أسود، سطر أحمر، ثم اليوم/التاريخ/الشفت
+  const dow=parseISO(iso).getDay(), sup=docSupervisor();
+  const titleInner = wPar('كشف الحضور والانصراف اليومي / '+docLocation(),{bold:1,sz:26})
+    + wPar(s.department+' / '+docTeam()+(sup?' '+sup:''),{bold:1,sz:26,color:RED})
+    + wPar('اليوم : '+AR_DAYS[dow]+'      التاريخ : '+fmtSlash(iso)+'      دوام الشفت : '+dayShiftLabel(iso),{sz:22,after:0});
+  const titleBox = `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="9600"/></w:tblGrid><w:tr>${wBoxCell(titleInner,9600)}</w:tr></w:tbl>`;
+  // صندوقا التوقيع جنباً إلى جنب: مسؤول الوردية (يمين، بالاسم) ورئيس القسم (يسار)
+  const supInner = wPar('توقيع مسؤول الوردية',{bold:1,u:1,sz:22}) + wPar(sup||' ',{bold:1,sz:24,after:0});
+  const chiefInner = wPar('توقيع رئيس قسم العمليات الجمركية',{bold:1,u:1,sz:22}) + wPar(' ',{sz:24,after:0});
+  const sigBox = `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:bidiVisual/></w:tblPr><w:tblGrid><w:gridCol w:w="4200"/><w:gridCol w:w="1200"/><w:gridCol w:w="4200"/></w:tblGrid><w:tr>${wBoxCell(supInner,4200)}${wGapCell(1200)}${wBoxCell(chiefInner,4200)}</w:tr></w:tbl>`;
+  // شعار اختياري: يُضمَّن في رأس الصفحة إن رفعه المستخدم (بدون أي نص تصنيف)
   const logo=logoInfo();
-  const logoPara = logo ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="60"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${logo.cx}" cy="${logo.cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="logo"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="logo"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${logo.cx}" cy="${logo.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>` : '';
+  const logoPara = logo ? `<w:p><w:pPr><w:jc w:val="center"/><w:spacing w:after="0"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${logo.cx}" cy="${logo.cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="logo"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="logo"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${logo.cx}" cy="${logo.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>` : '';
   const hdr=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">${logoPara}<w:p><w:pPr><w:bidi/><w:spacing w:after="0"/><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rtl/><w:color w:val="000000"/><w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${xmlesc(clsText)}</w:t></w:r></w:p></w:hdr>`;
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">${logoPara||'<w:p/>'}</w:hdr>`;
   const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>`
-    +p(s.department,30,1)+p('كشف الحضور والانصراف اليومي',26,0)+p(AR_DAYS[parseISO(iso).getDay()]+' — '+fmtDate(iso),24,1)
-    +'<w:p/>'+tbl+'<w:p/>'+sign
+    +titleBox+'<w:p/>'+tbl+'<w:p/>'+sigBox
     +'<w:sectPr><w:headerReference w:type="default" r:id="rId101"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708"/><w:bidi/></w:sectPr></w:body></w:document>';
   const imgDefaults = logo ? '<Default Extension="png" ContentType="image/png"/>' : '';
   const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'+imgDefaults+'<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>';
@@ -620,6 +662,15 @@ function openSettings(){
     <div class="field"><label>وردية بداية الفريق</label>
       <div class="pick">${WORK_SHIFTS.map(sh=>`<button data-t="${sh}" class="${s.startShift===sh?'on':''}" onclick="pickStart(this)">${sh}</button>`).join('')}</div></div>
     <div class="field"><label>بداية فترة الجدول</label><input id="s-sched" type="date" value="${s.scheduleStart}"></div>
+
+    <div style="border-top:1px solid var(--line);margin:16px 0 10px"></div>
+    <h3 style="font-size:14px">ترويسة الكشف (تظهر في ملف Word)</h3>
+    <div class="field"><label>الموقع/الجهة</label><input id="s-loc" value="${esc(docLocation())}" placeholder="جمارك مطار حمد الدولي"></div>
+    <div class="two">
+      <div class="field"><label>اسم الوردية</label><input id="s-team" value="${esc(docTeam())}" placeholder="الوردية الأولى"></div>
+      <div class="field"><label>مسؤول الوردية</label><input id="s-sup" value="${esc(docSupervisor())}" placeholder="اسم المسؤول"></div>
+    </div>
+
     <button class="btn block" onclick="saveSettings()">حفظ الإعدادات</button>
     <button class="btn block ghost" style="margin-top:8px" onclick="refreshFromCloud()">↻ تحديث من السحابة</button>
 
@@ -651,6 +702,9 @@ function saveSettings(){
   s.maxLeavesPerDay=Math.max(0,Number(val('s-max')));
   s.startShift=sheet._start||s.startShift;
   s.scheduleStart=val('s-sched')||s.scheduleStart;
+  s.location=val('s-loc').trim();
+  s.teamName=val('s-team').trim();
+  s.supervisor=val('s-sup').trim();
   Data.saveSettings(); closeSheet(); document.getElementById('hSub').textContent=s.department; renderScreen(current); toast('تم حفظ الإعدادات');
 }
 /* رفع شعار الكشف: يُصغَّر ويُخزَّن كـ data URL في الإعدادات (سحابة المستخدم الخاصة) */
