@@ -341,6 +341,80 @@ async function clearAllNotices(){
     state.settings.notices=[]; saveCache(); closeSheet(); renderScreen(current); toast('تم مسح كل التعاميم');
   }catch(e){ toast('تعذّر المسح'); }
 }
+
+/* -------- توجيهات مسؤول الوردية لموظفي ورديته (خاصة بكل وردية) -------- */
+function directiveList(){ return (state.settings.directives||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0)); }
+function directivesCardHtml(){
+  const list=directiveList(); if(!list.length) return '';
+  return `<div class="card">
+    <h3>📩 توجيهات مسؤول الوردية (${list.length})</h3>
+    ${list.map(n=>`<div onclick="showDirective(${Number(n.ts)||0})" style="cursor:pointer;border-right:3px solid var(--gold);background:var(--bg);border-radius:10px;padding:10px 12px;margin:6px 0;display:flex;align-items:center;gap:10px">
+      <span style="font-size:18px">📩</span>
+      <div class="grow" style="min-width:0">
+        <div class="name" style="font-size:14px">توجيه</div>
+        <div class="meta">${esc(n.by||'مسؤول الوردية')} • ${noticeDate(n.ts)}</div>
+      </div>
+      <span class="meta" style="font-size:20px;font-weight:800">‹</span>
+    </div>`).join('')}
+  </div>`;
+}
+function showDirective(ts){
+  const n=(state.settings.directives||[]).find(x=>Number(x.ts)===Number(ts)); if(!n) return;
+  openSheet(`
+    <h3>📩 توجيه<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="meta" style="margin-bottom:10px">${esc(n.by||'مسؤول الوردية')} • ${noticeDate(n.ts)}</div>
+    <div style="white-space:pre-wrap;font-size:15px;line-height:1.9;padding:6px 2px">${esc(n.text)}</div>
+    ${!isViewer?`<button class="btn block danger" style="margin-top:16px" onclick="deleteDirective(${Number(n.ts)||0})">🗑 حذف التوجيه</button>`:''}
+    <button class="btn block ghost" style="margin-top:8px" onclick="closeSheet()">إغلاق</button>
+  `);
+}
+function openDirectives(){
+  const list=directiveList();
+  openSheet(`
+    <h3>توجيهات الموظفين<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">تظهر لموظفي وردية <b>${esc(docTeam())}</b> في شاشة منبثقة عند الدخول وبطاقة في شاشتهم.</p>
+    <div class="field"><label>توجيه جديد</label>
+      <textarea id="dr-text" rows="4" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب التوجيه هنا…"></textarea></div>
+    <div class="hint bad" id="dr-err" style="margin-bottom:6px"></div>
+    <button class="btn block" id="dr-btn" onclick="sendDirective()">📩 إرسال التوجيه</button>
+    ${list.length?`
+      <div style="border-top:1px solid var(--line);margin:16px 0 8px"></div>
+      <h3 style="font-size:14px">التوجيهات المحفوظة (${list.length})</h3>
+      ${list.map(n=>`<div onclick="showDirective(${Number(n.ts)||0})" style="cursor:pointer;background:var(--bg);border-radius:8px;padding:10px 12px;margin:6px 0;display:flex;align-items:center;gap:10px">
+        <span style="font-size:16px">📩</span>
+        <div class="grow" style="min-width:0"><div class="name" style="font-size:13px">توجيه</div><div class="meta">${noticeDate(n.ts)}</div></div>
+        <span class="meta" style="font-size:18px;font-weight:800">‹</span>
+      </div>`).join('')}
+      <button class="btn block ghost" style="margin-top:8px" onclick="clearAllDirectives()">مسح كل التوجيهات</button>`:''}
+  `);
+}
+function sendDirective(){
+  const text=val('dr-text').trim(); const err=document.getElementById('dr-err'); if(err) err.textContent='';
+  if(!text){ if(err) err.textContent='اكتب نص التوجيه'; return; }
+  const list=(state.settings.directives||[]).slice();
+  list.push({ text, ts: Date.now(), by: docSupervisor()||currentUsername||'مسؤول الوردية' });
+  state.settings.directives=list.slice(-30);
+  Data.saveSettings(); closeSheet(); renderScreen(current); toast('تم إرسال التوجيه للموظفين');
+}
+function deleteDirective(ts){
+  state.settings.directives=(state.settings.directives||[]).filter(n=>Number(n.ts)!==Number(ts));
+  Data.saveSettings(); closeSheet(); renderScreen(current); toast('تم حذف التوجيه');
+}
+function clearAllDirectives(){
+  state.settings.directives=[]; Data.saveSettings(); closeSheet(); renderScreen(current); toast('تم مسح كل التوجيهات');
+}
+// شاشة منبثقة بأحدث توجيه للموظف عند الدخول
+function maybeShowDirective(){
+  const n=directiveList()[0]; if(!n||!n.text||!n.ts) return false;
+  if(localStorage.getItem('directiveSeen')===String(n.ts)) return false;
+  localStorage.setItem('directiveSeen', String(n.ts));
+  openSheet(`
+    <h3>📩 توجيه<button class="x" onclick="closeSheet()">×</button></h3>
+    <div style="white-space:pre-wrap;font-size:15px;line-height:1.7;padding:6px 2px">${esc(n.text)}</div>
+    <button class="btn block" style="margin-top:14px" onclick="closeSheet()">حسناً</button>
+  `);
+  return true;
+}
 // تعديل بيانات الوردية المعروضة (يفتح الإعدادات)
 function editTeamData(){ openSettings(); }
 // حذف الوردية المعروضة بالكامل
@@ -449,12 +523,14 @@ function renderDash(){
   el.innerHTML=`
     ${isOwner?ownerBarHtml():''}
     ${!isViewer?noticesCardHtml():''}
+    ${!isViewer?directivesCardHtml():''}
     <div class="card" style="background:linear-gradient(135deg,var(--teal-l),#fff)">
       <div style="font-size:13px;color:var(--muted)">${AR_DAYS[today().getDay()]} — ${fmtDate(iso)}</div>
       <div style="font-weight:800;font-size:18px;margin-top:2px">حالة اليوم</div>
     </div>
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>
+      <button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>
       <button class="btn sm ghost" onclick="refreshFromCloud()">↻ تحديث</button>
     </div>
     <div class="stats">
@@ -626,6 +702,7 @@ function renderSched(){
   }
   el.innerHTML=`
     ${isViewer?noticesCardHtml():''}
+    ${isViewer?directivesCardHtml():''}
     <div class="sched-bar">
       <button class="btn ghost sm" onclick="moveMonth(1)">‹ التالي</button>
       <div class="m">${AR_MONTHS[m]} ${y}</div>
@@ -1613,10 +1690,13 @@ async function startApp(){
   Cloud.subscribe(onRemoteChange);
   updateSyncBadge();
   nav(isViewer ? 'sched' : 'dash');
-  // تعميم موجّه للجميع يظهر منبثقاً؛ للموظف إن لم يظهر تعميم نعرض وقت استلام النقطة
-  let noticeShown=false;
-  try{ noticeShown=maybeShowNotice(); }catch(e){}
-  if(isViewer && !noticeShown){ try{ showMyPointPopup(); }catch(e){} }
+  // عند الدخول: تعميم رئيس القسم (للجميع) ثم توجيه مسؤول الوردية ثم وقت استلام النقطة — واحد لا يحجب الآخر
+  let shown=false;
+  try{ shown=maybeShowNotice(); }catch(e){}
+  if(isViewer){
+    if(!shown){ try{ shown=maybeShowDirective(); }catch(e){} }
+    if(!shown){ try{ showMyPointPopup(); }catch(e){} }
+  }
 }
 async function boot(){
   if(!window.supabase){
