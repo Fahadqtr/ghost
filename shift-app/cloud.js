@@ -69,19 +69,22 @@ const Cloud = {
 
   /* تحميل كل البيانات من السحابة إلى الحالة */
   async pull(){
-    const [e,l,o,s] = await Promise.all([
+    const [e,l,o,s,p] = await Promise.all([
       this.sb.from('employees').select('*').order('sort_order'),
       this.sb.from('leaves').select('*'),
       this.sb.from('overrides').select('*'),
-      this.sb.from('settings').select('data').eq('id',1).maybeSingle()
+      this.sb.from('settings').select('data').eq('id',1).maybeSingle(),
+      this.sb.from('point_shifts').select('*')
     ]);
-    const err = e.error || l.error || o.error || s.error;
+    const err = e.error || l.error || o.error || s.error || p.error;
     if(err) throw err;
     state.employees = (e.data||[]).map(rowToEmp);
     state.leaves    = (l.data||[]).map(rowToLeave);
     state.overrides = {};
     (o.data||[]).forEach(r=>{ (state.overrides[r.emp_id] = state.overrides[r.emp_id] || {})[r.day] = r.value; });
     state.settings  = mergeSettings(s.data && s.data.data);
+    state.pointShifts = {};
+    (p.data||[]).forEach(r=>{ state.pointShifts[r.day+'|'+r.shift] = { empOrder: r.emp_order||[], approved: !!r.approved, pointName: r.point_name||'النقطة الأمنية' }; });
     saveCache();
   },
 
@@ -107,6 +110,7 @@ const Cloud = {
     else if(op.t==='ov_up')  r=await sb.from('overrides').upsert(op.row, { onConflict:'emp_id,day' });
     else if(op.t==='ov_del') r=await sb.from('overrides').delete().eq('emp_id',op.emp_id).eq('day',op.day);
     else if(op.t==='set')    r=await sb.from('settings').upsert({ id:1, data:op.data });
+    else if(op.t==='ps_up')  r=await sb.from('point_shifts').upsert(op.row, { onConflict:'day,shift' });
     return r && r.error;
   },
 
@@ -135,7 +139,12 @@ const Data = {
   delLeave(id){ Cloud.enqueue({ t:'lv_del', id }); saveCache(); },
   setOverride(empId, day, value){ Cloud.enqueue({ t:'ov_up', row:{ emp_id:empId, day, value } }); saveCache(); },
   delOverride(empId, day){ Cloud.enqueue({ t:'ov_del', emp_id:empId, day }); saveCache(); },
-  saveSettings(){ Cloud.enqueue({ t:'set', data: state.settings }); saveCache(); }
+  saveSettings(){ Cloud.enqueue({ t:'set', data: state.settings }); saveCache(); },
+  savePointShift(day, shift, ps){
+    (state.pointShifts = state.pointShifts || {})[day+'|'+shift] = ps;
+    Cloud.enqueue({ t:'ps_up', row:{ day, shift, point_name: ps.pointName||'النقطة الأمنية', emp_order: ps.empOrder||[], approved: !!ps.approved } });
+    saveCache();
+  }
 };
 
 function uid(){ return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'x'+Date.now()+Math.round(performance.now()); }
