@@ -84,7 +84,7 @@ const Cloud = {
     (o.data||[]).forEach(r=>{ (state.overrides[r.emp_id] = state.overrides[r.emp_id] || {})[r.day] = r.value; });
     state.settings  = mergeSettings(s.data && s.data.data);
     state.pointShifts = {};
-    (p.data||[]).forEach(r=>{ state.pointShifts[r.day+'|'+r.shift] = { empOrder: r.emp_order||[], approved: !!r.approved, pointName: r.point_name||'النقطة الأمنية' }; });
+    (p.data||[]).forEach(r=>{ state.pointShifts[r.day+'|'+r.shift] = { empOrder: r.emp_order||[], approved: !!r.approved, pointName: r.point_name||'النقطة الأمنية', approvedBy: r.approved_by||'', approvedTitle: r.approved_title||'' }; });
     saveCache();
   },
 
@@ -142,7 +142,7 @@ const Data = {
   saveSettings(){ Cloud.enqueue({ t:'set', data: state.settings }); saveCache(); },
   savePointShift(day, shift, ps){
     (state.pointShifts = state.pointShifts || {})[day+'|'+shift] = ps;
-    Cloud.enqueue({ t:'ps_up', row:{ day, shift, point_name: ps.pointName||'النقطة الأمنية', emp_order: ps.empOrder||[], approved: !!ps.approved } });
+    Cloud.enqueue({ t:'ps_up', row:{ day, shift, point_name: ps.pointName||'النقطة الأمنية', emp_order: ps.empOrder||[], approved: !!ps.approved, approved_by: ps.approvedBy||'', approved_title: ps.approvedTitle||'' } });
     saveCache();
   }
 };
