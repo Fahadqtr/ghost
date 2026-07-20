@@ -456,10 +456,10 @@ function dailyRows(iso){
 // جدول الكشف بأنماط مضمّنة (يصلح للعرض والطباعة وملف Word)
 function dailyTableHtml(iso){
   const rows=dailyRows(iso);
-  const c='border:1px solid #333;padding:5px 4px;text-align:center;font-size:12px';
-  const cn='border:1px solid #333;padding:5px 8px;text-align:right;font-size:12px;white-space:nowrap;font-weight:bold';
-  const th='border:1px solid #333;padding:6px 4px;text-align:center;font-size:12px;background:#e9edf2;font-weight:bold';
-  const cNote='border:1px solid #333;padding:5px 4px;text-align:center;font-size:12px;color:#C00000;font-weight:bold';
+  const c='border:1px solid #333;padding:9px 5px;text-align:center;font-size:13px';
+  const cn='border:1px solid #333;padding:9px 8px;text-align:right;font-size:13px;white-space:nowrap;font-weight:bold';
+  const th='border:1px solid #333;padding:9px 5px;text-align:center;font-size:13px;background:#e9edf2;font-weight:bold';
+  const cNote='border:1px solid #333;padding:9px 5px;text-align:center;font-size:13px;color:#C00000;font-weight:bold';
   const body=rows.length? rows.map((r,i)=>`<tr>
       <td style="${c}">${i+1}</td><td style="${cn}">${r.name}</td><td style="${c}">${r.no}</td>
       <td style="${c}">${r.in}</td><td style="${c}">${r.inSig}</td>
@@ -532,7 +532,7 @@ function wTc(text, o){ o=o||{};
   const tcPr='<w:tcPr>'+(o.w?`<w:tcW w:w="${o.w}" w:type="dxa"/>`:'')
     +(o.span?`<w:gridSpan w:val="${o.span}"/>`:'')+(o.vm?`<w:vMerge w:val="${o.vm}"/>`:'')
     +(o.shd?`<w:shd w:val="clear" w:color="auto" w:fill="${o.shd}"/>`:'')+'<w:vAlign w:val="center"/></w:tcPr>';
-  const run=(o.vm==='continue')?'':`<w:r><w:rPr><w:rtl/>${o.bold?'<w:b/>':''}${o.color?`<w:color w:val="${o.color}"/>`:''}<w:sz w:val="22"/></w:rPr><w:t xml:space="preserve">${xmlesc(text)}</w:t></w:r>`;
+  const run=(o.vm==='continue')?'':`<w:r><w:rPr><w:rtl/>${o.bold?'<w:b/>':''}${o.color?`<w:color w:val="${o.color}"/>`:''}<w:sz w:val="26"/></w:rPr><w:t xml:space="preserve">${xmlesc(text)}</w:t></w:r>`;
   return `<w:tc>${tcPr}<w:p><w:pPr><w:bidi/><w:jc w:val="${o.align||'center'}"/></w:pPr>${run}</w:p></w:tc>`;
 }
 // فقرة عنوان/توقيع بخيارات (غامق/تحته خط/لون/حجم/محاذاة)
@@ -563,17 +563,20 @@ function dailyDocx(iso){
   const s=state.settings, rows=dailyRows(iso);
   const hd='e9edf2';
   const grid=[500,2450,1200,1150,1150,1150,1150,1638].map(w=>`<w:gridCol w:w="${w}"/>`).join(''); // مجموع 9638 = عرض الصفحة
-  const head1='<w:tr>'+wTc('م',{vm:'restart',shd:hd,bold:1})+wTc('الاسم',{vm:'restart',shd:hd,bold:1})
+  const RHh='<w:trPr><w:trHeight w:val="440" w:hRule="atLeast"/></w:trPr>'; // ارتفاع صف الرأس
+  const RHb='<w:trPr><w:trHeight w:val="620" w:hRule="atLeast"/></w:trPr>'; // ارتفاع صف البيانات (مسافات أوسع)
+  const head1='<w:tr>'+RHh+wTc('م',{vm:'restart',shd:hd,bold:1})+wTc('الاسم',{vm:'restart',shd:hd,bold:1})
     +wTc('الرقم الوظيفي',{vm:'restart',shd:hd,bold:1})+wTc('الحضور',{span:2,shd:hd,bold:1})
     +wTc('الانصراف',{span:2,shd:hd,bold:1})+wTc('ملاحظات',{vm:'restart',shd:hd,bold:1})+'</w:tr>';
-  const head2='<w:tr>'+wTc('',{vm:'continue'})+wTc('',{vm:'continue'})+wTc('',{vm:'continue'})
+  const head2='<w:tr>'+RHh+wTc('',{vm:'continue'})+wTc('',{vm:'continue'})+wTc('',{vm:'continue'})
     +wTc('الساعة',{shd:hd,bold:1})+wTc('التوقيع',{shd:hd,bold:1})+wTc('الساعة',{shd:hd,bold:1})+wTc('التوقيع',{shd:hd,bold:1})
     +wTc('',{vm:'continue'})+'</w:tr>';
-  const body=rows.length? rows.map((r,i)=>'<w:tr>'+wTc(String(i+1))+wTc(r.name,{align:'right',bold:1})+wTc(r.no)
+  const body=rows.length? rows.map((r,i)=>'<w:tr>'+RHb+wTc(String(i+1))+wTc(r.name,{align:'right',bold:1})+wTc(r.no)
     +wTc(r.in)+wTc(r.inSig)+wTc(r.out)+wTc(r.outSig)+wTc(r.note,{color:r.red?RED:'',bold:r.red?1:0})+'</w:tr>').join('')
-    : '<w:tr>'+wTc('لا يوجد موظفون على رأس العمل',{span:8})+'</w:tr>';
+    : '<w:tr>'+RHb+wTc('لا يوجد موظفون على رأس العمل',{span:8})+'</w:tr>';
   const border='<w:tblBorders>'+['top','left','bottom','right','insideH','insideV'].map(x=>`<w:${x} w:val="single" w:sz="6" w:space="0" w:color="333333"/>`).join('')+'</w:tblBorders>';
-  const tbl=`<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/>${border}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${head1}${head2}${body}</w:tbl>`;
+  const cellMar='<w:tblCellMar><w:top w:w="90" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="90" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar>';
+  const tbl=`<w:tbl><w:tblPr><w:tblW w:w="9638" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:jc w:val="center"/><w:bidiVisual/>${border}${cellMar}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${head1}${head2}${body}</w:tbl>`;
   // صندوق العنوان (مطابق للنموذج): سطر أسود، سطر أحمر، ثم اليوم/التاريخ/الشفت
   const dow=parseISO(iso).getDay(), sup=docSupervisor();
   const titleInner = wPar('كشف الحضور والانصراف اليومي / '+docLocation(),{bold:1,sz:26})
