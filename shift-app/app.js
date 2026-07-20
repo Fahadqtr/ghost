@@ -256,8 +256,6 @@ function noticeDate(ts){ try{ const d=new Date(ts); return d.getDate()+' '+AR_MO
 function noticeAud(n){ return (n && n.audience==='all') ? 'all' : 'admins'; }
 function visibleNotices(){ return noticeList().filter(n=> !isViewer || noticeAud(n)==='all'); }
 function audLabel(a){ return a==='all' ? 'للجميع' : 'للمسؤولين'; }
-// مقتطف قصير من نص التعميم للبطاقة الصغيرة
-function noticePreview(t){ const s=String(t||'').replace(/\s+/g,' ').trim(); return s.length>40 ? s.slice(0,40)+'…' : (s||'تعميم'); }
 // بطاقة التعاميم: بطاقات صغيرة قابلة للنقر (في الرئيسية للمسؤولين، وشاشة الجدول للموظفين)
 function noticesCardHtml(){
   const list=visibleNotices(); if(!list.length) return '';
@@ -266,7 +264,7 @@ function noticesCardHtml(){
     ${list.map(n=>`<div onclick="showNotice(${Number(n.ts)||0})" style="cursor:pointer;border-right:3px solid var(--teal);background:var(--bg);border-radius:10px;padding:10px 12px;margin:6px 0;display:flex;align-items:center;gap:10px">
       <span style="font-size:18px">📢</span>
       <div class="grow" style="min-width:0">
-        <div class="name" style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(noticePreview(n.text))}</div>
+        <div class="name" style="font-size:14px">تعميم</div>
         <div class="meta">${esc(n.by||'رئيس القسم')} • ${noticeDate(n.ts)}${isOwner?' • '+audLabel(noticeAud(n)):''}</div>
       </div>
       <span class="meta" style="font-size:20px;font-weight:800">‹</span>
@@ -305,7 +303,7 @@ function openAnnounce(){
       ${list.map(n=>`<div onclick="showNotice(${Number(n.ts)||0})" style="cursor:pointer;background:var(--bg);border-radius:8px;padding:10px 12px;margin:6px 0;display:flex;align-items:center;gap:10px">
         <span style="font-size:16px">📢</span>
         <div class="grow" style="min-width:0">
-          <div class="name" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(noticePreview(n.text))}</div>
+          <div class="name" style="font-size:13px">تعميم</div>
           <div class="meta">${noticeDate(n.ts)} • ${audLabel(noticeAud(n))}</div>
         </div>
         <span class="meta" style="font-size:18px;font-weight:800">‹</span>
