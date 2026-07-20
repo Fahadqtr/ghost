@@ -1069,6 +1069,30 @@ function renderPointViewer(){
     <div class="card"><div class="field" style="margin:0"><label>التاريخ</label><input type="date" value="${day}" onchange="pointDate=this.value;renderPoint()"></div></div>
     ${cards || '<div class="card"><div class="empty">لا يوجد توزيع معتمد لك في هذا اليوم</div></div>'}`;
 }
+// نافذة تلقائية للموظف عند الدخول: وقت استلامه على النقطة اليوم
+function showMyPointPopup(){
+  const me=viewerEmp(); if(!me) return;
+  const iso=toISO(today()), items=[];
+  WORK_SHIFTS.forEach(sh=>{
+    const p=getPoint(iso,sh); if(!p.approved) return;
+    const idx=p.empOrder.indexOf(me.id); if(idx<0) return;
+    const slots=pointSlots(sh,p.empOrder), s=slots[idx];
+    const prev=idx>0?empById(p.empOrder[idx-1]):null, next=idx<p.empOrder.length-1?empById(p.empOrder[idx+1]):null;
+    items.push({sh, s, prev, next, pointName:p.pointName});
+  });
+  if(!items.length) return;
+  openSheet(`
+    <h3>وقت استلامك اليوم<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px"><b>${esc(me.name)}</b> — ${AR_DAYS[parseISO(iso).getDay()]} ${fmtDate(iso)}</p>
+    ${items.map(i=>`<div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px">
+        <div class="name">${esc(i.pointName)} — وردية ${esc(i.sh)}</div>
+        <div style="font-size:22px;font-weight:800;color:var(--teal);margin:8px 0;text-align:center">${i.s.in} → ${i.s.out}</div>
+        <div class="meta">↩️ تستلم من: <b>${i.prev?esc(i.prev.name):'بداية الوردية'}</b></div>
+        <div class="meta" style="margin-top:2px">↪️ تسلّم إلى: <b>${i.next?esc(i.next.name):'نهاية الوردية'}</b></div>
+      </div>`).join('')}
+    <button class="btn block" onclick="closeSheet();nav('point')">تفاصيل النقطة</button>
+  `);
+}
 
 /* -------------------- الإعدادات -------------------- */
 function openSettings(){
@@ -1256,6 +1280,7 @@ async function startApp(){
   Cloud.subscribe(onRemoteChange);
   updateSyncBadge();
   nav(isViewer ? 'sched' : 'dash');
+  if(isViewer){ try{ showMyPointPopup(); }catch(e){} }
 }
 async function boot(){
   if(!window.supabase){
