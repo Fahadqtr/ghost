@@ -182,7 +182,7 @@ function renderDash(){
         const e=empById(l.empId);
         return `<div class="row">
           <div class="avatar">${initials(e?e.name:'?')}</div>
-          <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${inclusiveDays(l.from,l.to)} يوم</div></div>
+          <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${inclusiveDays(l.from,l.to)} يوم</div>${l.notes?`<div class="meta" style="margin-top:2px">📝 ${esc(l.notes)}</div>`:''}</div>
           <div style="display:flex;flex-direction:column;gap:6px">
             <button class="btn sm" onclick="approveLeave('${l.id}')">✓ اعتماد</button>
             <button class="btn sm danger" onclick="rejectLeave('${l.id}')">✗ رفض</button>
@@ -196,7 +196,7 @@ function renderDash(){
         const e=empById(l.empId);
         return `<div class="row">
           <div class="avatar">${initials(e?e.name:'?')}</div>
-          <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)}</div></div>
+          <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)}</div>${l.notes?`<div class="meta" style="margin-top:2px">📝 ${esc(l.notes)}</div>`:''}</div>
           <span class="badge ${l.status==='معتمد'?'b-ok':l.status==='مرفوض'?'b-rej':'b-pending'}">${l.status}</span>
         </div>`;
       }).join('') : '<div class="empty">لا إجازات في الوردية القادمة</div>') : '<div class="empty">لا توجد ورديات قادمة</div>'}
@@ -429,6 +429,7 @@ function renderLeaves(){
           <div class="grow">
             <div class="name">${e?e.name:'— (موظف محذوف)'} ${active?'<span class="badge b-leave" style="margin-inline-start:4px">اليوم</span>':''}</div>
             <div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${days} يوم</div>
+            ${l.notes?`<div class="meta" style="margin-top:2px">📝 ${esc(l.notes)}</div>`:''}
             <div class="meta ${cov.ok?'':'warn'}" style="margin-top:2px">${cov.text}</div>
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
