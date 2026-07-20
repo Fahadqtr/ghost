@@ -167,6 +167,16 @@ function currentTeamName(){
   const t=allTeams.find(x=>x.team===currentTeam);
   return t ? t.name : (state.settings.teamName||currentTeam);
 }
+// مبدّل الوردية في شاشات الكشوفات (لرئيس القسم فقط) — لتصفّح كشوفات كل الورديات
+function ownerTeamSwitcherHtml(){
+  if(!isOwner || allTeams.length<2) return '';
+  return `<div class="card no-print" style="padding:10px 12px;border:2px solid var(--teal)">
+    <label class="meta" style="display:block;margin-bottom:4px">👑 وردية الكشف المعروض</label>
+    <select onchange="switchTeam(this.value)" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff">
+      ${allTeams.map(t=>`<option value="${esc(t.team)}" ${t.team===currentTeam?'selected':''}>${esc(t.name)} (${esc(t.team)})</option>`).join('')}
+    </select>
+  </div>`;
+}
 let ownerOverview=null;   // ملخّص كل الورديات (يُحمَّل عند فتح لوحة رئيس القسم)
 function ownerBarHtml(){
   return `<div class="card" style="border:2px solid var(--teal);background:linear-gradient(135deg,#e9f7f5,#fff)">
@@ -1192,6 +1202,7 @@ function renderDaily(){
   const el=document.getElementById('scr-daily'), iso=dailyDate;
   el.innerHTML=`
     <h2 class="title no-print">كشف الحضور اليومي</h2>
+    ${ownerTeamSwitcherHtml()}
     <div class="card no-print"><div class="field" style="margin:0 0 10px"><label>اختر التاريخ</label>
       <input type="date" value="${iso}" onchange="dailyDate=this.value;renderDaily()"></div>
       ${!isViewer?`<button class="btn block ghost" style="margin-bottom:8px" onclick="editDailyTimes()">✏️ تعديل توقيتات الدخول/الخروج</button>`:''}
@@ -1413,6 +1424,7 @@ function renderPoint(){
   const others=state.employees.filter(e=>assigned.indexOf(e.id)<0);
   el.innerHTML=`
     <h2 class="title no-print">النقطة الأمنية</h2>
+    ${ownerTeamSwitcherHtml()}
     <div class="card no-print">
       <div class="field" style="margin:0 0 10px"><label>التاريخ</label><input type="date" value="${pointDate}" onchange="pointDate=this.value;pointShift=null;renderPoint()"></div>
       <div class="field" style="margin:0"><label>الوردية</label>
