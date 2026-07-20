@@ -62,6 +62,20 @@ const Cloud = {
     });
   },
 
+  /* قائمة كل الورديات (للمالك فقط — تعتمد على صلاحية RLS) */
+  async listTeams(){
+    const { data, error } = await this.sb.from('settings').select('team,data').order('team');
+    if(error) throw error;
+    return (data||[]).map(r=>({ team:r.team, name:(r.data && r.data.teamName) || r.team }));
+  },
+  /* إنشاء وردية جديدة + حساب مشرفها (للمالك فقط) */
+  async createTeam(name, adminUser, adminPass, adminName, assistant){
+    return await this.sb.rpc('create_team', {
+      p_team_name: name, p_admin_user: adminUser, p_admin_pass: adminPass,
+      p_admin_name: adminName, p_assistant: assistant||''
+    });
+  },
+
   async getSession(){ const { data } = await this.sb.auth.getSession(); return data.session; },
   async currentEmail(){ const { data } = await this.sb.auth.getUser(); return data.user ? data.user.email : ''; },
   async signIn(email, pw){ return await this.sb.auth.signInWithPassword({ email, password: pw }); },
@@ -70,12 +84,13 @@ const Cloud = {
 
   /* تحميل كل البيانات من السحابة إلى الحالة */
   async pull(){
+    const t = team();
     const [e,l,o,s,p] = await Promise.all([
-      this.sb.from('employees').select('*').order('sort_order'),
-      this.sb.from('leaves').select('*'),
-      this.sb.from('overrides').select('*'),
-      this.sb.from('settings').select('data').eq('team',team()).maybeSingle(),
-      this.sb.from('point_shifts').select('*')
+      this.sb.from('employees').select('*').eq('team',t).order('sort_order'),
+      this.sb.from('leaves').select('*').eq('team',t),
+      this.sb.from('overrides').select('*').eq('team',t),
+      this.sb.from('settings').select('data').eq('team',t).maybeSingle(),
+      this.sb.from('point_shifts').select('*').eq('team',t)
     ]);
     const err = e.error || l.error || o.error || s.error || p.error;
     if(err) throw err;

@@ -21,7 +21,11 @@ let currentUserEmail = '';
 let currentEmpNo = '';  // الرقم الوظيفي للموظف المسجّل (لدور العرض)
 let currentUsername = ''; // اسم مستخدم الدخول (للمشرف: salemm / fahdaziz)
 let currentTeam = 'w1';   // وردية المستخدم الحالي (عزل البيانات)
+let currentRole = '';   // admin / viewer / owner
+let isOwner = false;    // المالك: يتابع كل الورديات ويضيف ورديات جديدة
+let allTeams = [];      // قائمة كل الورديات (للمالك)
 let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
+const OWNER_TEAM_KEY = 'shiftApp.ownerTeam';
 let highlightDate = null; // تاريخ يُبرَز في الجدول (زر أقرب وردية)
 
 /* -------------------- أدوات التاريخ -------------------- */
@@ -155,6 +159,81 @@ function nextShiftBlock(){
   let j=i; while(j<180 && isWork(toISO(addDays(base,j)))) j++;
   return { start, end: toISO(addDays(base,j-1)) };
 }
+/* -------- لوحة المالك: متابعة كل الورديات + إضافة وردية -------- */
+function currentTeamName(){
+  const t=allTeams.find(x=>x.team===currentTeam);
+  return t ? t.name : (state.settings.teamName||currentTeam);
+}
+function ownerBarHtml(){
+  return `<div class="card" style="border:2px solid var(--teal);background:linear-gradient(135deg,#e9f7f5,#fff)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="font-size:20px">👑</span>
+      <div class="grow"><div class="name" style="font-weight:800">لوحة المالك</div>
+        <div class="meta">تتابع جميع الورديات وجداولها وكشوفاتها</div></div>
+    </div>
+    <label class="meta" style="display:block;margin-bottom:4px">الوردية المعروضة الآن</label>
+    <select id="owner-team" onchange="switchTeam(this.value)" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff">
+      ${allTeams.map(t=>`<option value="${esc(t.team)}" ${t.team===currentTeam?'selected':''}>${esc(t.name)} (${esc(t.team)})</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button class="btn sm" onclick="openAddTeam()">＋ إضافة وردية جديدة</button>
+      <button class="btn sm ghost" onclick="reloadTeams()">↻ تحديث القائمة</button>
+    </div>
+  </div>`;
+}
+async function reloadTeams(){
+  try{ allTeams = await Cloud.listTeams(); toast('تم تحديث قائمة الورديات'); renderDash(); }
+  catch(e){ toast('تعذّر تحميل الورديات'); }
+}
+async function switchTeam(t){
+  if(!t || t===currentTeam) return;
+  currentTeam=t; localStorage.setItem(OWNER_TEAM_KEY,t);
+  toast('جارٍ فتح '+currentTeamName()+'…');
+  try{ await Cloud.pull(); }catch(e){ toast('تعذّر تحميل بيانات الوردية'); }
+  document.getElementById('hSub').textContent=state.settings.department;
+  renderScreen(current);
+}
+function openAddTeam(){
+  openSheet(`
+    <h3>إضافة وردية جديدة<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:12px">تُنشأ وردية مستقلة ببياناتها الخاصة (لا تختلط مع الورديات الأخرى) ويُنشأ حساب مشرف لها للدخول.</p>
+    <div class="field"><label>اسم الوردية</label><input id="t-name" placeholder="مثال: الوردية الثانية"></div>
+    <div class="two">
+      <div class="field"><label>اسم مستخدم المشرف</label><input id="t-user" autocapitalize="none" placeholder="مثال: ahmadk"></div>
+      <div class="field"><label>كلمة مرور المشرف</label><input id="t-pass" placeholder="6 أحرف فأكثر"></div>
+    </div>
+    <div class="field"><label>اسم المشرف الكامل</label><input id="t-sup" placeholder="اسم مسؤول الوردية"></div>
+    <div class="field"><label>اسم المساعد (اختياري)</label><input id="t-asst" placeholder="اسم مساعد المسؤول"></div>
+    <div class="hint bad" id="t-err" style="margin-bottom:6px"></div>
+    <button class="btn block" id="t-btn" onclick="submitAddTeam()">إنشاء الوردية</button>
+  `);
+}
+async function submitAddTeam(){
+  const name=val('t-name').trim(), user=val('t-user').trim().toLowerCase(),
+        pass=val('t-pass'), sup=val('t-sup').trim(), asst=val('t-asst').trim();
+  const err=document.getElementById('t-err'); err.textContent='';
+  if(!name){ err.textContent='أدخل اسم الوردية'; return; }
+  if(!user || !/^[a-z0-9_.]+$/.test(user)){ err.textContent='اسم المستخدم بأحرف إنجليزية/أرقام فقط'; return; }
+  if(!pass || pass.length<6){ err.textContent='كلمة المرور 6 أحرف على الأقل'; return; }
+  if(!sup){ err.textContent='أدخل اسم المشرف'; return; }
+  const btn=document.getElementById('t-btn'); btn.disabled=true; btn.textContent='جارٍ الإنشاء…';
+  try{
+    const { data, error }=await Cloud.createTeam(name, user, pass, sup, asst);
+    if(error){ throw error; }
+    closeSheet();
+    allTeams = await Cloud.listTeams();
+    // الدالة تُعيد رمز الوردية الجديد (مثل w2) كنص
+    const created = (typeof data==='string' && data) || (allTeams.find(t=>t.name===name)||{}).team;
+    if(created){ currentTeam=created; localStorage.setItem(OWNER_TEAM_KEY,created); try{ await Cloud.pull(); }catch(e){} }
+    document.getElementById('hSub').textContent=state.settings.department;
+    renderScreen(current);
+    toast('تم إنشاء الوردية «'+name+'» — مستخدم المشرف: '+user);
+  }catch(e){
+    btn.disabled=false; btn.textContent='إنشاء الوردية';
+    const m=(e&&(e.message||e.hint))||'';
+    err.textContent = /exists|duplicate|already/i.test(m) ? 'اسم المستخدم مستخدم مسبقاً — اختر غيره' : ('تعذّر الإنشاء'+(m?': '+m:''));
+  }
+}
 function renderDash(){
   const iso=toISO(today()), st=dayStats(iso), s=state.settings, low=st.working<s.minWorkers;
   const el=document.getElementById('scr-dash');
@@ -167,6 +246,7 @@ function renderDash(){
   const pending=state.leaves.filter(l=>l.status==='قيد الانتظار').length;
   const pendingLeaves=state.leaves.filter(l=>l.status==='قيد الانتظار').sort((a,b)=>a.from<b.from?-1:1);
   el.innerHTML=`
+    ${isOwner?ownerBarHtml():''}
     <div class="card" style="background:linear-gradient(135deg,var(--teal-l),#fff)">
       <div style="font-size:13px;color:var(--muted)">${AR_DAYS[today().getDay()]} — ${fmtDate(iso)}</div>
       <div style="font-weight:800;font-size:18px;margin-top:2px">حالة اليوم</div>
@@ -1298,13 +1378,19 @@ async function startApp(){
   try{
     const { data }=await Cloud.sb.auth.getUser();
     const u=data&&data.user;
-    isViewer = !(u && u.app_metadata && u.app_metadata.role==='admin');
+    currentRole = (u && u.app_metadata && u.app_metadata.role) || 'viewer';
+    isOwner = currentRole==='owner';
+    isViewer = !(currentRole==='admin' || currentRole==='owner');
     currentUserEmail = u ? ((u.user_metadata&&u.user_metadata.full_name) || (u.email||'').replace(USER_DOMAIN,'')) : '';
     currentEmpNo = (u && u.user_metadata && u.user_metadata.emp_no) || '';
     currentUsername = u ? (u.email||'').split('@')[0] : '';
-    currentTeam = (u && u.app_metadata && u.app_metadata.team) || 'w1';
+    // المالك: يختار الوردية المعروضة (محفوظة محلياً)؛ غيره: وردية حسابه
+    currentTeam = isOwner ? (localStorage.getItem(OWNER_TEAM_KEY) || 'w1')
+                          : ((u && u.app_metadata && u.app_metadata.team) || 'w1');
   }catch(e){ isViewer=false; }
   applyRole();
+  if(isOwner){ try{ allTeams = await Cloud.listTeams(); }catch(e){ allTeams=[]; }
+    if(allTeams.length && !allTeams.some(t=>t.team===currentTeam)){ currentTeam=allTeams[0].team; localStorage.setItem(OWNER_TEAM_KEY,currentTeam); } }
   const hadCache=loadCache();
   document.getElementById('hSub').textContent=state.settings.department;
   if(!isViewer) await Cloud.flush();
