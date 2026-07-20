@@ -140,10 +140,23 @@ function printStaffCard(){
   const d=f.contentWindow.document; d.open(); d.write(html); d.close();
   setTimeout(()=>{ try{ f.contentWindow.focus(); f.contentWindow.print(); }catch(e){} setTimeout(()=>{ try{ f.remove(); }catch(e){} },1500); }, 250);
 }
+// الوردية القادمة: أقرب كتلة أيام عمل للفريق (تتجاوز الكتلة الحالية إن كنا فيها)
+function nextShiftBlock(){
+  const isWork=iso=>dayStats(iso).working>0, base=today();
+  let i=0;
+  if(isWork(toISO(base))){ while(i<180 && isWork(toISO(addDays(base,i)))) i++; }   // تجاوز الكتلة الحالية
+  while(i<180 && !isWork(toISO(addDays(base,i)))) i++;                              // تجاوز الراحة
+  if(i>=180) return null;
+  const start=toISO(addDays(base,i));
+  let j=i; while(j<180 && isWork(toISO(addDays(base,j)))) j++;
+  return { start, end: toISO(addDays(base,j-1)) };
+}
 function renderDash(){
   const iso=toISO(today()), st=dayStats(iso), s=state.settings, low=st.working<s.minWorkers;
   const el=document.getElementById('scr-dash');
   const soon=state.leaves.filter(l=>l.status==='معتمد' && daysBetween(iso,l.from)>=0 && daysBetween(iso,l.from)<=7);
+  const nb=nextShiftBlock();
+  const nbLeaves=nb ? state.leaves.filter(l=>l.status!=='مرفوض' && l.from<=nb.end && l.to>=nb.start).sort((a,b)=>a.from<b.from?-1:1) : [];
   const perEmp={}; state.employees.forEach(e=>perEmp[e.id]=0);
   state.leaves.filter(l=>l.status==='معتمد').forEach(l=>{ if(perEmp[l.empId]!=null) perEmp[l.empId]+=inclusiveDays(l.from,l.to); });
   const pending=state.leaves.filter(l=>l.status==='قيد الانتظار').length;
@@ -152,6 +165,10 @@ function renderDash(){
     <div class="card" style="background:linear-gradient(135deg,var(--teal-l),#fff)">
       <div style="font-size:13px;color:var(--muted)">${AR_DAYS[today().getDay()]} — ${fmtDate(iso)}</div>
       <div style="font-weight:800;font-size:18px;margin-top:2px">حالة اليوم</div>
+    </div>
+    <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>
+      <button class="btn sm ghost" onclick="refreshFromCloud()">↻ تحديث</button>
     </div>
     <div class="stats">
       <div class="stat ${low?'bad':''}"><div class="n">${st.working}</div><div class="l">عاملون اليوم${low?' • أقل من الحد ('+s.minWorkers+')':''}</div></div>
@@ -172,6 +189,17 @@ function renderDash(){
           </div>
         </div>`;
       }).join('') : '<div class="empty">لا توجد طلبات معلّقة</div>'}
+    </div>
+    <div class="card">
+      <h3>إجازات الوردية القادمة${nb?` <span class="meta" style="font-weight:600">(${fmtDate(nb.start)} ← ${fmtDate(nb.end)})</span>`:''}</h3>
+      ${nb? (nbLeaves.length? nbLeaves.map(l=>{
+        const e=empById(l.empId);
+        return `<div class="row">
+          <div class="avatar">${initials(e?e.name:'?')}</div>
+          <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)}</div></div>
+          <span class="badge ${l.status==='معتمد'?'b-ok':l.status==='مرفوض'?'b-rej':'b-pending'}">${l.status}</span>
+        </div>`;
+      }).join('') : '<div class="empty">لا إجازات في الوردية القادمة</div>') : '<div class="empty">لا توجد ورديات قادمة</div>'}
     </div>
     <div class="card">
       <h3>دخول الموظفين (عرض فقط)</h3>
