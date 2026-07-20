@@ -214,6 +214,9 @@ function ownerOverviewHtml(){
 }
 async function loadOwnerOverview(){
   try{
+    // قد تُستدعى قبل اكتمال تحميل قائمة الورديات (سباق) — حمّلها عند الحاجة
+    if(!allTeams.length){ try{ allTeams = await Cloud.listTeams(); }catch(e){} }
+    if(!allTeams.length){ ownerOverview=null; return; }   // أعد المحاولة لاحقاً بدل تخزين قائمة فارغة
     const iso=toISO(today());
     const [emps,lvs,pts]=await Promise.all([
       Cloud.sb.from('employees').select('team'),
