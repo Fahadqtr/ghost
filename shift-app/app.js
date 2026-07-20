@@ -30,6 +30,9 @@ let allTeams = [];      // قائمة كل الورديات (للمالك)
 let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
 const OWNER_TEAM_KEY = 'shiftApp.ownerTeam';
 let highlightDate = null; // تاريخ يُبرَز في الجدول (زر أقرب وردية)
+// حالة شاشة سجل التعديلات
+let auditRows=[], auditCursor=null, auditDone=false, auditLoading=false, auditErr='';
+let auditFilters={ team:'', action:'', entity:'', actor:'', from:'', to:'' };
 
 /* -------------------- أدوات التاريخ -------------------- */
 function toISO(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -86,7 +89,7 @@ function dayStats(iso){
 }
 
 /* -------------------- التنقّل -------------------- */
-const screens=['dash','emps','sched','leaves','daily','point'];
+const screens=['dash','emps','sched','leaves','daily','point','audit'];
 let current='dash';
 function nav(to){
   current=to;
@@ -103,6 +106,7 @@ function renderScreen(to){
   else if(to==='leaves') renderLeaves();
   else if(to==='daily') renderDaily();
   else if(to==='point') renderPoint();
+  else if(to==='audit') renderAudit();
 }
 
 /* -------------------- لوحة المعلومات -------------------- */
@@ -425,6 +429,85 @@ function maybeShowDirective(){
   `);
   return true;
 }
+/* -------------------- سجل التعديلات (Audit Log) -------------------- */
+function auditRoleLabel(r){ return r==='owner'?'رئيس القسم':r==='admin'?'مسؤول':r==='viewer'?'موظف':r==='system'?'النظام':(r||'—'); }
+function auditTeamName(t){ const x=allTeams.find(a=>a.team===t); return x?x.name:(t||'—'); }
+function auditWhen(at){ try{ const d=new Date(at); const hh=String(d.getHours()).padStart(2,'0'), mm=String(d.getMinutes()).padStart(2,'0'); return d.getDate()+' '+AR_MONTHS[d.getMonth()]+' '+d.getFullYear()+' — '+hh+':'+mm; }catch(e){ return ''; } }
+function auditActionIcon(a){ return a==='insert'?'➕':a==='delete'?'🗑️':'✏️'; }
+function resetAuditFilters(){ auditFilters={ team:'', action:'', entity:'', actor:'', from:'', to:'' }; renderAudit(); }
+function renderAudit(){
+  if(isViewer){ toast('غير مصرّح — للمشرفين فقط'); nav('sched'); return; }   // رفض وصول الموظف
+  const el=document.getElementById('scr-audit'), f=auditFilters;
+  const teamSel = isOwner ? `<div class="field" style="margin:0 0 10px"><label>الوردية</label>
+      <select onchange="auditFilters.team=this.value;loadAudit(true)">
+        <option value="" ${!f.team?'selected':''}>كل الورديات</option>
+        ${allTeams.map(t=>`<option value="${esc(t.team)}" ${f.team===t.team?'selected':''}>${esc(t.name)} (${esc(t.team)})</option>`).join('')}
+      </select></div>` : '';   // المسؤول: لا مبدّل وردية (RLS يقصره على ورديته)
+  const actions=[['','كل العمليات'],['insert','إضافة'],['update','تعديل'],['delete','حذف']];
+  const entities=[['','كل الجداول'],['employees','الموظفون'],['leaves','الإجازات'],['overrides','الجدول'],['point_shifts','النقطة'],['settings','الإعدادات']];
+  el.innerHTML=`
+    <h2 class="title no-print">📋 سجل التعديلات</h2>
+    <div class="card no-print">
+      ${teamSel}
+      <div class="two">
+        <div class="field" style="margin:0"><label>نوع العملية</label>
+          <select onchange="auditFilters.action=this.value;loadAudit(true)">${actions.map(a=>`<option value="${a[0]}" ${f.action===a[0]?'selected':''}>${a[1]}</option>`).join('')}</select></div>
+        <div class="field" style="margin:0"><label>الجدول</label>
+          <select onchange="auditFilters.entity=this.value;loadAudit(true)">${entities.map(a=>`<option value="${a[0]}" ${f.entity===a[0]?'selected':''}>${a[1]}</option>`).join('')}</select></div>
+      </div>
+      <div class="two" style="margin-top:10px">
+        <div class="field" style="margin:0"><label>من تاريخ</label><input type="date" value="${f.from||''}" onchange="auditFilters.from=this.value;loadAudit(true)"></div>
+        <div class="field" style="margin:0"><label>إلى تاريخ</label><input type="date" value="${f.to||''}" onchange="auditFilters.to=this.value;loadAudit(true)"></div>
+      </div>
+      <div class="field" style="margin:10px 0 0"><label>المستخدم</label>
+        <input placeholder="اسم المستخدم" value="${esc(f.actor||'')}" oninput="auditFilters.actor=this.value" onchange="loadAudit(true)"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn sm ghost" onclick="resetAuditFilters()">مسح الفلاتر</button>
+        <button class="btn sm ghost" onclick="loadAudit(true)">↻ تحديث</button>
+        <button class="btn sm ghost" onclick="nav('dash')">→ رجوع</button>
+      </div>
+    </div>
+    <div class="card" id="audit-list"></div>`;
+  renderAuditList();
+  loadAudit(true);
+}
+function renderAuditList(){
+  const box=document.getElementById('audit-list'); if(!box) return;
+  const rows=auditRows;
+  box.innerHTML =
+    (auditLoading && !rows.length ? '<div class="empty">جارٍ التحميل…</div>' : '')
+    + (rows.length ? rows.map(r=>`<div class="row">
+        <div class="grow">
+          <div class="name" style="font-size:14px">${auditActionIcon(r.action)} ${esc(r.summary||r.entity)}</div>
+          <div class="meta">${esc(r.actor_name||'—')} (${esc(auditRoleLabel(r.actor_role))}) • ${esc(auditWhen(r.at))}${isOwner&&r.team?' • '+esc(auditTeamName(r.team)):''}</div>
+        </div>
+      </div>`).join('') : (auditLoading?'':'<div class="empty">لا توجد سجلات</div>'))
+    + (auditErr?`<div class="hint bad" style="margin-top:10px">${esc(auditErr)}</div>`:'')
+    + (!auditDone && rows.length ? `<button class="btn block ghost" style="margin-top:12px" onclick="loadAudit(false)">تحميل المزيد</button>` : '');
+}
+async function loadAudit(reset){
+  if(isViewer) return;
+  if(auditLoading) return;
+  auditLoading=true; auditErr='';
+  if(reset){ auditRows=[]; auditCursor=null; auditDone=false; }
+  renderAuditList();
+  const f=auditFilters;
+  const res=await Cloud.fetchAudit({
+    team:   isOwner ? (f.team||'') : '',   // المسؤول: لا يمرّر team؛ RLS يقصره على ورديته
+    action: f.action||'', entity: f.entity||'', actor:(f.actor||'').trim(),
+    from:   f.from ? f.from+'T00:00:00' : '',
+    to:     f.to   ? f.to+'T23:59:59.999' : '',
+    before: auditCursor, limit: 30
+  });
+  auditLoading=false;
+  if(res.error){ auditErr='تعذّر تحميل السجل — تأكد من الاتصال'; renderAuditList(); return; }
+  const rows=res.rows||[];
+  auditRows=auditRows.concat(rows);
+  if(rows.length) auditCursor=rows[rows.length-1].id;
+  if(rows.length<30) auditDone=true;
+  renderAuditList();
+}
+
 // تعديل بيانات الوردية المعروضة (يفتح الإعدادات)
 function editTeamData(){ openSettings(); }
 // حذف الوردية المعروضة بالكامل
@@ -1523,6 +1606,7 @@ function openSettings(){
   }
   openSheet(`
     <h3>الإعدادات<button class="x" onclick="closeSheet()">×</button></h3>
+    <button class="btn block ghost" style="margin-bottom:14px" onclick="closeSheet();nav('audit')">📋 سجل التعديلات</button>
     <div class="field"><label>اسم القسم</label><input id="s-dep" value="${esc(s.department)}"></div>
     <div class="two">
       <div class="field"><label>طول دورة العمل (أيام)</label><input id="s-work" type="number" min="1" value="${s.workDays}"></div>
