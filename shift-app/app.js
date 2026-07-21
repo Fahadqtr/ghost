@@ -19,7 +19,9 @@ function docDeptHead(){ return (state.settings.deptHead||''); }               //
 function dailyApproved(iso){ const a=state.settings.dailyApproved; return !!(a && a[iso]); }
 
 /* الحالة الابتدائية (تُملأ من السحابة بعد الدخول) */
-let state = { employees: [], leaves: [], overrides: {}, pointShifts: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)) };
+let state = { employees: [], leaves: [], overrides: {}, pointShifts: {}, settings: JSON.parse(JSON.stringify(window.SEED.settings)), policies: [], ledger: [], myBalances: [] };
+let balanceYear = new Date().getFullYear();
+let balTypeFilter = 'الكل';
 let currentUserEmail = '';
 let currentEmpNo = '';  // الرقم الوظيفي للموظف المسجّل (لدور العرض)
 let currentUsername = ''; // اسم مستخدم الدخول (للمشرف: salemm / fahdaziz)
@@ -89,7 +91,7 @@ function dayStats(iso){
 }
 
 /* -------------------- التنقّل -------------------- */
-const screens=['dash','emps','sched','leaves','daily','point','audit'];
+const screens=['dash','emps','sched','leaves','daily','point','audit','balances'];
 let current='dash';
 function nav(to){
   current=to;
@@ -107,6 +109,7 @@ function renderScreen(to){
   else if(to==='daily') renderDaily();
   else if(to==='point') renderPoint();
   else if(to==='audit') renderAudit();
+  else if(to==='balances') renderBalances();
 }
 
 /* -------------------- لوحة المعلومات -------------------- */
@@ -886,6 +889,7 @@ function renderLeaves(){
   const list=state.leaves.slice().sort((a,b)=>a.from<b.from?1:-1);
   const filtered=leaveFilter==='الكل'?list:list.filter(l=>l.status===leaveFilter);
   el.innerHTML=`<h2 class="title">حجز الإجازات (${state.leaves.length})</h2>
+    <button class="btn block ghost" style="margin-bottom:10px" onclick="nav('balances')">💰 أرصدة الإجازات</button>
     <div class="seg">${['الكل','معتمد','قيد الانتظار','مرفوض'].map(f=>`<button class="${leaveFilter===f?'on':''}" onclick="setLeaveFilter('${f}')">${f}</button>`).join('')}</div>
     <div class="card" style="padding:6px 12px">
       ${filtered.length? filtered.map(l=>{
@@ -918,6 +922,7 @@ function renderMyLeaves(){
   const mine = me ? state.leaves.filter(l=>l.empId===me.id).sort((a,b)=>a.from<b.from?1:-1) : [];
   el.innerHTML=`<h2 class="title">طلبات الإجازة</h2>
     ${me?'':'<div class="card"><div class="empty">لم يتم التعرّف على حسابك — أعد الدخول بالرقم الوظيفي</div></div>'}
+    ${me?balanceCardHtml(myBalanceRows(),'رصيدي '+balanceYear):''}
     <div class="card" style="padding:6px 12px">
       ${mine.length? mine.map(l=>{
         const days=inclusiveDays(l.from,l.to), canCancel=l.status==='قيد الانتظار';
@@ -958,6 +963,11 @@ function submitLeaveRequest(){
   if(!from||!to){ toast('حدد التواريخ'); return; }
   if(to<from){ toast('تاريخ النهاية قبل البداية'); return; }
   const rec={ id:uid(), empId:me.id, type:sheet._type, from, to, status:'قيد الانتظار', notes:val('l-notes').trim() };
+  // تنبيه تجاوز الرصيد (لا يمنع الإرسال)
+  const rem=remainingForViewer(sheet._type);
+  if(rem!=null && inclusiveDays(from,to) > rem){
+    toast('مدة الطلب تتجاوز الرصيد المتبقي، وسيحتاج الطلب إلى موافقة استثنائية.');
+  }
   state.leaves.push(rec); Data.upsertLeave(rec);
   closeSheet(); renderScreen(current); toast('تم إرسال الطلب للاعتماد');
 }
@@ -1010,6 +1020,7 @@ function saveLeave(id){
   let rec;
   if(id){ rec=state.leaves.find(x=>x.id===id); if(!rec) return; Object.assign(rec,{empId,type:sheet._type,from,to,status:sheet._status,notes:val('l-notes').trim()}); }
   else { rec={ id:uid(), empId, type:sheet._type, from, to, status:sheet._status, notes:val('l-notes').trim() }; state.leaves.push(rec); }
+  if(!ensureOverrideIfNeeded(rec)){ if(!id) state.leaves=state.leaves.filter(x=>x.id!==rec.id); return; }
   Data.upsertLeave(rec); closeSheet(); renderScreen(current); toast(id?'تم الحفظ':'تم حجز الإجازة');
 }
 function deleteLeave(id){
@@ -1020,8 +1031,168 @@ function deleteLeave(id){
 }
 function setLeaveStatus(id, status){
   const l=state.leaves.find(x=>x.id===id); if(!l) return;
-  l.status=status; Data.upsertLeave(l); renderScreen(current);
+  const prev=l.status; l.status=status;
+  if(!ensureOverrideIfNeeded(l)){ l.status=prev; return; }
+  Data.upsertLeave(l); renderScreen(current);
   toast(status==='معتمد'?'✓ تم اعتماد الإجازة':'تم رفض الطلب');
+}
+
+/* ==================== أرصدة الإجازات (Leave Balances) ==================== */
+function balYearFrom(iso){ return parseInt(String(iso).slice(0,4),10); }
+// عدد أيام إجازة داخل سنة وفق أساس الاحتساب (يطابق منطق القاعدة)
+function leaveDaysInRange(emp, fromISO, toISO, year, basis){
+  const ys=year+'-01-01', ye=year+'-12-31';
+  const gs=(fromISO>ys?fromISO:ys), ge=(toISO<ye?toISO:ye);
+  if(gs>ge) return 0;
+  if(basis!=='scheduled_workdays') return daysBetween(gs,ge)+1;   // calendar
+  let n=0, d=parseISO(gs), end=parseISO(ge);
+  while(d<=end){ if(WORK_SHIFTS.includes(rotationShift(emp, toISO(d)))) n++; d=addDays(d,1); }
+  return n;
+}
+function ledgerSums(empId, year, type){
+  let initial=0, carryover=0, adjustments=0;
+  (state.ledger||[]).forEach(r=>{ if(r.emp_id===empId && Number(r.year)===year && r.type===type){
+    const v=Number(r.days)||0;
+    if(r.kind==='initial') initial+=v; else if(r.kind==='carryover') carryover+=v; else if(r.kind==='adjustment') adjustments+=v;
+  }});
+  return {initial, carryover, adjustments};
+}
+function policyFor(type, year){ return (state.policies||[]).find(p=>p.type===type && Number(p.year)===year) || null; }
+function approvedUsed(empId, year, type, basis, excludeId){
+  const emp=empById(empId); if(!emp) return 0; let u=0;
+  state.leaves.forEach(l=>{ if(l.empId===empId && l.type===type && l.status==='معتمد' && l.id!==excludeId)
+    u += leaveDaysInRange(emp, l.from, l.to, year, basis); });
+  return u;
+}
+// صفوف رصيد موظف (owner/admin — حساب محلي يعمل دون إنترنت)
+function computeBalanceRows(empId, year){
+  return (state.policies||[]).filter(p=>Number(p.year)===year).map(p=>{
+    const s=ledgerSums(empId, year, p.type), used=approvedUsed(empId, year, p.type, p.basis||'calendar');
+    let available=null, remaining=null;
+    if(p.mode==='limited' && p.entitled!=null){ available=Number(p.entitled)+s.initial+s.carryover+s.adjustments; remaining=available-used; }
+    return { type:p.type, mode:p.mode, entitled:p.entitled, initial:s.initial, carryover:s.carryover, adjustments:s.adjustments, used, available, remaining };
+  });
+}
+// صفوف رصيد الموظف الحالي (viewer) من نتيجة RPC المخزّنة
+function myBalanceRows(){
+  return (state.myBalances||[]).map(r=>({ type:r.type, mode:r.policy_mode, entitled:r.entitled_days,
+    initial:Number(r.initial||0), carryover:Number(r.carryover||0), adjustments:Number(r.adjustments||0),
+    used:Number(r.used||0), available:r.available, remaining:r.remaining }));
+}
+function remainingForViewer(type){
+  const r=(state.myBalances||[]).find(x=>x.type===type);
+  return (r && r.remaining!=null) ? Number(r.remaining) : null;
+}
+function balCellHtml(r){
+  if(r.mode==='tracking_only') return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span class="bal-mode">تتبّع فقط</span><span>المستخدَم <b>${r.used}</b></span></div>`;
+  if(r.mode==='unlimited')     return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span class="bal-mode">غير محدود</span><span>المستخدَم <b>${r.used}</b></span></div>`;
+  if(r.entitled==null)         return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span class="bal-mode warn">الرصيد غير محدد</span><span>المستخدَم <b>${r.used}</b></span></div>`;
+  const neg=Number(r.remaining)<0;
+  return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span>مستحق <b>${r.available}</b></span><span>مستخدَم <b>${r.used}</b></span><span>متبقٍّ <b class="${neg?'bal-neg':'bal-ok'}">${r.remaining}</b></span></div>`;
+}
+function balanceCardHtml(rows, title){
+  return `<div class="card bal-card"><div class="bal-title">${esc(title||('رصيد الإجازات '+balanceYear))}</div>
+    ${rows.length? rows.map(balCellHtml).join('') : '<div class="empty">لا توجد سياسات رصيد لهذه السنة</div>'}</div>`;
+}
+function renderBalances(){
+  if(isViewer){ nav('leaves'); return; }
+  const el=document.getElementById('scr-balances');
+  const years=[balanceYear-1,balanceYear,balanceYear+1];
+  const types=['الكل', ...state.settings.leaveTypes];
+  el.innerHTML=`<h2 class="title">أرصدة الإجازات</h2>
+    <div class="card no-print">
+      <div class="two">
+        <div class="field" style="margin:0"><label>السنة</label>
+          <select onchange="balanceYear=+this.value; refreshBalances()">${years.map(y=>`<option ${y===balanceYear?'selected':''}>${y}</option>`).join('')}</select></div>
+        <div class="field" style="margin:0"><label>النوع</label>
+          <select onchange="balTypeFilter=this.value; renderBalances()">${types.map(t=>`<option ${balTypeFilter===t?'selected':''}>${t}</option>`).join('')}</select></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn sm ghost" onclick="openPolicyEditor()">⚙️ سياسات الرصيد</button>
+        <button class="btn sm ghost" onclick="openAdjust('')">＋ تعديل رصيد</button>
+        <button class="btn sm ghost" onclick="nav('leaves')">→ رجوع</button>
+      </div>
+    </div>
+    <div class="card" style="padding:6px 12px">
+      ${state.employees.map(e=>{
+        let rows=computeBalanceRows(e.id, balanceYear);
+        if(balTypeFilter && balTypeFilter!=='الكل') rows=rows.filter(r=>r.type===balTypeFilter);
+        return `<div class="bal-emp"><div class="bal-emp-h"><b>${esc(e.name)}</b> <span class="meta">${esc(e.no)}</span>
+          <button class="icon-btn" onclick="openAdjust('${e.id}')">✏️</button></div>
+          ${rows.length? rows.map(balCellHtml).join(''):'<div class="empty">—</div>'}</div>`;
+      }).join('')}
+    </div>`;
+}
+function refreshBalances(){ if(!isViewer){ Cloud.pullBalances().then(()=>renderBalances()).catch(()=>renderBalances()); } else renderBalances(); }
+function openPolicyEditor(){
+  const y=balanceYear,
+    modes=[['limited','محدود'],['unlimited','غير محدود'],['tracking_only','تتبّع فقط']],
+    bases=[['calendar','تقويمي'],['scheduled_workdays','أيام العمل']];
+  openSheet(`<h3>سياسات الرصيد ${y}<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="hint" style="margin-bottom:8px">اترك «المستحق» فارغاً حتى تحدّده — النوع «محدود» بلا مستحق يظهر «غير محدد» ولا يمنع الطلب.</div>
+    ${state.settings.leaveTypes.map(t=>{ const p=policyFor(t,y)||{mode:'limited',entitled:null,maxCarryover:0,basis:'calendar'};
+      return `<div class="pol-row" data-type="${esc(t)}">
+        <div class="pol-name">${esc(t)}</div>
+        <select class="pol-mode">${modes.map(m=>`<option value="${m[0]}" ${p.mode===m[0]?'selected':''}>${m[1]}</option>`).join('')}</select>
+        <input class="pol-ent" type="number" min="0" placeholder="مستحق" value="${p.entitled==null?'':p.entitled}">
+        <input class="pol-car" type="number" min="0" placeholder="ترحيل" value="${p.maxCarryover||0}">
+        <select class="pol-basis">${bases.map(b=>`<option value="${b[0]}" ${(p.basis||'calendar')===b[0]?'selected':''}>${b[1]}</option>`).join('')}</select>
+      </div>`; }).join('')}
+    <button class="btn block" style="margin-top:10px" onclick="savePolicies()">حفظ السياسات</button>`);
+}
+function savePolicies(){
+  document.querySelectorAll('#sheet .pol-row').forEach(row=>{
+    const type=row.dataset.type, mode=row.querySelector('.pol-mode').value,
+      ent=row.querySelector('.pol-ent').value, car=row.querySelector('.pol-car').value, basis=row.querySelector('.pol-basis').value;
+    const pol={ team:team(), year:balanceYear, type, mode, entitled: (mode==='limited'&&ent!=='')?Number(ent):null, maxCarryover:Number(car||0), basis };
+    const i=(state.policies||[]).findIndex(p=>p.type===type && Number(p.year)===balanceYear);
+    if(i>=0) state.policies[i]=pol; else (state.policies=state.policies||[]).push(pol);
+    Data.savePolicy(pol);
+  });
+  closeSheet(); renderBalances(); toast('تم حفظ السياسات');
+}
+function openAdjust(empId){
+  const kinds=[['adjustment','تعديل'],['initial','رصيد ابتدائي'],['carryover','ترحيل']];
+  openSheet(`<h3>قيد رصيد<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="field"><label>الموظف</label><select id="adj-emp">${state.employees.map(e=>`<option value="${e.id}" ${empId===e.id?'selected':''}>${esc(e.name)}</option>`).join('')}</select></div>
+    <div class="two">
+      <div class="field"><label>نوع الإجازة</label><select id="adj-type">${state.settings.leaveTypes.map(t=>`<option>${esc(t)}</option>`).join('')}</select></div>
+      <div class="field"><label>السنة</label><input id="adj-year" type="number" value="${balanceYear}"></div>
+    </div>
+    <div class="two">
+      <div class="field"><label>نوع القيد</label><select id="adj-kind">${kinds.map(k=>`<option value="${k[0]}">${k[1]}</option>`).join('')}</select></div>
+      <div class="field"><label>الأيام (±)</label><input id="adj-days" type="number" step="0.5" placeholder="مثال: 5 أو -2"></div>
+    </div>
+    <div class="field"><label>السبب (إلزامي)</label><input id="adj-reason" placeholder="سبب القيد"></div>
+    <p class="hint">لا يُعدَّل قيد سابق؛ التصحيح بقيد معاكس.</p>
+    <button class="btn block" onclick="saveAdjust()">حفظ القيد</button>`);
+}
+function saveAdjust(){
+  const empId=val('adj-emp'), type=val('adj-type'), year=+val('adj-year'), kind=val('adj-kind'),
+    daysRaw=val('adj-days'), reason=val('adj-reason').trim();
+  if(!empId){ toast('اختر الموظف'); return; }
+  if(daysRaw===''||isNaN(parseFloat(daysRaw))){ toast('أدخل عدد الأيام'); return; }
+  if(!reason){ toast('اكتب سبب القيد'); return; }
+  const days=parseFloat(daysRaw), sourceYear = kind==='carryover' ? year-1 : null;
+  (state.ledger=state.ledger||[]).push({ emp_id:empId, year, type, kind, days, source_year:sourceYear, reason });
+  Data.addLedger({ team:team(), empId, year, type, kind, days, reason, sourceYear });
+  closeSheet(); renderBalances(); toast('تم حفظ القيد');
+}
+// يضمن تجاوزاً موثّقاً عند اعتماد طلب يتخطّى الرصيد (owner/admin). يعيد false لإلغاء.
+function ensureOverrideIfNeeded(l){
+  if(l.status!=='معتمد' || isViewer) return true;
+  const yr=balYearFrom(l.from), p=policyFor(l.type, yr);
+  if(!p || p.mode!=='limited' || p.entitled==null) return true;
+  const s=ledgerSums(l.empId, yr, l.type);
+  const avail=Number(p.entitled)+s.initial+s.carryover+s.adjustments;
+  const usedOther=approvedUsed(l.empId, yr, l.type, p.basis||'calendar', l.id);
+  const reqDays=leaveDaysInRange(empById(l.empId), l.from, l.to, yr, p.basis||'calendar');
+  if((usedOther+reqDays) <= avail) return true;
+  if(l.balanceOverride && l.balanceOverrideReason) return true;
+  const reason=prompt('مدة الطلب تتجاوز الرصيد المتبقّي. اكتب سبب الموافقة الاستثنائية للاعتماد:');
+  if(!reason || !reason.trim()){ toast('يلزم سبب تجاوز للاعتماد'); return false; }
+  l.balanceOverride=true; l.balanceOverrideReason=reason.trim();
+  return true;
 }
 function approveLeave(id){ setLeaveStatus(id,'معتمد'); }
 function rejectLeave(id){ setLeaveStatus(id,'مرفوض'); }
