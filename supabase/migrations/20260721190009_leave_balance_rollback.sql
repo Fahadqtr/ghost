@@ -10,6 +10,8 @@ begin;
 drop trigger if exists trg_balance_validate on public.leaves;
 drop trigger if exists trg_audit on public.leave_policies;
 drop trigger if exists trg_audit on public.leave_ledger;
+drop trigger if exists trg_ledger_server on public.leave_ledger;
+drop trigger if exists trg_policies_server on public.leave_policies;
 
 -- (2) استعادة audit_capture إلى نسخة ما قبل المرحلة ٢ (بلا فروع الرصيد)
 create or replace function public.audit_capture()
@@ -163,6 +165,8 @@ drop function if exists public.fn_leave_balance(uuid,int);
 drop function if exists public.fn_leave_used(uuid,int,text,uuid);
 drop function if exists public.fn_leave_days_in_range(uuid,date,date,int,text);
 drop function if exists public.fn_validate_leave_balance();
+drop function if exists public.fn_leave_ledger_server_fields();
+drop function if exists public.fn_leave_policies_server_fields();
 
 -- (6) جداول المرحلة ٢
 drop table if exists public.leave_ledger;

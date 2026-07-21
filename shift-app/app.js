@@ -23,6 +23,7 @@ let state = { employees: [], leaves: [], overrides: {}, pointShifts: {}, setting
 let balanceYear = new Date().getFullYear();
 let balTypeFilter = 'الكل';
 let currentUserEmail = '';
+let currentUserId = '';  // auth.uid() — يفصل cache التخزين المحلي حسب الحساب
 let currentEmpNo = '';  // الرقم الوظيفي للموظف المسجّل (لدور العرض)
 let currentUsername = ''; // اسم مستخدم الدخول (للمشرف: salemm / fahdaziz)
 let currentTeam = 'w1';   // وردية المستخدم الحالي (عزل البيانات)
@@ -1045,8 +1046,11 @@ function leaveDaysInRange(emp, fromISO, toISO, year, basis){
   const gs=(fromISO>ys?fromISO:ys), ge=(toISO<ye?toISO:ye);
   if(gs>ge) return 0;
   if(basis!=='scheduled_workdays') return daysBetween(gs,ge)+1;   // calendar
+  // يوم عمل = تعديل الجدول اليدوي (override) إن وُجد وإلا موضع الدورة — بلا leaves
+  const ov=(state.overrides && state.overrides[emp.id]) || {};
   let n=0, d=parseISO(gs), end=parseISO(ge);
-  while(d<=end){ if(WORK_SHIFTS.includes(rotationShift(emp, toISO(d)))) n++; d=addDays(d,1); }
+  while(d<=end){ const iso=toISO(d); const eff = (ov[iso]!=null && ov[iso]!=='') ? ov[iso] : rotationShift(emp, iso);
+    if(WORK_SHIFTS.includes(eff)) n++; d=addDays(d,1); }
   return n;
 }
 function ledgerSums(empId, year, type){
@@ -1174,8 +1178,10 @@ function saveAdjust(){
   if(daysRaw===''||isNaN(parseFloat(daysRaw))){ toast('أدخل عدد الأيام'); return; }
   if(!reason){ toast('اكتب سبب القيد'); return; }
   const days=parseFloat(daysRaw), sourceYear = kind==='carryover' ? year-1 : null;
-  (state.ledger=state.ledger||[]).push({ emp_id:empId, year, type, kind, days, source_year:sourceYear, reason });
-  Data.addLedger({ team:team(), empId, year, type, kind, days, reason, sourceYear });
+  if(days===0){ toast('لا يمكن أن يكون القيد صفراً'); return; }
+  const id=uid();   // مفتاح idempotency يُولَّد مرّة واحدة قبل الطابور
+  (state.ledger=state.ledger||[]).push({ id, emp_id:empId, year, type, kind, days, source_year:sourceYear, reason });
+  Data.addLedger({ id, empId, year, type, kind, days, reason, sourceYear });
   closeSheet(); renderBalances(); toast('تم حفظ القيد');
 }
 // يضمن تجاوزاً موثّقاً عند اعتماد طلب يتخطّى الرصيد (owner/admin). يعيد false لإلغاء.
@@ -1871,7 +1877,7 @@ async function doChangePassword(){
   const { error }=await Cloud.changePassword(pw);
   toast(error?'تعذّر التغيير':'تم تغيير كلمة المرور');
 }
-async function doLogout(){ closeSheet(); await Cloud.signOut(); location.reload(); }
+async function doLogout(){ closeSheet(); try{ Cloud.clearLocalData(); }catch(e){} currentUserId=''; await Cloud.signOut(); location.reload(); }
 
 /* -------------------- أدوات واجهة -------------------- */
 const sheet=document.getElementById('sheet');
@@ -1931,6 +1937,7 @@ async function startApp(){
   try{
     const { data }=await Cloud.sb.auth.getUser();
     const u=data&&data.user;
+    currentUserId = u ? u.id : '';           // قبل loadCache: يحدّد مفتاح الـcache الخاص بالحساب
     currentRole = (u && u.app_metadata && u.app_metadata.role) || 'viewer';
     isOwner = currentRole==='owner';
     isViewer = !(currentRole==='admin' || currentRole==='owner');

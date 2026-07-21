@@ -97,19 +97,25 @@ create index if not exists leave_policies_lookup_idx on public.leave_policies(te
 --     التصحيح بقيد معاكس؛ لا UPDATE/DELETE من الواجهة.
 -- ---------------------------------------------------------------------
 create table if not exists public.leave_ledger (
-  id          bigint generated always as identity primary key,
+  id          uuid primary key default gen_random_uuid(),   -- مفتاح idempotency يولّده العميل
   team        text not null,
   emp_id      uuid not null,
   year        int  not null,
   type        text not null,
   kind        text not null check (kind in ('initial','adjustment','carryover')),
-  days        numeric(5,1) not null,
+  days        numeric(5,1) not null check (days <> 0),        -- لا قيد بصفر
   source_year int,                       -- للترحيل: السنة المُرحَّل منها
   reason      text not null default '',
   created_by  uuid,
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  -- source_year مطلوب للترحيل فقط، وممنوع لغيره
+  constraint leave_ledger_source_year_ck check ((kind = 'carryover') = (source_year is not null))
 );
 create index if not exists leave_ledger_lookup_idx on public.leave_ledger(team, emp_id, year, type);
+-- initial idempotent: قيد ابتدائي واحد لكل (موظف، سنة، نوع)
+create unique index if not exists leave_ledger_initial_uniq
+  on public.leave_ledger(emp_id, year, type)
+  where kind = 'initial';
 -- ترحيل idempotent: قيد واحد لكل (موظف، من سنة → إلى سنة، نوع)
 create unique index if not exists leave_ledger_carryover_uniq
   on public.leave_ledger(emp_id, source_year, year, type)
@@ -119,7 +125,7 @@ create unique index if not exists leave_ledger_carryover_uniq
 -- (هـ) أرشفة قيود الموظف المحذوف (بيانات لازمة فقط، بلا أسرار)
 -- ---------------------------------------------------------------------
 create table if not exists public.archived_leave_ledger (
-  id          bigint,
+  id          uuid,
   team        text,
   emp_id      uuid,
   year        int,

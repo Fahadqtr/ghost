@@ -155,12 +155,14 @@ begin;
     json_build_object('sub',(select id::text from auth.users where email='e2424@shift.local'),'role','authenticated',
       'app_metadata',json_build_object('role','viewer','team','w1'))::text, true);
   do $$
-  declare denied int := 0;
+  declare denied int := 0; v_emp uuid;
   begin
-    begin insert into public.leave_ledger(team,emp_id,year,type,kind,days) values('w1',gen_random_uuid(),2026,'سنوية','adjustment',1); exception when others then denied:=denied+1; end;
+    -- emp_id صالح (viewer يقرأ موظفي ورديته) لاختبار رفض RLS لا رفض «موظف غير موجود»
+    select id into v_emp from public.employees where team='w1' order by sort_order limit 1;
+    begin insert into public.leave_ledger(emp_id,year,type,kind,days) values(v_emp,2026,'سنوية','adjustment',1); exception when others then denied:=denied+1; end;
     begin insert into public.leave_policies(team,year,type,policy_mode) values('w1',2026,'X','limited'); exception when others then denied:=denied+1; end;
     if denied <> 2 then raise exception 'T7 FAIL: الموظف كتب رصيداً/سياسة (denied=%)', denied; end if;
-    raise notice 'T7 OK: viewer ممنوع من الكتابة ×2';
+    raise notice 'T7 OK: viewer ممنوع من الكتابة ×2 (RLS)';
   end $$;
   reset role;
 rollback;
@@ -204,19 +206,26 @@ rollback;
 -- ============ T10: الأرشفة — حذف موظف يؤرشف الـledger بلا يتيم ============
 begin;
   do $$
-  declare v_id uuid; v_arch int; v_left int;
+  declare v_id uuid; v_arch int; v_left int; v_dup int;
   begin
     -- موظف اختباري (يُنشئ trg_provision مستخدم Auth وربطاً) — كله يُلغى بالـROLLBACK
     insert into public.employees(name,emp_no,cycle_start,sort_order,team)
       values('موظف اختبار رصيد','9999888','2026-01-01',999,'w1') returning id into v_id;
-    insert into public.leave_ledger(team,emp_id,year,type,kind,days,reason) values('w1',v_id,2026,'سنوية','initial',4,'بذر');
-    delete from public.employees where id=v_id;   -- يُشغّل الأرشفة
+    -- عدّة قيود بأنواع/سنوات مختلفة (team/created_by/created_at يفرضها الخادم)
+    insert into public.leave_ledger(emp_id,year,type,kind,days,source_year,reason) values
+      (v_id,2026,'سنوية','initial',    4, null, 'بذر'),
+      (v_id,2026,'سنوية','adjustment',-1, null, 'خصم'),
+      (v_id,2026,'عارض', 'initial',    2, null, 'بذر عارض'),
+      (v_id,2027,'سنوية','carryover',  3, 2026, 'ترحيل');
+    delete from public.employees where id=v_id;   -- يُشغّل الأرشفة قبل ON DELETE CASCADE
     select count(*) into v_arch from public.archived_leave_ledger where emp_id=v_id;
     select count(*) into v_left from public.leave_ledger where emp_id=v_id;
-    if v_arch < 1 then raise exception 'T10 FAIL: لم تُؤرشف قيود الرصيد'; end if;
+    select count(*) - count(distinct id) into v_dup from public.archived_leave_ledger where emp_id=v_id;
+    if v_arch <> 4 then raise exception 'T10 FAIL: أُرشِف % قيد (متوقع 4)', v_arch; end if;
     if v_left <> 0 then raise exception 'T10 FAIL: قيود يتيمة متبقية (%)', v_left; end if;
+    if v_dup <> 0 then raise exception 'T10 FAIL: أرشيف مكرر'; end if;
     if exists(select 1 from public.employee_auth where emp_id=v_id) then raise exception 'T10 FAIL: employee_auth لم يُحذف (cascade)'; end if;
-    raise notice 'T10 OK: أُرشِف % قيد، لا يتيم، cascade تم', v_arch;
+    raise notice 'T10 OK: أُرشِف % قيد (بلا يتيم/تكرار)، cascade تم', v_arch;
   end $$;
 rollback;
 
@@ -233,6 +242,88 @@ begin;
     exception when unique_violation then dup := true; end;
     if not dup then raise exception 'T11 FAIL'; end if;
     raise notice 'T11 OK: الترحيل المكرر مرفوض بالقيد الفريد';
+  end $$;
+rollback;
+
+-- ============ T12: idempotency لـled_add — نفس id لا يُنشئ قيداً ثانياً ============
+begin;
+  do $$
+  declare v_emp uuid; v_id uuid := gen_random_uuid(); n int; dup boolean := false;
+  begin
+    select id into v_emp from public.employees where team='w1' order by sort_order limit 1;
+    insert into public.leave_ledger(id,emp_id,year,type,kind,days,reason) values(v_id,v_emp,2026,'سنوية','adjustment',3,'أول');
+    -- إعادة إرسال نفس id ⇒ يجب أن تفشل بمفتاح مكرر (والعميل يعاملها idempotent)
+    begin
+      insert into public.leave_ledger(id,emp_id,year,type,kind,days,reason) values(v_id,v_emp,2026,'سنوية','adjustment',3,'أول');
+    exception when unique_violation then dup := true; end;
+    if not dup then raise exception 'T12 FAIL: قُبل id مكرر (لا idempotency)'; end if;
+    select count(*) into n from public.leave_ledger where id=v_id;
+    if n <> 1 then raise exception 'T12 FAIL: عدد الصفوف=% (متوقع 1)', n; end if;
+    raise notice 'T12 OK: نفس id ⇒ صف واحد فقط (idempotent)';
+  end $$;
+rollback;
+
+-- ============ T13: حماية التجاوز + خوادم الحقول ============
+begin;
+  do $$
+  declare v_emp uuid; v_id uuid := gen_random_uuid();
+  begin
+    select id into v_emp from public.employees where team='w1' order by sort_order limit 1;
+    update public.leave_policies set entitled_days=1 where team='w1' and year=2026 and type='سنوية';
+  end $$;
+  -- (أ) viewer: أي محاولة تعيين تجاوز على طلبه تُطهَّر — والاعتماد ليس من حقه أصلاً
+  set local role authenticated;
+  select set_config('request.jwt.claims',
+    json_build_object('sub',(select id::text from auth.users where email='e2424@shift.local'),'role','authenticated',
+      'app_metadata',json_build_object('role','viewer','team','w1'))::text, true);
+  do $$
+  declare v_emp uuid; ovr boolean;
+  begin
+    select ea.emp_id into v_emp from public.employee_auth ea join auth.users u on u.id=ea.user_id where u.email='e2424@shift.local';
+    insert into public.leaves(id,emp_id,type,from_date,to_date,status,notes,team,balance_override,balance_override_reason)
+      values (gen_random_uuid(),v_emp,'سنوية','2026-08-01','2026-08-01','قيد الانتظار','__LB_T13__','w1',true,'أحاول التلاعب');
+    select balance_override into ovr from public.leaves where notes='__LB_T13__';
+    if ovr then raise exception 'T13 FAIL: الموظف عيّن balance_override'; end if;
+    raise notice 'T13a OK: تجاوز الموظف طُهِّر (=false)';
+  end $$;
+  reset role;
+  -- (ب) admin: اعتماد متجاوز بلا سبب مرفوض؛ ومع سبب تُختم by/at من الخادم
+  set local role authenticated;
+  select set_config('request.jwt.claims',
+    json_build_object('sub',(select id::text from auth.users where email='salemm@shift.local'),'role','authenticated',
+      'app_metadata',json_build_object('role','admin','team','w1'))::text, true);
+  do $$
+  declare v_emp uuid; blocked boolean := false; v_by uuid; v_at timestamptz;
+  begin
+    select id into v_emp from public.employees where team='w1' order by sort_order limit 1;
+    begin
+      insert into public.leaves(id,emp_id,type,from_date,to_date,status,notes,team,balance_override,balance_override_reason)
+        values (gen_random_uuid(),v_emp,'سنوية','2026-08-10','2026-08-14','معتمد','__LB_T13b__','w1',true,'   ');
+      raise exception 'T13 FAIL: قُبل تجاوز بسبب فارغ';
+    exception when others then if sqlerrm like '%سبب التجاوز مطلوب%' then blocked:=true; else raise; end if; end;
+    if not blocked then raise exception 'T13 FAIL'; end if;
+    insert into public.leaves(id,emp_id,type,from_date,to_date,status,notes,team,balance_override,balance_override_reason)
+      values (gen_random_uuid(),v_emp,'سنوية','2026-08-10','2026-08-14','معتمد','__LB_T13b__','w1',true,'ظرف طارئ');
+    select balance_override_by, balance_override_at into v_by, v_at from public.leaves where notes='__LB_T13b__';
+    if v_by is null or v_at is null then raise exception 'T13 FAIL: by/at لم تُختم من الخادم'; end if;
+    raise notice 'T13b OK: سبب فارغ مرفوض؛ by/at مختومان من الخادم';
+  end $$;
+  reset role;
+rollback;
+
+-- ============ T14: قيود leave_ledger (days<>0، source_year، initial فريد) ============
+begin;
+  do $$
+  declare v_emp uuid; e1 boolean:=false; e2 boolean:=false; e3 boolean:=false; e4 boolean:=false;
+  begin
+    select id into v_emp from public.employees where team='w1' order by sort_order limit 1;
+    begin insert into public.leave_ledger(emp_id,year,type,kind,days,reason) values(v_emp,2026,'سنوية','adjustment',0,'صفر'); exception when check_violation then e1:=true; end;
+    begin insert into public.leave_ledger(emp_id,year,type,kind,days,source_year,reason) values(v_emp,2026,'سنوية','adjustment',1,2025,'source خاطئ'); exception when check_violation then e2:=true; end;
+    begin insert into public.leave_ledger(emp_id,year,type,kind,days,reason) values(v_emp,2027,'سنوية','carryover',1,'بلا source'); exception when check_violation then e3:=true; end;
+    insert into public.leave_ledger(emp_id,year,type,kind,days,reason) values(v_emp,2026,'مرضية','initial',3,'أول');
+    begin insert into public.leave_ledger(emp_id,year,type,kind,days,reason) values(v_emp,2026,'مرضية','initial',5,'ثانٍ'); exception when unique_violation then e4:=true; end;
+    if not (e1 and e2 and e3 and e4) then raise exception 'T14 FAIL: e1=% e2=% e3=% e4=%', e1,e2,e3,e4; end if;
+    raise notice 'T14 OK: days<>0، source_year للترحيل فقط، initial فريد';
   end $$;
 rollback;
 

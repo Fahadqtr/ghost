@@ -42,10 +42,17 @@ begin
   v_cycle := v_wd + v_rd;
   if v_cycle <= 0 then return (ge - gs) + 1; end if;   -- إعداد غير صالح ⇒ تقويمي
 
+  -- يوم عمل = تعديل الجدول اليدوي إن وُجد (وردية عمل)، وإلا موضع الدورة.
+  -- لا يُستخدم جدول leaves إطلاقاً (وإلا صارت الإجازة المعتمدة 0 أيام مستخدمة).
+  -- startShift يحدّد اسم الوردية فقط لا صفة «عمل/راحة»، فلا يؤثّر في العدّ.
   select count(*) into v_cnt
     from generate_series(gs, ge, interval '1 day') g(d)
-   where (g.d::date - v_cs) >= 0
-     and mod(((g.d::date - v_cs) % v_cycle) + v_cycle, v_cycle) < v_wd;
+    left join public.overrides o on o.emp_id = p_emp and o.day = g.d::date
+   where case
+           when o.value is not null then o.value in ('صباح','عصر','ليل')
+           else ((g.d::date - v_cs) >= 0
+                 and mod(((g.d::date - v_cs) % v_cycle) + v_cycle, v_cycle) < v_wd)
+         end;
   return coalesce(v_cnt, 0);
 end $$;
 

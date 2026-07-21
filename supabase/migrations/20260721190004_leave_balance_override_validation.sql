@@ -1,10 +1,14 @@
 -- =====================================================================
---  المرحلة ٢ — أرصدة الإجازات | 4/8: التحقّق من تجاوز الرصيد عند الاعتماد
+--  المرحلة ٢ — أرصدة الإجازات | 4/8: حماية التجاوز + قفل الاعتماد + التحقّق
 --  (مراجعة فقط — لا يُطبَّق على الإنتاج حتى موافقة منفصلة)
 --
---  عند تحويل طلب إلى «معتمد»: إن تجاوز الرصيد المتبقّي (نوع limited برصيد
---  مضبوط)، يجب balance_override=true وسبب غير فارغ وبواسطة owner/admin،
---  وإلا تُرفض العملية. الطلب المعلّق لا يُتحقَّق منه (يُسمح بإرساله).
+--  BEFORE INSERT/UPDATE على leaves:
+--   (أ) حماية حقول التجاوز: غير owner/admin لا يستطيع تعيينها إطلاقاً؛
+--       owner/admin يضبط السبب فقط، وby/at من الخادم؛ التجاوز بلا سبب مرفوض.
+--   (ب) قفل معاملي تصاعدي لكل (emp_id|type|year) قبل فحص الرصيد ⇒ تسلسل
+--       الاعتمادات المتزامنة (آمن ضد deadlock بترتيب السنوات تصاعدياً).
+--   (ج) إعادة حساب الرصيد بعد القفل، وإعادة التحقّق عند أي تعديل يجعل الحالة
+--       «معتمد» (يشمل تغيّر emp_id/type/from_date/to_date/team/status).
 -- =====================================================================
 begin;
 
@@ -13,18 +17,51 @@ returns trigger
 language plpgsql security definer set search_path = ''
 as $$
 declare
-  v_exceeds boolean := false;
+  v_is_admin boolean;
+  v_exceeds  boolean := false;
   y int; v_from_y int; v_to_y int;
   v_mode text; v_entitled int; v_basis text;
   v_available numeric; v_used_others numeric; v_new_days numeric;
 begin
+  v_is_admin := public.is_owner() or public.audit_current_user_role() = 'admin';
+
+  -- (أ) حماية حقول تجاوز الرصيد -----------------------------------------
+  if not v_is_admin then
+    -- الموظف (viewer) لا يملك حق تعيين أي حقل تجاوز — تُطهَّر دائماً
+    NEW.balance_override := false;
+    NEW.balance_override_reason := null;
+    NEW.balance_override_by := null;
+    NEW.balance_override_at := null;
+  else
+    if coalesce(NEW.balance_override, false) then
+      if coalesce(btrim(NEW.balance_override_reason), '') = '' then
+        raise exception 'سبب التجاوز مطلوب';
+      end if;
+      NEW.balance_override_by := (select auth.uid());   -- من الخادم لا من العميل
+      NEW.balance_override_at := now();                  -- من الخادم لا من العميل
+    else
+      NEW.balance_override_reason := null;
+      NEW.balance_override_by := null;
+      NEW.balance_override_at := null;
+    end if;
+  end if;
+
   if NEW.status <> 'معتمد' then
-    return NEW;   -- لا تحقّق إلا عند الاعتماد
+    return NEW;   -- لا فحص رصيد إلا عند الاعتماد
   end if;
 
   v_from_y := extract(year from NEW.from_date)::int;
   v_to_y   := extract(year from NEW.to_date)::int;
 
+  -- (ب) أقفال معاملية تصاعدية لكل سنة متأثرة (تسلسل الاعتمادات المتزامنة)
+  y := v_from_y;
+  while y <= v_to_y loop
+    perform pg_advisory_xact_lock(
+      hashtextextended(NEW.emp_id::text || '|' || NEW.type || '|' || y::text, 0));
+    y := y + 1;
+  end loop;
+
+  -- (ج) إعادة حساب الرصيد بعد القفل ثم التحقّق --------------------------
   y := v_from_y;
   while y <= v_to_y loop
     select lp.policy_mode, lp.entitled_days, coalesce(lp.day_count_basis,'calendar')
@@ -52,24 +89,13 @@ begin
   end loop;
 
   if v_exceeds then
-    -- يجب تجاوز موثّق بواسطة owner/admin مع سبب غير فارغ
-    if not (public.is_owner() or public.audit_current_user_role() = 'admin') then
+    if not v_is_admin then
       raise exception 'تجاوز الرصيد يتطلّب صلاحية owner أو admin';
     end if;
     if not (coalesce(NEW.balance_override,false)
             and coalesce(btrim(NEW.balance_override_reason),'') <> '') then
       raise exception 'يتطلّب موافقة استثنائية: مدة الطلب تتجاوز الرصيد المتبقّي — فعّل التجاوز واكتب السبب';
     end if;
-    -- ختم بيانات التجاوز (عند الإدراج أو أول تفعيل أو تغيّر السبب)
-    if TG_OP = 'INSERT'
-       or coalesce(OLD.balance_override,false) = false
-       or NEW.balance_override_reason is distinct from OLD.balance_override_reason then
-      NEW.balance_override_by := (select auth.uid());
-      NEW.balance_override_at := now();
-    end if;
-  else
-    -- لا تجاوز: لا حاجة لختم شيء (يُترك ما أرسله المستخدم كما هو)
-    null;
   end if;
 
   return NEW;

@@ -6,8 +6,13 @@
    ============================================================ */
 'use strict';
 
-const CACHE_KEY = 'shiftApp.cache.v2';
+const CACHE_KEY_BASE = 'shiftApp.cache.v2';
 const OUTBOX_KEY = 'shiftApp.outbox.v1';
+// مفتاح تخزين محلي مفصول حسب هوية المستخدم (auth.uid) — يمنع تسرّب cache حساب لآخر أوفلاين
+function cacheKey(){
+  const uid = (typeof currentUserId !== 'undefined' && currentUserId) ? currentUserId : 'anon';
+  return CACHE_KEY_BASE + '.' + uid;
+}
 
 /* تحويل بين صيغة الواجهة وصيغة قاعدة البيانات */
 function team(){ return (typeof currentTeam!=='undefined' && currentTeam) ? currentTeam : 'w1'; }
@@ -29,7 +34,15 @@ function rowToPolicy(r){ return { team:r.team, year:r.year, type:r.type, mode:r.
   entitled: r.entitled_days, maxCarryover: r.max_carryover||0, basis: r.day_count_basis||'calendar' }; }
 
 function saveCache(){
-  try{ localStorage.setItem(CACHE_KEY, JSON.stringify(state)); }catch(e){}
+  try{ localStorage.setItem(cacheKey(), JSON.stringify(state)); }catch(e){}
+}
+// مسح كل cache التطبيق (كل الحسابات) + تصفير بيانات الأرصدة في الذاكرة — يُستدعى عند الخروج/تبديل الحساب
+function clearLocalData(){
+  try{
+    Object.keys(localStorage).forEach(k=>{ if(k.indexOf(CACHE_KEY_BASE)===0) localStorage.removeItem(k); });
+    localStorage.removeItem(OUTBOX_KEY);
+  }catch(e){}
+  try{ state.policies=[]; state.ledger=[]; state.myBalances=[]; }catch(e){}
 }
 
 // دمج إعدادات السحابة مع الافتراضية — لضمان وجود القوائم الأساسية دائماً
@@ -45,7 +58,7 @@ function mergeSettings(db){
 }
 function loadCache(){
   try{
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = localStorage.getItem(cacheKey());
     if(raw){ state = JSON.parse(raw); return true; }
   }catch(e){}
   return false;
@@ -195,7 +208,22 @@ const Cloud = {
     else if(op.t==='set')    r=await sb.from('settings').upsert({ team:op.team||team(), data:op.data }, { onConflict:'team' });
     else if(op.t==='ps_up')  r=await sb.from('point_shifts').upsert(op.row, { onConflict:'team,day,shift' });
     else if(op.t==='pol_up') r=await sb.from('leave_policies').upsert(op.row, { onConflict:'team,year,type' });
-    else if(op.t==='led_add')r=await sb.from('leave_ledger').insert(op.row);
+    else if(op.t==='led_add'){
+      r=await sb.from('leave_ledger').insert(op.row);
+      // idempotency: إعادة إرسال نفس العملية (نفس id) لا تُنشئ قيداً ثانياً.
+      if(r && r.error && r.error.code==='23505'){
+        const chk=await sb.from('leave_ledger').select('emp_id,year,type,kind,days,source_year').eq('id',op.row.id).maybeSingle();
+        const d=chk.data;
+        if(d && d.emp_id===op.row.emp_id && Number(d.year)===Number(op.row.year) && d.type===op.row.type
+           && d.kind===op.row.kind && Number(d.days)===Number(op.row.days)
+           && Number(d.source_year||0)===Number(op.row.source_year||0)){
+          r={ error:null };                         // نفس id ونفس البيانات ⇒ نجاح idempotent
+        } else {
+          console.warn('led_add conflict: same id, different data — dropping', op.row.id);
+          r={ error:null };                         // نفس id ببيانات مختلفة ⇒ تعارض؛ يُسقَط ولا يُعاد للأبد
+        }
+      }
+    }
     return r && r.error;
   },
 
@@ -225,10 +253,12 @@ const Data = {
   // أرصدة الإجازات
   savePolicy(p){ Cloud.enqueue({ t:'pol_up', row: policyToRow(p) }); saveCache(); },
   addLedger(entry){ Cloud.enqueue({ t:'led_add', row: {
-    team: entry.team||team(), emp_id: entry.empId, year: Number(entry.year),
+    id: entry.id,                                  // مفتاح idempotency يولّده العميل مرّة واحدة
+    emp_id: entry.empId, year: Number(entry.year),
     type: entry.type, kind: entry.kind, days: Number(entry.days),
     source_year: entry.sourceYear!=null ? Number(entry.sourceYear) : null,
     reason: entry.reason||'' } }); saveCache(); },
+    // ملاحظة: team/created_by/created_at لا تُرسَل — يفرضها الخادم (trg_ledger_server).
   setOverride(empId, day, value){ Cloud.enqueue({ t:'ov_up', row:{ emp_id:empId, day, value, team:team() } }); saveCache(); },
   delOverride(empId, day){ Cloud.enqueue({ t:'ov_del', emp_id:empId, day }); saveCache(); },
   saveSettings(){ Cloud.enqueue({ t:'set', data: state.settings, team:team() }); saveCache(); },
