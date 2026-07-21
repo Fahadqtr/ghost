@@ -1,0 +1,10 @@
+{
+  "name": "shift-app-maintenance-scripts",
+  "private": true,
+  "type": "module",
+  "description": "سكربتات صيانة خادمية لـ shift-app عبر Supabase Auth Admin API. خادميّة فقط — لا تعمل في المتصفح ولا تستخدم publishable key.",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}
