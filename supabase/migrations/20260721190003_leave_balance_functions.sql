@@ -108,12 +108,12 @@ begin
      order by lp.type
   loop
     type := r.type; policy_mode := r.policy_mode; entitled_days := r.entitled_days;
-    select coalesce(sum(days) filter (where kind='initial'),0),
-           coalesce(sum(days) filter (where kind='carryover'),0),
-           coalesce(sum(days) filter (where kind='adjustment'),0)
+    select coalesce(sum(ll.days) filter (where ll.kind='initial'),0),
+           coalesce(sum(ll.days) filter (where ll.kind='carryover'),0),
+           coalesce(sum(ll.days) filter (where ll.kind='adjustment'),0)
       into initial, carryover, adjustments
-      from public.leave_ledger
-     where emp_id = p_emp and year = p_year and type = r.type;
+      from public.leave_ledger ll
+     where ll.emp_id = p_emp and ll.year = p_year and ll.type = r.type;
     used := public.fn_leave_used(p_emp, p_year, r.type);
 
     if r.policy_mode = 'limited' and r.entitled_days is not null then
