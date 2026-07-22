@@ -9,17 +9,30 @@
 -- =====================================================================
 begin;
 
+-- ملاحظة: هذا التعريف مطابق للحماية المطبَّقة في Migration 5 (لا يُضعِفها):
+--   يرفض الموظف غير الموجود ووردية فارغة/مسافات، بلا كشف UUID في الرسالة.
 create or replace function public.fn_leave_ledger_server_fields()
 returns trigger
-language plpgsql security definer set search_path = ''
+language plpgsql
+security definer
+set search_path = ''
 as $$
-declare v_team text;
+declare
+  v_team text;
 begin
-  select e.team into v_team from public.employees e where e.id = NEW.emp_id;
-  if v_team is null then raise exception 'leave_ledger: موظف غير موجود (%).', NEW.emp_id; end if;
+  select e.team
+    into v_team
+    from public.employees e
+   where e.id = NEW.emp_id;
+
+  if v_team is null or btrim(v_team) = '' then
+    raise exception 'leave_ledger: الموظف غير موجود أو ورديته غير صالحة';
+  end if;
+
   NEW.team       := v_team;                 -- من employees لا من العميل
   NEW.created_by := (select auth.uid());    -- من الجلسة لا من العميل
   NEW.created_at := now();                   -- من الخادم لا من العميل
+
   return NEW;
 end $$;
 
@@ -43,7 +56,7 @@ create trigger trg_policies_server
   before insert or update on public.leave_policies
   for each row execute function public.fn_leave_policies_server_fields();
 
-revoke all on function public.fn_leave_ledger_server_fields()   from public;
-revoke all on function public.fn_leave_policies_server_fields()  from public;
+revoke all on function public.fn_leave_ledger_server_fields()   from public, anon, authenticated;
+revoke all on function public.fn_leave_policies_server_fields()  from public, anon, authenticated;
 
 commit;
