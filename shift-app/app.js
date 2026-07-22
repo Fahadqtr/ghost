@@ -204,6 +204,22 @@ function ownerTeamSwitcherHtml(){
   </div>`;
 }
 let ownerOverview=null;   // ملخّص كل الورديات (يُحمَّل عند فتح لوحة رئيس القسم)
+let ownerReports=null;    // إفادات المسؤولين من كل الورديات (لرئيس القسم)
+// جمع الإفادات من إعدادات كل الورديات (المالك يقرأ الكل عبر RLS)
+async function loadOwnerReports(){
+  try{
+    const { data } = await Cloud.sb.from('settings').select('team,data');
+    const nameOf=t=>{ const x=allTeams.find(a=>a.team===t); return x?x.name:t; };
+    const all=[];
+    (data||[]).forEach(row=>{ const reps=(row.data&&row.data.reports)||[]; reps.forEach(r=> all.push({ id:r.id, text:r.text, ts:r.ts, by:r.by, team:row.team, teamName:nameOf(row.team) })); });
+    all.sort((a,b)=>(b.ts||0)-(a.ts||0));
+    ownerReports=all;
+  }catch(e){ ownerReports=[]; }
+  if(current==='dash' && isOwner) renderDash();
+}
+function seenReports(){ try{ return JSON.parse(localStorage.getItem('shiftApp.seenReports')||'[]'); }catch(e){ return []; } }
+function reportSeen(id){ return id!=null && seenReports().indexOf(id)>=0; }
+function dismissReport(id){ const s=seenReports(); if(s.indexOf(id)<0){ s.push(id); try{ localStorage.setItem('shiftApp.seenReports', JSON.stringify(s.slice(-500))); }catch(e){} } renderDash(); }
 async function loadOwnerOverview(){
   try{
     // قد تُستدعى قبل اكتمال تحميل قائمة الورديات (سباق) — حمّلها عند الحاجة
@@ -227,7 +243,7 @@ async function loadOwnerOverview(){
   if(current==='dash' && isOwner) renderDash();
 }
 async function reloadTeams(){
-  try{ allTeams = await Cloud.listTeams(); ownerOverview=null; toast('تم تحديث قائمة الورديات'); renderDash(); }
+  try{ allTeams = await Cloud.listTeams(); ownerOverview=null; ownerReports=null; toast('تم تحديث قائمة الورديات'); renderDash(); }
   catch(e){ toast('تعذّر تحميل الورديات'); }
 }
 // حفظ اسم رئيس القسم وبثّه لكل الورديات (يظهر في اعتماد كل الكشوفات)
@@ -396,6 +412,42 @@ function deleteDirective(ts){
 }
 function clearAllDirectives(){
   state.settings.directives=[]; Data.saveSettings(); closeSheet(); renderScreen(current); toast('تم مسح كل التوجيهات');
+}
+
+/* ===== إفادات: مسؤول الوردية ← رئيس القسم =====
+   تُخزَّن في إعدادات وردية المُرسِل (settings.reports) — يقرؤها رئيس القسم من كل الورديات (RLS يسمح للمالك). */
+function reportList(){ return (state.settings.reports||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0)); }
+function openReport(){
+  if(isViewer||isOwner) return;   // للمسؤولين فقط
+  const list=reportList();
+  openSheet(`
+    <h3>إفادة لرئيس القسم<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">تصل هذه الإفادة إلى رئيس القسم في لوحته.</p>
+    <div class="field"><label>نص الإفادة</label>
+      <textarea id="rp-text" rows="4" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب الإفادة هنا…"></textarea></div>
+    <div class="hint bad" id="rp-err" style="margin-bottom:6px"></div>
+    <button class="btn block" onclick="sendReport()">📤 إرسال الإفادة</button>
+    ${list.length?`
+      <div style="border-top:1px solid var(--line);margin:16px 0 8px"></div>
+      <h3 style="font-size:14px">إفاداتك المُرسَلة (${list.length})</h3>
+      ${list.map(n=>`<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin:6px 0;display:flex;align-items:flex-start;gap:10px">
+        <div class="grow" style="min-width:0"><div class="meta" style="white-space:pre-wrap">${esc(n.text)}</div><div class="meta" style="margin-top:3px">${noticeDate(n.ts)}</div></div>
+        <button class="icon-btn danger" onclick="deleteReport(${Number(n.ts)||0})">🗑️</button>
+      </div>`).join('')}`:''}
+  `);
+}
+function sendReport(){
+  if(isViewer||isOwner) return;
+  const text=val('rp-text').trim(); const err=document.getElementById('rp-err'); if(err) err.textContent='';
+  if(!text){ if(err) err.textContent='اكتب نص الإفادة'; return; }
+  const list=(state.settings.reports||[]).slice();
+  list.push({ id: uid(), text, ts: Date.now(), by: docSupervisor()||currentUsername||'مسؤول الوردية' });
+  state.settings.reports=list.slice(-50);
+  Data.saveSettings(); closeSheet(); renderScreen(current); toast('تم إرسال الإفادة لرئيس القسم');
+}
+function deleteReport(ts){
+  state.settings.reports=(state.settings.reports||[]).filter(n=>Number(n.ts)!==Number(ts));
+  Data.saveSettings(); openReport(); toast('تم حذف الإفادة');
 }
 // شاشة منبثقة بأحدث توجيه للموظف عند الدخول
 function maybeShowDirective(){
@@ -664,6 +716,18 @@ function renderOwnerDash(){
           </div>
         </div>`; }).join('') : '<div class="empty">لا طلبات معلّقة في الوردية المعروضة</div>'}
     </div>`;
+  if(ownerReports===null) loadOwnerReports();
+  const reps=(ownerReports||[]).filter(r=>!reportSeen(r.id));
+  const reportsCard=`
+    <div class="card">
+      <h3>📥 إفادات المسؤولين ${reps.length?`<span class="badge b-pending">${reps.length} جديدة</span>`:''}</h3>
+      ${ownerReports===null?'<div class="empty">جارٍ التحميل…</div>':(reps.length? reps.map(r=>`<div class="row" style="align-items:flex-start">
+          <div class="grow"><div class="name" style="font-size:14px">${esc(r.by||'مسؤول الوردية')} <span class="meta">(${esc(r.teamName||r.team)})</span></div>
+            <div class="meta" style="margin-top:2px;white-space:pre-wrap">${esc(r.text)}</div>
+            <div class="meta" style="margin-top:2px">${noticeDate(r.ts)}</div></div>
+          <button class="btn sm ghost" onclick="dismissReport('${esc(r.id)}')">تمّت</button>
+        </div>`).join('') : '<div class="empty">لا إفادات جديدة</div>')}
+    </div>`;
   const staff=`
     <div class="card">
       <h3>دخول الموظفين (عرض فقط)</h3>
@@ -673,7 +737,7 @@ function renderOwnerDash(){
         <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
       </div>
     </div>`;
-  el.innerHTML = header + actions + kpis + shiftsCard + pendingCard + noticesCardHtml() + staff;
+  el.innerHTML = header + actions + kpis + shiftsCard + pendingCard + reportsCard + noticesCardHtml() + staff;
 }
 // رئيس القسم يضبط دور (قالب صلاحيات) مسؤول الوردية المعروضة
 function openAdminRoles(){
@@ -717,6 +781,7 @@ function renderDash(){
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
       ${can('leaves')?`<button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>`:''}
       ${can('directives')?`<button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>`:''}
+      ${!isViewer?`<button class="btn sm" onclick="openReport()">📤 إفادة لرئيس القسم</button>`:''}
       <button class="btn sm ghost" onclick="refreshFromCloud()">↻ تحديث</button>
     </div>
     <div class="stats">
