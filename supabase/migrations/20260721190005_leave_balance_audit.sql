@@ -2,13 +2,51 @@
 --  المرحلة ٢ — أرصدة الإجازات | 5/8: توسيع سجل التعديلات (Audit Log)
 --  (مراجعة فقط — لا يُطبَّق على الإنتاج حتى موافقة منفصلة)
 --
---  إعادة تعريف audit_capture مع الحفاظ على كل الفروع الحالية + إضافة:
+--  أولاً: إغلاق ثغرة cross-team في leave_ledger (يفرض الوردية من الموظف
+--  قبل تقييم RLS WITH CHECK) ثم إعادة تعريف audit_capture مع الحفاظ على كل
+--  الفروع الحالية + إضافة:
 --   • leave_policies (Allowlist: policy_mode/entitled_days/max_carryover/day_count_basis)
---   • leave_ledger  (ملخّص فقط؛ نص السبب لا يُخزَّن)
+--   • leave_ledger  (ملخّص فقط؛ نص السبب لا يُخزَّن؛ الوردية من الموظف)
 --   • حقول تجاوز الرصيد في leaves (السبب لا يُخزَّن نصّاً)
 --  ثم مشغّلا trg_audit على leave_policies و leave_ledger.
 -- =====================================================================
 begin;
+
+-- ---------------------------------------------------------------------
+-- (0) حماية leave_ledger: فرض الوردية والحقول الموثوقة من الخادم قبل RLS.
+--     يعمل كـ BEFORE INSERT فيسبق تقييم RLS WITH CHECK: إذا حاول مسؤول w1
+--     إدخال قيد لموظف w2 بوسم team='w1'، يُعاد team إلى w2 فترفضه سياسة RLS
+--     (لأن وردية المسؤول w1)، ولا يتغيّر رصيد موظف w2.
+-- ---------------------------------------------------------------------
+create or replace function public.fn_leave_ledger_server_fields()
+returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+declare v_team text;
+begin
+  select e.team
+    into v_team
+    from public.employees e
+   where e.id = NEW.emp_id;
+
+  if v_team is null or v_team = '' then
+    raise exception 'leave_ledger: الموظف غير موجود أو ورديته غير صالحة';
+  end if;
+
+  NEW.team       := v_team;                 -- من employees لا من العميل
+  NEW.created_by := (select auth.uid());    -- من الجلسة لا من العميل
+  NEW.created_at := now();                   -- من الخادم لا من العميل
+
+  return NEW;
+end $$;
+
+drop trigger if exists trg_ledger_server on public.leave_ledger;
+create trigger trg_ledger_server
+  before insert on public.leave_ledger
+  for each row execute function public.fn_leave_ledger_server_fields();
+
+revoke all on function public.fn_leave_ledger_server_fields()
+  from public, anon, authenticated;
 
 create or replace function public.audit_capture()
 returns trigger
@@ -88,7 +126,14 @@ begin
       v_summary := 'حذف طلب إجازة لـ ' || v_emp;
     else
       if (v_new->>'status') is distinct from (v_old->>'status') then
-        if    (v_new->>'status') = 'معتمد' then v_summary := 'اعتمد طلب إجازة لـ ' || v_emp;
+        if    (v_new->>'status') = 'معتمد' then
+          -- الاعتماد إلى «معتمد»: إن كان التجاوز مفعّلاً (حتى لو كان true مسبقاً
+          -- ولم يتغيّر في هذا التحديث) يُسجَّل كاعتماد مع تجاوز الرصيد.
+          if coalesce((v_new->>'balance_override')::boolean, false) then
+            v_summary := 'اعتمد طلب إجازة مع تجاوز الرصيد لـ ' || v_emp;
+          else
+            v_summary := 'اعتمد طلب إجازة لـ ' || v_emp;
+          end if;
         elsif (v_new->>'status') = 'مرفوض' then v_summary := 'رفض طلب إجازة لـ ' || v_emp;
         else  v_summary := 'غيّر حالة طلب إجازة لـ ' || v_emp || ' إلى ' || coalesce(v_new->>'status','');
         end if;
@@ -106,12 +151,8 @@ begin
         v_changed := v_changed || jsonb_build_object('balance_override', jsonb_build_object('old', v_old->'balance_override', 'new', v_new->'balance_override'));
       end if;
       if (v_new->>'balance_override_reason') is distinct from (v_old->>'balance_override_reason') then
+        -- الحدث فقط (changed) — لا يُخزَّن نص السبب مطلقاً
         v_changed := v_changed || jsonb_build_object('balance_override_reason', jsonb_build_object('changed', true));
-      end if;
-      if coalesce((v_new->>'balance_override')::boolean,false)
-         and (coalesce((v_old->>'balance_override')::boolean,false) = false)
-         and (v_new->>'status') = 'معتمد' then
-        v_summary := 'اعتمد طلب إجازة مع تجاوز الرصيد لـ ' || v_emp;
       end if;
       if v_changed = '{}'::jsonb then v_changed := null; end if;
     end if;
@@ -214,6 +255,8 @@ begin
   elsif v_entity = 'leave_ledger' then
     v_emp_id := (case when tg_op = 'DELETE' then (v_old->>'emp_id') else (v_new->>'emp_id') end);
     v_emp := coalesce((select e.name from public.employees e where e.id = v_emp_id), '—');
+    -- وردية سجل التدقيق من الموظف في القاعدة، لا من قيمة team المرسلة
+    v_team := coalesce((select e.team from public.employees e where e.id = v_emp_id), v_team);
     v_id := v_row->>'id';
     if tg_op = 'INSERT' then
       v_summary := 'أضاف '
@@ -256,6 +299,6 @@ create trigger trg_audit
   after insert or update or delete on public.leave_ledger
   for each row execute function public.audit_capture();
 
-revoke all on function public.audit_capture() from public;
+revoke all on function public.audit_capture() from public, anon, authenticated;
 
 commit;
