@@ -939,6 +939,7 @@ function deleteEmp(id){
 
 /* -------------------- جدول الورديات -------------------- */
 let schedMonth=null;
+let ownerSchedByShift=true;   // رئيس القسم: عرض الجدول حسب الوردية (لا حسب الموظف)
 function ensureMonth(){
   if(schedMonth) return;
   const d=parseISO(state.settings.scheduleStart), t=today();
@@ -946,6 +947,7 @@ function ensureMonth(){
   if(t<d) schedMonth={ y:d.getFullYear(), m:d.getMonth() };
 }
 function renderSched(){
+  if(isOwner && ownerSchedByShift) return renderOwnerSched();   // رئيس القسم: عرض المداومين حسب الوردية
   ensureMonth();
   const el=document.getElementById('scr-sched'), {y,m}=schedMonth, days=new Date(y,m+1,0).getDate();
   const todayISO=toISO(today());
@@ -987,6 +989,7 @@ function renderSched(){
     <div class="sched-actions">
       <button class="btn sm" onclick="goToday()">اليوم</button>
       <button class="btn gold sm" onclick="jumpNearestShift()">⦿ أقرب وردية</button>
+      ${isOwner?'<button class="btn ghost sm" onclick="toggleOwnerSched(true)">📋 حسب الوردية</button>':''}
     </div>
     <div class="tablewrap">
       <table class="sched">
@@ -1028,6 +1031,71 @@ function labelShort(v){
 function moveMonth(dir){ let {y,m}=schedMonth; m+=dir; if(m>11){m=0;y++;} if(m<0){m=11;y--;} schedMonth={y,m}; highlightDate=null; renderSched(); }
 function viewerEmp(){ return currentEmpNo ? state.employees.find(e=>e.no===currentEmpNo) : null; }
 function goToday(){ const t=today(); schedMonth={y:t.getFullYear(),m:t.getMonth()}; highlightDate=null; renderSched(); }
+function toggleOwnerSched(byShift){ ownerSchedByShift=!!byShift; renderSched(); }
+// عرض الجدول لرئيس القسم حسب الوردية: من في صباح/عصر/ليل لكل يوم، والضغط يُظهر المداومين
+function renderOwnerSched(){
+  ensureMonth();
+  const el=document.getElementById('scr-sched'), {y,m}=schedMonth, days=new Date(y,m+1,0).getDate();
+  const todayISO=toISO(today());
+  let head='';
+  for(let d=1;d<=days;d++){
+    const iso=toISO(new Date(y,m,d)), wd=new Date(y,m,d).getDay(), wknd=(wd===5||wd===6);
+    head+=`<th class="${wknd?'wknd':''} ${wd===5?'fridaycol':''} ${iso===todayISO?'today':''}"><div>${AR_DAYS[wd].slice(0,3)}</div><div style="font-weight:800">${d}</div></th>`;
+  }
+  const shiftRows=WORK_SHIFTS.map(sh=>{
+    let cells='';
+    for(let d=1;d<=days;d++){
+      const iso=toISO(new Date(y,m,d)), c=dayStats(iso).counts[sh];
+      cells+=`<td class="fcount ${c>0?'f-'+sh:'fzero'} ${iso===todayISO?'today':''}" style="cursor:pointer" onclick="showShiftRoster('${iso}','${sh}')">${c>0?c:'·'}</td>`;
+    }
+    return `<tr class="shift-row"><td class="namecol"><span class="fdot dot-${sh}"></span>${sh}</td>${cells}</tr>`;
+  }).join('');
+  let totalCells='';
+  for(let d=1;d<=days;d++){ const iso=toISO(new Date(y,m,d)), w=dayStats(iso).working, low=w<state.settings.minWorkers;
+    totalCells+=`<td class="${low?'low':(w>0?'ok':'')} ${iso===todayISO?'today':''}">${w}</td>`; }
+  const todayCards=WORK_SHIFTS.map(sh=>{ const list=state.employees.filter(e=>cellValue(e,todayISO).value===sh);
+    return `<div class="card" style="padding:10px 12px;margin:0">
+      <div class="row" style="margin-bottom:4px"><span class="fdot dot-${sh}"></span><b style="margin-inline-start:6px">${sh}</b><span class="grow"></span><span class="badge b-ok">${list.length}</span></div>
+      ${list.length? list.map(e=>`<div class="meta" style="padding:2px 0">• ${esc(e.name)} <span style="opacity:.7">(${esc(e.no)})</span></div>`).join('') : '<div class="meta">لا مداومين</div>'}
+    </div>`; }).join('');
+  el.innerHTML=`
+    <div class="sched-bar">
+      <button class="btn ghost sm" onclick="moveMonth(1)">‹ التالي</button>
+      <div class="m">${AR_MONTHS[m]} ${y}</div>
+      <button class="btn ghost sm" onclick="moveMonth(-1)">السابق ›</button>
+    </div>
+    <div class="sched-actions">
+      <button class="btn sm" onclick="goToday()">اليوم</button>
+      <button class="btn ghost sm" onclick="toggleOwnerSched(false)">👥 حسب الموظف</button>
+    </div>
+    <div class="card summary-card">
+      <h3>المداومون حسب الوردية</h3>
+      <p class="hint" style="margin:-4px 0 8px">اضغط على أي خانة لعرض أسماء المداومين في تلك الوردية واليوم.</p>
+      <div class="tablewrap">
+        <table class="sched">
+          <thead><tr><th class="namecol">الوردية</th>${head}</tr></thead>
+          <tbody>${shiftRows}<tr class="total-row"><td class="namecol">إجمالي العاملين</td>${totalCells}</tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h3>مداومو اليوم — ${AR_DAYS[today().getDay()]} ${fmtDate(todayISO)}</h3>
+      <div style="display:flex;flex-direction:column;gap:8px">${todayCards}</div>
+    </div>
+    <div class="leg">
+      <span><i style="background:var(--morning-l)"></i>صباح</span>
+      <span><i style="background:var(--amber-l)"></i>عصر</span>
+      <span><i style="background:var(--indigo-l)"></i>ليل</span>
+    </div>`;
+}
+// قائمة المداومين في وردية ويوم محدّدين (لرئيس القسم)
+function showShiftRoster(iso, shift){
+  const list=state.employees.filter(e=>cellValue(e,iso).value===shift);
+  openSheet(`
+    <h3>وردية ${esc(shift)} — ${fmtDate(iso)}<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:8px">${AR_DAYS[parseISO(iso).getDay()]} • عدد المداومين: ${list.length}</p>
+    ${list.length? `<div class="card" style="padding:6px 12px">${list.map(e=>`<div class="row"><div class="avatar">${initials(e.name)}</div><div class="grow"><div class="name">${esc(e.name)}</div><div class="meta">الرقم الوظيفي: ${esc(e.no)}</div></div></div>`).join('')}</div>` : '<div class="empty">لا مداومين في هذه الوردية</div>'}`);
+}
 // أقرب وردية قادمة: للموظف ورديته هو، وللمشرف أقرب يوم عمل للفريق
 function jumpNearestShift(){
   const ve=viewerEmp(), start=today(); let target=null, shift='';
