@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createTask, updateTask, deleteTask, managerListComments, managerAddComment, createRoutine, setRoutineActive, deleteRoutine, type StaffTask, type TaskPriority, type TaskStatus } from "./actions";
+import { createTask, updateTask, deleteTask, bulkSetTaskStatus, bulkDeleteTasks, managerListComments, managerAddComment, createRoutine, setRoutineActive, deleteRoutine, type StaffTask, type TaskPriority, type TaskStatus } from "./actions";
 import type { Routine } from "@/lib/tasks/routines";
 import CatalogTaskDetails from "@/components/CatalogTaskDetails";
 import TaskThread from "@/components/TaskThread";
@@ -36,6 +36,13 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
   const [routines, setRoutines] = useState<Routine[]>(initialRoutines);
   const [busy, start] = useTransition();
   const [note, setNote] = useState("");
+
+  // multi-select (bulk approve / reject)
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSel = (id: string) =>
+    setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const exitSelect = () => { setSelectMode(false); setSelected(new Set()); };
 
   // form
   const [title, setTitle] = useState("");
@@ -81,6 +88,31 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
       const r = await deleteTask(t.id);
       if (r && "error" in r && r.error) { flash(r.error); return; }
       setTasks((ts) => ts.filter((x) => x.id !== t.id));
+    });
+  };
+
+  // bulk: approve (mark done) / reject (delete) the selected tasks
+  const bulkApprove = () => {
+    if (selected.size === 0) return;
+    const ids = [...selected];
+    start(async () => {
+      const r = await bulkSetTaskStatus(ids, "done");
+      if ((r as any)?.error) { flash((r as any).error); return; }
+      setTasks((ts) => ts.map((x) => (selected.has(x.id) ? { ...x, status: "done" as TaskStatus, completedAt: new Date().toISOString() } : x)));
+      flash(L(`✅ اعتُمدت ${ids.length} مهمة`, `✅ Approved ${ids.length} task(s)`));
+      exitSelect();
+    });
+  };
+  const bulkReject = () => {
+    if (selected.size === 0) return;
+    if (!confirm(L(`رفض وحذف ${selected.size} مهمة محدّدة؟`, `Reject & delete ${selected.size} selected task(s)?`))) return;
+    const ids = [...selected];
+    start(async () => {
+      const r = await bulkDeleteTasks(ids);
+      if ((r as any)?.error) { flash((r as any).error); return; }
+      setTasks((ts) => ts.filter((x) => !selected.has(x.id)));
+      flash(L(`🗑️ رُفضت ${ids.length} مهمة`, `🗑️ Rejected ${ids.length} task(s)`));
+      exitSelect();
     });
   };
 
@@ -170,10 +202,28 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
           <option value="low">⚪ {L("منخفضة", "Low")}</option>
         </select>
         <div className="ms-auto flex items-center gap-2">
+          <button onClick={() => (selectMode ? exitSelect() : setSelectMode(true))} className={`px-3 py-2 text-sm ${selectMode ? "btn-primary" : "btn-ghost"}`}>{selectMode ? L("× إلغاء التحديد", "× Cancel") : L("☑︎ تحديد", "☑︎ Select")}</button>
           <button onClick={() => setShowRoutines((v) => !v)} className="btn-ghost px-3 py-2 text-sm">🔁 {L("الروتين", "Routines")} ({routines.filter((r) => r.active).length})</button>
           <button onClick={() => setShowForm((v) => !v)} className="btn-primary px-4 py-2 text-sm">{showForm ? L("× إغلاق", "× Close") : L("+ مهمة جديدة", "+ New task")}</button>
         </div>
       </div>
+
+      {/* bulk action bar (multi-select) */}
+      {selectMode ? (
+        <div className="sticky top-1 z-30 flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/95 p-2 shadow-sm backdrop-blur">
+          <button onClick={() => setSelected(new Set(shown.map((t) => t.id)))} className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800">{L("تحديد الكل", "Select all")} ({shown.length})</button>
+          <button onClick={() => setSelected(new Set())} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600">{L("مسح", "Clear")}</button>
+          <span className="text-xs font-bold text-ink">{L(`المحدّد: ${selected.size}`, `Selected: ${selected.size}`)}</span>
+          <div className="ms-auto flex items-center gap-2">
+            {tab === "done" ? (
+              <button disabled={busy || selected.size === 0} onClick={() => { const ids = [...selected]; start(async () => { const r = await bulkSetTaskStatus(ids, "open"); if ((r as any)?.error) { flash((r as any).error); return; } setTasks((ts) => ts.map((x) => (selected.has(x.id) ? { ...x, status: "open" as TaskStatus } : x))); flash(L(`↺ فُتحت ${ids.length}`, `↺ Reopened ${ids.length}`)); exitSelect(); }); }} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 disabled:opacity-50">↺ {L("فتح", "Reopen")}</button>
+            ) : (
+              <button disabled={busy || selected.size === 0} onClick={bulkApprove} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">✓ {L("اعتماد الكل", "Approve all")}</button>
+            )}
+            <button disabled={busy || selected.size === 0} onClick={bulkReject} className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">✕ {L("رفض", "Reject")}</button>
+          </div>
+        </div>
+      ) : null}
 
       {/* routines panel */}
       {showRoutines ? (
@@ -267,7 +317,10 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
       ) : tab === "done" ? (
         <div className="space-y-1.5">
           {shown.map((t) => (
-            <div key={t.id} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
+            <div key={t.id} className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${selected.has(t.id) ? "border-emerald-400 bg-emerald-50" : "border-slate-100 bg-white"}`}>
+              {selectMode ? (
+                <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleSel(t.id)} aria-label={L("تحديد المهمة", "Select task")} className="h-4 w-4 shrink-0 accent-emerald-600" />
+              ) : null}
               <span className="min-w-0 flex-1 truncate text-sm text-slate-400 line-through">✓ {t.title}</span>
               <span className="shrink-0 text-[11px] text-slate-400">{(t.assignedName ?? L("الكل", "Everyone"))}{t.completedAt ? ` · ${fmt(t.completedAt)}` : ""}</span>
               <button disabled={busy} onClick={() => setStatus(t, "open")} className="shrink-0 rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50">{L("↺ فتح", "↺ Reopen")}</button>
@@ -282,9 +335,14 @@ export default function TasksClient({ initialTasks, staff, locale = "ar", initia
             const od = isOverdue(t);
             const everyone = t.assignedTo == null;
             return (
-              <div key={t.id} className={`relative overflow-hidden rounded-xl border p-3 ps-4 ${od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
+              <div key={t.id} className={`relative overflow-hidden rounded-xl border p-3 ps-4 ${selected.has(t.id) ? "border-emerald-400 bg-emerald-50 ring-1 ring-emerald-300" : od ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
                 <span className={`absolute inset-y-0 inset-s-0 w-1.5 ${p.bar}`} />
                 <div className="flex items-stretch gap-3">
+                  {selectMode ? (
+                    <label className="flex shrink-0 cursor-pointer items-center self-center">
+                      <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleSel(t.id)} aria-label={L("تحديد المهمة", "Select task")} className="h-5 w-5 accent-emerald-600" />
+                    </label>
+                  ) : null}
                   <span className={`flex h-10 w-10 shrink-0 items-center justify-center self-center rounded-full text-sm font-bold ${everyone ? "bg-slate-100 text-slate-500" : "bg-violet-100 text-violet-700"}`}>
                     {everyone ? "👥" : initial(t.assignedName)}
                   </span>
