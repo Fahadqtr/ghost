@@ -1088,11 +1088,14 @@ function remainingForViewer(type){
   return (r && r.remaining!=null) ? Number(r.remaining) : null;
 }
 function balCellHtml(r){
+  // صافي قيود الرصيد المُدخَلة (ابتدائي + ترحيل + تعديلات) — يظهر حتى قبل تحديد الاستحقاق
+  const entered = Number(r.initial||0) + Number(r.carryover||0) + Number(r.adjustments||0);
   if(r.mode==='tracking_only') return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span class="bal-mode">تتبّع فقط</span><span>المستخدَم <b>${r.used}</b></span></div>`;
   if(r.mode==='unlimited')     return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span class="bal-mode">غير محدود</span><span>المستخدَم <b>${r.used}</b></span></div>`;
-  if(r.entitled==null)         return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span class="bal-mode warn">الرصيد غير محدد</span><span>المستخدَم <b>${r.used}</b></span></div>`;
+  // limited بلا استحقاق: نُظهر قيود الرصيد المحفوظة دون رصيد متبقٍّ (الاستحقاق الرسمي غير محدد)
+  if(r.entitled==null)         return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span class="bal-mode warn">الاستحقاق غير محدد</span><span>قيود الرصيد <b>${entered}</b></span><span>المستخدَم <b>${r.used}</b></span></div>`;
   const neg=Number(r.remaining)<0;
-  return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span>مستحق <b>${r.available}</b></span><span>مستخدَم <b>${r.used}</b></span><span>متبقٍّ <b class="${neg?'bal-neg':'bal-ok'}">${r.remaining}</b></span></div>`;
+  return `<div class="bal-line"><span class="bal-t">${esc(r.type)}</span><span>متاح <b>${r.available}</b></span><span>مستخدَم <b>${r.used}</b></span><span>متبقٍّ <b class="${neg?'bal-neg':'bal-ok'}">${r.remaining}</b></span></div>`;
 }
 function balanceCardHtml(rows, title){
   return `<div class="card bal-card"><div class="bal-title">${esc(title||('رصيد الإجازات '+balanceYear))}</div>
