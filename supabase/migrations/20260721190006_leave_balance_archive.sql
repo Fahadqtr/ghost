@@ -9,6 +9,10 @@
 --  بما أنّ الأرشفة BEFORE DELETE وداخل نفس المعاملة: أي فشل في الأرشفة
 --  يرفع استثناءً فيُلغى حذف الموظف بالكامل (لا حذف دون أرشفة ناجحة).
 --  employee_auth يُحذف تلقائياً عبر ON DELETE CASCADE عند حذف الموظف.
+--
+--  تقوية: كل المراجع مؤهلة بالكامل ⇒ search_path='' (يمنع حقن المسار)،
+--  وتُسحب صلاحية الاستدعاء المباشر (تعمل عبر trigger فقط).
+--  المشغّل trg_archive (BEFORE DELETE) من Phase 1 لا يُغيَّر اسمه ولا تعريفه.
 -- =====================================================================
 begin;
 
@@ -16,7 +20,7 @@ create or replace function public.shift_archive_user()
 returns trigger
 language plpgsql
 security definer
-set search_path to 'public', 'auth', 'extensions'
+set search_path = ''
 as $function$
 begin
   insert into public.archived_employees(id,name,emp_no,cycle_start)
@@ -35,5 +39,8 @@ begin
   delete from auth.users where email = 'e'||OLD.emp_no||'@shift.local';
   return OLD;
 end $function$;
+
+-- تعمل عبر trigger فقط — لا استدعاء مباشر
+revoke all on function public.shift_archive_user() from public, anon, authenticated;
 
 commit;
