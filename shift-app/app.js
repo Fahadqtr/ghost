@@ -33,6 +33,24 @@ let allTeams = [];      // قائمة كل الورديات (للمالك)
 let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
 const OWNER_TEAM_KEY = 'shiftApp.ownerTeam';
 let highlightDate = null; // تاريخ يُبرَز في الجدول (زر أقرب وردية)
+
+/* ===== قوالب أدوار المسؤولين — يضبطها رئيس القسم لكل وردية =====
+   تُخزَّن في إعدادات الوردية (settings.adminPreset) كنصّ — بلا تعديل قاعدة بيانات.
+   ملاحظة: هذا ضبط على مستوى الواجهة (توضيح الأدوار ومنع الإجراءات الخاطئة)؛
+   الحماية التامّة على الخادم عبر RLS تبقى خطوة لاحقة منفصلة. */
+const ADMIN_PRESETS = {
+  full:     { name:'مسؤول كامل',        desc:'كل صلاحيات الوردية',                 caps:['emps','sched','leaves','approve','balances','point','directives'] },
+  schedule: { name:'جدول وموظفين',      desc:'الموظفون والجدول والنقطة والتوجيهات', caps:['emps','sched','point','directives'] },
+  approver: { name:'معتمِد إجازات',      desc:'الإجازات والأرصدة واعتمادها',         caps:['leaves','approve','balances'] },
+  readonly: { name:'قراءة فقط (مدقّق)',  desc:'عرض كل شيء دون تعديل',                caps:[] },
+};
+function adminPresetKey(){ const k=state.settings&&state.settings.adminPreset; return ADMIN_PRESETS[k]?k:'full'; }
+// صلاحية عملية للمستخدم الحالي: الموظف لا شيء؛ رئيس القسم إشراف واعتماد فقط؛ المسؤول حسب قالبه
+function can(cap){
+  if(isViewer) return false;
+  if(isOwner) return cap==='approve';           // إشراف واعتماد فقط — بلا إدخال يومي
+  return ADMIN_PRESETS[adminPresetKey()].caps.includes(cap);
+}
 // حالة شاشة سجل التعديلات
 let auditRows=[], auditCursor=null, auditDone=false, auditLoading=false, auditErr='';
 let auditFilters={ team:'', action:'', entity:'', actor:'', from:'', to:'' };
@@ -98,7 +116,7 @@ function nav(to){
   current=to;
   screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s===to));
   document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active', b.dataset.nav===to));
-  document.getElementById('fab').style.display = (to==='emps'||to==='leaves') ? 'grid' : 'none';
+  document.getElementById('fab').style.display = ((to==='emps'&&can('emps'))||(to==='leaves'&&can('leaves'))) ? 'grid' : 'none';
   window.scrollTo(0,0);
   renderScreen(to);
 }
@@ -343,6 +361,7 @@ function showDirective(ts){
   `);
 }
 function openDirectives(){
+  if(!can('directives')){ toast('غير مصرّح بإرسال التوجيهات'); return; }
   const list=directiveList();
   openSheet(`
     <h3>توجيهات الموظفين<button class="x" onclick="closeSheet()">×</button></h3>
@@ -363,6 +382,7 @@ function openDirectives(){
   `);
 }
 function sendDirective(){
+  if(!can('directives')){ toast('غير مصرّح'); return; }
   const text=val('dr-text').trim(); const err=document.getElementById('dr-err'); if(err) err.textContent='';
   if(!text){ if(err) err.textContent='اكتب نص التوجيه'; return; }
   const list=(state.settings.directives||[]).slice();
@@ -593,8 +613,10 @@ function renderOwnerDash(){
       <select id="owner-team" onchange="switchTeam(this.value)" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff">
         ${allTeams.map(t=>`<option value="${esc(t.team)}" ${t.team===currentTeam?'selected':''}>${esc(t.name)} (${esc(t.team)})</option>`).join('')}
       </select>
+      <div class="meta" style="margin-top:8px">دور مسؤول هذه الوردية: <b>${esc(ADMIN_PRESETS[adminPresetKey()].name)}</b></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         <button class="btn sm" onclick="openAddTeam()">＋ إضافة وردية</button>
+        <button class="btn sm ghost" onclick="openAdminRoles()">👔 دور المسؤول</button>
         <button class="btn sm ghost" onclick="editTeamData()">✏️ تعديل بيانات الوردية</button>
         <button class="btn sm ghost" onclick="openAnnounce()">📢 إرسال تعميم</button>
         <button class="btn sm ghost" onclick="reloadTeams()">↻ تحديث</button>
@@ -628,6 +650,20 @@ function renderOwnerDash(){
       }).join('') : '<div class="empty">لا توجد ورديات</div>'}
       <div class="hint" style="margin-top:8px">افتح أي وردية ثم تصفّح جدولها وإجازاتها وكشوفاتها واعتمِدها من التبويبات بالأسفل.</div>
     </div>`;
+  const pendingLeaves=state.leaves.filter(l=>l.status==='قيد الانتظار').sort((a,b)=>a.from<b.from?-1:1);
+  const pendingCard=`
+    <div class="card">
+      <h3>طلبات بانتظار اعتمادك — ${esc(currentTeamName())} (${pendingLeaves.length})</h3>
+      ${pendingLeaves.length? pendingLeaves.map(l=>{ const e=empById(l.empId);
+        return `<div class="row">
+          <div class="avatar">${initials(e?e.name:'?')}</div>
+          <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${inclusiveDays(l.from,l.to)} يوم</div></div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn sm" onclick="approveLeave('${l.id}')">✓ اعتماد</button>
+            <button class="btn sm danger" onclick="rejectLeave('${l.id}')">✗ رفض</button>
+          </div>
+        </div>`; }).join('') : '<div class="empty">لا طلبات معلّقة في الوردية المعروضة</div>'}
+    </div>`;
   const staff=`
     <div class="card">
       <h3>دخول الموظفين (عرض فقط)</h3>
@@ -637,7 +673,26 @@ function renderOwnerDash(){
         <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
       </div>
     </div>`;
-  el.innerHTML = header + actions + kpis + shiftsCard + noticesCardHtml() + staff;
+  el.innerHTML = header + actions + kpis + shiftsCard + pendingCard + noticesCardHtml() + staff;
+}
+// رئيس القسم يضبط دور (قالب صلاحيات) مسؤول الوردية المعروضة
+function openAdminRoles(){
+  if(!isOwner) return;
+  const cur=adminPresetKey();
+  openSheet(`<h3>دور مسؤول الوردية<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">اختر دور مسؤول وردية <b>${esc(currentTeamName())}</b> — يُطبَّق على واجهته عند دخوله. لضبط وردية أخرى بدّلها من «الوردية المعروضة».</p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${Object.entries(ADMIN_PRESETS).map(([k,v])=>`
+        <button class="btn block ghost" style="display:block;text-align:right;padding:12px 14px;${cur===k?'border:2px solid var(--teal)':''}" onclick="setAdminPreset('${k}')">
+          <div style="font-weight:800">${cur===k?'● ':'○ '}${esc(v.name)}</div>
+          <div class="meta" style="font-weight:400;margin-top:2px">${esc(v.desc)}</div>
+        </button>`).join('')}
+    </div>`);
+}
+function setAdminPreset(key){
+  if(!isOwner || !ADMIN_PRESETS[key]) return;
+  state.settings.adminPreset=key; Data.saveSettings();
+  closeSheet(); renderDash(); toast('تم ضبط دور المسؤول: '+ADMIN_PRESETS[key].name);
 }
 
 function renderDash(){
@@ -660,8 +715,8 @@ function renderDash(){
       <div style="font-weight:800;font-size:18px;margin-top:2px">حالة اليوم</div>
     </div>
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>
-      <button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>
+      ${can('leaves')?`<button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>`:''}
+      ${can('directives')?`<button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>`:''}
       <button class="btn sm ghost" onclick="refreshFromCloud()">↻ تحديث</button>
     </div>
     <div class="stats">
@@ -677,10 +732,10 @@ function renderDash(){
         return `<div class="row">
           <div class="avatar">${initials(e?e.name:'?')}</div>
           <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${inclusiveDays(l.from,l.to)} يوم</div>${l.notes?`<div class="meta" style="margin-top:2px">📝 ${esc(l.notes)}</div>`:''}</div>
-          <div style="display:flex;flex-direction:column;gap:6px">
+          ${can('approve')?`<div style="display:flex;flex-direction:column;gap:6px">
             <button class="btn sm" onclick="approveLeave('${l.id}')">✓ اعتماد</button>
             <button class="btn sm danger" onclick="rejectLeave('${l.id}')">✗ رفض</button>
-          </div>
+          </div>`:''}
         </div>`;
       }).join('') : '<div class="empty">لا توجد طلبات معلّقة</div>'}
     </div>
@@ -755,14 +810,15 @@ function renderEmps(){
           <div class="avatar">${initials(e.name)}</div>
           <div class="grow"><div class="name">${e.name}</div><div class="meta">الرقم الوظيفي: ${e.no} • بداية الدورة: ${fmtDate(e.cycleStart)}</div></div>
           ${badge}
-          <button class="icon-btn" onclick="editEmp('${e.id}')" title="تعديل">✏️</button>
-          <button class="icon-btn danger" onclick="deleteEmp('${e.id}')" title="شطب">🗑️</button>
+          ${can('emps')?`<button class="icon-btn" onclick="editEmp('${e.id}')" title="تعديل">✏️</button>
+          <button class="icon-btn danger" onclick="deleteEmp('${e.id}')" title="شطب">🗑️</button>`:''}
         </div>`;
-      }).join('') : '<div class="empty">لا يوجد موظفون — أضف موظفاً بزر +</div>'}
+      }).join('') : '<div class="empty">لا يوجد موظفون</div>'}
     </div>
-    <button class="btn block" onclick="editEmp('')">＋ تسجيل موظف جديد</button>`;
+    ${can('emps')?`<button class="btn block" onclick="editEmp('')">＋ تسجيل موظف جديد</button>`:'<p class="hint">عرض فقط — لا تملك صلاحية إدارة الموظفين.</p>'}`;
 }
 function editEmp(id){
+  if(!can('emps')){ toast('غير مصرّح بإدارة الموظفين'); return; }
   const e=id?empById(id):null;
   openSheet(`
     <h3>${e?'تعديل بيانات موظف':'تسجيل موظف جديد'}<button class="x" onclick="closeSheet()">×</button></h3>
@@ -775,6 +831,7 @@ function editEmp(id){
   `);
 }
 function saveEmp(id){
+  if(!can('emps')){ toast('غير مصرّح'); return; }
   const name=val('f-name').trim(), no=val('f-no').trim(), cs=val('f-cs');
   if(!name){ toast('أدخل الاسم'); return; }
   if(!no){ toast('أدخل الرقم الوظيفي'); return; }
@@ -784,6 +841,7 @@ function saveEmp(id){
   Data.upsertEmp(e); closeSheet(); renderScreen(current); toast(id?'تم الحفظ':'تم تسجيل الموظف');
 }
 function deleteEmp(id){
+  if(!can('emps')){ toast('غير مصرّح'); return; }
   const e=empById(id); if(!e) return;
   if(!confirm(`شطب الموظف «${e.name}»؟\nسيُحذف من الجدول وتُحذف طلبات إجازاته.`)) return;
   state.employees=state.employees.filter(x=>x.id!==id);
@@ -897,6 +955,7 @@ function jumpNearestShift(){
 }
 function editCell(empId, iso){
   if(isViewer) return;   // الموظف لا يعدّل
+  if(!can('sched')){ toast('غير مصرّح بتعديل الجدول'); return; }
   const e=empById(empId); if(!e) return;
   const cur=cellValue(e,iso), auto=rotationShift(e,iso), opts=[...WORK_SHIFTS, REST, ...state.settings.leaveTypes];
   openSheet(`
@@ -908,10 +967,12 @@ function editCell(empId, iso){
   `);
 }
 function setCell(empId, iso, value){
+  if(!can('sched')){ toast('غير مصرّح'); return; }
   state.overrides[empId]=state.overrides[empId]||{}; state.overrides[empId][iso]=value;
   Data.setOverride(empId, iso, value); closeSheet(); renderSched(); toast('تم تعديل الوردية');
 }
 function clearCell(empId, iso){
+  if(!can('sched')){ toast('غير مصرّح'); return; }
   if(state.overrides[empId]){ delete state.overrides[empId][iso]; if(!Object.keys(state.overrides[empId]).length) delete state.overrides[empId]; }
   Data.delOverride(empId, iso); closeSheet(); renderSched(); toast('أُرجعت للأصل');
 }
@@ -939,15 +1000,15 @@ function renderLeaves(){
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
             <span class="badge ${l.status==='معتمد'?'b-ok':l.status==='مرفوض'?'b-rej':'b-pending'}">${l.status}</span>
-            <div style="display:flex;gap:6px">
+            ${can('leaves')?`<div style="display:flex;gap:6px">
               <button class="icon-btn" onclick="editLeave('${l.id}')">✏️</button>
               <button class="icon-btn danger" onclick="deleteLeave('${l.id}')">🗑️</button>
-            </div>
+            </div>`:''}
           </div>
         </div>`;
       }).join('') : '<div class="empty">لا توجد طلبات في هذا التصنيف</div>'}
     </div>
-    <button class="btn block" onclick="editLeave('')">＋ حجز إجازة جديدة</button>`;
+    ${can('leaves')?`<button class="btn block" onclick="editLeave('')">＋ حجز إجازة جديدة</button>`:'<p class="hint">عرض فقط — لا تملك صلاحية إدارة الإجازات.</p>'}`;
 }
 function setLeaveFilter(f){ leaveFilter=f; renderLeaves(); }
 
@@ -1020,6 +1081,7 @@ function coverageCheck(l){
   return {ok, text: ok?`✓ التغطية سليمة (أقصى ${worst}/${max} مُجازين)`:`⚠ تجاوز التغطية: ${worst}/${max} مُجازين بتاريخ ${fmtDate(worstDay)}`};
 }
 function editLeave(id){
+  if(!can('leaves')){ toast('غير مصرّح بإدارة الإجازات'); return; }
   const l=id?state.leaves.find(x=>x.id===id):null, s=state.settings;
   const empOpts=state.employees.map(e=>`<option value="${e.id}" ${l&&l.empId===e.id?'selected':''}>${e.name} (${e.no})</option>`).join('');
   openSheet(`
@@ -1048,6 +1110,7 @@ function updLeaveHint(){
   h.className='hint ok'; h.textContent=`المدة: ${inclusiveDays(from,to)} يوم`;
 }
 function saveLeave(id){
+  if(!can('leaves')){ toast('غير مصرّح'); return; }
   const empId=val('l-emp'); if(!empId){ toast('اختر الموظف'); return; }
   const from=val('l-from'), to=val('l-to');
   if(!from||!to){ toast('حدد التواريخ'); return; }
@@ -1059,12 +1122,14 @@ function saveLeave(id){
   Data.upsertLeave(rec); closeSheet(); renderScreen(current); toast(id?'تم الحفظ':'تم حجز الإجازة');
 }
 function deleteLeave(id){
+  if(!can('leaves')){ toast('غير مصرّح'); return; }
   const l=state.leaves.find(x=>x.id===id); if(!l) return;
   if(!confirm('حذف طلب الإجازة؟')) return;
   state.leaves=state.leaves.filter(x=>x.id!==id);
   Data.delLeave(id); renderLeaves(); toast('تم الحذف');
 }
 function setLeaveStatus(id, status){
+  if(!can('approve')){ toast('غير مصرّح باعتماد الطلبات'); return; }
   const l=state.leaves.find(x=>x.id===id); if(!l) return;
   const prev=l.status; l.status=status;
   if(!ensureOverrideIfNeeded(l)){ l.status=prev; return; }
@@ -1150,10 +1215,11 @@ function renderBalances(){
           <select onchange="balTypeFilter=this.value; renderBalances()">${types.map(t=>`<option ${balTypeFilter===t?'selected':''}>${t}</option>`).join('')}</select></div>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn sm ghost" onclick="openPolicyEditor()">⚙️ سياسات الرصيد</button>
-        <button class="btn sm ghost" onclick="openAdjust('')">＋ تعديل رصيد</button>
+        ${can('balances')?`<button class="btn sm ghost" onclick="openPolicyEditor()">⚙️ سياسات الرصيد</button>
+        <button class="btn sm ghost" onclick="openAdjust('')">＋ تعديل رصيد</button>`:''}
         <button class="btn sm ghost" onclick="nav('leaves')">→ رجوع</button>
       </div>
+      ${can('balances')?'':'<p class="hint" style="margin:8px 0 0">عرض فقط — لا تملك صلاحية إدارة الأرصدة.</p>'}
     </div>
     <div class="card" style="padding:6px 12px">
       ${state.employees.map(e=>{
@@ -1167,6 +1233,7 @@ function renderBalances(){
 }
 function refreshBalances(){ if(!isViewer){ Cloud.pullBalances().then(()=>renderBalances()).catch(()=>renderBalances()); } else renderBalances(); }
 function openPolicyEditor(){
+  if(!can('balances')){ toast('غير مصرّح بإدارة الأرصدة'); return; }
   const y=balanceYear,
     modes=[['limited','محدود'],['unlimited','غير محدود'],['tracking_only','تتبّع فقط']],
     bases=[['calendar','تقويمي'],['scheduled_workdays','أيام العمل']];
@@ -1183,6 +1250,7 @@ function openPolicyEditor(){
     <button class="btn block" style="margin-top:10px" onclick="savePolicies()">حفظ السياسات</button>`);
 }
 function savePolicies(){
+  if(!can('balances')){ toast('غير مصرّح'); return; }
   document.querySelectorAll('#sheet .pol-row').forEach(row=>{
     const type=row.dataset.type, mode=row.querySelector('.pol-mode').value,
       ent=row.querySelector('.pol-ent').value, car=row.querySelector('.pol-car').value, basis=row.querySelector('.pol-basis').value;
@@ -1194,6 +1262,7 @@ function savePolicies(){
   closeSheet(); renderBalances(); toast('تم حفظ السياسات');
 }
 function openAdjust(empId){
+  if(!can('balances')){ toast('غير مصرّح'); return; }
   const kinds=[['adjustment','تعديل'],['initial','رصيد ابتدائي'],['carryover','ترحيل']];
   openSheet(`<h3>قيد رصيد<button class="x" onclick="closeSheet()">×</button></h3>
     <div class="field"><label>الموظف</label><select id="adj-emp">${state.employees.map(e=>`<option value="${e.id}" ${empId===e.id?'selected':''}>${esc(e.name)}</option>`).join('')}</select></div>
@@ -1210,6 +1279,7 @@ function openAdjust(empId){
     <button class="btn block" onclick="saveAdjust()">حفظ القيد</button>`);
 }
 function saveAdjust(){
+  if(!can('balances')){ toast('غير مصرّح'); return; }
   const empId=val('adj-emp'), type=val('adj-type'), year=+val('adj-year'), kind=val('adj-kind'),
     daysRaw=val('adj-days'), reason=val('adj-reason').trim();
   if(!empId){ toast('اختر الموظف'); return; }
@@ -1617,12 +1687,12 @@ function empsOnShift(iso, sh){ return state.employees.filter(e=>cellValue(e,iso)
 function pointRows(day,shift){ const p=getPoint(day,shift); return pointSlots(shift,p.empOrder).map((s,i)=>{ const e=empById(s.empId); return { i:i+1, name:e?e.name:'— (محذوف)', no:e?e.no:'', in:s.in, out:s.out, dur:fmtDur(s.mins) }; }); }
 function updatePoint(mut){ const ps=getPoint(pointDate,pointShift); mut(ps); Data.savePointShift(pointDate, pointShift, ps); renderPoint(); }
 function setPointShift(sh){ pointShift=sh; renderPoint(); }
-function fillPointFromShift(){ updatePoint(ps=>{ ps.empOrder = empsOnShift(pointDate,pointShift).map(e=>e.id); }); toast('تمّت التعبئة من عاملي الوردية'); }
-function addToPoint(sel){ const id=sel.value; if(!id) return; updatePoint(ps=>{ if(ps.empOrder.indexOf(id)<0) ps.empOrder.push(id); }); }
-function removeFromPoint(id){ updatePoint(ps=>{ ps.empOrder = ps.empOrder.filter(x=>x!==id); }); }
-function movePoint(id,dir){ updatePoint(ps=>{ const i=ps.empOrder.indexOf(id), j=i+dir; if(i<0||j<0||j>=ps.empOrder.length) return; const a=ps.empOrder; [a[i],a[j]]=[a[j],a[i]]; }); }
-function approvePoint(){ const p=getPoint(pointDate,pointShift); if(!p.empOrder.length){ toast('أضف موظفين أولاً'); return; } const ai=approverInfo(val('pt-approver')||approverDefaultRole()); updatePoint(ps=>{ ps.approved=true; ps.approvedTitle=ai.title; ps.approvedBy=ai.name; }); toast('✓ تم اعتماد الجدول'); }
-function unapprovePoint(){ updatePoint(ps=>{ ps.approved=false; }); toast('أُلغي الاعتماد — يمكن التعديل'); }
+function fillPointFromShift(){ if(!can('point')){ toast('غير مصرّح بإدارة النقطة'); return; } updatePoint(ps=>{ ps.empOrder = empsOnShift(pointDate,pointShift).map(e=>e.id); }); toast('تمّت التعبئة من عاملي الوردية'); }
+function addToPoint(sel){ if(!can('point')){ toast('غير مصرّح'); return; } const id=sel.value; if(!id) return; updatePoint(ps=>{ if(ps.empOrder.indexOf(id)<0) ps.empOrder.push(id); }); }
+function removeFromPoint(id){ if(!can('point')){ toast('غير مصرّح'); return; } updatePoint(ps=>{ ps.empOrder = ps.empOrder.filter(x=>x!==id); }); }
+function movePoint(id,dir){ if(!can('point')){ toast('غير مصرّح'); return; } updatePoint(ps=>{ const i=ps.empOrder.indexOf(id), j=i+dir; if(i<0||j<0||j>=ps.empOrder.length) return; const a=ps.empOrder; [a[i],a[j]]=[a[j],a[i]]; }); }
+function approvePoint(){ if(!can('approve')){ toast('غير مصرّح بالاعتماد'); return; } const p=getPoint(pointDate,pointShift); if(!p.empOrder.length){ toast('أضف موظفين أولاً'); return; } const ai=approverInfo(val('pt-approver')||approverDefaultRole()); updatePoint(ps=>{ ps.approved=true; ps.approvedTitle=ai.title; ps.approvedBy=ai.name; }); toast('✓ تم اعتماد الجدول'); }
+function unapprovePoint(){ if(!can('approve')){ toast('غير مصرّح'); return; } updatePoint(ps=>{ ps.approved=false; }); toast('أُلغي الاعتماد — يمكن التعديل'); }
 
 // جدول النقطة بأنماط مضمّنة (معاينة/طباعة)
 function pointTableHtml(day,shift){
@@ -1734,12 +1804,12 @@ function renderPoint(){
       ${assigned.length? assigned.map((id,idx)=>{ const e=empById(id), s=slots[idx]; return `<div class="row">
           <div class="grow"><div class="name">${e?esc(e.name):'— (محذوف)'} <span class="meta">(${e?e.no:''})</span></div>
             <div class="meta">⏱️ ${s?s.in+' → '+s.out+' ('+s.dur+')':''}</div></div>
-          ${locked?'':`<div style="display:flex;gap:4px">
+          ${(locked||!can('point'))?'':`<div style="display:flex;gap:4px">
             <button class="icon-btn" onclick="movePoint('${id}',-1)">↑</button>
             <button class="icon-btn" onclick="movePoint('${id}',1)">↓</button>
             <button class="icon-btn danger" onclick="removeFromPoint('${id}')">✕</button></div>`}
-        </div>`; }).join('') : '<div class="empty">لا يوجد موظفون — أضف من الأسفل</div>'}
-      ${locked?'':`<div class="two" style="margin-top:10px">
+        </div>`; }).join('') : '<div class="empty">لا يوجد موظفون على النقطة</div>'}
+      ${(locked||!can('point'))?'':`<div class="two" style="margin-top:10px">
         <div class="field" style="margin:0"><label>إضافة موظف</label><select onchange="addToPoint(this)"><option value="">اختر…</option>${others.map(e=>`<option value="${e.id}">${esc(e.name)} (${e.no})</option>`).join('')}</select></div>
         <div class="field" style="margin:0;display:flex;align-items:flex-end"><button class="btn block ghost" onclick="fillPointFromShift()">↻ عاملو الوردية</button></div>
       </div>`}
@@ -1750,14 +1820,16 @@ function renderPoint(){
            <button class="btn block" onclick="downloadPointWord()">⬇️ تنزيل الجدول (Word)</button>
            <button class="btn block ghost" style="margin-top:8px" onclick="sharePointImage()">📤 مشاركة كصورة (واتساب)</button>
            <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / PDF</button>
-           <button class="btn block danger" style="margin-top:8px" onclick="unapprovePoint()">✎ إلغاء الاعتماد للتعديل</button>`
-        : `<div class="field" style="margin:0 0 8px"><label>يعتمد باسم</label>
+           ${can('approve')?`<button class="btn block danger" style="margin-top:8px" onclick="unapprovePoint()">✎ إلغاء الاعتماد للتعديل</button>`:''}`
+        : (can('approve')
+          ? `<div class="field" style="margin:0 0 8px"><label>يعتمد باسم</label>
              <select id="pt-approver">
                <option value="sup" ${approverDefaultRole()==='sup'?'selected':''}>مسؤول ${esc(docTeam())} — ${esc(docSupervisor())}</option>
                <option value="asst" ${approverDefaultRole()==='asst'?'selected':''}>مساعد مسؤول ${esc(docTeam())} — ${esc(docAssistant())}</option>
              </select></div>
            <button class="btn block" onclick="approvePoint()">✓ اعتماد الجدول</button>
-           <p class="hint" style="text-align:center;margin-top:8px">بعد الاعتماد يظهر للموظفين ويُحفظ باسم المُعتمِد.</p>`}
+           <p class="hint" style="text-align:center;margin-top:8px">بعد الاعتماد يظهر للموظفين ويُحفظ باسم المُعتمِد.</p>`
+          : `<div class="hint" style="text-align:center">بانتظار الاعتماد من صاحب صلاحية الاعتماد.</div>`)}
     </div>
     <div class="card daily-doc"><div class="doc-fit" id="docFit"><div class="doc-page" id="docPage">${pointDocHtml(pointDate,pointShift)}</div></div></div>`;
   fitDocPage();
