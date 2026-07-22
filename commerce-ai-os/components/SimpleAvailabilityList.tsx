@@ -46,6 +46,10 @@ export default function SimpleAvailabilityList({ rows, locale = "ar" }: { rows: 
   const [bulkBusy, startBulk] = useTransition();
   const [zoom, setZoom] = useState<AvailabilityRow | null>(null);
   const [err, setErr] = useState("");
+  // Which bulk action is awaiting in-app confirmation (true = all in, false =
+  // all out, null = none). We use an inline bar instead of window.confirm(),
+  // which is silently suppressed inside installed PWAs / in-app webviews.
+  const [confirmBulk, setConfirmBulk] = useState<null | boolean>(null);
   const [, start] = useTransition();
 
   const name = (r: AvailabilityRow) => (en ? r.product_name || r.product_name_ar : r.product_name_ar || r.product_name) || r.sku || "—";
@@ -85,11 +89,20 @@ export default function SimpleAvailabilityList({ rows, locale = "ar" }: { rows: 
     });
   };
 
-  const bulk = (inStock: boolean) => {
+  // Step 1: tapping «الكل نفذ/متوفر» opens the inline confirm bar.
+  const requestBulk = (inStock: boolean) => {
+    if (filtered.length === 0) return;
+    setErr("");
+    setConfirmBulk(inStock);
+  };
+
+  // Step 2: confirming runs the bulk update against the currently-shown list.
+  const doBulk = () => {
+    if (confirmBulk === null) return;
+    const inStock = confirmBulk;
     const ids = filtered.map((r) => r.id);
+    setConfirmBulk(null);
     if (ids.length === 0) return;
-    const word = inStock ? L("متوفر", "In stock") : L("نافد", "Out of stock");
-    if (!confirm(L(`تأكيد: علّم ${ids.length} منتج «${word}»؟`, `Mark ${ids.length} products "${word}"?`))) return;
     setErr("");
     startBulk(async () => {
       const res = await setManyAvailability(ids, inStock);
@@ -105,10 +118,30 @@ export default function SimpleAvailabilityList({ rows, locale = "ar" }: { rows: 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <input value={q} onChange={(e) => setQ(e.target.value)} className="input flex-1" placeholder={L("ابحث بالاسم أو SKU…", "Search by name or SKU…")} />
         <div className="flex items-center gap-1">
-          <button disabled={bulkBusy} onClick={() => bulk(true)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">✅ {L("الكل متوفر", "All In")}</button>
-          <button disabled={bulkBusy} onClick={() => bulk(false)} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">🚫 {L("الكل نفذ", "All Out")}</button>
+          <button disabled={bulkBusy} onClick={() => requestBulk(true)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">✅ {L("الكل متوفر", "All In")}</button>
+          <button disabled={bulkBusy} onClick={() => requestBulk(false)} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">🚫 {L("الكل نفذ", "All Out")}</button>
         </div>
       </div>
+
+      {/* In-app confirm bar for the bulk switch (window.confirm is suppressed in PWAs). */}
+      {confirmBulk !== null ? (
+        <div className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs font-bold text-amber-900">
+            {L(
+              `تأكيد: علّم ${filtered.length} منتج «${confirmBulk ? "متوفر" : "نافد"}»؟`,
+              `Mark ${filtered.length} products "${confirmBulk ? "In stock" : "Out of stock"}"?`
+            )}
+          </span>
+          <span className="flex shrink-0 items-center gap-1.5">
+            <button disabled={bulkBusy} onClick={doBulk} className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50 ${confirmBulk ? "bg-emerald-600" : "bg-red-600"}`}>
+              {bulkBusy ? L("...يطبّق", "Applying…") : L("تأكيد", "Confirm")}
+            </button>
+            <button disabled={bulkBusy} onClick={() => setConfirmBulk(null)} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-slate-600 ring-1 ring-slate-200 disabled:opacity-50">
+              {L("إلغاء", "Cancel")}
+            </button>
+          </span>
+        </div>
+      ) : null}
 
       {/* Availability filter */}
       <div className="flex flex-wrap gap-2">
