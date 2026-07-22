@@ -186,50 +186,6 @@ function ownerTeamSwitcherHtml(){
   </div>`;
 }
 let ownerOverview=null;   // ملخّص كل الورديات (يُحمَّل عند فتح لوحة رئيس القسم)
-function ownerBarHtml(){
-  return `<div class="card" style="border:2px solid var(--teal);background:linear-gradient(135deg,#e9f7f5,#fff)">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <span style="font-size:20px">👑</span>
-      <div class="grow"><div class="name" style="font-weight:800">لوحة رئيس القسم</div>
-        <div class="meta">تتابع جميع الورديات وجداولها وكشوفاتها</div></div>
-    </div>
-    <div class="field" style="margin-bottom:10px"><label>اسم رئيس القسم (يظهر في اعتماد الجداول والكشوفات)</label>
-      <div style="display:flex;gap:8px">
-        <input id="owner-head" value="${esc(docDeptHead())}" placeholder="اكتب اسم رئيس القسم" style="flex:1">
-        <button class="btn sm" onclick="saveDeptHead()">حفظ</button>
-      </div>
-    </div>
-    <label class="meta" style="display:block;margin-bottom:4px">الوردية المعروضة الآن</label>
-    <select id="owner-team" onchange="switchTeam(this.value)" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff">
-      ${allTeams.map(t=>`<option value="${esc(t.team)}" ${t.team===currentTeam?'selected':''}>${esc(t.name)} (${esc(t.team)})</option>`).join('')}
-    </select>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-      <button class="btn sm" onclick="openAddTeam()">＋ إضافة وردية</button>
-      <button class="btn sm ghost" onclick="editTeamData()">✏️ تعديل بيانات الوردية</button>
-      <button class="btn sm ghost" onclick="openAnnounce()">📢 إرسال تعميم للمسؤولين</button>
-      <button class="btn sm ghost" onclick="reloadTeams()">↻ تحديث</button>
-      ${currentTeam!=='w1'?`<button class="btn sm danger" onclick="deleteTeamConfirm()">🗑️ حذف الوردية</button>`:''}
-    </div>
-  </div>
-  <div class="card">
-    <h3>متابعة جميع الورديات</h3>
-    ${ownerOverviewHtml()}
-  </div>`;
-}
-function ownerOverviewHtml(){
-  if(ownerOverview===null){ loadOwnerOverview(); return '<div class="empty">جارٍ تحميل ملخّص الورديات…</div>'; }
-  if(!ownerOverview.length) return '<div class="empty">لا توجد ورديات</div>';
-  return ownerOverview.map(o=>`
-    <div class="row" style="align-items:stretch">
-      <div class="grow">
-        <div class="name">${esc(o.name)} <span class="meta">(${esc(o.team)})</span>${o.team===currentTeam?' <span class="badge b-ok">معروضة</span>':''}</div>
-        <div class="meta" style="margin-top:2px">👥 ${o.emps} موظف • 🏖️ ${o.onleave} بإجازة اليوم • ${o.pending?('⏳ '+o.pending+' طلب معلّق'):'لا طلبات معلّقة'} • 🛡️ ${o.points} نقطة معتمدة</div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        ${o.team!==currentTeam?`<button class="btn sm" onclick="switchTeam('${esc(o.team)}')">فتح</button>`:'<span class="badge b-ok" style="text-align:center">مفتوحة</span>'}
-      </div>
-    </div>`).join('');
-}
 async function loadOwnerOverview(){
   try{
     // قد تُستدعى قبل اكتمال تحميل قائمة الورديات (سباق) — حمّلها عند الحاجة
@@ -606,7 +562,86 @@ async function submitAddTeam(){
     err.textContent = /exists|duplicate|already/i.test(m) ? 'اسم المستخدم مستخدم مسبقاً — اختر غيره' : ('تعذّر الإنشاء'+(m?': '+m:''));
   }
 }
+/* ===== لوحة رئيس القسم — إشرافية، منفصلة عن لوحة مسؤول الوردية ===== */
+// إجمالي المؤشرات عبر كل الورديات من ملخّص loadOwnerOverview
+function ownerKpis(ov){
+  return (ov||[]).reduce((a,o)=>({emps:a.emps+o.emps,onleave:a.onleave+o.onleave,pending:a.pending+o.pending,points:a.points+o.points}),{emps:0,onleave:0,pending:0,points:0});
+}
+function renderOwnerDash(){
+  const el=document.getElementById('scr-dash');
+  const iso=toISO(today()), st=dayStats(iso), s=state.settings, low=st.working<s.minWorkers;
+  // ترويسة مميّزة بهوية ذهبية (تختلف عن لوحة مسؤول الوردية)
+  const header=`
+    <div class="card owner-hero" style="border:none;background:linear-gradient(135deg,#b8912e,#8a6d1e);color:#fff">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:26px">👑</span>
+        <div class="grow"><div class="name" style="font-weight:800;color:#fff;font-size:18px">لوحة رئيس القسم</div>
+          <div class="meta" style="color:#fdf3d6">إشراف على جميع الورديات — اعتماد وتوجيه بلا إدخال يومي مباشر</div></div>
+      </div>
+      <div class="field" style="margin:12px 0 0">
+        <label style="color:#fdf3d6">اسم رئيس القسم (يظهر في اعتماد الجداول والكشوفات)</label>
+        <div style="display:flex;gap:8px">
+          <input id="owner-head" value="${esc(docDeptHead())}" placeholder="اكتب اسم رئيس القسم" style="flex:1">
+          <button class="btn sm" onclick="saveDeptHead()">حفظ</button>
+        </div>
+      </div>
+    </div>`;
+  // إجراءات إشرافية (لرئيس القسم فقط) — بلا أدوات الإدخال اليومي
+  const actions=`
+    <div class="card">
+      <label class="meta" style="display:block;margin-bottom:6px">الوردية المعروضة الآن (لتصفّح جدولها وكشوفاتها من التبويبات بالأسفل)</label>
+      <select id="owner-team" onchange="switchTeam(this.value)" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff">
+        ${allTeams.map(t=>`<option value="${esc(t.team)}" ${t.team===currentTeam?'selected':''}>${esc(t.name)} (${esc(t.team)})</option>`).join('')}
+      </select>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="btn sm" onclick="openAddTeam()">＋ إضافة وردية</button>
+        <button class="btn sm ghost" onclick="editTeamData()">✏️ تعديل بيانات الوردية</button>
+        <button class="btn sm ghost" onclick="openAnnounce()">📢 إرسال تعميم</button>
+        <button class="btn sm ghost" onclick="reloadTeams()">↻ تحديث</button>
+        ${currentTeam!=='w1'?`<button class="btn sm danger" onclick="deleteTeamConfirm()">🗑️ حذف الوردية</button>`:''}
+      </div>
+    </div>`;
+  if(ownerOverview===null){ loadOwnerOverview(); el.innerHTML=header+actions+'<div class="card"><div class="empty">جارٍ تحميل ملخّص الورديات…</div></div>'; return; }
+  const ov=ownerOverview, k=ownerKpis(ov);
+  const kpis=`
+    <div class="stats">
+      <div class="stat"><div class="n">${ov.length}</div><div class="l">عدد الورديات</div></div>
+      <div class="stat"><div class="n">${k.emps}</div><div class="l">إجمالي الموظفين</div></div>
+      <div class="stat ${k.onleave>0?'warn':''}"><div class="n">${k.onleave}</div><div class="l">مُجازون اليوم (كل الورديات)</div></div>
+      <div class="stat ${k.pending?'warn':''}"><div class="n">${k.pending}</div><div class="l">طلبات معلّقة (كل الورديات)</div></div>
+    </div>`;
+  const shiftsCard=`
+    <div class="card">
+      <h3>متابعة الورديات</h3>
+      ${ov.length? ov.map(o=>{
+        const open=o.team===currentTeam;
+        const cov=open?` <span class="badge ${low?'b-pending':'b-ok'}">${low?('⚠ تغطية '+st.working+'/'+s.minWorkers):('تغطية سليمة • '+st.working+' عاملون')}</span>`:'';
+        return `<div class="row" style="align-items:stretch">
+          <div class="grow">
+            <div class="name">${esc(o.name)} <span class="meta">(${esc(o.team)})</span>${open?' <span class="badge b-ok">معروضة</span>':''}${cov}</div>
+            <div class="meta" style="margin-top:3px">👥 ${o.emps} موظف • 🏖️ ${o.onleave} بإجازة اليوم • ${o.pending?('⏳ '+o.pending+' طلب معلّق'):'لا طلبات معلّقة'} • 🛡️ ${o.points} نقطة معتمدة</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;justify-content:center">
+            ${open?'<span class="badge b-ok" style="text-align:center">مفتوحة</span>':`<button class="btn sm" onclick="switchTeam('${esc(o.team)}')">فتح</button>`}
+          </div>
+        </div>`;
+      }).join('') : '<div class="empty">لا توجد ورديات</div>'}
+      <div class="hint" style="margin-top:8px">افتح أي وردية ثم تصفّح جدولها وإجازاتها وكشوفاتها واعتمِدها من التبويبات بالأسفل.</div>
+    </div>`;
+  const staff=`
+    <div class="card">
+      <h3>دخول الموظفين (عرض فقط)</h3>
+      <div class="meta" style="margin-bottom:8px">شارك الرابط أو رمز QR مع الموظفين — يدخلون بالرقم الوظيفي ويشاهدون الجدول والكشف فقط.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn sm" onclick="showStaffQR()">📱 عرض رمز QR</button>
+        <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
+      </div>
+    </div>`;
+  el.innerHTML = header + actions + kpis + shiftsCard + noticesCardHtml() + staff;
+}
+
 function renderDash(){
+  if(isOwner) return renderOwnerDash();   // رئيس القسم: لوحة إشرافية منفصلة
   const iso=toISO(today()), st=dayStats(iso), s=state.settings, low=st.working<s.minWorkers;
   const el=document.getElementById('scr-dash');
   const soon=state.leaves.filter(l=>l.status==='معتمد' && daysBetween(iso,l.from)>=0 && daysBetween(iso,l.from)<=7);
@@ -618,7 +653,6 @@ function renderDash(){
   const pending=state.leaves.filter(l=>l.status==='قيد الانتظار').length;
   const pendingLeaves=state.leaves.filter(l=>l.status==='قيد الانتظار').sort((a,b)=>a.from<b.from?-1:1);
   el.innerHTML=`
-    ${isOwner?ownerBarHtml():''}
     ${!isViewer?noticesCardHtml():''}
     ${!isViewer?directivesCardHtml():''}
     <div class="card" style="background:linear-gradient(135deg,var(--teal-l),#fff)">
