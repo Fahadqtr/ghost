@@ -246,3 +246,23 @@ body.viewer .daycell:active{outline:none}
 .install-bar .install-x{background:transparent;border:none;color:#fff;font-size:20px;line-height:1;cursor:pointer;padding:0 4px}
 body.viewer .install-bar{bottom:calc(64px + env(safe-area-inset-bottom,0))}
 @media(min-width:1040px){ .install-bar{left:auto;right:24px;max-width:360px} }
+
+/* -------------------- أرصدة الإجازات -------------------- */
+.bal-card{padding:12px}
+.bal-title{font-weight:800;margin-bottom:8px}
+.bal-line{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
+.bal-line:last-child{border-bottom:none}
+.bal-line .bal-t{font-weight:700;min-width:96px}
+.bal-mode{font-size:12px;color:var(--muted);background:var(--chip,#eef2f4);border-radius:20px;padding:1px 8px}
+.bal-mode.warn{color:#a15c00;background:#fff3e0}
+.bal-ok{color:var(--teal)}
+.bal-neg{color:#d33}
+.bal-emp{padding:8px 0;border-bottom:1px solid var(--line)}
+.bal-emp:last-child{border-bottom:none}
+.bal-emp-h{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.bal-emp-h .icon-btn{margin-inline-start:auto}
+.pol-row{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.pol-row .pol-name{font-weight:700}
+.pol-row select,.pol-row input{padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+.pol-row .pol-ent,.pol-row .pol-car{width:84px}
+@media(min-width:560px){ .pol-row{grid-template-columns:1.2fr .9fr .7fr .6fr 1fr} }
