@@ -161,6 +161,46 @@ export async function deleteTask(id: string) {
   return { ok: true as const };
 }
 
+// Bulk set status for many tasks at once (manager multi-select: "approve all"
+// = mark selected done, or reopen). One UPDATE; calendar sync is best-effort
+// per row so a Google hiccup never blocks the status change.
+export async function bulkSetTaskStatus(ids: string[], status: TaskStatus) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const list = Array.from(new Set((ids || []).map(String).filter(Boolean)));
+  if (list.length === 0) return { ok: true as const, count: 0 };
+  const p: Record<string, unknown> = { status };
+  if (status === "done") { p.completed_at = new Date().toISOString(); p.completed_by = await adminEmail(); }
+  else { p.completed_at = null; p.completed_by = null; }
+  const { data: updated, error } = await admin.from("staff_tasks").update(p).in("id", list).select("*");
+  if (error) return { error: error.message };
+  for (const row of updated ?? []) { try { await syncTaskRow(admin, row); } catch { /* logged in sync */ } }
+  revalidatePath("/tasks");
+  revalidatePath("/dashboard");
+  return { ok: true as const, count: (updated ?? []).length };
+}
+
+// Bulk delete many tasks (manager multi-select: "reject"). Removes their
+// calendar events first (best-effort), then one DELETE.
+export async function bulkDeleteTasks(ids: string[]) {
+  const unauth = await requireUser();
+  if (unauth) return unauth;
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const list = Array.from(new Set((ids || []).map(String).filter(Boolean)));
+  if (list.length === 0) return { ok: true as const, count: 0 };
+  let victims: any[] = [];
+  try { victims = (await admin.from("staff_tasks").select("id, gcal_event_id").in("id", list)).data ?? []; } catch { /* column may not exist */ }
+  const { error } = await admin.from("staff_tasks").delete().in("id", list);
+  if (error) return { error: error.message };
+  for (const v of victims) { try { await removeTaskEvent(admin, v); } catch { /* logged in sync */ } }
+  revalidatePath("/tasks");
+  revalidatePath("/dashboard");
+  return { ok: true as const, count: list.length };
+}
+
 /* ── Google Calendar link ──────────────────────────────────────────────── */
 
 /** Connection status for the Google Calendar card (Connected / Not connected / Error). */
