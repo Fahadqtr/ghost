@@ -215,11 +215,33 @@ async function loadOwnerReports(){
     all.sort((a,b)=>(b.ts||0)-(a.ts||0));
     ownerReports=all;
   }catch(e){ ownerReports=[]; }
-  if(current==='dash' && isOwner) renderDash();
+  if(current==='dash' && isOwner){ renderDash(); maybeShowReportsPopup(); }
 }
 function seenReports(){ try{ return JSON.parse(localStorage.getItem('shiftApp.seenReports')||'[]'); }catch(e){ return []; } }
 function reportSeen(id){ return id!=null && seenReports().indexOf(id)>=0; }
 function dismissReport(id){ const s=seenReports(); if(s.indexOf(id)<0){ s.push(id); try{ localStorage.setItem('shiftApp.seenReports', JSON.stringify(s.slice(-500))); }catch(e){} } renderDash(); }
+// إشعار منبثق لرئيس القسم بالإفادات الجديدة عند الدخول (لا يتكرّر إلا مع وصول أحدث)
+function maybeShowReportsPopup(){
+  if(!isOwner || !Array.isArray(ownerReports)) return false;
+  const ov=document.getElementById('overlay');
+  if(ov && ov.classList.contains('open')) return false;   // لا تحجب نافذة مفتوحة
+  const undismissed=ownerReports.filter(r=>!reportSeen(r.id));
+  if(!undismissed.length) return false;
+  const maxTs=undismissed.reduce((m,r)=>Math.max(m,Number(r.ts)||0),0);
+  let last=0; try{ last=Number(localStorage.getItem('shiftApp.reportPopupTs')||0)||0; }catch(e){}
+  if(maxTs<=last) return false;   // لا جديد منذ آخر إشعار
+  const fresh=undismissed.filter(r=>(Number(r.ts)||0)>last).sort((a,b)=>(b.ts||0)-(a.ts||0));
+  openSheet(`
+    <h3>📥 إفادات جديدة (${fresh.length})<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">وصلتك إفادات من مسؤولي الورديات:</p>
+    ${fresh.map(r=>`<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin:6px 0">
+      <div class="name" style="font-size:14px">${esc(r.by||'مسؤول الوردية')} <span class="meta">(${esc(r.teamName||r.team)})</span></div>
+      <div class="meta" style="margin-top:2px;white-space:pre-wrap">${esc(r.text)}</div>
+      <div class="meta" style="margin-top:2px">${noticeDate(r.ts)}</div></div>`).join('')}
+    <button class="btn block" style="margin-top:12px" onclick="closeSheet()">تمّ الاطلاع</button>`);
+  try{ localStorage.setItem('shiftApp.reportPopupTs', String(maxTs)); }catch(e){}
+  return true;
+}
 async function loadOwnerOverview(){
   try{
     // قد تُستدعى قبل اكتمال تحميل قائمة الورديات (سباق) — حمّلها عند الحاجة
