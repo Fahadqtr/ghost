@@ -1041,9 +1041,10 @@ function setLeaveStatus(id, status){
 /* ==================== أرصدة الإجازات (Leave Balances) ==================== */
 function balYearFrom(iso){ return parseInt(String(iso).slice(0,4),10); }
 // عدد أيام إجازة داخل سنة وفق أساس الاحتساب (يطابق منطق القاعدة)
-function leaveDaysInRange(emp, fromISO, toISO, year, basis){
+function leaveDaysInRange(emp, fromISO, toStr, year, basis){
+  // ملاحظة: المعامل يُسمّى toStr وليس toISO حتى لا يحجب دالة toISO(date) العامة
   const ys=year+'-01-01', ye=year+'-12-31';
-  const gs=(fromISO>ys?fromISO:ys), ge=(toISO<ye?toISO:ye);
+  const gs=(fromISO>ys?fromISO:ys), ge=(toStr<ye?toStr:ye);
   if(gs>ge) return 0;
   if(basis!=='scheduled_workdays') return daysBetween(gs,ge)+1;   // calendar
   // يوم عمل = تعديل الجدول اليدوي (override) إن وُجد وإلا موضع الدورة — بلا leaves
