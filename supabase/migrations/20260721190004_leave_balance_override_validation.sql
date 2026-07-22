@@ -3,6 +3,9 @@
 --  (مراجعة فقط — لا يُطبَّق على الإنتاج حتى موافقة منفصلة)
 --
 --  BEFORE INSERT/UPDATE على leaves:
+--   (fail-closed) الدور/الهوية غير المعروفة (NULL) لا تُعامل كمسؤول.
+--   وردية الموظف تُقرأ من public.employees (لا NEW.team)؛ وطلب بوردية
+--   لا تطابق وردية الموظف يُرفض؛ وسياسات الرصيد تُقرأ بوردية الموظف الموثوقة.
 --   (أ) حماية حقول التجاوز: غير owner/admin لا يستطيع تعيينها إطلاقاً؛
 --       owner/admin يضبط السبب فقط، وby/at من الخادم؛ التجاوز بلا سبب مرفوض.
 --   (ب) قفل معاملي تصاعدي لكل (emp_id|type|year) قبل فحص الرصيد ⇒ تسلسل
@@ -18,12 +21,26 @@ language plpgsql security definer set search_path = ''
 as $$
 declare
   v_is_admin boolean;
+  v_emp_team text;
   v_exceeds  boolean := false;
   y int; v_from_y int; v_to_y int;
   v_mode text; v_entitled int; v_basis text;
   v_available numeric; v_used_others numeric; v_new_days numeric;
 begin
-  v_is_admin := public.is_owner() or public.audit_current_user_role() = 'admin';
+  -- fail-closed: أي نتيجة NULL (دور غير معروف/جلسة بلا هوية) لا تُعامل كمسؤول
+  v_is_admin := coalesce(public.is_owner() or public.audit_current_user_role() = 'admin', false);
+
+  -- وردية الموظف الموثوقة من القاعدة — لا نثق في NEW.team مطلقاً
+  select e.team into v_emp_team from public.employees e where e.id = NEW.emp_id;
+  if NEW.emp_id is not null then
+    if v_emp_team is null then
+      raise exception 'الموظف غير موجود (%).', NEW.emp_id;
+    end if;
+    -- ترفض الطلب إذا كانت وردية الطلب لا تطابق وردية الموظف
+    if NEW.team is distinct from v_emp_team then
+      raise exception 'وردية الطلب (%) لا تطابق وردية الموظف (%).', NEW.team, v_emp_team;
+    end if;
+  end if;
 
   -- (أ) حماية حقول تجاوز الرصيد -----------------------------------------
   if not v_is_admin then
@@ -67,16 +84,16 @@ begin
     select lp.policy_mode, lp.entitled_days, coalesce(lp.day_count_basis,'calendar')
       into v_mode, v_entitled, v_basis
       from public.leave_policies lp
-     where lp.team = NEW.team and lp.year = y and lp.type = NEW.type;
+     where lp.team = v_emp_team and lp.year = y and lp.type = NEW.type;
 
     if v_mode = 'limited' and v_entitled is not null then
       select v_entitled
-           + coalesce(sum(days) filter (where kind='initial'),0)
-           + coalesce(sum(days) filter (where kind='carryover'),0)
-           + coalesce(sum(days) filter (where kind='adjustment'),0)
+           + coalesce(sum(ll.days) filter (where ll.kind='initial'),0)
+           + coalesce(sum(ll.days) filter (where ll.kind='carryover'),0)
+           + coalesce(sum(ll.days) filter (where ll.kind='adjustment'),0)
         into v_available
-        from public.leave_ledger
-       where emp_id = NEW.emp_id and year = y and type = NEW.type;
+        from public.leave_ledger ll
+       where ll.emp_id = NEW.emp_id and ll.year = y and ll.type = NEW.type;
 
       v_used_others := public.fn_leave_used(NEW.emp_id, y, NEW.type, NEW.id);
       v_new_days    := public.fn_leave_days_in_range(NEW.emp_id, NEW.from_date, NEW.to_date, y, v_basis);
