@@ -105,6 +105,55 @@ const Cloud = {
   /* حذف وردية بكل بياناتها (للمالك فقط) */
   async deleteTeam(code){ return await this.sb.rpc('delete_team', { p_team: code }); },
 
+  /* ===== المنصّة متعدّدة الأقسام (مدير النظام) ===== */
+  async listDepartments(){ return await this.sb.from('departments').select('*').order('id'); },
+  async bootstrapSuperadmin(user, pass, name){ return await this.sb.rpc('bootstrap_superadmin', { p_user:user, p_pass:pass, p_name:name||'' }); },
+  async adminCreateDepartment(name){ return await this.sb.rpc('admin_create_department', { p_dept_name:name }); },
+  async adminCreateOwner(dept, user, pass, name){ return await this.sb.rpc('admin_create_owner', { p_dept:dept, p_user:user, p_pass:pass, p_name:name||'' }); },
+  async adminListAccounts(){ return await this.sb.rpc('admin_list_accounts'); },
+
+  /* ===== الإفادات المتقدّمة: محادثات + رسائل + مرفقات =====
+     الحقول الحسّاسة (الوردية/الدور/المُنشئ/الوقت) تُفرَض بالخادم (triggers + RLS). */
+  async reportListThreads(){
+    return await this.sb.from('report_threads').select('*').order('last_msg_at', { ascending:false });
+  },
+  async reportListMessages(threadId){
+    const { data:msgs, error } = await this.sb.from('report_messages').select('*').eq('thread_id', threadId).order('created_at', { ascending:true });
+    if(error) return { error };
+    let files=[]; const ids=(msgs||[]).map(m=>m.id);
+    if(ids.length){ const r=await this.sb.from('report_files').select('*').in('message_id', ids); files=r.data||[]; }
+    return { data:{ messages:msgs||[], files } };
+  },
+  // teamCode: للمسؤول اتركه فارغاً (يُفرَض من ورديته)، ولرئيس القسم مرّر الوردية المستهدَفة
+  async reportCreateThread({ team:teamCode, subject, body, authorName }){
+    const ins = await this.sb.from('report_threads').insert({ team: teamCode||'', subject: subject||null, created_by_name: authorName||null }).select().single();
+    if(ins.error) return { error: ins.error };
+    const msg = await this.reportAddMessage({ threadId: ins.data.id, body, authorName });
+    if(msg.error) return { error: msg.error, data:{ thread: ins.data } };
+    return { data:{ thread: ins.data, message: msg.data } };
+  },
+  async reportAddMessage({ threadId, body, authorName }){
+    return await this.sb.from('report_messages').insert({ thread_id: threadId, body: body||'', author_name: authorName||null }).select().single();
+  },
+  async reportUploadFile({ teamCode, threadId, messageId, file }){
+    const clean = String(file && file.name || 'file').replace(/[^\w.\-]+/g,'_').slice(-80);
+    const rand = (self.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now()+'-'+Math.round(Math.random()*1e9));
+    const path = `${teamCode}/${threadId}/${rand}__${clean}`;
+    const up = await this.sb.storage.from('report-files').upload(path, file, { upsert:false, contentType:(file&&file.type)||undefined });
+    if(up.error) return { error: up.error };
+    return await this.sb.from('report_files').insert({ message_id: messageId, team: teamCode, path, file_name:(file&&file.name)||null, mime_type:(file&&file.type)||null, size_bytes:(file&&file.size)||null }).select().single();
+  },
+  async reportSignedUrl(path){
+    const { data, error } = await this.sb.storage.from('report-files').createSignedUrl(path, 3600);
+    return error ? '' : (data && data.signedUrl) || '';
+  },
+  async reportSetStatus(threadId, status){
+    return await this.sb.from('report_threads').update({ status }).eq('id', threadId);
+  },
+  async reportDeleteThread(threadId){
+    return await this.sb.from('report_threads').delete().eq('id', threadId);
+  },
+
   async getSession(){ const { data } = await this.sb.auth.getSession(); return data.session; },
   async currentEmail(){ const { data } = await this.sb.auth.getUser(); return data.user ? data.user.email : ''; },
   async signIn(email, pw){ return await this.sb.auth.signInWithPassword({ email, password: pw }); },
