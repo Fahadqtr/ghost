@@ -117,6 +117,9 @@ const Cloud = {
   async adminRenameAccount(user, name){ return await this.sb.rpc('admin_rename_account', { p_user:user, p_name:name||'' }); },
   async adminDeleteAccount(user){ return await this.sb.rpc('admin_delete_account', { p_user:user }); },
   async adminSetOwnerDept(user, dept){ return await this.sb.rpc('admin_set_owner_dept', { p_user:user, p_dept:dept }); },
+  async adminSetOwnerPreset(dept, preset){ return await this.sb.rpc('admin_set_owner_preset', { p_dept:dept, p_preset:preset }); },
+  async listDeptPresets(){ const { data } = await this.sb.from('settings').select('dept,data');
+    const m={}; (data||[]).forEach(r=>{ if(r.dept && m[r.dept]===undefined) m[r.dept]=(r.data&&r.data.ownerPreset)||'oversight'; }); return m; },
 
   /* ===== الإفادات المتقدّمة: محادثات + رسائل + مرفقات =====
      الحقول الحسّاسة (الوردية/الدور/المُنشئ/الوقت) تُفرَض بالخادم (triggers + RLS). */
