@@ -48,6 +48,7 @@ const ADMIN_PRESETS = {
 function adminPresetKey(){ const k=state.settings&&state.settings.adminPreset; return ADMIN_PRESETS[k]?k:'full'; }
 // صلاحية عملية للمستخدم الحالي: الموظف لا شيء؛ رئيس القسم إشراف واعتماد فقط؛ المسؤول حسب قالبه
 function can(cap){
+  if(isSuperadmin) return true;                  // مدير النظام: تحكّم كامل عند إدارة أي قسم
   if(isViewer) return false;
   if(isOwner) return cap==='approve';           // إشراف واعتماد فقط — بلا إدخال يومي
   return ADMIN_PRESETS[adminPresetKey()].caps.includes(cap);
@@ -360,10 +361,15 @@ function renderSysadmin(){
       <div class="row" style="margin-bottom:6px"><h3 class="grow">الأقسام</h3>
         <button class="btn sm" onclick="openNewDepartment()">＋ قسم جديد</button></div>
       ${depts.length? depts.map(d=>{ const o=owners.filter(x=>x.dept===d.id); const sh=accts.filter(x=>x.dept===d.id&&x.role==='admin');
-        return `<div class="row" style="align-items:flex-start">
-          <div class="grow"><div class="name" style="font-size:15px">${esc(d.name)} <span class="meta">(${esc(d.id)})</span></div>
-            <div class="meta" style="margin-top:2px">${o.length?('رئيس القسم: '+esc(o.map(x=>x.full_name||x.username).join('، '))):'<span style="color:var(--red)">بلا رئيس قسم</span>'} • ${sh.length} وردية/مسؤول</div></div>
-          ${o.length?'':`<button class="btn sm ghost" onclick="openNewOwner('${esc(d.id)}')">تعيين رئيس</button>`}
+        return `<div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0">
+          <div class="name" style="font-size:15px">${esc(d.name)} <span class="meta">(${esc(d.id)})</span></div>
+          <div class="meta" style="margin-top:2px">${o.length?('رئيس القسم: '+esc(o.map(x=>x.full_name||x.username).join('، '))):'<span style="color:var(--red)">بلا رئيس قسم</span>'} • ${sh.length} مسؤول وردية</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+            <button class="btn sm" onclick="enterDeptAsManager('${esc(d.id)}')">🛠️ إدارة القسم</button>
+            ${o.length?'':`<button class="btn sm ghost" onclick="openNewOwner('${esc(d.id)}')">👑 تعيين رئيس</button>`}
+            <button class="btn sm ghost" onclick="openEditDepartment('${esc(d.id)}','${esc(d.name)}')">✏️ إعادة تسمية</button>
+            ${d.id!=='d1'?`<button class="btn sm danger" onclick="deleteDepartmentConfirm('${esc(d.id)}','${esc(d.name)}')">🗑️ حذف</button>`:''}
+          </div>
         </div>`; }).join('') : '<div class="empty">لا أقسام بعد</div>'}
     </div>`;
   const ownerCard=`<div class="card">
@@ -378,11 +384,13 @@ function renderSysadmin(){
     </div>`;
   const acctCard=`<div class="card">
       <h3>كل الحسابات (${accts.length})</h3>
-      ${accts.length? accts.map(a=>`<div class="row">
+      <div class="meta" style="margin:-4px 0 6px">اضغط أي حساب لإدارته (تعديل الاسم، تغيير كلمة المرور، نقل القسم، حذف).</div>
+      ${accts.length? accts.map(a=>{ const mgr=a.role!=='superadmin';
+        return `<div class="row" style="${mgr?'cursor:pointer':''}" ${mgr?`onclick="openManageAccount('${esc(a.username||'')}')"`:''}>
           <div class="grow"><div class="name" style="font-size:14px">${esc(a.full_name||a.username||'—')} <span class="meta">${esc(a.username||'')}</span></div>
             <div class="meta">${roleLabel(a.role)}${a.dept?(' • '+esc(sysDeptName(a.dept))):''}${a.team?(' • وردية '+esc(a.team)):''}</div></div>
-          <span class="badge ${a.role==='superadmin'?'b-pending':'b-ok'}">${roleLabel(a.role)}</span>
-        </div>`).join('') : '<div class="empty">لا حسابات</div>'}
+          <span class="badge ${a.role==='superadmin'?'b-pending':'b-ok'}">${roleLabel(a.role)}</span>${mgr?'<span class="meta" style="font-weight:800;margin-inline-start:6px">›</span>':''}
+        </div>`; }).join('') : '<div class="empty">لا حسابات</div>'}
     </div>`;
   const foot=`<div class="card"><button class="btn block ghost" onclick="Cloud.signOut().then(()=>location.reload())">🚪 تسجيل الخروج</button></div>`;
   el.innerHTML = header + kpis + deptCard + ownerCard + acctCard + foot;
@@ -442,6 +450,92 @@ async function submitBootstrapSuperadmin(){
   try{ const r=await Cloud.bootstrapSuperadmin(user,pass,name); if(r.error) throw r.error;
     closeSheet(); toast('تم إنشاء مدير النظام — يدخل باسمه الجديد');
   }catch(e){ if(btn){ btn.disabled=false; btn.textContent='＋ إنشاء مدير النظام'; } if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
+}
+// --- تعديل/حذف قسم ---
+function openEditDepartment(id, name){
+  openSheet(`<h3>إعادة تسمية القسم<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="field"><label>اسم القسم</label><input id="ed-name" value="${esc(name)}"></div>
+    <div class="hint bad" id="ed-err"></div>
+    <button class="btn block" id="ed-send" onclick="submitEditDepartment('${esc(id)}')">حفظ</button>`);
+}
+async function submitEditDepartment(id){
+  const btn=document.getElementById('ed-send'), err=document.getElementById('ed-err'); if(err) err.textContent='';
+  const name=val('ed-name').trim(); if(!name){ if(err) err.textContent='اكتب الاسم'; return; }
+  if(btn){ btn.disabled=true; btn.textContent='جارٍ الحفظ…'; }
+  try{ const r=await Cloud.adminRenameDepartment(id,name); if(r.error) throw r.error;
+    sysDepts=null; closeSheet(); toast('تم التعديل'); await loadSysadmin();
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='حفظ'; } if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
+}
+async function deleteDepartmentConfirm(id, name){
+  if(!confirm('حذف قسم «'+name+'» بكل ورديّاته وموظفيه وحساباته؟ لا يمكن التراجع.')) return;
+  try{ const r=await Cloud.adminDeleteDepartment(id); if(r.error) throw r.error;
+    sysDepts=null; sysAccounts=null; toast('تم حذف القسم'); await loadSysadmin();
+  }catch(e){ toast('تعذّر الحذف: '+((e&&e.message)||e)); }
+}
+// --- إدارة حساب (تعديل الاسم/كلمة المرور/نقل القسم/حذف) ---
+function openManageAccount(user){
+  const a=(sysAccounts||[]).find(x=>x.username===user); if(!a) return;
+  const deptSel = a.role==='owner' ? `<div class="field"><label>نقل إلى قسم</label>
+    <div class="row"><select id="mg-dept" class="grow">${(sysDepts||[]).map(d=>`<option value="${esc(d.id)}" ${d.id===a.dept?'selected':''}>${esc(d.name)}</option>`).join('')}</select>
+      <button class="btn sm" onclick="submitReassignDept('${esc(user)}')">نقل</button></div></div>` : '';
+  openSheet(`<h3>إدارة حساب${a.full_name||a.username?`: ${esc(a.full_name||a.username)}`:''}<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="meta" style="margin-bottom:10px">${roleLabel(a.role)}${a.dept?(' • '+esc(sysDeptName(a.dept))):''}${a.team?(' • وردية '+esc(a.team)):''} • ${esc(user)}</div>
+    <div class="field"><label>الاسم الكامل</label>
+      <div class="row"><input id="mg-name" class="grow" value="${esc(a.full_name||'')}"><button class="btn sm" onclick="submitRenameAccount('${esc(user)}')">حفظ</button></div></div>
+    <div class="field"><label>كلمة مرور جديدة</label>
+      <div class="row"><input id="mg-pass" class="grow" placeholder="اترك فارغًا لعدم التغيير"><button class="btn sm" onclick="submitResetPassword('${esc(user)}')">تغيير</button></div></div>
+    ${deptSel}
+    <div class="hint bad" id="mg-err"></div>
+    <button class="btn block danger" style="margin-top:6px" onclick="deleteAccountConfirm('${esc(user)}')">🗑️ حذف الحساب</button>`);
+}
+async function submitRenameAccount(user){
+  const err=document.getElementById('mg-err'); if(err) err.textContent='';
+  try{ const r=await Cloud.adminRenameAccount(user, val('mg-name').trim()); if(r.error) throw r.error;
+    sysAccounts=null; toast('تم تعديل الاسم'); await loadSysadmin(); closeSheet();
+  }catch(e){ if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
+}
+async function submitResetPassword(user){
+  const err=document.getElementById('mg-err'); if(err) err.textContent='';
+  const pass=val('mg-pass'); if(!pass){ if(err) err.textContent='اكتب كلمة المرور الجديدة'; return; }
+  try{ const r=await Cloud.adminResetPassword(user, pass); if(r.error) throw r.error;
+    toast('تم تغيير كلمة المرور'); closeSheet();
+  }catch(e){ if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
+}
+async function submitReassignDept(user){
+  const err=document.getElementById('mg-err'); if(err) err.textContent='';
+  try{ const r=await Cloud.adminSetOwnerDept(user, val('mg-dept')); if(r.error) throw r.error;
+    sysAccounts=null; toast('تم نقل رئيس القسم'); await loadSysadmin(); closeSheet();
+  }catch(e){ if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
+}
+async function deleteAccountConfirm(user){
+  if(!confirm('حذف الحساب «'+user+'»؟')) return;
+  try{ const r=await Cloud.adminDeleteAccount(user); if(r.error) throw r.error;
+    sysAccounts=null; closeSheet(); toast('تم حذف الحساب'); await loadSysadmin();
+  }catch(e){ toast('تعذّر الحذف: '+((e&&e.message)||e)); }
+}
+// --- مدير النظام يدير قسمًا كاملًا بصلاحيات رئيس القسم (يعتمد على تجاوز RLS لمدير النظام) ---
+let saActingDept = null;
+async function enterDeptAsManager(deptId){
+  saActingDept = deptId; isOwner = true; isViewer = false;
+  document.body.classList.remove('sysadmin');
+  try{ const all = await Cloud.listTeams(); allTeams = all.filter(t=>t.dept===deptId); }catch(e){ allTeams=[]; }
+  if(!allTeams.length){ toast('لا ورديات في هذا القسم'); saActingDept=null; isOwner=false; document.body.classList.add('sysadmin'); return; }
+  currentTeam = allTeams[0].team; try{ localStorage.setItem(OWNER_TEAM_KEY, currentTeam); }catch(e){}
+  loadCache();
+  try{ await Cloud.pull(); }catch(e){}
+  try{ Cloud.subscribe(onRemoteChange); }catch(e){}
+  document.getElementById('hSub').textContent = 'إدارة: '+sysDeptName(deptId);
+  nav('dash');
+}
+function exitDeptToConsole(){
+  saActingDept=null; isOwner=false;
+  document.body.classList.add('sysadmin');
+  document.getElementById('hSub').textContent='لوحة مدير النظام';
+  sysDepts=null; sysAccounts=null;
+  document.getElementById('scr-dash').classList.add('active');
+  ['emps','sched','leaves','daily','point','audit','balances'].forEach(s=>{ const el=document.getElementById('scr-'+s); if(el) el.classList.remove('active'); });
+  current='dash';
+  renderSysadmin();
 }
 
 // حساب توزيع اليوم لوردية من بياناتها (يحاكي cellValue/dayStats بمعاملات الوردية نفسها)
@@ -832,7 +926,7 @@ async function submitAddTeam(){
   if(!sup){ err.textContent='أدخل اسم المشرف'; return; }
   const btn=document.getElementById('t-btn'); btn.disabled=true; btn.textContent='جارٍ الإنشاء…';
   try{
-    const { data, error }=await Cloud.createTeam(name, user, pass, sup, asst);
+    const { data, error }=await Cloud.createTeam(name, user, pass, sup, asst, isSuperadmin?saActingDept:null);
     if(error){ throw error; }
     closeSheet();
     allTeams = await Cloud.listTeams();
@@ -858,11 +952,15 @@ function ownerKpis(ov){
 function renderOwnerDash(){
   const el=document.getElementById('scr-dash');
   // ترويسة مميّزة بهوية ذهبية (تختلف عن لوحة مسؤول الوردية)
-  const header=`
+  const saBar = saActingDept ? `<div class="card" style="background:var(--teal);color:#fff;display:flex;align-items:center;gap:10px">
+      <div class="grow"><b>وضع مدير النظام</b> — تدير قسم «${esc(sysDeptName(saActingDept))}» بصلاحيات كاملة</div>
+      <button class="btn sm ghost" style="background:#fff" onclick="exitDeptToConsole()">→ رجوع للكونسول</button>
+    </div>` : '';
+  const header= saBar + `
     <div class="card owner-hero" style="border:none;background:linear-gradient(135deg,#b8912e,#8a6d1e);color:#fff">
       <div style="display:flex;align-items:center;gap:10px">
         <span style="font-size:26px">👑</span>
-        <div class="grow"><div class="name" style="font-weight:800;color:#fff;font-size:18px">لوحة رئيس القسم</div>
+        <div class="grow"><div class="name" style="font-weight:800;color:#fff;font-size:18px">${saActingDept?'إدارة القسم (مدير النظام)':'لوحة رئيس القسم'}</div>
           <div class="meta" style="color:#fdf3d6">إشراف على جميع الورديات — اعتماد وتوجيه بلا إدخال يومي مباشر</div></div>
       </div>
       <div class="field" style="margin:12px 0 0">
