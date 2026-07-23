@@ -204,42 +204,128 @@ function ownerTeamSwitcherHtml(){
   </div>`;
 }
 let ownerOverview=null;   // ملخّص كل الورديات (يُحمَّل عند فتح لوحة رئيس القسم)
-let ownerReports=null;    // إفادات المسؤولين من كل الورديات (لرئيس القسم)
-// جمع الإفادات من إعدادات كل الورديات (المالك يقرأ الكل عبر RLS)
-async function loadOwnerReports(){
-  try{
-    const { data } = await Cloud.sb.from('settings').select('team,data');
-    const nameOf=t=>{ const x=allTeams.find(a=>a.team===t); return x?x.name:t; };
-    const all=[];
-    (data||[]).forEach(row=>{ const reps=(row.data&&row.data.reports)||[]; reps.forEach(r=> all.push({ id:r.id, text:r.text, ts:r.ts, by:r.by, team:row.team, teamName:nameOf(row.team) })); });
-    all.sort((a,b)=>(b.ts||0)-(a.ts||0));
-    ownerReports=all;
-  }catch(e){ ownerReports=[]; }
-  if(current==='dash' && isOwner){ renderDash(); maybeShowReportsPopup(); }
+/* ===== الإفادات المتقدّمة (محادثات + مرفقات + ردّ) — تُخزَّن في قاعدة البيانات ===== */
+let reportThreads=null;   // محادثات الإفادات (RLS يقصرها: رئيس القسم يرى الكل، المسؤول ورديته فقط)
+async function loadReportThreads(){
+  try{ const { data } = await Cloud.reportListThreads(); reportThreads = data||[]; }
+  catch(e){ reportThreads=[]; }
+  if(current==='dash' && !isViewer){ renderDash(); maybeShowReportsPopup(); }
 }
-function seenReports(){ try{ return JSON.parse(localStorage.getItem('shiftApp.seenReports')||'[]'); }catch(e){ return []; } }
-function reportSeen(id){ return id!=null && seenReports().indexOf(id)>=0; }
-function dismissReport(id){ const s=seenReports(); if(s.indexOf(id)<0){ s.push(id); try{ localStorage.setItem('shiftApp.seenReports', JSON.stringify(s.slice(-500))); }catch(e){} } renderDash(); }
-// إشعار منبثق لرئيس القسم بالإفادات الجديدة عند الدخول (لا يتكرّر إلا مع وصول أحدث)
+function reportSeenMap(){ try{ return JSON.parse(localStorage.getItem('shiftApp.reportSeen.v2')||'{}'); }catch(e){ return {}; } }
+function threadUnread(t){ const m=reportSeenMap()[t.id]; return !m || String(t.last_msg_at||'')>String(m); }
+function markThreadSeen(t){ if(!t) return; const m=reportSeenMap(); m[t.id]=t.last_msg_at||new Date().toISOString(); try{ localStorage.setItem('shiftApp.reportSeen.v2', JSON.stringify(m)); }catch(e){} }
+function reportUnreadCount(){ return (reportThreads||[]).filter(threadUnread).length; }
+function reportTeamName(code){ const x=allTeams.find(a=>a.team===code); return x?x.name:(code||''); }
+function reportMyName(){ return isOwner ? (docDeptHead()||'رئيس القسم') : (docSupervisor()||currentUsername||'مسؤول الوردية'); }
+const REPORT_ACCEPT='image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt';
+// بطاقة صندوق الإفادات (لرئيس القسم ومسؤول الوردية)
+function reportsInboxHtml(){
+  if(reportThreads===null){ loadReportThreads(); return '<div class="card"><h3>📥 الإفادات</h3><div class="empty">جارٍ التحميل…</div></div>'; }
+  const list=reportThreads, unread=reportUnreadCount();
+  return `<div class="card">
+    <h3>📥 الإفادات ${unread?`<span class="badge b-pending">${unread} جديدة</span>`:''}</h3>
+    ${list.length? list.map(t=>{ const un=threadUnread(t), st=t.status==='handled';
+      return `<div class="row" style="align-items:flex-start;cursor:pointer" onclick="openReportThread('${esc(t.id)}')">
+        <div class="grow"><div class="name" style="font-size:14px">${un?'🔵 ':''}${esc(t.subject||'(بلا عنوان)')}${isOwner?` <span class="meta">— ${esc(reportTeamName(t.team))}</span>`:''}</div>
+          <div class="meta" style="margin-top:2px">${esc(t.created_by_name||(t.created_role==='owner'?'رئيس القسم':'مسؤول الوردية'))} • ${noticeDate(Date.parse(t.last_msg_at)||0)}</div></div>
+        <span class="badge ${st?'b-ok':'b-pending'}">${st?'تمّت':'مفتوحة'}</span>
+      </div>`; }).join('') : '<div class="empty">لا إفادات</div>'}
+    <button class="btn block" style="margin-top:8px" onclick="openNewReport()">＋ إفادة جديدة</button>
+  </div>`;
+}
+function openNewReport(){
+  if(isViewer) return;
+  const teamSel = isOwner ? `<div class="field"><label>الوردية المستهدَفة</label>
+    <select id="rp-team">${allTeams.map(t=>`<option value="${esc(t.team)}">${esc(t.name)} (${esc(t.team)})</option>`).join('')}</select></div>` : '';
+  openSheet(`<h3>إفادة جديدة<button class="x" onclick="closeSheet()">×</button></h3>
+    ${teamSel}
+    <div class="field"><label>العنوان</label><input id="rp-subject" placeholder="موضوع الإفادة"></div>
+    <div class="field"><label>النص</label><textarea id="rp-body" rows="4" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب الإفادة…"></textarea></div>
+    <div class="field"><label>مرفقات (صور/PDF/Word/Excel — حتى 15MB)</label><input id="rp-files" type="file" multiple accept="${REPORT_ACCEPT}"></div>
+    <div class="hint bad" id="rp-err"></div>
+    <button class="btn block" id="rp-send" onclick="submitNewReport()">📤 إرسال</button>`);
+}
+async function submitNewReport(){
+  const btn=document.getElementById('rp-send'), err=document.getElementById('rp-err'); if(err) err.textContent='';
+  const subject=val('rp-subject').trim(), body=val('rp-body').trim(), teamCode=isOwner?(val('rp-team')||''):'';
+  if(!subject && !body){ if(err) err.textContent='اكتب عنواناً أو نصّاً'; return; }
+  if(btn){ btn.disabled=true; btn.textContent='جارٍ الإرسال…'; }
+  try{
+    const res=await Cloud.reportCreateThread({ team:teamCode, subject, body, authorName:reportMyName() });
+    if(res.error) throw res.error;
+    const files=(document.getElementById('rp-files')||{}).files;
+    if(files && files.length && res.data.message){
+      const folder=res.data.thread.team;
+      for(const f of files){ const u=await Cloud.reportUploadFile({ teamCode:folder, threadId:res.data.thread.id, messageId:res.data.message.id, file:f }); if(u.error) throw u.error; }
+    }
+    reportThreads=null; closeSheet(); toast('تم إرسال الإفادة'); await loadReportThreads(); openReportThread(res.data.thread.id);
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='📤 إرسال'; } if(err) err.textContent='تعذّر الإرسال: '+((e&&e.message)||e); }
+}
+function reportFileHtml(f){
+  if(!f._url) return `<div class="meta" style="margin-top:4px">📎 ${esc(f.file_name||'ملف')}</div>`;
+  return (f.mime_type||'').indexOf('image/')===0
+    ? `<a href="${esc(f._url)}" target="_blank" rel="noopener"><img src="${esc(f._url)}" alt="" style="max-width:100%;border-radius:8px;margin-top:6px"></a>`
+    : `<a href="${esc(f._url)}" target="_blank" rel="noopener" class="meta" style="display:inline-block;margin-top:4px">📎 ${esc(f.file_name||'ملف')}</a>`;
+}
+async function openReportThread(threadId){
+  openSheet(`<h3>إفادة<button class="x" onclick="closeSheet()">×</button></h3><div class="empty">جارٍ التحميل…</div>`);
+  let res; try{ res=await Cloud.reportListMessages(threadId); }catch(e){ res={error:e}; }
+  if(!res || res.error){ openSheet(`<h3>إفادة<button class="x" onclick="closeSheet()">×</button></h3><div class="empty">تعذّر التحميل</div>`); return; }
+  const t=(reportThreads||[]).find(x=>x.id===threadId);
+  const { messages, files }=res.data, byMsg={};
+  files.forEach(f=>{ (byMsg[f.message_id]=byMsg[f.message_id]||[]).push(f); });
+  for(const f of files){ f._url=await Cloud.reportSignedUrl(f.path); }
+  if(t){ markThreadSeen(t); }
+  const msgsHtml=messages.map(m=>`<div style="background:${m.author_role==='owner'?'#f7edd4':'var(--bg)'};border-radius:10px;padding:10px 12px;margin:6px 0">
+      <div class="name" style="font-size:13px">${esc(m.author_name||(m.author_role==='owner'?'رئيس القسم':'مسؤول الوردية'))} <span class="meta">• ${noticeDate(Date.parse(m.created_at)||0)}</span></div>
+      ${m.body?`<div style="white-space:pre-wrap;font-size:14px;margin-top:4px">${esc(m.body)}</div>`:''}
+      ${(byMsg[m.id]||[]).map(reportFileHtml).join('')}
+    </div>`).join('');
+  const handled=t&&t.status==='handled';
+  const ownerActions=isOwner?`<button class="btn sm ghost" onclick="toggleReportStatus('${esc(threadId)}','${handled?'open':'handled'}')">${handled?'↺ إعادة فتح':'✓ تمّت المعالجة'}</button>`:'';
+  openSheet(`<h3>${esc((t&&t.subject)||'إفادة')} ${handled?'<span class="badge b-ok">تمّت</span>':''}<button class="x" onclick="closeSheet()">×</button></h3>
+    <div style="max-height:44vh;overflow:auto">${msgsHtml||'<div class="empty">لا رسائل</div>'}</div>
+    <div class="field" style="margin-top:10px"><label>ردّ</label><textarea id="rt-body" rows="3" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب ردّاً…"></textarea></div>
+    <div class="field"><input id="rt-files" type="file" multiple accept="${REPORT_ACCEPT}"></div>
+    <div class="hint bad" id="rt-err"></div>
+    <button class="btn block" id="rt-send" onclick="submitReportReply('${esc(threadId)}')">📤 إرسال الردّ</button>
+    <div style="display:flex;gap:8px;margin-top:8px">${ownerActions}<button class="btn sm danger" onclick="deleteReportThread('${esc(threadId)}')">🗑️ حذف</button></div>`);
+}
+async function submitReportReply(threadId){
+  const btn=document.getElementById('rt-send'), err=document.getElementById('rt-err'); if(err) err.textContent='';
+  const body=val('rt-body').trim(), files=(document.getElementById('rt-files')||{}).files;
+  if(!body && !(files&&files.length)){ if(err) err.textContent='اكتب ردّاً أو أرفق ملفاً'; return; }
+  if(btn){ btn.disabled=true; btn.textContent='جارٍ الإرسال…'; }
+  try{
+    const m=await Cloud.reportAddMessage({ threadId, body, authorName:reportMyName() });
+    if(m.error) throw m.error;
+    if(files && files.length){ const t=(reportThreads||[]).find(x=>x.id===threadId); const folder=isOwner?(t?t.team:''):currentTeam;
+      for(const f of files){ const u=await Cloud.reportUploadFile({ teamCode:folder, threadId, messageId:m.data.id, file:f }); if(u.error) throw u.error; } }
+    reportThreads=null; toast('تم إرسال الردّ'); await loadReportThreads(); openReportThread(threadId);
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='📤 إرسال الردّ'; } if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
+}
+async function toggleReportStatus(threadId, status){
+  try{ const r=await Cloud.reportSetStatus(threadId,status); if(r.error) throw r.error; reportThreads=null; await loadReportThreads(); openReportThread(threadId); toast(status==='handled'?'تمّت المعالجة':'أُعيد الفتح'); }
+  catch(e){ toast('تعذّر التحديث'); }
+}
+async function deleteReportThread(threadId){
+  if(!confirm('حذف هذه الإفادة بكل رسائلها ومرفقاتها؟')) return;
+  try{ const r=await Cloud.reportDeleteThread(threadId); if(r.error) throw r.error; reportThreads=null; closeSheet(); await loadReportThreads(); toast('تم الحذف'); }
+  catch(e){ toast('تعذّر الحذف'); }
+}
+// إشعار منبثق بالإفادات/الردود الجديدة عند الدخول (لرئيس القسم والمسؤول)
 function maybeShowReportsPopup(){
-  if(!isOwner || !Array.isArray(ownerReports)) return false;
-  const ov=document.getElementById('overlay');
-  if(ov && ov.classList.contains('open')) return false;   // لا تحجب نافذة مفتوحة
-  const undismissed=ownerReports.filter(r=>!reportSeen(r.id));
-  if(!undismissed.length) return false;
-  const maxTs=undismissed.reduce((m,r)=>Math.max(m,Number(r.ts)||0),0);
-  let last=0; try{ last=Number(localStorage.getItem('shiftApp.reportPopupTs')||0)||0; }catch(e){}
-  if(maxTs<=last) return false;   // لا جديد منذ آخر إشعار
-  const fresh=undismissed.filter(r=>(Number(r.ts)||0)>last).sort((a,b)=>(b.ts||0)-(a.ts||0));
-  openSheet(`
-    <h3>📥 إفادات جديدة (${fresh.length})<button class="x" onclick="closeSheet()">×</button></h3>
-    <p class="hint" style="margin-bottom:10px">وصلتك إفادات من مسؤولي الورديات:</p>
-    ${fresh.map(r=>`<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin:6px 0">
-      <div class="name" style="font-size:14px">${esc(r.by||'مسؤول الوردية')} <span class="meta">(${esc(r.teamName||r.team)})</span></div>
-      <div class="meta" style="margin-top:2px;white-space:pre-wrap">${esc(r.text)}</div>
-      <div class="meta" style="margin-top:2px">${noticeDate(r.ts)}</div></div>`).join('')}
-    <button class="btn block" style="margin-top:12px" onclick="closeSheet()">تمّ الاطلاع</button>`);
-  try{ localStorage.setItem('shiftApp.reportPopupTs', String(maxTs)); }catch(e){}
+  if(isViewer || !Array.isArray(reportThreads)) return false;
+  const ov=document.getElementById('overlay'); if(ov && ov.classList.contains('open')) return false;
+  const unread=reportThreads.filter(threadUnread); if(!unread.length) return false;
+  let last=''; try{ last=localStorage.getItem('shiftApp.reportPopupTs.v2')||''; }catch(e){}
+  const maxTs=unread.reduce((m,t)=>(String(t.last_msg_at)>m?String(t.last_msg_at):m),'');
+  if(maxTs<=last) return false;
+  openSheet(`<h3>📥 إفادات جديدة (${unread.length})<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">لديك إفادات أو ردود جديدة:</p>
+    ${unread.slice(0,8).map(t=>`<div class="row" style="cursor:pointer" onclick="closeSheet();openReportThread('${esc(t.id)}')"><div class="grow"><div class="name" style="font-size:14px">${esc(t.subject||'(بلا عنوان)')}${isOwner?` <span class="meta">— ${esc(reportTeamName(t.team))}</span>`:''}</div><div class="meta">${noticeDate(Date.parse(t.last_msg_at)||0)}</div></div><span class="meta" style="font-weight:800">‹</span></div>`).join('')}
+    <button class="btn block" style="margin-top:10px" onclick="closeSheet()">حسناً</button>`);
+  try{ localStorage.setItem('shiftApp.reportPopupTs.v2', maxTs); }catch(e){}
   return true;
 }
 // حساب توزيع اليوم لوردية من بياناتها (يحاكي cellValue/dayStats بمعاملات الوردية نفسها)
@@ -290,7 +376,7 @@ async function loadOwnerOverview(){
   if(current==='dash' && isOwner) renderDash();
 }
 async function reloadTeams(){
-  try{ allTeams = await Cloud.listTeams(); ownerOverview=null; ownerReports=null; toast('تم تحديث قائمة الورديات'); renderDash(); }
+  try{ allTeams = await Cloud.listTeams(); ownerOverview=null; reportThreads=null; toast('تم تحديث قائمة الورديات'); renderDash(); }
   catch(e){ toast('تعذّر تحميل الورديات'); }
 }
 // حفظ اسم رئيس القسم وبثّه لكل الورديات (يظهر في اعتماد كل الكشوفات)
@@ -461,41 +547,6 @@ function clearAllDirectives(){
   state.settings.directives=[]; Data.saveSettings(); closeSheet(); renderScreen(current); toast('تم مسح كل التوجيهات');
 }
 
-/* ===== إفادات: مسؤول الوردية ← رئيس القسم =====
-   تُخزَّن في إعدادات وردية المُرسِل (settings.reports) — يقرؤها رئيس القسم من كل الورديات (RLS يسمح للمالك). */
-function reportList(){ return (state.settings.reports||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0)); }
-function openReport(){
-  if(isViewer||isOwner) return;   // للمسؤولين فقط
-  const list=reportList();
-  openSheet(`
-    <h3>إفادة لرئيس القسم<button class="x" onclick="closeSheet()">×</button></h3>
-    <p class="hint" style="margin-bottom:10px">تصل هذه الإفادة إلى رئيس القسم في لوحته.</p>
-    <div class="field"><label>نص الإفادة</label>
-      <textarea id="rp-text" rows="4" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب الإفادة هنا…"></textarea></div>
-    <div class="hint bad" id="rp-err" style="margin-bottom:6px"></div>
-    <button class="btn block" onclick="sendReport()">📤 إرسال الإفادة</button>
-    ${list.length?`
-      <div style="border-top:1px solid var(--line);margin:16px 0 8px"></div>
-      <h3 style="font-size:14px">إفاداتك المُرسَلة (${list.length})</h3>
-      ${list.map(n=>`<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin:6px 0;display:flex;align-items:flex-start;gap:10px">
-        <div class="grow" style="min-width:0"><div class="meta" style="white-space:pre-wrap">${esc(n.text)}</div><div class="meta" style="margin-top:3px">${noticeDate(n.ts)}</div></div>
-        <button class="icon-btn danger" onclick="deleteReport(${Number(n.ts)||0})">🗑️</button>
-      </div>`).join('')}`:''}
-  `);
-}
-function sendReport(){
-  if(isViewer||isOwner) return;
-  const text=val('rp-text').trim(); const err=document.getElementById('rp-err'); if(err) err.textContent='';
-  if(!text){ if(err) err.textContent='اكتب نص الإفادة'; return; }
-  const list=(state.settings.reports||[]).slice();
-  list.push({ id: uid(), text, ts: Date.now(), by: docSupervisor()||currentUsername||'مسؤول الوردية' });
-  state.settings.reports=list.slice(-50);
-  Data.saveSettings(); closeSheet(); renderScreen(current); toast('تم إرسال الإفادة لرئيس القسم');
-}
-function deleteReport(ts){
-  state.settings.reports=(state.settings.reports||[]).filter(n=>Number(n.ts)!==Number(ts));
-  Data.saveSettings(); openReport(); toast('تم حذف الإفادة');
-}
 // شاشة منبثقة بأحدث توجيه للموظف عند الدخول
 function maybeShowDirective(){
   const n=directiveList()[0]; if(!n||!n.text||!n.ts) return false;
@@ -784,18 +835,6 @@ function renderOwnerDash(){
           </div>
         </div>`; }).join('') : '<div class="empty">لا طلبات معلّقة في الوردية المعروضة</div>'}
     </div>`;
-  if(ownerReports===null) loadOwnerReports();
-  const reps=(ownerReports||[]).filter(r=>!reportSeen(r.id));
-  const reportsCard=`
-    <div class="card">
-      <h3>📥 إفادات المسؤولين ${reps.length?`<span class="badge b-pending">${reps.length} جديدة</span>`:''}</h3>
-      ${ownerReports===null?'<div class="empty">جارٍ التحميل…</div>':(reps.length? reps.map(r=>`<div class="row" style="align-items:flex-start">
-          <div class="grow"><div class="name" style="font-size:14px">${esc(r.by||'مسؤول الوردية')} <span class="meta">(${esc(r.teamName||r.team)})</span></div>
-            <div class="meta" style="margin-top:2px;white-space:pre-wrap">${esc(r.text)}</div>
-            <div class="meta" style="margin-top:2px">${noticeDate(r.ts)}</div></div>
-          <button class="btn sm ghost" onclick="dismissReport('${esc(r.id)}')">تمّت</button>
-        </div>`).join('') : '<div class="empty">لا إفادات جديدة</div>')}
-    </div>`;
   const staff=`
     <div class="card">
       <h3>دخول الموظفين (عرض فقط)</h3>
@@ -805,7 +844,7 @@ function renderOwnerDash(){
         <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
       </div>
     </div>`;
-  el.innerHTML = header + actions + kpis + shiftsCard + chartsCard + pendingCard + reportsCard + noticesCardHtml() + staff;
+  el.innerHTML = header + actions + kpis + shiftsCard + chartsCard + pendingCard + reportsInboxHtml() + noticesCardHtml() + staff;
 }
 // رئيس القسم يضبط دور (قالب صلاحيات) مسؤول الوردية المعروضة
 function openAdminRoles(){
@@ -849,9 +888,10 @@ function renderDash(){
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
       ${can('leaves')?`<button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>`:''}
       ${can('directives')?`<button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>`:''}
-      ${!isViewer?`<button class="btn sm" onclick="openReport()">📤 إفادة لرئيس القسم</button>`:''}
+      ${!isViewer?`<button class="btn sm" onclick="openNewReport()">📤 إفادة لرئيس القسم</button>`:''}
       <button class="btn sm ghost" onclick="refreshFromCloud()">↻ تحديث</button>
     </div>
+    ${!isViewer?reportsInboxHtml():''}
     <div class="stats">
       <div class="stat ${low?'bad':''}"><div class="n">${st.working}</div><div class="l">عاملون اليوم${low?' • أقل من الحد ('+s.minWorkers+')':''}</div></div>
       <div class="stat ${st.onLeave>s.maxLeavesPerDay?'warn':''}"><div class="n">${st.onLeave}</div><div class="l">مُجازون اليوم • الحد ${s.maxLeavesPerDay}</div></div>
