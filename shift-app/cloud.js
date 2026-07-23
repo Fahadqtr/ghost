@@ -89,16 +89,16 @@ const Cloud = {
 
   /* قائمة كل الورديات (للمالك فقط — تعتمد على صلاحية RLS) */
   async listTeams(){
-    const { data, error } = await this.sb.from('settings').select('team,data').order('team');
+    const { data, error } = await this.sb.from('settings').select('team,dept,data').order('team');
     if(error) throw error;
-    return (data||[]).map(r=>({ team:r.team, name:(r.data && r.data.teamName) || r.team }));
+    return (data||[]).map(r=>({ team:r.team, dept:r.dept||'d1', name:(r.data && r.data.teamName) || r.team }));
   },
   /* إنشاء وردية جديدة + حساب مشرفها (للمالك فقط) */
-  async createTeam(name, adminUser, adminPass, adminName, assistant){
-    return await this.sb.rpc('create_team', {
-      p_team_name: name, p_admin_user: adminUser, p_admin_pass: adminPass,
-      p_admin_name: adminName, p_assistant: assistant||''
-    });
+  async createTeam(name, adminUser, adminPass, adminName, assistant, dept){
+    const args = { p_team_name: name, p_admin_user: adminUser, p_admin_pass: adminPass,
+      p_admin_name: adminName, p_assistant: assistant||'' };
+    if(dept) args.p_dept = dept;
+    return await this.sb.rpc('create_team', args);
   },
   /* بثّ حقول مشتركة لكل الورديات — اسم رئيس القسم أو تعميم (للمالك فقط) */
   async broadcast(patch){ return await this.sb.rpc('owner_broadcast', { p_patch: patch }); },
@@ -111,6 +111,12 @@ const Cloud = {
   async adminCreateDepartment(name){ return await this.sb.rpc('admin_create_department', { p_dept_name:name }); },
   async adminCreateOwner(dept, user, pass, name){ return await this.sb.rpc('admin_create_owner', { p_dept:dept, p_user:user, p_pass:pass, p_name:name||'' }); },
   async adminListAccounts(){ return await this.sb.rpc('admin_list_accounts'); },
+  async adminRenameDepartment(dept, name){ return await this.sb.rpc('admin_rename_department', { p_dept:dept, p_name:name }); },
+  async adminDeleteDepartment(dept){ return await this.sb.rpc('admin_delete_department', { p_dept:dept }); },
+  async adminResetPassword(user, pass){ return await this.sb.rpc('admin_reset_password', { p_user:user, p_pass:pass }); },
+  async adminRenameAccount(user, name){ return await this.sb.rpc('admin_rename_account', { p_user:user, p_name:name||'' }); },
+  async adminDeleteAccount(user){ return await this.sb.rpc('admin_delete_account', { p_user:user }); },
+  async adminSetOwnerDept(user, dept){ return await this.sb.rpc('admin_set_owner_dept', { p_user:user, p_dept:dept }); },
 
   /* ===== الإفادات المتقدّمة: محادثات + رسائل + مرفقات =====
      الحقول الحسّاسة (الوردية/الدور/المُنشئ/الوقت) تُفرَض بالخادم (triggers + RLS). */
