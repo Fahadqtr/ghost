@@ -242,25 +242,50 @@ function maybeShowReportsPopup(){
   try{ localStorage.setItem('shiftApp.reportPopupTs', String(maxTs)); }catch(e){}
   return true;
 }
+// حساب توزيع اليوم لوردية من بياناتها (يحاكي cellValue/dayStats بمعاملات الوردية نفسها)
+function teamDayToday(emps, sData, ovMap, leaves, iso){
+  const s = Object.assign({ workDays:6, restDays:4, startShift:'صباح', scheduleStart:'2026-01-01', minWorkers:0 }, sData||{});
+  const startIdx = Math.max(0, WORK_SHIFTS.indexOf(s.startShift));
+  const pat=[]; for(let i=0;i<s.workDays;i++){ pat.push(WORK_SHIFTS[(startIdx+Math.floor(i/2))%3]); }
+  const cycle=(s.workDays+s.restDays)||1;
+  const onLv={}; (leaves||[]).forEach(l=>{ if(l.status!=='مرفوض' && l.from_date<=iso && l.to_date>=iso) onLv[l.emp_id]=l; });
+  const counts={صباح:0,عصر:0,ليل:0,راحة:0,leave:0}; let working=0,onLeave=0;
+  (emps||[]).forEach(e=>{
+    let v;
+    if(ovMap[e.id]!=null && ovMap[e.id]!=='') v=ovMap[e.id];
+    else if(onLv[e.id]) v=onLv[e.id].type;
+    else { const start=e.cycle_start||s.scheduleStart, diff=daysBetween(start,iso);
+      if(diff<0){ v=''; } else { const pos=((diff%cycle)+cycle)%cycle; v = pos<s.workDays ? pat[pos] : REST; } }
+    if(v==='') return;
+    if(WORK_SHIFTS.includes(v)){ counts[v]++; working++; }
+    else if(v===REST){ counts.راحة++; }
+    else { counts.leave++; onLeave++; }
+  });
+  return { working, counts, onLeave, low: working < (s.minWorkers||0), minWorkers: s.minWorkers||0 };
+}
 async function loadOwnerOverview(){
   try{
     // قد تُستدعى قبل اكتمال تحميل قائمة الورديات (سباق) — حمّلها عند الحاجة
     if(!allTeams.length){ try{ allTeams = await Cloud.listTeams(); }catch(e){} }
     if(!allTeams.length){ ownerOverview=null; return; }   // أعد المحاولة لاحقاً بدل تخزين قائمة فارغة
     const iso=toISO(today());
-    const [emps,lvs,pts]=await Promise.all([
-      Cloud.sb.from('employees').select('team'),
-      Cloud.sb.from('leaves').select('team,status,from_date,to_date'),
-      Cloud.sb.from('point_shifts').select('team,approved').eq('day',iso)
+    const [emps,lvs,pts,ovs,sets]=await Promise.all([
+      Cloud.sb.from('employees').select('team,id,cycle_start'),
+      Cloud.sb.from('leaves').select('team,emp_id,status,from_date,to_date'),
+      Cloud.sb.from('point_shifts').select('team,approved').eq('day',iso),
+      Cloud.sb.from('overrides').select('team,emp_id,value').eq('day',iso),
+      Cloud.sb.from('settings').select('team,data')
     ]);
-    const map={};
-    allTeams.forEach(t=>map[t.team]={team:t.team,name:t.name,emps:0,pending:0,onleave:0,points:0});
-    (emps.data||[]).forEach(r=>{ if(map[r.team]) map[r.team].emps++; });
-    (lvs.data||[]).forEach(r=>{ const m=map[r.team]; if(!m) return;
-      if(r.status==='قيد الانتظار') m.pending++;
-      if(r.status==='معتمد' && r.from_date<=iso && r.to_date>=iso) m.onleave++; });
-    (pts.data||[]).forEach(r=>{ if(map[r.team]&&r.approved) map[r.team].points++; });
-    ownerOverview=Object.values(map);
+    const b={};
+    allTeams.forEach(t=>b[t.team]={team:t.team,name:t.name,emps:0,pending:0,points:0,_e:[],_ov:{},_lv:[],_set:null});
+    (emps.data||[]).forEach(r=>{ const x=b[r.team]; if(x){ x.emps++; x._e.push({id:r.id,cycle_start:r.cycle_start}); } });
+    (lvs.data||[]).forEach(r=>{ const x=b[r.team]; if(!x) return; x._lv.push(r); if(r.status==='قيد الانتظار') x.pending++; });
+    (ovs.data||[]).forEach(r=>{ const x=b[r.team]; if(x) x._ov[r.emp_id]=r.value; });
+    (sets.data||[]).forEach(r=>{ const x=b[r.team]; if(x) x._set=r.data; });
+    (pts.data||[]).forEach(r=>{ const x=b[r.team]; if(x&&r.approved) x.points++; });
+    ownerOverview=Object.values(b).map(x=>{ const d=teamDayToday(x._e,x._set,x._ov,x._lv,iso);
+      return { team:x.team,name:x.name,emps:x.emps,pending:x.pending,points:x.points,
+        onleave:d.onLeave,working:d.working,counts:d.counts,low:d.low,minWorkers:d.minWorkers }; });
   }catch(e){ ownerOverview=[]; }
   if(current==='dash' && isOwner) renderDash();
 }
@@ -659,11 +684,12 @@ async function submitAddTeam(){
 /* ===== لوحة رئيس القسم — إشرافية، منفصلة عن لوحة مسؤول الوردية ===== */
 // إجمالي المؤشرات عبر كل الورديات من ملخّص loadOwnerOverview
 function ownerKpis(ov){
-  return (ov||[]).reduce((a,o)=>({emps:a.emps+o.emps,onleave:a.onleave+o.onleave,pending:a.pending+o.pending,points:a.points+o.points}),{emps:0,onleave:0,pending:0,points:0});
+  return (ov||[]).reduce((a,o)=>({emps:a.emps+o.emps,onleave:a.onleave+o.onleave,pending:a.pending+o.pending,points:a.points+o.points,
+    working:a.working+(o.working||0), minWorkers:a.minWorkers+(o.minWorkers||0), low:a.low+(o.low?1:0)}),
+    {emps:0,onleave:0,pending:0,points:0,working:0,minWorkers:0,low:0});
 }
 function renderOwnerDash(){
   const el=document.getElementById('scr-dash');
-  const iso=toISO(today()), st=dayStats(iso), s=state.settings, low=st.working<s.minWorkers;
   // ترويسة مميّزة بهوية ذهبية (تختلف عن لوحة مسؤول الوردية)
   const header=`
     <div class="card owner-hero" style="border:none;background:linear-gradient(135deg,#b8912e,#8a6d1e);color:#fff">
@@ -699,30 +725,50 @@ function renderOwnerDash(){
     </div>`;
   if(ownerOverview===null){ loadOwnerOverview(); el.innerHTML=header+actions+'<div class="card"><div class="empty">جارٍ تحميل ملخّص الورديات…</div></div>'; return; }
   const ov=ownerOverview, k=ownerKpis(ov);
+  const covered=ov.length-k.low;
+  const tot={صباح:0,عصر:0,ليل:0,راحة:0,leave:0};
+  ov.forEach(o=>{ const c=o.counts||{}; tot.صباح+=c.صباح||0; tot.عصر+=c.عصر||0; tot.ليل+=c.ليل||0; tot.راحة+=c.راحة||0; tot.leave+=c.leave||0; });
   const kpis=`
     <div class="stats">
-      <div class="stat"><div class="n">${ov.length}</div><div class="l">عدد الورديات</div></div>
+      <div class="stat ${k.low>0?'bad':''}"><div class="n">${covered}/${ov.length}</div><div class="l">ورديات مغطّاة${k.low>0?' • '+k.low+' ناقصة':' • الكل سليم'}</div></div>
+      <div class="stat"><div class="n">${k.working}</div><div class="l">عاملون اليوم • الحد ${k.minWorkers}</div></div>
       <div class="stat"><div class="n">${k.emps}</div><div class="l">إجمالي الموظفين</div></div>
-      <div class="stat ${k.onleave>0?'warn':''}"><div class="n">${k.onleave}</div><div class="l">مُجازون اليوم (كل الورديات)</div></div>
-      <div class="stat ${k.pending?'warn':''}"><div class="n">${k.pending}</div><div class="l">طلبات معلّقة (كل الورديات)</div></div>
+      <div class="stat"><div class="n">${ov.length}</div><div class="l">عدد الورديات</div></div>
+      <div class="stat ${k.onleave>0?'warn':''}"><div class="n">${k.onleave}</div><div class="l">مُจازون اليوم</div></div>
+      <div class="stat ${k.pending?'warn':''}"><div class="n">${k.pending}</div><div class="l">طلبات معلّقة</div></div>
     </div>`;
   const shiftsCard=`
     <div class="card">
-      <h3>متابعة الورديات</h3>
-      ${ov.length? ov.map(o=>{
-        const open=o.team===currentTeam;
-        const cov=open?` <span class="badge ${low?'b-pending':'b-ok'}">${low?('⚠ تغطية '+st.working+'/'+s.minWorkers):('تغطية سليمة • '+st.working+' عاملون')}</span>`:'';
-        return `<div class="row" style="align-items:stretch">
-          <div class="grow">
-            <div class="name">${esc(o.name)} <span class="meta">(${esc(o.team)})</span>${open?' <span class="badge b-ok">معروضة</span>':''}${cov}</div>
-            <div class="meta" style="margin-top:3px">👥 ${o.emps} موظف • 🏖️ ${o.onleave} بإجازة اليوم • ${o.pending?('⏳ '+o.pending+' طلب معلّق'):'لا طلبات معلّقة'} • 🛡️ ${o.points} نقطة معتمدة</div>
+      <h3>وضع الورديات اليوم</h3>
+      ${ov.length? ov.map((o,i)=>{
+        const open=o.team===currentTeam, c=o.counts||{};
+        const pct=o.minWorkers>0?Math.min(100,Math.round(o.working/o.minWorkers*100)):(o.working>0?100:0);
+        const col=o.low?'var(--red)':'var(--green)';
+        return `<div style="padding:12px 0;${i<ov.length-1?'border-bottom:1px solid var(--line)':''}">
+          <div class="row" style="margin-bottom:6px">
+            <div class="grow"><b>${esc(o.name)}</b> <span class="meta">(${esc(o.team)})</span>${open?' <span class="badge b-ok">معروضة</span>':''}</div>
+            <span class="badge ${o.low?'b-pending':'b-ok'}">${o.low?('⚠ نقص '+o.working+'/'+o.minWorkers):('سليمة '+o.working+'/'+o.minWorkers)}</span>
           </div>
-          <div style="display:flex;flex-direction:column;gap:6px;justify-content:center">
-            ${open?'<span class="badge b-ok" style="text-align:center">مفتوحة</span>':`<button class="btn sm" onclick="switchTeam('${esc(o.team)}')">فتح</button>`}
-          </div>
+          <div style="height:9px;background:var(--bg);border-radius:6px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${col}"></div></div>
+          <div class="meta" style="margin-top:6px"><span style="color:var(--morning-d);font-weight:700">صباح ${c.صباح||0}</span> · <span style="color:#b45309;font-weight:700">عصر ${c.عصر||0}</span> · <span style="color:var(--indigo);font-weight:700">ليل ${c.ليل||0}</span> · راحة ${c.راحة||0} · 🏖️ ${o.onleave} · ⏳ ${o.pending} · 🛡️ ${o.points}</div>
+          ${open?'':`<button class="btn sm ghost" style="margin-top:8px" onclick="switchTeam('${esc(o.team)}')">فتح الوردية</button>`}
         </div>`;
       }).join('') : '<div class="empty">لا توجد ورديات</div>'}
-      <div class="hint" style="margin-top:8px">افتح أي وردية ثم تصفّح جدولها وإجازاتها وكشوفاتها واعتمِدها من التبويبات بالأسفل.</div>
+    </div>`;
+  const bar=(label,val,max,col)=>`<div style="margin:9px 0"><div style="display:flex;justify-content:space-between;font-size:13px"><span>${label}</span><b>${val}</b></div><div style="height:8px;background:var(--bg);border-radius:6px;overflow:hidden;margin-top:4px"><div style="height:100%;width:${Math.round(val/Math.max(1,max)*100)}%;background:${col}"></div></div></div>`;
+  const maxEmps=Math.max(1,...ov.map(x=>x.emps));
+  const maxType=Math.max(1,tot.صباح,tot.عصر,tot.ليل,tot.راحة,tot.leave);
+  const chartsCard=`
+    <div class="card">
+      <h3>إحصائيات القسم</h3>
+      <div class="meta" style="margin:-4px 0 6px;font-weight:700">توزيع الموظفين على الورديات</div>
+      ${ov.map(o=>bar(esc(o.name),o.emps,maxEmps,'var(--teal)')).join('')}
+      <div class="meta" style="margin:12px 0 6px;font-weight:700;border-top:1px solid var(--line);padding-top:10px">توزيع اليوم حسب نوع الوردية (كل القسم)</div>
+      ${bar('صباح',tot.صباح,maxType,'var(--morning)')}
+      ${bar('عصر',tot.عصر,maxType,'var(--amber)')}
+      ${bar('ليل',tot.ليل,maxType,'var(--indigo)')}
+      ${bar('راحة',tot.راحة,maxType,'var(--rest)')}
+      ${bar('إجازة',tot.leave,maxType,'var(--red)')}
     </div>`;
   const pendingLeaves=state.leaves.filter(l=>l.status==='قيد الانتظار').sort((a,b)=>a.from<b.from?-1:1);
   const pendingCard=`
@@ -759,7 +805,7 @@ function renderOwnerDash(){
         <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
       </div>
     </div>`;
-  el.innerHTML = header + actions + kpis + shiftsCard + pendingCard + reportsCard + noticesCardHtml() + staff;
+  el.innerHTML = header + actions + kpis + shiftsCard + chartsCard + pendingCard + reportsCard + noticesCardHtml() + staff;
 }
 // رئيس القسم يضبط دور (قالب صلاحيات) مسؤول الوردية المعروضة
 function openAdminRoles(){
