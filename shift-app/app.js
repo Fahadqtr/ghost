@@ -2591,7 +2591,18 @@ boot();
 /* -------------------- التثبيت كتطبيق (PWA) -------------------- */
 // service worker بسياسة «الشبكة أولاً» — يجعل التطبيق قابلاً للتثبيت ويعمل دون إنترنت دون نُسخ قديمة
 if('serviceWorker' in navigator){
-  window.addEventListener('load', ()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+  // تحديث تلقائي: عند تفعيل نسخة جديدة من الـ SW نُعيد التحميل مرّة لجلب أحدث كود
+  let __swRefreshing=false;
+  navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+    if(__swRefreshing) return; __swRefreshing=true; location.reload();
+  });
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').then((reg)=>{
+      try{ reg.update(); }catch(e){}
+      // افحص وجود تحديث كلّ مرّة يعود فيها التطبيق للواجهة
+      document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ try{ reg.update(); }catch(e){} } });
+    }).catch(()=>{});
+  });
 }
 let deferredInstall=null;
 function isStandalone(){ return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true; }
