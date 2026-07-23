@@ -46,11 +46,20 @@ const ADMIN_PRESETS = {
   readonly: { name:'قراءة فقط (مدقّق)',  desc:'عرض كل شيء دون تعديل',                caps:[] },
 };
 function adminPresetKey(){ const k=state.settings&&state.settings.adminPreset; return ADMIN_PRESETS[k]?k:'full'; }
-// صلاحية عملية للمستخدم الحالي: الموظف لا شيء؛ رئيس القسم إشراف واعتماد فقط؛ المسؤول حسب قالبه
+/* ===== قوالب صلاحيات رئيس القسم — يضبطها مدير النظام لكل قسم =====
+   تُخزَّن في settings.data.ownerPreset (لكل ورديات القسم). الافتراضي: إشراف واعتماد. */
+const OWNER_PRESETS = {
+  oversight: { name:'إشراف واعتماد',  desc:'اعتماد الإجازات والإشراف بلا إدخال يومي (الافتراضي)', caps:['approve'] },
+  full:      { name:'تحكّم كامل',      desc:'كل صلاحيات القسم: موظفون وجدول وإجازات ونقطة وتوجيهات', caps:['emps','sched','leaves','approve','balances','point','directives'] },
+  schedule:  { name:'جدول وموظفين',    desc:'الموظفون والجدول والنقطة والتوجيهات والاعتماد', caps:['emps','sched','point','directives','approve'] },
+  readonly:  { name:'عرض فقط',         desc:'يتابع دون تعديل', caps:[] },
+};
+function ownerPresetKey(){ const k=state.settings&&state.settings.ownerPreset; return OWNER_PRESETS[k]?k:'oversight'; }
+// صلاحية عملية للمستخدم الحالي: الموظف لا شيء؛ رئيس القسم حسب قالبه؛ المسؤول حسب قالبه
 function can(cap){
   if(isSuperadmin) return true;                  // مدير النظام: تحكّم كامل عند إدارة أي قسم
   if(isViewer) return false;
-  if(isOwner) return cap==='approve';           // إشراف واعتماد فقط — بلا إدخال يومي
+  if(isOwner) return OWNER_PRESETS[ownerPresetKey()].caps.includes(cap);
   return ADMIN_PRESETS[adminPresetKey()].caps.includes(cap);
 }
 // حالة شاشة سجل التعديلات
@@ -332,10 +341,11 @@ function maybeShowReportsPopup(){
 }
 
 /* ===================== كونسول مدير النظام (المنصّة متعدّدة الأقسام) ===================== */
-let sysDepts=null, sysAccounts=null;
+let sysDepts=null, sysAccounts=null, sysPresets={};
 async function loadSysadmin(){
   try{ const d=await Cloud.listDepartments(); sysDepts = d.data||[]; }catch(e){ sysDepts=[]; }
   try{ const a=await Cloud.adminListAccounts(); sysAccounts = a.data||[]; }catch(e){ sysAccounts=[]; }
+  try{ sysPresets = await Cloud.listDeptPresets(); }catch(e){ sysPresets={}; }
   renderSysadmin();
 }
 function sysDeptName(id){ const d=(sysDepts||[]).find(x=>x.id===id); return d?d.name:(id||'—'); }
@@ -364,6 +374,12 @@ function renderSysadmin(){
         return `<div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0">
           <div class="name" style="font-size:15px">${esc(d.name)} <span class="meta">(${esc(d.id)})</span></div>
           <div class="meta" style="margin-top:2px">${o.length?('رئيس القسم: '+esc(o.map(x=>x.full_name||x.username).join('، '))):'<span style="color:var(--red)">بلا رئيس قسم</span>'} • ${sh.length} مسؤول وردية</div>
+          <div class="field" style="margin:8px 0 0">
+            <label class="meta">صلاحيات رئيس القسم</label>
+            <select onchange="setOwnerPreset('${esc(d.id)}', this.value)" style="width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:#fff">
+              ${Object.entries(OWNER_PRESETS).map(([k,v])=>`<option value="${k}" ${(sysPresets[d.id]||'oversight')===k?'selected':''}>${esc(v.name)} — ${esc(v.desc)}</option>`).join('')}
+            </select>
+          </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
             <button class="btn sm" onclick="enterDeptAsManager('${esc(d.id)}')">🛠️ إدارة القسم</button>
             ${o.length?'':`<button class="btn sm ghost" onclick="openNewOwner('${esc(d.id)}')">👑 تعيين رئيس</button>`}
@@ -471,6 +487,11 @@ async function deleteDepartmentConfirm(id, name){
   try{ const r=await Cloud.adminDeleteDepartment(id); if(r.error) throw r.error;
     sysDepts=null; sysAccounts=null; toast('تم حذف القسم'); await loadSysadmin();
   }catch(e){ toast('تعذّر الحذف: '+((e&&e.message)||e)); }
+}
+async function setOwnerPreset(dept, preset){
+  try{ const r=await Cloud.adminSetOwnerPreset(dept, preset); if(r.error) throw r.error;
+    sysPresets[dept]=preset; toast('تم ضبط صلاحيات رئيس القسم');
+  }catch(e){ toast('تعذّر: '+((e&&e.message)||e)); }
 }
 // --- إدارة حساب (تعديل الاسم/كلمة المرور/نقل القسم/حذف) ---
 function openManageAccount(user){
