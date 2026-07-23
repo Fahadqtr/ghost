@@ -50,6 +50,7 @@ drop policy if exists staff_delete_own_pending  on public.leaves;
 
 -- إدراج: طلب معلّق، لموظف نفسه فقط، ووردية الصف = ورديته الموثوقة.
 create policy staff_insert_own_leave on public.leaves for insert
+  to authenticated
   with check (
         status = 'قيد الانتظار'
     and public.audit_current_emp_id() is not null
@@ -59,6 +60,7 @@ create policy staff_insert_own_leave on public.leaves for insert
 
 -- تعديل: فقط طلباته المعلّقة، ولا يمكنه تغيير emp_id أو الوردية لغير الموثوق.
 create policy staff_update_own_pending on public.leaves for update
+  to authenticated
   using (
         status = 'قيد الانتظار'
     and public.audit_current_emp_id() is not null
@@ -72,6 +74,7 @@ create policy staff_update_own_pending on public.leaves for update
 
 -- حذف: فقط طلباته المعلّقة.
 create policy staff_delete_own_pending on public.leaves for delete
+  to authenticated
   using (
         status = 'قيد الانتظار'
     and public.audit_current_emp_id() is not null
