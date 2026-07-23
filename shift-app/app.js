@@ -33,6 +33,24 @@ let allTeams = [];      // قائمة كل الورديات (للمالك)
 let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
 const OWNER_TEAM_KEY = 'shiftApp.ownerTeam';
 let highlightDate = null; // تاريخ يُبرَز في الجدول (زر أقرب وردية)
+
+/* ===== قوالب أدوار المسؤولين — يضبطها رئيس القسم لكل وردية =====
+   تُخزَّن في إعدادات الوردية (settings.adminPreset) كنصّ — بلا تعديل قاعدة بيانات.
+   ملاحظة: هذا ضبط على مستوى الواجهة (توضيح الأدوار ومنع الإجراءات الخاطئة)؛
+   الحماية التامّة على الخادم عبر RLS تبقى خطوة لاحقة منفصلة. */
+const ADMIN_PRESETS = {
+  full:     { name:'مسؤول كامل',        desc:'كل صلاحيات الوردية',                 caps:['emps','sched','leaves','approve','balances','point','directives'] },
+  schedule: { name:'جدول وموظفين',      desc:'الموظفون والجدول والنقطة والتوجيهات', caps:['emps','sched','point','directives'] },
+  approver: { name:'معتمِد إجازات',      desc:'الإجازات والأرصدة واعتمادها',         caps:['leaves','approve','balances'] },
+  readonly: { name:'قراءة فقط (مدقّق)',  desc:'عرض كل شيء دون تعديل',                caps:[] },
+};
+function adminPresetKey(){ const k=state.settings&&state.settings.adminPreset; return ADMIN_PRESETS[k]?k:'full'; }
+// صلاحية عملية للمستخدم الحالي: الموظف لا شيء؛ رئيس القسم إشراف واعتماد فقط؛ المسؤول حسب قالبه
+function can(cap){
+  if(isViewer) return false;
+  if(isOwner) return cap==='approve';           // إشراف واعتماد فقط — بلا إدخال يومي
+  return ADMIN_PRESETS[adminPresetKey()].caps.includes(cap);
+}
 // حالة شاشة سجل التعديلات
 let auditRows=[], auditCursor=null, auditDone=false, auditLoading=false, auditErr='';
 let auditFilters={ team:'', action:'', entity:'', actor:'', from:'', to:'' };
@@ -98,7 +116,7 @@ function nav(to){
   current=to;
   screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s===to));
   document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active', b.dataset.nav===to));
-  document.getElementById('fab').style.display = (to==='emps'||to==='leaves') ? 'grid' : 'none';
+  document.getElementById('fab').style.display = ((to==='emps'&&can('emps'))||(to==='leaves'&&can('leaves'))) ? 'grid' : 'none';
   window.scrollTo(0,0);
   renderScreen(to);
 }
@@ -186,49 +204,43 @@ function ownerTeamSwitcherHtml(){
   </div>`;
 }
 let ownerOverview=null;   // ملخّص كل الورديات (يُحمَّل عند فتح لوحة رئيس القسم)
-function ownerBarHtml(){
-  return `<div class="card" style="border:2px solid var(--teal);background:linear-gradient(135deg,#e9f7f5,#fff)">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <span style="font-size:20px">👑</span>
-      <div class="grow"><div class="name" style="font-weight:800">لوحة رئيس القسم</div>
-        <div class="meta">تتابع جميع الورديات وجداولها وكشوفاتها</div></div>
-    </div>
-    <div class="field" style="margin-bottom:10px"><label>اسم رئيس القسم (يظهر في اعتماد الجداول والكشوفات)</label>
-      <div style="display:flex;gap:8px">
-        <input id="owner-head" value="${esc(docDeptHead())}" placeholder="اكتب اسم رئيس القسم" style="flex:1">
-        <button class="btn sm" onclick="saveDeptHead()">حفظ</button>
-      </div>
-    </div>
-    <label class="meta" style="display:block;margin-bottom:4px">الوردية المعروضة الآن</label>
-    <select id="owner-team" onchange="switchTeam(this.value)" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff">
-      ${allTeams.map(t=>`<option value="${esc(t.team)}" ${t.team===currentTeam?'selected':''}>${esc(t.name)} (${esc(t.team)})</option>`).join('')}
-    </select>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-      <button class="btn sm" onclick="openAddTeam()">＋ إضافة وردية</button>
-      <button class="btn sm ghost" onclick="editTeamData()">✏️ تعديل بيانات الوردية</button>
-      <button class="btn sm ghost" onclick="openAnnounce()">📢 إرسال تعميم للمسؤولين</button>
-      <button class="btn sm ghost" onclick="reloadTeams()">↻ تحديث</button>
-      ${currentTeam!=='w1'?`<button class="btn sm danger" onclick="deleteTeamConfirm()">🗑️ حذف الوردية</button>`:''}
-    </div>
-  </div>
-  <div class="card">
-    <h3>متابعة جميع الورديات</h3>
-    ${ownerOverviewHtml()}
-  </div>`;
+let ownerReports=null;    // إفادات المسؤولين من كل الورديات (لرئيس القسم)
+// جمع الإفادات من إعدادات كل الورديات (المالك يقرأ الكل عبر RLS)
+async function loadOwnerReports(){
+  try{
+    const { data } = await Cloud.sb.from('settings').select('team,data');
+    const nameOf=t=>{ const x=allTeams.find(a=>a.team===t); return x?x.name:t; };
+    const all=[];
+    (data||[]).forEach(row=>{ const reps=(row.data&&row.data.reports)||[]; reps.forEach(r=> all.push({ id:r.id, text:r.text, ts:r.ts, by:r.by, team:row.team, teamName:nameOf(row.team) })); });
+    all.sort((a,b)=>(b.ts||0)-(a.ts||0));
+    ownerReports=all;
+  }catch(e){ ownerReports=[]; }
+  if(current==='dash' && isOwner){ renderDash(); maybeShowReportsPopup(); }
 }
-function ownerOverviewHtml(){
-  if(ownerOverview===null){ loadOwnerOverview(); return '<div class="empty">جارٍ تحميل ملخّص الورديات…</div>'; }
-  if(!ownerOverview.length) return '<div class="empty">لا توجد ورديات</div>';
-  return ownerOverview.map(o=>`
-    <div class="row" style="align-items:stretch">
-      <div class="grow">
-        <div class="name">${esc(o.name)} <span class="meta">(${esc(o.team)})</span>${o.team===currentTeam?' <span class="badge b-ok">معروضة</span>':''}</div>
-        <div class="meta" style="margin-top:2px">👥 ${o.emps} موظف • 🏖️ ${o.onleave} بإجازة اليوم • ${o.pending?('⏳ '+o.pending+' طلب معلّق'):'لا طلبات معلّقة'} • 🛡️ ${o.points} نقطة معتمدة</div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        ${o.team!==currentTeam?`<button class="btn sm" onclick="switchTeam('${esc(o.team)}')">فتح</button>`:'<span class="badge b-ok" style="text-align:center">مفتوحة</span>'}
-      </div>
-    </div>`).join('');
+function seenReports(){ try{ return JSON.parse(localStorage.getItem('shiftApp.seenReports')||'[]'); }catch(e){ return []; } }
+function reportSeen(id){ return id!=null && seenReports().indexOf(id)>=0; }
+function dismissReport(id){ const s=seenReports(); if(s.indexOf(id)<0){ s.push(id); try{ localStorage.setItem('shiftApp.seenReports', JSON.stringify(s.slice(-500))); }catch(e){} } renderDash(); }
+// إشعار منبثق لرئيس القسم بالإفادات الجديدة عند الدخول (لا يتكرّر إلا مع وصول أحدث)
+function maybeShowReportsPopup(){
+  if(!isOwner || !Array.isArray(ownerReports)) return false;
+  const ov=document.getElementById('overlay');
+  if(ov && ov.classList.contains('open')) return false;   // لا تحجب نافذة مفتوحة
+  const undismissed=ownerReports.filter(r=>!reportSeen(r.id));
+  if(!undismissed.length) return false;
+  const maxTs=undismissed.reduce((m,r)=>Math.max(m,Number(r.ts)||0),0);
+  let last=0; try{ last=Number(localStorage.getItem('shiftApp.reportPopupTs')||0)||0; }catch(e){}
+  if(maxTs<=last) return false;   // لا جديد منذ آخر إشعار
+  const fresh=undismissed.filter(r=>(Number(r.ts)||0)>last).sort((a,b)=>(b.ts||0)-(a.ts||0));
+  openSheet(`
+    <h3>📥 إفادات جديدة (${fresh.length})<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">وصلتك إفادات من مسؤولي الورديات:</p>
+    ${fresh.map(r=>`<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin:6px 0">
+      <div class="name" style="font-size:14px">${esc(r.by||'مسؤول الوردية')} <span class="meta">(${esc(r.teamName||r.team)})</span></div>
+      <div class="meta" style="margin-top:2px;white-space:pre-wrap">${esc(r.text)}</div>
+      <div class="meta" style="margin-top:2px">${noticeDate(r.ts)}</div></div>`).join('')}
+    <button class="btn block" style="margin-top:12px" onclick="closeSheet()">تمّ الاطلاع</button>`);
+  try{ localStorage.setItem('shiftApp.reportPopupTs', String(maxTs)); }catch(e){}
+  return true;
 }
 async function loadOwnerOverview(){
   try{
@@ -253,7 +265,7 @@ async function loadOwnerOverview(){
   if(current==='dash' && isOwner) renderDash();
 }
 async function reloadTeams(){
-  try{ allTeams = await Cloud.listTeams(); ownerOverview=null; toast('تم تحديث قائمة الورديات'); renderDash(); }
+  try{ allTeams = await Cloud.listTeams(); ownerOverview=null; ownerReports=null; toast('تم تحديث قائمة الورديات'); renderDash(); }
   catch(e){ toast('تعذّر تحميل الورديات'); }
 }
 // حفظ اسم رئيس القسم وبثّه لكل الورديات (يظهر في اعتماد كل الكشوفات)
@@ -387,6 +399,7 @@ function showDirective(ts){
   `);
 }
 function openDirectives(){
+  if(!can('directives')){ toast('غير مصرّح بإرسال التوجيهات'); return; }
   const list=directiveList();
   openSheet(`
     <h3>توجيهات الموظفين<button class="x" onclick="closeSheet()">×</button></h3>
@@ -407,6 +420,7 @@ function openDirectives(){
   `);
 }
 function sendDirective(){
+  if(!can('directives')){ toast('غير مصرّح'); return; }
   const text=val('dr-text').trim(); const err=document.getElementById('dr-err'); if(err) err.textContent='';
   if(!text){ if(err) err.textContent='اكتب نص التوجيه'; return; }
   const list=(state.settings.directives||[]).slice();
@@ -420,6 +434,42 @@ function deleteDirective(ts){
 }
 function clearAllDirectives(){
   state.settings.directives=[]; Data.saveSettings(); closeSheet(); renderScreen(current); toast('تم مسح كل التوجيهات');
+}
+
+/* ===== إفادات: مسؤول الوردية ← رئيس القسم =====
+   تُخزَّن في إعدادات وردية المُرسِل (settings.reports) — يقرؤها رئيس القسم من كل الورديات (RLS يسمح للمالك). */
+function reportList(){ return (state.settings.reports||[]).slice().sort((a,b)=>(b.ts||0)-(a.ts||0)); }
+function openReport(){
+  if(isViewer||isOwner) return;   // للمسؤولين فقط
+  const list=reportList();
+  openSheet(`
+    <h3>إفادة لرئيس القسم<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">تصل هذه الإفادة إلى رئيس القسم في لوحته.</p>
+    <div class="field"><label>نص الإفادة</label>
+      <textarea id="rp-text" rows="4" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px" placeholder="اكتب الإفادة هنا…"></textarea></div>
+    <div class="hint bad" id="rp-err" style="margin-bottom:6px"></div>
+    <button class="btn block" onclick="sendReport()">📤 إرسال الإفادة</button>
+    ${list.length?`
+      <div style="border-top:1px solid var(--line);margin:16px 0 8px"></div>
+      <h3 style="font-size:14px">إفاداتك المُرسَلة (${list.length})</h3>
+      ${list.map(n=>`<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin:6px 0;display:flex;align-items:flex-start;gap:10px">
+        <div class="grow" style="min-width:0"><div class="meta" style="white-space:pre-wrap">${esc(n.text)}</div><div class="meta" style="margin-top:3px">${noticeDate(n.ts)}</div></div>
+        <button class="icon-btn danger" onclick="deleteReport(${Number(n.ts)||0})">🗑️</button>
+      </div>`).join('')}`:''}
+  `);
+}
+function sendReport(){
+  if(isViewer||isOwner) return;
+  const text=val('rp-text').trim(); const err=document.getElementById('rp-err'); if(err) err.textContent='';
+  if(!text){ if(err) err.textContent='اكتب نص الإفادة'; return; }
+  const list=(state.settings.reports||[]).slice();
+  list.push({ id: uid(), text, ts: Date.now(), by: docSupervisor()||currentUsername||'مسؤول الوردية' });
+  state.settings.reports=list.slice(-50);
+  Data.saveSettings(); closeSheet(); renderScreen(current); toast('تم إرسال الإفادة لرئيس القسم');
+}
+function deleteReport(ts){
+  state.settings.reports=(state.settings.reports||[]).filter(n=>Number(n.ts)!==Number(ts));
+  Data.saveSettings(); openReport(); toast('تم حذف الإفادة');
 }
 // شاشة منبثقة بأحدث توجيه للموظف عند الدخول
 function maybeShowDirective(){
@@ -606,7 +656,133 @@ async function submitAddTeam(){
     err.textContent = /exists|duplicate|already/i.test(m) ? 'اسم المستخدم مستخدم مسبقاً — اختر غيره' : ('تعذّر الإنشاء'+(m?': '+m:''));
   }
 }
+/* ===== لوحة رئيس القسم — إشرافية، منفصلة عن لوحة مسؤول الوردية ===== */
+// إجمالي المؤشرات عبر كل الورديات من ملخّص loadOwnerOverview
+function ownerKpis(ov){
+  return (ov||[]).reduce((a,o)=>({emps:a.emps+o.emps,onleave:a.onleave+o.onleave,pending:a.pending+o.pending,points:a.points+o.points}),{emps:0,onleave:0,pending:0,points:0});
+}
+function renderOwnerDash(){
+  const el=document.getElementById('scr-dash');
+  const iso=toISO(today()), st=dayStats(iso), s=state.settings, low=st.working<s.minWorkers;
+  // ترويسة مميّزة بهوية ذهبية (تختلف عن لوحة مسؤول الوردية)
+  const header=`
+    <div class="card owner-hero" style="border:none;background:linear-gradient(135deg,#b8912e,#8a6d1e);color:#fff">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:26px">👑</span>
+        <div class="grow"><div class="name" style="font-weight:800;color:#fff;font-size:18px">لوحة رئيس القسم</div>
+          <div class="meta" style="color:#fdf3d6">إشراف على جميع الورديات — اعتماد وتوجيه بلا إدخال يومي مباشر</div></div>
+      </div>
+      <div class="field" style="margin:12px 0 0">
+        <label style="color:#fdf3d6">اسم رئيس القسم (يظهر في اعتماد الجداول والكشوفات)</label>
+        <div style="display:flex;gap:8px">
+          <input id="owner-head" value="${esc(docDeptHead())}" placeholder="اكتب اسم رئيس القسم" style="flex:1">
+          <button class="btn sm" onclick="saveDeptHead()">حفظ</button>
+        </div>
+      </div>
+    </div>`;
+  // إجراءات إشرافية (لرئيس القسم فقط) — بلا أدوات الإدخال اليومي
+  const actions=`
+    <div class="card">
+      <label class="meta" style="display:block;margin-bottom:6px">الوردية المعروضة الآن (لتصفّح جدولها وكشوفاتها من التبويبات بالأسفل)</label>
+      <select id="owner-team" onchange="switchTeam(this.value)" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;font-size:15px;background:#fff">
+        ${allTeams.map(t=>`<option value="${esc(t.team)}" ${t.team===currentTeam?'selected':''}>${esc(t.name)} (${esc(t.team)})</option>`).join('')}
+      </select>
+      <div class="meta" style="margin-top:8px">دور مسؤول هذه الوردية: <b>${esc(ADMIN_PRESETS[adminPresetKey()].name)}</b></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="btn sm" onclick="openAddTeam()">＋ إضافة وردية</button>
+        <button class="btn sm ghost" onclick="openAdminRoles()">👔 دور المسؤول</button>
+        <button class="btn sm ghost" onclick="editTeamData()">✏️ تعديل بيانات الوردية</button>
+        <button class="btn sm ghost" onclick="openAnnounce()">📢 إرسال تعميم</button>
+        <button class="btn sm ghost" onclick="reloadTeams()">↻ تحديث</button>
+        ${currentTeam!=='w1'?`<button class="btn sm danger" onclick="deleteTeamConfirm()">🗑️ حذف الوردية</button>`:''}
+      </div>
+    </div>`;
+  if(ownerOverview===null){ loadOwnerOverview(); el.innerHTML=header+actions+'<div class="card"><div class="empty">جارٍ تحميل ملخّص الورديات…</div></div>'; return; }
+  const ov=ownerOverview, k=ownerKpis(ov);
+  const kpis=`
+    <div class="stats">
+      <div class="stat"><div class="n">${ov.length}</div><div class="l">عدد الورديات</div></div>
+      <div class="stat"><div class="n">${k.emps}</div><div class="l">إجمالي الموظفين</div></div>
+      <div class="stat ${k.onleave>0?'warn':''}"><div class="n">${k.onleave}</div><div class="l">مُجازون اليوم (كل الورديات)</div></div>
+      <div class="stat ${k.pending?'warn':''}"><div class="n">${k.pending}</div><div class="l">طلبات معلّقة (كل الورديات)</div></div>
+    </div>`;
+  const shiftsCard=`
+    <div class="card">
+      <h3>متابعة الورديات</h3>
+      ${ov.length? ov.map(o=>{
+        const open=o.team===currentTeam;
+        const cov=open?` <span class="badge ${low?'b-pending':'b-ok'}">${low?('⚠ تغطية '+st.working+'/'+s.minWorkers):('تغطية سليمة • '+st.working+' عاملون')}</span>`:'';
+        return `<div class="row" style="align-items:stretch">
+          <div class="grow">
+            <div class="name">${esc(o.name)} <span class="meta">(${esc(o.team)})</span>${open?' <span class="badge b-ok">معروضة</span>':''}${cov}</div>
+            <div class="meta" style="margin-top:3px">👥 ${o.emps} موظف • 🏖️ ${o.onleave} بإجازة اليوم • ${o.pending?('⏳ '+o.pending+' طلب معلّق'):'لا طلبات معلّقة'} • 🛡️ ${o.points} نقطة معتمدة</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;justify-content:center">
+            ${open?'<span class="badge b-ok" style="text-align:center">مفتوحة</span>':`<button class="btn sm" onclick="switchTeam('${esc(o.team)}')">فتح</button>`}
+          </div>
+        </div>`;
+      }).join('') : '<div class="empty">لا توجد ورديات</div>'}
+      <div class="hint" style="margin-top:8px">افتح أي وردية ثم تصفّح جدولها وإجازاتها وكشوفاتها واعتمِدها من التبويبات بالأسفل.</div>
+    </div>`;
+  const pendingLeaves=state.leaves.filter(l=>l.status==='قيد الانتظار').sort((a,b)=>a.from<b.from?-1:1);
+  const pendingCard=`
+    <div class="card">
+      <h3>طلبات بانتظار اعتمادك — ${esc(currentTeamName())} (${pendingLeaves.length})</h3>
+      ${pendingLeaves.length? pendingLeaves.map(l=>{ const e=empById(l.empId);
+        return `<div class="row">
+          <div class="avatar">${initials(e?e.name:'?')}</div>
+          <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${inclusiveDays(l.from,l.to)} يوم</div></div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn sm" onclick="approveLeave('${l.id}')">✓ اعتماد</button>
+            <button class="btn sm danger" onclick="rejectLeave('${l.id}')">✗ رفض</button>
+          </div>
+        </div>`; }).join('') : '<div class="empty">لا طلبات معلّقة في الوردية المعروضة</div>'}
+    </div>`;
+  if(ownerReports===null) loadOwnerReports();
+  const reps=(ownerReports||[]).filter(r=>!reportSeen(r.id));
+  const reportsCard=`
+    <div class="card">
+      <h3>📥 إفادات المسؤولين ${reps.length?`<span class="badge b-pending">${reps.length} جديدة</span>`:''}</h3>
+      ${ownerReports===null?'<div class="empty">جارٍ التحميل…</div>':(reps.length? reps.map(r=>`<div class="row" style="align-items:flex-start">
+          <div class="grow"><div class="name" style="font-size:14px">${esc(r.by||'مسؤول الوردية')} <span class="meta">(${esc(r.teamName||r.team)})</span></div>
+            <div class="meta" style="margin-top:2px;white-space:pre-wrap">${esc(r.text)}</div>
+            <div class="meta" style="margin-top:2px">${noticeDate(r.ts)}</div></div>
+          <button class="btn sm ghost" onclick="dismissReport('${esc(r.id)}')">تمّت</button>
+        </div>`).join('') : '<div class="empty">لا إفادات جديدة</div>')}
+    </div>`;
+  const staff=`
+    <div class="card">
+      <h3>دخول الموظفين (عرض فقط)</h3>
+      <div class="meta" style="margin-bottom:8px">شارك الرابط أو رمز QR مع الموظفين — يدخلون بالرقم الوظيفي ويشاهدون الجدول والكشف فقط.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn sm" onclick="showStaffQR()">📱 عرض رمز QR</button>
+        <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
+      </div>
+    </div>`;
+  el.innerHTML = header + actions + kpis + shiftsCard + pendingCard + reportsCard + noticesCardHtml() + staff;
+}
+// رئيس القسم يضبط دور (قالب صلاحيات) مسؤول الوردية المعروضة
+function openAdminRoles(){
+  if(!isOwner) return;
+  const cur=adminPresetKey();
+  openSheet(`<h3>دور مسؤول الوردية<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">اختر دور مسؤول وردية <b>${esc(currentTeamName())}</b> — يُطبَّق على واجهته عند دخوله. لضبط وردية أخرى بدّلها من «الوردية المعروضة».</p>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${Object.entries(ADMIN_PRESETS).map(([k,v])=>`
+        <button class="btn block ghost" style="display:block;text-align:right;padding:12px 14px;${cur===k?'border:2px solid var(--teal)':''}" onclick="setAdminPreset('${k}')">
+          <div style="font-weight:800">${cur===k?'● ':'○ '}${esc(v.name)}</div>
+          <div class="meta" style="font-weight:400;margin-top:2px">${esc(v.desc)}</div>
+        </button>`).join('')}
+    </div>`);
+}
+function setAdminPreset(key){
+  if(!isOwner || !ADMIN_PRESETS[key]) return;
+  state.settings.adminPreset=key; Data.saveSettings();
+  closeSheet(); renderDash(); toast('تم ضبط دور المسؤول: '+ADMIN_PRESETS[key].name);
+}
+
 function renderDash(){
+  if(isOwner) return renderOwnerDash();   // رئيس القسم: لوحة إشرافية منفصلة
   const iso=toISO(today()), st=dayStats(iso), s=state.settings, low=st.working<s.minWorkers;
   const el=document.getElementById('scr-dash');
   const soon=state.leaves.filter(l=>l.status==='معتمد' && daysBetween(iso,l.from)>=0 && daysBetween(iso,l.from)<=7);
@@ -618,7 +794,6 @@ function renderDash(){
   const pending=state.leaves.filter(l=>l.status==='قيد الانتظار').length;
   const pendingLeaves=state.leaves.filter(l=>l.status==='قيد الانتظار').sort((a,b)=>a.from<b.from?-1:1);
   el.innerHTML=`
-    ${isOwner?ownerBarHtml():''}
     ${!isViewer?noticesCardHtml():''}
     ${!isViewer?directivesCardHtml():''}
     <div class="card" style="background:linear-gradient(135deg,var(--teal-l),#fff)">
@@ -626,8 +801,9 @@ function renderDash(){
       <div style="font-weight:800;font-size:18px;margin-top:2px">حالة اليوم</div>
     </div>
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>
-      <button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>
+      ${can('leaves')?`<button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>`:''}
+      ${can('directives')?`<button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>`:''}
+      ${!isViewer?`<button class="btn sm" onclick="openReport()">📤 إفادة لرئيس القسم</button>`:''}
       <button class="btn sm ghost" onclick="refreshFromCloud()">↻ تحديث</button>
     </div>
     <div class="stats">
@@ -643,10 +819,10 @@ function renderDash(){
         return `<div class="row">
           <div class="avatar">${initials(e?e.name:'?')}</div>
           <div class="grow"><div class="name">${e?e.name:'— (محذوف)'}</div><div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${inclusiveDays(l.from,l.to)} يوم</div>${l.notes?`<div class="meta" style="margin-top:2px">📝 ${esc(l.notes)}</div>`:''}</div>
-          <div style="display:flex;flex-direction:column;gap:6px">
+          ${can('approve')?`<div style="display:flex;flex-direction:column;gap:6px">
             <button class="btn sm" onclick="approveLeave('${l.id}')">✓ اعتماد</button>
             <button class="btn sm danger" onclick="rejectLeave('${l.id}')">✗ رفض</button>
-          </div>
+          </div>`:''}
         </div>`;
       }).join('') : '<div class="empty">لا توجد طلبات معلّقة</div>'}
     </div>
@@ -721,14 +897,15 @@ function renderEmps(){
           <div class="avatar">${initials(e.name)}</div>
           <div class="grow"><div class="name">${e.name}</div><div class="meta">الرقم الوظيفي: ${e.no} • بداية الدورة: ${fmtDate(e.cycleStart)}</div></div>
           ${badge}
-          <button class="icon-btn" onclick="editEmp('${e.id}')" title="تعديل">✏️</button>
-          <button class="icon-btn danger" onclick="deleteEmp('${e.id}')" title="شطب">🗑️</button>
+          ${can('emps')?`<button class="icon-btn" onclick="editEmp('${e.id}')" title="تعديل">✏️</button>
+          <button class="icon-btn danger" onclick="deleteEmp('${e.id}')" title="شطب">🗑️</button>`:''}
         </div>`;
-      }).join('') : '<div class="empty">لا يوجد موظفون — أضف موظفاً بزر +</div>'}
+      }).join('') : '<div class="empty">لا يوجد موظفون</div>'}
     </div>
-    <button class="btn block" onclick="editEmp('')">＋ تسجيل موظف جديد</button>`;
+    ${can('emps')?`<button class="btn block" onclick="editEmp('')">＋ تسجيل موظف جديد</button>`:'<p class="hint">عرض فقط — لا تملك صلاحية إدارة الموظفين.</p>'}`;
 }
 function editEmp(id){
+  if(!can('emps')){ toast('غير مصرّح بإدارة الموظفين'); return; }
   const e=id?empById(id):null;
   openSheet(`
     <h3>${e?'تعديل بيانات موظف':'تسجيل موظف جديد'}<button class="x" onclick="closeSheet()">×</button></h3>
@@ -741,6 +918,7 @@ function editEmp(id){
   `);
 }
 function saveEmp(id){
+  if(!can('emps')){ toast('غير مصرّح'); return; }
   const name=val('f-name').trim(), no=val('f-no').trim(), cs=val('f-cs');
   if(!name){ toast('أدخل الاسم'); return; }
   if(!no){ toast('أدخل الرقم الوظيفي'); return; }
@@ -750,6 +928,7 @@ function saveEmp(id){
   Data.upsertEmp(e); closeSheet(); renderScreen(current); toast(id?'تم الحفظ':'تم تسجيل الموظف');
 }
 function deleteEmp(id){
+  if(!can('emps')){ toast('غير مصرّح'); return; }
   const e=empById(id); if(!e) return;
   if(!confirm(`شطب الموظف «${e.name}»؟\nسيُحذف من الجدول وتُحذف طلبات إجازاته.`)) return;
   state.employees=state.employees.filter(x=>x.id!==id);
@@ -760,6 +939,7 @@ function deleteEmp(id){
 
 /* -------------------- جدول الورديات -------------------- */
 let schedMonth=null;
+let ownerSchedByShift=true;   // رئيس القسم: عرض الجدول حسب الوردية (لا حسب الموظف)
 function ensureMonth(){
   if(schedMonth) return;
   const d=parseISO(state.settings.scheduleStart), t=today();
@@ -767,6 +947,7 @@ function ensureMonth(){
   if(t<d) schedMonth={ y:d.getFullYear(), m:d.getMonth() };
 }
 function renderSched(){
+  if(isOwner && ownerSchedByShift) return renderOwnerSched();   // رئيس القسم: عرض المداومين حسب الوردية
   ensureMonth();
   const el=document.getElementById('scr-sched'), {y,m}=schedMonth, days=new Date(y,m+1,0).getDate();
   const todayISO=toISO(today());
@@ -808,6 +989,7 @@ function renderSched(){
     <div class="sched-actions">
       <button class="btn sm" onclick="goToday()">اليوم</button>
       <button class="btn gold sm" onclick="jumpNearestShift()">⦿ أقرب وردية</button>
+      ${isOwner?'<button class="btn ghost sm" onclick="toggleOwnerSched(true)">📋 حسب الوردية</button>':''}
     </div>
     <div class="tablewrap">
       <table class="sched">
@@ -849,6 +1031,71 @@ function labelShort(v){
 function moveMonth(dir){ let {y,m}=schedMonth; m+=dir; if(m>11){m=0;y++;} if(m<0){m=11;y--;} schedMonth={y,m}; highlightDate=null; renderSched(); }
 function viewerEmp(){ return currentEmpNo ? state.employees.find(e=>e.no===currentEmpNo) : null; }
 function goToday(){ const t=today(); schedMonth={y:t.getFullYear(),m:t.getMonth()}; highlightDate=null; renderSched(); }
+function toggleOwnerSched(byShift){ ownerSchedByShift=!!byShift; renderSched(); }
+// عرض الجدول لرئيس القسم حسب الوردية: من في صباح/عصر/ليل لكل يوم، والضغط يُظهر المداومين
+function renderOwnerSched(){
+  ensureMonth();
+  const el=document.getElementById('scr-sched'), {y,m}=schedMonth, days=new Date(y,m+1,0).getDate();
+  const todayISO=toISO(today());
+  let head='';
+  for(let d=1;d<=days;d++){
+    const iso=toISO(new Date(y,m,d)), wd=new Date(y,m,d).getDay(), wknd=(wd===5||wd===6);
+    head+=`<th class="${wknd?'wknd':''} ${wd===5?'fridaycol':''} ${iso===todayISO?'today':''}"><div>${AR_DAYS[wd].slice(0,3)}</div><div style="font-weight:800">${d}</div></th>`;
+  }
+  const shiftRows=WORK_SHIFTS.map(sh=>{
+    let cells='';
+    for(let d=1;d<=days;d++){
+      const iso=toISO(new Date(y,m,d)), c=dayStats(iso).counts[sh];
+      cells+=`<td class="fcount ${c>0?'f-'+sh:'fzero'} ${iso===todayISO?'today':''}" style="cursor:pointer" onclick="showShiftRoster('${iso}','${sh}')">${c>0?c:'·'}</td>`;
+    }
+    return `<tr class="shift-row"><td class="namecol"><span class="fdot dot-${sh}"></span>${sh}</td>${cells}</tr>`;
+  }).join('');
+  let totalCells='';
+  for(let d=1;d<=days;d++){ const iso=toISO(new Date(y,m,d)), w=dayStats(iso).working, low=w<state.settings.minWorkers;
+    totalCells+=`<td class="${low?'low':(w>0?'ok':'')} ${iso===todayISO?'today':''}">${w}</td>`; }
+  const todayCards=WORK_SHIFTS.map(sh=>{ const list=state.employees.filter(e=>cellValue(e,todayISO).value===sh);
+    return `<div class="card" style="padding:10px 12px;margin:0">
+      <div class="row" style="margin-bottom:4px"><span class="fdot dot-${sh}"></span><b style="margin-inline-start:6px">${sh}</b><span class="grow"></span><span class="badge b-ok">${list.length}</span></div>
+      ${list.length? list.map(e=>`<div class="meta" style="padding:2px 0">• ${esc(e.name)} <span style="opacity:.7">(${esc(e.no)})</span></div>`).join('') : '<div class="meta">لا مداومين</div>'}
+    </div>`; }).join('');
+  el.innerHTML=`
+    <div class="sched-bar">
+      <button class="btn ghost sm" onclick="moveMonth(1)">‹ التالي</button>
+      <div class="m">${AR_MONTHS[m]} ${y}</div>
+      <button class="btn ghost sm" onclick="moveMonth(-1)">السابق ›</button>
+    </div>
+    <div class="sched-actions">
+      <button class="btn sm" onclick="goToday()">اليوم</button>
+      <button class="btn ghost sm" onclick="toggleOwnerSched(false)">👥 حسب الموظف</button>
+    </div>
+    <div class="card summary-card">
+      <h3>المداومون حسب الوردية</h3>
+      <p class="hint" style="margin:-4px 0 8px">اضغط على أي خانة لعرض أسماء المداومين في تلك الوردية واليوم.</p>
+      <div class="tablewrap">
+        <table class="sched">
+          <thead><tr><th class="namecol">الوردية</th>${head}</tr></thead>
+          <tbody>${shiftRows}<tr class="total-row"><td class="namecol">إجمالي العاملين</td>${totalCells}</tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h3>مداومو اليوم — ${AR_DAYS[today().getDay()]} ${fmtDate(todayISO)}</h3>
+      <div style="display:flex;flex-direction:column;gap:8px">${todayCards}</div>
+    </div>
+    <div class="leg">
+      <span><i style="background:var(--morning-l)"></i>صباح</span>
+      <span><i style="background:var(--amber-l)"></i>عصر</span>
+      <span><i style="background:var(--indigo-l)"></i>ليل</span>
+    </div>`;
+}
+// قائمة المداومين في وردية ويوم محدّدين (لرئيس القسم)
+function showShiftRoster(iso, shift){
+  const list=state.employees.filter(e=>cellValue(e,iso).value===shift);
+  openSheet(`
+    <h3>وردية ${esc(shift)} — ${fmtDate(iso)}<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:8px">${AR_DAYS[parseISO(iso).getDay()]} • عدد المداومين: ${list.length}</p>
+    ${list.length? `<div class="card" style="padding:6px 12px">${list.map(e=>`<div class="row"><div class="avatar">${initials(e.name)}</div><div class="grow"><div class="name">${esc(e.name)}</div><div class="meta">الرقم الوظيفي: ${esc(e.no)}</div></div></div>`).join('')}</div>` : '<div class="empty">لا مداومين في هذه الوردية</div>'}`);
+}
 // أقرب وردية قادمة: للموظف ورديته هو، وللمشرف أقرب يوم عمل للفريق
 function jumpNearestShift(){
   const ve=viewerEmp(), start=today(); let target=null, shift='';
@@ -863,6 +1110,7 @@ function jumpNearestShift(){
 }
 function editCell(empId, iso){
   if(isViewer) return;   // الموظف لا يعدّل
+  if(!can('sched')){ toast('غير مصرّح بتعديل الجدول'); return; }
   const e=empById(empId); if(!e) return;
   const cur=cellValue(e,iso), auto=rotationShift(e,iso), opts=[...WORK_SHIFTS, REST, ...state.settings.leaveTypes];
   openSheet(`
@@ -874,10 +1122,12 @@ function editCell(empId, iso){
   `);
 }
 function setCell(empId, iso, value){
+  if(!can('sched')){ toast('غير مصرّح'); return; }
   state.overrides[empId]=state.overrides[empId]||{}; state.overrides[empId][iso]=value;
   Data.setOverride(empId, iso, value); closeSheet(); renderSched(); toast('تم تعديل الوردية');
 }
 function clearCell(empId, iso){
+  if(!can('sched')){ toast('غير مصرّح'); return; }
   if(state.overrides[empId]){ delete state.overrides[empId][iso]; if(!Object.keys(state.overrides[empId]).length) delete state.overrides[empId]; }
   Data.delOverride(empId, iso); closeSheet(); renderSched(); toast('أُرجعت للأصل');
 }
@@ -905,15 +1155,15 @@ function renderLeaves(){
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
             <span class="badge ${l.status==='معتمد'?'b-ok':l.status==='مرفوض'?'b-rej':'b-pending'}">${l.status}</span>
-            <div style="display:flex;gap:6px">
+            ${can('leaves')?`<div style="display:flex;gap:6px">
               <button class="icon-btn" onclick="editLeave('${l.id}')">✏️</button>
               <button class="icon-btn danger" onclick="deleteLeave('${l.id}')">🗑️</button>
-            </div>
+            </div>`:''}
           </div>
         </div>`;
       }).join('') : '<div class="empty">لا توجد طلبات في هذا التصنيف</div>'}
     </div>
-    <button class="btn block" onclick="editLeave('')">＋ حجز إجازة جديدة</button>`;
+    ${can('leaves')?`<button class="btn block" onclick="editLeave('')">＋ حجز إجازة جديدة</button>`:'<p class="hint">عرض فقط — لا تملك صلاحية إدارة الإجازات.</p>'}`;
 }
 function setLeaveFilter(f){ leaveFilter=f; renderLeaves(); }
 
@@ -986,6 +1236,7 @@ function coverageCheck(l){
   return {ok, text: ok?`✓ التغطية سليمة (أقصى ${worst}/${max} مُجازين)`:`⚠ تجاوز التغطية: ${worst}/${max} مُجازين بتاريخ ${fmtDate(worstDay)}`};
 }
 function editLeave(id){
+  if(!can('leaves')){ toast('غير مصرّح بإدارة الإجازات'); return; }
   const l=id?state.leaves.find(x=>x.id===id):null, s=state.settings;
   const empOpts=state.employees.map(e=>`<option value="${e.id}" ${l&&l.empId===e.id?'selected':''}>${e.name} (${e.no})</option>`).join('');
   openSheet(`
@@ -1014,6 +1265,7 @@ function updLeaveHint(){
   h.className='hint ok'; h.textContent=`المدة: ${inclusiveDays(from,to)} يوم`;
 }
 function saveLeave(id){
+  if(!can('leaves')){ toast('غير مصرّح'); return; }
   const empId=val('l-emp'); if(!empId){ toast('اختر الموظف'); return; }
   const from=val('l-from'), to=val('l-to');
   if(!from||!to){ toast('حدد التواريخ'); return; }
@@ -1025,12 +1277,14 @@ function saveLeave(id){
   Data.upsertLeave(rec); closeSheet(); renderScreen(current); toast(id?'تم الحفظ':'تم حجز الإجازة');
 }
 function deleteLeave(id){
+  if(!can('leaves')){ toast('غير مصرّح'); return; }
   const l=state.leaves.find(x=>x.id===id); if(!l) return;
   if(!confirm('حذف طلب الإجازة؟')) return;
   state.leaves=state.leaves.filter(x=>x.id!==id);
   Data.delLeave(id); renderLeaves(); toast('تم الحذف');
 }
 function setLeaveStatus(id, status){
+  if(!can('approve')){ toast('غير مصرّح باعتماد الطلبات'); return; }
   const l=state.leaves.find(x=>x.id===id); if(!l) return;
   const prev=l.status; l.status=status;
   if(!ensureOverrideIfNeeded(l)){ l.status=prev; return; }
@@ -1116,10 +1370,11 @@ function renderBalances(){
           <select onchange="balTypeFilter=this.value; renderBalances()">${types.map(t=>`<option ${balTypeFilter===t?'selected':''}>${t}</option>`).join('')}</select></div>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn sm ghost" onclick="openPolicyEditor()">⚙️ سياسات الرصيد</button>
-        <button class="btn sm ghost" onclick="openAdjust('')">＋ تعديل رصيد</button>
+        ${can('balances')?`<button class="btn sm ghost" onclick="openPolicyEditor()">⚙️ سياسات الرصيد</button>
+        <button class="btn sm ghost" onclick="openAdjust('')">＋ تعديل رصيد</button>`:''}
         <button class="btn sm ghost" onclick="nav('leaves')">→ رجوع</button>
       </div>
+      ${can('balances')?'':'<p class="hint" style="margin:8px 0 0">عرض فقط — لا تملك صلاحية إدارة الأرصدة.</p>'}
     </div>
     <div class="card" style="padding:6px 12px">
       ${state.employees.map(e=>{
@@ -1133,6 +1388,7 @@ function renderBalances(){
 }
 function refreshBalances(){ if(!isViewer){ Cloud.pullBalances().then(()=>renderBalances()).catch(()=>renderBalances()); } else renderBalances(); }
 function openPolicyEditor(){
+  if(!can('balances')){ toast('غير مصرّح بإدارة الأرصدة'); return; }
   const y=balanceYear,
     modes=[['limited','محدود'],['unlimited','غير محدود'],['tracking_only','تتبّع فقط']],
     bases=[['calendar','تقويمي'],['scheduled_workdays','أيام العمل']];
@@ -1149,6 +1405,7 @@ function openPolicyEditor(){
     <button class="btn block" style="margin-top:10px" onclick="savePolicies()">حفظ السياسات</button>`);
 }
 function savePolicies(){
+  if(!can('balances')){ toast('غير مصرّح'); return; }
   document.querySelectorAll('#sheet .pol-row').forEach(row=>{
     const type=row.dataset.type, mode=row.querySelector('.pol-mode').value,
       ent=row.querySelector('.pol-ent').value, car=row.querySelector('.pol-car').value, basis=row.querySelector('.pol-basis').value;
@@ -1160,6 +1417,7 @@ function savePolicies(){
   closeSheet(); renderBalances(); toast('تم حفظ السياسات');
 }
 function openAdjust(empId){
+  if(!can('balances')){ toast('غير مصرّح'); return; }
   const kinds=[['adjustment','تعديل'],['initial','رصيد ابتدائي'],['carryover','ترحيل']];
   openSheet(`<h3>قيد رصيد<button class="x" onclick="closeSheet()">×</button></h3>
     <div class="field"><label>الموظف</label><select id="adj-emp">${state.employees.map(e=>`<option value="${e.id}" ${empId===e.id?'selected':''}>${esc(e.name)}</option>`).join('')}</select></div>
@@ -1176,6 +1434,7 @@ function openAdjust(empId){
     <button class="btn block" onclick="saveAdjust()">حفظ القيد</button>`);
 }
 function saveAdjust(){
+  if(!can('balances')){ toast('غير مصرّح'); return; }
   const empId=val('adj-emp'), type=val('adj-type'), year=+val('adj-year'), kind=val('adj-kind'),
     daysRaw=val('adj-days'), reason=val('adj-reason').trim();
   if(!empId){ toast('اختر الموظف'); return; }
@@ -1583,12 +1842,12 @@ function empsOnShift(iso, sh){ return state.employees.filter(e=>cellValue(e,iso)
 function pointRows(day,shift){ const p=getPoint(day,shift); return pointSlots(shift,p.empOrder).map((s,i)=>{ const e=empById(s.empId); return { i:i+1, name:e?e.name:'— (محذوف)', no:e?e.no:'', in:s.in, out:s.out, dur:fmtDur(s.mins) }; }); }
 function updatePoint(mut){ const ps=getPoint(pointDate,pointShift); mut(ps); Data.savePointShift(pointDate, pointShift, ps); renderPoint(); }
 function setPointShift(sh){ pointShift=sh; renderPoint(); }
-function fillPointFromShift(){ updatePoint(ps=>{ ps.empOrder = empsOnShift(pointDate,pointShift).map(e=>e.id); }); toast('تمّت التعبئة من عاملي الوردية'); }
-function addToPoint(sel){ const id=sel.value; if(!id) return; updatePoint(ps=>{ if(ps.empOrder.indexOf(id)<0) ps.empOrder.push(id); }); }
-function removeFromPoint(id){ updatePoint(ps=>{ ps.empOrder = ps.empOrder.filter(x=>x!==id); }); }
-function movePoint(id,dir){ updatePoint(ps=>{ const i=ps.empOrder.indexOf(id), j=i+dir; if(i<0||j<0||j>=ps.empOrder.length) return; const a=ps.empOrder; [a[i],a[j]]=[a[j],a[i]]; }); }
-function approvePoint(){ const p=getPoint(pointDate,pointShift); if(!p.empOrder.length){ toast('أضف موظفين أولاً'); return; } const ai=approverInfo(val('pt-approver')||approverDefaultRole()); updatePoint(ps=>{ ps.approved=true; ps.approvedTitle=ai.title; ps.approvedBy=ai.name; }); toast('✓ تم اعتماد الجدول'); }
-function unapprovePoint(){ updatePoint(ps=>{ ps.approved=false; }); toast('أُلغي الاعتماد — يمكن التعديل'); }
+function fillPointFromShift(){ if(!can('point')){ toast('غير مصرّح بإدارة النقطة'); return; } updatePoint(ps=>{ ps.empOrder = empsOnShift(pointDate,pointShift).map(e=>e.id); }); toast('تمّت التعبئة من عاملي الوردية'); }
+function addToPoint(sel){ if(!can('point')){ toast('غير مصرّح'); return; } const id=sel.value; if(!id) return; updatePoint(ps=>{ if(ps.empOrder.indexOf(id)<0) ps.empOrder.push(id); }); }
+function removeFromPoint(id){ if(!can('point')){ toast('غير مصرّح'); return; } updatePoint(ps=>{ ps.empOrder = ps.empOrder.filter(x=>x!==id); }); }
+function movePoint(id,dir){ if(!can('point')){ toast('غير مصرّح'); return; } updatePoint(ps=>{ const i=ps.empOrder.indexOf(id), j=i+dir; if(i<0||j<0||j>=ps.empOrder.length) return; const a=ps.empOrder; [a[i],a[j]]=[a[j],a[i]]; }); }
+function approvePoint(){ if(!can('approve')){ toast('غير مصرّح بالاعتماد'); return; } const p=getPoint(pointDate,pointShift); if(!p.empOrder.length){ toast('أضف موظفين أولاً'); return; } const ai=approverInfo(val('pt-approver')||approverDefaultRole()); updatePoint(ps=>{ ps.approved=true; ps.approvedTitle=ai.title; ps.approvedBy=ai.name; }); toast('✓ تم اعتماد الجدول'); }
+function unapprovePoint(){ if(!can('approve')){ toast('غير مصرّح'); return; } updatePoint(ps=>{ ps.approved=false; }); toast('أُلغي الاعتماد — يمكن التعديل'); }
 
 // جدول النقطة بأنماط مضمّنة (معاينة/طباعة)
 function pointTableHtml(day,shift){
@@ -1700,12 +1959,12 @@ function renderPoint(){
       ${assigned.length? assigned.map((id,idx)=>{ const e=empById(id), s=slots[idx]; return `<div class="row">
           <div class="grow"><div class="name">${e?esc(e.name):'— (محذوف)'} <span class="meta">(${e?e.no:''})</span></div>
             <div class="meta">⏱️ ${s?s.in+' → '+s.out+' ('+s.dur+')':''}</div></div>
-          ${locked?'':`<div style="display:flex;gap:4px">
+          ${(locked||!can('point'))?'':`<div style="display:flex;gap:4px">
             <button class="icon-btn" onclick="movePoint('${id}',-1)">↑</button>
             <button class="icon-btn" onclick="movePoint('${id}',1)">↓</button>
             <button class="icon-btn danger" onclick="removeFromPoint('${id}')">✕</button></div>`}
-        </div>`; }).join('') : '<div class="empty">لا يوجد موظفون — أضف من الأسفل</div>'}
-      ${locked?'':`<div class="two" style="margin-top:10px">
+        </div>`; }).join('') : '<div class="empty">لا يوجد موظفون على النقطة</div>'}
+      ${(locked||!can('point'))?'':`<div class="two" style="margin-top:10px">
         <div class="field" style="margin:0"><label>إضافة موظف</label><select onchange="addToPoint(this)"><option value="">اختر…</option>${others.map(e=>`<option value="${e.id}">${esc(e.name)} (${e.no})</option>`).join('')}</select></div>
         <div class="field" style="margin:0;display:flex;align-items:flex-end"><button class="btn block ghost" onclick="fillPointFromShift()">↻ عاملو الوردية</button></div>
       </div>`}
@@ -1716,14 +1975,16 @@ function renderPoint(){
            <button class="btn block" onclick="downloadPointWord()">⬇️ تنزيل الجدول (Word)</button>
            <button class="btn block ghost" style="margin-top:8px" onclick="sharePointImage()">📤 مشاركة كصورة (واتساب)</button>
            <button class="btn block ghost" style="margin-top:8px" onclick="window.print()">🖨️ طباعة / PDF</button>
-           <button class="btn block danger" style="margin-top:8px" onclick="unapprovePoint()">✎ إلغاء الاعتماد للتعديل</button>`
-        : `<div class="field" style="margin:0 0 8px"><label>يعتمد باسم</label>
+           ${can('approve')?`<button class="btn block danger" style="margin-top:8px" onclick="unapprovePoint()">✎ إلغاء الاعتماد للتعديل</button>`:''}`
+        : (can('approve')
+          ? `<div class="field" style="margin:0 0 8px"><label>يعتمد باسم</label>
              <select id="pt-approver">
                <option value="sup" ${approverDefaultRole()==='sup'?'selected':''}>مسؤول ${esc(docTeam())} — ${esc(docSupervisor())}</option>
                <option value="asst" ${approverDefaultRole()==='asst'?'selected':''}>مساعد مسؤول ${esc(docTeam())} — ${esc(docAssistant())}</option>
              </select></div>
            <button class="btn block" onclick="approvePoint()">✓ اعتماد الجدول</button>
-           <p class="hint" style="text-align:center;margin-top:8px">بعد الاعتماد يظهر للموظفين ويُحفظ باسم المُعتمِد.</p>`}
+           <p class="hint" style="text-align:center;margin-top:8px">بعد الاعتماد يظهر للموظفين ويُحفظ باسم المُعتمِد.</p>`
+          : `<div class="hint" style="text-align:center">بانتظار الاعتماد من صاحب صلاحية الاعتماد.</div>`)}
     </div>
     <div class="card daily-doc"><div class="doc-fit" id="docFit"><div class="doc-page" id="docPage">${pointDocHtml(pointDate,pointShift)}</div></div></div>`;
   fitDocPage();
