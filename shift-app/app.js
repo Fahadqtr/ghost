@@ -28,7 +28,8 @@ let currentEmpNo = '';  // الرقم الوظيفي للموظف المسجّل
 let currentUsername = ''; // اسم مستخدم الدخول (للمشرف: salemm / fahdaziz)
 let currentTeam = 'w1';   // وردية المستخدم الحالي (عزل البيانات)
 let currentRole = '';   // admin / viewer / owner
-let isOwner = false;    // المالك: يتابع كل الورديات ويضيف ورديات جديدة
+let isOwner = false;    // رئيس القسم: يتابع كل ورديات قسمه ويضيف ورديات جديدة
+let isSuperadmin = false; // مدير النظام: ينشئ الأقسام وحسابات رؤساء الأقسام
 let allTeams = [];      // قائمة كل الورديات (للمالك)
 let isViewer = false;   // موظف: عرض فقط (جدول + كشف يومي)
 const OWNER_TEAM_KEY = 'shiftApp.ownerTeam';
@@ -328,6 +329,121 @@ function maybeShowReportsPopup(){
   try{ localStorage.setItem('shiftApp.reportPopupTs.v2', maxTs); }catch(e){}
   return true;
 }
+
+/* ===================== كونسول مدير النظام (المنصّة متعدّدة الأقسام) ===================== */
+let sysDepts=null, sysAccounts=null;
+async function loadSysadmin(){
+  try{ const d=await Cloud.listDepartments(); sysDepts = d.data||[]; }catch(e){ sysDepts=[]; }
+  try{ const a=await Cloud.adminListAccounts(); sysAccounts = a.data||[]; }catch(e){ sysAccounts=[]; }
+  renderSysadmin();
+}
+function sysDeptName(id){ const d=(sysDepts||[]).find(x=>x.id===id); return d?d.name:(id||'—'); }
+function roleLabel(r){ return r==='superadmin'?'مدير النظام':r==='owner'?'رئيس قسم':r==='admin'?'مسؤول وردية':'موظف'; }
+function renderSysadmin(){
+  const el=document.getElementById('scr-dash'); if(!el) return;
+  if(sysDepts===null || sysAccounts===null){ loadSysadmin();
+    el.innerHTML='<div class="card"><div class="empty">جارٍ تحميل لوحة مدير النظام…</div></div>'; return; }
+  const depts=sysDepts, accts=sysAccounts;
+  const owners=accts.filter(a=>a.role==='owner'), admins=accts.filter(a=>a.role==='admin');
+  const header=`<div class="card" style="background:linear-gradient(135deg,var(--teal),var(--teal-d));color:#fff">
+      <div style="font-size:13px;opacity:.9">${esc(currentUserEmail||'مدير النظام')}</div>
+      <div style="font-weight:800;font-size:20px;margin-top:2px">🛠️ لوحة مدير النظام</div>
+      <div style="font-size:13px;opacity:.9;margin-top:2px">إدارة الأقسام وحسابات رؤساء الأقسام لكل المنصّة</div>
+    </div>`;
+  const kpis=`<div class="stats">
+      <div class="stat"><div class="n">${depts.length}</div><div class="l">الأقسام</div></div>
+      <div class="stat"><div class="n">${owners.length}</div><div class="l">رؤساء الأقسام</div></div>
+      <div class="stat"><div class="n">${admins.length}</div><div class="l">مسؤولو الورديات</div></div>
+      <div class="stat"><div class="n">${accts.length}</div><div class="l">إجمالي الحسابات</div></div>
+    </div>`;
+  const deptCard=`<div class="card">
+      <div class="row" style="margin-bottom:6px"><h3 class="grow">الأقسام</h3>
+        <button class="btn sm" onclick="openNewDepartment()">＋ قسم جديد</button></div>
+      ${depts.length? depts.map(d=>{ const o=owners.filter(x=>x.dept===d.id); const sh=accts.filter(x=>x.dept===d.id&&x.role==='admin');
+        return `<div class="row" style="align-items:flex-start">
+          <div class="grow"><div class="name" style="font-size:15px">${esc(d.name)} <span class="meta">(${esc(d.id)})</span></div>
+            <div class="meta" style="margin-top:2px">${o.length?('رئيس القسم: '+esc(o.map(x=>x.full_name||x.username).join('، '))):'<span style="color:var(--red)">بلا رئيس قسم</span>'} • ${sh.length} وردية/مسؤول</div></div>
+          ${o.length?'':`<button class="btn sm ghost" onclick="openNewOwner('${esc(d.id)}')">تعيين رئيس</button>`}
+        </div>`; }).join('') : '<div class="empty">لا أقسام بعد</div>'}
+    </div>`;
+  const ownerCard=`<div class="card">
+      <div class="row" style="margin-bottom:6px"><h3 class="grow">حسابات رؤساء الأقسام</h3>
+        <button class="btn sm" onclick="openNewOwner('')">＋ رئيس قسم</button></div>
+      ${owners.length? owners.map(o=>`<div class="row">
+          <div class="avatar">${initials(o.full_name||o.username||'?')}</div>
+          <div class="grow"><div class="name">${esc(o.full_name||o.username||'—')}</div>
+            <div class="meta">${esc(o.username||'')} • ${esc(sysDeptName(o.dept))}</div></div>
+          <span class="badge b-ok">رئيس قسم</span>
+        </div>`).join('') : '<div class="empty">لا حسابات رؤساء أقسام</div>'}
+    </div>`;
+  const acctCard=`<div class="card">
+      <h3>كل الحسابات (${accts.length})</h3>
+      ${accts.length? accts.map(a=>`<div class="row">
+          <div class="grow"><div class="name" style="font-size:14px">${esc(a.full_name||a.username||'—')} <span class="meta">${esc(a.username||'')}</span></div>
+            <div class="meta">${roleLabel(a.role)}${a.dept?(' • '+esc(sysDeptName(a.dept))):''}${a.team?(' • وردية '+esc(a.team)):''}</div></div>
+          <span class="badge ${a.role==='superadmin'?'b-pending':'b-ok'}">${roleLabel(a.role)}</span>
+        </div>`).join('') : '<div class="empty">لا حسابات</div>'}
+    </div>`;
+  const foot=`<div class="card"><button class="btn block ghost" onclick="Cloud.signOut().then(()=>location.reload())">🚪 تسجيل الخروج</button></div>`;
+  el.innerHTML = header + kpis + deptCard + ownerCard + acctCard + foot;
+}
+function openNewDepartment(){
+  openSheet(`<h3>قسم جديد<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">يُنشأ القسم مع وردية أولى تلقائيًا؛ ثم عيّن له رئيس قسم.</p>
+    <div class="field"><label>اسم القسم</label><input id="dp-name" placeholder="مثال: قسم التفتيش الجمركي"></div>
+    <div class="hint bad" id="dp-err"></div>
+    <button class="btn block" id="dp-send" onclick="submitNewDepartment()">＋ إنشاء القسم</button>`);
+}
+async function submitNewDepartment(){
+  const btn=document.getElementById('dp-send'), err=document.getElementById('dp-err'); if(err) err.textContent='';
+  const name=val('dp-name').trim(); if(!name){ if(err) err.textContent='اكتب اسم القسم'; return; }
+  if(btn){ btn.disabled=true; btn.textContent='جارٍ الإنشاء…'; }
+  try{ const r=await Cloud.adminCreateDepartment(name); if(r.error) throw r.error;
+    sysDepts=null; sysAccounts=null; closeSheet(); toast('تم إنشاء القسم'); await loadSysadmin();
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='＋ إنشاء القسم'; } if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
+}
+function openNewOwner(preDept){
+  const opts=(sysDepts||[]).map(d=>`<option value="${esc(d.id)}" ${d.id===preDept?'selected':''}>${esc(d.name)} (${esc(d.id)})</option>`).join('');
+  openSheet(`<h3>حساب رئيس قسم<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="field"><label>القسم</label><select id="ow-dept">${opts||'<option value="">— لا أقسام —</option>'}</select></div>
+    <div class="field"><label>الاسم الكامل</label><input id="ow-name" placeholder="اسم رئيس القسم"></div>
+    <div class="field"><label>اسم المستخدم</label><input id="ow-user" placeholder="بلا مسافات — مثال: owner2" autocapitalize="off"></div>
+    <div class="field"><label>كلمة المرور</label><input id="ow-pass" placeholder="كلمة مرور قوية"></div>
+    <div class="hint bad" id="ow-err"></div>
+    <button class="btn block" id="ow-send" onclick="submitNewOwner()">＋ إنشاء الحساب</button>`);
+}
+async function submitNewOwner(){
+  const btn=document.getElementById('ow-send'), err=document.getElementById('ow-err'); if(err) err.textContent='';
+  const dept=val('ow-dept'), name=val('ow-name').trim(), user=val('ow-user').trim().toLowerCase(), pass=val('ow-pass');
+  if(!dept){ if(err) err.textContent='اختر قسمًا'; return; }
+  if(!user || !pass){ if(err) err.textContent='اسم المستخدم وكلمة المرور مطلوبان'; return; }
+  if(/\s/.test(user)){ if(err) err.textContent='اسم المستخدم بلا مسافات'; return; }
+  if(btn){ btn.disabled=true; btn.textContent='جارٍ الإنشاء…'; }
+  try{ const r=await Cloud.adminCreateOwner(dept,user,pass,name); if(r.error) throw r.error;
+    sysAccounts=null; closeSheet(); toast('تم إنشاء حساب رئيس القسم'); await loadSysadmin();
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='＋ إنشاء الحساب'; } if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
+}
+// إنشاء أول مدير نظام — يستدعيه رئيس القسم الحالي مرّة (الخادم يمنع التكرار)
+function openBootstrapSuperadmin(){
+  openSheet(`<h3>إنشاء حساب مدير النظام<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="hint" style="margin-bottom:10px">مدير النظام ينشئ الأقسام وحسابات رؤساء الأقسام لكل المنصّة. يُنشأ مرّة واحدة.</p>
+    <div class="field"><label>الاسم الكامل</label><input id="sa-name" placeholder="اسم مدير النظام"></div>
+    <div class="field"><label>اسم المستخدم</label><input id="sa-user" placeholder="مثال: sysadmin" autocapitalize="off"></div>
+    <div class="field"><label>كلمة المرور</label><input id="sa-pass" placeholder="كلمة مرور قوية"></div>
+    <div class="hint bad" id="sa-err"></div>
+    <button class="btn block" id="sa-send" onclick="submitBootstrapSuperadmin()">＋ إنشاء مدير النظام</button>`);
+}
+async function submitBootstrapSuperadmin(){
+  const btn=document.getElementById('sa-send'), err=document.getElementById('sa-err'); if(err) err.textContent='';
+  const name=val('sa-name').trim(), user=val('sa-user').trim().toLowerCase(), pass=val('sa-pass');
+  if(!user || !pass){ if(err) err.textContent='اسم المستخدم وكلمة المرور مطلوبان'; return; }
+  if(/\s/.test(user)){ if(err) err.textContent='اسم المستخدم بلا مسافات'; return; }
+  if(btn){ btn.disabled=true; btn.textContent='جارٍ الإنشاء…'; }
+  try{ const r=await Cloud.bootstrapSuperadmin(user,pass,name); if(r.error) throw r.error;
+    closeSheet(); toast('تم إنشاء مدير النظام — يدخل باسمه الجديد');
+  }catch(e){ if(btn){ btn.disabled=false; btn.textContent='＋ إنشاء مدير النظام'; } if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
+}
+
 // حساب توزيع اليوم لوردية من بياناتها (يحاكي cellValue/dayStats بمعاملات الوردية نفسها)
 function teamDayToday(emps, sData, ovMap, leaves, iso){
   const s = Object.assign({ workDays:6, restDays:4, startShift:'صباح', scheduleStart:'2026-01-01', minWorkers:0 }, sData||{});
@@ -770,6 +886,7 @@ function renderOwnerDash(){
         <button class="btn sm ghost" onclick="openAdminRoles()">👔 دور المسؤول</button>
         <button class="btn sm ghost" onclick="editTeamData()">✏️ تعديل بيانات الوردية</button>
         <button class="btn sm ghost" onclick="openAnnounce()">📢 إرسال تعميم</button>
+        <button class="btn sm ghost" onclick="openBootstrapSuperadmin()">🛠️ إنشاء مدير النظام</button>
         <button class="btn sm ghost" onclick="reloadTeams()">↻ تحديث</button>
         ${currentTeam!=='w1'?`<button class="btn sm danger" onclick="deleteTeamConfirm()">🗑️ حذف الوردية</button>`:''}
       </div>
@@ -2267,7 +2384,7 @@ async function doEmpLogin(){
   if(error){ err.textContent='الرقم الوظيفي غير صحيح'; return; }
   await startApp();
 }
-function applyRole(){ document.body.classList.toggle('viewer', isViewer); }
+function applyRole(){ document.body.classList.toggle('viewer', isViewer); document.body.classList.toggle('sysadmin', isSuperadmin); }
 const USER_DOMAIN='@shift.local';   // اسم المستخدم بلا @ يُكمَّل بهذا النطاق
 async function doLogin(){
   let email=val('lg-email').trim(); const pw=val('lg-pass');
@@ -2290,8 +2407,9 @@ async function startApp(){
     const u=data&&data.user;
     currentUserId = u ? u.id : '';           // قبل loadCache: يحدّد مفتاح الـcache الخاص بالحساب
     currentRole = (u && u.app_metadata && u.app_metadata.role) || 'viewer';
+    isSuperadmin = currentRole==='superadmin';
     isOwner = currentRole==='owner';
-    isViewer = !(currentRole==='admin' || currentRole==='owner');
+    isViewer = !(currentRole==='admin' || currentRole==='owner' || currentRole==='superadmin');
     currentUserEmail = u ? ((u.user_metadata&&u.user_metadata.full_name) || (u.email||'').replace(USER_DOMAIN,'')) : '';
     currentEmpNo = (u && u.user_metadata && u.user_metadata.emp_no) || '';
     currentUsername = u ? (u.email||'').split('@')[0] : '';
@@ -2300,6 +2418,12 @@ async function startApp(){
                           : ((u && u.app_metadata && u.app_metadata.team) || 'w1');
   }catch(e){ isViewer=false; }
   applyRole();
+  // مدير النظام: كونسول مستقلّ (لا يحمّل بيانات وردية بعينها)
+  if(isSuperadmin){
+    document.getElementById('hSub').textContent='لوحة مدير النظام';
+    renderSysadmin();
+    return;
+  }
   if(isOwner){ try{ allTeams = await Cloud.listTeams(); }catch(e){ allTeams=[]; }
     if(allTeams.length && !allTeams.some(t=>t.team===currentTeam)){ currentTeam=allTeams[0].team; localStorage.setItem(OWNER_TEAM_KEY,currentTeam); } }
   const hadCache=loadCache();

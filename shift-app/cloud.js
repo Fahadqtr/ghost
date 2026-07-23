@@ -105,6 +105,13 @@ const Cloud = {
   /* حذف وردية بكل بياناتها (للمالك فقط) */
   async deleteTeam(code){ return await this.sb.rpc('delete_team', { p_team: code }); },
 
+  /* ===== المنصّة متعدّدة الأقسام (مدير النظام) ===== */
+  async listDepartments(){ return await this.sb.from('departments').select('*').order('id'); },
+  async bootstrapSuperadmin(user, pass, name){ return await this.sb.rpc('bootstrap_superadmin', { p_user:user, p_pass:pass, p_name:name||'' }); },
+  async adminCreateDepartment(name){ return await this.sb.rpc('admin_create_department', { p_dept_name:name }); },
+  async adminCreateOwner(dept, user, pass, name){ return await this.sb.rpc('admin_create_owner', { p_dept:dept, p_user:user, p_pass:pass, p_name:name||'' }); },
+  async adminListAccounts(){ return await this.sb.rpc('admin_list_accounts'); },
+
   /* ===== الإفادات المتقدّمة: محادثات + رسائل + مرفقات =====
      الحقول الحسّاسة (الوردية/الدور/المُنشئ/الوقت) تُفرَض بالخادم (triggers + RLS). */
   async reportListThreads(){

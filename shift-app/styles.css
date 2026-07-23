@@ -205,6 +205,9 @@ body.viewer .nav button[data-nav="dash"],
 body.viewer .nav button[data-nav="emps"],
 body.viewer .nav button[data-nav="daily"]{display:none}
 body.viewer #fab{display:none!important}
+/* مدير النظام: كونسول مستقلّ — بلا شريط تبويبات ولا زرّ إضافة */
+body.sysadmin .nav{display:none}
+body.sysadmin #fab{display:none!important}
 body.viewer .daycell{cursor:default}
 body.viewer .daycell:active{outline:none}
 
