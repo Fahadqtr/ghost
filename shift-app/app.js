@@ -345,6 +345,8 @@ let sysDepts=null, sysAccounts=null, sysPresets={}, sysTeams=[];
 // ملخّص اللوحة (RPC آمنة superadmin) — حالة مستقلّة قابلة للتحديث وحدها
 let sysSummary=null, sysSummaryErr='', sysSummaryLoading=false, sysSummaryAt=null;
 async function loadSysadmin(){
+  // إن أصبح حساب مدير النظام الحالي غير فعّال (عطّله آخر)، سجّل الخروج وارجع لشاشة الدخول
+  try{ if(!(await Cloud.currentUserIsActive())){ await Cloud.signOut(); location.reload(); return; } }catch(e){}
   try{ const d=await Cloud.listDepartments(); sysDepts = d.data||[]; }catch(e){ sysDepts=[]; }
   // قائمة حسابات غنيّة (معرّف داخلي + حالة + هل رئيس قسم) عبر RPC آمنة
   try{ const a=await Cloud.superadminListAccounts(); sysAccounts = a.data||[]; }catch(e){ sysAccounts=[]; }

@@ -77,6 +77,121 @@ grant execute on function public.audit_current_user_team() to authenticated;
 grant execute on function public.audit_current_user_dept() to authenticated;
 
 -- ---------------------------------------------------------------------
+-- 1b) فحص نشاط الحساب المركزي — مصدر الثقة الوحيد لحالة التعطيل.
+--     يقرأ auth.users بـ auth.uid() (لا user_metadata، لا claims). يُعيد false
+--     عند غياب المستخدم أو كون banned_until مستقبليًا. لا يستدعي أي دالة هوية
+--     (يمنع التكرار الدائري).
+-- ---------------------------------------------------------------------
+create or replace function public.audit_current_user_is_active()
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists(
+    select 1 from auth.users u
+    where u.id = (select auth.uid())
+      and (u.banned_until is null or u.banned_until <= now()))
+$$;
+revoke all on function public.audit_current_user_is_active() from public, anon;
+grant execute on function public.audit_current_user_is_active() to authenticated;
+
+-- تحصين هوية الموظف: الحساب المعطّل يفقد هوية الموظف (تُعيد NULL) فتُحجب
+-- سياسات staff_insert/update/delete_own على public.leaves فورًا حتى بتوكن قديم.
+create or replace function public.audit_current_emp_id()
+returns uuid language sql stable security definer set search_path = '' as $$
+  select case when count(*) = 1 then (array_agg(ea.emp_id))[1] end
+  from public.employee_auth ea
+  where ea.user_id = (select auth.uid())
+    and public.audit_current_user_is_active()
+$$;
+create or replace function public.audit_current_emp_team()
+returns text language sql stable security definer set search_path = '' as $$
+  select case when count(*) = 1 then (array_agg(ea.team))[1] end
+  from public.employee_auth ea
+  where ea.user_id = (select auth.uid())
+    and public.audit_current_user_is_active()
+$$;
+revoke all on function public.audit_current_emp_id()   from public, anon;
+revoke all on function public.audit_current_emp_team() from public, anon;
+grant execute on function public.audit_current_emp_id()   to authenticated;
+grant execute on function public.audit_current_emp_team() to authenticated;
+
+-- أرصدة الإجازات الخاصة: تُحجب للحساب المعطّل (فحص صريح قبل أي قراءة).
+create or replace function public.my_leave_balances(p_year integer)
+returns table(type text, policy_mode text, entitled_days integer, initial numeric,
+              carryover numeric, adjustments numeric, used numeric, available numeric, remaining numeric)
+language plpgsql stable security definer set search_path = '' as $$
+declare v_emp uuid;
+begin
+  if not public.audit_current_user_is_active() then return; end if;
+  select ea.emp_id into v_emp from public.employee_auth ea where ea.user_id = (select auth.uid());
+  if v_emp is null then return; end if;
+  return query select * from public.fn_leave_balance(v_emp, p_year);
+end $$;
+revoke all on function public.my_leave_balances(integer) from public, anon;
+grant execute on function public.my_leave_balances(integer) to authenticated;
+
+-- الجداول المؤرشفة: كانت تقرأ الدور من JWT (قديم، لا يفحص التعطيل). نحوّلها
+-- إلى audit_current_user_role() الموثوقة التي ترفض الحساب المعطّل.
+alter policy read_arch_emp on public.archived_employees using (public.audit_current_user_role() = 'admin');
+alter policy read_arch_lv  on public.archived_leaves    using (public.audit_current_user_role() = 'admin');
+
+-- ---------------------------------------------------------------------
+-- 1c) حارس آخر مدير نظام — مقاوم للتزامن (قفل تسلسلي ثابت داخل المعاملة).
+--     داخلي بحت: محروم من anon/PUBLIC/authenticated؛ يُستدعى فقط من دوال/مُشغّلات
+--     DEFINER المملوكة لـ postgres. أسماء pg_catalog مؤهّلة (search_path='').
+-- ---------------------------------------------------------------------
+create or replace function public._sa_lock_superadmin_guard()
+returns void language plpgsql security definer set search_path = '' as $$
+begin
+  perform pg_catalog.pg_advisory_xact_lock(918273645);
+end $$;
+revoke all on function public._sa_lock_superadmin_guard() from public, anon, authenticated;
+
+-- مُشغّل على auth.users يمنع ترك النظام بلا مدير نظام فعّال — يحمي كل مسارات
+-- الكتابة بما فيها Supabase Admin API (الذي يكتب banned_until مباشرةً في auth.users).
+-- يعمل فقط عند تغيّر banned_until أو الدور أو عند الحذف؛ غير ذلك مسار سريع بلا أثر.
+-- القفل التسلسلي يجعل الفحص+الكتابة ذرّيًا عبر العمليات المتزامنة.
+create or replace function public._sa_guard_no_orphan()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_was_active_sa boolean; v_now_active_sa boolean;
+begin
+  if TG_OP = 'DELETE' then
+    v_was_active_sa := (OLD.raw_app_meta_data->>'role' = 'superadmin')
+                       and (OLD.banned_until is null or OLD.banned_until <= now());
+    if v_was_active_sa then
+      perform public._sa_lock_superadmin_guard();
+      if (select count(*) from auth.users
+            where raw_app_meta_data->>'role' = 'superadmin' and id <> OLD.id
+              and (banned_until is null or banned_until <= now())) = 0 then
+        raise exception 'لا يمكن ترك النظام بلا مدير نظام فعّال' using errcode = '42501';
+      end if;
+    end if;
+    return OLD;
+  end if;
+  -- UPDATE: تصرّف فقط عند تغيّر banned_until أو الدور
+  if OLD.banned_until is distinct from NEW.banned_until
+     or (OLD.raw_app_meta_data->>'role') is distinct from (NEW.raw_app_meta_data->>'role') then
+    v_was_active_sa := (OLD.raw_app_meta_data->>'role' = 'superadmin')
+                       and (OLD.banned_until is null or OLD.banned_until <= now());
+    v_now_active_sa := (NEW.raw_app_meta_data->>'role' = 'superadmin')
+                       and (NEW.banned_until is null or NEW.banned_until <= now());
+    if v_was_active_sa and not v_now_active_sa then
+      perform public._sa_lock_superadmin_guard();
+      if (select count(*) from auth.users
+            where raw_app_meta_data->>'role' = 'superadmin' and id <> NEW.id
+              and (banned_until is null or banned_until <= now())) = 0 then
+        raise exception 'لا يمكن ترك النظام بلا مدير نظام فعّال' using errcode = '42501';
+      end if;
+    end if;
+  end if;
+  return NEW;
+end $$;
+revoke all on function public._sa_guard_no_orphan() from public, anon, authenticated;
+
+drop trigger if exists sa_guard_no_orphan on auth.users;
+create trigger sa_guard_no_orphan
+  before update or delete on auth.users
+  for each row execute function public._sa_guard_no_orphan();
+
+-- ---------------------------------------------------------------------
 -- 2) مساعد تدقيق داخلي (غير مُتاح لأحد خارجيًا؛ يُستدعى فقط من دوال DEFINER
 --    المملوكة لـ postgres، فلا يمكن تزوير سجلّ تدقيق).
 -- ---------------------------------------------------------------------
@@ -114,45 +229,35 @@ revoke all on function public.superadmin_list_accounts() from public, anon;
 grant execute on function public.superadmin_list_accounts() to authenticated;
 
 -- ---------------------------------------------------------------------
--- 4) تعطيل / إعادة تفعيل حساب (على مستوى المصادقة).
+-- 4) تعطيل / إعادة تفعيل حساب:
+--    * لا كتابة مباشرة إلى auth.users.banned_until ولا حذف من auth.sessions من SQL.
+--    * الحظر الفعلي يتم عبر Supabase Admin API داخل Edge Function (service-role
+--      على الخادم فقط) — انظر supabase/functions/admin-account-status.
+--    * هذه الدالة «تحضير/تحقّق» فقط: يستدعيها الـ Edge Function بسياق توكن المُنفِّذ
+--      للتأكد أنه مدير نظام فعّال، وأن الهدف موجود وليس نفسه، و(عند التعطيل) ليس
+--      آخر مدير نظام — مع القفل التسلسلي. لا تكتب أي بيانات. الضمان الذرّي النهائي
+--      لعدم ترك النظام بلا مدير نظام هو المُشغّل sa_guard_no_orphan على auth.users.
 -- ---------------------------------------------------------------------
-create or replace function public.superadmin_set_account_active(p_user_id uuid, p_active boolean)
+create or replace function public.superadmin_prepare_account_active(p_user_id uuid, p_active boolean)
 returns void language plpgsql security definer set search_path = '' as $$
-declare
-  v_actor uuid := (select auth.uid());
-  v_role  text;
-  v_was   boolean;
+declare v_actor uuid := (select auth.uid()); v_role text;
 begin
   if not public.is_superadmin() then raise exception 'لمدير النظام فقط' using errcode = '42501'; end if;
   if p_active is null then raise exception 'قيمة الحالة مطلوبة'; end if;
   if not exists (select 1 from auth.users where id = p_user_id) then raise exception 'حساب غير موجود'; end if;
-  select u.raw_app_meta_data->>'role', (u.banned_until is null or u.banned_until <= now())
-    into v_role, v_was from auth.users u where u.id = p_user_id;
-
   if not p_active then
     if p_user_id = v_actor then raise exception 'لا يمكنك تعطيل نفسك'; end if;
+    perform public._sa_lock_superadmin_guard();
+    select u.raw_app_meta_data->>'role' into v_role from auth.users u where u.id = p_user_id;
     if v_role = 'superadmin'
        and (select count(*) from auth.users
               where raw_app_meta_data->>'role' = 'superadmin' and id <> p_user_id
                 and (banned_until is null or banned_until <= now())) = 0
       then raise exception 'لا يمكن تعطيل آخر مدير نظام'; end if;
-    update auth.users set banned_until = timestamptz '9999-12-31 23:59:59+00', updated_at = now()
-      where id = p_user_id;
-    delete from auth.sessions where user_id = p_user_id;   -- إنهاء الجلسات الحالية فورًا
-  else
-    update auth.users set banned_until = null, updated_at = now() where id = p_user_id;
   end if;
-
-  perform public._sa_audit(
-    case when p_active then 'account_enable' else 'account_disable' end,
-    'account', p_user_id::text,
-    case when p_active then 'إعادة تفعيل حساب' else 'تعطيل حساب' end,
-    jsonb_build_object('old', jsonb_build_object('active', v_was),
-                       'new', jsonb_build_object('active', p_active)),
-    null);
 end $$;
-revoke all on function public.superadmin_set_account_active(uuid, boolean) from public, anon;
-grant execute on function public.superadmin_set_account_active(uuid, boolean) to authenticated;
+revoke all on function public.superadmin_prepare_account_active(uuid, boolean) from public, anon;
+grant execute on function public.superadmin_prepare_account_active(uuid, boolean) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- 5) تغيير الدور/الوردية/القسم ذرّيًا (تحديث واحد لـ raw_app_meta_data).
@@ -165,6 +270,7 @@ declare
   v_actor uuid := (select auth.uid());
   v_old   jsonb;
   v_old_role text;
+  v_active boolean;
   v_new   jsonb;
   v_team  text := nullif(btrim(coalesce(p_team,'')), '');
   v_dept  text := nullif(btrim(coalesce(p_dept,'')), '');
@@ -173,18 +279,27 @@ begin
   if not public.is_superadmin() then raise exception 'لمدير النظام فقط' using errcode = '42501'; end if;
   if p_role is null or p_role not in ('superadmin','owner','admin','viewer') then
     raise exception 'دور غير صالح'; end if;
-  select u.raw_app_meta_data, u.raw_app_meta_data->>'role' into v_old, v_old_role
+  select u.raw_app_meta_data, u.raw_app_meta_data->>'role',
+         (u.banned_until is null or u.banned_until <= now())
+    into v_old, v_old_role, v_active
     from auth.users u where u.id = p_user_id;
   if v_old is null then raise exception 'حساب غير موجود'; end if;
 
   if p_user_id = v_actor and p_role <> coalesce(v_old_role,'') then
     raise exception 'لا يمكنك تغيير دورك بنفسك'; end if;
 
-  if v_old_role = 'superadmin' and p_role <> 'superadmin'
-     and (select count(*) from auth.users
+  -- الحساب المعطّل لا يُرقّى/يُنقل إلى دور إداري (يُفعَّل أولًا)
+  if not v_active and p_role in ('superadmin','owner','admin') then
+    raise exception 'الحساب معطّل — فعّله أولًا'; end if;
+
+  -- تخفيض superadmin: قفل تسلسلي ثم عدّ (المُشغّل هو الضمان الذرّي النهائي)
+  if v_old_role = 'superadmin' and p_role <> 'superadmin' then
+    perform public._sa_lock_superadmin_guard();
+    if (select count(*) from auth.users
             where raw_app_meta_data->>'role' = 'superadmin' and id <> p_user_id
               and (banned_until is null or banned_until <= now())) = 0
-    then raise exception 'لا يمكن تخفيض آخر مدير نظام'; end if;
+      then raise exception 'لا يمكن تخفيض آخر مدير نظام'; end if;
+  end if;
 
   v_new := (coalesce(v_old,'{}'::jsonb) - 'role' - 'team' - 'dept');
   if p_role = 'superadmin' then

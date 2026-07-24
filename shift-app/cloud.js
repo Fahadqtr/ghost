@@ -124,7 +124,19 @@ const Cloud = {
   async superadminDashboard(){ return await this.sb.rpc('superadmin_dashboard_summary'); },
   /* ===== إدارة الحسابات ورؤساء الأقسام (superadmin فقط؛ الخادم يفرض كل القيود) ===== */
   async superadminListAccounts(){ return await this.sb.rpc('superadmin_list_accounts'); },
-  async superadminSetAccountActive(userId, active){ return await this.sb.rpc('superadmin_set_account_active', { p_user_id:userId, p_active:active }); },
+  /* تعطيل/تفعيل الحساب عبر Edge Function آمنة (Admin API على الخادم) — لا service-role في العميل.
+     نرسل فقط معرّف الهدف والحالة؛ لا نرسل دور المُنفِّذ (الخادم يشتقّه من التوكن). */
+  async superadminSetAccountActive(userId, active){
+    const { data, error } = await this.sb.functions.invoke('admin-account-status', { body:{ target_user_id:userId, active:!!active } });
+    if(error){
+      let msg = (error && error.message) || 'تعذّر تنفيذ العملية';
+      try{ if(error.context && error.context.json){ const b=await error.context.json(); if(b && (b.detail||b.error)) msg=b.detail||b.error; } }catch(_){}
+      return { error:{ message: msg } };
+    }
+    return { data };
+  },
+  /* هل الحساب الحالي فعّال؟ (مصدر موثوق من الخادم؛ لا يعتمد على JWT القديم) */
+  async currentUserIsActive(){ const { data, error } = await this.sb.rpc('audit_current_user_is_active'); if(error) return true; return data!==false; },
   async superadminUpdateAccountScope(userId, role, team, dept){ return await this.sb.rpc('superadmin_update_account_scope', { p_user_id:userId, p_role:role, p_team:team, p_dept:dept }); },
   async superadminPromoteHead(userId, dept){ return await this.sb.rpc('superadmin_promote_department_head', { p_user_id:userId, p_dept:dept }); },
   async superadminRemoveHead(userId){ return await this.sb.rpc('superadmin_remove_department_head', { p_user_id:userId }); },
