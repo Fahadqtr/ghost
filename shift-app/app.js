@@ -342,14 +342,96 @@ function maybeShowReportsPopup(){
 
 /* ===================== كونسول مدير النظام (المنصّة متعدّدة الأقسام) ===================== */
 let sysDepts=null, sysAccounts=null, sysPresets={};
+// ملخّص اللوحة (RPC آمنة superadmin) — حالة مستقلّة قابلة للتحديث وحدها
+let sysSummary=null, sysSummaryErr='', sysSummaryLoading=false, sysSummaryAt=null;
 async function loadSysadmin(){
   try{ const d=await Cloud.listDepartments(); sysDepts = d.data||[]; }catch(e){ sysDepts=[]; }
   try{ const a=await Cloud.adminListAccounts(); sysAccounts = a.data||[]; }catch(e){ sysAccounts=[]; }
   try{ sysPresets = await Cloud.listDeptPresets(); }catch(e){ sysPresets={}; }
   renderSysadmin();
+  loadSysSummary();               // يجلب الإحصائيات ثم يعيد رسم قسم النظرة العامة
+}
+// جلب ملخّص اللوحة عبر RPC واحدة آمنة (لا تجميع من جداول حسّاسة في العميل)
+async function loadSysSummary(){
+  sysSummaryLoading=true; sysSummaryErr=''; renderSysadmin();
+  try{
+    const { data, error } = await Cloud.superadminDashboard();
+    if(error) throw error;
+    sysSummary = data || null; sysSummaryAt = new Date();
+  }catch(e){ sysSummaryErr = (e&&e.message) || String(e); }
+  finally{ sysSummaryLoading=false; renderSysadmin(); }
 }
 function sysDeptName(id){ const d=(sysDepts||[]).find(x=>x.id===id); return d?d.name:(id||'—'); }
 function roleLabel(r){ return r==='superadmin'?'مدير النظام':r==='owner'?'رئيس قسم':r==='admin'?'مسؤول وردية':'موظف'; }
+function fmtClock(dt){ if(!dt) return '—';
+  try{ return dt.toLocaleTimeString('ar-SA-u-nu-latn',{hour:'2-digit',minute:'2-digit'}); }
+  catch(e){ const h=String(dt.getHours()).padStart(2,'0'), m=String(dt.getMinutes()).padStart(2,'0'); return h+':'+m; } }
+
+/* ---- قسم النظرة العامة (بطاقات إحصائية + توزيعات + تنبيهات) ---- */
+function renderOverviewSection(){
+  const head=`<div class="card">
+      <div class="row" style="margin-bottom:2px">
+        <h3 class="grow">نظرة عامة على المنصّة</h3>
+        <button class="btn sm ghost" id="ov-refresh" onclick="loadSysSummary()" ${sysSummaryLoading?'disabled':''}>${sysSummaryLoading?'…جارٍ':'↻ تحديث'}</button>
+      </div>
+      <div class="meta">${sysSummaryAt?('آخر تحديث: '+fmtClock(sysSummaryAt)):(sysSummaryLoading?'جارٍ التحميل…':'—')}</div>`;
+  let body;
+  if(sysSummaryErr){
+    body=`<div class="empty" style="color:var(--red)">تعذّر تحميل الإحصائيات: ${esc(sysSummaryErr)}<br><button class="btn sm" style="margin-top:8px" onclick="loadSysSummary()">إعادة المحاولة</button></div>`;
+  } else if(!sysSummary){
+    body=`<div class="empty">${sysSummaryLoading?'جارٍ تحميل الإحصائيات…':'لا بيانات'}</div>`;
+  } else {
+    body = renderStatCards(sysSummary.stats||{}) + renderDistribution(sysSummary) + renderAlerts(sysSummary.alerts||{});
+  }
+  return head + body + `</div>`;
+}
+function statCell(n, label, warn){
+  return `<div class="stat ${warn&&(+n>0)?'warn':''}"><div class="n">${(+n||0)}</div><div class="l">${label}</div></div>`;
+}
+function renderStatCards(s){
+  return `<div class="stats" style="margin-top:8px">
+      ${statCell(s.employees,'إجمالي الموظفين')}
+      ${statCell(s.accounts,'إجمالي الحسابات')}
+      ${statCell(s.departments,'إجمالي الأقسام')}
+      ${statCell(s.shifts,'إجمالي الورديات')}
+      ${statCell(s.leaves_pending,'إجازات معلّقة',true)}
+      ${statCell(s.leaves_approved,'إجازات معتمدة')}
+      ${statCell(s.leaves_rejected,'إجازات مرفوضة')}
+      ${statCell(s.employees_without_account,'موظفون بلا حساب',true)}
+      ${statCell(s.accounts_without_employee,'حسابات بلا موظف',true)}
+      ${statCell(s.users_invalid_scope,'مستخدمون بلا نطاق صحيح',true)}
+    </div>`;
+}
+function distRow(label, n){
+  return `<div class="row" style="padding:6px 0"><div class="grow name" style="font-size:14px">${esc(label)}</div><span class="badge b-ok">${(+n||0)}</span></div>`;
+}
+function renderDistribution(sum){
+  const byShift=(sum.by_shift||[]), byDept=(sum.by_dept||[]), byRole=(sum.by_role||{});
+  const shiftHtml = byShift.length ? byShift.map(x=>distRow((x.name||x.team)+' ('+x.team+')', x.count)).join('') : '<div class="empty">لا ورديات</div>';
+  const deptHtml  = byDept.length  ? byDept.map(x=>distRow((x.name||x.dept)+' ('+x.dept+')', x.count)).join('')   : '<div class="empty">لا أقسام</div>';
+  const roleHtml  = ['superadmin','owner','admin','viewer'].map(r=>distRow(roleLabel(r), byRole[r])).join('');
+  return `<div style="margin-top:12px">
+      <div class="meta" style="font-weight:800;margin:6px 0 2px">الموظفون حسب الوردية</div>${shiftHtml}
+      <div class="meta" style="font-weight:800;margin:10px 0 2px">الموظفون حسب القسم</div>${deptHtml}
+      <div class="meta" style="font-weight:800;margin:10px 0 2px">الحسابات حسب الدور</div>${roleHtml}
+    </div>`;
+}
+function renderAlerts(a){
+  const defs=[
+    ['employee_without_shift','موظف بلا وردية'],
+    ['account_without_dept','رئيس قسم بلا قسم'],
+    ['account_without_role','حساب بلا دور'],
+    ['dept_without_owner','قسم بلا رئيس'],
+    ['shift_without_dept','وردية بلا قسم'],
+    ['pending_leaves','طلبات إجازة معلّقة'],
+    ['invalid_links','ربط موظف/حساب غير صالح'],
+  ];
+  const active=defs.filter(([k])=>(+a[k]||0)>0);
+  const list = active.length
+    ? active.map(([k,label])=>`<div class="row" style="padding:6px 0"><div class="grow name" style="font-size:14px">⚠️ ${esc(label)}</div><span class="badge b-rej">${(+a[k]||0)}</span></div>`).join('')
+    : `<div class="empty" style="color:var(--green,#2e7d32)">✓ لا تنبيهات — كل شيء سليم</div>`;
+  return `<div style="margin-top:12px"><div class="meta" style="font-weight:800;margin:6px 0 2px">تنبيهات مدير النظام</div>${list}</div>`;
+}
 function renderSysadmin(){
   const el=document.getElementById('scr-dash'); if(!el) return;
   if(sysDepts===null || sysAccounts===null){ loadSysadmin();
@@ -409,7 +491,7 @@ function renderSysadmin(){
         </div>`; }).join('') : '<div class="empty">لا حسابات</div>'}
     </div>`;
   const foot=`<div class="card"><button class="btn block ghost" onclick="Cloud.signOut().then(()=>location.reload())">🚪 تسجيل الخروج</button></div>`;
-  el.innerHTML = header + kpis + deptCard + ownerCard + acctCard + foot;
+  el.innerHTML = header + renderOverviewSection() + kpis + deptCard + ownerCard + acctCard + foot;
 }
 function openNewDepartment(){
   openSheet(`<h3>قسم جديد<button class="x" onclick="closeSheet()">×</button></h3>
@@ -2591,7 +2673,18 @@ boot();
 /* -------------------- التثبيت كتطبيق (PWA) -------------------- */
 // service worker بسياسة «الشبكة أولاً» — يجعل التطبيق قابلاً للتثبيت ويعمل دون إنترنت دون نُسخ قديمة
 if('serviceWorker' in navigator){
-  window.addEventListener('load', ()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+  // تحديث تلقائي: عند تفعيل نسخة جديدة من الـ SW نُعيد التحميل مرّة لجلب أحدث كود
+  let __swRefreshing=false;
+  navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+    if(__swRefreshing) return; __swRefreshing=true; location.reload();
+  });
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').then((reg)=>{
+      try{ reg.update(); }catch(e){}
+      // افحص وجود تحديث كلّ مرّة يعود فيها التطبيق للواجهة
+      document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ try{ reg.update(); }catch(e){} } });
+    }).catch(()=>{});
+  });
 }
 let deferredInstall=null;
 function isStandalone(){ return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true; }

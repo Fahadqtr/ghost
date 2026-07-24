@@ -120,6 +120,8 @@ const Cloud = {
   async adminSetOwnerPreset(dept, preset){ return await this.sb.rpc('admin_set_owner_preset', { p_dept:dept, p_preset:preset }); },
   async listDeptPresets(){ const { data } = await this.sb.from('settings').select('dept,data');
     const m={}; (data||[]).forEach(r=>{ if(r.dept && m[r.dept]===undefined) m[r.dept]=(r.data&&r.data.ownerPreset)||'oversight'; }); return m; },
+  /* ملخّص لوحة مدير النظام — استدعاء واحد آمن (superadmin فقط؛ الخادم يفرض ذلك) */
+  async superadminDashboard(){ return await this.sb.rpc('superadmin_dashboard_summary'); },
 
   /* ===== الإفادات المتقدّمة: محادثات + رسائل + مرفقات =====
      الحقول الحسّاسة (الوردية/الدور/المُنشئ/الوقت) تُفرَض بالخادم (triggers + RLS). */

@@ -5,7 +5,7 @@
    ويستخدم النسخة المخزّنة فقط عند انقطاع الإنترنت.
    ============================================================ */
 'use strict';
-const CACHE = 'shiftapp-v3';
+const CACHE = 'shiftapp-v4';
 const SHELL = [
   './', './index.html', './styles.css',
   './seed.js', './config.js', './cloud.js', './qr.js', './app.js',
