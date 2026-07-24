@@ -7,7 +7,11 @@
 // ويتأكّد أنه «مدير نظام فعّال» عبر RPC is_superadmin() بسياق توكن المُنفِّذ (لا يثق
 // بأي دور/هوية في جسم الطلب). service-role لا يُطبع ولا يُعاد ولا يُسجَّل.
 //
-// النشر ليس جزءًا من هذه المهمة (لا Deploy).
+// v2:
+//  - idempotent: إن كان الحساب في الحالة المطلوبة أصلًا لا نستدعي Admin API ولا نُدقّق،
+//    ونعيد 200 مع changed=false, idempotent=true (بدل 500 verification_mismatch).
+//  - تدقيق موثوق عبر RPC superadmin_audit_account_status (يُفحص خطؤها صراحةً؛ لا ابتلاع).
+//    فشل التدقيق لا يقلب النجاح إلى 500؛ يُعاد 200 مع audit_recorded=false فقط.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
@@ -31,6 +35,10 @@ function json(status: number, body: Record<string, unknown>): Response {
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isActiveFromBannedUntil(bannedUntil: string | null | undefined): boolean {
+  return !bannedUntil || new Date(bannedUntil).getTime() <= Date.now();
+}
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -75,17 +83,36 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json(400, { error: "cannot_disable_self" });
   }
 
+  // service-role على الخادم فقط — لا يُعاد ولا يُطبع ولا يُسجَّل.
+  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  // الحالة الراهنة (لتحديد idempotency وللتأكد من وجود الحساب).
+  const { data: before, error: beforeErr } = await admin.auth.admin.getUserById(target);
+  if (beforeErr || !before?.user) return json(409, { error: "account_not_found" });
+  const currentActive = isActiveFromBannedUntil(
+    (before.user as { banned_until?: string | null }).banned_until,
+  );
+
+  // لا تغيير مطلوب: أعِد النجاح دون استدعاء Admin API ودون تدقيق (لا شيء يُسجَّل).
+  if (currentActive === active) {
+    return json(200, {
+      ok: true,
+      target_user_id: target,
+      active,
+      changed: false,
+      idempotent: true,
+      audit_recorded: false,
+    });
+  }
+
   // تحقّق/قفل تسلسلي بسياق المُنفِّذ (موجود؟ ليس النفس؟ ليس آخر مدير نظام؟).
   const { error: prepErr } = await userClient.rpc(
     "superadmin_prepare_account_active",
     { p_user_id: target, p_active: active },
   );
   if (prepErr) return json(409, { error: "precondition_failed", detail: prepErr.message });
-
-  // service-role على الخادم فقط — لا يُعاد ولا يُطبع ولا يُسجَّل.
-  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
 
   // الحظر الفعلي عبر Admin API. المُشغّل على auth.users يمنع ذرّيًا فقدان آخر
   // مدير نظام؛ إن رفض المُشغّل يعود الخطأ من updateUserById.
@@ -94,32 +121,34 @@ Deno.serve(async (req: Request): Promise<Response> => {
   });
   if (banErr) return json(409, { error: "apply_failed", detail: banErr.message });
 
-  // تحقّق أفضل جهد أن الحالة أصبحت كما هو مقصود.
+  // تحقّق أن الحالة أصبحت كما هو مقصود (فشل هنا يعني أن الكتابة لم تُثبَّت).
   const { data: after } = await admin.auth.admin.getUserById(target);
-  const bannedUntil = (after?.user as { banned_until?: string | null } | undefined)
-    ?.banned_until ?? null;
-  const nowActive = !bannedUntil || new Date(bannedUntil).getTime() <= Date.now();
+  const nowActive = isActiveFromBannedUntil(
+    (after?.user as { banned_until?: string | null } | undefined)?.banned_until,
+  );
   if (nowActive !== active) {
     return json(500, { error: "verification_mismatch" });
   }
 
-  // تدقيق آمن (service-role يتجاوز RLS وله صلاحية الإدراج). فشل التدقيق لا يُلغي
-  // الحظر — الأفضل بقاء الحساب محجوبًا على فتحه دون قصد.
-  try {
-    await admin.from("audit_log").insert({
-      actor_id: caller.id,
-      actor_name: (caller.user_metadata as { full_name?: string } | undefined)?.full_name ?? null,
-      actor_role: "superadmin",
-      action: active ? "account_enable" : "account_disable",
-      entity: "account",
-      entity_id: target,
-      summary: active ? "إعادة تفعيل حساب" : "تعطيل حساب",
-      changed: { new: { active } },
-      team: null,
-    });
-  } catch (_e) {
-    // تُهمَل بأمان — الحظر مطبّق. (لا نطبع أي مفتاح.)
+  // تدقيق موثوق عبر RPC (service_role فقط). يُفحص الخطأ صراحةً — لا ابتلاع.
+  // فشل التدقيق لا يُلغي الحظر ولا يقلب النجاح إلى 500؛ يُعلَّم audit_recorded=false.
+  let auditRecorded = true;
+  const { error: auditErr } = await admin.rpc(
+    "superadmin_audit_account_status",
+    { p_actor_id: caller.id, p_target_id: target, p_active: active },
+  );
+  if (auditErr) {
+    auditRecorded = false;
+    // رمز مقتضب فقط إلى السجل — لا مفاتيح ولا توكنات.
+    console.error("audit_write_failed", auditErr.code ?? "unknown");
   }
 
-  return json(200, { ok: true, target_user_id: target, active });
+  return json(200, {
+    ok: true,
+    target_user_id: target,
+    active,
+    changed: true,
+    idempotent: false,
+    audit_recorded: auditRecorded,
+  });
 });
