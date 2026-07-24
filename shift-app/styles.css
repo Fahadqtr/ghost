@@ -269,3 +269,12 @@ body.viewer .install-bar{bottom:calc(64px + env(safe-area-inset-bottom,0))}
 .pol-row select,.pol-row input{padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 .pol-row .pol-ent,.pol-row .pol-car{width:84px}
 @media(min-width:560px){ .pol-row{grid-template-columns:1.2fr .9fr .7fr .6fr 1fr} }
+
+/* ===== إدارة الحسابات (المرحلة الثانية) ===== */
+.acct-row{gap:8px}
+.acct-off{opacity:.6}
+.acct-off .name{text-decoration:line-through}
+.am-sec{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0}
+.am-sec-t{font-weight:800;font-size:13px;margin-bottom:8px;color:var(--muted,#667)}
+.am-sec select,.am-sec input{padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
+.am-sec .row select,.am-sec .row input{width:auto}

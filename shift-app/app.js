@@ -341,16 +341,21 @@ function maybeShowReportsPopup(){
 }
 
 /* ===================== كونسول مدير النظام (المنصّة متعدّدة الأقسام) ===================== */
-let sysDepts=null, sysAccounts=null, sysPresets={};
+let sysDepts=null, sysAccounts=null, sysPresets={}, sysTeams=[];
 // ملخّص اللوحة (RPC آمنة superadmin) — حالة مستقلّة قابلة للتحديث وحدها
 let sysSummary=null, sysSummaryErr='', sysSummaryLoading=false, sysSummaryAt=null;
 async function loadSysadmin(){
   try{ const d=await Cloud.listDepartments(); sysDepts = d.data||[]; }catch(e){ sysDepts=[]; }
-  try{ const a=await Cloud.adminListAccounts(); sysAccounts = a.data||[]; }catch(e){ sysAccounts=[]; }
+  // قائمة حسابات غنيّة (معرّف داخلي + حالة + هل رئيس قسم) عبر RPC آمنة
+  try{ const a=await Cloud.superadminListAccounts(); sysAccounts = a.data||[]; }catch(e){ sysAccounts=[]; }
+  try{ sysTeams = await Cloud.listTeams(); }catch(e){ sysTeams=[]; }
   try{ sysPresets = await Cloud.listDeptPresets(); }catch(e){ sysPresets={}; }
   renderSysadmin();
   loadSysSummary();               // يجلب الإحصائيات ثم يعيد رسم قسم النظرة العامة
 }
+// عدد مديري النظام الفعّالين (لحماية آخر superadmin بصريًا)
+function activeSuperadmins(){ return (sysAccounts||[]).filter(a=>a.role==='superadmin' && a.active!==false).length; }
+function acctById(id){ return (sysAccounts||[]).find(a=>a.user_id===id); }
 // جلب ملخّص اللوحة عبر RPC واحدة آمنة (لا تجميع من جداول حسّاسة في العميل)
 async function loadSysSummary(){
   sysSummaryLoading=true; sysSummaryErr=''; renderSysadmin();
@@ -481,13 +486,20 @@ function renderSysadmin(){
         </div>`).join('') : '<div class="empty">لا حسابات رؤساء أقسام</div>'}
     </div>`;
   const acctCard=`<div class="card">
-      <h3>كل الحسابات (${accts.length})</h3>
-      <div class="meta" style="margin:-4px 0 6px">اضغط أي حساب لإدارته (تعديل الاسم، تغيير كلمة المرور، نقل القسم، حذف).</div>
-      ${accts.length? accts.map(a=>{ const mgr=a.role!=='superadmin';
-        return `<div class="row" style="${mgr?'cursor:pointer':''}" ${mgr?`onclick="openManageAccount('${esc(a.username||'')}')"`:''}>
-          <div class="grow"><div class="name" style="font-size:14px">${esc(a.full_name||a.username||'—')} <span class="meta">${esc(a.username||'')}</span></div>
-            <div class="meta">${roleLabel(a.role)}${a.dept?(' • '+esc(sysDeptName(a.dept))):''}${a.team?(' • وردية '+esc(a.team)):''}</div></div>
-          <span class="badge ${a.role==='superadmin'?'b-pending':'b-ok'}">${roleLabel(a.role)}</span>${mgr?'<span class="meta" style="font-weight:800;margin-inline-start:6px">›</span>':''}
+      <div class="row" style="margin-bottom:2px"><h3 class="grow">إدارة الحسابات (${accts.length})</h3>
+        <button class="btn sm ghost" onclick="sysAccounts=null; loadSysadmin()">↻ تحديث</button></div>
+      <div class="meta" style="margin:-2px 0 6px">اضغط أي حساب لإدارة دوره ووردية/قسمه وتفعيله ورئاسته للقسم.</div>
+      ${accts.length? accts.map(a=>{ const off=a.active===false;
+        return `<div class="row acct-row${off?' acct-off':''}" style="cursor:pointer" onclick="openAccountManager('${esc(a.user_id||'')}')">
+          <div class="grow" style="min-width:0">
+            <div class="name" style="font-size:14px">${esc(a.full_name||a.username||'—')} <span class="meta">${esc(a.username||'')}</span></div>
+            <div class="meta">${roleLabel(a.role)||'—'}${a.dept?(' • '+esc(sysDeptName(a.dept))):''}${a.team?(' • وردية '+esc(a.team)):''}</div>
+          </div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;align-items:center">
+            ${a.is_head?'<span class="badge b-ok">رئيس قسم</span>':''}
+            <span class="badge ${off?'b-rej':(a.role==='superadmin'?'b-pending':'b-ok')}">${off?'معطّل':roleLabel(a.role)}</span>
+            <span class="meta" style="font-weight:800">›</span>
+          </div>
         </div>`; }).join('') : '<div class="empty">لا حسابات</div>'}
     </div>`;
   const foot=`<div class="card"><button class="btn block ghost" onclick="Cloud.signOut().then(()=>location.reload())">🚪 تسجيل الخروج</button></div>`;
@@ -575,21 +587,101 @@ async function setOwnerPreset(dept, preset){
     sysPresets[dept]=preset; toast('تم ضبط صلاحيات رئيس القسم');
   }catch(e){ toast('تعذّر: '+((e&&e.message)||e)); }
 }
-// --- إدارة حساب (تعديل الاسم/كلمة المرور/نقل القسم/حذف) ---
-function openManageAccount(user){
-  const a=(sysAccounts||[]).find(x=>x.username===user); if(!a) return;
-  const deptSel = a.role==='owner' ? `<div class="field"><label>نقل إلى قسم</label>
-    <div class="row"><select id="mg-dept" class="grow">${(sysDepts||[]).map(d=>`<option value="${esc(d.id)}" ${d.id===a.dept?'selected':''}>${esc(d.name)}</option>`).join('')}</select>
-      <button class="btn sm" onclick="submitReassignDept('${esc(user)}')">نقل</button></div></div>` : '';
-  openSheet(`<h3>إدارة حساب${a.full_name||a.username?`: ${esc(a.full_name||a.username)}`:''}<button class="x" onclick="closeSheet()">×</button></h3>
-    <div class="meta" style="margin-bottom:10px">${roleLabel(a.role)}${a.dept?(' • '+esc(sysDeptName(a.dept))):''}${a.team?(' • وردية '+esc(a.team)):''} • ${esc(user)}</div>
-    <div class="field"><label>الاسم الكامل</label>
-      <div class="row"><input id="mg-name" class="grow" value="${esc(a.full_name||'')}"><button class="btn sm" onclick="submitRenameAccount('${esc(user)}')">حفظ</button></div></div>
+// --- إدارة حساب شاملة (الدور/الوردية/القسم/التفعيل/رئاسة القسم) — مفتاحها المعرّف الداخلي ---
+// منفّذ موحّد لأي إجراء: يعطّل الزر أثناء التنفيذ (منع الضغط المكرر)، يعرض الخطأ،
+// وعند النجاح يحدّث القائمة دون إعادة تحميل كامل ويغلق النافذة.
+async function saAction(btn, factory, okMsg){
+  const err=document.getElementById('mg-err'); if(err) err.textContent='';
+  const old = btn ? btn.textContent : '';
+  if(btn){ btn.disabled=true; btn.textContent='جارٍ…'; }
+  try{
+    const r = await factory();
+    if(r && r.error) throw r.error;
+    toast(okMsg||'تم'); sysAccounts=null; closeSheet(); await loadSysadmin();
+  }catch(e){ if(err) err.textContent='تعذّر: '+((e&&e.message)||e); if(btn){ btn.disabled=false; btn.textContent=old; } }
+}
+function amScopeToggle(){
+  const r=(document.getElementById('am-role')||{}).value;
+  const tw=document.getElementById('am-team-wrap'), dw=document.getElementById('am-dept-wrap');
+  if(tw) tw.style.display=(r==='admin'||r==='viewer')?'':'none';
+  if(dw) dw.style.display=(r==='owner')?'':'none';
+}
+function openAccountManager(uid){
+  const a=acctById(uid); if(!a) return;
+  const isSelf = uid===currentUserId;
+  const lastSA = a.role==='superadmin' && activeSuperadmins()<=1;   // آخر مدير نظام فعّال
+  const off = a.active===false;
+  const deptOpts = (sysDepts||[]).map(d=>`<option value="${esc(d.id)}" ${d.id===a.dept?'selected':''}>${esc(d.name)} (${esc(d.id)})</option>`).join('');
+  const teamOpts = (sysTeams||[]).map(t=>`<option value="${esc(t.team)}" ${t.team===a.team?'selected':''}>${esc(t.name||t.team)} (${esc(t.team)}) — ${esc(sysDeptName(t.dept))}</option>`).join('');
+  const roles=[['superadmin','مدير النظام'],['owner','رئيس قسم'],['admin','مسؤول وردية'],['viewer','موظف']];
+  const roleOpts = roles.map(([v,l])=>`<option value="${v}" ${a.role===v?'selected':''}>${l}</option>`).join('');
+  // النطاق: الدور + محدّد ديناميكي (قسم لرئيس القسم، وردية للمسؤول/الموظف)
+  const scopeSection = `
+    <div class="field"><label>الدور</label>
+      <select id="am-role" onchange="amScopeToggle()" ${(isSelf||lastSA)?'disabled':''}>${roleOpts}</select>
+      ${isSelf?'<div class="meta">لا يمكنك تغيير دورك بنفسك.</div>':''}
+      ${lastSA?'<div class="meta" style="color:var(--red)">آخر مدير نظام فعّال — لا يمكن تخفيضه.</div>':''}</div>
+    <div class="field" id="am-team-wrap" style="display:none"><label>الوردية</label>
+      <select id="am-team">${teamOpts||'<option value="">— لا ورديات —</option>'}</select>
+      <div class="meta">القسم يُشتق من الوردية تلقائيًا.</div></div>
+    <div class="field" id="am-dept-wrap" style="display:none"><label>القسم</label>
+      <select id="am-dept-scope">${deptOpts||'<option value="">— لا أقسام —</option>'}</select></div>
+    ${(isSelf||lastSA)?'':`<button class="btn block" id="am-scope-btn" onclick="submitAccountScope('${esc(uid)}',this)">حفظ النطاق</button>`}`;
+  // الحالة (تفعيل/تعطيل على مستوى المصادقة)
+  let statusSection;
+  if(isSelf) statusSection = `<div class="meta">لا يمكنك تعطيل حسابك.</div>`;
+  else if(off) statusSection = `<button class="btn block" onclick="setAccountActive('${esc(uid)}',true,this)">✔ إعادة تفعيل الحساب</button>`;
+  else statusSection = `<button class="btn block danger" ${lastSA?'disabled':''} onclick="setAccountActive('${esc(uid)}',false,this)">⛔ تعطيل الحساب</button>${lastSA?'<div class="meta" style="color:var(--red)">لا يمكن تعطيل آخر مدير نظام.</div>':''}`;
+  // رئاسة القسم
+  let headSection='';
+  if(a.role!=='superadmin'){
+    if(a.is_head){
+      headSection = `<div class="field"><label>تغيير قسم الرئاسة</label>
+          <div class="row"><select id="am-head-dept" class="grow">${deptOpts}</select><button class="btn sm" onclick="changeHeadDept('${esc(uid)}',this)">نقل</button></div></div>
+        <button class="btn block danger" onclick="removeHead('${esc(uid)}',this)">إزالة صفة رئيس القسم</button>`;
+    } else {
+      headSection = `<div class="field"><label>ترقية إلى رئيس قسم</label>
+          <div class="row"><select id="am-promo-dept" class="grow">${deptOpts||'<option value="">— لا أقسام —</option>'}</select><button class="btn sm" onclick="promoteHead('${esc(uid)}',this)">ترقية</button></div></div>`;
+    }
+  }
+  const basic = `<div class="field"><label>الاسم الكامل</label>
+      <div class="row"><input id="mg-name" class="grow" value="${esc(a.full_name||'')}"><button class="btn sm" onclick="submitRenameAccount('${esc(a.username||'')}')">حفظ</button></div></div>
     <div class="field"><label>كلمة مرور جديدة</label>
-      <div class="row"><input id="mg-pass" class="grow" placeholder="اترك فارغًا لعدم التغيير"><button class="btn sm" onclick="submitResetPassword('${esc(user)}')">تغيير</button></div></div>
-    ${deptSel}
+      <div class="row"><input id="mg-pass" class="grow" placeholder="اترك فارغًا لعدم التغيير"><button class="btn sm" onclick="submitResetPassword('${esc(a.username||'')}')">تغيير</button></div></div>`;
+  openSheet(`<h3>إدارة: ${esc(a.full_name||a.username||'—')}<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="meta" style="margin-bottom:8px">${roleLabel(a.role)||'بلا دور'}${a.dept?(' • '+esc(sysDeptName(a.dept))):''}${a.team?(' • وردية '+esc(a.team)):''} • ${off?'<span style="color:var(--red);font-weight:800">معطّل</span>':'فعّال'}</div>
     <div class="hint bad" id="mg-err"></div>
-    <button class="btn block danger" style="margin-top:6px" onclick="deleteAccountConfirm('${esc(user)}')">🗑️ حذف الحساب</button>`);
+    <div class="am-sec"><div class="am-sec-t">النطاق (الدور/الوردية/القسم)</div>${scopeSection}</div>
+    <div class="am-sec"><div class="am-sec-t">الحالة</div>${statusSection}</div>
+    ${headSection?`<div class="am-sec"><div class="am-sec-t">رئاسة القسم</div>${headSection}</div>`:''}
+    <div class="am-sec"><div class="am-sec-t">أساسية</div>${basic}
+      <button class="btn block danger" style="margin-top:8px" onclick="deleteAccountConfirm('${esc(a.username||'')}')">🗑️ حذف الحساب نهائيًا</button></div>`);
+  amScopeToggle();
+}
+function submitAccountScope(uid, btn){
+  const role=(document.getElementById('am-role')||{}).value;
+  let team=null, dept=null;
+  if(role==='owner') dept=(document.getElementById('am-dept-scope')||{}).value||null;
+  else if(role==='admin'||role==='viewer') team=(document.getElementById('am-team')||{}).value||null;
+  saAction(btn, ()=>Cloud.superadminUpdateAccountScope(uid, role, team, dept), 'تم تحديث نطاق الحساب');
+}
+function setAccountActive(uid, active, btn){
+  if(!active && !confirm('تعطيل هذا الحساب؟ سيفقد الدخول فورًا وتُنهى جلساته، ويمكن إعادة تفعيله لاحقًا.')) return;
+  saAction(btn, ()=>Cloud.superadminSetAccountActive(uid, active), active?'تم إعادة التفعيل':'تم التعطيل');
+}
+function promoteHead(uid, btn){
+  const dept=(document.getElementById('am-promo-dept')||{}).value;
+  if(!dept){ const err=document.getElementById('mg-err'); if(err) err.textContent='اختر قسمًا'; return; }
+  if(!confirm('ترقية هذا الحساب إلى رئيس القسم؟')) return;
+  saAction(btn, ()=>Cloud.superadminPromoteHead(uid, dept), 'تمّت الترقية إلى رئيس قسم');
+}
+function changeHeadDept(uid, btn){
+  const dept=(document.getElementById('am-head-dept')||{}).value;
+  saAction(btn, ()=>Cloud.superadminUpdateAccountScope(uid, 'owner', null, dept), 'تم تغيير قسم الرئاسة');
+}
+function removeHead(uid, btn){
+  if(!confirm('إزالة صفة رئيس القسم عن هذا الحساب؟ يبقى الحساب فعّالًا كموظف بلا قسم.')) return;
+  saAction(btn, ()=>Cloud.superadminRemoveHead(uid), 'تمت إزالة صفة رئيس القسم');
 }
 async function submitRenameAccount(user){
   const err=document.getElementById('mg-err'); if(err) err.textContent='';
@@ -602,12 +694,6 @@ async function submitResetPassword(user){
   const pass=val('mg-pass'); if(!pass){ if(err) err.textContent='اكتب كلمة المرور الجديدة'; return; }
   try{ const r=await Cloud.adminResetPassword(user, pass); if(r.error) throw r.error;
     toast('تم تغيير كلمة المرور'); closeSheet();
-  }catch(e){ if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
-}
-async function submitReassignDept(user){
-  const err=document.getElementById('mg-err'); if(err) err.textContent='';
-  try{ const r=await Cloud.adminSetOwnerDept(user, val('mg-dept')); if(r.error) throw r.error;
-    sysAccounts=null; toast('تم نقل رئيس القسم'); await loadSysadmin(); closeSheet();
   }catch(e){ if(err) err.textContent='تعذّر: '+((e&&e.message)||e); }
 }
 async function deleteAccountConfirm(user){

@@ -122,6 +122,13 @@ const Cloud = {
     const m={}; (data||[]).forEach(r=>{ if(r.dept && m[r.dept]===undefined) m[r.dept]=(r.data&&r.data.ownerPreset)||'oversight'; }); return m; },
   /* ملخّص لوحة مدير النظام — استدعاء واحد آمن (superadmin فقط؛ الخادم يفرض ذلك) */
   async superadminDashboard(){ return await this.sb.rpc('superadmin_dashboard_summary'); },
+  /* ===== إدارة الحسابات ورؤساء الأقسام (superadmin فقط؛ الخادم يفرض كل القيود) ===== */
+  async superadminListAccounts(){ return await this.sb.rpc('superadmin_list_accounts'); },
+  async superadminSetAccountActive(userId, active){ return await this.sb.rpc('superadmin_set_account_active', { p_user_id:userId, p_active:active }); },
+  async superadminUpdateAccountScope(userId, role, team, dept){ return await this.sb.rpc('superadmin_update_account_scope', { p_user_id:userId, p_role:role, p_team:team, p_dept:dept }); },
+  async superadminPromoteHead(userId, dept){ return await this.sb.rpc('superadmin_promote_department_head', { p_user_id:userId, p_dept:dept }); },
+  async superadminRemoveHead(userId){ return await this.sb.rpc('superadmin_remove_department_head', { p_user_id:userId }); },
+  async superadminReplaceHead(oldId, newId, dept){ return await this.sb.rpc('superadmin_replace_department_head', { p_old_user_id:oldId, p_new_user_id:newId, p_dept:dept }); },
 
   /* ===== الإفادات المتقدّمة: محادثات + رسائل + مرفقات =====
      الحقول الحسّاسة (الوردية/الدور/المُنشئ/الوقت) تُفرَض بالخادم (triggers + RLS). */
