@@ -121,7 +121,7 @@ function dayStats(iso){
 }
 
 /* -------------------- التنقّل -------------------- */
-const screens=['dash','emps','sched','leaves','daily','point','audit','balances'];
+const screens=['dash','emps','sched','leaves','daily','point','audit','balances','secaudit','reports'];
 let current='dash';
 function nav(to){
   current=to;
@@ -140,6 +140,8 @@ function renderScreen(to){
   else if(to==='point') renderPoint();
   else if(to==='audit') renderAudit();
   else if(to==='balances') renderBalances();
+  else if(to==='secaudit') renderSecAudit();
+  else if(to==='reports') renderReports();
 }
 
 /* -------------------- لوحة المعلومات -------------------- */
@@ -504,8 +506,13 @@ function renderSysadmin(){
           </div>
         </div>`; }).join('') : '<div class="empty">لا حسابات</div>'}
     </div>`;
+  const toolsCard=`<div class="card">
+    <div class="card-h">🔎 المراجعة والتقارير</div>
+    <button class="btn block" onclick="nav('secaudit')">🛡️ سجل التدقيق الأمني</button>
+    <button class="btn block ghost" onclick="nav('reports')" style="margin-top:8px">📊 التقارير المتقدّمة</button>
+  </div>`;
   const foot=`<div class="card"><button class="btn block ghost" onclick="Cloud.signOut().then(()=>location.reload())">🚪 تسجيل الخروج</button></div>`;
-  el.innerHTML = header + renderOverviewSection() + kpis + deptCard + ownerCard + acctCard + foot;
+  el.innerHTML = header + renderOverviewSection() + kpis + deptCard + ownerCard + acctCard + toolsCard + foot;
 }
 function openNewDepartment(){
   openSheet(`<h3>قسم جديد<button class="x" onclick="closeSheet()">×</button></h3>
@@ -2540,7 +2547,8 @@ function openSettings(){
   }
   openSheet(`
     <h3>الإعدادات<button class="x" onclick="closeSheet()">×</button></h3>
-    <button class="btn block ghost" style="margin-bottom:14px" onclick="closeSheet();nav('audit')">📋 سجل التعديلات</button>
+    <button class="btn block ghost" style="margin-bottom:8px" onclick="closeSheet();nav('audit')">📋 سجل التعديلات</button>
+    ${!isViewer?`<button class="btn block ghost" style="margin-bottom:14px" onclick="closeSheet();nav('reports')">📊 التقارير المتقدّمة</button>`:''}
     <div class="field"><label>اسم القسم</label><input id="s-dep" value="${esc(s.department)}"></div>
     <div class="two">
       <div class="field"><label>طول دورة العمل (أيام)</label><input id="s-work" type="number" min="1" value="${s.workDays}"></div>
@@ -2759,6 +2767,225 @@ window.addEventListener('resize', ()=>{ if(current==='daily'||current==='point')
 boot();
 
 /* -------------------- التثبيت كتطبيق (PWA) -------------------- */
+/* ============================================================
+   المرحلة 3 — سجل التدقيق الأمني (مدير النظام) + التقارير المتقدّمة.
+   النطاق يُفرَض بالكامل على الخادم عبر RPCs؛ الواجهة عرض فقط.
+   ============================================================ */
+const AUDIT_ACTIONS={insert:'إضافة',update:'تعديل',delete:'حذف',account_disabled:'تعطيل حساب',account_enabled:'تفعيل حساب',account_scope_update:'تغيير نطاق حساب',head_promote:'ترقية رئيس قسم',head_remove:'إزالة رئيس قسم',head_replace:'استبدال رئيس قسم',account_create:'إنشاء حساب',account_rename:'تسمية حساب',account_delete:'حذف حساب',access_denied:'وصول مرفوض'};
+const AUDIT_ENTITIES={employees:'موظف',leaves:'إجازة',overrides:'تعديل جدول',point_shifts:'توزيع النقطة',settings:'إعدادات وردية',leave_policies:'سياسة رصيد',leave_ledger:'قيد رصيد',departments:'قسم',account:'حساب'};
+const AUDIT_ROLES={superadmin:'مدير النظام',owner:'رئيس قسم',admin:'مسؤول وردية',viewer:'موظف',system:'النظام',anonymous:'غير معروف',unknown:'غير معروف'};
+const FIELD_LABELS={name:'الاسم',status:'الحالة',type:'النوع',from_date:'من تاريخ',to_date:'إلى تاريخ',notes:'ملاحظات',cycle_start:'بداية الدورة',sort_order:'الترتيب',emp_no:'الرقم الوظيفي',role:'الدور',dept:'القسم',team:'الوردية',active:'مفعّل',policy_mode:'نمط السياسة',entitled_days:'أيام الاستحقاق',max_carryover:'أقصى ترحيل',day_count_basis:'أساس العد',balance_override:'تجاوز الرصيد',field:'الحقل',approved:'معتمد',value:'القيمة',day:'اليوم',shift:'المناوبة',point_name:'النقطة',balance_override_reason:'سبب التجاوز'};
+function saActionLabel(a){return AUDIT_ACTIONS[a]||a||'—';}
+function saEntityLabel(e){return AUDIT_ENTITIES[e]||e||'—';}
+function saRoleLabel(r){return AUDIT_ROLES[r]||r||'—';}
+function saWhen(at){ try{return new Date(at).toLocaleString('ar-EG-u-nu-latn',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return esc(at||'');} }
+function fieldLabel(k){ return FIELD_LABELS[k]||k; }
+function fmtDiffVal(v){ if(v==null) return '—'; if(typeof v==='object') return esc(JSON.stringify(v)); return esc(String(v)); }
+
+/* تصدير CSV: UTF-8 BOM + تحييد حقن الصيغ (=+-@) لفتح آمن في Excel */
+function csvCell(v){
+  let s=(v==null?'':String(v));
+  if(/^[=+\-@\t\r]/.test(s)) s="'"+s;
+  if(/[",\n\r]/.test(s)) s='"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+function exportCSV(name, headers, rows){
+  const lines=[headers.map(csvCell).join(',')];
+  (rows||[]).forEach(r=>lines.push(r.map(csvCell).join(',')));
+  const blob=new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url;
+  a.download=name+'-'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+function kpiRow(items){ return `<div class="kpis">${items.map(it=>`<div class="kpi"><div class="kpi-v">${esc(String(it[1]))}</div><div class="kpi-l">${esc(it[0])}</div></div>`).join('')}</div>`; }
+function hbars(title, items, valKey, labelKey){
+  items=items||[];
+  const max=Math.max(1,...items.map(x=>+x[valKey]||0));
+  return `<div class="card"><div class="card-h">${esc(title)}</div>${items.length?items.map(x=>{
+    const v=+x[valKey]||0, pct=Math.max(2,Math.round(Math.abs(v)/max*100));
+    return `<div class="bar-row"><div class="bar-lbl">${esc(String(x[labelKey]==null?'—':x[labelKey]))}</div><div class="bar-track"><div class="bar-fill${v<0?' neg':''}" style="width:${pct}%"></div></div><div class="bar-val">${esc(String(v))}</div></div>`;
+  }).join(''):'<div class="empty">لا بيانات</div>'}</div>`;
+}
+
+/* ---------- سجل التدقيق الأمني (مدير النظام فقط) ---------- */
+let secAuditState={page:1,pageSize:30,total:0,pages:0,rows:[],loading:false,err:'',filters:{search:'',action:'',entity:'',from:'',to:''}};
+function renderSecAudit(){
+  const el=document.getElementById('scr-secaudit');
+  if(!isSuperadmin){ toast('لمدير النظام فقط'); nav('dash'); return; }
+  const f=secAuditState.filters;
+  const aOpts=['',...Object.keys(AUDIT_ACTIONS)].map(a=>`<option value="${a}">${a?esc(saActionLabel(a)):'كل العمليات'}</option>`).join('');
+  const eOpts=['',...Object.keys(AUDIT_ENTITIES)].map(e=>`<option value="${e}">${e?esc(saEntityLabel(e)):'كل الكيانات'}</option>`).join('');
+  el.innerHTML=`
+   <div class="head-row"><button class="btn sm ghost" onclick="nav('dash')">← رجوع</button><h2 class="scr-title">🛡️ سجل التدقيق الأمني</h2></div>
+   <div class="card filters">
+     <input id="sa-q" class="inp" placeholder="بحث في الوصف أو المنفّذ" value="${esc(f.search)}">
+     <div class="two"><select id="sa-action" class="inp">${aOpts}</select><select id="sa-entity" class="inp">${eOpts}</select></div>
+     <div class="two"><div class="field"><label>من</label><input id="sa-from" type="date" class="inp" value="${esc(f.from)}"></div><div class="field"><label>إلى</label><input id="sa-to" type="date" class="inp" value="${esc(f.to)}"></div></div>
+     <div class="two"><button class="btn sm" onclick="applySecAudit()">🔍 بحث</button><button class="btn sm ghost" onclick="clearSecAudit()">مسح الفلاتر</button></div>
+     <div class="row-between"><button class="btn sm ghost" onclick="exportSecAudit()">⬇️ تصدير CSV</button><button class="btn sm ghost" onclick="loadSecAudit()">↻ تحديث</button></div>
+   </div>
+   <div id="sa-meta" class="rep-meta"></div>
+   <div id="sa-list"></div>
+   <div id="sa-pager" class="pager"></div>`;
+  const as=document.getElementById('sa-action'), es=document.getElementById('sa-entity');
+  if(as) as.value=f.action; if(es) es.value=f.entity;
+  loadSecAudit();
+}
+function applySecAudit(){ const f=secAuditState.filters; f.search=val('sa-q').trim(); f.action=val('sa-action'); f.entity=val('sa-entity'); f.from=val('sa-from'); f.to=val('sa-to'); secAuditState.page=1; loadSecAudit(); }
+function clearSecAudit(){ secAuditState.filters={search:'',action:'',entity:'',from:'',to:''}; secAuditState.page=1; renderSecAudit(); }
+function secAuditGoto(p){ if(p<1||p>secAuditState.pages) return; secAuditState.page=p; loadSecAudit(); }
+function secAuditRange(){ const f=secAuditState.filters; return { from:f.from?f.from+'T00:00:00Z':null, to:f.to?f.to+'T23:59:59Z':null }; }
+async function loadSecAudit(){
+  secAuditState.loading=true; renderSecAuditList();
+  const f=secAuditState.filters, rg=secAuditRange();
+  const { data, error }=await Cloud.searchAuditLog({page:secAuditState.page,pageSize:secAuditState.pageSize,search:f.search||null,action:f.action||null,entity:f.entity||null,from:rg.from,to:rg.to});
+  secAuditState.loading=false;
+  if(error){ secAuditState.err=(error&&error.message)||'خطأ'; secAuditState.rows=[]; renderSecAuditList(); return; }
+  secAuditState.err=''; secAuditState.rows=(data&&data.items)||[]; secAuditState.total=(data&&data.total)||0; secAuditState.pages=(data&&data.total_pages)||0;
+  renderSecAuditList();
+}
+function renderSecAuditList(){
+  const meta=document.getElementById('sa-meta'), list=document.getElementById('sa-list'), pager=document.getElementById('sa-pager');
+  if(!list) return;
+  if(secAuditState.loading){ list.innerHTML='<div class="empty">جارٍ التحميل…</div>'; if(meta)meta.textContent=''; if(pager)pager.innerHTML=''; return; }
+  if(secAuditState.err){ list.innerHTML='<div class="hint bad">تعذّر التحميل: '+esc(secAuditState.err)+'</div>'; if(pager)pager.innerHTML=''; return; }
+  const rows=secAuditState.rows;
+  if(meta) meta.textContent='إجمالي النتائج: '+secAuditState.total;
+  if(!rows.length){ list.innerHTML='<div class="empty">لا توجد سجلات مطابقة</div>'; if(pager)pager.innerHTML=''; return; }
+  list.innerHTML=rows.map((r,i)=>`<div class="row audit-row" onclick="openSecAuditDetail(${i})">
+    <div class="grow"><div class="name" style="font-size:14px">${esc(saActionLabel(r.action))} • ${esc(saEntityLabel(r.entity))}</div>
+    <div class="sub">${esc(r.summary||'—')}</div>
+    <div class="meta">${esc(r.actor_name||'—')} (${esc(saRoleLabel(r.actor_role))}) • ${esc(saWhen(r.at))}${r.team?' • '+esc(r.team):''}</div></div><div class="chev">›</div></div>`).join('');
+  const p=secAuditState.page, tp=secAuditState.pages||1;
+  if(pager) pager.innerHTML=`<button class="btn sm ghost" ${p<=1?'disabled':''} onclick="secAuditGoto(${p-1})">السابق</button><span class="page-ind">صفحة ${p} من ${tp}</span><button class="btn sm ghost" ${p>=tp?'disabled':''} onclick="secAuditGoto(${p+1})">التالي</button>`;
+}
+function openSecAuditDetail(i){
+  const r=secAuditState.rows[i]; if(!r) return;
+  let diff='<div class="empty">لا تغييرات مفصّلة</div>';
+  const ch=r.changed;
+  if(ch && typeof ch==='object' && !Array.isArray(ch) && Object.keys(ch).length){
+    diff='<table class="diff"><tr><th>الحقل</th><th>قبل</th><th>بعد</th></tr>'+Object.keys(ch).map(k=>{
+      const c=ch[k]; let ov='—',nv='—';
+      if(c && typeof c==='object'){ if(('old' in c)||('new' in c)){ ov=fmtDiffVal(c.old); nv=fmtDiffVal(c.new); } else if(c.changed===true){ nv='(تغيّر)'; } else { nv=esc(JSON.stringify(c)); } }
+      else nv=esc(String(c));
+      return `<tr><td>${esc(fieldLabel(k))}</td><td>${ov}</td><td>${nv}</td></tr>`;
+    }).join('')+'</table>';
+  }
+  openSheet(`<h3>تفاصيل السجل<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="kv"><b>العملية:</b> ${esc(saActionLabel(r.action))}</div>
+    <div class="kv"><b>الكيان:</b> ${esc(saEntityLabel(r.entity))}${r.entity_id?' • '+esc(r.entity_id):''}</div>
+    <div class="kv"><b>المنفّذ:</b> ${esc(r.actor_name||'—')} (${esc(saRoleLabel(r.actor_role))})</div>
+    <div class="kv"><b>الوقت:</b> ${esc(saWhen(r.at))}</div>
+    ${r.team?`<div class="kv"><b>الوردية:</b> ${esc(r.team)}</div>`:''}
+    <div class="kv"><b>الوصف:</b> ${esc(r.summary||'—')}</div>
+    <div class="diff-wrap">${diff}</div>`);
+}
+async function exportSecAudit(){
+  const f=secAuditState.filters, rg=secAuditRange(), cap=2000; let page=1, all=[];
+  toast('يجري تجهيز التصدير…');
+  while(all.length<cap){
+    const { data, error }=await Cloud.searchAuditLog({page,pageSize:100,search:f.search||null,action:f.action||null,entity:f.entity||null,from:rg.from,to:rg.to});
+    if(error){ toast('تعذّر التصدير'); return; }
+    const items=(data&&data.items)||[]; all=all.concat(items);
+    if(items.length<100 || all.length>=((data&&data.total)||0)) break; page++;
+  }
+  all=all.slice(0,cap);
+  exportCSV('audit-log',['الوقت','العملية','الكيان','المعرّف','المنفّذ','الدور','الوردية','الوصف'],
+    all.map(r=>[saWhen(r.at),saActionLabel(r.action),saEntityLabel(r.entity),r.entity_id||'',r.actor_name||'',saRoleLabel(r.actor_role),r.team||'',r.summary||'']));
+  if(all.length>=cap) toast('تم تصدير أول '+cap+' سجل');
+}
+
+/* ---------- التقارير المتقدّمة (مقيّدة بالنطاق خادمياً) ---------- */
+let reportsState={tab:'employees',from:'',to:'',year:new Date().getFullYear(),data:{},loading:false,err:''};
+function renderReports(){
+  const el=document.getElementById('scr-reports');
+  if(isViewer){ toast('غير متاح'); nav('dash'); return; }
+  const rs=reportsState;
+  const tabs=[['employees','👥 الموظفون'],['leaves','🏖️ الإجازات'],['balances','⚖️ الأرصدة'],['accounts','👤 الحسابات'],['activity','📈 النشاط']];
+  el.innerHTML=`
+   <div class="head-row"><button class="btn sm ghost" onclick="nav('dash')">← رجوع</button><h2 class="scr-title">📊 التقارير المتقدّمة</h2></div>
+   <div class="rep-tabs">${tabs.map(t=>`<button class="rep-tab ${rs.tab===t[0]?'active':''}" onclick="reportsTab('${t[0]}')">${t[1]}</button>`).join('')}</div>
+   <div class="card filters" id="rep-filters"></div>
+   <div id="rep-body"></div>`;
+  renderReportsFilters(); loadReport();
+}
+function reportsTab(t){ reportsState.tab=t; renderReports(); }
+function renderReportsFilters(){
+  const rs=reportsState, box=document.getElementById('rep-filters'); if(!box) return;
+  if(rs.tab==='balances'){
+    const cy=new Date().getFullYear(), ys=[]; for(let y=cy+1;y>=cy-4;y--) ys.push(y);
+    box.innerHTML=`<div class="two"><div class="field"><label>السنة</label><select id="rep-year" class="inp">${ys.map(y=>`<option value="${y}" ${y===rs.year?'selected':''}>${y}</option>`).join('')}</select></div><button class="btn sm" onclick="applyReport()">عرض</button></div>`;
+  } else if(rs.tab==='employees'||rs.tab==='accounts'){
+    box.innerHTML=`<div class="row-between"><div class="hint">ملخّص فوري ضمن نطاقك.</div><button class="btn sm ghost" onclick="loadReport()">↻ تحديث</button></div>`;
+  } else {
+    box.innerHTML=`<div class="two"><div class="field"><label>من</label><input id="rep-from" type="date" class="inp" value="${esc(rs.from)}"></div><div class="field"><label>إلى</label><input id="rep-to" type="date" class="inp" value="${esc(rs.to)}"></div></div><button class="btn sm" onclick="applyReport()">عرض</button>`;
+  }
+}
+function applyReport(){
+  const rs=reportsState;
+  if(rs.tab==='balances'){ rs.year=parseInt(val('rep-year'),10)||rs.year; }
+  else if(rs.tab==='leaves'||rs.tab==='activity'){ rs.from=val('rep-from'); rs.to=val('rep-to'); }
+  loadReport();
+}
+async function loadReport(){
+  const rs=reportsState; rs.loading=true; rs.err=''; renderReportBody();
+  let res;
+  try{
+    if(rs.tab==='employees'||rs.tab==='accounts') res=await Cloud.reportsSummary();
+    else if(rs.tab==='leaves') res=await Cloud.leaveReport(rs.from||null, rs.to||null);
+    else if(rs.tab==='balances') res=await Cloud.balanceReport(rs.year);
+    else res=await Cloud.activityReport(rs.from||null, rs.to||null);
+  }catch(e){ res={error:{message:String(e)}}; }
+  rs.loading=false;
+  if(res&&res.error){ rs.err=(res.error&&res.error.message)||'خطأ'; rs.data={}; renderReportBody(); return; }
+  rs.data=(res&&res.data)||{}; renderReportBody();
+}
+function renderReportBody(){
+  const rs=reportsState, box=document.getElementById('rep-body'); if(!box) return;
+  if(rs.loading){ box.innerHTML='<div class="empty">جارٍ التحميل…</div>'; return; }
+  if(rs.err){ box.innerHTML='<div class="hint bad">تعذّر التحميل: '+esc(rs.err)+'</div>'; return; }
+  const d=rs.data;
+  if(rs.tab==='employees'){
+    const e=d.employees||{};
+    box.innerHTML=kpiRow([['إجمالي الموظفين',e.total||0],['بلا حساب',e.without_account||0],['بلا وردية',e.without_shift||0],['مؤرشفون',e.archived==null?'—':e.archived]])
+      +hbars('حسب الوردية',e.by_shift,'count','name')+hbars('حسب القسم',e.by_dept,'count','name')
+      +`<button class="btn sm ghost" onclick="exportEmployees()">⬇️ تصدير CSV</button>`;
+  } else if(rs.tab==='leaves'){
+    box.innerHTML=kpiRow([['الإجمالي',d.total||0],['معتمدة',d.approved||0],['معلّقة',d.pending||0],['مرفوضة',d.rejected||0],['متوسط الأيام',d.avg_days||0]])
+      +hbars('حسب النوع',d.by_type,'count','type')+hbars('حسب الوردية',d.by_shift,'count','name')+hbars('حسب الشهر',d.by_month,'count','month')
+      +`<button class="btn sm ghost" onclick="exportLeaves()">⬇️ تصدير CSV</button>`;
+  } else if(rs.tab==='balances'){
+    const tt=d.totals||{};
+    box.innerHTML=kpiRow([['السنة',d.year||rs.year],['استحقاق',tt.entitled||0],['مستخدم',tt.used||0],['متبقٍ',tt.remaining||0],['تعديلات',tt.adjustments||0]])
+      +repBalTable('أرصدة سالبة',d.negative||[])+repBalTable('أرصدة منخفضة (≤3)',d.low||[])
+      +hbars('المتبقي حسب الوردية',d.by_shift,'remaining','team')
+      +`<button class="btn sm ghost" onclick="exportBalance()">⬇️ تصدير CSV</button>`;
+  } else if(rs.tab==='accounts'){
+    const a=d.accounts||{}, roles=a.by_role||{};
+    box.innerHTML=kpiRow([['بلا موظف',a.without_employee||0],['معطّلة',a.disabled||0],['نطاق ناقص',a.missing_scope||0]])
+      +hbars('حسب الدور',Object.keys(roles).map(k=>({role:saRoleLabel(k),count:roles[k]})),'count','role')
+      +repHeads(a.heads||[])
+      +`<button class="btn sm ghost" onclick="exportAccounts()">⬇️ تصدير CSV</button>`;
+  } else {
+    const ac=d.account_changes||{};
+    box.innerHTML=kpiRow([['إجمالي العمليات',d.total||0],['تعطيل',ac.disabled||0],['تفعيل',ac.enabled||0],['نطاق',ac.scope||0],['رؤساء',ac.heads||0]])
+      +hbars('حسب نوع العملية',(d.by_action||[]).map(x=>({label:saActionLabel(x.action),count:x.count})),'count','label')
+      +hbars('أكثر المنفّذين',d.by_actor,'count','actor')
+      +hbars('حسب الكيان',(d.by_entity||[]).map(x=>({label:saEntityLabel(x.entity),count:x.count})),'count','label')
+      +hbars('حسب اليوم',d.by_day,'count','day')
+      +`<button class="btn sm ghost" onclick="exportActivity()">⬇️ تصدير CSV</button>`;
+  }
+}
+function repBalTable(title, arr){ return `<div class="card"><div class="card-h">${esc(title)} (${arr.length})</div>${arr.length?`<div class="tbl-wrap"><table class="rep-table"><tr><th>الموظف</th><th>الوردية</th><th>النوع</th><th>المتبقي</th></tr>${arr.map(x=>`<tr><td>${esc(x.name||'—')}</td><td>${esc(x.team||'—')}</td><td>${esc(x.type||'—')}</td><td>${esc(String(x.remaining))}</td></tr>`).join('')}</table></div>`:'<div class="empty">لا يوجد</div>'}</div>`; }
+function repHeads(heads){ if(!heads.length) return ''; return `<div class="card"><div class="card-h">رؤساء الأقسام</div><div class="tbl-wrap"><table class="rep-table"><tr><th>القسم</th><th>له رئيس؟</th></tr>${heads.map(h=>`<tr><td>${esc(h.name||h.dept)}</td><td>${h.has_head?'✅ نعم':'— لا'}</td></tr>`).join('')}</table></div></div>`; }
+function exportEmployees(){ const e=(reportsState.data.employees)||{}; exportCSV('employees-by-shift',['الوردية','القسم','العدد'],(e.by_shift||[]).map(x=>[x.name,x.dept,x.count])); }
+function exportLeaves(){ const d=reportsState.data; exportCSV('leaves-by-type',['النوع','العدد'],(d.by_type||[]).map(x=>[x.type,x.count])); }
+function exportBalance(){ const d=reportsState.data; exportCSV('balances',['الموظف','الوردية','النوع','المتبقي'],(d.negative||[]).concat(d.low||[]).map(x=>[x.name,x.team,x.type,x.remaining])); }
+function exportAccounts(){ const roles=((reportsState.data.accounts)||{}).by_role||{}; exportCSV('accounts-by-role',['الدور','العدد'],Object.keys(roles).map(k=>[saRoleLabel(k),roles[k]])); }
+function exportActivity(){ const d=reportsState.data; exportCSV('activity-by-action',['العملية','العدد'],(d.by_action||[]).map(x=>[saActionLabel(x.action),x.count])); }
+
 // service worker بسياسة «الشبكة أولاً» — يجعل التطبيق قابلاً للتثبيت ويعمل دون إنترنت دون نُسخ قديمة
 if('serviceWorker' in navigator){
   // تحديث تلقائي: عند تفعيل نسخة جديدة من الـ SW نُعيد التحميل مرّة لجلب أحدث كود
