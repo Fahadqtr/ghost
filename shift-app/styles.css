@@ -331,3 +331,12 @@ body.viewer .install-bar{bottom:calc(64px + env(safe-area-inset-bottom,0))}
 .notif-title{font-weight:700;font-size:14px;color:var(--ink)}
 .notif-body{font-size:13px;color:var(--muted);margin-top:2px;word-break:break-word}
 .notif-time{font-size:12px;color:var(--muted);margin-top:3px}
+
+/* ==================== السجل التاريخي (Timeline) — المرحلة 5 ==================== */
+.tl{padding:4px 2px}
+.tl-row{display:flex;gap:10px;align-items:flex-start;padding:8px 4px;position:relative}
+.tl-row:not(:last-child)::before{content:"";position:absolute;inset-inline-start:7px;top:20px;bottom:-8px;width:2px;background:var(--line)}
+.tl-dot{width:14px;height:14px;border-radius:50%;background:var(--teal);flex:none;margin-top:3px;box-shadow:0 0 0 3px var(--teal-l)}
+.tl-title{font-weight:700;font-size:14px;color:var(--ink)}
+.tl-detail{font-size:13px;color:var(--muted);margin-top:2px;word-break:break-word}
+.tl-time{font-size:12px;color:var(--muted);margin-top:2px}

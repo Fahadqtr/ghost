@@ -309,6 +309,23 @@ const Cloud = {
     return await this.sb.rpc('list_my_notifications', { p_page:page||1, p_page_size:pageSize||20 });
   },
   async unreadCount(){ return await this.sb.rpc('notification_unread_count'); },
+
+  /* ===== المرحلة 5: تعديل/إلغاء طلبات الإجازة + السجل التاريخي ===== */
+  async updatePendingLeave(id, type, from, to, notes){
+    return await this.sb.rpc('update_pending_leave_request', { p_leave_id:id, p_type:type, p_from:from, p_to:to, p_notes:notes||'' });
+  },
+  async cancelPendingLeave(id, reason){
+    return await this.sb.rpc('cancel_pending_leave_request', { p_leave_id:id, p_reason:reason||'' });
+  },
+  async requestLeaveCancellation(id, reason){
+    return await this.sb.rpc('request_approved_leave_cancellation', { p_leave_id:id, p_reason:reason||'' });
+  },
+  async decideLeaveCancellation(requestId, decision, reason){
+    return await this.sb.rpc('decide_leave_cancellation', { p_request_id:requestId, p_decision:decision, p_reason:reason||'' });
+  },
+  async leaveTimeline(id){ return await this.sb.rpc('get_leave_timeline', { p_leave_id:id }); },
+  async listPendingCancellations(){ return await this.sb.rpc('list_pending_leave_cancellations'); },
+  async myCancellationRequests(){ return await this.sb.rpc('list_my_cancellation_requests'); },
   async markNotifRead(id){ return await this.sb.rpc('mark_notification_read', { p_id:id }); },
   async markAllNotifRead(){ return await this.sb.rpc('mark_all_notifications_read'); },
 
