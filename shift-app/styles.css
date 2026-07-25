@@ -316,3 +316,18 @@ body.viewer .install-bar{bottom:calc(64px + env(safe-area-inset-bottom,0))}
 .diff-wrap{margin-top:10px;overflow-x:auto}
 .kv{margin:4px 0;font-size:14px}
 .kv b{color:var(--muted);font-weight:700}
+
+/* ==================== مركز الإشعارات (المرحلة 4) ==================== */
+.hbtn.bell{position:relative}
+.bell-badge{
+  position:absolute;top:-4px;inset-inline-end:-4px;min-width:18px;height:18px;padding:0 4px;
+  background:var(--gold);color:#fff;font-size:11px;font-weight:800;line-height:18px;
+  border-radius:9px;text-align:center;box-shadow:0 0 0 2px var(--teal-d);
+}
+.notif-row{display:flex;align-items:flex-start;gap:10px;padding:10px 6px;border-bottom:1px solid var(--line)}
+.notif-row:last-child{border-bottom:none}
+.notif-row.unread{background:var(--teal-l);border-radius:10px}
+.notif-ic{font-size:20px;flex:none;width:28px;text-align:center}
+.notif-title{font-weight:700;font-size:14px;color:var(--ink)}
+.notif-body{font-size:13px;color:var(--muted);margin-top:2px;word-break:break-word}
+.notif-time{font-size:12px;color:var(--muted);margin-top:3px}
