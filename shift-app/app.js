@@ -126,6 +126,9 @@ let current='dash';
 /* حالة مركز الإشعارات */
 let notifState={ items:[], page:1, pageSize:20, total:0, unread:0, totalPages:0, loading:false, err:'' };
 let notifPollTimer=null;
+/* المرحلة 5: طلبات إلغاء الإجازة */
+let myCancellations={};        // {leave_id: {status,reason,decision_reason,...}} — للموظف
+let pendingCancellations=[];   // قائمة طلبات الإلغاء المعلّقة — للمسؤول
 function nav(to){
   current=to;
   screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s===to));
@@ -1261,7 +1264,7 @@ function renderOwnerDash(){
         <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
       </div>
     </div>`;
-  el.innerHTML = header + actions + kpis + shiftsCard + chartsCard + pendingCard + reportsInboxHtml() + noticesCardHtml() + staff;
+  el.innerHTML = header + actions + kpis + shiftsCard + chartsCard + pendingCard + cancellationsCardHtml() + reportsInboxHtml() + noticesCardHtml() + staff;
 }
 // رئيس القسم يضبط دور (قالب صلاحيات) مسؤول الوردية المعروضة
 function openAdminRoles(){
@@ -1329,6 +1332,7 @@ function renderDash(){
         </div>`;
       }).join('') : '<div class="empty">لا توجد طلبات معلّقة</div>'}
     </div>
+    ${cancellationsCardHtml()}
     <div class="card">
       <h3>جدول المستلمين على النقطة اليوم</h3>
       ${pointToday.length? pointToday.map(x=>`
@@ -1681,18 +1685,27 @@ function renderMyLeaves(){
     ${me?balanceCardHtml(myBalanceRows(),'رصيدي '+balanceYear):''}
     <div class="card" style="padding:6px 12px">
       ${mine.length? mine.map(l=>{
-        const days=inclusiveDays(l.from,l.to), canCancel=l.status==='قيد الانتظار';
-        const decided=l.status!=='قيد الانتظار' && l.decidedAt;
+        const days=inclusiveDays(l.from,l.to);
+        const decided=(l.status==='معتمد'||l.status==='مرفوض') && l.decidedAt;
+        const cr=myCancellations[l.id];
+        const today0=toISO(today());
+        const canReqCancel=l.status==='معتمد' && l.from>today0 && !(cr && cr.status==='pending');
         return `<div class="row">
           <div class="grow">
             <div class="name">${l.type}</div>
             <div class="meta">${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${days} يوم${l.notes?' • '+esc(l.notes):''}</div>
             ${decided?`<div class="meta" style="margin-top:2px">${l.status==='معتمد'?'اعتُمد':'رُفض'} ${relTime(l.decidedAt)}</div>`:''}
             ${l.status==='مرفوض'?`<div class="meta warn" style="margin-top:2px">سبب الرفض: ${esc(l.rejectReason||'لم يُذكر سبب الرفض')}</div>`:''}
+            ${cr?cancelReqLine(cr):''}
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
-            <span class="badge ${l.status==='معتمد'?'b-ok':l.status==='مرفوض'?'b-rej':'b-pending'}">${l.status}</span>
-            ${canCancel?`<button class="icon-btn danger" onclick="cancelMyLeave('${l.id}')">🗑️</button>`:''}
+            <span class="badge ${l.status==='معتمد'?'b-ok':(l.status==='مرفوض'||l.status==='ملغى')?'b-rej':'b-pending'}">${l.status}</span>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+              <button class="icon-btn" title="السجل" onclick="showTimeline('${l.id}')">📜</button>
+              ${l.status==='قيد الانتظار'?`<button class="icon-btn" title="تعديل" onclick="editMyPending('${l.id}')">✏️</button>
+                <button class="icon-btn danger" title="إلغاء" onclick="cancelMyPending('${l.id}')">🗑️</button>`:''}
+              ${canReqCancel?`<button class="btn sm ghost" onclick="requestCancel('${l.id}')">طلب إلغاء</button>`:''}
+            </div>
           </div>
         </div>`;
       }).join('') : '<div class="empty">لا توجد طلبات — قدّم طلبك من الزر بالأسفل</div>'}
@@ -1732,11 +1745,131 @@ async function submitLeaveRequest(){
   renderScreen(current); refreshUnread();
   toast('تم إرسال الطلب للاعتماد');
 }
-function cancelMyLeave(id){
-  const l=state.leaves.find(x=>x.id===id); if(!l || l.status!=='قيد الانتظار') return;
+/* ---- المرحلة 5: تعديل/إلغاء طلبات الموظف + طلب إلغاء المعتمدة ---- */
+function cancelReqLine(cr){
+  const t = cr.status==='pending'?'طلب إلغاء قيد الانتظار':cr.status==='approved'?'تم اعتماد الإلغاء':'رُفض طلب الإلغاء';
+  const rej = cr.status==='rejected'&&cr.decision_reason?' — '+esc(cr.decision_reason):'';
+  return `<div class="meta ${cr.status==='rejected'?'warn':''}" style="margin-top:2px">🔁 ${t}${rej}</div>`;
+}
+async function loadMyCancellations(){
+  try{ const { data, error }=await Cloud.myCancellationRequests(); if(error) return;
+    myCancellations={}; ((data&&data.items)||[]).forEach(r=>{ if(!myCancellations[r.leave_id]) myCancellations[r.leave_id]=r; });
+  }catch(e){}
+}
+async function loadPendingCancellations(){
+  try{ const { data, error }=await Cloud.listPendingCancellations(); pendingCancellations=(!error&&data&&data.items)||[]; }
+  catch(e){ pendingCancellations=[]; }
+}
+function editMyPending(id){
+  const l=state.leaves.find(x=>x.id===id); if(!l||l.status!=='قيد الانتظار'){ toast('لا يمكن تعديل هذا الطلب'); return; }
+  const s=state.settings;
+  openSheet(`<h3>تعديل طلب الإجازة<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="field"><label>نوع الإجازة</label>
+      <div class="pick">${s.leaveTypes.map(t=>`<button data-t="${t}" class="${l.type===t?'on':''}" onclick="pickType(this)">${t}</button>`).join('')}</div></div>
+    <div class="two">
+      <div class="field"><label>من تاريخ</label><input id="e-from" type="date" value="${l.from}"></div>
+      <div class="field"><label>إلى تاريخ</label><input id="e-to" type="date" value="${l.to}"></div>
+    </div>
+    <div class="field"><label>ملاحظات</label><input id="e-notes" maxlength="2000" value="${esc(l.notes||'')}" placeholder="اختياري"></div>
+    <button class="btn block" id="e-save" style="margin-top:10px" onclick="saveMyPendingEdit('${id}')">حفظ التعديل</button>`);
+  sheet._type=l.type;
+}
+async function saveMyPendingEdit(id){
+  const from=val('e-from'), to=val('e-to');
+  if(!from||!to){ toast('حدد التواريخ'); return; }
+  if(to<from){ toast('تاريخ النهاية قبل البداية'); return; }
+  if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  const btn=document.getElementById('e-save'); if(btn){ btn.disabled=true; btn.textContent='جارٍ…'; }
+  const { error }=await Cloud.updatePendingLeave(id, sheet._type, from, to, val('e-notes').trim());
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='حفظ التعديل'; } toast(rpcErr(error)); return; }
+  closeSheet(); try{ await Cloud.pull(); }catch(e){} renderScreen(current); toast('تم حفظ التعديل');
+}
+async function cancelMyPending(id){
+  const l=state.leaves.find(x=>x.id===id); if(!l||l.status!=='قيد الانتظار') return;
   if(!confirm('إلغاء طلب الإجازة؟')) return;
-  state.leaves=state.leaves.filter(x=>x.id!==id);
-  Data.delLeave(id); renderMyLeaves(); toast('تم إلغاء الطلب');
+  if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  const { error }=await Cloud.cancelPendingLeave(id,'');
+  if(error){ toast(rpcErr(error)); return; }
+  try{ await Cloud.pull(); }catch(e){} renderScreen(current); refreshUnread(); toast('تم إلغاء الطلب');
+}
+function requestCancel(id){
+  const l=state.leaves.find(x=>x.id===id); if(!l||l.status!=='معتمد'){ toast('طلب الإلغاء للإجازات المعتمدة فقط'); return; }
+  openSheet(`<h3>طلب إلغاء الإجازة<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="meta">${esc(l.type)} • ${fmtDate(l.from)} ← ${fmtDate(l.to)}</p>
+    <p class="hint">يُرسَل الطلب للمسؤول لاعتماد الإلغاء.</p>
+    <div class="field"><label>سبب طلب الإلغاء (إلزامي)</label><textarea id="rc-reason" rows="3" maxlength="1000" placeholder="اكتب سبب رغبتك في إلغاء الإجازة"></textarea></div>
+    <button class="btn block" id="rc-btn" onclick="submitCancelRequest('${id}')">إرسال طلب الإلغاء</button>`);
+}
+async function submitCancelRequest(id){
+  const reason=(val('rc-reason')||'').trim();
+  if(!reason){ toast('سبب طلب الإلغاء مطلوب'); return; }
+  if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  const btn=document.getElementById('rc-btn'); if(btn){ btn.disabled=true; btn.textContent='جارٍ…'; }
+  const { error }=await Cloud.requestLeaveCancellation(id, reason);
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='إرسال طلب الإلغاء'; } toast(rpcErr(error)); return; }
+  closeSheet(); await loadMyCancellations(); renderScreen(current); refreshUnread(); toast('تم إرسال طلب الإلغاء');
+}
+/* ---- المسؤول: قرار طلبات الإلغاء ---- */
+async function approveCancellation(reqId){
+  if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  const { error }=await Cloud.decideLeaveCancellation(reqId,'approve','');
+  if(error){ toast(rpcErr(error)); return; }
+  await loadPendingCancellations(); try{ await Cloud.pull(); }catch(e){} renderScreen(current); refreshUnread(); toast('تم اعتماد الإلغاء');
+}
+function rejectCancellation(reqId){
+  const c=pendingCancellations.find(x=>x.request_id===reqId);
+  openSheet(`<h3>رفض طلب الإلغاء<button class="x" onclick="closeSheet()">×</button></h3>
+    ${c?`<p class="meta">${esc(c.emp_name||'')} • ${esc(c.leave_type||'')} • ${fmtDate(c.from)} ← ${fmtDate(c.to)}</p>`:''}
+    <div class="field"><label>سبب رفض الإلغاء (إلزامي)</label><textarea id="dc-reason" rows="3" maxlength="1000"></textarea></div>
+    <button class="btn block danger" id="dc-btn" onclick="confirmRejectCancellation('${reqId}')">تأكيد الرفض</button>`);
+}
+async function confirmRejectCancellation(reqId){
+  const reason=(val('dc-reason')||'').trim();
+  if(!reason){ toast('سبب الرفض مطلوب'); return; }
+  if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  const btn=document.getElementById('dc-btn'); if(btn){ btn.disabled=true; btn.textContent='جارٍ…'; }
+  const { error }=await Cloud.decideLeaveCancellation(reqId,'reject',reason);
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='تأكيد الرفض'; } toast(rpcErr(error)); return; }
+  closeSheet(); await loadPendingCancellations(); renderScreen(current); refreshUnread(); toast('تم رفض طلب الإلغاء');
+}
+function cancellationsCardHtml(){
+  if(!can('approve')) return '';
+  const list=pendingCancellations||[];
+  return `<div class="card">
+    <h3>طلبات إلغاء الإجازات المعتمدة (${list.length})</h3>
+    ${list.length? list.map(c=>`<div class="row">
+      <div class="grow">
+        <div class="name">${esc(c.emp_name||'— (محذوف)')}</div>
+        <div class="meta">${esc(c.leave_type||'')} • ${fmtDate(c.from)} ← ${fmtDate(c.to)} • وردية ${esc(c.team||'')}</div>
+        <div class="meta">السبب: ${esc(c.reason||'—')}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="btn sm" onclick="approveCancellation('${c.request_id}')">✓ اعتماد الإلغاء</button>
+        <button class="btn sm danger" onclick="rejectCancellation('${c.request_id}')">✗ رفض</button>
+      </div>
+    </div>`).join('') : '<div class="empty">لا طلبات إلغاء معلّقة</div>'}
+  </div>`;
+}
+/* ---- السجل التاريخي (Timeline) ---- */
+const TL_LABEL={submitted:'تقديم الطلب',edited:'تعديل الطلب',cancelled:'إلغاء الطلب',approved:'اعتماد الطلب',rejected:'رفض الطلب',cancellation_requested:'طلب إلغاء',cancellation_approved:'اعتماد الإلغاء',cancellation_rejected:'رفض الإلغاء'};
+const TL_ROLE={superadmin:'مدير النظام',owner:'رئيس القسم',admin:'مسؤول الوردية',viewer:'الموظف'};
+function tlDate(s){ return (s&&/^\d{4}-\d{2}-\d{2}/.test(s))?fmtDate(String(s).slice(0,10)):''; }
+async function showTimeline(id){
+  openSheet('<h3>سجل الطلب<button class="x" onclick="closeSheet()">×</button></h3><div class="empty">جارٍ التحميل…</div>');
+  const { data, error }=await Cloud.leaveTimeline(id);
+  if(error){ sheet.innerHTML='<h3>سجل الطلب<button class="x" onclick="closeSheet()">×</button></h3><div class="empty warn">'+esc(rpcErr(error))+'</div>'; return; }
+  const items=(data&&data.items)||[];
+  const rows=items.map(ev=>{
+    const label=TL_LABEL[ev.event]||ev.event, role=TL_ROLE[ev.role]||'';
+    let detail='';
+    if(ev.event==='edited'&&ev.old&&ev.new){ detail=`من ${esc(ev.old.type||'')} ${tlDate(ev.old.from)}←${tlDate(ev.old.to)} إلى ${esc(ev.new.type||'')} ${tlDate(ev.new.from)}←${tlDate(ev.new.to)}`; }
+    else if(ev.new&&ev.new.reason){ detail='السبب: '+esc(ev.new.reason); }
+    return `<div class="tl-row"><div class="tl-dot"></div><div class="grow">
+      <div class="tl-title">${label}${role?' • '+role:''}</div>
+      ${detail?`<div class="tl-detail">${detail}</div>`:''}
+      <div class="tl-time">${relTime(ev.at)}</div></div></div>`;
+  }).join('');
+  sheet.innerHTML=`<h3>سجل الطلب<button class="x" onclick="closeSheet()">×</button></h3><div class="tl">${rows||'<div class="empty">لا أحداث</div>'}</div>`;
 }
 function coverageCheck(l){
   if(l.status!=='معتمد') return {ok:true, text:'الطلب '+l.status};
@@ -2836,7 +2969,11 @@ function initNotifications(){
     document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') refreshUnread(); });
   }
 }
-function pullAndRender(){ Cloud.pull().then(()=>{ document.getElementById('hSub').textContent=state.settings.department; renderScreen(current); }).catch(()=>{}); }
+function pullAndRender(){ Cloud.pull().then(async ()=>{ document.getElementById('hSub').textContent=state.settings.department; await loadCancellationData(); renderScreen(current); }).catch(()=>{}); }
+// المرحلة 5: حمّل بيانات الإلغاء حسب الدور (الموظف: طلباته؛ المسؤول: المعلّقة)
+async function loadCancellationData(){
+  try{ if(isViewer) await loadMyCancellations(); else if(can('approve')) await loadPendingCancellations(); }catch(e){}
+}
 
 /* -------------------- الدخول والتشغيل -------------------- */
 function showLogin(){ document.getElementById('login').classList.add('open'); }
@@ -2907,6 +3044,7 @@ async function startApp(){
   Cloud.subscribe(onRemoteChange);
   updateSyncBadge();
   initNotifications();
+  await loadCancellationData();
   nav(isViewer ? 'sched' : 'dash');
   // عند الدخول: تعميم رئيس القسم (للجميع) ثم توجيه مسؤول الوردية ثم وقت استلام النقطة — واحد لا يحجب الآخر
   let shown=false;
