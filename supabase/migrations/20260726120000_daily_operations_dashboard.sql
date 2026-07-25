@@ -233,7 +233,9 @@ returns jsonb language sql stable security definer set search_path to '' as $fn$
       'title', title, 'description', description) as j
     from public._ops_action_items(p_teams, p_today, p_now)
     order by case priority when 'critical' then 0 when 'warning' then 1 else 2 end,
-             sort_key nulls last, from_sort nulls last
+             sort_key nulls last, from_sort nulls last,
+             -- tie-breaker نهائي حتمي (معرّفات داخلية غير معروضة) لثبات الترقيم
+             leave_id nulls last, request_id nulls last, emp_id nulls last
     limit p_limit offset p_offset
   ) t;
 $fn$;
@@ -249,7 +251,9 @@ returns jsonb language sql stable security definer set search_path to '' as $fn$
       'from_date', from_date, 'to_date', to_date,
       'title', title, 'description', description) as j
     from public._ops_alerts(p_teams, p_today, p_now)
-    order by sort_key, employee_name
+    order by sort_key, employee_name,
+             -- tie-breaker نهائي حتمي (معرّفات داخلية غير معروضة) لثبات الترقيم
+             leave_id nulls last, request_id nulls last, emp_id nulls last
     limit p_limit offset p_offset
   ) t;
 $fn$;

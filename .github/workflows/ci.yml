@@ -25,6 +25,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: every job here only checks out and runs build/test/guard —
+# none writes to the repo, comments, or deploys. Read-only token.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: commerce-ai-os
@@ -138,3 +143,72 @@ jobs:
             exit 0
           fi
           exit $code
+
+  # Supabase migration schema-compatibility guard for the daily-operations
+  # dashboard (Phase 6). Runs against a THROWAWAY local Postgres service — no
+  # Supabase connection, no secrets, no production data. Reproduces the exact
+  # scaffold-fidelity failure class that broke the first production apply
+  # (a migration referencing a leaves column that does not exist on prod).
+  # This job does NOT touch commerce-ai-os, so it overrides the workflow's
+  # working-directory default.
+  dashboard-schema:
+    name: dashboard-schema
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure psql client
+        run: command -v psql >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client)
+      - name: Run daily-operations dashboard schema guard
+        env:
+          # Local service container only — NOT production; no secrets used.
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: bash "$GITHUB_WORKSPACE/supabase/tests/daily_operations_dashboard_schema.sh"
+
+  # Aggregate gate. There is no in-repo "final" job today (the protect-master
+  # ruleset lists individual checks), so this job gives a single check that is
+  # RED whenever any currently-required check OR the new schema guard fails —
+  # i.e. a failing dashboard-schema fails ci-success. lint and audit stay
+  # advisory (deliberately excluded here) so this does not promote them.
+  # NOTE (admin action, outside this repo): add `dashboard-schema` (or switch to
+  # `ci-success`) in the protect-master ruleset's required checks to make the
+  # guard merge-blocking; a workflow file cannot edit the ruleset itself.
+  ci-success:
+    name: ci-success
+    if: always()
+    needs: [typecheck, test, build, dashboard-schema]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Verify required checks passed
+        run: |
+          echo "typecheck=${{ needs.typecheck.result }} test=${{ needs.test.result }} build=${{ needs.build.result }} dashboard-schema=${{ needs.dashboard-schema.result }}"
+          bad=""
+          for kv in \
+            "typecheck:${{ needs.typecheck.result }}" \
+            "test:${{ needs.test.result }}" \
+            "build:${{ needs.build.result }}" \
+            "dashboard-schema:${{ needs.dashboard-schema.result }}"; do
+            name=${kv%%:*}; res=${kv#*:}
+            if [ "$res" != "success" ]; then echo "::error::required check '$name' = $res"; bad=1; fi
+          done
+          if [ -n "$bad" ]; then exit 1; fi
+          echo "all required checks passed (including dashboard-schema)"
