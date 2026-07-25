@@ -396,3 +396,16 @@ body.viewer .install-bar{bottom:calc(64px + env(safe-area-inset-bottom,0))}
 .att-tag.voided{background:#fde8e8;color:#a11}
 .att-pager{margin-top:10px;align-items:center;gap:8px}
 @media (min-width:820px){ .att-grid{grid-template-columns:repeat(4,1fr)} }
+
+/* المرحلة 8: جدول العمل + السياسة */
+.att-sched{padding:12px 14px}
+.att-sched .l{font-size:12px;color:var(--muted,#8a94a6)}
+.att-sched .v{font-weight:700;margin-top:2px}
+.att-sched .v.muted{color:var(--muted,#8a94a6);font-weight:600}
+.ops-kpis .stat.muted .n{color:var(--muted,#8a94a6)}
+.ops-kpis .stat.muted{opacity:.75}
+.modal-wrap{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:60;padding:16px}
+.modal-wrap .modal{background:var(--card,#fff);border-radius:14px;padding:18px;max-width:420px;width:100%;max-height:90vh;overflow:auto}
+.modal-wrap .modal h3{margin:0 0 12px}
+.modal-wrap .modal label{display:block;margin:8px 0;font-size:13px}
+.modal-wrap .modal label input,.modal-wrap .modal label select{width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid var(--border,#d5dbe6);background:var(--bg,#fff);color:inherit}

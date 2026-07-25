@@ -121,7 +121,7 @@ function dayStats(iso){
 }
 
 /* -------------------- التنقّل -------------------- */
-const screens=['dash','emps','sched','leaves','daily','point','audit','balances','secaudit','reports','notif','dailyops','attend','attadmin'];
+const screens=['dash','emps','sched','leaves','daily','point','audit','balances','secaudit','reports','notif','dailyops','attend','attadmin','wsched','shiftdefs','attpolicy'];
 let current='dash';
 /* حالة مركز الإشعارات */
 let notifState={ items:[], page:1, pageSize:20, total:0, unread:0, totalPages:0, loading:false, err:'' };
@@ -530,7 +530,7 @@ function renderSysadmin(){
     <button class="btn block ghost" onclick="nav('reports')" style="margin-top:8px">📊 التقارير المتقدّمة</button>
   </div>`;
   const foot=`<div class="card"><button class="btn block ghost" onclick="Cloud.signOut().then(()=>location.reload())">🚪 تسجيل الخروج</button></div>`;
-  el.innerHTML = header + opsEntryBtnHtml() + attAdminEntryBtnHtml() + renderOverviewSection() + kpis + deptCard + ownerCard + acctCard + toolsCard + foot;
+  el.innerHTML = header + opsEntryBtnHtml() + attAdminEntryBtnHtml() + schedEntryBtnHtml() + renderOverviewSection() + kpis + deptCard + ownerCard + acctCard + toolsCard + foot;
 }
 function openNewDepartment(){
   openSheet(`<h3>قسم جديد<button class="x" onclick="closeSheet()">×</button></h3>
@@ -1275,7 +1275,7 @@ function renderOwnerDash(){
         <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
       </div>
     </div>`;
-  el.innerHTML = header + opsEntryBtnHtml() + attAdminEntryBtnHtml() + actions + kpis + shiftsCard + chartsCard + pendingCard + cancellationsCardHtml() + reportsInboxHtml() + noticesCardHtml() + staff;
+  el.innerHTML = header + opsEntryBtnHtml() + attAdminEntryBtnHtml() + schedEntryBtnHtml() + actions + kpis + shiftsCard + chartsCard + pendingCard + cancellationsCardHtml() + reportsInboxHtml() + noticesCardHtml() + staff;
 }
 // رئيس القسم يضبط دور (قالب صلاحيات) مسؤول الوردية المعروضة
 function openAdminRoles(){
@@ -1316,7 +1316,7 @@ function renderDash(){
       <div style="font-size:13px;color:var(--muted)">${AR_DAYS[today().getDay()]} — ${fmtDate(iso)}</div>
       <div style="font-weight:800;font-size:18px;margin-top:2px">حالة اليوم</div>
     </div>
-    ${!isViewer?(opsEntryBtnHtml()+attAdminEntryBtnHtml()):attEntryBtnHtml()}
+    ${!isViewer?(opsEntryBtnHtml()+attAdminEntryBtnHtml()+schedEntryBtnHtml()):attEntryBtnHtml()}
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
       ${can('leaves')?`<button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>`:''}
       ${can('directives')?`<button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>`:''}
@@ -1889,6 +1889,7 @@ const OPS_SEV={critical:{c:'critical',t:'حرِج'},warning:{c:'warning',t:'تح
 // زر دخول اللوحة (يظهر في الصفحة الرئيسية للمسؤول/رئيس القسم/مدير النظام)
 function opsEntryBtnHtml(){ return `<button class="btn block ops-entry" onclick="openDailyOps()">🧭 لوحة التشغيل اليومية</button>`; }
 let opsAtt=null;  // ملخّص الحضور الفعلي (مؤشرات موثوقة تُضاف للوحة التشغيل — قراءة فقط)
+let opsV2=null, opsV2avail=null;  // المرحلة 8: متأخر/غائب/تغطية (تُعرض فقط عند availability=true)
 async function loadDailyOps(){
   dailyOpsLoading=true; dailyOpsErr='';
   try{
@@ -1897,6 +1898,8 @@ async function loadDailyOps(){
   }catch(e){ dailyOpsErr='تعذّر تحميل اللوحة — تحقّق من الاتصال'; }
   // فشل جزئي لا يُسقط الصفحة: مؤشرات الحضور best-effort
   try{ const a=await Cloud.attSummary(); if(a && !a.error) opsAtt=(a.data&&a.data.summary)||null; }catch(e){}
+  // المرحلة 8: نظرة الجدول المتقدّمة (متأخر/غائب/تغطية مع availability) best-effort
+  try{ const v=await Cloud.attOverviewV2(); if(v && !v.error){ opsV2=(v.data&&v.data.summary)||null; opsV2avail=(v.data&&v.data.availability)||null; } }catch(e){}
   dailyOpsLoading=false;
 }
 function openDailyOps(){
@@ -2062,11 +2065,21 @@ function renderDailyOps(){
       ${opsKpi(opsAtt.checked_in_today||0,'سجّلوا حضورًا اليوم')}
     </div>
     <button class="btn block att-entry" onclick="openAttAdmin()">🗂️ إدارة الحضور التفصيلية</button>` : '';
+  // المرحلة 8: متأخر/غائب/مبكر/جدول-مفقود/تغطية — تُعرض بأرقام فقط عند توفّر السياسة؛ وإلا «غير مفعّل»
+  const v2=opsV2, av=opsV2avail||{};
+  const schedStrip = v2 ? `<div class="stats ops-kpis att-strip">
+      ${opsKpi(v2.scheduled_employees||0,'مجدولون اليوم')}
+      ${opsKpi(v2.schedule_missing||0,'جدول مفقود',(v2.schedule_missing?'bad':''))}
+      ${av.policy_ready ? opsKpi(v2.late_confirmed||0,'متأخرون مؤكّدون',(v2.late_confirmed?'bad':'')) : `<div class="stat muted"><div class="n">—</div><div class="l">التأخير (غير مفعّل)</div></div>`}
+      ${av.policy_ready ? opsKpi(v2.absent_confirmed||0,'غائبون مؤكّدون',(v2.absent_confirmed?'bad':'')) : `<div class="stat muted"><div class="n">—</div><div class="l">الغياب (غير مفعّل)</div></div>`}
+      ${av.policy_ready ? opsKpi(v2.early_leave_confirmed||0,'انصراف مبكر',(v2.early_leave_confirmed?'bad':'')) : ''}
+      ${av.coverage_ready ? opsKpi(v2.coverage_gap||0,'نقص التغطية',(v2.coverage_gap?'bad':'')) : `<div class="stat muted"><div class="n">—</div><div class="l">التغطية (غير مفعّلة)</div></div>`}
+    </div>` : '';
   const ai=(d.action_items||[]).map(opsActionRow).join('');
   const al=(d.alerts||[]).map(opsAlertRow).join('');
   const td=(d.today_leaves||[]).map(l=>opsLeaveRow(l,false)).join('');
   const up=(d.upcoming_leaves||[]).map(l=>opsLeaveRow(l,true)).join('');
-  el.innerHTML = header + kpis + attStrip
+  el.innerHTML = header + kpis + attStrip + schedStrip
     + opsSection('ai','تحتاج إجراء', (d.action_items||[]).length, ai)
     + opsSection('alerts','التنبيهات التشغيلية', (d.alerts||[]).length, al)
     + opsSection('today','في إجازة اليوم', (d.today_leaves||[]).length, td)
@@ -2137,15 +2150,200 @@ function renderAttend(){ const el=document.getElementById('scr-attend'); if(!el)
     ${bigBtn}
     <div class="att-note">الوقت المعتمد هو وقت الخادم (توقيت قطر).</div>
   </div>`;
+  const schedCard=attSchedCardHtml(s.schedule);
   const recent=(s.recent||[]);
   const hist=`<div class="card ops-sec"><div class="ops-sec-h"><h3 class="grow">آخر الأيام <span class="ops-count">${recent.length}</span></h3></div>
     <div class="ops-sec-b">${recent.length?recent.map(attRecentRow).join(''):'<div class="empty">لا سجلّات</div>'}</div></div>`;
-  el.innerHTML=header+statusCard+hist;
+  el.innerHTML=header+statusCard+schedCard+hist;
 }
 
 /* -------- المشرف: إدارة الحضور -------- */
 let attAdm=null, attAdmErr='', attAdmLoading=false, attAdmDate='', attAdmStatus='', attAdmPage=1, attAdmPollTimer=null, attAdmBusy=false;
 function attAdminEntryBtnHtml(){ return `<button class="btn block att-entry" onclick="openAttAdmin()">🗂️ إدارة الحضور</button>`; }
+
+/* ============================ المرحلة 8: جدول العمل + السياسة ============================ */
+function schedEntryBtnHtml(){ return `<button class="btn block att-entry" onclick="openWsched()">🗓️ جدول العمل المتوقع</button>`; }
+function todayISO(){ try{ return new Date().toISOString().slice(0,10); }catch(e){ return ''; } }
+function wsTime(iso){ if(!iso) return '—'; try{ return new Date(iso).toLocaleTimeString('ar',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Qatar'}); }catch(e){ return '—'; } }
+// بطاقة جدول الموظف لليوم — تُعرض فقط عند توفّر Snapshot؛ بلا تصنيف غياب/تأخير مضلّل
+function attSchedCardHtml(sc){
+  if(!sc || sc.status!=='ok'){ return `<div class="card att-sched"><div class="l">وردية اليوم</div><div class="v muted">الجدول غير متوفر</div></div>`; }
+  if(!sc.is_working_day){ return `<div class="card att-sched"><div class="l">وردية اليوم</div><div class="v">🛌 يوم راحة</div></div>`; }
+  const times=wsTime(sc.expected_start_at)+' → '+wsTime(sc.expected_end_at)+(sc.is_overnight?' (ليلية)':'');
+  const note=sc.policy_complete?'':'<div class="att-note">سياسة التأخير غير مفعّلة بعد.</div>';
+  return `<div class="card att-sched"><div class="l">وردية اليوم المتوقّعة</div>
+    <div class="v">${esc(sc.shift_code||'—')} · ${esc(times)}</div>${note}</div>`;
+}
+
+let wsFrom='', wsTo='', wsPage=1, wsData=null, wsLoading=false, wsErr='', wsBusy=false;
+async function loadWsched(){ wsLoading=true; wsErr='';
+  if(!wsFrom){ wsFrom=todayISO(); wsTo=todayISO(); }
+  try{ const { data, error }=await Cloud.getSchedule(wsFrom||null, wsTo||null, null, wsPage, 100);
+    if(error){ wsErr=rpcErr(error); } else { wsData=data||null; }
+  }catch(e){ wsErr='تعذّر تحميل الجدول — تحقّق من الاتصال'; }
+  wsLoading=false; }
+function openWsched(){ current='wsched'; wsData=null; wsErr='';
+  screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s==='wsched'));
+  const fab=document.getElementById('fab'); if(fab) fab.style.display='none'; window.scrollTo(0,0);
+  renderWsched(); loadWsched().then(renderWsched); }
+function closeWsched(){ current='dash'; go('dash'); }
+async function wsSetRange(){ const f=document.getElementById('ws-from'), t=document.getElementById('ws-to');
+  wsFrom=(f&&f.value)||wsFrom; wsTo=(t&&t.value)||wsTo; wsPage=1; renderWsched(); await loadWsched(); renderWsched(); }
+async function doGenSchedule(){ if(wsBusy) return; if(!wsFrom||!wsTo){ alert('حدّد نطاق التاريخ'); return; }
+  wsBusy=true; renderWsched();
+  try{ const { data, error }=await Cloud.genSchedule(wsFrom, wsTo);
+    if(error){ alert('تعذّر التوليد: '+rpcErr(error)); } else {
+      alert('تم التوليد — أُنشئ '+((data&&data.created)||0)+'، حُدّث '+((data&&data.updated)||0)+
+        '، تُخطّي مقفل '+((data&&data.skipped_locked)||0)+'، يدوي '+((data&&data.skipped_manual)||0)); }
+  }catch(e){ alert('تعذّر التوليد — تحقّق من الاتصال'); }
+  wsBusy=false; await loadWsched(); renderWsched(); }
+async function doLockRange(lock){ if(wsBusy) return; if(!wsFrom||!wsTo){ alert('حدّد نطاق التاريخ'); return; }
+  if(!confirm((lock?'قفل':'فتح')+' الجدول للفترة '+esc(wsFrom)+' → '+esc(wsTo)+'؟')) return;
+  wsBusy=true;
+  try{ const { data, error }=await Cloud.lockSchedule(wsFrom, wsTo, lock);
+    if(error) alert('تعذّر: '+rpcErr(error)); else alert('تم — '+((data&&data.affected)||0)+' سجلًّا');
+  }catch(e){ alert('تعذّر — تحقّق من الاتصال'); }
+  wsBusy=false; await loadWsched(); renderWsched(); }
+function wsRow(r){ const shift=r.is_working_day?esc(r.shift_code||'—'):'راحة';
+  const times=r.is_working_day?(wsTime(r.expected_start_at)+' → '+wsTime(r.expected_end_at)+(r.is_overnight?' (ليلية)':'')):'—';
+  const lock=r.is_locked?'🔒':''; const src={rotation:'دوران',override:'استبدال',manual:'يدوي',import:'استيراد'}[r.source]||esc(r.source||'');
+  return `<div class="att-row"><div class="grow"><div class="att-emp">${esc(r.employee_name||'—')} ${lock}</div>
+    <div class="att-meta">${esc(r.work_date)} · ${shift} · ${times}</div>
+    <div class="att-meta">المصدر: ${src}</div></div>
+    <div class="att-actions">
+      <button class="btn sm" onclick="showSchedTimeline('${esc(r.schedule_id)}')">سجل</button>
+      <button class="btn sm" onclick="openSchedEdit('${esc(r.employee_id)}','${esc(r.work_date)}')" ${r.is_locked?'disabled':''}>تعديل</button>
+    </div></div>`; }
+function renderWsched(){ const el=document.getElementById('scr-wsched'); if(!el) return;
+  const header=`<div class="card ops-head"><div class="row" style="align-items:center">
+    <button class="btn sm ghost" onclick="closeWsched()">→ رجوع</button>
+    <div class="grow" style="text-align:center"><div style="font-weight:800;font-size:17px">🗓️ جدول العمل المتوقع</div></div>
+    <button class="btn sm" onclick="loadWsched().then(renderWsched)" ${wsLoading?'disabled':''}>${wsLoading?'…':'⟳'}</button></div>
+    <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">
+      <label class="meta">من <input type="date" id="ws-from" value="${esc(wsFrom||todayISO())}"></label>
+      <label class="meta">إلى <input type="date" id="ws-to" value="${esc(wsTo||todayISO())}"></label>
+      <button class="btn sm" onclick="wsSetRange()">عرض</button>
+      <button class="btn sm" onclick="doGenSchedule()" ${wsBusy?'disabled':''}>${wsBusy?'…':'⚙️ توليد'}</button>
+      <button class="btn sm" onclick="doLockRange(true)" ${wsBusy?'disabled':''}>🔒 قفل</button>
+      <button class="btn sm ghost" onclick="doLockRange(false)" ${wsBusy?'disabled':''}>فتح</button>
+    </div>
+    <div class="row" style="gap:8px;margin-top:8px">
+      <button class="btn sm ghost" onclick="openShiftDefs()">⏱️ تعريف الورديات</button>
+      <button class="btn sm ghost" onclick="openAttPolicy()">📐 سياسة الحضور</button>
+    </div></div>`;
+  if(wsErr){ el.innerHTML=header+`<div class="card"><div class="empty warn">${esc(wsErr)}</div><button class="btn block" onclick="loadWsched().then(renderWsched)">إعادة المحاولة</button></div>`; return; }
+  if(!wsData){ el.innerHTML=header+`<div class="card"><div class="empty">جارٍ التحميل…</div></div>`; return; }
+  const items=(wsData.items||[]);
+  const body=`<div class="card ops-sec"><div class="ops-sec-h"><h3 class="grow">الأيام <span class="ops-count">${wsData.total||0}</span></h3></div>
+    <div class="ops-sec-b">${items.length?items.map(wsRow).join(''):'<div class="empty">لا سجلّات لهذا النطاق — استخدم «توليد»</div>'}</div></div>`;
+  el.innerHTML=header+body;
+}
+async function showSchedTimeline(id){ try{ const { data, error }=await Cloud.schedTimeline(id);
+    if(error){ alert('تعذّر: '+rpcErr(error)); return; }
+    const items=(data&&data.items)||[]; const evt={generated:'تُوِّلد',updated:'عُدِّل',locked:'قُفل',unlocked:'فُتح',marked_off:'راحة',marked_working:'عمل'};
+    const txt=items.length?items.map(h=>(evt[h.event_type]||esc(h.event_type))+(h.reason?(' — '+esc(h.reason)):'')).join('\n'):'لا أحداث';
+    alert('سجل التغييرات:\n'+txt);
+  }catch(e){ alert('تعذّر — تحقّق من الاتصال'); } }
+function openSchedEdit(empId, date){ wsEditEmp=empId; wsEditDate=date;
+  Cloud.listShiftDefs(false).then(({data})=>{ wsDefs=(data&&data.items)||[]; renderSchedEditModal(); }); }
+let wsEditEmp='', wsEditDate='', wsDefs=[];
+function renderSchedEditModal(){ const opts=wsDefs.map(d=>`<option value="${esc(d.id)}">${esc(d.name_ar||d.shift_code)} (${esc(d.start_local_time)}–${esc(d.end_local_time)})</option>`).join('');
+  const m=document.createElement('div'); m.className='modal-wrap'; m.id='sched-edit-modal';
+  m.innerHTML=`<div class="modal"><h3>تعديل يوم ${esc(wsEditDate)}</h3>
+    <label>الحالة <select id="se-working"><option value="1">يوم عمل</option><option value="0">راحة</option></select></label>
+    <label>الوردية <select id="se-def">${opts}</select></label>
+    <label>السبب (إلزامي) <input id="se-reason" maxlength="1000" placeholder="سبب التعديل"></label>
+    <div class="row" style="gap:8px"><button class="btn" onclick="confirmSchedEdit()">حفظ</button>
+    <button class="btn ghost" onclick="document.getElementById('sched-edit-modal').remove()">إلغاء</button></div></div>`;
+  document.body.appendChild(m); }
+async function confirmSchedEdit(){ const working=document.getElementById('se-working').value==='1';
+  const defId=document.getElementById('se-def').value; const reason=(document.getElementById('se-reason').value||'').trim();
+  if(!reason){ alert('السبب إلزامي'); return; }
+  try{ const { error }=await Cloud.updSchedule(wsEditEmp, wsEditDate, working?defId:null, working, reason);
+    if(error){ alert('تعذّر: '+rpcErr(error)); return; }
+    const mm=document.getElementById('sched-edit-modal'); if(mm) mm.remove();
+    await loadWsched(); renderWsched();
+  }catch(e){ alert('تعذّر — تحقّق من الاتصال'); } }
+
+/* ---- تعريف الورديات ---- */
+let sdData=null, sdErr='';
+function openShiftDefs(){ current='shiftdefs'; sdData=null; sdErr='';
+  screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s==='shiftdefs'));
+  window.scrollTo(0,0); renderShiftDefs(); Cloud.listShiftDefs(true).then(({data,error})=>{ if(error) sdErr=rpcErr(error); else sdData=data; renderShiftDefs(); }); }
+function renderShiftDefs(){ const el=document.getElementById('scr-shiftdefs'); if(!el) return;
+  const header=`<div class="card ops-head"><div class="row"><button class="btn sm ghost" onclick="openWsched()">→ رجوع</button>
+    <div class="grow" style="text-align:center;font-weight:800">⏱️ تعريف الورديات</div>
+    <button class="btn sm" onclick="openShiftDefEdit()">＋ نسخة</button></div>
+    <div class="meta" style="margin-top:6px">تغيير الوقت يُنشئ نسخة سريان جديدة ولا يعدّل الماضي.</div></div>`;
+  if(sdErr){ el.innerHTML=header+`<div class="card"><div class="empty warn">${esc(sdErr)}</div></div>`; return; }
+  if(!sdData){ el.innerHTML=header+`<div class="card"><div class="empty">جارٍ التحميل…</div></div>`; return; }
+  const items=(sdData.items||[]);
+  el.innerHTML=header+`<div class="card ops-sec"><div class="ops-sec-b">${items.length?items.map(d=>
+    `<div class="att-row"><div class="grow"><div class="att-emp">${esc(d.name_ar||d.shift_code)} ${d.is_overnight?'🌙':''} ${d.is_active?'':'(معطّلة)'}</div>
+     <div class="att-meta">${esc(d.start_local_time)} → ${esc(d.end_local_time)} · من ${esc(d.effective_from)}${d.effective_to?(' إلى '+esc(d.effective_to)):''}</div></div></div>`
+    ).join(''):'<div class="empty">لا تعريفات</div>'}</div></div>`; }
+function openShiftDefEdit(){ const m=document.createElement('div'); m.className='modal-wrap'; m.id='sd-modal';
+  m.innerHTML=`<div class="modal"><h3>نسخة وردية</h3>
+    <label>الرمز <input id="sd-code" placeholder="صباح/عصر/ليل"></label>
+    <label>الاسم <input id="sd-name" placeholder="اسم العرض"></label>
+    <label>البداية <input id="sd-start" type="time"></label>
+    <label>النهاية <input id="sd-end" type="time"></label>
+    <label>تاريخ السريان <input id="sd-from" type="date" value="${esc(todayISO())}"></label>
+    <div class="row" style="gap:8px"><button class="btn" onclick="confirmShiftDef()">حفظ</button>
+    <button class="btn ghost" onclick="document.getElementById('sd-modal').remove()">إلغاء</button></div></div>`;
+  document.body.appendChild(m); }
+async function confirmShiftDef(){ const code=(document.getElementById('sd-code').value||'').trim();
+  const name=(document.getElementById('sd-name').value||'').trim(); const s=document.getElementById('sd-start').value;
+  const e=document.getElementById('sd-end').value; const from=document.getElementById('sd-from').value;
+  if(!code||!s||!e||!from){ alert('كل الحقول مطلوبة'); return; }
+  try{ const { error }=await Cloud.upsertShiftDef(code, name, null, s, e, from);
+    if(error){ alert('تعذّر: '+rpcErr(error)); return; }
+    document.getElementById('sd-modal').remove();
+    Cloud.listShiftDefs(true).then(({data})=>{ sdData=data; renderShiftDefs(); });
+  }catch(err){ alert('تعذّر — تحقّق من الاتصال'); } }
+
+/* ---- سياسة الحضور ---- */
+let apData=null, apErr='';
+function openAttPolicy(){ current='attpolicy'; apData=null; apErr='';
+  screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s==='attpolicy'));
+  window.scrollTo(0,0); renderAttPolicy(); Cloud.listAttPolicies(true).then(({data,error})=>{ if(error) apErr=rpcErr(error); else apData=data; renderAttPolicy(); }); }
+function renderAttPolicy(){ const el=document.getElementById('scr-attpolicy'); if(!el) return;
+  const header=`<div class="card ops-head"><div class="row"><button class="btn sm ghost" onclick="openWsched()">→ رجوع</button>
+    <div class="grow" style="text-align:center;font-weight:800">📐 سياسة الحضور</div>
+    <button class="btn sm" onclick="openAttPolicyEdit()">＋ سياسة</button></div>
+    <div class="meta" style="margin-top:6px">التأخير/الغياب/التغطية تُحسب فقط بعد ضبط سياسة صريحة. القيم تؤثر على المستقبل فقط.</div></div>`;
+  if(apErr){ el.innerHTML=header+`<div class="card"><div class="empty warn">${esc(apErr)}</div></div>`; return; }
+  if(!apData){ el.innerHTML=header+`<div class="card"><div class="empty">جارٍ التحميل…</div></div>`; return; }
+  const items=(apData.items||[]);
+  el.innerHTML=header+`<div class="card ops-sec"><div class="ops-sec-b">${items.length?items.map(p=>
+    `<div class="att-row"><div class="grow"><div class="att-emp">${esc(p.name)} · ${esc(p.scope_type)}${p.scope_ref?(':'+esc(p.scope_ref)):''} ${p.is_active?'':'(معطّلة)'}</div>
+     <div class="att-meta">سماح ${esc(p.grace_minutes)}د · حدّ غياب ${esc(p.absence_cutoff_minutes)}د · انصراف ${esc(p.early_leave_grace_minutes)}د · حدّ أدنى ${p.minimum_staff_required==null?'—':esc(p.minimum_staff_required)}</div>
+     <div class="att-meta">من ${esc(p.effective_from)}${p.effective_to?(' إلى '+esc(p.effective_to)):''}</div></div></div>`
+    ).join(''):'<div class="empty">لا سياسات — الحساب غير مفعّل</div>'}</div></div>`; }
+function openAttPolicyEdit(){ const m=document.createElement('div'); m.className='modal-wrap'; m.id='ap-modal';
+  m.innerHTML=`<div class="modal"><h3>سياسة حضور</h3>
+    <label>الاسم <input id="ap-name" placeholder="اسم السياسة"></label>
+    <label>النطاق <select id="ap-scope"><option value="global">عام</option><option value="department">قسم</option><option value="team">فريق</option><option value="shift">وردية</option></select></label>
+    <label>مرجع النطاق (للقسم/الفريق/الوردية) <input id="ap-ref" placeholder="اتركه فارغًا للعام"></label>
+    <label>سماح التأخير (دقائق) <input id="ap-grace" type="number" min="0" value="0"></label>
+    <label>حدّ الغياب (دقائق ≥ السماح) <input id="ap-cut" type="number" min="0" value="0"></label>
+    <label>سماح الانصراف المبكر (دقائق) <input id="ap-early" type="number" min="0" value="0"></label>
+    <label>أقصى ساعات جلسة <input id="ap-max" type="number" min="1" max="48" value="12"></label>
+    <label>الحدّ الأدنى للتغطية (اختياري) <input id="ap-min" type="number" min="0" placeholder="اتركه فارغًا"></label>
+    <label>تاريخ السريان <input id="ap-from" type="date" value="${esc(todayISO())}"></label>
+    <div class="row" style="gap:8px"><button class="btn" onclick="confirmAttPolicy()">حفظ</button>
+    <button class="btn ghost" onclick="document.getElementById('ap-modal').remove()">إلغاء</button></div></div>`;
+  document.body.appendChild(m); }
+async function confirmAttPolicy(){ const g=v=>document.getElementById(v).value;
+  const scope=g('ap-scope'), ref=(g('ap-ref')||'').trim(), grace=+g('ap-grace'), cut=+g('ap-cut'), early=+g('ap-early'), maxH=+g('ap-max'), min=g('ap-min'), from=g('ap-from');
+  if(!from){ alert('تاريخ السريان مطلوب'); return; }
+  if(cut<grace){ alert('حدّ الغياب يجب أن يكون ≥ سماح التأخير'); return; }
+  if(scope!=='global' && !ref){ alert('مرجع النطاق مطلوب لغير العام'); return; }
+  try{ const { error }=await Cloud.upsertAttPolicy(g('ap-name'), scope, ref, grace, cut, early, maxH, min, from);
+    if(error){ alert('تعذّر: '+rpcErr(error)); return; }
+    document.getElementById('ap-modal').remove();
+    Cloud.listAttPolicies(true).then(({data})=>{ apData=data; renderAttPolicy(); });
+  }catch(e){ alert('تعذّر — تحقّق من الاتصال'); } }
 async function loadAttAdmin(){ attAdmLoading=true; attAdmErr='';
   try{
     const [sum, sess, anom]=await Promise.all([
