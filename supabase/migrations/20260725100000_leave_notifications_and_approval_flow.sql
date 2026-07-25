@@ -25,6 +25,17 @@ alter table public.leaves
   add column if not exists decided_role  text,
   add column if not exists reject_reason text;
 
+-- حدّ طول سبب الرفض (يسمح بـ NULL للمسار القديم)
+do $rr$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'leaves_reject_reason_len') then
+    alter table public.leaves
+      add constraint leaves_reject_reason_len
+      check (reject_reason is null or char_length(reject_reason) <= 1000);
+  end if;
+end
+$rr$;
+
 -- تعبئة سجلّية للصفوف الموجودة دون إطلاق triggers (تفادي تدقيق/تحقّق رصيد زائف).
 -- ملاحظة: يُنفَّذ بدور مالك الجدول (postgres) في الـmigration فيُسمح بتعطيل الـtriggers.
 do $backfill$
@@ -51,15 +62,16 @@ create table if not exists public.notifications (
   type        text not null check (type in (
                 'leave_submitted','leave_approved','leave_rejected','leave_cancelled',
                 'account_changed','department_changed')),  -- الإجازات فقط تُنفَّذ الآن
-  title       text not null,
-  body        text not null default '',
+  title       text not null check (char_length(title) <= 200),
+  body        text not null default '' check (char_length(body) <= 2000),
   entity_type text not null default 'leave',
   entity_id   uuid,                                -- مرجع غير مقيّد بـ FK (يحفظ التاريخ، بلا CASCADE)
   is_read     boolean not null default false,
   read_at     timestamptz,
   created_at  timestamptz not null default now(),
   created_by  uuid,                                -- منفّذ الحدث (لا يُعرض للموظف)
-  data        jsonb not null default '{}'::jsonb   -- معلومات غير حساسة فقط
+  -- data: يُنشأ داخلياً فقط (لا من العميل)؛ حدّ دفاعي 16KB على النص الناتج
+  data        jsonb not null default '{}'::jsonb check (length(data::text) <= 16384)
 );
 
 create index if not exists idx_notifications_user_created
@@ -90,7 +102,7 @@ create table if not exists public.leave_decisions (
   decision        text not null check (decision in ('approved','rejected','cancelled')),
   decided_by      uuid,
   decided_at      timestamptz not null default now(),
-  reason          text not null default '',
+  reason          text check (reason is null or char_length(reason) <= 1000),  -- NULL = رفض قديم بلا سبب
   previous_status text,
   new_status      text,
   actor_role      text,
@@ -201,8 +213,13 @@ begin
       NEW.decided_at   := now();
       NEW.decided_role := public.audit_current_user_role();
       if NEW.status = 'مرفوض' then
+        -- سبب الرفض إلزامي في RPC الجديدة (تتحقّق قبل UPDATE). هنا الحارس عامّ
+        -- ومتوافق مع المسار القديم (UPDATE مباشر بلا reject_reason): يُخزَّن NULL،
+        -- ولا نخترع سبباً منسوباً للمسؤول. الحدّ الأقصى مفروض بقيد الجدول.
         if coalesce(btrim(NEW.reject_reason), '') = '' then
-          raise exception 'سبب الرفض مطلوب';
+          NEW.reject_reason := null;
+        else
+          NEW.reject_reason := btrim(NEW.reject_reason);
         end if;
       else
         NEW.reject_reason := null;                 -- الاعتماد يمسح السبب
@@ -236,16 +253,19 @@ begin
     return NEW;
   end if;
 
+  -- reason = NULL عند رفض قديم بلا سبب (لا نخزّن نص العرض العام كأنه سبب المسؤول)
   insert into public.leave_decisions(
     leave_id, decision, decided_by, decided_at, reason,
     previous_status, new_status, actor_role, team, dept)
   values (
     NEW.id,
     case when NEW.status = 'معتمد' then 'approved' else 'rejected' end,
-    NEW.decided_by, coalesce(NEW.decided_at, now()), coalesce(NEW.reject_reason, ''),
+    NEW.decided_by, coalesce(NEW.decided_at, now()),
+    case when NEW.status = 'مرفوض' and coalesce(btrim(NEW.reject_reason),'') <> '' then NEW.reject_reason else null end,
     OLD.status, NEW.status, NEW.decided_role, NEW.team, public.audit_team_dept(NEW.team));
 
-  -- إشعار الموظف صاحب الطلب (إن كان له حساب) — لا اسم المنفّذ في النص
+  -- إشعار الموظف صاحب الطلب (إن كان له حساب) — لا اسم المنفّذ في النص.
+  -- عند رفض بلا سبب (مسار قديم) نعرض «لم يُذكر سبب الرفض» في نص الرسالة فقط.
   select ea.user_id into v_uid from public.employee_auth ea where ea.emp_id = NEW.emp_id;
   if v_uid is not null then
     insert into public.notifications(user_id, type, title, body, entity_type, entity_id, created_by, data)
@@ -254,11 +274,14 @@ begin
       case when NEW.status = 'معتمد' then 'leave_approved' else 'leave_rejected' end,
       case when NEW.status = 'معتمد' then 'تم اعتماد طلب الإجازة' else 'تم رفض طلب الإجازة' end,
       NEW.type || ' • ' || to_char(NEW.from_date,'YYYY-MM-DD') || ' ← ' || to_char(NEW.to_date,'YYYY-MM-DD')
-        || case when NEW.status = 'مرفوض' and coalesce(btrim(NEW.reject_reason),'') <> ''
-                then ' — السبب: ' || NEW.reject_reason else '' end,
+        || case when NEW.status = 'مرفوض'
+                then ' — ' || case when coalesce(btrim(NEW.reject_reason),'') <> ''
+                                   then 'السبب: ' || NEW.reject_reason
+                                   else 'لم يُذكر سبب الرفض' end
+                else '' end,
       'leave', NEW.id, NEW.decided_by,
-      jsonb_build_object('leave_type', NEW.type, 'from', NEW.from_date, 'to', NEW.to_date,
-                         'status', NEW.status, 'reason', coalesce(NEW.reject_reason,'')));
+      -- data: حقول غير حساسة للتنقّل فقط — لا نكرّر سبب الرفض (موجود في الرسالة)
+      jsonb_build_object('leave_type', NEW.type, 'from', NEW.from_date, 'to', NEW.to_date, 'status', NEW.status));
   end if;
   -- إن لم يوجد حساب مرتبط: القرار مطبَّق ويُتخطّى الإشعار (لا فشل).
   return NEW;
@@ -337,6 +360,9 @@ begin
   if p_from is null or p_to is null then raise exception 'حدّد تواريخ الطلب'; end if;
   if p_to < p_from then raise exception 'تاريخ النهاية قبل البداية'; end if;
   if coalesce(btrim(p_type),'') = '' then raise exception 'نوع الإجازة مطلوب'; end if;
+  if char_length(coalesce(p_notes,'')) > 2000 then
+    raise exception 'الملاحظات تتجاوز الحد المسموح (2000 محرف)';   -- رفض، لا قصّ صامت
+  end if;
 
   select s.data->'leaveTypes' into v_types from public.settings s where s.team = v_team;
   if v_types is not null and jsonb_typeof(v_types) = 'array' and not (v_types ? p_type) then
@@ -389,8 +415,13 @@ begin
   if v_lv.status <> 'قيد الانتظار' then
     raise exception 'تم اتخاذ قرار بشأن الطلب مسبقاً' using errcode = '55006';
   end if;
-  if p_decision = 'reject' and coalesce(btrim(p_reason),'') = '' then
-    raise exception 'سبب الرفض مطلوب';
+  if p_decision = 'reject' then
+    if coalesce(btrim(p_reason),'') = '' then
+      raise exception 'سبب الرفض مطلوب';                       -- إلزامي في RPC الجديدة
+    end if;
+    if char_length(btrim(p_reason)) > 1000 then
+      raise exception 'سبب الرفض يتجاوز الحد المسموح (1000 محرف)';  -- رفض، لا قصّ صامت
+    end if;
   end if;
 
   v_new := case when p_decision = 'approve' then 'معتمد' else 'مرفوض' end;

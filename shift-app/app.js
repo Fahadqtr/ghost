@@ -1655,7 +1655,7 @@ function renderLeaves(){
             <div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${days} يوم</div>
             ${l.notes?`<div class="meta" style="margin-top:2px">📝 ${esc(l.notes)}</div>`:''}
             ${l.status!=='قيد الانتظار'&&l.decidedAt?`<div class="meta" style="margin-top:2px">${l.status==='معتمد'?'اعتُمد':'رُفض'} ${relTime(l.decidedAt)}</div>`:''}
-            ${l.status==='مرفوض'&&l.rejectReason?`<div class="meta warn" style="margin-top:2px">سبب الرفض: ${esc(l.rejectReason)}</div>`:''}
+            ${l.status==='مرفوض'?`<div class="meta warn" style="margin-top:2px">سبب الرفض: ${esc(l.rejectReason||'لم يُذكر سبب الرفض')}</div>`:''}
             <div class="meta ${cov.ok?'':'warn'}" style="margin-top:2px">${cov.text}</div>
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
@@ -1688,7 +1688,7 @@ function renderMyLeaves(){
             <div class="name">${l.type}</div>
             <div class="meta">${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${days} يوم${l.notes?' • '+esc(l.notes):''}</div>
             ${decided?`<div class="meta" style="margin-top:2px">${l.status==='معتمد'?'اعتُمد':'رُفض'} ${relTime(l.decidedAt)}</div>`:''}
-            ${l.status==='مرفوض'&&l.rejectReason?`<div class="meta warn" style="margin-top:2px">سبب الرفض: ${esc(l.rejectReason)}</div>`:''}
+            ${l.status==='مرفوض'?`<div class="meta warn" style="margin-top:2px">سبب الرفض: ${esc(l.rejectReason||'لم يُذكر سبب الرفض')}</div>`:''}
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
             <span class="badge ${l.status==='معتمد'?'b-ok':l.status==='مرفوض'?'b-rej':'b-pending'}">${l.status}</span>
@@ -1709,7 +1709,7 @@ function requestLeave(){
       <div class="field"><label>من تاريخ</label><input id="l-from" type="date" value="${toISO(today())}" oninput="updLeaveHint()"></div>
       <div class="field"><label>إلى تاريخ</label><input id="l-to" type="date" value="${toISO(today())}" oninput="updLeaveHint()"></div>
     </div>
-    <div class="field"><label>ملاحظات</label><input id="l-notes" placeholder="اختياري"></div>
+    <div class="field"><label>ملاحظات</label><input id="l-notes" maxlength="2000" placeholder="اختياري"></div>
     <div class="hint" id="l-hint"></div>
     <p class="hint">يُرسَل الطلب إلى المشرف للاعتماد.</p>
     <button class="btn block" id="l-submit" style="margin-top:10px" onclick="submitLeaveRequest()">إرسال الطلب</button>
@@ -1760,7 +1760,7 @@ function editLeave(id){
     </div>
     <div class="field"><label>الحالة</label>
       <div class="pick">${s.statuses.map(t=>`<button data-t="${t}" class="${(l?l.status:'معتمد')===t?'on':''}" onclick="pickStatus(this)">${t}</button>`).join('')}</div></div>
-    <div class="field"><label>ملاحظات</label><input id="l-notes" value="${l?esc(l.notes||''):''}" placeholder="اختياري"></div>
+    <div class="field"><label>ملاحظات</label><input id="l-notes" maxlength="2000" value="${l?esc(l.notes||''):''}" placeholder="اختياري"></div>
     <div class="hint" id="l-hint"></div>
     <button class="btn block" style="margin-top:10px" onclick="saveLeave('${id}')">${l?'حفظ التعديلات':'حجز الإجازة'}</button>
   `);
@@ -2016,7 +2016,7 @@ function rejectLeave(id){
     <h3>رفض طلب الإجازة<button class="x" onclick="closeSheet()">×</button></h3>
     <p class="meta">${esc(e?e.name:'—')} • ${esc(l.type)} • ${fmtDate(l.from)} ← ${fmtDate(l.to)}</p>
     <div class="field"><label>سبب الرفض (إلزامي — يظهر للموظف)</label>
-      <textarea id="rej-reason" rows="3" placeholder="مثال: التغطية غير كافية في هذه الفترة"></textarea></div>
+      <textarea id="rej-reason" rows="3" maxlength="1000" placeholder="مثال: التغطية غير كافية في هذه الفترة"></textarea></div>
     <button class="btn block danger" id="rej-btn" onclick="confirmReject('${id}')">تأكيد الرفض</button>
   `);
 }
