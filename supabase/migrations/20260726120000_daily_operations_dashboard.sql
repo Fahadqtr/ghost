@@ -30,17 +30,17 @@ returns table(
 language sql stable security definer set search_path to '' as $fn$
   -- (أ) طلبات إجازة معلّقة
   select
-    case when extract(epoch from (p_now - coalesce(l.submitted_at,l.updated_at,l.created_at)))/3600.0 > 24
+    case when extract(epoch from (p_now - coalesce(l.submitted_at,l.updated_at)))/3600.0 > 24
          then 'stale_pending_leave' else 'pending_leave' end,
     case when l.from_date <= p_today then 'critical'
          when l.from_date = p_today + 1
-           or extract(epoch from (p_now - coalesce(l.submitted_at,l.updated_at,l.created_at)))/3600.0 > 24 then 'warning'
+           or extract(epoch from (p_now - coalesce(l.submitted_at,l.updated_at)))/3600.0 > 24 then 'warning'
          else 'info' end,
-    coalesce(l.submitted_at, l.updated_at, l.created_at), l.from_date,
+    coalesce(l.submitted_at, l.updated_at), l.from_date,
     l.id, null::uuid, l.emp_id,
     coalesce(e.name,'—'), l.team, coalesce(d.name, s.dept),
-    l.from_date, l.to_date, l.type, coalesce(l.submitted_at, l.updated_at, l.created_at),
-    round((extract(epoch from (p_now - coalesce(l.submitted_at,l.updated_at,l.created_at)))/3600.0)::numeric, 1),
+    l.from_date, l.to_date, l.type, coalesce(l.submitted_at, l.updated_at),
+    round((extract(epoch from (p_now - coalesce(l.submitted_at,l.updated_at)))/3600.0)::numeric, 1),
     'decide_leave', 'طلب إجازة بانتظار القرار',
     coalesce(e.name,'—')||' — '||l.type
   from public.leaves l
@@ -143,7 +143,7 @@ language sql stable security definer set search_path to '' as $fn$
     left join public.settings s on s.team=l.team left join public.departments d on d.id=s.dept
   where l.status='قيد الانتظار' and l.team=any(p_teams)
     and l.from_date > p_today
-    and extract(epoch from (p_now - coalesce(l.submitted_at,l.updated_at,l.created_at)))/3600.0 > 24
+    and extract(epoch from (p_now - coalesce(l.submitted_at,l.updated_at)))/3600.0 > 24
   union all
   -- طلب معلّق يبدأ غدًا (تحذير)
   select 'warning','pending_starts_tomorrow',6, l.id,null::uuid,l.emp_id,
@@ -274,7 +274,7 @@ begin
     'pending_cancellations', (select count(*) from public.leave_change_requests cr join public.leaves l on l.id=cr.leave_id where cr.status='pending' and l.team=any(v_teams)),
     'on_leave_today', (select count(*) from public.leaves where status='معتمد' and team=any(v_teams) and from_date<=v_today and to_date>=v_today),
     'upcoming', (select count(*) from public.leaves where status='معتمد' and team=any(v_teams) and from_date>v_today and from_date<=v_today+v_days),
-    'stale_pending_24h', (select count(*) from public.leaves where status='قيد الانتظار' and team=any(v_teams) and extract(epoch from (v_now - coalesce(submitted_at,updated_at,created_at)))/3600.0 > 24),
+    'stale_pending_24h', (select count(*) from public.leaves where status='قيد الانتظار' and team=any(v_teams) and extract(epoch from (v_now - coalesce(submitted_at,updated_at)))/3600.0 > 24),
     'ending_today', (select count(*) from public.leaves where status='معتمد' and team=any(v_teams) and to_date=v_today),
     'active_employees', (select count(*) from public.employees where team=any(v_teams)),
     'disabled_accounts', (select count(*) from public.employees e join public.employee_auth ea on ea.emp_id=e.id join auth.users u on u.id=ea.user_id where e.team=any(v_teams) and u.banned_until is not null and u.banned_until>v_now),
