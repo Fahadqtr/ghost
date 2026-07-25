@@ -372,3 +372,27 @@ body.viewer .install-bar{bottom:calc(64px + env(safe-area-inset-bottom,0))}
 .ops-alert.info{border-inline-start-color:#3b82c4;background:#f7fafd}
 @media (min-width:820px){ .ops-kpis{grid-template-columns:repeat(3,1fr)} }
 @media (min-width:1040px){ .ops-kpis{grid-template-columns:repeat(6,1fr)} .ops-sec-b .ops-item .meta{font-size:13px} }
+
+/* ==================== المرحلة 7: الحضور والانصراف ==================== */
+.att-entry{margin:0 0 10px;background:linear-gradient(135deg,#0e7c86,#0b5c66)}
+.att-status{text-align:center}
+.att-status.on{background:linear-gradient(135deg,#eafaf0,#fff)}
+.att-status.off{background:linear-gradient(135deg,#f4f6f8,#fff)}
+.att-state{font-weight:800;font-size:18px;margin-bottom:10px}
+.att-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px}
+.att-grid .l{font-size:12px;color:var(--muted)}
+.att-grid .v{font-weight:800;font-size:16px;margin-top:2px}
+.att-big{font-size:17px;padding:14px}
+.att-note{font-size:12px;color:var(--muted);margin-top:8px}
+.att-row{display:flex;gap:8px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line)}
+.att-row:first-child{border-top:0}
+.att-row.open{background:#f0fbff;border-radius:8px;padding:10px 8px}
+.att-row .name{font-weight:700;font-size:14px}
+.att-row .meta{font-size:12px;color:var(--muted);margin-top:3px}
+.att-tag{display:inline-block;font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;vertical-align:middle}
+.att-tag.open{background:#e1f4ff;color:#0b6b86}
+.att-tag.closed{background:#eef1f4;color:#556}
+.att-tag.corrected{background:#fff2d8;color:#8a5a00}
+.att-tag.voided{background:#fde8e8;color:#a11}
+.att-pager{margin-top:10px;align-items:center;gap:8px}
+@media (min-width:820px){ .att-grid{grid-template-columns:repeat(4,1fr)} }

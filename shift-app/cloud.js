@@ -333,6 +333,16 @@ const Cloud = {
   async listOpsToday(page, size){ return await this.sb.rpc('list_today_leaves', { p_page:page||1, p_page_size:size||50 }); },
   async listOpsUpcoming(days, page, size){ return await this.sb.rpc('list_upcoming_leaves', { p_upcoming_days:days||7, p_page:page||1, p_page_size:size||50 }); },
   async listOpsAlerts(page, size){ return await this.sb.rpc('list_operational_alerts', { p_page:page||1, p_page_size:size||50 }); },
+  /* المرحلة 7: الحضور والانصراف — كل الوقت والهوية من الخادم (لا معاملات وقت/موظّف) */
+  async attCheckIn(){ return await this.sb.rpc('attendance_check_in'); },
+  async attCheckOut(){ return await this.sb.rpc('attendance_check_out'); },
+  async myAttStatus(){ return await this.sb.rpc('get_my_attendance_status'); },
+  async listAttSessions(date, status, page, size){ return await this.sb.rpc('list_attendance_sessions', { p_date:date||null, p_status:status||null, p_page:page||1, p_page_size:size||50 }); },
+  async attSummary(date){ return await this.sb.rpc('get_attendance_summary', { p_date:date||null }); },
+  async listAttAnomalies(page, size){ return await this.sb.rpc('list_attendance_anomalies', { p_page:page||1, p_page_size:size||50 }); },
+  async attTimeline(id){ return await this.sb.rpc('get_attendance_timeline', { p_session_id:id }); },
+  async correctAtt(id, ci, co, reason){ return await this.sb.rpc('correct_attendance_session', { p_session_id:id, p_check_in_at:ci, p_check_out_at:co, p_reason:reason }); },
+  async voidAtt(id, reason){ return await this.sb.rpc('void_attendance_session', { p_session_id:id, p_reason:reason }); },
   async markNotifRead(id){ return await this.sb.rpc('mark_notification_read', { p_id:id }); },
   async markAllNotifRead(){ return await this.sb.rpc('mark_all_notifications_read'); },
 
