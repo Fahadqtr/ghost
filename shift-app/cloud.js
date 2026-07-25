@@ -326,6 +326,13 @@ const Cloud = {
   async leaveTimeline(id){ return await this.sb.rpc('get_leave_timeline', { p_leave_id:id }); },
   async listPendingCancellations(){ return await this.sb.rpc('list_pending_leave_cancellations'); },
   async myCancellationRequests(){ return await this.sb.rpc('list_my_cancellation_requests'); },
+
+  /* ===== المرحلة 6: لوحة التشغيل اليومية (قراءة فقط، مقيّدة خادميًا) ===== */
+  async dailyOps(days){ return await this.sb.rpc('get_daily_operations_dashboard', { p_upcoming_days: days||7 }); },
+  async listOpsActionItems(page, size){ return await this.sb.rpc('list_daily_action_items', { p_page:page||1, p_page_size:size||50 }); },
+  async listOpsToday(page, size){ return await this.sb.rpc('list_today_leaves', { p_page:page||1, p_page_size:size||50 }); },
+  async listOpsUpcoming(days, page, size){ return await this.sb.rpc('list_upcoming_leaves', { p_upcoming_days:days||7, p_page:page||1, p_page_size:size||50 }); },
+  async listOpsAlerts(page, size){ return await this.sb.rpc('list_operational_alerts', { p_page:page||1, p_page_size:size||50 }); },
   async markNotifRead(id){ return await this.sb.rpc('mark_notification_read', { p_id:id }); },
   async markAllNotifRead(){ return await this.sb.rpc('mark_all_notifications_read'); },
 
