@@ -181,6 +181,40 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: bash "$GITHUB_WORKSPACE/supabase/tests/daily_operations_dashboard_schema.sh"
 
+  # Attendance-foundation (Phase 7) schema-compatibility guard. Same throwaway
+  # postgres:16 service, no Supabase, no secrets. Verifies the attendance
+  # migration applies against a production-faithful schema and asserts objects,
+  # grants, RLS, partial-unique open-session index, zero DML, atomicity, and a
+  # negative missing-column test.
+  attendance-schema:
+    name: attendance-schema
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure psql client
+        run: command -v psql >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client)
+      - name: Run attendance foundation schema guard
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: bash "$GITHUB_WORKSPACE/supabase/tests/attendance_foundation_schema.sh"
+
   # Aggregate gate. There is no in-repo "final" job today (the protect-master
   # ruleset lists individual checks), so this job gives a single check that is
   # RED whenever any currently-required check OR the new schema guard fails —
@@ -192,7 +226,7 @@ jobs:
   ci-success:
     name: ci-success
     if: always()
-    needs: [typecheck, test, build, dashboard-schema]
+    needs: [typecheck, test, build, dashboard-schema, attendance-schema]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -200,15 +234,16 @@ jobs:
     steps:
       - name: Verify required checks passed
         run: |
-          echo "typecheck=${{ needs.typecheck.result }} test=${{ needs.test.result }} build=${{ needs.build.result }} dashboard-schema=${{ needs.dashboard-schema.result }}"
+          echo "typecheck=${{ needs.typecheck.result }} test=${{ needs.test.result }} build=${{ needs.build.result }} dashboard-schema=${{ needs.dashboard-schema.result }} attendance-schema=${{ needs.attendance-schema.result }}"
           bad=""
           for kv in \
             "typecheck:${{ needs.typecheck.result }}" \
             "test:${{ needs.test.result }}" \
             "build:${{ needs.build.result }}" \
-            "dashboard-schema:${{ needs.dashboard-schema.result }}"; do
+            "dashboard-schema:${{ needs.dashboard-schema.result }}" \
+            "attendance-schema:${{ needs.attendance-schema.result }}"; do
             name=${kv%%:*}; res=${kv#*:}
             if [ "$res" != "success" ]; then echo "::error::required check '$name' = $res"; bad=1; fi
           done
           if [ -n "$bad" ]; then exit 1; fi
-          echo "all required checks passed (including dashboard-schema)"
+          echo "all required checks passed (including dashboard-schema, attendance-schema)"

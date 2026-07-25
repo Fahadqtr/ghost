@@ -121,7 +121,7 @@ function dayStats(iso){
 }
 
 /* -------------------- التنقّل -------------------- */
-const screens=['dash','emps','sched','leaves','daily','point','audit','balances','secaudit','reports','notif','dailyops'];
+const screens=['dash','emps','sched','leaves','daily','point','audit','balances','secaudit','reports','notif','dailyops','attend','attadmin'];
 let current='dash';
 /* حالة مركز الإشعارات */
 let notifState={ items:[], page:1, pageSize:20, total:0, unread:0, totalPages:0, loading:false, err:'' };
@@ -158,6 +158,8 @@ function renderScreen(to){
   else if(to==='reports') renderReports();
   else if(to==='notif') renderNotifCenter();
   else if(to==='dailyops') renderDailyOps();
+  else if(to==='attend') renderAttend();
+  else if(to==='attadmin') renderAttAdmin();
 }
 
 /* -------------------- لوحة المعلومات -------------------- */
@@ -528,7 +530,7 @@ function renderSysadmin(){
     <button class="btn block ghost" onclick="nav('reports')" style="margin-top:8px">📊 التقارير المتقدّمة</button>
   </div>`;
   const foot=`<div class="card"><button class="btn block ghost" onclick="Cloud.signOut().then(()=>location.reload())">🚪 تسجيل الخروج</button></div>`;
-  el.innerHTML = header + opsEntryBtnHtml() + renderOverviewSection() + kpis + deptCard + ownerCard + acctCard + toolsCard + foot;
+  el.innerHTML = header + opsEntryBtnHtml() + attAdminEntryBtnHtml() + renderOverviewSection() + kpis + deptCard + ownerCard + acctCard + toolsCard + foot;
 }
 function openNewDepartment(){
   openSheet(`<h3>قسم جديد<button class="x" onclick="closeSheet()">×</button></h3>
@@ -1273,7 +1275,7 @@ function renderOwnerDash(){
         <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
       </div>
     </div>`;
-  el.innerHTML = header + opsEntryBtnHtml() + actions + kpis + shiftsCard + chartsCard + pendingCard + cancellationsCardHtml() + reportsInboxHtml() + noticesCardHtml() + staff;
+  el.innerHTML = header + opsEntryBtnHtml() + attAdminEntryBtnHtml() + actions + kpis + shiftsCard + chartsCard + pendingCard + cancellationsCardHtml() + reportsInboxHtml() + noticesCardHtml() + staff;
 }
 // رئيس القسم يضبط دور (قالب صلاحيات) مسؤول الوردية المعروضة
 function openAdminRoles(){
@@ -1314,7 +1316,7 @@ function renderDash(){
       <div style="font-size:13px;color:var(--muted)">${AR_DAYS[today().getDay()]} — ${fmtDate(iso)}</div>
       <div style="font-weight:800;font-size:18px;margin-top:2px">حالة اليوم</div>
     </div>
-    ${!isViewer?opsEntryBtnHtml():''}
+    ${!isViewer?(opsEntryBtnHtml()+attAdminEntryBtnHtml()):attEntryBtnHtml()}
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
       ${can('leaves')?`<button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>`:''}
       ${can('directives')?`<button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>`:''}
@@ -1886,12 +1888,15 @@ async function showTimeline(id){
 const OPS_SEV={critical:{c:'critical',t:'حرِج'},warning:{c:'warning',t:'تحذير'},info:{c:'info',t:'معلومة'}};
 // زر دخول اللوحة (يظهر في الصفحة الرئيسية للمسؤول/رئيس القسم/مدير النظام)
 function opsEntryBtnHtml(){ return `<button class="btn block ops-entry" onclick="openDailyOps()">🧭 لوحة التشغيل اليومية</button>`; }
+let opsAtt=null;  // ملخّص الحضور الفعلي (مؤشرات موثوقة تُضاف للوحة التشغيل — قراءة فقط)
 async function loadDailyOps(){
   dailyOpsLoading=true; dailyOpsErr='';
   try{
     const { data, error }=await Cloud.dailyOps(dailyOpsDays);
     if(error){ dailyOpsErr=rpcErr(error); } else { dailyOps=data||null; }
   }catch(e){ dailyOpsErr='تعذّر تحميل اللوحة — تحقّق من الاتصال'; }
+  // فشل جزئي لا يُسقط الصفحة: مؤشرات الحضور best-effort
+  try{ const a=await Cloud.attSummary(); if(a && !a.error) opsAtt=(a.data&&a.data.summary)||null; }catch(e){}
   dailyOpsLoading=false;
 }
 function openDailyOps(){
@@ -2049,16 +2054,213 @@ function renderDailyOps(){
     ${opsKpi(s.stale_pending_24h||0,'متأخرة +24س', (s.stale_pending_24h? 'warn':''))}
     ${opsKpi(s.critical_alerts||0,'تنبيهات حرجة', (s.critical_alerts? 'bad':''))}
   </div>`;
+  // مؤشرات الحضور الفعلي (المرحلة 7) — موثوقة فقط؛ لا تُغيّر المؤشرات القديمة
+  const attStrip = opsAtt ? `<div class="stats ops-kpis att-strip">
+      ${opsKpi(opsAtt.on_duty_now||0,'داخل الدوام الآن')}
+      ${opsKpi(opsAtt.open_sessions||0,'جلسات مفتوحة')}
+      ${opsKpi(opsAtt.open_long||0,'مفتوحة +16س',(opsAtt.open_long?'bad':''))}
+      ${opsKpi(opsAtt.checked_in_today||0,'سجّلوا حضورًا اليوم')}
+    </div>
+    <button class="btn block att-entry" onclick="openAttAdmin()">🗂️ إدارة الحضور التفصيلية</button>` : '';
   const ai=(d.action_items||[]).map(opsActionRow).join('');
   const al=(d.alerts||[]).map(opsAlertRow).join('');
   const td=(d.today_leaves||[]).map(l=>opsLeaveRow(l,false)).join('');
   const up=(d.upcoming_leaves||[]).map(l=>opsLeaveRow(l,true)).join('');
-  el.innerHTML = header + kpis
+  el.innerHTML = header + kpis + attStrip
     + opsSection('ai','تحتاج إجراء', (d.action_items||[]).length, ai)
     + opsSection('alerts','التنبيهات التشغيلية', (d.alerts||[]).length, al)
     + opsSection('today','في إجازة اليوم', (d.today_leaves||[]).length, td)
     + opsSection('upcoming','الإجازات القادمة ('+(d.upcoming_days||7)+' أيام)', (d.upcoming_leaves||[]).length, up);
 }
+/* ==================== المرحلة 7: الحضور والانصراف ==================== */
+function attDur(secs){ secs=+secs||0; const h=Math.floor(secs/3600), m=Math.floor((secs%3600)/60);
+  return h>0 ? (h+'س '+m+'د') : (m+'د'); }
+function attTime(iso){ if(!iso) return '—'; try{ const d=new Date(iso);
+  return d.toLocaleTimeString('ar',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Qatar'}); }catch(e){ return '—'; } }
+function attDate(iso){ return (iso&&/^\d{4}-\d{2}-\d{2}/.test(String(iso))) ? fmtDate(String(iso).slice(0,10)) : ''; }
+const ATT_ST={open:'مفتوحة',closed:'مغلقة',corrected:'مصحّحة',voided:'مُبطَلة'};
+const ATT_ANOM={open_over_16h:'جلسة مفتوحة +16 ساعة',open_prev_day:'مفتوحة من يوم سابق',attendance_during_approved_leave:'حضور في يوم إجازة معتمدة',excessive_corrections:'تصحيحات متكررة',disabled_with_open:'حساب معطّل بجلسة مفتوحة'};
+
+/* -------- الموظف -------- */
+let attStatus=null, attStatusErr='', attLoading=false, attBusy=false, attPollTimer=null;
+function attEntryBtnHtml(){ return `<button class="btn block att-entry" onclick="openAttend()">🕒 الحضور والانصراف</button>`; }
+async function loadMyAtt(){ attLoading=true; attStatusErr='';
+  try{ const { data, error }=await Cloud.myAttStatus();
+    if(error){ attStatusErr=rpcErr(error); } else { attStatus=data||null; }
+  }catch(e){ attStatusErr='تعذّر تحميل حالة الحضور — تحقّق من الاتصال'; }
+  attLoading=false; }
+function openAttend(){ current='attend';
+  screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s==='attend'));
+  document.getElementById('fab').style.display='none'; window.scrollTo(0,0);
+  attStatus=null; attStatusErr=''; renderAttend();
+  loadMyAtt().then(()=>{ if(current==='attend') renderAttend(); });
+  startAttPolling(); }
+function closeAttend(){ stopAttPolling(); current='dash';
+  screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s==='dash'));
+  window.scrollTo(0,0);
+  if(isSuperadmin) renderSysadmin(); else if(isOwner) renderOwnerDash(); else if(isViewer) renderDash(); else renderDash(); }
+async function attRefresh(){ await loadMyAtt(); if(current==='attend') renderAttend(); }
+function startAttPolling(){ stopAttPolling(); attPollTimer=setInterval(()=>{ if(document.visibilityState==='visible' && current==='attend' && Cloud.online) attRefresh(); }, 60000); }
+function stopAttPolling(){ if(attPollTimer){ clearInterval(attPollTimer); attPollTimer=null; } }
+async function attDoCheckIn(){ if(attBusy) return; if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  attBusy=true; renderAttend(); const { data, error }=await Cloud.attCheckIn(); attBusy=false;
+  if(error){ toast(rpcErr(error)); renderAttend(); return; }
+  toast((data&&data.already_open)?'لديك جلسة مفتوحة':'✓ تم تسجيل الدخول'); await attRefresh(); }
+async function attDoCheckOut(){ if(attBusy) return; if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  attBusy=true; renderAttend(); const { error }=await Cloud.attCheckOut(); attBusy=false;
+  if(error){ toast(rpcErr(error)); renderAttend(); return; }
+  toast('✓ تم تسجيل الخروج'); await attRefresh(); }
+function attRecentRow(r){ return `<div class="att-row">
+    <div class="grow"><div class="name">${esc(attDate(r.attendance_date))} <span class="att-tag ${esc(r.status)}">${esc(ATT_ST[r.status]||r.status)}</span></div>
+    <div class="meta">دخول ${attTime(r.check_in_at)} • خروج ${attTime(r.check_out_at)}${r.work_seconds!=null?(' • '+attDur(r.work_seconds)):''}</div></div></div>`; }
+function renderAttend(){ const el=document.getElementById('scr-attend'); if(!el) return;
+  const header=`<div class="card ops-head"><div class="row" style="align-items:center">
+    <button class="btn sm ghost" onclick="closeAttend()">→ رجوع</button>
+    <div class="grow" style="text-align:center"><div style="font-weight:800;font-size:17px">🕒 الحضور والانصراف</div>
+      <div class="meta">${attStatus?('تحديث '+relTime(attStatus.generated_at)):''}</div></div>
+    <button class="btn sm" onclick="attRefresh()" ${attLoading?'disabled':''}>${attLoading?'…':'⟳'}</button></div></div>`;
+  if(!attStatus){ el.innerHTML=header+(attStatusErr
+      ? `<div class="card"><div class="empty warn">${esc(attStatusErr)}</div><button class="btn block" onclick="attRefresh()">إعادة المحاولة</button></div>`
+      : `<div class="card"><div class="empty">جارٍ التحميل…</div></div>`); return; }
+  const s=attStatus, onDuty=!!s.on_duty;
+  const bigBtn=onDuty
+    ? `<button class="btn block danger att-big" ${attBusy?'disabled':''} onclick="attDoCheckOut()">${attBusy?'…':'⏹️ تسجيل الخروج'}</button>`
+    : `<button class="btn block att-big" ${attBusy?'disabled':''} onclick="attDoCheckIn()">${attBusy?'…':'▶️ تسجيل الدخول'}</button>`;
+  const statusCard=`<div class="card att-status ${onDuty?'on':'off'}">
+    <div class="att-state">${onDuty?'🟢 داخل الدوام':'⚪ خارج الدوام'}</div>
+    <div class="att-grid">
+      <div><div class="l">دخول</div><div class="v">${attTime(s.current_check_in_at||s.last_check_in_at)}</div></div>
+      <div><div class="l">خروج</div><div class="v">${onDuty?'—':attTime(s.last_check_out_at)}</div></div>
+      <div><div class="l">مدة الجلسة</div><div class="v">${onDuty&&s.current_seconds!=null?attDur(s.current_seconds):'—'}</div></div>
+      <div><div class="l">إجمالي اليوم</div><div class="v">${attDur(s.today_total_seconds)}</div></div>
+    </div>
+    ${bigBtn}
+    <div class="att-note">الوقت المعتمد هو وقت الخادم (توقيت قطر).</div>
+  </div>`;
+  const recent=(s.recent||[]);
+  const hist=`<div class="card ops-sec"><div class="ops-sec-h"><h3 class="grow">آخر الأيام <span class="ops-count">${recent.length}</span></h3></div>
+    <div class="ops-sec-b">${recent.length?recent.map(attRecentRow).join(''):'<div class="empty">لا سجلّات</div>'}</div></div>`;
+  el.innerHTML=header+statusCard+hist;
+}
+
+/* -------- المشرف: إدارة الحضور -------- */
+let attAdm=null, attAdmErr='', attAdmLoading=false, attAdmDate='', attAdmStatus='', attAdmPage=1, attAdmPollTimer=null, attAdmBusy=false;
+function attAdminEntryBtnHtml(){ return `<button class="btn block att-entry" onclick="openAttAdmin()">🗂️ إدارة الحضور</button>`; }
+async function loadAttAdmin(){ attAdmLoading=true; attAdmErr='';
+  try{
+    const [sum, sess, anom]=await Promise.all([
+      Cloud.attSummary(attAdmDate||null),
+      Cloud.listAttSessions(attAdmDate||null, attAdmStatus||null, attAdmPage, 50),
+      Cloud.listAttAnomalies(1, 50)
+    ]);
+    if(sum.error||sess.error||anom.error){ attAdmErr=rpcErr(sum.error||sess.error||anom.error); }
+    else attAdm={ summary:(sum.data&&sum.data.summary)||{}, meta:sum.data||{}, sessions:sess.data||{items:[]}, anomalies:anom.data||{items:[]} };
+  }catch(e){ attAdmErr='تعذّر تحميل إدارة الحضور — تحقّق من الاتصال'; }
+  attAdmLoading=false; }
+function openAttAdmin(){ current='attadmin';
+  screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s==='attadmin'));
+  document.getElementById('fab').style.display='none'; window.scrollTo(0,0);
+  attAdm=null; attAdmErr=''; attAdmPage=1; renderAttAdmin();
+  loadAttAdmin().then(()=>{ if(current==='attadmin') renderAttAdmin(); });
+  startAttAdmPolling(); }
+function closeAttAdmin(){ stopAttAdmPolling(); current='dash';
+  screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s==='dash'));
+  window.scrollTo(0,0);
+  if(isSuperadmin) renderSysadmin(); else if(isOwner) renderOwnerDash(); else renderDash(); }
+async function attAdmRefresh(){ await loadAttAdmin(); if(current==='attadmin') renderAttAdmin(); }
+function attAdmSetStatus(st){ attAdmStatus=st; attAdmPage=1; renderAttAdmin(); attAdmRefresh(); }
+function attAdmSetPage(p){ if(p<1) return; attAdmPage=p; attAdmRefresh(); }
+function startAttAdmPolling(){ stopAttAdmPolling(); attAdmPollTimer=setInterval(()=>{ if(document.visibilityState==='visible' && current==='attadmin' && Cloud.online) attAdmRefresh(); }, 60000); }
+function stopAttAdmPolling(){ if(attAdmPollTimer){ clearInterval(attAdmPollTimer); attAdmPollTimer=null; } }
+function attAdmSessRow(x){
+  const dur=(x.work_seconds!=null)?attDur(x.work_seconds):'—';
+  return `<div class="att-row ${x.is_open?'open':''}">
+    <div class="grow"><div class="name">${esc(x.employee_name||'—')} <span class="att-tag ${esc(x.status)}">${esc(ATT_ST[x.status]||x.status)}</span>${x.correction_count>0?` <span class="att-tag corrected">تصحيح ${(+x.correction_count||0)}</span>`:''}</div>
+      <div class="meta">دخول ${attTime(x.check_in_at)} • خروج ${attTime(x.check_out_at)} • ${dur}${x.team_name?(' • وردية '+esc(x.team_name)):''}</div></div>
+    <div class="ops-btns">
+      <button class="btn sm ghost" onclick="showAttTimeline('${esc(x.session_id)}')">السجل</button>
+      <button class="btn sm" onclick="openAttCorrect('${esc(x.session_id)}','${esc(x.check_in_at||'')}','${esc(x.check_out_at||'')}')">تصحيح</button>
+      ${x.status!=='voided'?`<button class="btn sm danger" onclick="openAttVoid('${esc(x.session_id)}')">إبطال</button>`:''}
+    </div></div>`; }
+function attAdmAnomRow(a){ return `<div class="ops-alert ${a.severity==='critical'?'critical':'warning'}">
+    <div class="grow"><div class="name">${esc(ATT_ANOM[a.anomaly_type]||a.anomaly_type)} <span class="ops-tag ${a.severity==='critical'?'critical':'warning'}">${a.severity==='critical'?'حرِج':'تحذير'}</span></div>
+    <div class="meta">${esc(a.employee_name||'—')}${a.team_name?(' • وردية '+esc(a.team_name)):''} • دخول ${attTime(a.check_in_at)}</div></div></div>`; }
+function attKpi(n,label,cls){ return `<div class="stat ${cls||''}"><div class="n">${(+n||0)}</div><div class="l">${label}</div></div>`; }
+function renderAttAdmin(){ const el=document.getElementById('scr-attadmin'); if(!el) return;
+  const header=`<div class="card ops-head"><div class="row" style="align-items:center">
+    <button class="btn sm ghost" onclick="closeAttAdmin()">→ رجوع</button>
+    <div class="grow" style="text-align:center"><div style="font-weight:800;font-size:17px">🗂️ إدارة الحضور</div>
+      <div class="meta">${attAdm?(attDate(attAdm.meta.today)+' • تحديث '+relTime(attAdm.meta.generated_at)):''}</div></div>
+    <button class="btn sm" onclick="attAdmRefresh()" ${attAdmLoading?'disabled':''}>${attAdmLoading?'…':'⟳'}</button></div>
+    <div class="seg ops-days">
+      ${['','open','closed','corrected','voided'].map(st=>`<button class="${attAdmStatus===st?'on':''}" onclick="attAdmSetStatus('${st}')">${st===''?'الكل':esc(ATT_ST[st])}</button>`).join('')}
+    </div></div>`;
+  if(!attAdm){ el.innerHTML=header+(attAdmErr
+      ? `<div class="card"><div class="empty warn">${esc(attAdmErr)}</div><button class="btn block" onclick="attAdmRefresh()">إعادة المحاولة</button></div>`
+      : `<div class="card"><div class="empty">جارٍ التحميل…</div></div>`); return; }
+  const s=attAdm.summary;
+  const kpis=`<div class="stats ops-kpis">
+    ${attKpi(s.on_duty_now,'داخل الدوام الآن')}
+    ${attKpi(s.open_sessions,'جلسات مفتوحة')}
+    ${attKpi(s.open_long,'مفتوحة +16س',(s.open_long?'bad':''))}
+    ${attKpi(s.closed_today,'أُغلقت اليوم')}
+    ${attKpi(s.checked_in_today,'سجّلوا اليوم')}
+    ${attKpi(s.anomalies,'تنبيهات',(s.anomalies?'warn':''))}
+  </div>`;
+  const sess=attAdm.sessions, items=sess.items||[];
+  const pager=(sess.total_pages>1)?`<div class="row att-pager"><button class="btn sm ghost" ${attAdmPage<=1?'disabled':''} onclick="attAdmSetPage(${attAdmPage-1})">السابق</button>
+    <span class="grow" style="text-align:center">صفحة ${sess.page} / ${sess.total_pages}</span>
+    <button class="btn sm ghost" ${attAdmPage>=sess.total_pages?'disabled':''} onclick="attAdmSetPage(${attAdmPage+1})">التالي</button></div>`:'';
+  const list=`<div class="card ops-sec"><div class="ops-sec-h"><h3 class="grow">الجلسات <span class="ops-count">${sess.total||0}</span></h3></div>
+    <div class="ops-sec-b">${items.length?items.map(attAdmSessRow).join(''):'<div class="empty">لا جلسات</div>'}${pager}</div></div>`;
+  const anoms=attAdm.anomalies.items||[];
+  const alertsSec=`<div class="card ops-sec"><div class="ops-sec-h"><h3 class="grow">التنبيهات <span class="ops-count">${attAdm.anomalies.total||0}</span></h3></div>
+    <div class="ops-sec-b">${anoms.length?anoms.map(attAdmAnomRow).join(''):'<div class="empty">لا تنبيهات</div>'}</div></div>`;
+  el.innerHTML=header+kpis+alertsSec+list;
+}
+async function showAttTimeline(id){
+  openSheet('<h3>سجل الجلسة<button class="x" onclick="closeSheet()">×</button></h3><div class="empty">جارٍ التحميل…</div>');
+  const { data, error }=await Cloud.attTimeline(id);
+  if(error){ sheet.innerHTML='<h3>سجل الجلسة<button class="x" onclick="closeSheet()">×</button></h3><div class="empty warn">'+esc(rpcErr(error))+'</div>'; return; }
+  const EV={checked_in:'تسجيل دخول',checked_out:'تسجيل خروج',corrected:'تصحيح',voided:'إبطال'};
+  const rows=((data&&data.items)||[]).map(ev=>`<div class="tl-row"><div class="tl-dot"></div><div class="grow">
+    <div class="tl-title">${esc(EV[ev.event_type]||ev.event_type)}${ev.actor_role?(' • '+esc(auditRoleLabel(ev.actor_role))):''}</div>
+    ${ev.reason?`<div class="tl-detail">السبب: ${esc(ev.reason)}</div>`:''}
+    <div class="tl-time">${relTime(ev.at)}</div></div></div>`).join('');
+  sheet.innerHTML='<h3>سجل الجلسة<button class="x" onclick="closeSheet()">×</button></h3><div class="tl">'+(rows||'<div class="empty">لا أحداث</div>')+'</div>';
+}
+function isoLocal(v){ if(!v) return null; try{ return new Date(v).toISOString(); }catch(e){ return null; } }
+function dtLocalValue(iso){ if(!iso) return ''; try{ const d=new Date(iso);
+  const p=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'T'+p(d.getHours())+':'+p(d.getMinutes()); }catch(e){ return ''; } }
+function openAttCorrect(id, ci, co){
+  openSheet(`<h3>تصحيح جلسة الحضور<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="field"><label>وقت الدخول</label><input id="ac-in" type="datetime-local" value="${esc(dtLocalValue(ci))}"></div>
+    <div class="field"><label>وقت الخروج (اتركه فارغًا لإبقائها مفتوحة)</label><input id="ac-out" type="datetime-local" value="${esc(dtLocalValue(co))}"></div>
+    <div class="field"><label>سبب التصحيح (إلزامي)</label><textarea id="ac-reason" rows="3" maxlength="1000" placeholder="مثال: خطأ في تسجيل الوقت"></textarea></div>
+    <button class="btn block" id="ac-btn" onclick="confirmAttCorrect('${esc(id)}')">حفظ التصحيح</button>`); }
+async function confirmAttCorrect(id){
+  const ci=isoLocal(val('ac-in')), coRaw=val('ac-out'), co=coRaw?isoLocal(coRaw):null, reason=(val('ac-reason')||'').trim();
+  if(!ci){ toast('وقت الدخول مطلوب'); return; }
+  if(!reason){ toast('سبب التصحيح مطلوب'); return; }
+  if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  const btn=document.getElementById('ac-btn'); if(btn){ btn.disabled=true; btn.textContent='جارٍ…'; }
+  const { error }=await Cloud.correctAtt(id, ci, co, reason);
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='حفظ التصحيح'; } toast(rpcErr(error)); return; }
+  closeSheet(); toast('تم حفظ التصحيح'); await attAdmRefresh(); }
+function openAttVoid(id){
+  openSheet(`<h3>إبطال الجلسة<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="field"><label>سبب الإبطال (إلزامي)</label><textarea id="av-reason" rows="3" maxlength="1000" placeholder="مثال: جلسة مكرّرة بالخطأ"></textarea></div>
+    <button class="btn block danger" id="av-btn" onclick="confirmAttVoid('${esc(id)}')">تأكيد الإبطال</button>`); }
+async function confirmAttVoid(id){
+  const reason=(val('av-reason')||'').trim();
+  if(!reason){ toast('سبب الإبطال مطلوب'); return; }
+  if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  const btn=document.getElementById('av-btn'); if(btn){ btn.disabled=true; btn.textContent='جارٍ…'; }
+  const { error }=await Cloud.voidAtt(id, reason);
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='تأكيد الإبطال'; } toast(rpcErr(error)); return; }
+  closeSheet(); toast('تم إبطال الجلسة'); await attAdmRefresh(); }
+
 function coverageCheck(l){
   if(l.status!=='معتمد') return {ok:true, text:'الطلب '+l.status};
   let worst=0, worstDay=l.from, d=parseISO(l.from), end=parseISO(l.to);
