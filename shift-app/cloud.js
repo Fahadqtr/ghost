@@ -142,6 +142,27 @@ const Cloud = {
   async superadminRemoveHead(userId){ return await this.sb.rpc('superadmin_remove_department_head', { p_user_id:userId }); },
   async superadminReplaceHead(oldId, newId, dept){ return await this.sb.rpc('superadmin_replace_department_head', { p_old_user_id:oldId, p_new_user_id:newId, p_dept:dept }); },
 
+  /* ===== المرحلة 3: سجل التدقيق الأمني + التقارير المتقدّمة =====
+     كلها RPCs آمنة على الخادم (SECURITY DEFINER): البحث في التدقيق لمدير النظام فقط،
+     والتقارير مقيّدة بنطاق الدور من القاعدة الموثوقة (لا من JWT/LocalStorage). */
+  async searchAuditLog(opts){
+    opts = opts || {};
+    return await this.sb.rpc('superadmin_search_audit_log', {
+      p_page: opts.page || 1,
+      p_page_size: opts.pageSize || 30,
+      p_from: opts.from || null,
+      p_to: opts.to || null,
+      p_action: opts.action || null,
+      p_entity: opts.entity || null,
+      p_team: opts.team || null,
+      p_search: opts.search || null
+    });
+  },
+  async reportsSummary(){ return await this.sb.rpc('admin_reports_summary'); },
+  async leaveReport(from, to){ return await this.sb.rpc('admin_leave_report', { p_from: from || null, p_to: to || null }); },
+  async balanceReport(year){ return await this.sb.rpc('admin_balance_report', { p_year: year || null }); },
+  async activityReport(from, to){ return await this.sb.rpc('admin_activity_report', { p_from: from || null, p_to: to || null }); },
+
   /* ===== الإفادات المتقدّمة: محادثات + رسائل + مرفقات =====
      الحقول الحسّاسة (الوردية/الدور/المُنشئ/الوقت) تُفرَض بالخادم (triggers + RLS). */
   async reportListThreads(){
