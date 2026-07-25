@@ -156,6 +156,38 @@ SQL
 d1=$($PSQLA -c "select (select count(*) from $POS.employee_work_schedule)||'|'||(select count(*) from $POS.work_schedule_history)||'|'||(select count(*) from $POS.audit_log)||'|'||(select count(*) from $POS.attendance_sessions);")
 [ "$d0" = "$d1" ] || fail "تغيّرت البيانات بعد القراءة: $d0 -> $d1"; ok "صفر DML بعد دوال القراءة."
 
+echo "== 9b) حماية سباق الإنشاء + استجابة early_leave_minutes =="
+A1='a0000000-0000-0000-0000-0000000000a1'; A2='a0000000-0000-0000-0000-0000000000a2'
+# ثابت: فرع الإنشاء في update يستخدم on conflict do nothing (يمنع رجوع 23505)
+$PSQLA -c "select pg_get_functiondef('$POS.update_employee_work_schedule'::regproc);" | grep -qi "on conflict (employee_id, work_date) do nothing" \
+  || fail "update_employee_work_schedule بلا on-conflict (احتمال رجوع 23505)"
+ok "update يستخدم on conflict do nothing."
+SDID=$($PSQLA -c "select id from $POS.shift_definitions where shift_code='صباح' limit 1;")
+# وظيفي: صف أنشأه طرف آخر مسبقًا (محاكاة فوز generate) ثم update لنفس (emp,date) -> بلا 23505، يصبح manual، صف واحد
+$PSQL -c "insert into $POS.employee_work_schedule(employee_id,work_date,team,department,shift_definition_id,shift_code,is_working_day,expected_start_at,expected_end_at,source) values ('$A2','2026-07-15','w1','d1','$SDID','صباح',true, ('2026-07-15'::date+time '06:00') at time zone 'Asia/Qatar', ('2026-07-15'::date+time '13:00') at time zone 'Asia/Qatar','rotation');" >/dev/null
+race_out="$($PSQL -c "select ($POS.update_employee_work_schedule('$A2','2026-07-15','$SDID',true,'race-followup'))->>'ok';" 2>&1)"
+echo "$race_out" | grep -qiE '23505|duplicate key' && fail "update رفع 23505 خامًا على صف موجود (create-race)"
+[ "$($PSQLA -c "select source from $POS.employee_work_schedule where employee_id='$A2' and work_date='2026-07-15';")" = "manual" ] || fail "update لم يطبّق manual على صف موجود"
+[ "$($PSQLA -c "select count(*) from $POS.employee_work_schedule where employee_id='$A2' and work_date='2026-07-15';")" = "1" ] || fail "أكثر من صف لنفس (emp,date)"
+ok "create-race: update على صف موجود -> بلا 23505، manual، صف واحد."
+# استجابة check_out تتضمّن مفتاح early_leave_minutes (null بلا سياسة) — a1 لديه جلسة مفتوحة من القسم 8
+$PSQL -c "update $POS.attendance_sessions set check_in_at=now()-interval '2 hours' where employee_id='$A1' and status='open';" >/dev/null
+[ "$($PSQLA -c "select (($POS.attendance_check_out())::jsonb ? 'early_leave_minutes');")" = "t" ] \
+  || fail "استجابة check_out لا تتضمّن مفتاح early_leave_minutes"
+ok "check_out يتضمّن early_leave_minutes (null بلا سياسة)."
+# مع سياسة+جدول: JSON == العمود وغير null
+$PSQL -c "select $POS.upsert_attendance_policy('A','global',null,10,180,5,12,3,'2026-06-01');" >/dev/null
+tday="$($PSQLA -c "select (now() at time zone 'Asia/Qatar')::date;")"
+$PSQL -c "delete from $POS.attendance_history; delete from $POS.attendance_sessions;" >/dev/null
+# صف جدول a1 لليوم مع سياسة+أوقات (on conflict do update — لا حذف: FK يمنع مسح جدول له تاريخ)
+$PSQL -c "insert into $POS.employee_work_schedule(employee_id,work_date,team,department,shift_definition_id,policy_id,shift_code,is_working_day,expected_start_at,expected_end_at,source) select '$A1','$tday','w1','d1','$SDID',(select id from $POS.attendance_policies where scope_type='global' and effective_to is null limit 1),'صباح',true, now()-interval '1 hour', now()+interval '30 minutes','rotation' on conflict (employee_id,work_date) do update set policy_id=excluded.policy_id, shift_definition_id=excluded.shift_definition_id, shift_code='صباح', is_working_day=true, expected_start_at=excluded.expected_start_at, expected_end_at=excluded.expected_end_at;" >/dev/null
+$PSQL -c "select $POS.attendance_check_in();" >/dev/null
+$PSQL -c "update $POS.attendance_sessions set check_in_at=now()-interval '2 hours' where employee_id='$A1' and status='open';" >/dev/null
+jval="$($PSQLA -c "select ($POS.attendance_check_out())->>'early_leave_minutes';")"
+cval="$($PSQLA -c "select early_leave_minutes from $POS.attendance_sessions where employee_id='$A1' order by check_out_at desc limit 1;")"
+[ -n "$jval" ] && [ "$jval" = "$cval" ] || fail "early_leave_minutes: JSON($jval) != column($cval) أو null"
+ok "check_out: early_leave_minutes في JSON يطابق العمود ($jval)."
+
 echo "== 10) الذرّية =="
 build_base "$ATOM"; { render "$ATOM" "$M8"; printf '\nDO $$ BEGIN RAISE EXCEPTION %sinjected%s; END $$;\n' "'" "'"; } > /tmp/ws_atom_$PID.sql
 if psql -X -q -v ON_ERROR_STOP=1 --single-transaction "$DATABASE_URL" -f /tmp/ws_atom_$PID.sql >/dev/null 2>&1; then fail "التطبيق مع الخطأ لم يفشل"; fi

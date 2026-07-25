@@ -400,19 +400,25 @@ begin
     v_evt := 'marked_off';
   end if;
 
-  select * into ex from public.employee_work_schedule where employee_id = p_employee_id and work_date = p_work_date for update;
-  if ex.id is not null and ex.locked_at is not null then raise exception using errcode='42501', message='السجل مقفل'; end if;
-
-  if ex.id is null then
-    insert into public.employee_work_schedule(employee_id, work_date, team, department, shift_definition_id, policy_id,
-        shift_code, is_working_day, expected_start_at, expected_end_at, is_overnight, source, source_reference, generated_at, generated_by)
-      values (p_employee_id, p_work_date, v_team, v_dept, p_shift_definition_id, v_pol_id, v_def_code, p_is_working_day, v_es, v_ee,
-        coalesce(v_def_ov,false), 'manual', v_reason, v_now, (select auth.uid()))
-      returning id into v_id;
+  -- إنشاء ذرّي آمن ضد سباق أول توليد لنفس (employee_id, work_date):
+  -- نحاول الإدراج؛ إن سبقنا آخر (generate/update) لم يُدرَج صف ونسقط لفرع التحديث
+  -- بعد قفل الصف الموجود وتطبيق قواعد القفل — بلا خطأ خام 23505 وبلا فقدان تحديث.
+  insert into public.employee_work_schedule(employee_id, work_date, team, department, shift_definition_id, policy_id,
+      shift_code, is_working_day, expected_start_at, expected_end_at, is_overnight, source, source_reference, generated_at, generated_by)
+    values (p_employee_id, p_work_date, v_team, v_dept, p_shift_definition_id, v_pol_id, v_def_code, p_is_working_day, v_es, v_ee,
+      coalesce(v_def_ov,false), 'manual', v_reason, v_now, (select auth.uid()))
+    on conflict (employee_id, work_date) do nothing
+    returning id into v_id;
+  if v_id is not null then
+    -- سجل يدوي جديد أُنشئ ذرّيًا
     v_new := to_jsonb((select r from public.employee_work_schedule r where r.id=v_id));
     insert into public.work_schedule_history(schedule_id, event_type, actor_id, actor_role, reason, new_data)
       values (v_id, v_evt, (select auth.uid()), public.audit_current_user_role(), v_reason, public._ws_hist_json(v_new));
   else
+    -- الصف موجود سلفًا (أُنشئ قبلنا أو تزامنًا): اقفله ثم طبّق قواعد القفل والتعديل
+    select * into ex from public.employee_work_schedule where employee_id = p_employee_id and work_date = p_work_date for update;
+    if ex.id is null then raise exception using errcode='40001', message='conflict_retry'; end if;
+    if ex.locked_at is not null then raise exception using errcode='42501', message='السجل مقفل'; end if;
     v_old := to_jsonb(ex);
     update public.employee_work_schedule
       set shift_definition_id=p_shift_definition_id, policy_id=v_pol_id, shift_code=v_def_code, is_working_day=p_is_working_day,
@@ -754,7 +760,8 @@ begin
   insert into public.attendance_history(session_id, event_type, actor_id, actor_role, old_data, new_data)
     values (v_id, 'checked_out', (select auth.uid()), public.audit_current_user_role(), public._att_hist_json(v_old), public._att_hist_json(v_new));
   perform public._att_audit(v_team, 'update', v_id, 'تسجيل خروج');
-  return jsonb_build_object('ok', true, 'session_id', v_id, 'check_out_at', v_now, 'work_seconds', v_secs);
+  return jsonb_build_object('ok', true, 'session_id', v_id, 'check_out_at', v_now, 'work_seconds', v_secs,
+    'early_leave_minutes', v_early);
 end $$;
 
 -- حالة الموظف: إضافة جدول اليوم المتوقّع (قراءة؛ schedule_missing عند غيابه) — لا يكسر المرحلة 7
