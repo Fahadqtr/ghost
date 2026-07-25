@@ -340,3 +340,35 @@ body.viewer .install-bar{bottom:calc(64px + env(safe-area-inset-bottom,0))}
 .tl-title{font-weight:700;font-size:14px;color:var(--ink)}
 .tl-detail{font-size:13px;color:var(--muted);margin-top:2px;word-break:break-word}
 .tl-time{font-size:12px;color:var(--muted);margin-top:2px}
+
+/* ==================== المرحلة 6: لوحة التشغيل اليومية ==================== */
+.ops-entry{background:linear-gradient(135deg,var(--teal),var(--teal-d));color:#fff;border:none}
+.ops-head .seg.ops-days{margin-top:10px}
+.ops-kpis .stat{cursor:default}
+.ops-sec{padding:0;overflow:hidden}
+.ops-sec-h{display:flex;align-items:center;gap:8px;padding:12px 14px;cursor:pointer;user-select:none}
+.ops-sec-h h3{margin:0}
+.ops-count{display:inline-block;min-width:20px;padding:0 7px;border-radius:10px;background:var(--teal-l);color:var(--teal-d);font-size:12px;font-weight:700;text-align:center}
+.ops-chev{color:var(--muted);font-size:14px}
+.ops-sec-b{padding:0 14px 12px}
+.ops-item{display:flex;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.ops-item:first-child{border-top:none}
+.ops-item .name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ops-item .meta{color:var(--muted);font-size:12.5px;margin-top:2px}
+.ops-btns{display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+.ops-age{color:var(--muted);font-size:11.5px;font-weight:500}
+.ops-tag{font-size:11px;font-weight:700;padding:1px 8px;border-radius:10px;white-space:nowrap}
+.ops-tag.critical{background:#fde8e8;color:#b42318}
+.ops-tag.warning{background:#fef3cd;color:#8a6100}
+.ops-tag.info{background:#e7f0fb;color:#1c5aa8}
+.ops-item.critical{border-inline-start:3px solid var(--red);padding-inline-start:10px}
+.ops-item.warning{border-inline-start:3px solid #e0a800;padding-inline-start:10px}
+.ops-alert{padding:10px 12px;border-radius:10px;margin-bottom:8px;background:#fafafa;border-inline-start:4px solid var(--line)}
+.ops-alert:last-child{margin-bottom:0}
+.ops-alert .name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ops-alert .meta{color:var(--muted);font-size:12.5px;margin-top:2px}
+.ops-alert.critical{border-inline-start-color:var(--red);background:#fef6f6}
+.ops-alert.warning{border-inline-start-color:#e0a800;background:#fffdf5}
+.ops-alert.info{border-inline-start-color:#3b82c4;background:#f7fafd}
+@media (min-width:820px){ .ops-kpis{grid-template-columns:repeat(3,1fr)} }
+@media (min-width:1040px){ .ops-kpis{grid-template-columns:repeat(6,1fr)} .ops-sec-b .ops-item .meta{font-size:13px} }

@@ -121,7 +121,7 @@ function dayStats(iso){
 }
 
 /* -------------------- التنقّل -------------------- */
-const screens=['dash','emps','sched','leaves','daily','point','audit','balances','secaudit','reports','notif'];
+const screens=['dash','emps','sched','leaves','daily','point','audit','balances','secaudit','reports','notif','dailyops'];
 let current='dash';
 /* حالة مركز الإشعارات */
 let notifState={ items:[], page:1, pageSize:20, total:0, unread:0, totalPages:0, loading:false, err:'' };
@@ -129,6 +129,14 @@ let notifPollTimer=null;
 /* المرحلة 5: طلبات إلغاء الإجازة */
 let myCancellations={};        // {leave_id: {status,reason,decision_reason,...}} — للموظف
 let pendingCancellations=[];   // قائمة طلبات الإلغاء المعلّقة — للمسؤول
+/* المرحلة 6: لوحة التشغيل اليومية */
+let dailyOps=null;             // آخر استجابة من get_daily_operations_dashboard
+let dailyOpsErr='';            // نص خطأ التحميل (إن وُجد)
+let dailyOpsLoading=false;     // حالة التحميل
+let dailyOpsDays=7;            // نافذة «القادم» (7/14/30)
+let opsPollTimer=null;         // مؤقّت التحديث الدوري (60ث) — أثناء ظهور اللوحة فقط
+let opsOpen={ai:true,alerts:true,today:false,upcoming:false}; // أقسام قابلة للطي
+let opsBusy=false;             // منع الضغط المتكرر على أزرار القرار
 function nav(to){
   current=to;
   screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s===to));
@@ -149,6 +157,7 @@ function renderScreen(to){
   else if(to==='secaudit') renderSecAudit();
   else if(to==='reports') renderReports();
   else if(to==='notif') renderNotifCenter();
+  else if(to==='dailyops') renderDailyOps();
 }
 
 /* -------------------- لوحة المعلومات -------------------- */
@@ -519,7 +528,7 @@ function renderSysadmin(){
     <button class="btn block ghost" onclick="nav('reports')" style="margin-top:8px">📊 التقارير المتقدّمة</button>
   </div>`;
   const foot=`<div class="card"><button class="btn block ghost" onclick="Cloud.signOut().then(()=>location.reload())">🚪 تسجيل الخروج</button></div>`;
-  el.innerHTML = header + renderOverviewSection() + kpis + deptCard + ownerCard + acctCard + toolsCard + foot;
+  el.innerHTML = header + opsEntryBtnHtml() + renderOverviewSection() + kpis + deptCard + ownerCard + acctCard + toolsCard + foot;
 }
 function openNewDepartment(){
   openSheet(`<h3>قسم جديد<button class="x" onclick="closeSheet()">×</button></h3>
@@ -1264,7 +1273,7 @@ function renderOwnerDash(){
         <button class="btn sm ghost" onclick="copyStaffLink()">🔗 نسخ الرابط</button>
       </div>
     </div>`;
-  el.innerHTML = header + actions + kpis + shiftsCard + chartsCard + pendingCard + cancellationsCardHtml() + reportsInboxHtml() + noticesCardHtml() + staff;
+  el.innerHTML = header + opsEntryBtnHtml() + actions + kpis + shiftsCard + chartsCard + pendingCard + cancellationsCardHtml() + reportsInboxHtml() + noticesCardHtml() + staff;
 }
 // رئيس القسم يضبط دور (قالب صلاحيات) مسؤول الوردية المعروضة
 function openAdminRoles(){
@@ -1305,6 +1314,7 @@ function renderDash(){
       <div style="font-size:13px;color:var(--muted)">${AR_DAYS[today().getDay()]} — ${fmtDate(iso)}</div>
       <div style="font-weight:800;font-size:18px;margin-top:2px">حالة اليوم</div>
     </div>
+    ${!isViewer?opsEntryBtnHtml():''}
     <div class="card" style="display:flex;gap:8px;flex-wrap:wrap">
       ${can('leaves')?`<button class="btn sm" onclick="editLeave('')">＋ إضافة إجازة</button>`:''}
       ${can('directives')?`<button class="btn sm" onclick="openDirectives()">📩 توجيه للموظفين</button>`:''}
@@ -1870,6 +1880,184 @@ async function showTimeline(id){
       <div class="tl-time">${relTime(ev.at)}</div></div></div>`;
   }).join('');
   sheet.innerHTML=`<h3>سجل الطلب<button class="x" onclick="closeSheet()">×</button></h3><div class="tl">${rows||'<div class="empty">لا أحداث</div>'}</div>`;
+}
+
+/* ==================== المرحلة 6: لوحة التشغيل اليومية ==================== */
+const OPS_SEV={critical:{c:'critical',t:'حرِج'},warning:{c:'warning',t:'تحذير'},info:{c:'info',t:'معلومة'}};
+// زر دخول اللوحة (يظهر في الصفحة الرئيسية للمسؤول/رئيس القسم/مدير النظام)
+function opsEntryBtnHtml(){ return `<button class="btn block ops-entry" onclick="openDailyOps()">🧭 لوحة التشغيل اليومية</button>`; }
+async function loadDailyOps(){
+  dailyOpsLoading=true; dailyOpsErr='';
+  try{
+    const { data, error }=await Cloud.dailyOps(dailyOpsDays);
+    if(error){ dailyOpsErr=rpcErr(error); } else { dailyOps=data||null; }
+  }catch(e){ dailyOpsErr='تعذّر تحميل اللوحة — تحقّق من الاتصال'; }
+  dailyOpsLoading=false;
+}
+function openDailyOps(){
+  current='dailyops';
+  screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s==='dailyops'));
+  document.getElementById('fab').style.display='none';
+  window.scrollTo(0,0);
+  dailyOps=null; dailyOpsErr=''; renderDailyOps();
+  loadDailyOps().then(()=>{ if(current==='dailyops') renderDailyOps(); });
+  startOpsPolling();
+}
+function closeDailyOps(){
+  stopOpsPolling(); current='dash';
+  screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s==='dash'));
+  window.scrollTo(0,0);
+  // الصفحة الرئيسية لكل دور تُرسَم في scr-dash
+  if(isSuperadmin) renderSysadmin(); else if(isOwner) renderOwnerDash(); else renderDash();
+}
+async function opsRefresh(){ await loadDailyOps(); if(current==='dailyops') renderDailyOps(); }
+function opsSetDays(days){ if(dailyOpsDays===days) return; dailyOpsDays=days; renderDailyOps(); opsRefresh(); }
+function opsToggle(sec){ opsOpen[sec]=!opsOpen[sec]; renderDailyOps(); }
+function startOpsPolling(){ stopOpsPolling(); opsPollTimer=setInterval(()=>{ if(document.visibilityState==='visible' && current==='dailyops' && Cloud.online) opsRefresh(); }, 60000); }
+function stopOpsPolling(){ if(opsPollTimer){ clearInterval(opsPollTimer); opsPollTimer=null; } }
+// أزرار القرار (تستدعي RPCs الحالية مباشرةً — تعمل عبر الأقسام لرئيس القسم/المدير)
+async function opsApproveLeave(id){
+  if(opsBusy) return; if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  opsBusy=true; const { error }=await Cloud.decideLeave(id,'approve','',false,'');
+  opsBusy=false;
+  if(error){ toast(rpcErr(error)); return; }
+  toast('✓ تم اعتماد الإجازة'); await opsRefresh(); refreshUnread();
+}
+function opsRejectLeave(id){
+  openSheet(`<h3>رفض طلب الإجازة<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="field"><label>سبب الرفض (إلزامي — يظهر للموظف)</label>
+      <textarea id="ops-rej" rows="3" maxlength="1000" placeholder="مثال: التغطية غير كافية"></textarea></div>
+    <button class="btn block danger" id="ops-rej-btn" onclick="confirmOpsRejectLeave('${id}')">تأكيد الرفض</button>`);
+}
+async function confirmOpsRejectLeave(id){
+  const reason=(val('ops-rej')||'').trim();
+  if(!reason){ toast('سبب الرفض مطلوب'); return; }
+  if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  const btn=document.getElementById('ops-rej-btn'); if(btn){ btn.disabled=true; btn.textContent='جارٍ…'; }
+  const { error }=await Cloud.decideLeave(id,'reject',reason,false,'');
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='تأكيد الرفض'; } toast(rpcErr(error)); return; }
+  closeSheet(); toast('تم رفض الطلب'); await opsRefresh(); refreshUnread();
+}
+async function opsApproveCancel(reqId){
+  if(opsBusy) return; if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  opsBusy=true; const { error }=await Cloud.decideLeaveCancellation(reqId,'approve','');
+  opsBusy=false;
+  if(error){ toast(rpcErr(error)); return; }
+  toast('تم اعتماد الإلغاء'); await opsRefresh(); refreshUnread();
+}
+function opsRejectCancel(reqId){
+  openSheet(`<h3>رفض طلب الإلغاء<button class="x" onclick="closeSheet()">×</button></h3>
+    <div class="field"><label>سبب رفض الإلغاء (إلزامي)</label>
+      <textarea id="ops-crej" rows="3" maxlength="1000"></textarea></div>
+    <button class="btn block danger" id="ops-crej-btn" onclick="confirmOpsRejectCancel('${reqId}')">تأكيد الرفض</button>`);
+}
+async function confirmOpsRejectCancel(reqId){
+  const reason=(val('ops-crej')||'').trim();
+  if(!reason){ toast('سبب الرفض مطلوب'); return; }
+  if(!Cloud.online){ toast('يتطلّب اتصالاً بالإنترنت'); return; }
+  const btn=document.getElementById('ops-crej-btn'); if(btn){ btn.disabled=true; btn.textContent='جارٍ…'; }
+  const { error }=await Cloud.decideLeaveCancellation(reqId,'reject',reason);
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='تأكيد الرفض'; } toast(rpcErr(error)); return; }
+  closeSheet(); toast('تم رفض طلب الإلغاء'); await opsRefresh(); refreshUnread();
+}
+function opsGoEmployees(){ closeDailyOps(); if(!isSuperadmin){ nav('emps'); } }
+// صفّ عنصر «تحتاج إجراء»
+function opsActionRow(it){
+  const dates=(it.from_date? `${fmtDate(it.from_date)} ← ${fmtDate(it.to_date)}` : '');
+  const age=(it.created_at? `<span class="ops-age">${relTime(it.created_at)}</span>` : '');
+  const meta=[esc(it.leave_type||''), dates, it.team_name?('وردية '+esc(it.team_name)):'', it.department_name?esc(it.department_name):'']
+              .filter(Boolean).join(' • ');
+  let btns='';
+  if(it.can_decide && it.action_kind==='decide_leave'){
+    btns=`<button class="btn sm ghost" onclick="showTimeline('${it.leave_id}')">السجل</button>
+      <button class="btn sm" onclick="opsApproveLeave('${it.leave_id}')">✓ اعتماد</button>
+      <button class="btn sm danger" onclick="opsRejectLeave('${it.leave_id}')">✗ رفض</button>`;
+  } else if(it.can_decide && it.action_kind==='decide_cancellation'){
+    btns=`<button class="btn sm ghost" onclick="showTimeline('${it.leave_id}')">السجل</button>
+      <button class="btn sm" onclick="opsApproveCancel('${it.request_id}')">✓ اعتماد الإلغاء</button>
+      <button class="btn sm danger" onclick="opsRejectCancel('${it.request_id}')">✗ رفض</button>`;
+  } else if(it.action_kind==='manage_account'){
+    btns=`<button class="btn sm ghost" onclick="opsGoEmployees()">إدارة الحساب</button>`;
+  }
+  const pr=OPS_SEV[it.priority]||OPS_SEV.info;
+  return `<div class="ops-item ${pr.c}">
+    <div class="grow">
+      <div class="name">${esc(it.employee_name||'—')} <span class="ops-tag ${pr.c}">${pr.t}</span> ${age}</div>
+      <div class="meta">${esc(it.title||'')}${meta?' • '+meta:''}</div>
+    </div>
+    <div class="ops-btns">${btns}</div>
+  </div>`;
+}
+function opsAlertRow(a){
+  const pr=OPS_SEV[a.severity]||OPS_SEV.info;
+  const dates=(a.from_date? ` • ${fmtDate(a.from_date)} ← ${fmtDate(a.to_date)}` : '');
+  return `<div class="ops-alert ${pr.c}">
+    <div class="grow"><div class="name">${esc(a.title||'')} <span class="ops-tag ${pr.c}">${pr.t}</span></div>
+    <div class="meta">${esc(a.employee_name||'—')}${a.team_name?(' • وردية '+esc(a.team_name)):''}${dates}${a.description&&a.description!==a.employee_name?(' • '+esc(a.description)):''}</div></div>
+  </div>`;
+}
+function opsLeaveRow(l, upcoming){
+  const tags=[];
+  if(l.starts_today) tags.push('<span class="ops-tag warning">يبدأ اليوم</span>');
+  if(l.ends_today) tags.push('<span class="ops-tag info">ينتهي اليوم</span>');
+  if(upcoming && l.days_until!=null) tags.push('<span class="ops-tag info">بعد '+l.days_until+' يوم</span>');
+  return `<div class="ops-item">
+    <div class="grow"><div class="name">${esc(l.employee_name||'—')} ${tags.join(' ')}</div>
+    <div class="meta">${esc(l.leave_type||'')} • ${fmtDate(l.from_date)} ← ${fmtDate(l.to_date)}${l.team_name?(' • وردية '+esc(l.team_name)):''}</div></div>
+  </div>`;
+}
+function opsSection(key, title, count, rowsHtml){
+  const open=!!opsOpen[key];
+  return `<div class="card ops-sec">
+    <div class="ops-sec-h" onclick="opsToggle('${key}')">
+      <h3 class="grow">${title} <span class="ops-count">${count}</span></h3>
+      <span class="ops-chev">${open?'▾':'◂'}</span>
+    </div>
+    ${open? `<div class="ops-sec-b">${rowsHtml||'<div class="empty">لا عناصر</div>'}</div>`:''}
+  </div>`;
+}
+function opsKpi(n, label, cls){ return `<div class="stat ${cls||''}"><div class="n">${n}</div><div class="l">${label}</div></div>`; }
+function renderDailyOps(){
+  const el=document.getElementById('scr-dailyops'); if(!el) return;
+  const header=`<div class="card ops-head">
+    <div class="row" style="align-items:center">
+      <button class="btn sm ghost" onclick="closeDailyOps()">→ رجوع</button>
+      <div class="grow" style="text-align:center">
+        <div style="font-weight:800;font-size:17px">🧭 لوحة التشغيل اليومية</div>
+        <div class="meta">${dailyOps?fmtDate(dailyOps.today):''}${dailyOps?(' • تحديث '+relTime(dailyOps.generated_at)):''}</div>
+      </div>
+      <button class="btn sm" id="ops-refresh" onclick="opsRefresh()" ${dailyOpsLoading?'disabled':''}>${dailyOpsLoading?'…':'⟳'}</button>
+    </div>
+    <div class="seg ops-days">
+      <button class="${dailyOpsDays===7?'on':''}" onclick="opsSetDays(7)">7 أيام</button>
+      <button class="${dailyOpsDays===14?'on':''}" onclick="opsSetDays(14)">14</button>
+      <button class="${dailyOpsDays===30?'on':''}" onclick="opsSetDays(30)">30</button>
+    </div>
+  </div>`;
+  if(!dailyOps){
+    let body;
+    if(dailyOpsErr) body=`<div class="card"><div class="empty warn">${esc(dailyOpsErr)}</div><button class="btn block" onclick="opsRefresh()">إعادة المحاولة</button></div>`;
+    else body=`<div class="card"><div class="empty">جارٍ تحميل اللوحة…</div></div>`;
+    el.innerHTML=header+body; return;
+  }
+  const d=dailyOps, s=d.summary||{};
+  const kpis=`<div class="stats ops-kpis">
+    ${opsKpi(s.pending_leaves||0,'طلبات معلّقة', (s.pending_leaves? 'warn':''))}
+    ${opsKpi(s.pending_cancellations||0,'طلبات إلغاء')}
+    ${opsKpi(s.on_leave_today||0,'في إجازة اليوم')}
+    ${opsKpi(s.upcoming||0,'تبدأ قريبًا')}
+    ${opsKpi(s.stale_pending_24h||0,'متأخرة +24س', (s.stale_pending_24h? 'warn':''))}
+    ${opsKpi(s.critical_alerts||0,'تنبيهات حرجة', (s.critical_alerts? 'bad':''))}
+  </div>`;
+  const ai=(d.action_items||[]).map(opsActionRow).join('');
+  const al=(d.alerts||[]).map(opsAlertRow).join('');
+  const td=(d.today_leaves||[]).map(l=>opsLeaveRow(l,false)).join('');
+  const up=(d.upcoming_leaves||[]).map(l=>opsLeaveRow(l,true)).join('');
+  el.innerHTML = header + kpis
+    + opsSection('ai','تحتاج إجراء', (d.action_items||[]).length, ai)
+    + opsSection('alerts','التنبيهات التشغيلية', (d.alerts||[]).length, al)
+    + opsSection('today','في إجازة اليوم', (d.today_leaves||[]).length, td)
+    + opsSection('upcoming','الإجازات القادمة ('+(d.upcoming_days||7)+' أيام)', (d.upcoming_leaves||[]).length, up);
 }
 function coverageCheck(l){
   if(l.status!=='معتمد') return {ok:true, text:'الطلب '+l.status};
