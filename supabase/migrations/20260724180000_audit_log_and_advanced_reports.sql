@@ -7,8 +7,8 @@
 --   * Minimal, safe audit coverage for gaps: departments (trigger) and the
 --     account lifecycle RPCs (create owner / rename / delete) — bodies are
 --     preserved verbatim, only an audit write is added.
---   * A server-authoritative denied-access logger (persists outside any
---     raising transaction; wired from the account-status Edge Function).
+--   * An internal denied-access logger helper (NOT client-callable; reliable
+--     denial logging is deferred to an out-of-transaction caller — see note).
 --   * A superadmin-only, paginated, sanitized audit-search RPC.
 --   * Read-only, role-scoped advanced report RPCs.
 --   * Supporting indexes and least-privilege grants.
@@ -37,7 +37,13 @@ alter table public.audit_log add constraint audit_log_action_check
 --    Redacts sensitive keys at every nesting depth (objects + arrays).
 --    Internal: not granted to anon/authenticated.
 -- ----------------------------------------------------------------------------
-create or replace function public._audit_sanitize_json(p jsonb)
+-- Sensitive keys are matched on a NORMALIZED form of the key (lowercased and
+-- stripped of every non-alphanumeric char) so snake_case, camelCase and mixed
+-- casing all collapse to the same token. Membership is tested against an exact
+-- denylist set — NOT a broad '%key%'/'%session%' pattern — so safe fields like
+-- keyboard_layout, monkey_count, token_count, keynote_title and sessional_report
+-- are never redacted. Recurses through objects and arrays, with a depth guard.
+create or replace function public._audit_sanitize_json(p jsonb, p_depth integer default 0)
 returns jsonb
 language plpgsql
 immutable
@@ -46,25 +52,37 @@ as $function$
 declare
   k    text;
   v    jsonb;
+  nk   text;
   out  jsonb;
+  deny constant text[] := array[
+    'password','passwd','pass','token','accesstoken','refreshtoken','idtoken','sessiontoken',
+    'authorization','bearer','cookie','cookies','session','sessionid','secret','secrets',
+    'clientsecret','apikey','apisecret','servicerole','servicerolekey','servicekey','privatekey',
+    'credential','credentials','rawappmetadata','rawusermetadata','appmetadata','usermetadata',
+    'encrypted','encryptedpassword','banneduntil'
+  ];
 begin
   if p is null then
     return null;
+  end if;
+  if p_depth > 40 then                     -- guard against pathologically deep JSON
+    return to_jsonb('[عمق مفرط]'::text);
   end if;
 
   if jsonb_typeof(p) = 'object' then
     out := '{}'::jsonb;
     for k, v in select key, value from jsonb_each(p) loop
-      if lower(k) ~ '(password|passwd|secret|token|authorization|bearer|service_role|access_token|refresh_token|encrypted|raw_app_meta_data|raw_user_meta_data|banned_until|api[_-]?key|private[_-]?key|_key$|^key$|credential)' then
+      nk := regexp_replace(lower(k), '[^a-z0-9]', '', 'g');
+      if nk = any(deny) then
         out := out || jsonb_build_object(k, to_jsonb('[محجوب]'::text));
       else
-        out := out || jsonb_build_object(k, public._audit_sanitize_json(v));
+        out := out || jsonb_build_object(k, public._audit_sanitize_json(v, p_depth + 1));
       end if;
     end loop;
     return out;
   elsif jsonb_typeof(p) = 'array' then
     return (
-      select coalesce(jsonb_agg(public._audit_sanitize_json(e)), '[]'::jsonb)
+      select coalesce(jsonb_agg(public._audit_sanitize_json(e, p_depth + 1)), '[]'::jsonb)
       from jsonb_array_elements(p) e
     );
   else
@@ -73,7 +91,8 @@ begin
 end
 $function$;
 
-revoke all on function public._audit_sanitize_json(jsonb) from public;
+-- internal helper: never client-callable (anon + authenticated + PUBLIC all denied)
+revoke all on function public._audit_sanitize_json(jsonb, integer) from public, anon, authenticated;
 
 -- Mask a UUID-looking entity id for display (keep composite keys readable).
 create or replace function public._audit_mask_id(p text)
@@ -90,7 +109,8 @@ as $function$
   end
 $function$;
 
-revoke all on function public._audit_mask_id(text) from public;
+-- internal helper: never client-callable
+revoke all on function public._audit_mask_id(text) from public, anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- 3) Departments audit trigger — covers create / rename / delete of a
@@ -149,13 +169,19 @@ create trigger trg_audit_departments
   after insert or update or delete on public.departments
   for each row execute function public._audit_departments();
 
+-- internal trigger function: never client-callable
+revoke all on function public._audit_departments() from public, anon, authenticated;
+
 -- ----------------------------------------------------------------------------
--- 4) Server-authoritative denied-access logger.
---    Records the CALLER's real identity (auth.uid) with a short, non-sensitive
---    detail. Because it is invoked as its own statement (e.g. from the Edge
---    Function after it decides to reject), the row persists — unlike an audit
---    write inside an RPC that then RAISEs (which would roll back).
---    Never accepts request bodies; detail is a bounded label only.
+-- 4) Denied-access logger — INTERNAL ONLY, and a DEFERRED feature.
+--    Rejected administrative attempts require out-of-transaction logging through
+--    an Edge Function or external logging service: a denial written inside an
+--    RPC that then RAISEs is rolled back with that transaction, and exposing
+--    this writer to the client would allow flooding the audit log. It is
+--    therefore NOT granted to anon/authenticated and has no caller yet. The UI
+--    does NOT claim rejected attempts are logged. Kept here so the out-of-band
+--    caller can be added later without a new migration. It never stores request
+--    bodies; detail is a bounded label only, actor is taken from auth.uid().
 -- ----------------------------------------------------------------------------
 create or replace function public.log_admin_access_denied(p_action text, p_detail text)
 returns void
@@ -187,8 +213,8 @@ begin
 end
 $function$;
 
-revoke all on function public.log_admin_access_denied(text, text) from public;
-grant execute on function public.log_admin_access_denied(text, text) to authenticated;
+-- internal / deferred: not client-callable (anon + authenticated + PUBLIC denied)
+revoke all on function public.log_admin_access_denied(text, text) from public, anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- 5) Account-lifecycle audit coverage.
@@ -355,7 +381,8 @@ begin
 end
 $function$;
 
-revoke all on function public.superadmin_search_audit_log(integer,integer,timestamptz,timestamptz,text,text,text,text) from public;
+-- external RPC: authenticated only (anon + PUBLIC denied); self-gated to superadmin
+revoke all on function public.superadmin_search_audit_log(integer,integer,timestamptz,timestamptz,text,text,text,text) from public, anon, authenticated;
 grant execute on function public.superadmin_search_audit_log(integer,integer,timestamptz,timestamptz,text,text,text,text) to authenticated;
 
 -- ----------------------------------------------------------------------------
@@ -395,7 +422,8 @@ begin
 end
 $function$;
 
-revoke all on function public._report_scope_teams() from public;
+-- internal helper: never client-callable (external report RPCs call it as definer)
+revoke all on function public._report_scope_teams() from public, anon, authenticated;
 
 -- ----------------------------------------------------------------------------
 -- 9) Report: employees + accounts/roles summary (role-scoped).
@@ -481,7 +509,8 @@ begin
 end
 $function$;
 
-revoke all on function public.admin_reports_summary() from public;
+-- external RPC: authenticated only (anon + PUBLIC denied); self-gated by scope
+revoke all on function public.admin_reports_summary() from public, anon, authenticated;
 grant execute on function public.admin_reports_summary() to authenticated;
 
 -- ----------------------------------------------------------------------------
@@ -529,7 +558,8 @@ begin
 end
 $function$;
 
-revoke all on function public.admin_leave_report(date, date) from public;
+-- external RPC: authenticated only (anon + PUBLIC denied); self-gated by scope
+revoke all on function public.admin_leave_report(date, date) from public, anon, authenticated;
 grant execute on function public.admin_leave_report(date, date) to authenticated;
 
 -- ----------------------------------------------------------------------------
@@ -577,7 +607,8 @@ begin
 end
 $function$;
 
-revoke all on function public.admin_balance_report(integer) from public;
+-- external RPC: authenticated only (anon + PUBLIC denied); self-gated by scope
+revoke all on function public.admin_balance_report(integer) from public, anon, authenticated;
 grant execute on function public.admin_balance_report(integer) to authenticated;
 
 -- ----------------------------------------------------------------------------
@@ -632,5 +663,6 @@ begin
 end
 $function$;
 
-revoke all on function public.admin_activity_report(date, date) from public;
+-- external RPC: authenticated only (anon + PUBLIC denied); self-gated by scope
+revoke all on function public.admin_activity_report(date, date) from public, anon, authenticated;
 grant execute on function public.admin_activity_report(date, date) to authenticated;
