@@ -21,6 +21,13 @@ alter table public.notifications add constraint notifications_type_check check (
   'account_changed','department_changed'));
 
 -- ---------------------------------------------------------------------------
+-- 1b) مرجع داخلي على leaves يُثبت أن الإلغاء تمّ عبر سير موثوق (Nullable).
+--     يُملأ خادميًا فقط داخل decide_leave_cancellation، ولا يُعرض للعميل،
+--     ويحرسه trg_leave_cancellation_guard ضد أي تعديل مباشر (§4b).
+-- ---------------------------------------------------------------------------
+alter table public.leaves add column if not exists cancelled_via_request_id uuid;
+
+-- ---------------------------------------------------------------------------
 -- 2) جدول طلبات التغيير/الإلغاء (لإلغاء المعتمدة)
 -- ---------------------------------------------------------------------------
 create table if not exists public.leave_change_requests (
@@ -142,6 +149,62 @@ create trigger trg_leave_history_capture after insert or update on public.leaves
   for each row execute function public.fn_leave_history_capture();
 
 -- ---------------------------------------------------------------------------
+-- 4b) حارس الإلغاء (BEFORE UPDATE): يفرض سير الإلغاء نفسه لا سلامة النتيجة فقط.
+--     أي تحويل 'معتمد' → 'ملغى' بكتابة مباشرة — بما في ذلك write_leaves لـ
+--     admin/owner/superadmin — يُرفض ما لم يكن مدعومًا بطلب إلغاء:
+--       • موجود ويُشير إلى الإجازة نفسها،
+--       • request_type='cancel_approved_leave' وstatus='approved'،
+--       • قرّره المستخدم الحالي الموثوق (decided_by = auth.uid())،
+--       • والإجازة لم تُلغَ سابقًا عبر هذا المسار (OLD المرجع NULL) — يمنع
+--         إعادة استخدام طلب معتمد بعد إعادة فتح إجازة ملغاة.
+--     هذه الشروط لا يمكن اصطناعها بكتابة مباشرة: اعتماد الطلب (المصدر الوحيد
+--     لحالة approved) لا يحدث إلا داخل decide_leave_cancellation الذي يضبط
+--     المرجع والحالة ذرّيًا؛ والعميل لا يكتب في leave_change_requests (RLS).
+--     كما يحمي cancelled_via_request_id من أي ضبط/تغيير من العميل.
+-- ---------------------------------------------------------------------------
+create or replace function public.fn_leave_cancellation_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path to ''
+as $fn$
+declare v_ok boolean;
+begin
+  if OLD.status = 'معتمد' and NEW.status = 'ملغى' then
+    if NEW.cancelled_via_request_id is null or OLD.cancelled_via_request_id is not null then
+      raise exception 'لا يمكن إلغاء إجازة معتمدة إلا عبر اعتماد طلب إلغاء' using errcode = '42501';
+    end if;
+    select exists(
+      select 1 from public.leave_change_requests r
+       where r.id = NEW.cancelled_via_request_id
+         and r.leave_id = NEW.id
+         and r.request_type = 'cancel_approved_leave'
+         and r.status = 'approved'
+         and r.decided_by = (select auth.uid())
+    ) into v_ok;
+    if not v_ok then
+      raise exception 'إلغاء الإجازة المعتمدة يتطلب طلب إلغاء معتمد وموثوق' using errcode = '42501';
+    end if;
+    return NEW;   -- مسموح: المرجع صحيح ومملوء خادميًا داخل RPC القرار
+  end if;
+  -- أي تحديث آخر لا يجوز أن يُدخل/يغيّر مرجع الإلغاء (يبقى كما هو من الخادم)
+  NEW.cancelled_via_request_id := OLD.cancelled_via_request_id;
+  return NEW;
+end
+$fn$;
+
+-- حارس داخلي: لا EXECUTE للعميل (يعمل ضمن نظام الـtrigger فقط)
+revoke all on function public.fn_leave_cancellation_guard() from public;
+revoke all on function public.fn_leave_cancellation_guard() from anon;
+revoke all on function public.fn_leave_cancellation_guard() from authenticated;
+
+-- الاسم يسبق trg_leave_decision_guard أبجديًا فيعمل قبله (كلاهما BEFORE UPDATE)؛
+-- لا تعارض بينهما (يعملان على حقول مختلفة).
+drop trigger if exists trg_leave_cancellation_guard on public.leaves;
+create trigger trg_leave_cancellation_guard before update on public.leaves
+  for each row execute function public.fn_leave_cancellation_guard();
+
+-- ---------------------------------------------------------------------------
 -- 5) RPCs
 -- ---------------------------------------------------------------------------
 
@@ -161,6 +224,12 @@ begin
   if p_to < p_from then raise exception 'تاريخ النهاية قبل البداية'; end if;
   if coalesce(btrim(p_type),'') = '' then raise exception 'نوع الإجازة مطلوب'; end if;
   if char_length(coalesce(p_notes,'')) > 2000 then raise exception 'الملاحظات تتجاوز الحد المسموح (2000 محرف)'; end if;
+  -- لا تغيير فعلي (بعد القفل): أعِد نتيجة idempotent دون UPDATE/تاريخ/إشعار/تدقيق.
+  -- المقارنة تطابق تمامًا ما ستكتبه جملة UPDATE أدناه (type=p_type, notes=btrim).
+  if (v_lv.type, v_lv.from_date, v_lv.to_date, coalesce(v_lv.notes,''))
+       is not distinct from (p_type, p_from, p_to, coalesce(btrim(p_notes),'')) then
+    return jsonb_build_object('ok', true, 'id', p_leave_id, 'unchanged', true);
+  end if;
   select e.team into v_team from public.employees e where e.id = v_emp;
   select s.data->'leaveTypes' into v_types from public.settings s where s.team = v_team;
   if v_types is not null and jsonb_typeof(v_types)='array' and not (v_types ? p_type) then raise exception 'نوع إجازة غير صالح'; end if;
@@ -226,9 +295,16 @@ begin
   if exists (select 1 from public.leave_change_requests where leave_id = p_leave_id and status = 'pending') then
     raise exception 'يوجد طلب إلغاء معلّق لهذه الإجازة';
   end if;
-  insert into public.leave_change_requests(leave_id, request_type, status, requested_by, reason)
-  values (p_leave_id, 'cancel_approved_leave', 'pending', (select auth.uid()), btrim(p_reason))
-  returning id into v_req;
+  -- الفهرس الفريد الجزئي هو الضمان النهائي ضد طلبين متزامنين؛ نلتقط تعارضه
+  -- ونعيد رسالة عربية آمنة دون كشف 23505/اسم الفهرس/تفاصيل PostgreSQL،
+  -- ودون ترك تاريخ/إشعار orphan (الإدراج قبلها في نفس المعاملة).
+  begin
+    insert into public.leave_change_requests(leave_id, request_type, status, requested_by, reason)
+    values (p_leave_id, 'cancel_approved_leave', 'pending', (select auth.uid()), btrim(p_reason))
+    returning id into v_req;
+  exception when unique_violation then
+    raise exception 'يوجد طلب إلغاء معلّق لهذه الإجازة مسبقاً' using errcode = '55006';
+  end;
   select e.team, e.name into v_team, v_name from public.employees e where e.id = v_emp;
   insert into public.leave_history(leave_id, event_type, actor_id, actor_role, new_data)
   values (p_leave_id,'cancellation_requested',(select auth.uid()),public.audit_current_user_role(),
@@ -270,7 +346,9 @@ begin
 
   if p_decision = 'approve' then
     perform set_config('app.leave_hist_reason', coalesce(v_req.reason,''), true);
-    update public.leaves set status = 'ملغى' where id = v_lv.id;   -- الرصيد يُستعاد تلقائيًا؛ trigger: cancellation_approved + trg_audit
+    -- ضبط المرجع + الحالة ذرّيًا: المرجع يُثبت للحارس أن الإلغاء عبر سير موثوق.
+    -- (الطلب صار 'approved' وdecided_by=auth.uid() في التحديث أعلاه ضمن نفس المعاملة.)
+    update public.leaves set status = 'ملغى', cancelled_via_request_id = p_request_id where id = v_lv.id;  -- الرصيد يُستعاد تلقائيًا؛ trigger: cancellation_approved + trg_audit
     v_new_status := 'ملغى';
   else
     insert into public.leave_history(leave_id, event_type, actor_id, actor_role, new_data)
