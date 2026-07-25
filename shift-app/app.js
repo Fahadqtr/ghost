@@ -121,8 +121,11 @@ function dayStats(iso){
 }
 
 /* -------------------- التنقّل -------------------- */
-const screens=['dash','emps','sched','leaves','daily','point','audit','balances','secaudit','reports'];
+const screens=['dash','emps','sched','leaves','daily','point','audit','balances','secaudit','reports','notif'];
 let current='dash';
+/* حالة مركز الإشعارات */
+let notifState={ items:[], page:1, pageSize:20, total:0, unread:0, totalPages:0, loading:false, err:'' };
+let notifPollTimer=null;
 function nav(to){
   current=to;
   screens.forEach(s=>document.getElementById('scr-'+s).classList.toggle('active', s===to));
@@ -142,6 +145,7 @@ function renderScreen(to){
   else if(to==='balances') renderBalances();
   else if(to==='secaudit') renderSecAudit();
   else if(to==='reports') renderReports();
+  else if(to==='notif') renderNotifCenter();
 }
 
 /* -------------------- لوحة المعلومات -------------------- */
@@ -1650,6 +1654,8 @@ function renderLeaves(){
             <div class="name">${e?e.name:'— (موظف محذوف)'} ${active?'<span class="badge b-leave" style="margin-inline-start:4px">اليوم</span>':''}</div>
             <div class="meta">${l.type} • ${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${days} يوم</div>
             ${l.notes?`<div class="meta" style="margin-top:2px">📝 ${esc(l.notes)}</div>`:''}
+            ${l.status!=='قيد الانتظار'&&l.decidedAt?`<div class="meta" style="margin-top:2px">${l.status==='معتمد'?'اعتُمد':'رُفض'} ${relTime(l.decidedAt)}</div>`:''}
+            ${l.status==='مرفوض'?`<div class="meta warn" style="margin-top:2px">سبب الرفض: ${esc(l.rejectReason||'لم يُذكر سبب الرفض')}</div>`:''}
             <div class="meta ${cov.ok?'':'warn'}" style="margin-top:2px">${cov.text}</div>
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
@@ -1676,10 +1682,13 @@ function renderMyLeaves(){
     <div class="card" style="padding:6px 12px">
       ${mine.length? mine.map(l=>{
         const days=inclusiveDays(l.from,l.to), canCancel=l.status==='قيد الانتظار';
+        const decided=l.status!=='قيد الانتظار' && l.decidedAt;
         return `<div class="row">
           <div class="grow">
             <div class="name">${l.type}</div>
             <div class="meta">${fmtDate(l.from)} ← ${fmtDate(l.to)} • ${days} يوم${l.notes?' • '+esc(l.notes):''}</div>
+            ${decided?`<div class="meta" style="margin-top:2px">${l.status==='معتمد'?'اعتُمد':'رُفض'} ${relTime(l.decidedAt)}</div>`:''}
+            ${l.status==='مرفوض'?`<div class="meta warn" style="margin-top:2px">سبب الرفض: ${esc(l.rejectReason||'لم يُذكر سبب الرفض')}</div>`:''}
           </div>
           <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
             <span class="badge ${l.status==='معتمد'?'b-ok':l.status==='مرفوض'?'b-rej':'b-pending'}">${l.status}</span>
@@ -1700,26 +1709,28 @@ function requestLeave(){
       <div class="field"><label>من تاريخ</label><input id="l-from" type="date" value="${toISO(today())}" oninput="updLeaveHint()"></div>
       <div class="field"><label>إلى تاريخ</label><input id="l-to" type="date" value="${toISO(today())}" oninput="updLeaveHint()"></div>
     </div>
-    <div class="field"><label>ملاحظات</label><input id="l-notes" placeholder="اختياري"></div>
+    <div class="field"><label>ملاحظات</label><input id="l-notes" maxlength="2000" placeholder="اختياري"></div>
     <div class="hint" id="l-hint"></div>
     <p class="hint">يُرسَل الطلب إلى المشرف للاعتماد.</p>
-    <button class="btn block" style="margin-top:10px" onclick="submitLeaveRequest()">إرسال الطلب</button>
+    <button class="btn block" id="l-submit" style="margin-top:10px" onclick="submitLeaveRequest()">إرسال الطلب</button>
   `);
   sheet._type=s.leaveTypes[0]; updLeaveHint();
 }
-function submitLeaveRequest(){
+// خطأ RPC مقروء (رسالة الاستثناء من القاعدة عربية غالباً)
+function rpcErr(error){ return (error && (error.message||error.details||error.hint)) || 'تعذّر تنفيذ العملية'; }
+async function submitLeaveRequest(){
   const me=viewerEmp(); if(!me){ toast('تعذّر تحديد حسابك'); return; }
   const from=val('l-from'), to=val('l-to');
   if(!from||!to){ toast('حدد التواريخ'); return; }
   if(to<from){ toast('تاريخ النهاية قبل البداية'); return; }
-  const rec={ id:uid(), empId:me.id, type:sheet._type, from, to, status:'قيد الانتظار', notes:val('l-notes').trim() };
-  // تنبيه تجاوز الرصيد (لا يمنع الإرسال)
-  const rem=remainingForViewer(sheet._type);
-  if(rem!=null && inclusiveDays(from,to) > rem){
-    toast('مدة الطلب تتجاوز الرصيد المتبقي، وسيحتاج الطلب إلى موافقة استثنائية.');
-  }
-  state.leaves.push(rec); Data.upsertLeave(rec);
-  closeSheet(); renderScreen(current); toast('تم إرسال الطلب للاعتماد');
+  if(!Cloud.online){ toast('يتطلّب إرسال الطلب اتصالاً بالإنترنت'); return; }
+  const btn=document.getElementById('l-submit'); if(btn){ btn.disabled=true; btn.textContent='جارٍ الإرسال…'; }
+  const { error }=await Cloud.submitLeave(sheet._type, from, to, val('l-notes').trim());
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='إرسال الطلب'; } toast(rpcErr(error)); return; }
+  closeSheet();
+  try{ await Cloud.pull(); }catch(e){}
+  renderScreen(current); refreshUnread();
+  toast('تم إرسال الطلب للاعتماد');
 }
 function cancelMyLeave(id){
   const l=state.leaves.find(x=>x.id===id); if(!l || l.status!=='قيد الانتظار') return;
@@ -1749,7 +1760,7 @@ function editLeave(id){
     </div>
     <div class="field"><label>الحالة</label>
       <div class="pick">${s.statuses.map(t=>`<button data-t="${t}" class="${(l?l.status:'معتمد')===t?'on':''}" onclick="pickStatus(this)">${t}</button>`).join('')}</div></div>
-    <div class="field"><label>ملاحظات</label><input id="l-notes" value="${l?esc(l.notes||''):''}" placeholder="اختياري"></div>
+    <div class="field"><label>ملاحظات</label><input id="l-notes" maxlength="2000" value="${l?esc(l.notes||''):''}" placeholder="اختياري"></div>
     <div class="hint" id="l-hint"></div>
     <button class="btn block" style="margin-top:10px" onclick="saveLeave('${id}')">${l?'حفظ التعديلات':'حجز الإجازة'}</button>
   `);
@@ -1769,6 +1780,15 @@ function saveLeave(id){
   const from=val('l-from'), to=val('l-to');
   if(!from||!to){ toast('حدد التواريخ'); return; }
   if(to<from){ toast('تاريخ النهاية قبل البداية'); return; }
+  // قرار على طلب معلّق يمرّ عبر RPC الآمن (لا عبر upsert): يسجّل القرار ويُشعر الموظف
+  if(id){
+    const orig=(state.leaves.find(x=>x.id===id)||{}).status;
+    if(orig==='قيد الانتظار' && (sheet._status==='معتمد' || sheet._status==='مرفوض')){
+      closeSheet();
+      if(sheet._status==='معتمد') return approveLeave(id);
+      return rejectLeave(id);   // يفتح نافذة إدخال السبب
+    }
+  }
   let rec;
   if(id){ rec=state.leaves.find(x=>x.id===id); if(!rec) return; Object.assign(rec,{empId,type:sheet._type,from,to,status:sheet._status,notes:val('l-notes').trim()}); }
   else { rec={ id:uid(), empId, type:sheet._type, from, to, status:sheet._status, notes:val('l-notes').trim() }; state.leaves.push(rec); }
@@ -1782,13 +1802,26 @@ function deleteLeave(id){
   state.leaves=state.leaves.filter(x=>x.id!==id);
   Data.delLeave(id); renderLeaves(); toast('تم الحذف');
 }
-function setLeaveStatus(id, status){
-  if(!can('approve')){ toast('غير مصرّح باعتماد الطلبات'); return; }
-  const l=state.leaves.find(x=>x.id===id); if(!l) return;
-  const prev=l.status; l.status=status;
-  if(!ensureOverrideIfNeeded(l)){ l.status=prev; return; }
-  Data.upsertLeave(l); renderScreen(current);
-  toast(status==='معتمد'?'✓ تم اعتماد الإجازة':'تم رفض الطلب');
+// تنفيذ القرار عبر RPC الآمن (قفل صف على الخادم يمنع القرار المزدوج). يعيد true عند النجاح.
+async function runDecision(id, decision, reason, override, overrideReason){
+  if(!Cloud.online){ toast('يتطلّب القرار اتصالاً بالإنترنت'); return false; }
+  const { error }=await Cloud.decideLeave(id, decision, reason, override, overrideReason);
+  if(error){ toast(rpcErr(error)); return false; }
+  closeSheet();
+  try{ await Cloud.pull(); }catch(e){}
+  renderScreen(current); refreshUnread();
+  toast(decision==='approve'?'✓ تم اعتماد الإجازة':'تم رفض الطلب');
+  return true;
+}
+// true = ضمن الرصيد (لا يلزم تجاوز)؛ الخادم هو المرجع النهائي
+function withinBalance(l){
+  const yr=balYearFrom(l.from), p=policyFor(l.type, yr);
+  if(!p || p.mode!=='limited' || p.entitled==null) return true;
+  const s=ledgerSums(l.empId, yr, l.type);
+  const avail=Number(p.entitled)+s.initial+s.carryover+s.adjustments;
+  const usedOther=approvedUsed(l.empId, yr, l.type, p.basis||'calendar', l.id);
+  const reqDays=leaveDaysInRange(empById(l.empId), l.from, l.to, yr, p.basis||'calendar');
+  return (usedOther+reqDays) <= avail;
 }
 
 /* ==================== أرصدة الإجازات (Leave Balances) ==================== */
@@ -1962,8 +1995,38 @@ function ensureOverrideIfNeeded(l){
   l.balanceOverride=true; l.balanceOverrideReason=reason.trim();
   return true;
 }
-function approveLeave(id){ setLeaveStatus(id,'معتمد'); }
-function rejectLeave(id){ setLeaveStatus(id,'مرفوض'); }
+async function approveLeave(id){
+  if(!can('approve')){ toast('غير مصرّح باعتماد الطلبات'); return; }
+  const l=state.leaves.find(x=>x.id===id); if(!l) return;
+  if(l.status!=='قيد الانتظار'){ toast('تم اتخاذ قرار بشأن الطلب مسبقاً'); renderScreen(current); return; }
+  let override=false, overrideReason='';
+  if(!withinBalance(l)){
+    const reason=prompt('مدة الطلب تتجاوز الرصيد المتبقّي. اكتب سبب الموافقة الاستثنائية للاعتماد:');
+    if(!reason || !reason.trim()){ toast('يلزم سبب تجاوز للاعتماد'); return; }
+    override=true; overrideReason=reason.trim();
+  }
+  await runDecision(id, 'approve', '', override, overrideReason);
+}
+function rejectLeave(id){
+  if(!can('approve')){ toast('غير مصرّح باعتماد الطلبات'); return; }
+  const l=state.leaves.find(x=>x.id===id); if(!l) return;
+  if(l.status!=='قيد الانتظار'){ toast('تم اتخاذ قرار بشأن الطلب مسبقاً'); renderScreen(current); return; }
+  const e=empById(l.empId);
+  openSheet(`
+    <h3>رفض طلب الإجازة<button class="x" onclick="closeSheet()">×</button></h3>
+    <p class="meta">${esc(e?e.name:'—')} • ${esc(l.type)} • ${fmtDate(l.from)} ← ${fmtDate(l.to)}</p>
+    <div class="field"><label>سبب الرفض (إلزامي — يظهر للموظف)</label>
+      <textarea id="rej-reason" rows="3" maxlength="1000" placeholder="مثال: التغطية غير كافية في هذه الفترة"></textarea></div>
+    <button class="btn block danger" id="rej-btn" onclick="confirmReject('${id}')">تأكيد الرفض</button>
+  `);
+}
+async function confirmReject(id){
+  const reason=(val('rej-reason')||'').trim();
+  if(!reason){ toast('سبب الرفض مطلوب'); return; }
+  const btn=document.getElementById('rej-btn'); if(btn){ btn.disabled=true; btn.textContent='جارٍ…'; }
+  const ok=await runDecision(id, 'reject', reason, false, '');
+  if(!ok && btn){ btn.disabled=false; btn.textContent='تأكيد الرفض'; }
+}
 
 /* -------------------- كشف يومي -------------------- */
 let dailyDate=null;
@@ -2642,7 +2705,105 @@ async function doChangePassword(){
   const { error }=await Cloud.changePassword(pw);
   toast(error?'تعذّر التغيير':'تم تغيير كلمة المرور');
 }
-async function doLogout(){ closeSheet(); try{ Cloud.clearLocalData(); }catch(e){} currentUserId=''; await Cloud.signOut(); location.reload(); }
+async function doLogout(){ closeSheet(); stopNotifPolling(); try{ Cloud.unsubscribeNotifications(); }catch(e){} try{ Cloud.clearLocalData(); }catch(e){} currentUserId=''; await Cloud.signOut(); location.reload(); }
+
+/* ==================== مركز الإشعارات (المرحلة 4) ==================== */
+const NOTIF_ICON={ leave_submitted:'📥', leave_approved:'✅', leave_rejected:'⛔', leave_cancelled:'↩️',
+  account_changed:'👤', department_changed:'🏢' };
+// وقت نسبي مختصر بالعربية
+function relTime(iso){
+  if(!iso) return '';
+  const d=new Date(iso), now=new Date(), s=Math.floor((now-d)/1000);
+  if(isNaN(s)) return '';
+  if(s<60) return 'الآن';
+  const m=Math.floor(s/60); if(m<60) return 'قبل '+m+' د';
+  const h=Math.floor(m/60); if(h<24) return 'قبل '+h+' س';
+  const dd=Math.floor(h/24); if(dd<30) return 'قبل '+dd+' يوم';
+  return fmtDate(toISO(d));
+}
+// تحديث شارة الجرس من الخادم (المصدر الأساسي — يعمل بلا Realtime)
+async function refreshUnread(){
+  if(!Cloud.online) return;
+  try{
+    const { data, error }=await Cloud.unreadCount();
+    if(error) return;
+    setBellBadge(Number(data)||0);
+  }catch(e){}
+}
+function setBellBadge(n){
+  notifState.unread=n;
+  const b=document.getElementById('bellBadge'); if(!b) return;
+  if(n>0){ b.hidden=false; b.textContent=n>99?'99+':String(n); }
+  else { b.hidden=true; b.textContent='0'; }
+}
+function startNotifPolling(){
+  stopNotifPolling();
+  refreshUnread();
+  notifPollTimer=setInterval(refreshUnread, 60000);   // polling خفيف كل دقيقة (احتياطي عند غياب Realtime)
+}
+function stopNotifPolling(){ if(notifPollTimer){ clearInterval(notifPollTimer); notifPollTimer=null; } }
+// عند وصول إشعار لحظي: حدّث الشارة، وأعد تحميل القائمة إن كانت مفتوحة
+function onNotifRealtime(){ refreshUnread(); if(current==='notif') loadNotifications(notifState.page); }
+
+function openNotifications(){ notifState.page=1; nav('notif'); loadNotifications(1); }
+async function loadNotifications(page){
+  notifState.loading=true; notifState.err=''; if(current==='notif') renderNotifCenter();
+  const { data, error }=await Cloud.listNotifications(page||1, notifState.pageSize);
+  notifState.loading=false;
+  if(error){ notifState.err=rpcErr(error); if(current==='notif') renderNotifCenter(); return; }
+  notifState.items=(data&&data.items)||[];
+  notifState.total=(data&&data.total)||0;
+  notifState.page=(data&&data.page)||1;
+  notifState.totalPages=(data&&data.total_pages)||0;
+  setBellBadge((data&&data.unread)||0);
+  if(current==='notif') renderNotifCenter();
+}
+function renderNotifCenter(){
+  const el=document.getElementById('scr-notif');
+  const body=(()=>{
+    if(notifState.loading && !notifState.items.length) return '<div class="card"><div class="empty">جارٍ التحميل…</div></div>';
+    if(notifState.err) return `<div class="card"><div class="empty warn">${esc(notifState.err)}</div></div>`;
+    if(!notifState.items.length) return '<div class="card"><div class="empty">لا توجد إشعارات</div></div>';
+    return `<div class="card" style="padding:6px 10px">${notifState.items.map(n=>{
+      const unread=!n.is_read;
+      return `<div class="notif-row ${unread?'unread':''}">
+        <div class="notif-ic">${NOTIF_ICON[n.type]||'🔔'}</div>
+        <div class="grow" onclick="openNotifEntity('${n.id}','${esc(n.entity_type||'')}')" style="cursor:pointer">
+          <div class="notif-title">${esc(n.title||'')}</div>
+          ${n.body?`<div class="notif-body">${esc(n.body)}</div>`:''}
+          <div class="notif-time">${relTime(n.created_at)}</div>
+        </div>
+        ${unread?`<button class="icon-btn" title="تعليم كمقروء" onclick="markNotif('${n.id}')">✓</button>`:''}
+      </div>`;
+    }).join('')}</div>
+    ${notifState.page<notifState.totalPages?`<button class="btn block ghost" onclick="loadNotifications(${notifState.page+1})">تحميل المزيد</button>`:''}`;
+  })();
+  el.innerHTML=`<h2 class="title">الإشعارات ${notifState.unread?`<span class="badge b-pending">${notifState.unread} غير مقروء</span>`:''}</h2>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="btn sm ghost grow" onclick="refreshNotifCenter()">🔄 تحديث</button>
+      <button class="btn sm grow" onclick="markAllNotif()" ${notifState.unread?'':'disabled'}>تعليم الكل كمقروء</button>
+    </div>${body}`;
+}
+function refreshNotifCenter(){ loadNotifications(notifState.page); }
+async function markNotif(id){
+  const { error }=await Cloud.markNotifRead(id);
+  if(error){ toast(rpcErr(error)); return; }
+  const it=notifState.items.find(x=>x.id===id); if(it) it.is_read=true;
+  setBellBadge(Math.max(0,notifState.unread-1));
+  renderNotifCenter();
+}
+async function markAllNotif(){
+  const { error }=await Cloud.markAllNotifRead();
+  if(error){ toast(rpcErr(error)); return; }
+  notifState.items.forEach(x=>x.is_read=true); setBellBadge(0); renderNotifCenter(); toast('تم تعليم الكل كمقروء');
+}
+// فتح الطلب المرتبط: يعلّم الإشعار كمقروء ثم ينتقل لشاشة الإجازات (الوصول يخضع لـ RLS)
+async function openNotifEntity(id, entityType){
+  const it=notifState.items.find(x=>x.id===id);
+  if(it && !it.is_read){ try{ await Cloud.markNotifRead(id); it.is_read=true; setBellBadge(Math.max(0,notifState.unread-1)); }catch(e){} }
+  if(entityType==='leave' || !entityType) nav('leaves');
+  else renderNotifCenter();
+}
 
 /* -------------------- أدوات واجهة -------------------- */
 const sheet=document.getElementById('sheet');
@@ -2664,7 +2825,17 @@ function updateSyncBadge(){
 
 /* -------------------- المزامنة اللحظية -------------------- */
 let remoteT;
-function onRemoteChange(){ clearTimeout(remoteT); remoteT=setTimeout(()=>pullAndRender(), 400); }
+function onRemoteChange(){ clearTimeout(remoteT); remoteT=setTimeout(()=>{ pullAndRender(); refreshUnread(); }, 400); }
+// تفعيل الإشعارات: إظهار الجرس + polling خفيف + اشتراك Realtime مُقيَّد بالمستخدم
+function initNotifications(){
+  const bell=document.getElementById('btnBell'); if(bell) bell.style.display='';
+  startNotifPolling();
+  try{ Cloud.subscribeNotifications(currentUserId, onNotifRealtime); }catch(e){}
+  if(!initNotifications._vis){
+    initNotifications._vis=true;
+    document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') refreshUnread(); });
+  }
+}
 function pullAndRender(){ Cloud.pull().then(()=>{ document.getElementById('hSub').textContent=state.settings.department; renderScreen(current); }).catch(()=>{}); }
 
 /* -------------------- الدخول والتشغيل -------------------- */
@@ -2735,6 +2906,7 @@ async function startApp(){
   document.getElementById('hSub').textContent=state.settings.department;
   Cloud.subscribe(onRemoteChange);
   updateSyncBadge();
+  initNotifications();
   nav(isViewer ? 'sched' : 'dash');
   // عند الدخول: تعميم رئيس القسم (للجميع) ثم توجيه مسؤول الوردية ثم وقت استلام النقطة — واحد لا يحجب الآخر
   let shown=false;

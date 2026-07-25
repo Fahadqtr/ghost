@@ -25,7 +25,8 @@ function leaveToRow(l){
   return r;
 }
 function rowToLeave(r){ return { id:r.id, empId:r.emp_id, type:r.type, from:r.from_date, to:r.to_date, status:r.status, notes:r.notes||'',
-  balanceOverride: !!r.balance_override, balanceOverrideReason: r.balance_override_reason||'' }; }
+  balanceOverride: !!r.balance_override, balanceOverrideReason: r.balance_override_reason||'',
+  rejectReason: r.reject_reason||'', decidedAt: r.decided_at||null, submittedAt: r.submitted_at||null }; }
 // أرصدة الإجازات
 function policyToRow(p){ return { team: p.team||team(), year:p.year, type:p.type, policy_mode:p.mode,
   entitled_days: (p.entitled===''||p.entitled==null)?null:Number(p.entitled),
@@ -289,6 +290,44 @@ const Cloud = {
     this.sb.channel('shift-sync')
       .on('postgres_changes', { event:'*', schema:'public' }, ()=>{ cb && cb(); })
       .subscribe();
+  },
+
+  /* ===== المرحلة 4: سير الاعتماد + الإشعارات (كلها RPCs آمنة على الخادم) =====
+     الهوية تُشتقّ من auth.uid()؛ لا نرسل معرّف موظف/وردية/دور من العميل. */
+  // تقديم طلب إجازة (الموظف) — الهوية والوردية من القاعدة الموثوقة
+  async submitLeave(type, from, to, notes){
+    return await this.sb.rpc('submit_leave_request', { p_type:type, p_from:from, p_to:to, p_notes:notes||'' });
+  },
+  // قرار (اعتماد/رفض) — قفل الصف على الخادم يمنع القرار المزدوج
+  async decideLeave(id, decision, reason, override, overrideReason){
+    return await this.sb.rpc('decide_leave_request', {
+      p_leave_id:id, p_decision:decision, p_reason:reason||'',
+      p_override:!!override, p_override_reason:overrideReason||'' });
+  },
+  // إشعاراتي (ترقيم آمن، الأحدث أولاً) — المستخدم الحالي فقط
+  async listNotifications(page, pageSize){
+    return await this.sb.rpc('list_my_notifications', { p_page:page||1, p_page_size:pageSize||20 });
+  },
+  async unreadCount(){ return await this.sb.rpc('notification_unread_count'); },
+  async markNotifRead(id){ return await this.sb.rpc('mark_notification_read', { p_id:id }); },
+  async markAllNotifRead(){ return await this.sb.rpc('mark_all_notifications_read'); },
+
+  /* اشتراك Realtime في إشعارات المستخدم الحالي فقط (مُقيَّد بـ user_id).
+     ليس آلية أمان — المصدر الأساسي هو RPC؛ هذا لتحديث الجرس فوراً فقط.
+     يعمل فقط إن كان الجدول ضمن نشر Realtime (قد لا يكون قبل تطبيق الترحيل)؛ عند غيابه يبقى polling. */
+  subscribeNotifications(uid, cb){
+    this.unsubscribeNotifications();
+    if(!uid) return;
+    try{
+      this._notifChan = this.sb.channel('notif-'+uid)
+        .on('postgres_changes',
+            { event:'*', schema:'public', table:'notifications', filter:'user_id=eq.'+uid },
+            ()=>{ cb && cb(); })
+        .subscribe();
+    }catch(e){ this._notifChan=null; }
+  },
+  unsubscribeNotifications(){
+    if(this._notifChan){ try{ this.sb.removeChannel(this._notifChan); }catch(e){} this._notifChan=null; }
   },
 
   /* ---- الطابور المحلي (Outbox) ---- */
