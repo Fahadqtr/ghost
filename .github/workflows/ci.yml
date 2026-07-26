@@ -273,6 +273,20 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: bash "$GITHUB_WORKSPACE/supabase/tests/work_schedule_cleanup_schema.sh"
 
+  shift-app-ui-tests:
+    name: shift-app-ui-tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run shift-app UI unit tests (node --test)
+        run: node --test "$GITHUB_WORKSPACE"/shift-app/tests/*.test.mjs
+
   # Aggregate gate. There is no in-repo "final" job today (the protect-master
   # ruleset lists individual checks), so this job gives a single check that is
   # RED whenever any currently-required check OR the new schema guard fails —
@@ -284,7 +298,7 @@ jobs:
   ci-success:
     name: ci-success
     if: always()
-    needs: [typecheck, test, build, dashboard-schema, attendance-schema, work-schedule-schema, work-schedule-cleanup-schema]
+    needs: [typecheck, test, build, dashboard-schema, attendance-schema, work-schedule-schema, work-schedule-cleanup-schema, shift-app-ui-tests]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -292,7 +306,7 @@ jobs:
     steps:
       - name: Verify required checks passed
         run: |
-          echo "typecheck=${{ needs.typecheck.result }} test=${{ needs.test.result }} build=${{ needs.build.result }} dashboard-schema=${{ needs.dashboard-schema.result }} attendance-schema=${{ needs.attendance-schema.result }} work-schedule-schema=${{ needs.work-schedule-schema.result }} work-schedule-cleanup-schema=${{ needs.work-schedule-cleanup-schema.result }}"
+          echo "typecheck=${{ needs.typecheck.result }} test=${{ needs.test.result }} build=${{ needs.build.result }} dashboard-schema=${{ needs.dashboard-schema.result }} attendance-schema=${{ needs.attendance-schema.result }} work-schedule-schema=${{ needs.work-schedule-schema.result }} work-schedule-cleanup-schema=${{ needs.work-schedule-cleanup-schema.result }} shift-app-ui-tests=${{ needs.shift-app-ui-tests.result }}"
           bad=""
           for kv in \
             "typecheck:${{ needs.typecheck.result }}" \
@@ -301,9 +315,10 @@ jobs:
             "dashboard-schema:${{ needs.dashboard-schema.result }}" \
             "attendance-schema:${{ needs.attendance-schema.result }}" \
             "work-schedule-schema:${{ needs.work-schedule-schema.result }}" \
-            "work-schedule-cleanup-schema:${{ needs.work-schedule-cleanup-schema.result }}"; do
+            "work-schedule-cleanup-schema:${{ needs.work-schedule-cleanup-schema.result }}" \
+            "shift-app-ui-tests:${{ needs.shift-app-ui-tests.result }}"; do
             name=${kv%%:*}; res=${kv#*:}
             if [ "$res" != "success" ]; then echo "::error::required check '$name' = $res"; bad=1; fi
           done
           if [ -n "$bad" ]; then exit 1; fi
-          echo "all required checks passed (including dashboard-schema, attendance-schema, work-schedule-schema, work-schedule-cleanup-schema)"
+          echo "all required checks passed (including dashboard-schema, attendance-schema, work-schedule-schema, work-schedule-cleanup-schema, shift-app-ui-tests)"
