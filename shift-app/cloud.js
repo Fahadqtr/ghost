@@ -343,6 +343,18 @@ const Cloud = {
   async attTimeline(id){ return await this.sb.rpc('get_attendance_timeline', { p_session_id:id }); },
   async correctAtt(id, ci, co, reason){ return await this.sb.rpc('correct_attendance_session', { p_session_id:id, p_check_in_at:ci, p_check_out_at:co, p_reason:reason }); },
   async voidAtt(id, reason){ return await this.sb.rpc('void_attendance_session', { p_session_id:id, p_reason:reason }); },
+
+  /* المرحلة 8 — جدول العمل المتوقع + سياسة الحضور (كلها RPC؛ لا وصول مباشر) */
+  async genSchedule(from, to){ return await this.sb.rpc('generate_work_schedule', { p_from_date:from, p_to_date:to }); },
+  async getSchedule(from, to, team, page, size){ return await this.sb.rpc('get_work_schedule', { p_from_date:from||null, p_to_date:to||null, p_team:team||null, p_page:page||1, p_page_size:size||50 }); },
+  async updSchedule(empId, date, shiftDefId, isWorking, reason){ return await this.sb.rpc('update_employee_work_schedule', { p_employee_id:empId, p_work_date:date, p_shift_definition_id:shiftDefId||null, p_is_working_day:isWorking, p_reason:reason }); },
+  async lockSchedule(from, to, lock){ return await this.sb.rpc('lock_work_schedule', { p_from_date:from, p_to_date:to, p_lock:lock }); },
+  async schedTimeline(id){ return await this.sb.rpc('get_schedule_timeline', { p_schedule_id:id }); },
+  async listShiftDefs(inc){ return await this.sb.rpc('list_shift_definitions', { p_include_inactive:!!inc }); },
+  async upsertShiftDef(code, ar, en, start, end, from){ return await this.sb.rpc('upsert_shift_definition', { p_shift_code:code, p_name_ar:ar, p_name_en:en||null, p_start:start, p_end:end, p_effective_from:from }); },
+  async listAttPolicies(inc){ return await this.sb.rpc('list_attendance_policies', { p_include_inactive:!!inc }); },
+  async upsertAttPolicy(name, scope, ref, grace, cutoff, early, maxHrs, minStaff, from){ return await this.sb.rpc('upsert_attendance_policy', { p_name:name, p_scope_type:scope, p_scope_ref:ref||null, p_grace:grace, p_absence_cutoff:cutoff, p_early_grace:early, p_max_session_hours:maxHrs, p_min_staff:(minStaff===''||minStaff==null)?null:minStaff, p_effective_from:from }); },
+  async attOverviewV2(date){ return await this.sb.rpc('get_attendance_overview_v2', { p_date:date||null }); },
   async markNotifRead(id){ return await this.sb.rpc('mark_notification_read', { p_id:id }); },
   async markAllNotifRead(){ return await this.sb.rpc('mark_all_notifications_read'); },
 
