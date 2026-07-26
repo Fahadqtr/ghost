@@ -285,7 +285,7 @@ jobs:
         with:
           node-version: 22
       - name: Run shift-app UI unit tests (node --test)
-        run: node --test "$GITHUB_WORKSPACE/shift-app/tests/"
+        run: node --test "$GITHUB_WORKSPACE"/shift-app/tests/*.test.mjs
 
   # Aggregate gate. There is no in-repo "final" job today (the protect-master
   # ruleset lists individual checks), so this job gives a single check that is
