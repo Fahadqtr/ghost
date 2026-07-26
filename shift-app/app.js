@@ -2187,9 +2187,16 @@ function openWsched(){ current='wsched'; wsData=null; wsErr='';
   const fab=document.getElementById('fab'); if(fab) fab.style.display='none'; window.scrollTo(0,0);
   renderWsched(); loadWsched().then(renderWsched); }
 function closeWsched(){ current='dash'; go('dash'); }
-async function wsSetRange(){ const f=document.getElementById('ws-from'), t=document.getElementById('ws-to');
-  wsFrom=(f&&f.value)||wsFrom; wsTo=(t&&t.value)||wsTo; wsPage=1; renderWsched(); await loadWsched(); renderWsched(); }
-async function doGenSchedule(){ if(wsBusy) return; if(!wsFrom||!wsTo){ alert('حدّد نطاق التاريخ'); return; }
+// يوحّد قيمة حقل تاريخ على YYYY-MM-DD (input[type=date].value هو YYYY-MM-DD أصلًا؛ نتحقّق ونرفض غير الصالح)
+function wsNormISO(v){ const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v==null?'':v).trim()); return m?(m[1]+'-'+m[2]+'-'+m[3]):''; }
+// عرض DD-MM-YYYY لرسائل التأكيد (تحويل نصّي محض بلا انزياح توقيت)
+function fmtDMY(iso){ const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(iso||''); return m?(m[3]+'-'+m[2]+'-'+m[1]):esc(iso||''); }
+// يقرأ القيم الحيّة الآن من حقلي from/to (لا state قديم/افتراضي/نطاق مولّد) ويحدّث wsFrom/wsTo بصيغة YYYY-MM-DD
+function wsReadRange(){ const f=document.getElementById('ws-from'), t=document.getElementById('ws-to');
+  const nf=wsNormISO(f&&f.value), nt=wsNormISO(t&&t.value);
+  if(nf) wsFrom=nf; if(nt) wsTo=nt; return { from:wsFrom, to:wsTo }; }
+async function wsSetRange(){ wsReadRange(); wsPage=1; renderWsched(); await loadWsched(); renderWsched(); }
+async function doGenSchedule(){ if(wsBusy) return; wsReadRange(); if(!wsFrom||!wsTo){ alert('حدّد نطاق التاريخ'); return; }
   wsBusy=true; renderWsched();
   try{ const { data, error }=await Cloud.genSchedule(wsFrom, wsTo);
     if(error){ alert('تعذّر التوليد: '+rpcErr(error)); } else {
@@ -2197,8 +2204,8 @@ async function doGenSchedule(){ if(wsBusy) return; if(!wsFrom||!wsTo){ alert('ح
         '، تُخطّي مقفل '+((data&&data.skipped_locked)||0)+'، يدوي '+((data&&data.skipped_manual)||0)); }
   }catch(e){ alert('تعذّر التوليد — تحقّق من الاتصال'); }
   wsBusy=false; await loadWsched(); renderWsched(); }
-async function doLockRange(lock){ if(wsBusy) return; if(!wsFrom||!wsTo){ alert('حدّد نطاق التاريخ'); return; }
-  if(!confirm((lock?'قفل':'فتح')+' الجدول للفترة '+esc(wsFrom)+' → '+esc(wsTo)+'؟')) return;
+async function doLockRange(lock){ if(wsBusy) return; wsReadRange(); if(!wsFrom||!wsTo){ alert('حدّد نطاق التاريخ'); return; }
+  if(!confirm((lock?'قفل':'فتح')+' الجدول للفترة '+fmtDMY(wsFrom)+' → '+fmtDMY(wsTo)+'؟')) return;
   wsBusy=true;
   try{ const { data, error }=await Cloud.lockSchedule(wsFrom, wsTo, lock);
     if(error) alert('تعذّر: '+rpcErr(error)); else alert('تم — '+((data&&data.affected)||0)+' سجلًّا');
