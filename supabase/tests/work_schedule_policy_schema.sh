@@ -24,7 +24,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 M7="$HERE/../migrations/20260727120000_attendance_foundation.sql"
 M8="$HERE/../migrations/20260728120000_work_schedule_policy.sql"
-for f in "$M7" "$M8"; do [ -f "$f" ] || { echo "لم يُعثر على: $f"; exit 1; }; done
+M8FIX="$HERE/../migrations/20260728130000_work_schedule_policy_audit_fix.sql"
+for f in "$M7" "$M8" "$M8FIX"; do [ -f "$f" ] || { echo "لم يُعثر على: $f"; exit 1; }; done
 
 PID=$$
 POS="ws_pos_$PID"; NEG="ws_neg_$PID"; ATOM="ws_atom_$PID"
@@ -54,7 +55,8 @@ create table $S.settings (id int generated always as identity primary key, data 
 create table $S.departments (id text primary key, name text not null, created_at timestamptz default now());
 create table $S.overrides (emp_id uuid, day date, value text, team text, primary key(emp_id,day));
 create table $S.leaves (id uuid primary key default gen_random_uuid(), emp_id uuid, type text, from_date date, to_date date, status text, team text, submitted_at timestamptz, updated_at timestamptz);
-create table $S.audit_log (id bigint generated always as identity primary key, at timestamptz default now(), team text, actor_id uuid, actor_name text, actor_role text, action text, entity text, entity_id text, summary text, changed jsonb);
+create table $S.audit_log (id bigint generated always as identity primary key, at timestamptz default now(), team text, actor_id uuid, actor_name text, actor_role text, action text, entity text, entity_id text, summary text, changed jsonb,
+  constraint audit_log_action_check check (action = any (array['insert','update','delete','account_disabled','account_enabled','account_scope_update','head_promote','head_remove','head_replace','account_create','account_rename','account_delete','access_denied'])));
 create table $S.notifications (id uuid primary key default gen_random_uuid(), user_id uuid, created_at timestamptz default now());
 create or replace function $S.audit_current_user_role() returns text language sql stable as \$f\$ select 'superadmin'::text \$f\$;
 create or replace function $S.audit_current_user_dept() returns text language sql stable as \$f\$ select 'd1'::text \$f\$;
@@ -88,6 +90,23 @@ before_tbl=$(bt); before_trg=$(btr)
 
 echo "== 2) تطبيق هجرة المرحلة 8 =="
 render "$POS" "$M8" | $PSQL -f - >/dev/null && ok "تطبيق الهجرة نجح."
+
+echo "== 2b) قيد audit_log_action_check (مطابق للإنتاج) + الهجرة التصحيحية =="
+# السكافولد يجب أن يرفض action='generate' (كالإنتاج) ويقبل 'insert' — لولا هذا لما اكتُشف العيب قبل التطبيق
+if $PSQL -c "insert into $POS.audit_log(action,summary) values ('generate','probe');" >/dev/null 2>&1; then fail "السكافولد قَبِل action='generate' (قيد audit مفقود/ضعيف)"; fi
+$PSQL -c "begin; insert into $POS.audit_log(action,summary) values ('insert','probe'); rollback;" >/dev/null || fail "السكافولد رفض action='insert' (قيد audit خاطئ)"
+ok "قيد audit_log_action_check: يرفض 'generate' ويقبل 'insert'."
+# قبل الإصلاح: الهجرة الأصلية تستدعي _ws_audit(...,'generate') (سيُخالف القيد على الإنتاج)
+$PSQLA -c "select pg_get_functiondef('$POS.generate_work_schedule'::regproc);" | grep -qi "_ws_audit(t.team, 'generate'" \
+  || fail "الهجرة الأصلية لا تستدعي _ws_audit(...,'generate') كما هو متوقّع للبرهنة"
+ok "قبل الإصلاح: generate يستدعي _ws_audit(...,'generate') (مخالف للقيد)."
+# تطبيق الهجرة التصحيحية (CREATE OR REPLACE فقط)
+render "$POS" "$M8FIX" | $PSQL -f - >/dev/null && ok "تطبيق الهجرة التصحيحية نجح."
+# بعد الإصلاح: generate يستدعي _ws_audit(...,'insert') ولا يستدعي 'generate' في نداء التدقيق
+fdef="$($PSQLA -c "select pg_get_functiondef('$POS.generate_work_schedule'::regproc);")"
+echo "$fdef" | grep -qi "_ws_audit(t.team, 'insert'" || fail "بعد الإصلاح: generate لا يستدعي _ws_audit(...,'insert')"
+echo "$fdef" | grep -qi "_ws_audit(t.team, 'generate'" && fail "بعد الإصلاح: ما زال يستدعي _ws_audit(...,'generate')"
+ok "بعد الإصلاح: نداء التدقيق يستخدم action='insert' فقط."
 
 echo "== 3) الجداول الأربعة + RLS =="
 for t in "${NEW_TABLES[@]}"; do
@@ -135,7 +154,14 @@ lm=$($PSQLA -c "select $POS.calculate_late_minutes('2026-06-16 06:00:00+03','202
 
 echo "== 8) سلوك NULL الآمن + التوقيت/الليلية عبر التوليد =="
 [ "$($PSQLA -c "select $POS.resolve_expected_schedule('a0000000-0000-0000-0000-0000000000a1','2026-06-14')->>'status';")" = "schedule_missing" ] || fail "resolve بلا snapshot != schedule_missing"
+audit0=$($PSQLA -c "select count(*) from $POS.audit_log;")
 $PSQL -c "select $POS.generate_work_schedule('2026-06-14','2026-06-19');" >/dev/null
+# تدقيق التوليد: نجح بلا 23514 مع القيد المطابق للإنتاج؛ سطر واحد action='insert' (لا 'generate')
+[ "$($PSQLA -c "select count(*) from $POS.audit_log where action='generate';")" = "0" ] || fail "audit يحوي action='generate' (القيد كان يجب أن يمنعه)"
+ga=$($PSQLA -c "select count(*) from $POS.audit_log where action='insert' and summary like 'توليد جدول%';")
+[ "$ga" = "1" ] || fail "سطر audit التوليد != 1 (=$ga) أو action != 'insert'"
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - audit0 ))" = "1" ] || fail "التوليد أضاف != 1 سطر audit"
+ok "التوليد: نجح بلا 23514، سطر audit واحد action='insert'."
 # ليل 2026-06-18: نهاية على اليوم التالي 06:00 قطر
 nq=$($PSQLA -c "select to_char(expected_start_at at time zone 'Asia/Qatar','HH24:MI')||'|'||to_char(expected_end_at at time zone 'Asia/Qatar','MM-DD HH24:MI')||'|'||is_overnight from $POS.employee_work_schedule where employee_id='a0000000-0000-0000-0000-0000000000a1' and work_date='2026-06-18';")
 [ "$nq" = "21:00|06-19 06:00|true" ] || fail "الليلية/التوقيت خطأ: $nq"; ok "ليل 21:00→اليوم التالي 06:00 (ليلية)."
