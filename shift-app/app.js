@@ -2203,13 +2203,14 @@ async function wsSetRange(){ const { from, to }=wsReadRange();
 async function doGenSchedule(){ if(wsBusy) return; const { from, to }=wsReadRange();
   if(!from||!to){ alert('حدّد نطاق التاريخ'); return; }
   if(from>to){ alert('تاريخ البداية بعد تاريخ النهاية'); return; }
-  wsBusy=true; renderWsched();
-  try{ const { data, error }=await Cloud.genSchedule(from, to);
+  wsBusy=true;
+  try{ renderWsched();
+    const { data, error }=await Cloud.genSchedule(from, to);
     if(error){ alert('تعذّر التوليد: '+rpcErr(error)); } else {
       alert('تم التوليد — أُنشئ '+((data&&data.created)||0)+'، حُدّث '+((data&&data.updated)||0)+
         '، تُخطّي مقفل '+((data&&data.skipped_locked)||0)+'، يدوي '+((data&&data.skipped_manual)||0)); }
   }catch(e){ alert('تعذّر التوليد — تحقّق من الاتصال'); }
-  wsBusy=false; await loadWsched(); renderWsched(); }
+  finally{ wsBusy=false; try{ await loadWsched(); renderWsched(); }catch(_e){} } }
 async function doLockRange(lock){ if(wsBusy) return; const { from, to }=wsReadRange();
   if(!from||!to){ alert('حدّد نطاق التاريخ'); return; }
   if(from>to){ alert('تاريخ البداية بعد تاريخ النهاية'); return; }
@@ -2218,7 +2219,7 @@ async function doLockRange(lock){ if(wsBusy) return; const { from, to }=wsReadRa
   try{ const { data, error }=await Cloud.lockSchedule(from, to, lock);
     if(error) alert('تعذّر: '+rpcErr(error)); else alert('تم — '+((data&&data.affected)||0)+' سجلًّا');
   }catch(e){ alert('تعذّر — تحقّق من الاتصال'); }
-  wsBusy=false; await loadWsched(); renderWsched(); }
+  finally{ wsBusy=false; try{ await loadWsched(); renderWsched(); }catch(_e){} } }
 function wsRow(r){ const shift=r.is_working_day?esc(r.shift_code||'—'):'راحة';
   const times=r.is_working_day?(wsTime(r.expected_start_at)+' → '+wsTime(r.expected_end_at)+(r.is_overnight?' (ليلية)':'')):'—';
   const lock=r.is_locked?'🔒':''; const src={rotation:'دوران',override:'استبدال',manual:'يدوي',import:'استيراد'}[r.source]||esc(r.source||'');
