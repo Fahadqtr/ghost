@@ -27,12 +27,15 @@ const block = appSrc.slice(start, end);
 //   lockResult/genResult: قيمة RPC المُعادة عند النجاح/الخطأ
 //   lockThrow/genThrow: Error يُرمى فعليًا من RPC (لاختبار catch)
 //   gate: Promise يبقى pending داخل lockSchedule (لاختبار حارس wsBusy)
+//   renderThrowFirst: يجعل أول استدعاء لـ renderWsched يرمي (لاختبار فشل render بعد busy)
+//   loadThrow: يجعل loadWsched يرمي أثناء التنظيف (لاختبار فشل إعادة التحميل في finally)
 function buildApi({
   fromVal = '', toVal = '', staleFrom = '', staleTo = '',
   confirmReturn = true,
   lockResult = { data: { affected: 18 }, error: null },
   genResult = { data: { created: 0 }, error: null },
   lockThrow = null, genThrow = null, gate = null,
+  renderThrowFirst = false, loadThrow = false,
 } = {}) {
   const state = { confirmMsg: null, alertMsg: null, lockCalls: [], genCalls: [] };
   const inputs = { 'ws-from': { value: fromVal }, 'ws-to': { value: toVal } };
@@ -58,9 +61,9 @@ function buildApi({
   const harness = `
     let wsFrom = ${JSON.stringify(staleFrom)}, wsTo = ${JSON.stringify(staleTo)};
     let wsBusy = false, wsPage = 1, wsData = null, wsLoading = false, wsErr = '';
-    let loadCount = 0;
-    function renderWsched(){}
-    async function loadWsched(){ loadCount++; }
+    let loadCount = 0, renderCount = 0;
+    function renderWsched(){ renderCount++; if(${renderThrowFirst ? 'true' : 'false'} && renderCount === 1) throw new Error('render boom'); }
+    async function loadWsched(){ loadCount++; if(${loadThrow ? 'true' : 'false'}) throw new Error('reload boom'); }
     ${block}
     return {
       wsNormISO, fmtDMY, wsReadRange, doLockRange, doGenSchedule, wsSetRange,
@@ -249,4 +252,57 @@ test('J) cancel confirm: confirm=false ⇒ لا RPC/لا busy/لا reload/لا �
   assert.equal(state.alertMsg, null, 'لا رسالة نجاح/خطأ');
   assert.equal(api.getLoadCount(), 0, 'لا إعادة تحميل عند الإلغاء');
   assert.equal(api.getBusy(), false, 'wsBusy لم يتحوّل true');
+});
+
+// 7) إصلاح finally — فشل renderWsched بعد تفعيل busy في doGenSchedule:
+//    renderWsched أصبح داخل try، فالرمي يصل catch؛ لا يُطلَق RPC؛ finally يعيد busy=false
+//    ولا يبقى الإجراء عالقًا (استدعاء لاحق يمرّ ويطلق RPC).
+test('K) doGenSchedule: رمي render بعد busy ⇒ لا RPC + رسالة اتصال + busy=false + غير عالق', async () => {
+  const { api, state } = buildApi({
+    fromVal: '2026-08-03', toVal: '2026-08-04', staleFrom: '', staleTo: '',
+    renderThrowFirst: true,
+  });
+  await api.doGenSchedule();
+  assert.equal(state.genCalls.length, 0, 'render رمى قبل await ⇒ لا استدعاء genSchedule');
+  assert.match(state.alertMsg, /تعذّر التوليد — تحقّق من الاتصال/, 'رسالة الاتصال الحالية عبر catch');
+  assert.equal(api.getBusy(), false, 'busy=false في finally رغم رمي render');
+  // غير عالق: الاستدعاء التالي (render لم يعد يرمي) يمرّ ويطلق RPC مرة واحدة
+  await api.doGenSchedule();
+  assert.equal(state.genCalls.length, 1, 'الاستدعاء التالي غير محجوب ويطلق RPC');
+  assert.equal(api.getBusy(), false);
+});
+
+// 8) إصلاح finally — فشل loadWsched أثناء التنظيف في doGenSchedule:
+//    busy=false يحدث قبل await التنظيف؛ خطأ التنظيف مُمتَص داخليًا (لا rejection معلّق)؛
+//    لا نجاح وهمي إضافي؛ لا تكرار RPC.
+test('L) doGenSchedule: رمي loadWsched في finally ⇒ busy=false + لا rejection + لا تكرار RPC', async () => {
+  const { api, state } = buildApi({
+    fromVal: '2026-08-03', toVal: '2026-08-04', staleFrom: '', staleTo: '',
+    genResult: { data: { created: 2 }, error: null },
+    loadThrow: true,
+  });
+  await assert.doesNotReject(() => api.doGenSchedule(), 'خطأ التنظيف مُمتَص — لا rejection');
+  assert.equal(state.genCalls.length, 1, 'RPC مرة واحدة (لا تكرار)');
+  assert.match(state.alertMsg, /تم التوليد/, 'رسالة النجاح الأصلية باقية');
+  assert.doesNotMatch(state.alertMsg, /تعذّر/, 'لا رسالة خطأ/نجاح وهمي من التنظيف');
+  assert.equal(api.getLoadCount(), 1, 'حاول إعادة التحميل مرة واحدة');
+  assert.equal(api.getBusy(), false, 'busy=false رغم فشل التنظيف');
+});
+
+// 9) مسار القفل عبر finally — استثناء RPC يعيد busy=false، إعادة تحميل مرة واحدة،
+//    والاستدعاء التالي غير محجوب بحالة busy قديمة.
+test('M) doLockRange: استثناء RPC ⇒ busy=false + reload مرة + الاستدعاء التالي غير محجوب', async () => {
+  const { api, state } = buildApi({
+    fromVal: '2026-08-03', toVal: '2026-08-04', staleFrom: '', staleTo: '',
+    lockThrow: new Error('network down'),
+  });
+  await api.doLockRange(true);
+  assert.equal(state.lockCalls.length, 1, 'استدعاء lock مرة');
+  assert.match(state.alertMsg, /تحقّق من الاتصال/, 'رسالة الاتصال في catch');
+  assert.equal(api.getLoadCount(), 1, 'إعادة تحميل مرة واحدة بعد الاستثناء');
+  assert.equal(api.getBusy(), false, 'busy=false في finally');
+  // الاستدعاء التالي غير محجوب بحالة busy قديمة
+  await api.doLockRange(false);
+  assert.equal(state.lockCalls.length, 2, 'الاستدعاء التالي مرّ (لم يُحجب بـ busy قديم)');
+  assert.equal(api.getBusy(), false);
 });
