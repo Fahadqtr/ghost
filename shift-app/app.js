@@ -2262,24 +2262,28 @@ async function showSchedTimeline(id){ try{ const { data, error }=await Cloud.sch
   }catch(e){ alert('تعذّر — تحقّق من الاتصال'); } }
 function openSchedEdit(empId, date){ wsEditEmp=empId; wsEditDate=date;
   Cloud.listShiftDefs(false).then(({data})=>{ wsDefs=(data&&data.items)||[]; renderSchedEditModal(); }); }
-let wsEditEmp='', wsEditDate='', wsDefs=[];
+let wsEditEmp='', wsEditDate='', wsDefs=[], wsEditBusy=false;
 function renderSchedEditModal(){ const opts=wsDefs.map(d=>`<option value="${esc(d.id)}">${esc(d.name_ar||d.shift_code)} (${esc(d.start_local_time)}–${esc(d.end_local_time)})</option>`).join('');
   const m=document.createElement('div'); m.className='modal-wrap'; m.id='sched-edit-modal';
   m.innerHTML=`<div class="modal"><h3>تعديل يوم ${esc(wsEditDate)}</h3>
     <label>الحالة <select id="se-working"><option value="1">يوم عمل</option><option value="0">راحة</option></select></label>
     <label>الوردية <select id="se-def">${opts}</select></label>
     <label>السبب (إلزامي) <input id="se-reason" maxlength="1000" placeholder="سبب التعديل"></label>
-    <div class="row" style="gap:8px"><button class="btn" onclick="confirmSchedEdit()">حفظ</button>
+    <div class="row" style="gap:8px"><button class="btn" id="se-save" onclick="confirmSchedEdit()">حفظ</button>
     <button class="btn ghost" onclick="document.getElementById('sched-edit-modal').remove()">إلغاء</button></div></div>`;
   document.body.appendChild(m); }
-async function confirmSchedEdit(){ const working=document.getElementById('se-working').value==='1';
+async function confirmSchedEdit(){ if(wsEditBusy) return;
+  const working=document.getElementById('se-working').value==='1';
   const defId=document.getElementById('se-def').value; const reason=(document.getElementById('se-reason').value||'').trim();
   if(!reason){ alert('السبب إلزامي'); return; }
+  const btn=document.getElementById('se-save'); if(btn) btn.disabled=true;
+  wsEditBusy=true; let ok=false;
   try{ const { error }=await Cloud.updSchedule(wsEditEmp, wsEditDate, working?defId:null, working, reason);
     if(error){ alert('تعذّر: '+rpcErr(error)); return; }
     const mm=document.getElementById('sched-edit-modal'); if(mm) mm.remove();
-    await loadWsched(); renderWsched();
-  }catch(e){ alert('تعذّر — تحقّق من الاتصال'); } }
+    ok=true;
+  }catch(e){ alert('تعذّر — تحقّق من الاتصال'); }
+  finally{ wsEditBusy=false; if(ok){ try{ await loadWsched(); renderWsched(); }catch(_e){} } if(btn) btn.disabled=false; } }
 
 /* ---- تعريف الورديات ---- */
 let sdData=null, sdErr='';
