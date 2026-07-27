@@ -25,7 +25,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 M7="$HERE/../migrations/20260727120000_attendance_foundation.sql"
 M8="$HERE/../migrations/20260728120000_work_schedule_policy.sql"
 M8FIX="$HERE/../migrations/20260728130000_work_schedule_policy_audit_fix.sql"
-for f in "$M7" "$M8" "$M8FIX"; do [ -f "$f" ] || { echo "لم يُعثر على: $f"; exit 1; }; done
+M9="$HERE/../migrations/20260729120000_audit_work_schedule_lock_unlock.sql"
+for f in "$M7" "$M8" "$M8FIX" "$M9"; do [ -f "$f" ] || { echo "لم يُعثر على: $f"; exit 1; }; done
 
 PID=$$
 POS="ws_pos_$PID"; NEG="ws_neg_$PID"; ATOM="ws_atom_$PID"
@@ -107,6 +108,19 @@ fdef="$($PSQLA -c "select pg_get_functiondef('$POS.generate_work_schedule'::regp
 echo "$fdef" | grep -qi "_ws_audit(t.team, 'insert'" || fail "بعد الإصلاح: generate لا يستدعي _ws_audit(...,'insert')"
 echo "$fdef" | grep -qi "_ws_audit(t.team, 'generate'" && fail "بعد الإصلاح: ما زال يستدعي _ws_audit(...,'generate')"
 ok "بعد الإصلاح: نداء التدقيق يستخدم action='insert' فقط."
+
+echo "== 2c) هجرة تدقيق قفل/فتح الجدول (M9) =="
+# قبل الهجرة: lock_work_schedule لا يسجّل في audit_log إطلاقًا
+lockdef_before="$($PSQLA -c "select pg_get_functiondef('$POS.lock_work_schedule'::regproc);")"
+echo "$lockdef_before" | grep -qi "$POS.audit_log" && fail "lock_work_schedule يسجّل audit قبل الهجرة (سكافولد غير متوقّع)"
+ok "قبل الهجرة: lock_work_schedule بلا تسجيل audit."
+render "$POS" "$M9" | $PSQL -f - >/dev/null && ok "تطبيق هجرة M9 نجح."
+# بعد الهجرة: يسجّل مركزيًا في audit_log مع الحفاظ على SECURITY DEFINER + search_path=''
+lockdef_after="$($PSQLA -c "select pg_get_functiondef('$POS.lock_work_schedule'::regproc);")"
+echo "$lockdef_after" | grep -qi "insert into $POS.audit_log" || fail "بعد M9: lock_work_schedule لا يسجّل في audit_log"
+echo "$lockdef_after" | grep -qi "security definer" || fail "بعد M9: فُقد SECURITY DEFINER"
+echo "$lockdef_after" | grep -qiE "search_path( to| =) ''" || fail "بعد M9: فُقد search_path=''"
+ok "بعد M9: lock_work_schedule يسجّل مركزيًا مع بقاء SECURITY DEFINER + search_path=''."
 
 echo "== 3) الجداول الأربعة + RLS =="
 for t in "${NEW_TABLES[@]}"; do
@@ -213,6 +227,75 @@ jval="$($PSQLA -c "select ($POS.attendance_check_out())->>'early_leave_minutes';
 cval="$($PSQLA -c "select early_leave_minutes from $POS.attendance_sessions where employee_id='$A1' order by check_out_at desc limit 1;")"
 [ -n "$jval" ] && [ "$jval" = "$cval" ] || fail "early_leave_minutes: JSON($jval) != column($cval) أو null"
 ok "check_out: early_leave_minutes في JSON يطابق العمود ($jval)."
+
+echo "== 9c) قفل الجدول: سطر audit مركزي واحد + history لكل صف + changed =="
+# نطاق التوليد (2026-06-14..19) يملك صفوفًا أُنشئت في القسم 8؛ كلها غير مقفلة الآن
+$PSQL -c "update $POS.employee_work_schedule set locked_at=null where work_date between '2026-06-14' and '2026-06-19';" >/dev/null
+lb0=$($PSQLA -c "select count(*) from $POS.audit_log;")
+hb0=$($PSQLA -c "select count(*) from $POS.work_schedule_history where event_type='locked';")
+aff=$($PSQLA -c "select ($POS.lock_work_schedule('2026-06-14','2026-06-19',true))->>'affected';")
+[ "$aff" -ge 1 ] 2>/dev/null || fail "لا صفوف للقفل (aff=$aff)"
+[ "$($PSQLA -c "select count(*) from $POS.employee_work_schedule where work_date between '2026-06-14' and '2026-06-19' and locked_at is null;")" = "0" ] || fail "بقيت صفوف غير مقفلة بعد القفل"
+[ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history where event_type='locked';") - hb0 ))" = "$aff" ] || fail "history 'locked' != affected"
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - lb0 ))" = "1" ] || fail "القفل أضاف != 1 سطر audit"
+lrow="$($PSQLA -c "select action||'|'||(changed->>'locked')||'|'||(changed->>'affected')||'|'||(changed->>'from_date')||'|'||(changed->>'to_date')||'|'||entity||'|'||coalesce(entity_id,'NULL') from $POS.audit_log order by id desc limit 1;")"
+[ "$lrow" = "update|true|$aff|2026-06-14|2026-06-19|employee_work_schedule|NULL" ] || fail "سطر audit القفل خاطئ: $lrow"
+ok "القفل: سطر audit واحد action='update' changed.locked=true affected=$aff + history لكل صف."
+
+echo "== 9d) فتح الجدول: سطر audit مركزي واحد + changed.locked=false =="
+lb1=$($PSQLA -c "select count(*) from $POS.audit_log;")
+hu0=$($PSQLA -c "select count(*) from $POS.work_schedule_history where event_type='unlocked';")
+uaff=$($PSQLA -c "select ($POS.lock_work_schedule('2026-06-14','2026-06-19',false))->>'affected';")
+[ "$uaff" = "$aff" ] || fail "affected الفتح ($uaff) != القفل ($aff)"
+[ "$($PSQLA -c "select count(*) from $POS.employee_work_schedule where work_date between '2026-06-14' and '2026-06-19' and locked_at is not null;")" = "0" ] || fail "بقيت صفوف مقفلة بعد الفتح"
+[ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history where event_type='unlocked';") - hu0 ))" = "$uaff" ] || fail "history 'unlocked' != affected"
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - lb1 ))" = "1" ] || fail "الفتح أضاف != 1 سطر audit"
+urow="$($PSQLA -c "select (changed->>'locked')||'|'||(changed->>'affected')||'|'||(changed->>'from_date')||'|'||(changed->>'to_date') from $POS.audit_log order by id desc limit 1;")"
+[ "$urow" = "false|$uaff|2026-06-14|2026-06-19" ] || fail "سطر audit الفتح خاطئ: $urow"
+ok "الفتح: سطر audit واحد changed.locked=false affected=$uaff."
+
+echo "== 9e) صفر متأثر: لا history ولا audit =="
+lz0=$($PSQLA -c "select count(*) from $POS.audit_log;")
+hz0=$($PSQLA -c "select count(*) from $POS.work_schedule_history;")
+zaff=$($PSQLA -c "select ($POS.lock_work_schedule('2030-01-01','2030-01-02',true))->>'affected';")
+[ "$zaff" = "0" ] || fail "متوقّع affected=0 لنطاق بلا صفوف (=$zaff)"
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - lz0 ))" = "0" ] || fail "أُضيف audit رغم affected=0"
+[ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history;") - hz0 ))" = "0" ] || fail "أُضيف history رغم affected=0"
+ok "صفر متأثر: لا audit ولا history."
+
+echo "== 9f) عزل الفِرق: القفل لا يمسّ فريقًا خارج _report_scope_teams() =="
+# w9 ليس في settings ⇒ خارج النطاق؛ صفّه يجب أن يبقى غير مقفول ولا يظهر في changed.teams
+$PSQL -c "insert into $POS.employees(id,name,team,cycle_start,sort_order) values ('a0000000-0000-0000-0000-0000000000c9','E9','w9','2026-06-14',9);" >/dev/null
+$PSQL -c "insert into $POS.employee_work_schedule(employee_id,work_date,team,is_working_day,source) values ('a0000000-0000-0000-0000-0000000000c9','2026-06-15','w9',false,'manual');" >/dev/null
+$PSQLA -c "select ($POS.lock_work_schedule('2026-06-14','2026-06-19',true))->>'affected';" >/dev/null
+[ "$($PSQLA -c "select locked_at is null from $POS.employee_work_schedule where employee_id='a0000000-0000-0000-0000-0000000000c9';")" = "t" ] || fail "قُفل صف خارج النطاق (w9)"
+[ "$($PSQLA -c "select coalesce((changed->'teams') ? 'w9',false) from $POS.audit_log order by id desc limit 1;")" = "f" ] || fail "changed.teams يحوي فريقًا خارج النطاق (w9)"
+[ "$($PSQLA -c "select coalesce((changed->'teams') ? 'w1',false) from $POS.audit_log order by id desc limit 1;")" = "t" ] || fail "changed.teams لا يحوي الفريق داخل النطاق (w1)"
+ok "عزل الفِرق: w9 خارج النطاق لم يُقفَل ولا يظهر في changed.teams."
+
+echo "== 9g) الصلاحية: دور غير مسموح يُرفض بلا تحديث/history/audit =="
+$PSQL -c "create or replace function $POS.audit_current_user_role() returns text language sql stable as \$f\$ select 'viewer'::text \$f\$;" >/dev/null
+lg0=$($PSQLA -c "select count(*) from $POS.audit_log;")
+hg0=$($PSQLA -c "select count(*) from $POS.work_schedule_history;")
+lk0=$($PSQLA -c "select count(*) from $POS.employee_work_schedule where locked_at is not null;")
+if $PSQL -c "select $POS.lock_work_schedule('2026-06-14','2026-06-19',false);" >/dev/null 2>&1; then fail "دور viewer تمكّن من الفتح/القفل"; fi
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - lg0 ))" = "0" ] || fail "أُضيف audit رغم رفض الصلاحية"
+[ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history;") - hg0 ))" = "0" ] || fail "أُضيف history رغم رفض الصلاحية"
+[ "$($PSQLA -c "select count(*) from $POS.employee_work_schedule where locked_at is not null;")" = "$lk0" ] || fail "تغيّر locked_at رغم رفض الصلاحية"
+$PSQL -c "create or replace function $POS.audit_current_user_role() returns text language sql stable as \$f\$ select 'superadmin'::text \$f\$;" >/dev/null
+ok "الصلاحية: viewer مرفوض (42501) بلا تحديث/history/audit."
+
+echo "== 9h) الذرّية: فشل إدراج audit يُرجِع locked_at وhistory =="
+$PSQL -c "update $POS.employee_work_schedule set locked_at=null where work_date between '2026-06-14' and '2026-06-19';" >/dev/null
+h0=$($PSQLA -c "select count(*) from $POS.work_schedule_history;")
+# محفّز مؤقت يُفشل إدراج audit_log (بيئة اختبار فقط) لإثبات ذرّية المعاملة داخل الدالة
+$PSQL -c "create or replace function $POS._boom() returns trigger language plpgsql as \$f\$ begin raise exception 'boom-audit'; end \$f\$;" >/dev/null
+$PSQL -c "create trigger _boom_audit before insert on $POS.audit_log for each row execute function $POS._boom();" >/dev/null
+if $PSQL -c "select $POS.lock_work_schedule('2026-06-14','2026-06-19',true);" >/dev/null 2>&1; then fail "القفل نجح رغم فشل إدراج audit (لا ذرّية)"; fi
+$PSQL -c "drop trigger _boom_audit on $POS.audit_log;" >/dev/null
+[ "$($PSQLA -c "select count(*) from $POS.employee_work_schedule where work_date between '2026-06-14' and '2026-06-19' and locked_at is not null;")" = "0" ] || fail "بقي locked_at بعد فشل audit (لا ذرّية)"
+[ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history;") - h0 ))" = "0" ] || fail "بقي history بعد فشل audit (لا ذرّية)"
+ok "الذرّية: فشل audit تراجعت معه locked_at وhistory بالكامل."
 
 echo "== 10) الذرّية =="
 build_base "$ATOM"; { render "$ATOM" "$M8"; printf '\nDO $$ BEGIN RAISE EXCEPTION %sinjected%s; END $$;\n' "'" "'"; } > /tmp/ws_atom_$PID.sql
