@@ -26,7 +26,8 @@ M7="$HERE/../migrations/20260727120000_attendance_foundation.sql"
 M8="$HERE/../migrations/20260728120000_work_schedule_policy.sql"
 M8FIX="$HERE/../migrations/20260728130000_work_schedule_policy_audit_fix.sql"
 M9="$HERE/../migrations/20260729120000_audit_work_schedule_lock_unlock.sql"
-for f in "$M7" "$M8" "$M8FIX" "$M9"; do [ -f "$f" ] || { echo "لم يُعثر على: $f"; exit 1; }; done
+M10="$HERE/../migrations/20260730120000_fix_work_schedule_generation_audit.sql"
+for f in "$M7" "$M8" "$M8FIX" "$M9" "$M10"; do [ -f "$f" ] || { echo "لم يُعثر على: $f"; exit 1; }; done
 
 PID=$$
 POS="ws_pos_$PID"; NEG="ws_neg_$PID"; ATOM="ws_atom_$PID"
@@ -122,6 +123,20 @@ echo "$lockdef_after" | grep -qi "security definer" || fail "بعد M9: فُقد
 echo "$lockdef_after" | grep -qiE "search_path( to| =) ''" || fail "بعد M9: فُقد search_path=''"
 ok "بعد M9: lock_work_schedule يسجّل مركزيًا مع بقاء SECURITY DEFINER + search_path=''."
 
+echo "== 2d) هجرة تصحيح تدقيق التوليد (M10) =="
+# قبل M10: generate يسجّل عبر _ws_audit(...,'insert') داخل حلقة الفِرق (سطر لكل فريق)
+gdef_before="$($PSQLA -c "select pg_get_functiondef('$POS.generate_work_schedule'::regproc);")"
+echo "$gdef_before" | grep -qi "_ws_audit(t.team, 'insert'" || fail "قبل M10: generate لا يستدعي _ws_audit(...,'insert') كما هو متوقّع"
+render "$POS" "$M10" | $PSQL -f - >/dev/null && ok "تطبيق هجرة M10 نجح."
+# بعد M10: أُزيل نداء _ws_audit من التوليد، والتسجيل مباشر في audit_log بشرط (created+updated)>0
+gdef_after="$($PSQLA -c "select pg_get_functiondef('$POS.generate_work_schedule'::regproc);")"
+echo "$gdef_after" | grep -qi "_ws_audit" && fail "بعد M10: ما زال generate يستدعي _ws_audit"
+echo "$gdef_after" | grep -qi "insert into $POS.audit_log" || fail "بعد M10: generate لا يسجّل مباشرةً في audit_log"
+echo "$gdef_after" | grep -qi "(v_created + v_updated) > 0" || fail "بعد M10: لا يوجد شرط (created+updated)>0"
+echo "$gdef_after" | grep -qi "security definer" || fail "بعد M10: فُقد SECURITY DEFINER"
+echo "$gdef_after" | grep -qiE "search_path( to| =) ''" || fail "بعد M10: فُقد search_path=''"
+ok "بعد M10: generate يسجّل سطرًا مباشرًا مشروطًا بلا _ws_audit، مع بقاء SECURITY DEFINER + search_path=''."
+
 echo "== 3) الجداول الأربعة + RLS =="
 for t in "${NEW_TABLES[@]}"; do
   r=$($PSQLA -c "select relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='$POS' and c.relname='$t';")
@@ -170,12 +185,12 @@ echo "== 8) سلوك NULL الآمن + التوقيت/الليلية عبر ال
 [ "$($PSQLA -c "select $POS.resolve_expected_schedule('a0000000-0000-0000-0000-0000000000a1','2026-06-14')->>'status';")" = "schedule_missing" ] || fail "resolve بلا snapshot != schedule_missing"
 audit0=$($PSQLA -c "select count(*) from $POS.audit_log;")
 $PSQL -c "select $POS.generate_work_schedule('2026-06-14','2026-06-19');" >/dev/null
-# تدقيق التوليد: نجح بلا 23514 مع القيد المطابق للإنتاج؛ سطر واحد action='insert' (لا 'generate')
+# تدقيق التوليد بعد M10: توليد أوّل يُنشئ صفوفًا ⇒ سطر audit واحد action='update' (لا 'generate' ولا 'insert')
 [ "$($PSQLA -c "select count(*) from $POS.audit_log where action='generate';")" = "0" ] || fail "audit يحوي action='generate' (القيد كان يجب أن يمنعه)"
-ga=$($PSQLA -c "select count(*) from $POS.audit_log where action='insert' and summary like 'توليد جدول%';")
-[ "$ga" = "1" ] || fail "سطر audit التوليد != 1 (=$ga) أو action != 'insert'"
+ga=$($PSQLA -c "select count(*) from $POS.audit_log where action='update' and summary like 'توليد جدول العمل المتوقع%';")
+[ "$ga" = "1" ] || fail "سطر audit التوليد != 1 (=$ga) أو action != 'update'"
 [ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - audit0 ))" = "1" ] || fail "التوليد أضاف != 1 سطر audit"
-ok "التوليد: نجح بلا 23514، سطر audit واحد action='insert'."
+ok "التوليد: نجح بلا 23514، سطر audit واحد action='update'."
 # ليل 2026-06-18: نهاية على اليوم التالي 06:00 قطر
 nq=$($PSQLA -c "select to_char(expected_start_at at time zone 'Asia/Qatar','HH24:MI')||'|'||to_char(expected_end_at at time zone 'Asia/Qatar','MM-DD HH24:MI')||'|'||is_overnight from $POS.employee_work_schedule where employee_id='a0000000-0000-0000-0000-0000000000a1' and work_date='2026-06-18';")
 [ "$nq" = "21:00|06-19 06:00|true" ] || fail "الليلية/التوقيت خطأ: $nq"; ok "ليل 21:00→اليوم التالي 06:00 (ليلية)."
@@ -296,6 +311,85 @@ $PSQL -c "drop trigger _boom_audit on $POS.audit_log;" >/dev/null
 [ "$($PSQLA -c "select count(*) from $POS.employee_work_schedule where work_date between '2026-06-14' and '2026-06-19' and locked_at is not null;")" = "0" ] || fail "بقي locked_at بعد فشل audit (لا ذرّية)"
 [ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history;") - h0 ))" = "0" ] || fail "بقي history بعد فشل audit (لا ذرّية)"
 ok "الذرّية: فشل audit تراجعت معه locked_at وhistory بالكامل."
+
+# ── تدقيق التوليد (M10): سطر واحد مشروط بـ (created+updated)>0، خارج كل الحلقات ──
+echo "== 9i) A) توليد يُنشئ صفوفًا: سطر audit واحد action='update' + changed.created =="
+la0=$($PSQLA -c "select count(*) from $POS.audit_log;")
+lh0=$($PSQLA -c "select count(*) from $POS.work_schedule_history;")
+res="$($PSQLA -c "with r as (select $POS.generate_work_schedule('2026-07-20','2026-07-22') as j) select (j->>'created')||'|'||(j->>'updated') from r;")"
+gc="${res%%|*}"; gu="${res#*|}"
+[ "$gc" -ge 1 ] 2>/dev/null || fail "A: created متوقّع > 0 (=$gc)"
+[ "$gu" = "0" ] || fail "A: updated متوقّع 0 (=$gu)"
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - la0 ))" = "1" ] || fail "A: التوليد أضاف != 1 سطر audit"
+[ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history;") - lh0 ))" = "$gc" ] || fail "A: history != created"
+arow="$($PSQLA -c "select action||'|'||(changed->>'created')||'|'||(changed->>'updated')||'|'||(changed->>'affected')||'|'||(changed->>'from_date')||'|'||(changed->>'to_date')||'|'||entity||'|'||coalesce(entity_id,'NULL') from $POS.audit_log order by id desc limit 1;")"
+[ "$arow" = "update|$gc|0|$gc|2026-07-20|2026-07-22|employee_work_schedule|NULL" ] || fail "A: سطر audit الإنشاء خاطئ: $arow"
+ok "A) توليد الإنشاء: created=$gc updated=0 affected=$gc، سطر audit واحد action='update'."
+
+echo "== 9j) B) توليد يُحدّث صفوفًا: سطر audit واحد + changed.updated + affected=created+updated =="
+# عبث ذرّي بصف rotation واحد ضمن النطاق (source→override) كي يكتشفه التوليد التالي ويحدّثه
+$PSQL -c "update $POS.employee_work_schedule set source='override' where id = (select id from $POS.employee_work_schedule where work_date between '2026-07-20' and '2026-07-22' and source='rotation' order by id limit 1);" >/dev/null
+lb0=$($PSQLA -c "select count(*) from $POS.audit_log;")
+res="$($PSQLA -c "with r as (select $POS.generate_work_schedule('2026-07-20','2026-07-22') as j) select (j->>'created')||'|'||(j->>'updated') from r;")"
+bc="${res%%|*}"; bu="${res#*|}"
+[ "$bu" -ge 1 ] 2>/dev/null || fail "B: updated متوقّع > 0 (=$bu)"
+[ "$bc" = "0" ] || fail "B: created متوقّع 0 (=$bc)"
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - lb0 ))" = "1" ] || fail "B: التحديث أضاف != 1 سطر audit"
+brow="$($PSQLA -c "select (changed->>'created')||'|'||(changed->>'updated')||'|'||(changed->>'affected') from $POS.audit_log order by id desc limit 1;")"
+[ "$brow" = "0|$bu|$bu" ] || fail "B: سطر audit التحديث خاطئ: $brow (affected=created+updated)"
+ok "B) توليد التحديث: created=0 updated=$bu affected=$bu، سطر audit واحد."
+
+echo "== 9k) C) تشغيل ثانٍ idempotent: created=0 updated=0 ⇒ لا audit ولا history =="
+lc0=$($PSQLA -c "select count(*) from $POS.audit_log;")
+hc0=$($PSQLA -c "select count(*) from $POS.work_schedule_history;")
+res="$($PSQLA -c "with r as (select $POS.generate_work_schedule('2026-07-20','2026-07-22') as j) select (j->>'created')||'|'||(j->>'updated') from r;")"
+cc="${res%%|*}"; cu="${res#*|}"
+[ "$cc" = "0" ] || fail "C: created متوقّع 0 (=$cc)"
+[ "$cu" = "0" ] || fail "C: updated متوقّع 0 (=$cu)"
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - lc0 ))" = "0" ] || fail "C: أُضيف audit رغم created+updated=0"
+[ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history;") - hc0 ))" = "0" ] || fail "C: أُضيف history رغم created+updated=0"
+ok "C) idempotent: created=0 updated=0، لا audit ولا history جديد."
+
+echo "== 9l) D) صفوف مقفلة فقط: created+updated=0 ⇒ لا audit/history/overwrite =="
+$PSQL -c "update $POS.employee_work_schedule set locked_at=now() where work_date between '2026-07-20' and '2026-07-22';" >/dev/null
+ld0=$($PSQLA -c "select count(*) from $POS.audit_log;")
+hd0=$($PSQLA -c "select count(*) from $POS.work_schedule_history;")
+src_before="$($PSQLA -c "select string_agg(source, ',' order by id) from $POS.employee_work_schedule where work_date between '2026-07-20' and '2026-07-22';")"
+res="$($PSQLA -c "with r as (select $POS.generate_work_schedule('2026-07-20','2026-07-22') as j) select (j->>'created')||'|'||(j->>'updated')||'|'||(j->>'skipped_locked') from r;")"
+dc="${res%%|*}"; drest="${res#*|}"; du="${drest%%|*}"; dsl="${drest#*|}"
+[ "$dc" = "0" ] && [ "$du" = "0" ] || fail "D: متوقّع created=0 updated=0 (=$dc/$du)"
+[ "$dsl" -ge 1 ] 2>/dev/null || fail "D: skipped_locked متوقّع > 0 (=$dsl)"
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - ld0 ))" = "0" ] || fail "D: أُضيف audit رغم عدم وجود تغيير"
+[ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history;") - hd0 ))" = "0" ] || fail "D: أُضيف history رغم عدم وجود تغيير"
+[ "$($PSQLA -c "select string_agg(source, ',' order by id) from $POS.employee_work_schedule where work_date between '2026-07-20' and '2026-07-22';")" = "$src_before" ] || fail "D: overwrite لصفوف مقفلة"
+$PSQL -c "update $POS.employee_work_schedule set locked_at=null where work_date between '2026-07-20' and '2026-07-22';" >/dev/null
+ok "D) مقفلة فقط: created+updated=0، skipped_locked=$dsl، لا audit/history/overwrite."
+
+echo "== 9m) E) فرق متعددة: سطر audit واحد للاستدعاء + changed.teams بلا تكرار =="
+# أضف فريق w2 (بنسخ إعدادات w1) وموظفًا فيه، ثم ولّد نطاقًا جديدًا يغطي w1+w2
+$PSQL -c "insert into $POS.settings(data,team,dept) select data,'w2','d1' from $POS.settings where team='w1';" >/dev/null
+$PSQL -c "insert into $POS.employees(id,name,team,cycle_start,sort_order) values ('a0000000-0000-0000-0000-0000000000e2','E2W2','w2','2026-06-14',20);" >/dev/null
+le0=$($PSQLA -c "select count(*) from $POS.audit_log;")
+res="$($PSQLA -c "with r as (select $POS.generate_work_schedule('2026-08-01','2026-08-03') as j) select (j->>'created')||'|'||(j->>'updated') from r;")"
+ec="${res%%|*}"
+[ "$ec" -ge 1 ] 2>/dev/null || fail "E: created متوقّع > 0 (=$ec)"
+[ "$(( $($PSQLA -c "select count(*) from $POS.audit_log;") - le0 ))" = "1" ] || fail "E: أُضيف != 1 سطر audit (يجب سطر واحد للاستدعاء لا لكل فريق)"
+[ "$($PSQLA -c "select (changed->'teams') ? 'w1' from $POS.audit_log order by id desc limit 1;")" = "t" ] || fail "E: changed.teams لا يحوي w1"
+[ "$($PSQLA -c "select (changed->'teams') ? 'w2' from $POS.audit_log order by id desc limit 1;")" = "t" ] || fail "E: changed.teams لا يحوي w2"
+[ "$($PSQLA -c "select jsonb_array_length(changed->'teams') from $POS.audit_log order by id desc limit 1;")" = "2" ] || fail "E: changed.teams فيه تكرار أو عدد خاطئ"
+[ "$($PSQLA -c "select team is null from $POS.audit_log order by id desc limit 1;")" = "t" ] || fail "E: عمود team ليس null لاستدعاء متعدد الفرق"
+ok "E) فرق متعددة: سطر audit واحد، changed.teams=[w1,w2] بلا تكرار."
+
+echo "== 9n) F) الذرّية: فشل إدراج audit للتوليد يُرجِع الإنشاء وhistory =="
+e0=$($PSQLA -c "select count(*) from $POS.employee_work_schedule;")
+h0=$($PSQLA -c "select count(*) from $POS.work_schedule_history;")
+$PSQL -c "create or replace function $POS._boom() returns trigger language plpgsql as \$f\$ begin raise exception 'boom-audit'; end \$f\$;" >/dev/null
+$PSQL -c "create trigger _boom_audit before insert on $POS.audit_log for each row execute function $POS._boom();" >/dev/null
+if $PSQL -c "select $POS.generate_work_schedule('2026-08-10','2026-08-12');" >/dev/null 2>&1; then fail "F: التوليد نجح رغم فشل إدراج audit (لا ذرّية)"; fi
+$PSQL -c "drop trigger _boom_audit on $POS.audit_log;" >/dev/null
+[ "$(( $($PSQLA -c "select count(*) from $POS.employee_work_schedule;") - e0 ))" = "0" ] || fail "F: بقيت صفوف مُنشأة بعد فشل audit (لا ذرّية)"
+[ "$(( $($PSQLA -c "select count(*) from $POS.work_schedule_history;") - h0 ))" = "0" ] || fail "F: بقي history بعد فشل audit (لا ذرّية)"
+ok "F) الذرّية: فشل audit تراجع معه الإنشاء وhistory بالكامل."
 
 echo "== 10) الذرّية =="
 build_base "$ATOM"; { render "$ATOM" "$M8"; printf '\nDO $$ BEGIN RAISE EXCEPTION %sinjected%s; END $$;\n' "'" "'"; } > /tmp/ws_atom_$PID.sql
