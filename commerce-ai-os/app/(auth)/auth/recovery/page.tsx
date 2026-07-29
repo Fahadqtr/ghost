@@ -2,11 +2,13 @@
 
 // Prefetch-safe password recovery landing page.
 //
-// Link format (fragment, NOT query — never reaches the server or link scanners):
+// Accepted link formats (token in either place; fragment preferred):
 //   https://app.malikasuniverse.com/auth/recovery#token_hash=...&type=recovery
+//   https://app.malikasuniverse.com/auth/recovery?token_hash=...&type=recovery
 //
-// On load we only READ the token from the hash, keep it in memory (useRef), and
-// clear the hash. We do NOT verify automatically (Gmail prefetch abuses that).
+// On load we only READ the token — fragment first, query as a fallback — keep it
+// in memory (useRef), and immediately clear BOTH the query and the fragment from
+// the URL. We do NOT verify automatically (Gmail prefetch abuses that).
 // Verification (verifyOtp) runs only when the user clicks "Continue password
 // reset"; then they set a new password (updateUser) and we sign out.
 //
@@ -17,8 +19,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
-  parseRecoveryHash,
-  isValidRecoveryParams,
+  resolveRecoveryToken,
   validateNewPassword,
   RECOVERY_ERRORS,
   MIN_RECOVERY_PASSWORD_LENGTH,
@@ -39,19 +40,25 @@ export default function RecoveryPage() {
   const clientRef = useRef<ReturnType<typeof createClient> | null>(null);
   const busyRef = useRef(false);
 
-  // On load: read the token from the fragment, keep it in memory, and clear the
-  // hash immediately. NO verification happens here — only on an explicit click.
+  // On load: read the token — fragment first, query as a fallback — keep it in
+  // memory, and immediately strip BOTH the query and the fragment from the URL.
+  // NO verification happens here — only on an explicit click.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const { tokenHash, type } = parseRecoveryHash(window.location.hash);
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    const { tokenHash, source } = resolveRecoveryToken(
+      window.location.hash,
+      window.location.search
+    );
+    // Drop query + fragment (pathname only) so the token isn't left in the
+    // address bar, history, or any later referrer.
+    window.history.replaceState(null, "", window.location.pathname);
 
-    const valid = isValidRecoveryParams(type, tokenHash);
+    const valid = source !== "none";
     if (valid) tokenHashRef.current = tokenHash;
 
-    // Reading the one-time token from the URL fragment is a client-only,
-    // post-mount action — there is no SSR-safe way to derive this during
-    // render, so the state update must live here in the effect.
+    // Reading the one-time token from the URL is a client-only, post-mount
+    // action — there is no SSR-safe way to derive this during render, so the
+    // state update must live here in the effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLinkValid(valid);
     if (!valid) {
