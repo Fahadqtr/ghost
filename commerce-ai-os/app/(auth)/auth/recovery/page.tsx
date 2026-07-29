@@ -46,11 +46,16 @@ export default function RecoveryPage() {
     const { tokenHash, type } = parseRecoveryHash(window.location.hash);
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
 
-    if (isValidRecoveryParams(type, tokenHash)) {
-      tokenHashRef.current = tokenHash;
-      setLinkValid(true);
-    } else {
-      setLinkValid(false);
+    const valid = isValidRecoveryParams(type, tokenHash);
+    if (valid) tokenHashRef.current = tokenHash;
+
+    // Reading the one-time token from the URL fragment is a client-only,
+    // post-mount action — there is no SSR-safe way to derive this during
+    // render, so the state update must live here in the effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLinkValid(valid);
+    if (!valid) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(RECOVERY_ERRORS.invalidLink);
     }
   }, []);
