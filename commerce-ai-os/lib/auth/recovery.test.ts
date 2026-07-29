@@ -8,7 +8,10 @@ import {
   parseRecoveryHash,
   isValidRecoveryParams,
   validateNewPassword,
+  requestPasswordReset,
   RECOVERY_ERRORS,
+  LOGIN_ERRORS,
+  RESET_REQUEST_SENT,
 } from "./recovery.ts";
 
 test("parseRecoveryHash: parses token_hash + type (with or without '#')", () => {
@@ -61,4 +64,45 @@ test("validateNewPassword: checks length before match", () => {
 test("RECOVERY_ERRORS are safe generic strings (no raw markers)", () => {
   const all = Object.values(RECOVERY_ERRORS).join(" ");
   assert.doesNotMatch(all, /token|stack|supabase|jwt/i);
+});
+
+test("requestPasswordReset: success returns the generic (non-enumerating) sent message", async () => {
+  const outcome = await requestPasswordReset("user@example.com", async () => ({ error: null }));
+  assert.deepEqual(outcome, { status: "sent", message: RESET_REQUEST_SENT });
+});
+
+test("requestPasswordReset: checks the returned error and does NOT report success on failure", async () => {
+  let called = false;
+  const outcome = await requestPasswordReset("user@example.com", async () => {
+    called = true;
+    return { error: { message: "rate limit exceeded", status: 429 } };
+  });
+  assert.equal(called, true, "sendReset must be invoked");
+  assert.equal(outcome.status, "failed");
+  assert.equal(outcome.message, LOGIN_ERRORS.resetRequestFailed);
+  assert.notEqual(outcome.message, RESET_REQUEST_SENT);
+  // The raw provider error text must never leak into the user-facing message.
+  assert.doesNotMatch(outcome.message, /rate limit|429/i);
+});
+
+test("requestPasswordReset: a thrown exception (network) maps to the generic failure message", async () => {
+  const outcome = await requestPasswordReset("user@example.com", async () => {
+    throw new Error("network down: getaddrinfo ENOTFOUND");
+  });
+  assert.equal(outcome.status, "failed");
+  assert.equal(outcome.message, LOGIN_ERRORS.resetRequestFailed);
+  assert.doesNotMatch(outcome.message, /network down|ENOTFOUND/i);
+});
+
+test("requestPasswordReset: trims the email before sending", async () => {
+  let received: string | null = null;
+  await requestPasswordReset("  user@example.com  ", async (email) => {
+    received = email;
+    return { error: null };
+  });
+  assert.equal(received, "user@example.com");
+});
+
+test("LOGIN_ERRORS.resetRequestFailed is a safe generic string (no raw markers)", () => {
+  assert.doesNotMatch(LOGIN_ERRORS.resetRequestFailed, /token|stack|supabase|jwt|rate limit|429/i);
 });

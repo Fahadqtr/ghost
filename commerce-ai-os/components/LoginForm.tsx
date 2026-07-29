@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { LOGIN_ERRORS, RESET_REQUEST_SENT } from "@/lib/auth/recovery";
+import { LOGIN_ERRORS, requestPasswordReset } from "@/lib/auth/recovery";
 
 type Mode = "signin" | "forgot";
 
@@ -59,14 +59,22 @@ export default function LoginForm() {
       const supabase = createClient();
       const redirectTo =
         typeof window !== "undefined" ? `${window.location.origin}/auth/recovery` : undefined;
-      // Ignore the result to avoid revealing whether the email exists.
-      await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-    } catch {
-      // Swallow — still show the same generic confirmation (no enumeration).
+      // Trims the email, checks the returned { error }, and maps failures
+      // (rate limit, misconfig, network) to a generic message — never raw.
+      const outcome = await requestPasswordReset(email, (normalizedEmail) =>
+        supabase.auth.resetPasswordForEmail(normalizedEmail, { redirectTo })
+      );
+      if (outcome.status === "sent") {
+        // Generic, non-enumerating confirmation — shown ONLY on success.
+        setNotice(outcome.message);
+      } else {
+        setError(outcome.message);
+      }
     } finally {
+      // finally only tears down the in-flight guards; it never decides the
+      // user-facing outcome (so we can't show success on a failed request).
       busyRef.current = false;
       setLoading(false);
-      setNotice(RESET_REQUEST_SENT);
     }
   }
 
