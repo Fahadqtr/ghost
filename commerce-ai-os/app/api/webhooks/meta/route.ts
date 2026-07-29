@@ -1,45 +1,58 @@
-import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { upsertDmConversation, insertDmMessage, autoReplyDm, ensureDmUsername } from "@/lib/dm/inbox";
+import {
+  verifyMetaSignature,
+  resolveSubscriptionChallenge,
+  WEBHOOK_NOT_CONFIGURED_MESSAGE,
+  WEBHOOK_INVALID_SIGNATURE_MESSAGE,
+} from "@/lib/meta/signature";
 
 // Meta webhook (Instagram DMs now; WhatsApp joins later on the same endpoint).
-// GET  = subscription verification (hub.challenge echo).
-// POST = message events → store → «ملاك» auto-reply. Always 200 fast; Meta
-// retries on non-200 and the mid-dedupe makes retries harmless.
+// GET  = subscription verification (hub.challenge echo, via META_VERIFY_TOKEN).
+// POST = message events → store → «ملاك» auto-reply. The POST body is
+// authenticated with an HMAC signature (META_APP_SECRET) BEFORE anything is
+// parsed, logged, written, or sent — and we fail CLOSED if that secret is
+// absent. Once verified we answer 200 fast; Meta retries on non-200 and the
+// mid-dedupe makes retries harmless.
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
-  const verify = process.env.META_VERIFY_TOKEN || "";
-  if (p.get("hub.mode") === "subscribe" && verify && p.get("hub.verify_token") === verify) {
-    return new NextResponse(p.get("hub.challenge") ?? "", { status: 200 });
-  }
+  const challenge = resolveSubscriptionChallenge(
+    p.get("hub.mode"),
+    p.get("hub.verify_token"),
+    p.get("hub.challenge"),
+    process.env.META_VERIFY_TOKEN
+  );
+  if (challenge !== null) return new NextResponse(challenge, { status: 200 });
   return new NextResponse("forbidden", { status: 403 });
 }
 
-/** X-Hub-Signature-256 check — enforced only when META_APP_SECRET is set. */
-function signatureOk(raw: string, header: string | null): boolean {
-  const secret = process.env.META_APP_SECRET;
-  if (!secret) return true;
-  if (!header?.startsWith("sha256=")) return false;
-  const expected = crypto.createHmac("sha256", secret).update(raw, "utf8").digest("hex");
-  const got = header.slice(7);
-  try {
-    return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(got, "hex"));
-  } catch {
-    return false;
-  }
-}
-
 export async function POST(req: NextRequest) {
+  // Read the raw body exactly once — required verbatim for HMAC verification.
   const raw = await req.text();
-  if (!signatureOk(raw, req.headers.get("x-hub-signature-256"))) {
-    return new NextResponse("bad signature", { status: 401 });
+
+  const signature = verifyMetaSignature(
+    raw,
+    req.headers.get("x-hub-signature-256"),
+    process.env.META_APP_SECRET
+  );
+
+  // Fail CLOSED: without the signing secret we cannot authenticate Meta, so we
+  // refuse to parse, log, touch the DB, call AI, or send any Instagram DM.
+  if (signature === "not_configured") {
+    return new NextResponse(WEBHOOK_NOT_CONFIGURED_MESSAGE, { status: 503 });
+  }
+  // Missing / malformed / wrong signature → reject with no side effects and
+  // without echoing the digest, secret, or raw body.
+  if (signature !== "ok") {
+    return new NextResponse(WEBHOOK_INVALID_SIGNATURE_MESSAGE, { status: 401 });
   }
 
+  // Signature verified — only now do we parse and process the event.
   let payload: any;
   try { payload = JSON.parse(raw); } catch { return NextResponse.json({ ok: true }); }
 
