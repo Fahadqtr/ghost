@@ -11,8 +11,12 @@ import { type Locale } from "@/lib/i18n";
 // a manual reply box (jumping in clears the needs-human flag) and a
 // per-conversation auto-reply switch.
 
-export default function InboxClient({ initial, ready, locale = "ar" }: {
+export default function InboxClient({ initial, ready, locale = "ar", isOwner = true }: {
   initial: DmConversationRow[]; ready: boolean; locale?: Locale;
+  // Owner-only sending: replying, flipping auto-reply, and connecting the
+  // channel dispatch/enable external DMs, so they're gated (server enforces it
+  // too). Non-owner keeps full read access to conversations and threads.
+  isOwner?: boolean;
 }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
@@ -125,8 +129,8 @@ export default function InboxClient({ initial, ready, locale = "ar" }: {
             <p className="truncate text-sm font-bold text-ink">{sel.username || `IG ${sel.external_id.slice(-6)}`}</p>
             <p className="text-[10px] text-muted">📸 Instagram</p>
           </div>
-          <button onClick={() => flipAuto(sel)} disabled={busy}
-            className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ${sel.auto_reply ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-slate-100 text-slate-500"}`}>
+          <button onClick={() => flipAuto(sel)} disabled={busy || !isOwner}
+            className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${sel.auto_reply ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-slate-100 text-slate-500"}`}>
             {sel.auto_reply ? L("🤖 تلقائي", "🤖 Auto") : L("✋ يدوي", "✋ Manual")}
           </button>
         </div>
@@ -154,11 +158,17 @@ export default function InboxClient({ initial, ready, locale = "ar" }: {
         </div>
 
         {err ? <p className="px-3 pb-1 text-xs text-red-600">{err}</p> : null}
-        <form onSubmit={(e) => { e.preventDefault(); send(); }} className="flex gap-2 border-t border-[#efe3d6] p-2">
-          <input value={input} onChange={(e) => setInput(e.target.value)} className="input flex-1"
-            placeholder={L("اكتب ردك…", "Type your reply…")} />
-          <button type="submit" className="btn-primary px-4 disabled:opacity-50" disabled={busy || !input.trim()}>{L("إرسال", "Send")}</button>
-        </form>
+        {isOwner ? (
+          <form onSubmit={(e) => { e.preventDefault(); send(); }} className="flex gap-2 border-t border-[#efe3d6] p-2">
+            <input value={input} onChange={(e) => setInput(e.target.value)} className="input flex-1"
+              placeholder={L("اكتب ردك…", "Type your reply…")} />
+            <button type="submit" className="btn-primary px-4 disabled:opacity-50" disabled={busy || !input.trim()}>{L("إرسال", "Send")}</button>
+          </form>
+        ) : (
+          <p className="border-t border-[#efe3d6] p-3 text-center text-xs text-muted">
+            🔒 {L("الرد على الرسائل متاح للمالك فقط.", "Replying is available to the owner only.")}
+          </p>
+        )}
       </div>
     );
   }
@@ -176,10 +186,17 @@ export default function InboxClient({ initial, ready, locale = "ar" }: {
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" /> {L("مباشر", "Live")}
           </span>
-          <button onClick={connect} disabled={busy} className="btn-ghost px-3 py-1 text-xs disabled:opacity-50">🔌 {L("فعّل الاستقبال", "Connect")}</button>
+          {isOwner ? (
+            <button onClick={connect} disabled={busy} className="btn-ghost px-3 py-1 text-xs disabled:opacity-50">🔌 {L("فعّل الاستقبال", "Connect")}</button>
+          ) : null}
           <button onClick={refresh} disabled={busy} className="btn-ghost px-3 py-1 text-xs disabled:opacity-50">↻ {L("حدّث", "Refresh")}</button>
         </div>
       </div>
+      {!isOwner ? (
+        <div className="card border-amber-200 bg-amber-50 text-xs text-amber-800">
+          🔒 {L("الرد وتفعيل الاستقبال متاح للمالك فقط — تقدر تتابع المحادثات بس.", "Replying and connecting is owner-only — you can view conversations only.")}
+        </div>
+      ) : null}
       {connectLog.length ? (
         <div className="space-y-1 rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-xs text-ink">
           {connectLog.map((line, i) => <p key={i} className="break-words">{line}</p>)}

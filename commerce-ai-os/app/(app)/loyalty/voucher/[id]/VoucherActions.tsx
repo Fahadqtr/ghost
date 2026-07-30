@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { sendVoucherAction } from "../../actions";
 
-export default function VoucherActions({ customerId }: { customerId: string }) {
+export default function VoucherActions({ customerId, isOwner = true }: { customerId: string; isOwner?: boolean }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -38,13 +38,17 @@ export default function VoucherActions({ customerId }: { customerId: string }) {
       >
         🖨️ طباعة القسيمة
       </button>
-      <button
-        onClick={sendWhatsApp}
-        disabled={isPending}
-        className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-      >
-        {isPending ? "جارٍ الإرسال…" : "💬 إرسال تأكيد واتساب"}
-      </button>
+      {isOwner ? (
+        <button
+          onClick={sendWhatsApp}
+          disabled={isPending}
+          className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {isPending ? "جارٍ الإرسال…" : "💬 إرسال تأكيد واتساب"}
+        </button>
+      ) : (
+        <span className="text-xs text-muted">🔒 إرسال الواتساب متاح للمالك فقط.</span>
+      )}
       {msg && (
         <span className={`text-sm ${ok ? "text-emerald-600" : "text-red-600"}`}>{msg}</span>
       )}

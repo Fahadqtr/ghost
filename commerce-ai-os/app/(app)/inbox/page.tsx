@@ -1,4 +1,5 @@
 import { listDmConversations } from "./actions";
+import { isOwner as checkOwner } from "@/lib/malak/authz";
 import InboxClient from "@/components/InboxClient";
 import DmMetricsPanel from "@/components/DmMetricsPanel";
 import { getT } from "@/lib/i18n-server";
@@ -13,8 +14,12 @@ export default async function InboxPage() {
   let items: Awaited<ReturnType<typeof listDmConversations>>["items"] = [];
   let ready = true;
   let error: string | undefined;
+  let owner = false;
   try {
-    ({ items, ready, error } = await listDmConversations());
+    [{ items, ready, error }, owner] = await Promise.all([
+      listDmConversations(),
+      checkOwner(),
+    ]);
   } catch (e: any) {
     error = e?.message || L("تعذّر تحميل الوارد.", "Couldn't load the inbox.");
   }
@@ -33,7 +38,7 @@ export default async function InboxPage() {
       ) : (
         <>
           <DmMetricsPanel locale={locale} />
-          <InboxClient initial={items} ready={ready} locale={locale} />
+          <InboxClient initial={items} ready={ready} locale={locale} isOwner={owner} />
         </>
       )}
     </div>

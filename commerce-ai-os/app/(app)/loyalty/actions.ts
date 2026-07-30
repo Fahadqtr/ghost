@@ -6,6 +6,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireOwner } from "@/lib/malak/authz";
 import {
   approveSubmission,
   rejectSubmission,
@@ -110,7 +111,9 @@ export async function deletePrizeAction(id: string) {
 export async function sendVoucherAction(
   customerId: string
 ): Promise<{ configured: boolean; ok: boolean; error?: string }> {
-  await requireUser();
+  // OWNER-only: this dispatches a real WhatsApp message to a customer.
+  const owner = await requireOwner();
+  if (!owner.ok) return { configured: true, ok: false, error: owner.error };
   const res = await sendVoucherWhatsApp(customerId);
   return { configured: res.configured, ok: res.ok, error: res.error };
 }
