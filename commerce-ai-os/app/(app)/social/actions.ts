@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireOwner } from "@/lib/malak/authz";
 import { revalidatePath } from "next/cache";
 import { publishToInstagram, publishStoryToInstagram, publishVideoStoryToInstagram, publishReelToInstagram, instagramConfigured, fetchIgMediaStats } from "@/lib/social/instagram";
 import { engagementScore, engagementRate, summarizeInsights, EMPTY_STATS, type PostStats } from "@/lib/social/insights-compute";
@@ -84,7 +85,8 @@ export async function listSocialPosts(): Promise<{ error?: string; pending: Soci
 }
 
 export async function publishSocialPost(id: string, caption: string): Promise<{ ok?: true; story?: boolean; error?: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const sb = admin();
   if (!sb) return { error: NO_DB };
 
@@ -138,7 +140,8 @@ export async function dismissSocialPost(id: string): Promise<{ ok?: true; error?
  * recent list with its stats like any other post.
  */
 export async function publishReelByUrl(videoUrl: string, caption: string): Promise<{ ok?: true; mediaId?: string; error?: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const sb = admin();
   if (!sb) return { error: NO_DB };
   const url = String(videoUrl || "").trim();
@@ -169,7 +172,8 @@ export async function publishReelByUrl(videoUrl: string, caption: string): Promi
  * media). Recorded in social_posts so it appears in the recent list.
  */
 export async function publishStoryByUrl(mediaUrl: string, kind: "image" | "video"): Promise<{ ok?: true; error?: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const sb = admin();
   if (!sb) return { error: NO_DB };
   const url = String(mediaUrl || "").trim();
@@ -312,7 +316,8 @@ export async function saveStoryImage(dataUrl: string): Promise<{ ok?: true; imag
  * posts as a story when scheduled_at passes. Immediate (empty/past time) posts now.
  */
 export async function scheduleStory(mediaUrl: string, kind: "image" | "video", whenIso: string): Promise<{ ok?: true; scheduled?: boolean; error?: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const sb = admin();
   if (!sb) return { error: NO_DB };
   const url = String(mediaUrl || "").trim();
@@ -346,7 +351,8 @@ export async function scheduleStory(mediaUrl: string, kind: "image" | "video", w
  * if a live row already sits inside this slot's window, it is kept.
  */
 export async function planWeekSlot(dayOffset: number, slot: number): Promise<{ ok?: true; created?: boolean; name?: string; scheduledAt?: string; error?: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const sb = admin();
   if (!sb) return { error: NO_DB };
 
@@ -388,7 +394,8 @@ export async function planWeekSlot(dayOffset: number, slot: number): Promise<{ o
 
 /** Approve / un-approve a planned post (only approved rows auto-publish). */
 export async function approveSocialPost(id: string, approved: boolean): Promise<{ ok?: true; error?: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const sb = admin();
   if (!sb) return { error: NO_DB };
   const { error } = await sb.from("social_posts").update({ approved }).eq("id", id);
@@ -399,7 +406,8 @@ export async function approveSocialPost(id: string, approved: boolean): Promise<
 
 /** Move a planned post to another time (datetime-local from the UI). */
 export async function rescheduleSocialPost(id: string, iso: string): Promise<{ ok?: true; error?: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const sb = admin();
   if (!sb) return { error: NO_DB };
   const when = new Date(iso);

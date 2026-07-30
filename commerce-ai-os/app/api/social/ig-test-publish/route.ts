@@ -9,7 +9,7 @@
 //   ?type=reel            → a Reel (needs a 9:16 H.264 MP4). Pass ?video=<url>.
 //   ?caption=<text>       → override the caption.
 import { publishToInstagram, publishReelToInstagram } from "@/lib/social/instagram";
-import { requireUser } from "@/lib/auth/requireUser";
+import { requireOwner } from "@/lib/malak/authz";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,8 +25,8 @@ const SAMPLE_CAPTION =
   "#قطر #ماليكا_يونيفرس #بيوتي #مكياج #Qatar";
 
 export async function GET(req: Request) {
-  const unauth = await requireUser();
-  if (unauth) return Response.json({ error: unauth.error }, { status: 401 });
+  const owner = await requireOwner();
+  if (!owner.ok) return Response.json({ error: owner.error }, { status: owner.status });
 
   const url = new URL(req.url);
   if (url.searchParams.get("confirm") !== "yes") {

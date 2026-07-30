@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getVoucher } from "@/lib/loyalty/rewards";
+import { isOwner as checkOwner } from "@/lib/malak/authz";
 import BrandLogo from "@/components/BrandLogo";
 import VoucherActions from "./VoucherActions";
 
@@ -17,8 +18,9 @@ export default async function VoucherPage({
 
   let voucher: Awaited<ReturnType<typeof getVoucher>> | null = null;
   let error: string | null = null;
+  let owner = false;
   try {
-    voucher = await getVoucher(id);
+    [voucher, owner] = await Promise.all([getVoucher(id), checkOwner()]);
   } catch (e: any) {
     error = e?.message ?? "تعذّر تحميل القسيمة.";
   }
@@ -46,7 +48,7 @@ export default async function VoucherPage({
         </Link>
       </div>
 
-      <VoucherActions customerId={voucher.customerId} />
+      <VoucherActions customerId={voucher.customerId} isOwner={owner} />
 
       {!voucher.ready && (
         <p data-no-print className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">

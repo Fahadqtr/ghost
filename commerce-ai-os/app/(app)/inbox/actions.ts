@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
+import { requireOwner } from "@/lib/malak/authz";
 import { sendInstagramDm, insertDmMessage, connectDmChannel } from "@/lib/dm/inbox";
 
 // Owner's DM inbox actions — read the conversations «ملاك» is handling, jump
@@ -79,8 +80,8 @@ export async function dmThread(conversationId: string): Promise<{ ok: boolean; i
 }
 
 export async function sendDmReply(conversationId: string, text: string): Promise<{ ok: true } | { error: string }> {
-  const unauth = await requireUser();
-  if (unauth) return unauth;
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
   const body = String(text ?? "").trim();
@@ -100,14 +101,14 @@ export async function sendDmReply(conversationId: string, text: string): Promise
 
 /** Subscribe the linked Facebook Page to the app's `messages` webhook (one-tap fix for "nothing arrives"). */
 export async function connectDmSubscription(): Promise<{ ok: boolean; log: string[] }> {
-  const unauth = await requireUser();
-  if (unauth) return { ok: false, log: [unauth.error] };
+  const owner = await requireOwner();
+  if (!owner.ok) return { ok: false, log: [owner.error] };
   return connectDmChannel();
 }
 
 export async function toggleDmAuto(conversationId: string, on: boolean): Promise<{ ok: true } | { error: string }> {
-  const unauth = await requireUser();
-  if (unauth) return unauth;
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
   const { error } = await admin.from("dm_conversations").update({ auto_reply: on }).eq("id", String(conversationId));

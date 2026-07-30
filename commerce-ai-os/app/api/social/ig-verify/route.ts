@@ -3,14 +3,14 @@
 // and creates a Reels container (never publishes) to prove content-publishing
 // works. Returns a plain-Arabic summary + the value to lock into Vercel.
 import { verifyIgSetup } from "@/lib/social/instagram";
-import { requireUser } from "@/lib/auth/requireUser";
+import { requireOwner } from "@/lib/malak/authz";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const unauth = await requireUser();
-  if (unauth) return Response.json({ error: unauth.error }, { status: 401 });
+  const owner = await requireOwner();
+  if (!owner.ok) return Response.json({ error: owner.error }, { status: owner.status });
   const result = await verifyIgSetup();
   return Response.json(result, { status: result.ok ? 200 : 200 });
 }

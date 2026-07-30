@@ -131,10 +131,14 @@ export default function SocialClient({
   pending: initialPending,
   recent,
   configured,
+  isOwner = true,
 }: {
   pending: SocialPost[];
   recent: SocialPost[];
   configured: { instagram: boolean; tiktok: boolean };
+  // Owner-only publish/approve/schedule. Non-owner keeps read + draft tools but
+  // every real publish control is disabled (the server enforces this too).
+  isOwner?: boolean;
 }) {
   const [pending, setPending] = useState(initialPending);
   const [captions, setCaptions] = useState<Record<string, string>>(
@@ -314,8 +318,9 @@ export default function SocialClient({
               </span>
               <input
                 type="datetime-local"
-                className="input h-8 w-auto px-2 py-0 text-xs"
+                className="input h-8 w-auto px-2 py-0 text-xs disabled:opacity-50"
                 defaultValue={toLocalInput(String(p.scheduled_at))}
+                disabled={!isOwner}
                 onBlur={(e) => { if (e.target.value && e.target.value !== toLocalInput(String(p.scheduled_at))) reschedule(p, e.target.value); }}
               />
             </div>
@@ -380,7 +385,7 @@ export default function SocialClient({
                 type="button"
                 className={`flex-1 disabled:opacity-50 ${p.approved ? "btn-ghost" : "btn"}`}
                 onClick={() => toggleApprove(p)}
-                disabled={busy || busyId === p.id || notConfigured(p.platform)}
+                disabled={busy || busyId === p.id || notConfigured(p.platform) || !isOwner}
               >
                 {p.approved ? "إلغاء الاعتماد" : "✅ اعتماد للنشر التلقائي"}
               </button>
@@ -389,7 +394,7 @@ export default function SocialClient({
               type="button"
               className={`disabled:opacity-50 ${p.scheduled_at ? "btn-ghost" : "btn flex-1"}`}
               onClick={() => publish(p)}
-              disabled={busy || busyId === p.id || notConfigured(p.platform)}
+              disabled={busy || busyId === p.id || notConfigured(p.platform) || !isOwner}
             >
               {busyId === p.id ? "…ينشر" : "🚀 انشر الآن"}
             </button>
@@ -411,11 +416,16 @@ export default function SocialClient({
           <button type="button" className="btn-ghost whitespace-nowrap disabled:opacity-50" onClick={generateNow} disabled={busy}>
             ✨ ولّد الآن
           </button>
-          <button type="button" className="btn whitespace-nowrap text-sm disabled:opacity-50" onClick={planWeek} disabled={busy}>
+          <button type="button" className="btn whitespace-nowrap text-sm disabled:opacity-50" onClick={planWeek} disabled={busy || !isOwner}>
             🗓️ جهّز خطة أسبوع
           </button>
         </div>
       </div>
+      {!isOwner ? (
+        <div className="card border-amber-200 bg-amber-50 text-xs text-amber-800">
+          🔒 النشر والجدولة والاعتماد متاح للمالك فقط — تقدر تراجع المحتوى وتصمّم الإعلانات، بس زر النشر معطّل.
+        </div>
+      ) : null}
       {genMsg ? <p className="text-xs text-muted">{genMsg}</p> : null}
       {planMsg ? <p className="text-xs text-muted">{planMsg}</p> : null}
 
