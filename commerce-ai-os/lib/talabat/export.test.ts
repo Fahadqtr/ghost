@@ -328,6 +328,38 @@ test("R: the route uses explicit approval + exact channel + fail-closed gate", (
   assert.match(route, /buildRafeeqAoa/);
 });
 
+// ---- Final review: exact channel pricing + redacted errors ------------------
+
+test("F1: the exact resolver ignores a 'Talabat Archive' sibling (archive never selected)", () => {
+  const res = resolveExactChannelId([{ id: "t", name: "Talabat" }, { id: "arc", name: "Talabat Archive" }], "talabat");
+  assert.deepEqual(res, { status: "ok", id: "t" });
+  // Two channels literally named "Talabat" is still ambiguous → blocks.
+  assert.deepEqual(resolveExactChannelId([{ id: "t1", name: "Talabat" }, { id: "t2", name: "Talabat" }], "talabat"), { status: "ambiguous" });
+});
+
+test("F1: route loads price + mappings from the EXACT Talabat channel only", () => {
+  const route = read("app/api/export/[channel]/route.ts");
+  assert.match(route, /channel !== "talabat"/, "generic fuzzy channel_products load is skipped for talabat");
+  assert.match(route, /\.eq\("channel_id", channelRes\.id\)/, "talabat price loads by the exact channel id");
+  assert.match(route, /talabatPrice\[p\.id\]/, "productInputs use the exact-channel price map");
+  assert.ok(!/channel_price:\s*priceOverride/.test(route), "talabat must not use the fuzzy priceOverride");
+  assert.ok(!/\.in\("channel_id", chanIds\)[\s\S]{0,120}channel_price/.test(route), "no fuzzy channel_price load");
+});
+
+test("F2: Talabat errors are redacted to a static safe 503 (no raw error / no CSV)", () => {
+  const route = read("app/api/export/[channel]/route.ts");
+  assert.match(route, /Talabat export is temporarily unavailable/);
+  const catchIdx = route.lastIndexOf("catch (e)");
+  assert.ok(catchIdx >= 0);
+  const guardIdx = route.indexOf('if (channel === "talabat")', catchIdx);
+  const staticIdx = route.indexOf("Talabat export is temporarily unavailable", catchIdx);
+  const rawIdx = route.indexOf("Export failed:", catchIdx);
+  assert.ok(guardIdx > catchIdx, "catch has a talabat guard");
+  assert.ok(staticIdx > guardIdx && staticIdx < rawIdx, "talabat returns the static 503 before the raw path");
+  // The safe 503 body carries no error interpolation.
+  assert.ok(!/Talabat export is temporarily unavailable[^"]*\$\{/.test(route), "static message has no interpolation");
+});
+
 test("summary reports counts for preview / dry-run", () => {
   const vs = [variant({ sku: "a", barcode: "1" }), variant({ sku: "b", barcode: null })];
   const r = buildTalabatExport([prod()], vs);

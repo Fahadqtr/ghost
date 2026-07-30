@@ -60,18 +60,18 @@ export async function GET(
       .from("channels").select("id, name").ilike("name", `%${channel}%`);
     const chanIds = (chans ?? []).map((c: any) => c.id);
     const status: StatusMap = {};
-    const priceOverride: Record<string, number | null> = {};
-    if (chanIds.length) {
+    // Fuzzy status/price map for the OTHER channels (Snoonu deliberately spans
+    // two storefronts). Talabat must NOT use this — it resolves its own exact
+    // channel below so a "%talabat%" sibling (e.g. a "Talabat Archive" channel)
+    // can never leak its price into the export.
+    if (chanIds.length && channel !== "talabat") {
       const links = await fetchAll((from, to) =>
         supabase.from("channel_products")
-          .select("product_id, channel_status, channel_price")
+          .select("product_id, channel_status")
           .in("channel_id", chanIds)
           .range(from, to)
       );
-      for (const l of links) {
-        status[l.product_id] = l.channel_status ?? "Not Listed";
-        if (l.channel_price != null) priceOverride[l.product_id] = l.channel_price;
-      }
+      for (const l of links) status[l.product_id] = l.channel_status ?? "Not Listed";
     }
 
     let csv: string;
@@ -91,6 +91,24 @@ export async function GET(
         const want = new Set(catsParam.split("|").map((s) => s.trim()).filter(Boolean));
         prods = prods.filter((p) => want.has(String(p.main_category ?? "").trim()));
       }
+      // Resolve EXACTLY ONE Talabat channel up front. Both the price override
+      // and the mappings come only from this channel — never a fuzzy
+      // "%talabat%" sibling.
+      const channelRes = resolveExactChannelId(chans ?? [], "talabat");
+
+      // Channel price override — ONLY from the exact Talabat channel, and only
+      // when it resolves. Missing/ambiguous ⇒ no overrides are loaded.
+      const talabatPrice: Record<string, number | null> = {};
+      if (channelRes.status === "ok") {
+        const links = await fetchAll((from, to) =>
+          supabase.from("channel_products")
+            .select("product_id, channel_price")
+            .eq("channel_id", channelRes.id)
+            .range(from, to)
+        );
+        for (const l of links) if (l.channel_price != null) talabatPrice[l.product_id] = l.channel_price;
+      }
+
       const variants = (await fetchAll((from, to) =>
         supabase.from("product_variants")
           .select("parent_product_id, variant_name, variant_name_en, sku, barcode, price, stock_quantity")
@@ -116,7 +134,7 @@ export async function GET(
         main_category: p.main_category,
         description_en: p.description_en, description_ar: p.description_ar,
         image_filename: p.image_filename, image_url: p.image_url,
-        channel_price: priceOverride[p.id] ?? null,
+        channel_price: talabatPrice[p.id] ?? null,          // exact Talabat channel only
         approved: isApprovedForTalabat(approvalByProduct[p.id]), // explicit approval only
       }));
       const variantInputs: ExportVariantInput[] = variants.map((v) => ({
@@ -127,12 +145,11 @@ export async function GET(
 
       const result = buildTalabatExport(productInputs, variantInputs);
 
-      // FAIL-CLOSED: when there are valid rows, resolve EXACTLY ONE Talabat
-      // channel and persist EVERY mapping (failed === 0) before any file may
-      // download. An unresolved/ambiguous channel, an admin/query error, or any
-      // failed write returns a safe 503 — never a channel id, product id,
-      // barcode, or raw DB error.
-      const channelRes = resolveExactChannelId(chans ?? [], "talabat");
+      // FAIL-CLOSED: when there are valid rows, the Talabat channel must resolve
+      // to exactly one AND every mapping must persist (failed === 0) before any
+      // file may download. An unresolved/ambiguous channel, an admin/query
+      // error, or any failed write returns a safe 503 — never a channel id,
+      // product id, barcode, or raw DB error.
       let persist: PersistCounts | null = null;
       if (result.rows.length > 0 && channelRes.status === "ok") {
         try {
@@ -195,6 +212,13 @@ export async function GET(
       },
     });
   } catch (e) {
+    // Talabat: never surface a raw error (message, Supabase/table/column names,
+    // channel/product ids, SKU, or barcode). Any failure — products,
+    // product_variants, platform_status, channels/channel_products, the admin
+    // client, or persistence — collapses to one static, safe 503, and never a CSV.
+    if (channel === "talabat") {
+      return new Response("Talabat export is temporarily unavailable", { status: 503 });
+    }
     return new Response(`Export failed: ${e instanceof Error ? e.message : "error"}`, { status: 500 });
   }
 }
