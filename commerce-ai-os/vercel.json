@@ -11,11 +11,7 @@
     },
     {
       "path": "/api/cron/publish-social",
-      "schedule": "0 10 * * *"
-    },
-    {
-      "path": "/api/cron/publish-social",
-      "schedule": "0 17 * * *"
+      "schedule": "*/15 * * * *"
     }
   ]
 }
