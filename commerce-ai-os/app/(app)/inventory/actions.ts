@@ -9,6 +9,8 @@ import { requireUser } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
 import { logStockTransition, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
+import { pushInventoryStockToShopify } from "@/lib/shopify/admin";
+import { summarizeStockSync, type ShopifyStockSyncStatus } from "@/lib/shopify/stock-push";
 import Anthropic from "@anthropic-ai/sdk";
 
 function toNum(v: string | number | null | undefined): number | null {
@@ -896,70 +898,25 @@ export async function importInventoryBySku(rows: CsvRow[]) {
 }
 
 /**
- * Push current Supabase stock to Shopify for the given SKUs.
- * Honest, env-gated: requires SHOPIFY_SHOP + SHOPIFY_ADMIN_TOKEN. Without them
- * it returns a clear "not configured" status instead of pretending to work.
+ * Push current Supabase stock to Shopify for the given SKUs — through the ONE
+ * central Shopify client (`lib/shopify/admin.ts`), so it works with the OAuth
+ * connection exactly like every other Shopify call (products, orders, prices,
+ * the nightly availability sync). No Shopify credentials, API version, shop URL,
+ * or location id are read here; the central client owns all of that.
+ *
+ * Returns a typed, UI-safe status (never raw Shopify errors, never a silent
+ * success): `configured` reflects the real connection, `synced` is true only
+ * when a set actually succeeded, and `reason` explains a batch-level stop.
  */
-export async function pushStockToShopify(items: { sku: string; quantity: number }[]) {
+export async function pushStockToShopify(
+  items: { sku: string; quantity: number }[],
+): Promise<ShopifyStockSyncStatus & { message?: string }> {
   const unauth = await requireUser();
-  if (unauth) return { configured: false as const, message: unauth.error };
-  const SHOP = process.env.SHOPIFY_SHOP;
-  const TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
-  const LOCATION = process.env.SHOPIFY_LOCATION_ID || "gid://shopify/Location/81908531438";
-  const VERSION = process.env.SHOPIFY_API_VERSION || "2025-10";
-
-  if (!SHOP || !TOKEN) {
-    return {
-      configured: false as const,
-      message:
-        "Shopify push is not configured. Add SHOPIFY_SHOP and SHOPIFY_ADMIN_TOKEN (Admin API token with write_inventory) to the server env to enable it.",
-    };
+  if (unauth) {
+    return { configured: false, synced: false, pushed: 0, failed: 0, missing: 0, reason: "not_configured", message: unauth.error };
   }
-
-  const endpoint = `https://${SHOP}/admin/api/${VERSION}/graphql.json`;
-  const gql = async (query: string, variables?: unknown) => {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": TOKEN },
-      body: JSON.stringify({ query, variables }),
-    });
-    return res.json();
-  };
-
-  let pushed = 0;
-  const errors: string[] = [];
-  for (const it of items) {
-    try {
-      const q = await gql(
-        `query($q:String!){ productVariants(first:1, query:$q){ edges { node { inventoryItem { id } } } } }`,
-        // Quote + strip quotes/backslashes so the SKU can't alter the search filter.
-        { q: `sku:"${String(it.sku).replace(/["\\]/g, "")}"` }
-      );
-      const invItem = q?.data?.productVariants?.edges?.[0]?.node?.inventoryItem?.id;
-      if (!invItem) {
-        errors.push(`${it.sku}: not found in Shopify`);
-        continue;
-      }
-      const m = await gql(
-        `mutation($input:InventorySetQuantitiesInput!){ inventorySetQuantities(input:$input){ userErrors{ message } } }`,
-        {
-          input: {
-            name: "available",
-            ignoreCompareQuantity: true,
-            reason: "correction",
-            quantities: [{ inventoryItemId: invItem, locationId: LOCATION, quantity: it.quantity }],
-          },
-        }
-      );
-      const ue = m?.data?.inventorySetQuantities?.userErrors;
-      if (ue && ue.length) errors.push(`${it.sku}: ${ue[0].message}`);
-      else pushed++;
-    } catch (e: any) {
-      errors.push(`${it.sku}: ${e?.message ?? "request failed"}`);
-    }
-  }
-
-  return { configured: true as const, pushed, failed: errors.length, errors: errors.slice(0, 5) };
+  const summary = await pushInventoryStockToShopify(items);
+  return summarizeStockSync(summary);
 }
 
 export type MovementInput = {
@@ -1225,7 +1182,7 @@ export async function markOutOfStockByNames(text: string, apply = false): Promis
   matched: number;
   products: { sku: string | null; name: string | null }[];
   unmatched: string[];
-  shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
+  shopify?: ShopifyStockSyncStatus & { message?: string };
 }> {
   const unauth = await requireUser();
   if (unauth) return { error: (unauth as any).error ?? "Not signed in.", applied: false, matched: 0, products: [], unmatched: [] };
@@ -1378,13 +1335,12 @@ export async function markOutOfStockByNames(text: string, apply = false): Promis
     await admin.from("channel_products").update({ channel_status: "Not Listed" }).in("product_id", chunk);
   }
 
-  // Best-effort: push 0 stock to Shopify for every matched SKU.
-  let shopify: { configured: boolean; pushed?: number; failed?: number; message?: string } | undefined;
+  // Best-effort external sync: push 0 stock to Shopify for every matched SKU.
+  // The local DB writes above stand on their own — a Shopify hiccup never rolls
+  // them back; the returned status lets the UI say whether the store synced too.
+  let shopify: (ShopifyStockSyncStatus & { message?: string }) | undefined;
   if (skus.size > 0) {
-    const res = await pushStockToShopify([...skus].map((sku) => ({ sku, quantity: 0 })));
-    shopify = res.configured
-      ? { configured: true, pushed: res.pushed, failed: res.failed }
-      : { configured: false, message: res.message };
+    shopify = await pushStockToShopify([...skus].map((sku) => ({ sku, quantity: 0 })));
   }
 
   revalidatePath("/inventory");
@@ -1405,7 +1361,7 @@ export async function matchChannelsToMalika(apply = false): Promise<{
   applied: boolean;
   products: { sku: string | null; name: string | null; channels: string[] }[];
   channelRows: number;
-  shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
+  shopify?: ShopifyStockSyncStatus & { message?: string };
 }> {
   const unauth = await requireUser();
   if (unauth) return { error: (unauth as any).error ?? "Not signed in.", applied: false, products: [], channelRows: 0 };
@@ -1481,12 +1437,12 @@ export async function matchChannelsToMalika(apply = false): Promise<{
     await admin.from("channel_products").update({ channel_status: "Not Listed" }).in("product_id", chunk).eq("channel_status", "Active");
   }
 
-  // Best-effort: re-push 0 stock to Shopify for the affected SKUs.
-  let shopify: { configured: boolean; pushed?: number; failed?: number; message?: string } | undefined;
+  // Best-effort external sync: re-push 0 stock to Shopify for the affected SKUs.
+  // The channel delisting above is committed regardless of the Shopify outcome.
+  let shopify: (ShopifyStockSyncStatus & { message?: string }) | undefined;
   const skus = products.map((p) => p.sku).filter((s): s is string => !!s);
   if (skus.length > 0) {
-    const res = await pushStockToShopify(skus.map((sku) => ({ sku, quantity: 0 })));
-    shopify = res.configured ? { configured: true, pushed: res.pushed, failed: res.failed } : { configured: false, message: res.message };
+    shopify = await pushStockToShopify(skus.map((sku) => ({ sku, quantity: 0 })));
   }
 
   revalidatePath("/inventory");

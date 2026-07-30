@@ -448,15 +448,20 @@ export default function InventoryTable({
       .filter((it) => it.sku);
     startTransition(async () => {
       const res = await pushStockToShopify(items);
-      if (!res.configured) setMsg({ kind: "err", text: res.message });
-      else
+      if (!res.configured) {
+        setMsg({ kind: "err", text: res.message ?? L("Shopify غير مربوط بعد.", "Shopify isn't connected yet.") });
+      } else if (res.reason === "missing_location") {
+        setMsg({ kind: "err", text: L("تعذّرت مزامنة Shopify: لا يوجد موقع مخزون.", "Shopify sync failed: no inventory location.") });
+      } else {
+        const problems = res.failed + res.missing;
         setMsg({
-          kind: res.failed ? "err" : "ok",
+          kind: problems ? "err" : "ok",
           text: L(
-            `أُرسل ${res.pushed} إلى Shopify · فشل ${res.failed}${res.errors.length ? `: ${res.errors.join("; ")}` : ""}`,
-            `Pushed ${res.pushed} to Shopify · ${res.failed} failed${res.errors.length ? `: ${res.errors.join("; ")}` : ""}`
+            `أُرسل ${res.pushed} إلى Shopify${res.failed ? ` · ${res.failed} فشل` : ""}${res.missing ? ` · ${res.missing} غير موجود` : ""}`,
+            `Pushed ${res.pushed} to Shopify${res.failed ? ` · ${res.failed} failed` : ""}${res.missing ? ` · ${res.missing} not found` : ""}`
           ),
         });
+      }
     });
   }
 
