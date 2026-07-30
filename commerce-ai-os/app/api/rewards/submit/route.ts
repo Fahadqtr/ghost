@@ -1,8 +1,10 @@
 // Public: a customer uploads a screenshot of the review they left on Snoonu.
 // The image is stored in the loyalty-reviews bucket and linked as a PENDING
 // submission — no heart is granted until the owner/staff approve it in the
-// admin app. No auth (customer-facing), so guards live here: file type/size
-// limits and a cap on how many screenshots can queue per customer.
+// admin app. No auth (customer-facing), so guards live here: a per-IP rate
+// limit (before any service-role work), file type/size limits, and a cap on
+// how many screenshots can queue per customer. Storage/DB errors are returned
+// as a generic message (no raw service text).
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   addSubmission,
@@ -10,6 +12,13 @@ import {
   normalizePhone,
   REVIEW_BUCKET,
 } from "@/lib/loyalty/rewards";
+import { rateLimit, clientIpFrom, runIfAllowed } from "@/lib/ratelimit";
+import {
+  REWARDS_RATE_LIMIT,
+  RATE_LIMITED_MESSAGE,
+  REWARDS_GENERIC_ERROR,
+  toPublicRewardState,
+} from "@/lib/loyalty/rewards-public";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +33,15 @@ const EXT: Record<string, string> = {
 };
 
 export async function POST(req: Request) {
+  const ip = clientIpFrom(req.headers.get("x-forwarded-for"), req.headers.get("x-real-ip"));
+  return runIfAllowed(
+    () => rateLimit("rewards:submit", ip, REWARDS_RATE_LIMIT),
+    () => Response.json({ error: RATE_LIMITED_MESSAGE }, { status: 429 }),
+    () => handleSubmit(req)
+  );
+}
+
+async function handleSubmit(req: Request) {
   let form: FormData;
   try {
     form = await req.formData();
@@ -63,8 +81,8 @@ export async function POST(req: Request) {
   let admin;
   try {
     admin = createAdminClient();
-  } catch (e: any) {
-    return Response.json({ error: e?.message ?? "الخدمة غير متاحة حالياً." }, { status: 500 });
+  } catch {
+    return Response.json({ error: REWARDS_GENERIC_ERROR }, { status: 500 });
   }
 
   const path = `${phone}/${Date.now()}_${Math.floor(Math.random() * 1e4)}.${ext}`;
@@ -73,14 +91,14 @@ export async function POST(req: Request) {
     const { error: upErr } = await admin.storage
       .from(REVIEW_BUCKET)
       .upload(path, buf, { contentType: file.type, upsert: false, cacheControl: "3600" });
-    if (upErr) return Response.json({ error: `فشل الرفع: ${upErr.message}` }, { status: 400 });
+    if (upErr) return Response.json({ error: REWARDS_GENERIC_ERROR }, { status: 400 });
 
     const imageUrl = admin.storage.from(REVIEW_BUCKET).getPublicUrl(path).data.publicUrl;
     await addSubmission(phone, path, imageUrl);
 
     const next = await getStateByPhone(phone);
-    return Response.json({ ok: true, state: next });
-  } catch (e: any) {
-    return Response.json({ error: e?.message ?? "خطأ غير متوقع أثناء الرفع." }, { status: 400 });
+    return Response.json({ ok: true, state: next ? toPublicRewardState(next) : null });
+  } catch {
+    return Response.json({ error: REWARDS_GENERIC_ERROR }, { status: 400 });
   }
 }

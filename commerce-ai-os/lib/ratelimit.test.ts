@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { windowKey, secsUntilWindowEnd, decide, clientIpFrom, rateLimit } from "./ratelimit.ts";
+import { windowKey, secsUntilWindowEnd, decide, clientIpFrom, rateLimit, runIfAllowed } from "./ratelimit.ts";
 
 // ---- windowKey ---------------------------------------------------------------
 
@@ -71,4 +71,48 @@ test("without Upstash env, rateLimit is a configured:false no-op that allows", a
     if (savedUrl != null) process.env.UPSTASH_REDIS_REST_URL = savedUrl;
     if (savedTok != null) process.env.UPSTASH_REDIS_REST_TOKEN = savedTok;
   }
+});
+
+// ---- runIfAllowed (gate side effects behind the limiter) --------------------
+
+test("runIfAllowed: blocks perform and returns onLimited when over the limit", async () => {
+  let performed = false;
+  const out = await runIfAllowed(
+    async () => ({ configured: true, allowed: false, remaining: 0, retryAfterSec: 12 }),
+    () => "429",
+    async () => {
+      performed = true; // stands in for any DB/Storage/WhatsApp side effect
+      return "ok";
+    }
+  );
+  assert.equal(out, "429");
+  assert.equal(performed, false, "no side effect may start when rate-limited");
+});
+
+test("runIfAllowed: runs perform when allowed", async () => {
+  let performed = false;
+  const out = await runIfAllowed(
+    async () => ({ configured: true, allowed: true, remaining: 5, retryAfterSec: 0 }),
+    () => "429",
+    async () => {
+      performed = true;
+      return "ok";
+    }
+  );
+  assert.equal(out, "ok");
+  assert.equal(performed, true);
+});
+
+test("runIfAllowed: fail-open (configured:false) still runs perform", async () => {
+  let performed = false;
+  const out = await runIfAllowed(
+    async () => ({ configured: false, allowed: true, remaining: 20, retryAfterSec: 0 }),
+    () => "429",
+    async () => {
+      performed = true;
+      return "ok";
+    }
+  );
+  assert.equal(out, "ok");
+  assert.equal(performed, true);
 });
