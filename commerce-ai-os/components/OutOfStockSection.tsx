@@ -3,6 +3,25 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { markOutOfStockByNames, matchChannelsToMalika } from "@/app/(app)/inventory/actions";
+import type { ShopifyStockSyncStatus } from "@/lib/shopify/stock-push";
+
+type ShopifyStatus = ShopifyStockSyncStatus & { message?: string };
+
+/**
+ * One safe, bilingual line describing the Shopify outcome after a local stock
+ * change. The local DB update already happened — this only reports whether the
+ * store synced too, never a raw Shopify error.
+ */
+function shopifyNote(s: ShopifyStatus | undefined, ar: boolean): string {
+  if (!s) return "";
+  if (!s.configured) return ar ? " · محليًا فقط (Shopify غير مربوط)" : " · local only (Shopify not connected)";
+  if (s.reason === "missing_location")
+    return ar ? " · محليًا فقط — تعذّرت مزامنة Shopify (لا يوجد موقع)" : " · local only — Shopify sync failed (no location)";
+  if (s.synced) return ar ? ` · وتمت مزامنة Shopify (${s.pushed})` : ` · Shopify synced (${s.pushed})`;
+  return ar
+    ? ` · مزامنة Shopify جزئية: ${s.pushed} دُفع${s.failed ? `، ${s.failed} فشل` : ""}${s.missing ? `، ${s.missing} غير موجود` : ""}`
+    : ` · Shopify partial: ${s.pushed} pushed${s.failed ? `, ${s.failed} failed` : ""}${s.missing ? `, ${s.missing} not found` : ""}`;
+}
 
 export type OosItem = {
   id: string;
@@ -32,7 +51,7 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
     matched: number;
     products: { sku: string | null; name: string | null }[];
     unmatched: string[];
-    shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
+    shopify?: ShopifyStatus;
     error?: string;
   } | null>(null);
 
@@ -45,7 +64,7 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
     applied: boolean;
     channelRows: number;
     products: { sku: string | null; name: string | null; channels: string[] }[];
-    shopify?: { configured: boolean; pushed?: number; failed?: number; message?: string };
+    shopify?: ShopifyStatus;
     error?: string;
   } | null>(null);
 
@@ -167,12 +186,7 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
           )}
           {result?.applied && (
             <span className="text-xs text-emerald-700">
-              ✓ تم — {result.matched} منتج عُلّم
-              {result.shopify
-                ? result.shopify.configured
-                  ? ` · Shopify: ${result.shopify.pushed} دُفع${result.shopify.failed ? `، ${result.shopify.failed} فشل` : ""}`
-                  : " · Shopify غير مفعّل"
-                : ""}
+              ✓ تم — {result.matched} منتج عُلّم (المخزون المحلي محدّث){shopifyNote(result.shopify, true)}
             </span>
           )}
           {result?.error && <span className="text-xs text-red-600">{result.error}</span>}
@@ -224,8 +238,7 @@ export default function OutOfStockSection({ items }: { items: OosItem[] }) {
           {matchRes?.error && <div className="text-xs text-red-600">{matchRes.error}</div>}
           {matchRes?.applied && (
             <div className="text-xs text-emerald-700">
-              ✓ تم التطابق — أُلغي إدراج {matchRes.products.length} منتج ({matchRes.channelRows} سطر قناة)
-              {matchRes.shopify ? (matchRes.shopify.configured ? ` · Shopify: ${matchRes.shopify.pushed} دُفع` : " · Shopify غير مفعّل") : ""}
+              ✓ تم التطابق — أُلغي إدراج {matchRes.products.length} منتج ({matchRes.channelRows} سطر قناة){shopifyNote(matchRes.shopify, true)}
             </div>
           )}
           {matchRes && !matchRes.error && !matchRes.applied && (

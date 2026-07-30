@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { syncStockBySku, type ShopifyStockPushSummary } from "./stock-push";
 
 // Env-gated Shopify Admin API client (GraphQL). Needs SHOPIFY_STORE_DOMAIN
 // (xxxxx.myshopify.com) plus a token: either SHOPIFY_ADMIN_TOKEN directly
@@ -273,6 +274,50 @@ export async function setInventoryQuantities(
     updated += batch.length;
   }
   return { ok: true, updated };
+}
+
+/**
+ * Resolve a variant's inventory item id by SKU via the central client.
+ * Returns `inventoryItemId: ""` when no variant matches the SKU (not an error),
+ * and `error` only on an actual Shopify failure. The SKU is quote/backslash
+ * stripped so it can't alter the search filter.
+ */
+export async function resolveInventoryItemIdBySku(
+  sku: string,
+): Promise<{ inventoryItemId?: string; error?: string }> {
+  const clean = String(sku ?? "").replace(/["\\]/g, "");
+  if (!clean) return { inventoryItemId: "" };
+  const { data, error } = await shopifyGraphQL<{
+    productVariants: { edges: { node: { inventoryItem: { id: string } | null } }[] };
+  }>(
+    `query($q: String!) {
+      productVariants(first: 1, query: $q) { edges { node { inventoryItem { id } } } }
+    }`,
+    { q: `sku:"${clean}"` },
+  );
+  if (error) return { error };
+  return { inventoryItemId: String(data?.productVariants?.edges?.[0]?.node?.inventoryItem?.id ?? "") };
+}
+
+/**
+ * Push our stock quantities to Shopify through the ONE central client (same
+ * credentials, API version, and location resolution as every other Shopify
+ * call). Delegates the orchestration to the pure `syncStockBySku` core so the
+ * decision logic is unit-tested; here we only wire the canonical capabilities.
+ * Returns a typed summary — never a silent success.
+ */
+export async function pushInventoryStockToShopify(
+  items: { sku: string; quantity: number }[],
+): Promise<ShopifyStockPushSummary> {
+  return syncStockBySku(items, {
+    configured: shopifyConfigured,
+    resolveLocationId: fetchPrimaryLocationId,
+    resolveInventoryItemId: resolveInventoryItemIdBySku,
+    setQuantity: async (locationId, inventoryItemId, quantity) => {
+      const r = await setInventoryQuantities(locationId, [{ inventoryItemId, quantity }]);
+      return { ok: r.ok, ...(r.error ? { error: r.error } : {}) };
+    },
+  });
 }
 
 export interface CreateProductOpts {
