@@ -11,11 +11,36 @@
 // stock page by a Redis outage); the limiter is a brute-force brake, not an
 // auth boundary. The window key/decision math is pure and unit-tested.
 
+/**
+ * Why the limiter returned what it did. Diagnostic only — every value is a
+ * fixed enum literal, never carries request/response/secret data. "ok" means
+ * Upstash answered (whether the attempt was allowed or blocked); all other
+ * values mean the limiter FAILED OPEN and did not actually enforce.
+ */
+export type RateLimitReason =
+  | "ok"
+  | "missing_config"
+  | "upstream_status"
+  | "timeout"
+  | "invalid_response"
+  | "network_error";
+
 export interface RateLimitResult {
   configured: boolean;   // false = no Upstash env, nothing enforced
   allowed: boolean;
   remaining: number;     // attempts left in this window (0 when blocked)
   retryAfterSec: number; // seconds until the window resets (0 when allowed)
+  reason: RateLimitReason; // diagnostic classification (no sensitive data)
+}
+
+/**
+ * Emit ONE warning line when the limiter fails open, carrying ONLY the scope
+ * and the typed reason — never a URL, token, Redis key, IP, phone, name,
+ * request/response body, or stack. Silent on "ok" (including real blocks).
+ */
+function logFailOpen(scope: string, reason: RateLimitReason): void {
+  if (reason === "ok") return;
+  console.warn(`[ratelimit] fail_open scope=${scope} reason=${reason}`);
 }
 
 /** Fixed-window bucket key: same (scope,id) share a key within each window. */
@@ -79,7 +104,8 @@ export async function rateLimit(
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) {
-    return { configured: false, allowed: true, remaining: limit, retryAfterSec: 0 };
+    logFailOpen(scope, "missing_config");
+    return { configured: false, allowed: true, remaining: limit, retryAfterSec: 0, reason: "missing_config" };
   }
 
   const now = Date.now();
@@ -102,8 +128,26 @@ export async function rateLimit(
       allowed,
       remaining,
       retryAfterSec: allowed ? 0 : secsUntilWindowEnd(now, windowSec),
+      reason: "ok", // Upstash answered — enforcement is live (allowed or blocked)
     };
-  } catch {
-    return { configured: true, allowed: true, remaining: limit, retryAfterSec: 0 }; // fail open
+  } catch (e) {
+    // Fail OPEN, but classify WHY so a single safe log line can explain it.
+    const reason = classifyRateLimitError(e);
+    logFailOpen(scope, reason);
+    return { configured: true, allowed: true, remaining: limit, retryAfterSec: 0, reason };
   }
+}
+
+/**
+ * Map a thrown fetch/parse error to a typed reason — no message text, status
+ * body, or stack is retained (only the enum literal leaves this function).
+ */
+function classifyRateLimitError(e: unknown): RateLimitReason {
+  if (e instanceof Error) {
+    // AbortSignal.timeout(...) rejects with a TimeoutError (AbortError on some runtimes).
+    if (e.name === "TimeoutError" || e.name === "AbortError") return "timeout";
+    if (e.message.startsWith("upstash ")) return "upstream_status"; // thrown on !res.ok
+    if (e.message === "bad pipeline response") return "invalid_response";
+  }
+  return "network_error";
 }
