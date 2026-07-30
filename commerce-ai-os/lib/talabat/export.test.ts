@@ -15,6 +15,9 @@ import {
   talabatResultToCsv,
   summarizeTalabatExport,
   planMappingWrite,
+  isApprovedForTalabat,
+  resolveExactChannelId,
+  decideExportGate,
   type ExportProductInput,
   type ExportVariantInput,
   type TalabatMappingCandidate,
@@ -30,6 +33,7 @@ function prod(over: Partial<ExportProductInput> = {}): ExportProductInput {
     price: 100, discount_price: null, main_category: "Makeup",
     description_en: "desc en", description_ar: "وصف",
     image_filename: "mk100.jpg", image_url: null,
+    approved: true, // explicit Talabat approval; override to test exclusion
     ...over,
   };
 }
@@ -176,9 +180,10 @@ test("17: a mapping update never clears channel_product_id", () => {
   if (ins.op === "insert") assert.equal(ins.row.channel_product_id, null);
 });
 
-test("18: a variant mapping (inherits parent image) is needs_review", () => {
+test("18: a complete variant mapping (inherits parent image) is active, warning remains", () => {
   const r = buildTalabatExport([prod()], [variant()]);
-  assert.equal(r.mappings[0].mappingStatus, "needs_review");
+  assert.equal(r.mappings[0].mappingStatus, "active"); // inheriting the parent image does NOT force needs_review
+  assert.ok(r.warnings.some((w) => w.kind === "no_variant_image"));
 });
 
 test("19: a complete no-variant mapping is active", () => {
@@ -218,6 +223,109 @@ test("CSV has the 10-column header and one data row per valid row", () => {
   assert.equal(lines[0], "SKU,Barcode,Price (QAR),Discount,Product Name EN,Product Name AR,Category,Description EN,Description AR,New Image Filename");
   assert.equal(lines.length, 2);
   assert.ok(lines[1].startsWith("mk100,6291000000017,100,,"));
+});
+
+// ---- Review fix 1: explicit Talabat approval ---------------------------------
+
+test("R1: only explicit \"Approved\" counts; undefined/other are not approved", () => {
+  assert.equal(isApprovedForTalabat("Approved"), true);
+  for (const v of [undefined, null, "", "Not Listed", "Pending", "SentAI", "Rejected", "approved", "APPROVED"]) {
+    assert.equal(isApprovedForTalabat(v as string | null | undefined), false, `"${String(v)}" must not be approved`);
+  }
+});
+
+test("R1: a product with no Talabat approval (undefined) is excluded", () => {
+  const r = buildTalabatExport([prod({ approved: undefined })], []);
+  assert.equal(r.rows.length, 0);
+  assert.ok(r.warnings.some((w) => w.kind === "excluded_not_approved"));
+});
+
+test("R1: Not Listed / Pending / Rejected are excluded; only explicit approval enters", () => {
+  for (const status of [undefined, null, "", "Not Listed", "Pending", "Rejected", "SentAI"]) {
+    const approved = isApprovedForTalabat(status as string | null | undefined);
+    const r = buildTalabatExport([prod({ approved })], []);
+    assert.equal(r.rows.length, 0, `status "${String(status)}" must be excluded`);
+  }
+  const ok = buildTalabatExport([prod({ approved: isApprovedForTalabat("Approved") })], []);
+  assert.equal(ok.rows.length, 1);
+});
+
+// ---- Review fix 2: unambiguous Talabat channel -------------------------------
+
+test("R2: resolve exactly one Talabat channel (missing / ok / ambiguous)", () => {
+  assert.deepEqual(resolveExactChannelId([], "talabat"), { status: "missing" });
+  assert.deepEqual(resolveExactChannelId([{ id: "c1", name: "Talabat" }], "talabat"), { status: "ok", id: "c1" });
+  // Never picks the first of several exact matches.
+  assert.deepEqual(resolveExactChannelId([{ id: "c1", name: "Talabat" }, { id: "c2", name: "talabat" }], "talabat"), { status: "ambiguous" });
+  // A "%talabat%"-style partial match is NOT an exact channel.
+  assert.deepEqual(resolveExactChannelId([{ id: "c9", name: "Talabat QA" }], "talabat"), { status: "missing" });
+});
+
+// ---- Review fix 4: fail-closed export gate -----------------------------------
+
+test("R4: zero valid rows is allowed (no mappings, no channel needed)", () => {
+  assert.deepEqual(decideExportGate(0, { status: "missing" }, null), { ok: true });
+});
+
+test("R4: valid rows with a missing/ambiguous channel block the download (safe 503)", () => {
+  const miss = decideExportGate(3, { status: "missing" }, null);
+  const amb = decideExportGate(3, { status: "ambiguous" }, null);
+  for (const g of [miss, amb]) {
+    assert.equal(g.ok, false);
+    if (!g.ok) {
+      assert.equal(g.httpStatus, 503);
+      assert.equal(g.message, "Talabat export configuration is unavailable");
+    }
+  }
+});
+
+test("R4: persistence failure (failed>0 or null) blocks the download", () => {
+  const nullPersist = decideExportGate(3, { status: "ok", id: "c1" }, null);
+  const failed = decideExportGate(3, { status: "ok", id: "c1" }, { inserted: 2, updated: 0, failed: 1 });
+  for (const g of [nullPersist, failed]) {
+    assert.equal(g.ok, false);
+    if (!g.ok) {
+      assert.equal(g.httpStatus, 503);
+      assert.equal(g.message, "Talabat export could not be completed. Please try again.");
+    }
+  }
+});
+
+test("R4: full persistence success permits the download", () => {
+  assert.deepEqual(decideExportGate(3, { status: "ok", id: "c1" }, { inserted: 3, updated: 0, failed: 0 }), { ok: true });
+});
+
+test("R4: gate messages never leak ids/barcodes/DB errors", () => {
+  for (const g of [decideExportGate(1, { status: "missing" }, null), decideExportGate(1, { status: "ok", id: "c1" }, { inserted: 0, updated: 0, failed: 1 })]) {
+    if (!g.ok) assert.ok(!/c1|barcode|error|supabase|sql/i.test(g.message), `message leaks: ${g.message}`);
+  }
+});
+
+// ---- Review fix 3: OutOfStock stays active -----------------------------------
+
+test("R3: an out-of-stock variant stays active with OutOfStock in the snapshot", () => {
+  const r = buildTalabatExport([prod()], [variant({ stock_quantity: 0 })]);
+  assert.equal(r.rows.length, 1);
+  assert.equal(r.mappings[0].mappingStatus, "active");
+  assert.equal(r.mappings[0].exportSnapshot.availability, "OutOfStock");
+  assert.ok(r.warnings.some((w) => w.kind === "out_of_stock"));
+});
+
+// ---- Review: route wiring (source scan) --------------------------------------
+
+test("R: the route uses explicit approval + exact channel + fail-closed gate", () => {
+  const route = read("app/api/export/[channel]/route.ts");
+  assert.match(route, /isApprovedForTalabat/);
+  assert.ok(!/!==\s*"Not Listed"/.test(route), "must not gate approval by channel_status !== Not Listed");
+  assert.match(route, /platform_status/);
+  assert.match(route, /resolveExactChannelId/);
+  assert.ok(!/chanIds\[0\]/.test(route), "must not pick chanIds[0]");
+  assert.match(route, /decideExportGate/);
+  assert.match(route, /status:\s*gate\.httpStatus/);
+  // Other channels untouched.
+  assert.match(route, /buildShopifyCsv/);
+  assert.match(route, /buildSnoonuCsv/);
+  assert.match(route, /buildRafeeqAoa/);
 });
 
 test("summary reports counts for preview / dry-run", () => {

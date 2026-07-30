@@ -13,6 +13,12 @@ import {
 // existing channel_product_id. Blocked rows are not persisted here (the builder
 // only emits candidates for valid rows).
 //
+// Contract: this returns { inserted, updated, failed } and does not throw, so
+// the caller can enforce a FAIL-CLOSED gate — the export file must not download
+// unless `failed === 0`. Re-running is idempotent (upsert by identity, updates
+// never touch channel_product_id), so a later retry after a partial failure is
+// safe. Raw DB errors are never returned to the client.
+//
 // The pure decision (planMappingWrite) lives in ./export and is unit-tested;
 // this file is the thin, injectable I/O wrapper.
 

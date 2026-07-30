@@ -211,7 +211,9 @@ export function buildTalabatExport(
       warnings.push({ kind: "excluded_archived", masterProductId: p.id, masterVariantSku: null, exportedSku: null, message: "product archived — excluded from export" });
       continue;
     }
-    if (p.approved === false) {
+    // Fail-closed: a product enters the Talabat export ONLY with explicit
+    // approval (approved === true). Missing/undefined ⇒ excluded.
+    if (p.approved !== true) {
       warnings.push({ kind: "excluded_not_approved", masterProductId: p.id, masterVariantSku: null, exportedSku: null, message: "product not approved for Talabat — excluded" });
       continue;
     }
@@ -268,7 +270,12 @@ export function buildTalabatExport(
         row: { sku, barcode, priceQar: priceStr(price), discount: "", nameEn, nameAr, category, descEn, descAr, imageFilename: image },
         mapping: {
           masterProductId: p.id, masterVariantSku: sku, exportedSku: sku, exportedBarcode: barcode,
-          mappingStatus: "needs_review", // inherits parent image → review before it is "clean"
+          // A complete variant (SKU + barcode + a valid parent image) is `active`
+          // — inheriting the parent image is allowed this phase and only raises
+          // the no_variant_image warning, never a needs_review status. This
+          // mirrors lib/talabat/mapping.ts classifyMappingStatus (needs_review is
+          // reserved for incomplete/invalid mappings, which are blocked above).
+          mappingStatus: "active",
           exportSnapshot: { nameEn, nameAr, price: priceStr(price), barcode, imageFilename: image, availability: outOfStock ? "OutOfStock" : "InStock" },
         },
       });
@@ -358,6 +365,68 @@ export function summarizeTalabatExport(
     duplicateBarcode: byReason("duplicate_barcode"),
     noVariantImage: result.warnings.filter((w) => w.kind === "no_variant_image").length,
   };
+}
+
+// ---- Approval + channel resolution (pure) -----------------------------------
+
+/**
+ * A product is approved for Talabat ONLY when its Talabat approval overlay
+ * (platform_status where platform='talabat') is exactly "Approved". Missing row,
+ * undefined, null, "", "SentAI", "Rejected", "Not Listed", etc. ⇒ NOT approved.
+ */
+export function isApprovedForTalabat(approval: string | null | undefined): boolean {
+  return approval === "Approved";
+}
+
+export type ChannelResolution =
+  | { status: "ok"; id: string }
+  | { status: "missing" }
+  | { status: "ambiguous" };
+
+/**
+ * Resolve exactly one channel by exact (case-insensitive) name. Never picks the
+ * first of several — 0 matches ⇒ missing, >1 ⇒ ambiguous.
+ */
+export function resolveExactChannelId(
+  channels: { id: string; name: string | null }[],
+  exactName: string,
+): ChannelResolution {
+  const want = exactName.trim().toLowerCase();
+  const matches = (channels ?? []).filter((c) => String(c.name ?? "").trim().toLowerCase() === want);
+  if (matches.length === 0) return { status: "missing" };
+  if (matches.length > 1) return { status: "ambiguous" };
+  return { status: "ok", id: matches[0].id };
+}
+
+export interface PersistCounts {
+  inserted: number;
+  updated: number;
+  failed: number;
+}
+
+export type ExportGate = { ok: true } | { ok: false; httpStatus: 503; message: string };
+
+const CHANNEL_UNAVAILABLE = "Talabat export configuration is unavailable";
+const PERSIST_FAILED = "Talabat export could not be completed. Please try again.";
+
+/**
+ * Fail-closed gate: when there are valid rows to export, the Talabat channel
+ * must resolve to exactly one and EVERY mapping must persist (failed === 0)
+ * before a file may download. `persist === null` means persistence was not
+ * attempted or the client/query threw. Messages are static and safe (no channel
+ * ids, product ids, barcodes, or DB errors). Zero valid rows ⇒ allowed (no
+ * mappings needed).
+ */
+export function decideExportGate(
+  validRowCount: number,
+  channel: ChannelResolution,
+  persist: PersistCounts | null,
+): ExportGate {
+  if (validRowCount <= 0) return { ok: true };
+  if (channel.status !== "ok") return { ok: false, httpStatus: 503, message: CHANNEL_UNAVAILABLE };
+  if (persist === null) return { ok: false, httpStatus: 503, message: PERSIST_FAILED };
+  if (persist.failed > 0) return { ok: false, httpStatus: 503, message: PERSIST_FAILED };
+  return { ok: true };
 }
 
 // ---- Mapping persistence PLAN (pure; the I/O wrapper lives in

@@ -8,7 +8,8 @@ import {
 } from "@/lib/exporters";
 import {
   buildTalabatExport, talabatResultToCsv,
-  type ExportProductInput, type ExportVariantInput,
+  isApprovedForTalabat, resolveExactChannelId, decideExportGate,
+  type ExportProductInput, type ExportVariantInput, type PersistCounts,
 } from "@/lib/talabat/export";
 import { persistTalabatMappings, type MappingWriteClient } from "@/lib/talabat/persist-mappings";
 
@@ -96,6 +97,18 @@ export async function GET(
           .range(from, to)
       )) as any[];
 
+      // Explicit Talabat approval lives in the per-platform overlay
+      // (platform_status where platform='talabat'). A missing row / undefined /
+      // any value other than "Approved" means NOT approved.
+      const approvalByProduct: Record<string, string | null> = {};
+      const approvals = await fetchAll((from, to) =>
+        supabase.from("platform_status")
+          .select("product_id, approval")
+          .eq("platform", "talabat")
+          .range(from, to)
+      );
+      for (const a of approvals) approvalByProduct[a.product_id] = a.approval ?? null;
+
       const productInputs: ExportProductInput[] = prods.map((p: any) => ({
         id: p.id, sku: p.sku, barcode: p.barcode,
         name_en: p.name_en, name_ar: p.name_ar,
@@ -104,7 +117,7 @@ export async function GET(
         description_en: p.description_en, description_ar: p.description_ar,
         image_filename: p.image_filename, image_url: p.image_url,
         channel_price: priceOverride[p.id] ?? null,
-        approved: status[p.id] !== "Not Listed", // undefined status ⇒ included
+        approved: isApprovedForTalabat(approvalByProduct[p.id]), // explicit approval only
       }));
       const variantInputs: ExportVariantInput[] = variants.map((v) => ({
         parent_product_id: v.parent_product_id, sku: v.sku, barcode: v.barcode,
@@ -114,16 +127,23 @@ export async function GET(
 
       const result = buildTalabatExport(productInputs, variantInputs);
 
-      // Persist mappings for VALID rows only, via the service-role client.
-      // Best-effort: a persistence failure never breaks the export download and
-      // never surfaces a raw DB error.
-      const talabatChannelId = chanIds[0];
-      if (talabatChannelId && result.mappings.length) {
+      // FAIL-CLOSED: when there are valid rows, resolve EXACTLY ONE Talabat
+      // channel and persist EVERY mapping (failed === 0) before any file may
+      // download. An unresolved/ambiguous channel, an admin/query error, or any
+      // failed write returns a safe 503 — never a channel id, product id,
+      // barcode, or raw DB error.
+      const channelRes = resolveExactChannelId(chans ?? [], "talabat");
+      let persist: PersistCounts | null = null;
+      if (result.rows.length > 0 && channelRes.status === "ok") {
         try {
           const admin = createAdminClient() as unknown as MappingWriteClient;
-          await persistTalabatMappings(admin, talabatChannelId, result.mappings, new Date().toISOString());
-        } catch { /* export still returns the valid rows */ }
+          persist = await persistTalabatMappings(admin, channelRes.id, result.mappings, new Date().toISOString());
+        } catch {
+          persist = null; // treated as failure by the gate
+        }
       }
+      const gate = decideExportGate(result.rows.length, channelRes, persist);
+      if (!gate.ok) return new Response(gate.message, { status: gate.httpStatus });
 
       const date = new Date().toISOString().slice(0, 10);
       return new Response("﻿" + talabatResultToCsv(result.rows), {
