@@ -20,6 +20,7 @@ import { DAY_SLOTS, slotTimeUtc } from "@/lib/social/schedule-compute";
 import { generateScheduledPost } from "@/lib/social/generate";
 import { geminiConfigured, generateSceneWithGemini, designSceneSettingWithGemini } from "@/lib/social/scene-gemini";
 import { PRODUCT_SCENE_BASE, WORN_SCENE_BASE } from "@/lib/social/ad-variants";
+import { SAFE_PUBLISH_FAILURE_MESSAGE, classifyPublishFailure, logPublishFailure } from "@/lib/social/publish-due";
 import crypto from "crypto";
 
 // السعر المعروض في الإعلان: إذا للمنتج خيارات مُسعّرة نمشي على سعر الخيارات
@@ -78,7 +79,9 @@ export async function listSocialPosts(): Promise<{ error?: string; pending: Soci
   }
   const rows = (data ?? []) as SocialPost[];
   return {
-    pending: rows.filter((r) => r.status === "pending" || r.status === "failed"),
+    // "publishing" = claimed by the cron mid-flight; keep it visible so a run
+    // that was hard-killed leaves a recoverable row the owner can re-publish.
+    pending: rows.filter((r) => r.status === "pending" || r.status === "failed" || r.status === "publishing"),
     recent: rows.filter((r) => r.status === "posted" || r.status === "dismissed").slice(0, 10),
     configured,
   };
@@ -102,9 +105,14 @@ export async function publishSocialPost(id: string, caption: string): Promise<{ 
       : { ok: false as const, error: `منصة غير معروفة: ${row.platform}` };
 
   if (!res.ok) {
-    await sb.from("social_posts").update({ status: "failed", error: res.error ?? "فشل النشر", caption: text }).eq("id", id);
+    // Never store or surface the raw Meta/TikTok error — a generic message goes
+    // to the row/UI, the classified category is logged server-side only.
+    logPublishFailure((l) => console.warn(l), {
+      platform: row.platform, kind: "post", category: classifyPublishFailure(res.error),
+    });
+    await sb.from("social_posts").update({ status: "failed", error: SAFE_PUBLISH_FAILURE_MESSAGE, caption: text }).eq("id", id);
     revalidatePath("/social");
-    return { error: res.error ?? "فشل النشر" };
+    return { error: SAFE_PUBLISH_FAILURE_MESSAGE };
   }
 
   await sb.from("social_posts").update({
