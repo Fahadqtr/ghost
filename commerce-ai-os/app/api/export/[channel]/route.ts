@@ -1,32 +1,20 @@
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   buildShopifyCsv, buildSnoonuCsv, buildRafeeqAoa, RAFEEQ_COL_WIDTHS,
   CHANNEL_KEYS, type ChannelKey, type ExportProduct,
-  type ExportVariant, type StatusMap,
+  type StatusMap,
 } from "@/lib/exporters";
 import {
-  buildTalabatRows, rowsToCsv, masterDescEnFromRows,
-} from "@/lib/malak/talabat-export.mjs";
+  buildTalabatExport, talabatResultToCsv,
+  isApprovedForTalabat, resolveExactChannelId, decideExportGate,
+  type ExportProductInput, type ExportVariantInput, type PersistCounts,
+} from "@/lib/talabat/export";
+import { persistTalabatMappings, type MappingWriteClient } from "@/lib/talabat/persist-mappings";
 
-export const runtime = "nodejs"; // needs fs to read the master sheet fallback
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-// Master sheet (gitignored, present locally / not on Vercel) → SKU→Description-EN
-// map. Used ONLY to fill an empty DB description; absent file → empty map.
-function loadMasterDescEn(): Map<string, string> {
-  try {
-    const require = createRequire(import.meta.url);
-    const XLSX = require("xlsx");
-    const buf = readFileSync("./Malikas_Universe_CLEAN_28col.xlsx");
-    const wb = XLSX.read(buf, { type: "buffer" });
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
-    return masterDescEnFromRows(rows);
-  } catch {
-    return new Map(); // not deployed → DB stays the only source
-  }
-}
 
 const PAGE = 1000;
 async function fetchAll(q: (from: number, to: number) => any): Promise<any[]> {
@@ -72,7 +60,11 @@ export async function GET(
       .from("channels").select("id, name").ilike("name", `%${channel}%`);
     const chanIds = (chans ?? []).map((c: any) => c.id);
     const status: StatusMap = {};
-    if (chanIds.length) {
+    // Fuzzy status/price map for the OTHER channels (Snoonu deliberately spans
+    // two storefronts). Talabat must NOT use this — it resolves its own exact
+    // channel below so a "%talabat%" sibling (e.g. a "Talabat Archive" channel)
+    // can never leak its price into the export.
+    if (chanIds.length && channel !== "talabat") {
       const links = await fetchAll((from, to) =>
         supabase.from("channel_products")
           .select("product_id, channel_status")
@@ -84,8 +76,9 @@ export async function GET(
 
     let csv: string;
     if (channel === "talabat") {
-      // Same format as scripts/export_talabat.mjs (shared module): 10 columns,
-      // one row per variant ({sku}-{seq}), Description EN gap-filled from master.
+      // Flatten each variant into its own standalone Talabat product and persist
+      // a channel_variant_mapping per VALID row. Blocked rows (missing SKU /
+      // barcode / image, duplicates) are never exported.
       // Optional ?cats=A|B|C → include only those categories (default: all).
       // Optional ?source=new → only products added via Snoonu Sync (notes marker).
       const url2 = new URL(req.url);
@@ -98,13 +91,89 @@ export async function GET(
         const want = new Set(catsParam.split("|").map((s) => s.trim()).filter(Boolean));
         prods = prods.filter((p) => want.has(String(p.main_category ?? "").trim()));
       }
+      // Resolve EXACTLY ONE Talabat channel up front. Both the price override
+      // and the mappings come only from this channel — never a fuzzy
+      // "%talabat%" sibling.
+      const channelRes = resolveExactChannelId(chans ?? [], "talabat");
+
+      // Channel price override — ONLY from the exact Talabat channel, and only
+      // when it resolves. Missing/ambiguous ⇒ no overrides are loaded.
+      const talabatPrice: Record<string, number | null> = {};
+      if (channelRes.status === "ok") {
+        const links = await fetchAll((from, to) =>
+          supabase.from("channel_products")
+            .select("product_id, channel_price")
+            .eq("channel_id", channelRes.id)
+            .range(from, to)
+        );
+        for (const l of links) if (l.channel_price != null) talabatPrice[l.product_id] = l.channel_price;
+      }
+
       const variants = (await fetchAll((from, to) =>
         supabase.from("product_variants")
-          .select("parent_product_id, variant_name, sku, price")
+          .select("parent_product_id, variant_name, variant_name_en, sku, barcode, price, stock_quantity")
           .range(from, to)
-      )) as ExportVariant[];
-      const { rows } = buildTalabatRows(prods, variants, loadMasterDescEn());
-      csv = rowsToCsv(rows);
+      )) as any[];
+
+      // Explicit Talabat approval lives in the per-platform overlay
+      // (platform_status where platform='talabat'). A missing row / undefined /
+      // any value other than "Approved" means NOT approved.
+      const approvalByProduct: Record<string, string | null> = {};
+      const approvals = await fetchAll((from, to) =>
+        supabase.from("platform_status")
+          .select("product_id, approval")
+          .eq("platform", "talabat")
+          .range(from, to)
+      );
+      for (const a of approvals) approvalByProduct[a.product_id] = a.approval ?? null;
+
+      const productInputs: ExportProductInput[] = prods.map((p: any) => ({
+        id: p.id, sku: p.sku, barcode: p.barcode,
+        name_en: p.name_en, name_ar: p.name_ar,
+        price: p.price, discount_price: p.discount_price,
+        main_category: p.main_category,
+        description_en: p.description_en, description_ar: p.description_ar,
+        image_filename: p.image_filename, image_url: p.image_url,
+        channel_price: talabatPrice[p.id] ?? null,          // exact Talabat channel only
+        approved: isApprovedForTalabat(approvalByProduct[p.id]), // explicit approval only
+      }));
+      const variantInputs: ExportVariantInput[] = variants.map((v) => ({
+        parent_product_id: v.parent_product_id, sku: v.sku, barcode: v.barcode,
+        variant_name: v.variant_name, variant_name_en: v.variant_name_en,
+        price: v.price, stock_quantity: v.stock_quantity,
+      }));
+
+      const result = buildTalabatExport(productInputs, variantInputs);
+
+      // FAIL-CLOSED: when there are valid rows, the Talabat channel must resolve
+      // to exactly one AND every mapping must persist (failed === 0) before any
+      // file may download. An unresolved/ambiguous channel, an admin/query
+      // error, or any failed write returns a safe 503 — never a channel id,
+      // product id, barcode, or raw DB error.
+      let persist: PersistCounts | null = null;
+      if (result.rows.length > 0 && channelRes.status === "ok") {
+        try {
+          const admin = createAdminClient() as unknown as MappingWriteClient;
+          persist = await persistTalabatMappings(admin, channelRes.id, result.mappings, new Date().toISOString());
+        } catch {
+          persist = null; // treated as failure by the gate
+        }
+      }
+      const gate = decideExportGate(result.rows.length, channelRes, persist);
+      if (!gate.ok) return new Response(gate.message, { status: gate.httpStatus });
+
+      const date = new Date().toISOString().slice(0, 10);
+      return new Response("﻿" + talabatResultToCsv(result.rows), {
+        status: 200,
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="talabat_export_${date}.csv"`,
+          "Cache-Control": "no-store",
+          "X-Talabat-Valid-Rows": String(result.rows.length),
+          "X-Talabat-Blocked-Rows": String(result.blocked.length),
+          "X-Talabat-Warnings": String(result.warnings.length),
+        },
+      });
     } else if (channel === "shopify") {
       csv = buildShopifyCsv(products, status);
     } else if (channel === "snoonu") {
@@ -143,6 +212,13 @@ export async function GET(
       },
     });
   } catch (e) {
+    // Talabat: never surface a raw error (message, Supabase/table/column names,
+    // channel/product ids, SKU, or barcode). Any failure — products,
+    // product_variants, platform_status, channels/channel_products, the admin
+    // client, or persistence — collapses to one static, safe 503, and never a CSV.
+    if (channel === "talabat") {
+      return new Response("Talabat export is temporarily unavailable", { status: 503 });
+    }
     return new Response(`Export failed: ${e instanceof Error ? e.message : "error"}`, { status: 500 });
   }
 }
