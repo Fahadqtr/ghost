@@ -4,6 +4,7 @@
 // (/api/rewards/*) and the admin server actions call in through here.
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendWhatsAppTo, sendWhatsAppImageTo } from "@/lib/whatsapp";
+import { planCustomerName, shouldApplyPrizeChange } from "@/lib/loyalty/rewards-public";
 
 /** Hearts needed to earn one free product. */
 export const STAMPS_REQUIRED = 6;
@@ -71,19 +72,39 @@ export async function getOrCreateState(
   if (!name) throw new Error("الاسم مطلوب.");
 
   const admin = createAdminClient();
+  const COLS = "id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id";
 
-  // Upsert on the unique phone. On conflict we refresh the name + updated_at.
-  const { data: customer, error } = await admin
+  // Look the customer up first. Existing customers KEEP their stored name — a
+  // public request must never rename them (renames are admin-only) and we don't
+  // touch updated_at when nothing actually changes. New phones are created with
+  // the submitted name.
+  const { data: existing } = await admin
     .from("loyalty_customers")
-    .upsert(
-      { phone, name, updated_at: new Date().toISOString() },
-      { onConflict: "phone" }
-    )
-    .select("id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id")
-    .single();
-  if (error || !customer) throw new Error(error?.message ?? "تعذّر إنشاء البطاقة.");
+    .select(COLS)
+    .eq("phone", phone)
+    .maybeSingle();
 
-  return stateFor(admin, customer);
+  const plan = planCustomerName(existing ? { name: existing.name } : null, name);
+  if (plan.action === "keep") {
+    return stateFor(admin, existing as CustomerRow);
+  }
+
+  const { data: created, error } = await admin
+    .from("loyalty_customers")
+    .insert({ phone, name: plan.name })
+    .select(COLS)
+    .single();
+  if (error || !created) {
+    // A concurrent create can lose the insert race (unique phone) — re-read.
+    const { data: again } = await admin
+      .from("loyalty_customers")
+      .select(COLS)
+      .eq("phone", phone)
+      .maybeSingle();
+    if (again) return stateFor(admin, again as CustomerRow);
+    throw new Error("تعذّر إنشاء البطاقة.");
+  }
+  return stateFor(admin, created);
 }
 
 /** Read-only state lookup by phone (returns null if the customer doesn't exist). */
@@ -327,11 +348,19 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
 
   const { data: customer } = await admin
     .from("loyalty_customers")
-    .select("id, stamps")
+    .select("id, stamps, chosen_prize_id")
     .eq("phone", phone)
     .maybeSingle();
   if (!customer) throw new Error("العميلة غير موجودة.");
   if (customer.stamps < STAMPS_REQUIRED) throw new Error("لم تكتمل الختمات بعد.");
+
+  // Idempotent: re-choosing the SAME prize is a no-op — no write, and no
+  // second WhatsApp (which would let a repeat call spam the customer).
+  if (!shouldApplyPrizeChange(customer.chosen_prize_id, prizeId)) {
+    const cur = await getStateByPhone(phone);
+    if (!cur) throw new Error("تعذّر تحديث الحالة.");
+    return cur;
+  }
 
   const { data: prize } = await admin
     .from("loyalty_prizes")

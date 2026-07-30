@@ -49,6 +49,23 @@ export function clientIpFrom(xForwardedFor: string | null, xRealIp: string | nul
 }
 
 /**
+ * Gate a side-effecting operation behind a rate-limit check: run `perform`
+ * only when the check allows it, otherwise `onLimited`. A fail-open result
+ * (`configured:false`, or `allowed:true`) runs `perform`. This guarantees no
+ * service-role DB/Storage/WhatsApp work starts before the limiter passes —
+ * the check runs first and `perform` is never invoked on a block.
+ */
+export async function runIfAllowed<T>(
+  check: () => Promise<RateLimitResult>,
+  onLimited: () => T | Promise<T>,
+  perform: () => Promise<T>,
+): Promise<T> {
+  const result = await check();
+  if (result.configured && !result.allowed) return onLimited();
+  return perform();
+}
+
+/**
  * Count one attempt for (scope,id) and decide. INCR + EXPIRE NX run in one
  * pipeline call, so the window TTL is set exactly once per bucket.
  */
