@@ -1,8 +1,11 @@
-// Auto-publisher for the weekly plan. Runs every 15 minutes (Vercel Cron, see
-// vercel.json) and publishes ONLY rows the owner explicitly approved on /social
-// whose scheduled_at (UTC) has passed — nothing ever posts without that approval
-// tap. Each due row is CLAIMED (pending → publishing) before its external call,
-// so overlapping runs / Vercel retries never publish the same post twice.
+// Auto-publisher for the weekly plan. Polled every 15 minutes by Supabase
+// pg_cron (supabase/social_publish_cron.sql) — the Vercel Hobby plan only allows
+// once-daily crons, so vercel.json keeps a single daily entry as a safety-net
+// fallback while pg_cron drives the real 15-minute cadence. Publishes ONLY rows
+// the owner explicitly approved on /social whose scheduled_at (UTC) has passed —
+// nothing ever posts without that approval tap. Each due row is CLAIMED
+// (pending → publishing) before its external call, so overlapping runs / retries
+// never publish the same post twice.
 //
 // Auth: same CRON_SECRET bearer scheme as availability-sync / notify — verified
 // before any DB or external work.

@@ -209,11 +209,19 @@ test("13: logPublishFailure emits only scope/platform/kind/category — no secre
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
-test("1: vercel.json runs publish-social every 15 minutes, exactly once", () => {
+test("1: the publish path is checked every 15 minutes via Supabase pg_cron", () => {
+  // The Vercel Hobby plan rejects sub-daily crons, so the 15-minute cadence is
+  // driven by Supabase pg_cron (the mechanism the repo already ships), and
+  // vercel.json keeps a single valid DAILY entry as a safety-net fallback.
+  const pgcron = read("supabase/social_publish_cron.sql");
+  assert.match(pgcron, /cron\.schedule\(\s*'publish-social',\s*'\*\/15 \* \* \* \*'/, "pg_cron runs the publish endpoint every 15 minutes");
+  assert.match(pgcron, /\/api\/cron\/publish-social/, "pg_cron targets the publish endpoint");
+
   const vercel = JSON.parse(read("vercel.json")) as { crons: { path: string; schedule: string }[] };
   const entries = vercel.crons.filter((c) => c.path === "/api/cron/publish-social");
-  assert.equal(entries.length, 1, "exactly one cron for the publish path (no duplicate)");
-  assert.equal(entries[0].schedule, "*/15 * * * *");
+  assert.equal(entries.length, 1, "exactly one Vercel cron for the publish path (no duplicate)");
+  // Hobby-compatible: a once-daily schedule (minute + hour fixed, not a step).
+  assert.match(entries[0].schedule, /^\d+ \d+ \* \* \*$/, "Vercel fallback must be a valid once-daily schedule");
 });
 
 test("11: the cron rejects a bad CRON_SECRET before any DB or external work", () => {
