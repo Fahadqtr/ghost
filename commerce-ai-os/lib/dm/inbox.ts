@@ -1,16 +1,15 @@
 import "server-only";
 import { buildDmPrompt, parseDmReply, dmSearchTokens, matchDmProducts, detectCategories, matchDmProductsByCategory, type DmProduct, type DmTurn } from "./respond-compute";
 import { STORE_INFO } from "./store-info";
+import { graphFetch, GRAPH_BASE as GRAPH, IG_GRAPH_BASE as IG_GRAPH } from "../social/graph";
 
 // DM engine: store the incoming message, let «ملاك» answer from the catalog
 // + store facts, send the reply, and flag anything she can't handle for a
 // human. Called from the Meta webhook — every step is defensive; a failure
 // flags the conversation instead of dropping the customer.
-
-const GRAPH = "https://graph.facebook.com/v21.0";
-// Instagram-Login tokens (generated via "API setup with Instagram business
-// login") speak to graph.instagram.com, not the Facebook graph host.
-const IG_GRAPH = "https://graph.instagram.com/v21.0";
+//
+// All Graph calls go through graphFetch, so the access token rides only in the
+// Authorization: Bearer header — never in a request URL, log, or error.
 
 export function dmToken(): string {
   return process.env.META_MESSAGING_TOKEN || process.env.INSTAGRAM_ACCESS_TOKEN || "";
@@ -24,45 +23,29 @@ export function dmToken(): string {
 export async function sendInstagramDm(recipientId: string, text: string): Promise<{ ok: boolean; error?: string }> {
   const token = dmToken();
   if (!token) return { ok: false, error: "INSTAGRAM_ACCESS_TOKEN غير مضبوط" };
-  const body = JSON.stringify({ recipient: { id: recipientId }, message: { text: text.slice(0, 900) } });
+  const message = { recipient: { id: recipientId }, message: { text: text.slice(0, 900) } };
   let lastErr = "";
   for (const base of [GRAPH, IG_GRAPH]) {
-    try {
-      const r = await fetch(`${base}/me/messages?access_token=${encodeURIComponent(token)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (r.ok) return { ok: true };
-      lastErr = `Graph ${r.status}`;
-      console.error("[dm-send]", base, r.status, (await r.text()).slice(0, 300));
-    } catch (e) {
-      lastErr = e instanceof Error ? e.message : "send failed";
-    }
+    const r = await graphFetch("/me/messages", { token, base, method: "POST", body: message });
+    if (r.ok) return { ok: true };
+    // Classified category only — never the token, the Authorization header, the
+    // full URL, or the raw response body (which could carry sensitive data).
+    lastErr = r.errorKind ?? "meta_api_error";
+    console.error("[dm-send]", base, lastErr);
   }
   return { ok: false, error: lastErr };
 }
 
 async function graphGet(path: string, token: string, base: string = GRAPH): Promise<any> {
-  const sep = path.includes("?") ? "&" : "?";
-  const r = await fetch(`${base}${path}${sep}access_token=${encodeURIComponent(token)}`, {
-    signal: AbortSignal.timeout(15_000),
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j?.error?.message || `Graph ${r.status}`);
-  return j;
+  const r = await graphFetch<any>(path, { token, base, method: "GET" });
+  if (!r.ok) throw new Error(r.errorMessage || r.errorKind || "meta_api_error");
+  return r.data ?? {};
 }
 
 async function graphPost(path: string, token: string, base: string = GRAPH): Promise<any> {
-  const sep = path.includes("?") ? "&" : "?";
-  const r = await fetch(`${base}${path}${sep}access_token=${encodeURIComponent(token)}`, {
-    method: "POST",
-    signal: AbortSignal.timeout(15_000),
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j?.error?.message || `Graph ${r.status}`);
-  return j;
+  const r = await graphFetch<any>(path, { token, base, method: "POST" });
+  if (!r.ok) throw new Error(r.errorMessage || r.errorKind || "meta_api_error");
+  return r.data ?? {};
 }
 
 /**
