@@ -1,4 +1,5 @@
 import "server-only";
+import { graphFetch } from "./graph";
 
 // Env-gated Instagram publisher (Meta Graph API — official content publishing).
 // Two-step: create a media container from a PUBLIC image URL (our Supabase
@@ -8,8 +9,9 @@ import "server-only";
 // Setup (same Meta app as WhatsApp works): Instagram Business/Creator account
 // linked to a Facebook Page → add the "Instagram Graph API" product → token
 // with instagram_basic + instagram_content_publish + pages_show_list.
-
-const GRAPH = "https://graph.facebook.com/v21.0";
+//
+// The token rides in the Authorization: Bearer header (via graphFetch) so it
+// never appears in a request URL, log, proxy, or error trace.
 
 // Env values pasted into the dashboard often pick up a stray newline, space, or
 // wrapping quotes — Meta then rejects the token with "Cannot parse access
@@ -47,13 +49,12 @@ export interface IgVerifyResult {
 // Derive the IG business account id from the token (page → instagram account),
 // so the operator doesn't have to hunt for it manually.
 async function deriveIgUserId(token: string): Promise<{ id?: string; error?: string }> {
-  const r = await fetch(
-    `${GRAPH}/me/accounts?fields=name,instagram_business_account&access_token=${encodeURIComponent(token)}`,
-    { cache: "no-store", signal: AbortSignal.timeout(15_000) },
+  const r = await graphFetch<{ data?: { instagram_business_account?: { id?: string } }[] }>(
+    "/me/accounts",
+    { token, query: { fields: "name,instagram_business_account" }, timeoutMs: 15_000 },
   );
-  const j = (await r.json().catch(() => null)) as { data?: { instagram_business_account?: { id?: string } }[]; error?: { message?: string } } | null;
-  if (!r.ok) return { error: j?.error?.message || `HTTP ${r.status}` };
-  for (const p of j?.data ?? []) if (p?.instagram_business_account?.id) return { id: p.instagram_business_account.id };
+  if (!r.ok) return { error: r.errorMessage || `HTTP ${r.status}` };
+  for (const p of r.data?.data ?? []) if (p?.instagram_business_account?.id) return { id: p.instagram_business_account.id };
   return { error: "ما لقيت instagram_business_account على أي صفحة — تأكد إن حساب انستقرام Business ومربوط بصفحة فيسبوك." };
 }
 
@@ -78,28 +79,27 @@ export async function verifyIgSetup(): Promise<IgVerifyResult> {
   base.igUserId = id; base.igUserIdSource = source;
 
   // username
-  const u = await fetch(`${GRAPH}/${id}?fields=username&access_token=${encodeURIComponent(token)}`, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
-  const uj = (await u.json().catch(() => null)) as { username?: string; error?: { message?: string } } | null;
-  if (!u.ok) return { ...base, error: uj?.error?.message, summary: `❌ التوكن/الـID لا يعملان: ${uj?.error?.message ?? `HTTP ${u.status}`}` };
-  base.username = uj?.username ?? null;
+  const u = await graphFetch<{ username?: string }>(`/${id}`, { token, query: { fields: "username" }, timeoutMs: 15_000 });
+  if (!u.ok) return { ...base, error: u.errorMessage, summary: `❌ التوكن/الـID لا يعملان: ${u.errorMessage ?? `HTTP ${u.status}`}` };
+  base.username = u.data?.username ?? null;
 
   // container test (create only — never publish)
   const SAMPLE = "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
-  const c = await fetch(`${GRAPH}/${id}/media`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_type: "REELS", video_url: SAMPLE, caption: "verification only — not published", access_token: token }),
-    cache: "no-store", signal: AbortSignal.timeout(20_000),
+  const c = await graphFetch<{ id?: string }>(`/${id}/media`, {
+    token, method: "POST",
+    body: { media_type: "REELS", video_url: SAMPLE, caption: "verification only — not published" },
+    timeoutMs: 20_000,
   });
-  const cj = (await c.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
-  if (!c.ok || !cj?.id) {
-    return { ...base, error: cj?.error?.message, summary: `⚠️ التوكن يقرأ الحساب (@${base.username}) بس إنشاء الحاوية فشل: ${cj?.error?.message ?? `HTTP ${c.status}`} — تأكد من صلاحية instagram_content_publish.` };
+  const containerId = c.data?.id ?? null;
+  if (!c.ok || !containerId) {
+    return { ...base, error: c.errorMessage, summary: `⚠️ التوكن يقرأ الحساب (@${base.username}) بس إنشاء الحاوية فشل: ${c.errorMessage ?? `HTTP ${c.status}`} — تأكد من صلاحية instagram_content_publish.` };
   }
 
   const setEnv = source === "derived" ? `INSTAGRAM_USER_ID=${id}` : undefined;
   return {
-    ...base, ok: true, containerId: cj.id,
+    ...base, ok: true, containerId,
     setEnv,
-    summary: `✅ جاهز! الحساب @${base.username} · IG_USER_ID=${id}${source === "derived" ? " (مشتقّ تلقائيًا)" : ""} · نجح إنشاء حاوية Reels (${cj.id}). ${setEnv ? `أضف ${setEnv} في Vercel لتثبيته.` : ""} تقدر الحين تنشر ريل تجريبي.`,
+    summary: `✅ جاهز! الحساب @${base.username} · IG_USER_ID=${id}${source === "derived" ? " (مشتقّ تلقائيًا)" : ""} · نجح إنشاء حاوية Reels (${containerId}). ${setEnv ? `أضف ${setEnv} في Vercel لتثبيته.` : ""} تقدر الحين تنشر ريل تجريبي.`,
   };
 }
 
@@ -151,30 +151,28 @@ export async function fetchIgMediaStats(mediaId: string): Promise<IgMediaStats> 
   const empty = { likes: 0, comments: 0, reach: 0, views: 0, saved: 0, shares: 0 };
   if (!token) return { ok: false, error: "إنستقرام غير مهيأ (INSTAGRAM_ACCESS_TOKEN).", ...empty };
   try {
-    const base = await fetch(
-      `${GRAPH}/${mediaId}?fields=like_count,comments_count,permalink&access_token=${encodeURIComponent(token)}`,
-      { cache: "no-store", signal: AbortSignal.timeout(15_000) },
+    const base = await graphFetch<{ like_count?: number; comments_count?: number; permalink?: string }>(
+      `/${mediaId}`,
+      { token, query: { fields: "like_count,comments_count,permalink" }, timeoutMs: 15_000 },
     );
     if (!base.ok) {
-      const j = await base.json().catch(() => null) as { error?: { message?: string } } | null;
-      return { ok: false, error: j?.error?.message || `HTTP ${base.status}`, ...empty };
+      return { ok: false, error: base.errorMessage || `HTTP ${base.status}`, ...empty };
     }
-    const b = (await base.json()) as { like_count?: number; comments_count?: number; permalink?: string };
+    const b = base.data ?? {};
     const stats = { ...empty, likes: Number(b.like_count) || 0, comments: Number(b.comments_count) || 0 };
 
     let gotInsights = false;
     let lastInsightErr = "";
     for (const metrics of INSIGHT_METRIC_SETS) {
-      const r = await fetch(
-        `${GRAPH}/${mediaId}/insights?metric=${metrics}&access_token=${encodeURIComponent(token)}`,
-        { cache: "no-store", signal: AbortSignal.timeout(15_000) },
+      const r = await graphFetch<{ data?: { name?: string; values?: { value?: number }[] }[] }>(
+        `/${mediaId}/insights`,
+        { token, query: { metric: metrics }, timeoutMs: 15_000 },
       );
       if (!r.ok) {
-        const j = await r.json().catch(() => null) as { error?: { message?: string } } | null;
-        lastInsightErr = j?.error?.message || `HTTP ${r.status}`;
+        lastInsightErr = r.errorMessage || `HTTP ${r.status}`;
         continue;
       }
-      const j = (await r.json()) as { data?: { name?: string; values?: { value?: number }[] }[] };
+      const j = r.data ?? {};
       for (const m of j.data ?? []) {
         const v = Number(m.values?.[0]?.value) || 0;
         if (m.name === "reach") stats.reach = v;
@@ -197,22 +195,13 @@ async function publishIg(params: Record<string, string>, pollAttempts = 6): Prom
   const token = igToken();
   if (!igId || !token) return { ok: false, error: "إنستقرام غير مهيأ (INSTAGRAM_USER_ID / INSTAGRAM_ACCESS_TOKEN)." };
 
-  const metaError = async (r: Response) => {
-    const j = await r.json().catch(() => null) as { error?: { message?: string } } | null;
-    return j?.error?.message || `HTTP ${r.status}`;
-  };
-
   try {
     // 1) Create the media container.
-    const create = await fetch(`${GRAPH}/${igId}/media`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...params, access_token: token }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(20_000),
+    const create = await graphFetch<{ id?: string }>(`/${igId}/media`, {
+      token, method: "POST", body: { ...params }, timeoutMs: 20_000,
     });
-    if (!create.ok) return { ok: false, error: await metaError(create) };
-    const container = (await create.json()) as { id?: string };
+    if (!create.ok) return { ok: false, error: create.errorMessage || `HTTP ${create.status}` };
+    const container = create.data ?? {};
     if (!container.id) return { ok: false, error: "ما رجع معرف الحاوية من Meta." };
 
     // 1b) Wait for the container to finish processing before publishing.
@@ -221,32 +210,25 @@ async function publishIg(params: Record<string, string>, pollAttempts = 6): Prom
     let ready = false;
     for (let attempt = 0; attempt < pollAttempts; attempt++) {
       await new Promise((r) => setTimeout(r, attempt === 0 ? 1500 : 2000));
-      try {
-        const st = await fetch(
-          `${GRAPH}/${container.id}?fields=status_code,status&access_token=${encodeURIComponent(token)}`,
-          { cache: "no-store", signal: AbortSignal.timeout(15_000) }
-        );
-        const sj = (await st.json().catch(() => null)) as { status_code?: string; status?: string } | null;
-        const code = sj?.status_code;
-        if (code === "FINISHED") { ready = true; break; }
-        // Surface Meta's specific reason (e.g. unsupported format / aspect ratio)
-        // instead of a generic message, so a bad media file is diagnosable.
-        if (code === "ERROR") return { ok: false, error: `فشلت معالجة الوسائط عند Meta: ${sj?.status || "تحقق من الصيغة/الأبعاد (Reels: 9:16، MP4/H.264)."}` };
-      } catch { /* transient — keep polling */ }
+      const st = await graphFetch<{ status_code?: string; status?: string }>(
+        `/${container.id}`,
+        { token, query: { fields: "status_code,status" }, timeoutMs: 15_000 },
+      );
+      if (!st.ok) continue; // transient — keep polling
+      const code = st.data?.status_code;
+      if (code === "FINISHED") { ready = true; break; }
+      // Surface Meta's specific reason (e.g. unsupported format / aspect ratio)
+      // instead of a generic message, so a bad media file is diagnosable.
+      if (code === "ERROR") return { ok: false, error: `فشلت معالجة الوسائط عند Meta: ${st.data?.status || "تحقق من الصيغة/الأبعاد (Reels: 9:16، MP4/H.264)."}` };
     }
     if (!ready) return { ok: false, error: "الصورة ما جهزت عند Meta في الوقت المتاح — جرّب مرة ثانية." };
 
     // 2) Publish it.
-    const pub = await fetch(`${GRAPH}/${igId}/media_publish`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ creation_id: container.id, access_token: token }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(20_000),
+    const pub = await graphFetch<{ id?: string }>(`/${igId}/media_publish`, {
+      token, method: "POST", body: { creation_id: container.id }, timeoutMs: 20_000,
     });
-    if (!pub.ok) return { ok: false, error: await metaError(pub) };
-    const media = (await pub.json()) as { id?: string };
-    return { ok: true, mediaId: media.id };
+    if (!pub.ok) return { ok: false, error: pub.errorMessage || `HTTP ${pub.status}` };
+    return { ok: true, mediaId: pub.data?.id };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "فشل النشر على إنستقرام." };
   }
