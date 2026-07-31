@@ -3,6 +3,7 @@ import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, set
 import { planInventorySync } from "@/lib/shopify-diff";
 import { planOrderDeductions, spreadDeduction, type CatalogRowLite } from "./order-deduct-compute";
 import { classifyShopifyOrderChannel } from "./orders-compute";
+import { claimAndDeduct, type ClaimDeductPorts, type ClaimDeductPlanners } from "./order-ledger";
 import { logStockTransition } from "@/lib/tasks/stock-tasks";
 
 // Stock → Shopify sync core, shared by the manual button on /import-export/
@@ -40,9 +41,16 @@ async function pageAll<T>(fetchPage: (from: number, to: number) => any): Promise
 /**
  * Deduct NEW store orders from the inventory table before the push, so a sale
  * on Shopify lowers OUR stock instead of being silently restocked at night.
- * shopify_synced_orders remembers what was already deducted; the very first
- * run only baselines existing orders without touching stock. Best-effort: any
- * failure (e.g. table not created yet) skips the step with a note.
+ * shopify_synced_orders is the idempotency ledger; the very first run only
+ * baselines existing orders without touching stock.
+ *
+ * Safety: this is a thin adapter around order-ledger's CLAIM-BEFORE-DEDUCT
+ * contract. Orders are recorded in the ledger FIRST (verified), and inventory is
+ * deducted ONLY for the orders this run atomically claimed — so a store sale is
+ * never subtracted from our stock unless its order is durably recorded, and the
+ * same order can never be deducted twice (after a partial failure OR by a
+ * concurrent run). An unexpected DB error skips the step with a note instead of
+ * deducting; only a genuine missing-migration-column error falls back silently.
  */
 async function deductRecentOrders(
   sb: any,
@@ -66,61 +74,42 @@ async function deductRecentOrders(
       .in("order_id", orders.map((o) => o.id));
     const alreadySynced = new Set<string>(((seen ?? []) as { order_id: string }[]).map((r) => r.order_id));
 
-    const plan = planOrderDeductions(orders, catalog, alreadySynced);
-    if (!plan.orderIds.length) return none;
-
-    // First run: record the existing orders as the baseline, deduct nothing.
+    // First run (empty ledger): record existing orders as the baseline, deduct nothing.
     const baseline = (count ?? 0) === 0;
-    const nameOf = new Map(orders.map((o) => [o.id, o.name]));
-    let deducted = 0;
+    const nameOf = new Map<string, string>(orders.map((o) => [o.id, o.name]));
 
-    if (!baseline) {
-      for (const d of plan.deductions) {
-        const { data: rows, error: rowErr } = await sb
-          .from("inventory")
-          .select("id, stock_quantity")
-          .eq("product_id", d.product_id);
-        if (rowErr) continue;
-        const rowStocks = ((rows ?? []) as { id: string | number; stock_quantity: number | null }[])
-          .map((r) => ({ rowKey: r.id, stock: Number(r.stock_quantity) || 0 }));
-        const updates = spreadDeduction(rowStocks, d.qty);
-        let applied = 0; // what actually landed (clamped + write-checked)
-        for (const u of updates) {
-          const prev = rowStocks.find((r) => r.rowKey === u.rowKey)?.stock ?? 0;
-          const { error: upErr } = await sb.from("inventory").update({ stock_quantity: u.stock }).eq("id", u.rowKey);
-          if (!upErr) { deducted++; applied += prev - u.stock; }
+    // Supabase-backed ports for the claim-before-deduct contract. The ledger upsert
+    // uses ON CONFLICT (order_id) DO NOTHING and RETURNING (.select) so the caller
+    // learns exactly which orders this run won and may deduct.
+    const ports: ClaimDeductPorts = {
+      upsertLedger: (rows) =>
+        sb.from("shopify_synced_orders").upsert(rows, { onConflict: "order_id", ignoreDuplicates: true }).select("order_id"),
+      readInventory: (productId) =>
+        sb.from("inventory").select("id, stock_quantity").eq("product_id", productId),
+      writeInventory: (rowKey, stock) =>
+        sb.from("inventory").update({ stock_quantity: stock }).eq("id", rowKey),
+      setLedgerDeducted: async (orderIds, deducted) => {
+        try {
+          await sb.from("shopify_synced_orders").update({ deducted }).in("order_id", orderIds);
+        } catch {
+          /* telemetry only — idempotency already holds */
         }
-        // A store sale that empties the product opens the "mark unavailable on
-        // the manual platforms" task (best-effort inside).
-        if (applied > 0) {
-          const beforeTotal = rowStocks.reduce((s, r) => s + r.stock, 0);
-          await logStockTransition(sb, {
-            productId: d.product_id, before: beforeTotal, after: beforeTotal - applied,
-            actor: "شوبي فاي — طلب متجر",
-          });
-        }
-      }
-    }
+      },
+      logStock: (args) =>
+        logStockTransition(sb, { productId: args.productId, before: args.before, after: args.after, actor: "شوبي فاي — طلب متجر" }),
+    };
+    const planners: ClaimDeductPlanners = {
+      plan: planOrderDeductions,
+      spread: spreadDeduction,
+      classifyChannel: classifyShopifyOrderChannel,
+    };
 
-    // Record every considered order (idempotency by order_id) WITH its channel
-    // attribution, classified purely from the Shopify payment gateway names.
-    // Tiered write: if the channel columns don't exist yet (migration not applied),
-    // fall back to the base columns so the order is still recorded and can never
-    // be deducted twice.
-    const baseRows = plan.considered.map((c) => ({ order_id: c.id, order_name: c.name ?? nameOf.get(c.id) ?? null, deducted: baseline ? 0 : deducted }));
-    const richRows = plan.considered.map((c, i) => ({
-      ...baseRows[i],
-      channel: classifyShopifyOrderChannel(c.paymentGatewayNames),
-      payment_gateway_names: c.paymentGatewayNames,
-    }));
-    const { error: upErr } = await sb.from("shopify_synced_orders").upsert(richRows, { onConflict: "order_id", ignoreDuplicates: true });
-    if (upErr) {
-      await sb.from("shopify_synced_orders").upsert(baseRows, { onConflict: "order_id", ignoreDuplicates: true });
-    }
+    const res = await claimAndDeduct(orders, catalog, alreadySynced, baseline, nameOf, ports, planners);
+    if (!res.ok) return { ...none, ordersNote: res.note };
     return {
-      ordersProcessed: plan.orderIds.length,
-      deducted,
-      ...(baseline ? { ordersNote: "أول تشغيل — سجّل الطلبات الحالية كخط أساس بدون خصم." } : {}),
+      ordersProcessed: res.ordersProcessed,
+      deducted: res.deducted,
+      ...(res.note ? { ordersNote: res.note } : {}),
     };
   } catch (e) {
     return { ...none, ordersNote: `تخطى خصم الطلبات: ${e instanceof Error ? e.message : "خطأ"}` };
