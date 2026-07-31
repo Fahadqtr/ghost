@@ -191,8 +191,9 @@ export function resolveLine(line: ResolverLine, ctx: ResolveContext): LineResolu
 }
 
 export interface ResolveOrderOptions {
-  /** From buildTalabatDedupKey — a "weak" identity can never auto-deduct. */
-  dedupConfidence?: "strong" | "weak";
+  /** From buildTalabatDedupKey. REQUIRED: only "strong" may auto-resolve — any
+   *  other value (or a missing options object at runtime) fails closed. */
+  dedupConfidence: "strong" | "weak";
 }
 
 /**
@@ -201,11 +202,14 @@ export interface ResolveOrderOptions {
  * lines resolving to the same (product, variant SKU) are aggregated — quantities
  * summed, original lineKeys kept — so a target is never deducted twice.
  */
-export function resolveTalabatOrder(lines: ResolverLine[], ctx: ResolveContext, opts: ResolveOrderOptions = {}): OrderResolution {
+export function resolveTalabatOrder(lines: ResolverLine[], ctx: ResolveContext, opts: ResolveOrderOptions): OrderResolution {
   if (!Array.isArray(lines) || lines.length === 0) {
     return { status: "manual_review", reason: "empty_order", resolution: { reason: "empty_order" } };
   }
-  if (opts.dedupConfidence === "weak") {
+  // FAIL-CLOSED: only an explicit "strong" identity may auto-resolve. A missing
+  // options object, an omitted/undefined confidence, "weak", or any unexpected
+  // runtime value all become weak_order_identity.
+  if (opts?.dedupConfidence !== "strong") {
     return { status: "manual_review", reason: "weak_order_identity", resolution: { reason: "weak_order_identity" } };
   }
 

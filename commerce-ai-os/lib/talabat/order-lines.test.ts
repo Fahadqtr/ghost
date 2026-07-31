@@ -118,3 +118,54 @@ test("token: a webhook token is never used as order code, dedup key, or a strong
   const strong = buildTalabatDedupKey(parseTalabatOrderLines({ order: { code: "OC-77", token: "T", items: [{ sku: "A", quantity: 1 }] } }));
   assert.deepEqual(strong, { key: "talabat:oc-77", confidence: "strong" });
 });
+
+// ---- Untrusted-input type boundaries (real parser) --------------------------
+
+test("boundary: an OBJECT order.code → orderCode null + weak identity, never \"[object Object]\"", () => {
+  const parsed = parseTalabatOrderLines({ order: { code: { token: "secret" }, items: [{ sku: "A", quantity: 1 }] } });
+  assert.equal(parsed.orderCode, null);
+  const k = buildTalabatDedupKey(parsed);
+  assert.equal(k.confidence, "weak");
+  const blob = JSON.stringify(parsed) + k.key;
+  assert.ok(!/\[object Object\]/.test(blob), blob);
+  assert.ok(!/secret/.test(blob));
+});
+
+test("boundary: an ARRAY order.id → orderCode null + weak identity", () => {
+  const parsed = parseTalabatOrderLines({ order: { id: ["EVT-1"], items: [{ sku: "A", quantity: 1 }] } });
+  assert.equal(parsed.orderCode, null);
+  assert.equal(buildTalabatDedupKey(parsed).confidence, "weak");
+});
+
+test("boundary: a BOOLEAN merchantOrderId → orderCode null (and not a reference)", () => {
+  const parsed = parseTalabatOrderLines({ order: { merchantOrderId: true, items: [{ sku: "A", quantity: 1 }] } });
+  assert.equal(parsed.orderCode, null);
+  assert.equal(parsed.reference, null);
+  assert.equal(buildTalabatDedupKey(parsed).confidence, "weak");
+});
+
+test("boundary: an OBJECT reference → reference null + weak identity", () => {
+  const parsed = parseTalabatOrderLines({ reference: { a: 1 }, items: [{ sku: "A", quantity: 1 }] });
+  assert.equal(parsed.reference, null);
+  const k = buildTalabatDedupKey(parsed);
+  assert.equal(k.confidence, "weak");
+  assert.ok(!/\[object Object\]/.test(k.key));
+});
+
+test("boundary: a non-string event → null", () => {
+  assert.equal(parseTalabatOrderLines({ event: { x: 1 }, items: [{ sku: "A", quantity: 1 }] }).event, null);
+  assert.equal(parseTalabatOrderLines({ event: ["a"], items: [{ sku: "A", quantity: 1 }] }).event, null);
+});
+
+test("boundary: object/array SKU / barcode / productId in a line → null", () => {
+  const l = parseTalabatOrderLines({ order: { code: "OC-1", items: [{ sku: { a: 1 }, barcode: ["b"], productId: { p: 1 }, quantity: 1 }] } }).lines[0];
+  assert.equal(l.sku, null);
+  assert.equal(l.barcode, null);
+  assert.equal(l.channelProductId, null);
+  assert.ok(!/\[object Object\]/.test(JSON.stringify(l)));
+});
+
+test("boundary: a NUMERIC commercial order id is accepted deterministically (strong)", () => {
+  const k = buildTalabatDedupKey(parseTalabatOrderLines({ order: { code: 12345, items: [{ sku: "A", quantity: 1 }] } }));
+  assert.deepEqual(k, { key: "talabat:12345", confidence: "strong" });
+});

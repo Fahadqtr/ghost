@@ -31,8 +31,26 @@ export interface TalabatDedupKey {
   confidence: DedupConfidence;
 }
 
-const s = (v: unknown): string => (v == null ? "" : String(v).trim());
-const orNull = (v: unknown): string | null => { const t = s(v); return t === "" ? null : t; };
+// ---- Untrusted-input type boundaries ---------------------------------------
+// Webhook input is untrusted, so an identifier is NEVER produced by String(v):
+// an object/array would coerce to "[object Object]"/"a,b" and could masquerade as
+// a real id. These helpers accept ONLY genuine scalars and return null otherwise.
+
+/** An identifier scalar: a non-empty trimmed STRING, or a finite NUMBER rendered
+ *  deterministically. Rejects boolean/object/array/function/symbol/bigint/NaN/
+ *  Infinity/null/undefined → null. */
+function identifierScalarOrNull(v: unknown): string | null {
+  if (typeof v === "string") { const t = v.trim(); return t === "" ? null : t; }
+  if (typeof v === "number") return Number.isFinite(v) ? String(v) : null;
+  return null;
+}
+
+/** Plain text: a non-empty trimmed STRING only. Any non-string → null. */
+function textOnlyOrNull(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t === "" ? null : t;
+}
 
 /** First present value across candidate keys (supports dotted "a.b" paths). */
 function pick(obj: any, ...keys: string[]): unknown {
@@ -49,16 +67,20 @@ function findItems(o: any): any[] {
   return [];
 }
 
-/** A strictly-positive integer, else null (invalid) — no coercion/flooring. */
+/** A strictly-positive integer, else null (invalid) — no coercion/flooring, and
+ *  only a number or a numeric string is even considered (arrays/objects → null). */
 function positiveInt(v: unknown): number | null {
-  if (typeof v === "boolean") return null;
-  const n = typeof v === "number" ? v : Number(String(v).trim());
+  if (typeof v !== "number" && typeof v !== "string") return null;
+  const n = typeof v === "number" ? v : Number(v.trim());
   if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return null;
   return n;
 }
 
+/** A finite number for a DISPLAY-only field (unit price); only number/string are
+ *  considered so an array/object can't coerce into a bogus figure. */
 function numOrNull(v: unknown): number | null {
-  const n = Number(v);
+  if (typeof v !== "number" && typeof v !== "string") return null;
+  const n = typeof v === "number" ? v : Number(v.trim());
   return Number.isFinite(n) ? n : null;
 }
 
@@ -79,19 +101,19 @@ export function parseTalabatOrderLines(payload: any): ParsedTalabatOrder {
   // it is accepted ONLY when it lives under an explicit `order` node (order.id).
   let rawCode = pick(order, "orderCode", "code", "orderId", "order_id", "shortCode", "short_code", "merchantOrderId", "merchant_order_id");
   if (rawCode === undefined && hasOrderNode) rawCode = pick(order, "id");
-  const orderCode = orNull(rawCode);
-  const event = orNull(pick(o, "event", "eventType", "type") ?? pick(order, "event", "eventType", "type"));
-  const reference = orNull(pick(order, "posOrderId", "pos_order_id", "externalId", "external_id", "reference", "order_reference", "merchantOrderId", "remoteOrderId"));
-  const createdAt = orNull(pick(order, "createdAt", "created_at", "placedAt", "orderTime", "order_time"));
+  const orderCode = identifierScalarOrNull(rawCode);
+  const event = textOnlyOrNull(pick(o, "event", "eventType", "type") ?? pick(order, "event", "eventType", "type"));
+  const reference = identifierScalarOrNull(pick(order, "posOrderId", "pos_order_id", "externalId", "external_id", "reference", "order_reference", "merchantOrderId", "remoteOrderId"));
+  const createdAt = textOnlyOrNull(pick(order, "createdAt", "created_at", "placedAt", "orderTime", "order_time"));
 
   const lines: TalabatOrderLine[] = findItems(order).map((it: any, i: number) => {
     const qty = positiveInt(pick(it, "quantity", "qty", "count"));
     return {
       lineKey: `line-${i}`,
-      channelProductId: orNull(pick(it, "channelProductId", "vendorProductId", "productId", "product_id", "remoteCode", "remote_code")),
-      sku: orNull(pick(it, "sku", "code")),
-      barcode: orNull(pick(it, "barcode", "ean", "gtin")),
-      title: orNull(pick(it, "name", "title", "productName", "product_name")),
+      channelProductId: identifierScalarOrNull(pick(it, "channelProductId", "vendorProductId", "productId", "product_id", "remoteCode", "remote_code")),
+      sku: identifierScalarOrNull(pick(it, "sku", "code")),
+      barcode: identifierScalarOrNull(pick(it, "barcode", "ean", "gtin")),
+      title: textOnlyOrNull(pick(it, "name", "title", "productName", "product_name")),
       quantity: qty ?? 0,
       unitPrice: numOrNull(pick(it, "price", "unitPrice", "unit_price", "totalPrice", "amount", "paidPrice")),
       invalidQuantity: qty === null,
