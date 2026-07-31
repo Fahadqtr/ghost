@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --max-warnings 74",
-    "test": "node --conditions=react-server --experimental-strip-types --test \"lib/**/*.test.ts\""
+    "test": "node --conditions=react-server --experimental-strip-types --test \"lib/**/*.test.ts\" \"app/**/*.test.ts\""
   },
   "pnpm": {
     "overrides": {

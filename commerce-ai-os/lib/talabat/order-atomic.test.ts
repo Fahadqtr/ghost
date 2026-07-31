@@ -275,10 +275,12 @@ test("10: the audit insert matches the real malak_audit schema", () => {
   assert.match(mv, /status:\s*"done"/);
 });
 
-test("31: the Talabat webhook is unchanged (does not import the new resolution code)", () => {
+test("31: the Talabat webhook wires server-side processing store-first, and never calls the RPC directly (Phase 2A.3B)", () => {
   const wh = read("app/api/webhooks/talabat/[token]/route.ts");
-  assert.ok(!/order-resolver|deduction-plan|order-lines|process_talabat_order_deduction/.test(wh));
-  assert.match(wh, /talabat_orders/);
+  assert.match(wh, /talabat_orders/);                                   // still stores the order first
+  assert.match(wh, /processStoredTalabatOrder|webhook-core/);           // now wired to the server-side processor
+  // the atomic RPC is invoked ONLY inside the processor, never from the route file itself
+  assert.ok(!/process_talabat_order_deduction/.test(wh), "route must not call the atomic RPC directly");
 });
 
 test("32: the Shopify deduction workflow is unchanged", () => {
