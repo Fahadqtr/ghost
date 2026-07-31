@@ -1,27 +1,27 @@
-// Tests for the Shopify order → inventory CLAIM-BEFORE-DEDUCT ledger contract.
+// Tests for the TRANSACTIONAL Shopify order → inventory deduction contract.
 // Run: node --conditions=react-server --experimental-strip-types --test lib/shopify/order-ledger.test.ts
 //
-// These lock down the security invariant behind PR #492: inventory is never
-// deducted for an order that was not first durably recorded, the same order can
-// never be deducted twice, and no unexpected DB error is ever hidden behind a
-// false success.
+// These lock down the security invariant behind PR #492: inventory is deducted
+// ONLY when the single-transaction RPC explicitly reports success, the same order
+// can never be deducted twice, and every non-success result (null / empty /
+// unknown / DB error / missing migration) fails CLOSED — nothing is deducted.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
   claimAndDeduct,
-  isMissingColumnError,
+  isMissingDeductionMigration,
   type ClaimDeductPorts,
   type ClaimDeductPlanners,
-  type DbError,
+  type RpcResult,
+  type DeductionRpcArgs,
 } from "./order-ledger.ts";
-import { planOrderDeductions, spreadDeduction, type CatalogRowLite, type OrderForDeduction } from "./order-deduct-compute.ts";
+import { planOrderDeductions, type CatalogRowLite, type OrderForDeduction } from "./order-deduct-compute.ts";
 import { classifyShopifyOrderChannel } from "./orders-compute.ts";
 
 const PLANNERS: ClaimDeductPlanners = {
   plan: planOrderDeductions,
-  spread: spreadDeduction,
   classifyChannel: classifyShopifyOrderChannel,
 };
 
@@ -39,210 +39,210 @@ const order = (over: Partial<OrderForDeduction>): OrderForDeduction => ({
   ...over,
 });
 
-type Call =
-  | { op: "upsert"; rows: any[] }
-  | { op: "read"; productId: string }
-  | { op: "write"; rowKey: string | number; stock: number }
-  | { op: "setDeducted"; orderIds: string[]; deducted: number }
-  | { op: "log"; productId: string };
+const ok = (data: unknown): RpcResult => ({ data, error: null });
+const processed = (deducted: number, products: any[] = []): RpcResult => ok({ status: "processed", deducted, products });
 
 interface HarnessOpts {
-  /** Queued responses for successive upsertLedger calls (rich then base). */
-  upsertResponses?: { data: { order_id: string }[] | null; error: DbError | null }[];
-  /** Inventory rows keyed by product_id. */
-  inventory?: Record<string, { id: string | number; stock_quantity: number | null }[]>;
-  /** product_ids whose inventory READ should error. */
-  readErrorFor?: string[];
-  /** row keys whose inventory WRITE should error. */
-  writeErrorFor?: (string | number)[];
+  /** RPC response per call, in order. Falls back to a generic processed:1 result. */
+  rpc?: RpcResult[];
+  /** Or a function keyed by the RPC args. */
+  rpcFor?: (args: DeductionRpcArgs) => RpcResult;
 }
 
 function harness(opts: HarnessOpts = {}) {
-  const calls: Call[] = [];
-  const upsertResponses = [...(opts.upsertResponses ?? [])];
+  const calls: { op: "rpc"; args: DeductionRpcArgs }[] = [];
+  const logs: { productId: string; before: number; after: number }[] = [];
+  const queue = [...(opts.rpc ?? [])];
   const ports: ClaimDeductPorts = {
-    upsertLedger: async (rows) => {
-      calls.push({ op: "upsert", rows });
-      const queued = upsertResponses.shift();
-      if (queued) return queued;
-      // default: every submitted row is won (fresh insert)
-      return { data: rows.map((r) => ({ order_id: r.order_id })), error: null };
-    },
-    readInventory: async (productId) => {
-      calls.push({ op: "read", productId });
-      if (opts.readErrorFor?.includes(productId)) return { data: null, error: { message: "read fail" } };
-      return { data: opts.inventory?.[productId] ?? [], error: null };
-    },
-    writeInventory: async (rowKey, stock) => {
-      calls.push({ op: "write", rowKey, stock });
-      if (opts.writeErrorFor?.includes(rowKey)) return { error: { message: "write fail" } };
-      return { error: null };
-    },
-    setLedgerDeducted: async (orderIds, deducted) => {
-      calls.push({ op: "setDeducted", orderIds, deducted });
+    callDeduction: async (args) => {
+      calls.push({ op: "rpc", args });
+      if (opts.rpcFor) return opts.rpcFor(args);
+      return queue.shift() ?? processed(1);
     },
     logStock: async (a) => {
-      calls.push({ op: "log", productId: a.productId });
+      logs.push(a);
     },
   };
-  return { ports, calls };
+  return { ports, calls, logs };
 }
 
-// ── isMissingColumnError ───────────────────────────────────────────────────
+// ── isMissingDeductionMigration ────────────────────────────────────────────
 
-test("isMissingColumnError: only genuine missing-column errors match", () => {
-  assert.equal(isMissingColumnError({ code: "42703" }), true); // undefined_column
-  assert.equal(isMissingColumnError({ code: "PGRST204" }), true); // PostgREST schema-cache miss
-  assert.equal(isMissingColumnError({ message: "Could not find the 'channel' column in the schema cache" }), true);
-  assert.equal(isMissingColumnError({ message: "column payment_gateway_names does not exist" }), true);
-  // NOT a missing column — must never be treated as one.
-  assert.equal(isMissingColumnError({ code: "42501", message: "permission denied for table shopify_synced_orders" }), false);
-  assert.equal(isMissingColumnError({ code: "23505", message: "duplicate key value violates unique constraint" }), false);
-  assert.equal(isMissingColumnError({ message: "connection refused" }), false);
-  assert.equal(isMissingColumnError({ message: "some other column blew up" }), false); // says "column" but not our columns
-  assert.equal(isMissingColumnError(null), false);
-  assert.equal(isMissingColumnError(undefined), false);
+test("isMissingDeductionMigration: only a genuinely-absent RPC/migration matches", () => {
+  assert.equal(isMissingDeductionMigration({ code: "42883" }), true); // undefined_function
+  assert.equal(isMissingDeductionMigration({ code: "PGRST202" }), true); // PostgREST fn not in schema cache
+  assert.equal(isMissingDeductionMigration({ code: "42P01" }), true); // undefined_table
+  assert.equal(
+    isMissingDeductionMigration({ message: "Could not find the function public.process_shopify_order_deduction in the schema cache" }),
+    true,
+  );
+  assert.equal(isMissingDeductionMigration({ message: "column deduction_result does not exist" }), true);
+  // NOT a missing migration.
+  assert.equal(isMissingDeductionMigration({ code: "42501", message: "permission denied for function" }), false);
+  assert.equal(isMissingDeductionMigration({ code: "23505", message: "duplicate key" }), false);
+  assert.equal(isMissingDeductionMigration({ message: "connection reset" }), false);
+  assert.equal(isMissingDeductionMigration(null), false);
 });
 
-// ── migration columns available (rich path) ────────────────────────────────
+// ── Blocker 1: fail closed on null / empty RPC data ────────────────────────
 
-test("migration columns available: records WITH channel, then deducts", async () => {
-  const { ports, calls } = harness({ inventory: { p1: [{ id: "r1", stock_quantity: 5 }] } });
-  const res = await claimAndDeduct([order({ paymentGatewayNames: ["Talabat"] })], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
-
-  assert.equal(res.ok, true);
-  if (!res.ok) return;
-  assert.equal(res.deducted, 1);
-  assert.equal(res.ordersProcessed, 1);
-  // exactly one upsert (rich) — no fallback needed
-  const upserts = calls.filter((c) => c.op === "upsert");
-  assert.equal(upserts.length, 1);
-  const row = (upserts[0] as any).rows[0];
-  assert.equal(row.channel, "talabat");
-  assert.deepEqual(row.payment_gateway_names, ["Talabat"]);
-});
-
-// ── migration columns unavailable (base fallback) ──────────────────────────
-
-test("migration columns unavailable: falls back to base columns and still deducts", async () => {
-  const { ports, calls } = harness({
-    upsertResponses: [
-      { data: null, error: { code: "PGRST204", message: "Could not find the 'channel' column" } }, // rich fails
-      { data: [{ order_id: "gid://1" }], error: null }, // base succeeds
-    ],
-    inventory: { p1: [{ id: "r1", stock_quantity: 5 }] },
-  });
-  const res = await claimAndDeduct([order({ paymentGatewayNames: ["Talabat"] })], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
-
-  assert.equal(res.ok, true);
-  if (!res.ok) return;
-  assert.equal(res.deducted, 1);
-  const upserts = calls.filter((c) => c.op === "upsert") as any[];
-  assert.equal(upserts.length, 2); // rich then base
-  assert.equal("channel" in upserts[0].rows[0], true); // first was the rich attempt
-  assert.equal("channel" in upserts[1].rows[0], false); // fallback used base columns only
-});
-
-// ── unexpected DB error on claim → NEVER deduct, NEVER false success ────────
-
-test("unexpected DB error on the rich claim: no fallback, no deduction, ok:false", async () => {
-  const { ports, calls } = harness({
-    upsertResponses: [{ data: null, error: { code: "42501", message: "permission denied" } }],
-    inventory: { p1: [{ id: "r1", stock_quantity: 5 }] },
-  });
+test("data=null → no deduction (fail closed)", async () => {
+  const { ports, calls } = harness({ rpc: [ok(null)] });
   const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
-
-  assert.equal(res.ok, false);
-  assert.equal(res.deducted, 0);
-  assert.equal(res.ordersProcessed, 0);
-  // aborted before touching inventory, and did NOT retry with base columns
-  assert.equal(calls.filter((c) => c.op === "upsert").length, 1);
-  assert.equal(calls.some((c) => c.op === "read" || c.op === "write"), false);
-});
-
-test("base-column claim ALSO fails: error is surfaced, nothing deducted", async () => {
-  const { ports, calls } = harness({
-    upsertResponses: [
-      { data: null, error: { code: "PGRST204", message: "Could not find the 'channel' column" } }, // rich → missing col
-      { data: null, error: { message: "connection reset" } }, // base → real failure
-    ],
-    inventory: { p1: [{ id: "r1", stock_quantity: 5 }] },
-  });
-  const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
-
-  assert.equal(res.ok, false);
-  assert.equal(res.deducted, 0);
-  assert.equal(calls.filter((c) => c.op === "upsert").length, 2);
-  assert.equal(calls.some((c) => c.op === "read" || c.op === "write"), false); // never deducted
-});
-
-// ── claim happens BEFORE any deduction ─────────────────────────────────────
-
-test("claim-before-deduct: the ledger write precedes every inventory read/write", async () => {
-  const { ports, calls } = harness({ inventory: { p1: [{ id: "r1", stock_quantity: 5 }] } });
-  await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
-
-  const firstUpsert = calls.findIndex((c) => c.op === "upsert");
-  const firstTouch = calls.findIndex((c) => c.op === "read" || c.op === "write");
-  assert.equal(firstUpsert, 0);
-  assert.ok(firstTouch > firstUpsert);
-});
-
-// ── the same order can never be deducted twice ─────────────────────────────
-
-test("already-synced order is neither recorded again nor deducted", async () => {
-  const { ports, calls } = harness({ inventory: { p1: [{ id: "r1", stock_quantity: 5 }] } });
-  const res = await claimAndDeduct([order({})], CATALOG, new Set(["gid://1"]), false, new Map(), ports, PLANNERS);
-
   assert.equal(res.ok, true);
   if (!res.ok) return;
   assert.equal(res.deducted, 0);
-  assert.equal(res.ordersProcessed, 0);
-  assert.equal(calls.length, 0); // nothing considered → no DB traffic at all
+  assert.equal(res.recorded, 0);
+  assert.equal(res.skipped, 1);
+  assert.equal(calls.length, 1); // the RPC was attempted, but nothing counted as done
 });
 
-test("concurrent run: an order won by ANOTHER run (not in RETURNING) is NOT deducted here", async () => {
-  // Two fresh orders considered, but the ledger reports only gid://2 as inserted by
-  // us — gid://1 was claimed by a concurrent run. We must deduct ONLY gid://2.
+test("empty RETURNING array → no deduction (fail closed)", async () => {
+  const { ports } = harness({ rpc: [ok([])] });
+  const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.deducted, 0);
+  assert.equal(res.skipped, 1);
+});
+
+test("unknown / error RPC status → no deduction (fail closed)", async () => {
+  const { ports } = harness({ rpc: [ok({ status: "error", reason: "whatever" })] });
+  const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.deducted, 0);
+  assert.equal(res.recorded, 0);
+  assert.equal(res.skipped, 1);
+});
+
+// ── concurrent duplicate → exactly one winner ──────────────────────────────
+
+test("concurrent duplicate: the loser gets already_processed and deducts nothing", async () => {
+  // Two DIFFERENT orders; the second was already claimed by a concurrent run.
   const orders = [
     order({ id: "gid://1", items: [{ title: "Rose Serum", qty: 2, sku: "MK-1" }] }),
     order({ id: "gid://2", items: [{ title: "Gold Mask", qty: 3, sku: "MK-2" }] }),
   ];
-  const { ports, calls } = harness({
-    upsertResponses: [{ data: [{ order_id: "gid://2" }], error: null }],
-    inventory: { p1: [{ id: "r1", stock_quantity: 9 }], p2: [{ id: "r2", stock_quantity: 9 }] },
+  const { ports } = harness({
+    rpcFor: (a) => (a.p_order_id === "gid://1" ? processed(1) : ok({ status: "already_processed", deducted: 0 })),
   });
   const res = await claimAndDeduct(orders, CATALOG, new Set(), false, new Map(), ports, PLANNERS);
-
   assert.equal(res.ok, true);
   if (!res.ok) return;
-  assert.equal(res.wonCount, 1);
-  const reads = calls.filter((c) => c.op === "read") as any[];
-  assert.deepEqual(reads.map((r) => r.productId), ["p2"]); // p1 (gid://1) never touched
-  const writes = calls.filter((c) => c.op === "write") as any[];
-  assert.deepEqual(writes.map((w) => w.stock), [6]); // 9 - 3, only Gold Mask
+  assert.equal(res.deducted, 1); // only gid://1
+  assert.equal(res.recorded, 2); // both are in the ledger (one by us, one by the other run)
+  assert.equal(res.skipped, 0);
 });
 
-test("re-run after a partial failure does not re-deduct: recorded orders are excluded", async () => {
-  // Simulate the "next sync": the order is already in the ledger (alreadySynced),
-  // so it is excluded up front — no matter what happened to its stock last run.
-  const { ports } = harness({ inventory: { p1: [{ id: "r1", stock_quantity: 4 }] } });
-  const res = await claimAndDeduct([order({})], CATALOG, new Set(["gid://1"]), false, new Map(), ports, PLANNERS);
+test("RPC already_processed → recorded but not deducted", async () => {
+  const { ports } = harness({ rpc: [ok({ status: "already_processed", deducted: 0 })] });
+  const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
   assert.equal(res.ok, true);
   if (!res.ok) return;
   assert.equal(res.deducted, 0);
+  assert.equal(res.recorded, 1);
 });
 
-// ── partial inventory-write failure ────────────────────────────────────────
+// ── migration missing / DB error → safe skip ───────────────────────────────
 
-test("partial inventory-write failure: order stays recorded, only successful writes count, no throw", async () => {
-  const { ports, calls } = harness({
-    inventory: { p1: [{ id: "r1", stock_quantity: 5 }, { id: "r2", stock_quantity: 5 }] },
-    writeErrorFor: ["r1"], // biggest row write fails
+test("RPC migration missing → safe skip, ok:false, migration note, nothing deducted", async () => {
+  const { ports, logs } = harness({
+    rpc: [{ data: null, error: { code: "PGRST202", message: "Could not find the function process_shopify_order_deduction" } }],
   });
-  // qty 7 spread across two rows of 5 → r1:5→0 (fails), r2:5→3 (ok)
-  const res = await claimAndDeduct(
-    [order({ items: [{ title: "Rose Serum", qty: 7, sku: "MK-1" }] })],
+  const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.equal(res.ok, false);
+  if (res.ok) return;
+  assert.equal(res.deducted, 0);
+  assert.equal(res.ordersProcessed, 0);
+  assert.match(res.note, /migration/i);
+  assert.equal(logs.length, 0);
+});
+
+test("RPC database error → safe skip (not a false success)", async () => {
+  const { ports } = harness({ rpc: [{ data: null, error: { code: "40001", message: "serialization failure" } }] });
+  const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.deducted, 0);
+  assert.equal(res.recorded, 0);
+  assert.equal(res.skipped, 1);
+});
+
+// ── partial failure reported → no success ──────────────────────────────────
+
+test("partial failure reported by the RPC → that order is not counted as deducted", async () => {
+  // One order errors mid-transaction (rolled back server-side), one succeeds.
+  const orders = [
+    order({ id: "gid://1", items: [{ title: "Rose Serum", qty: 2, sku: "MK-1" }] }),
+    order({ id: "gid://2", items: [{ title: "Gold Mask", qty: 3, sku: "MK-2" }] }),
+  ];
+  const { ports } = harness({
+    rpcFor: (a) =>
+      a.p_order_id === "gid://1" ? { data: null, error: { code: "XX000", message: "internal error" } } : processed(1),
+  });
+  const res = await claimAndDeduct(orders, CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.deducted, 1); // only gid://2 counted
+  assert.equal(res.recorded, 1);
+  assert.equal(res.skipped, 1); // gid://1 safely skipped, will retry next run
+});
+
+// ── baseline records without deduction ─────────────────────────────────────
+
+test("baseline → recorded without deduction (RPC gets p_baseline=true)", async () => {
+  const { ports, calls } = harness({ rpc: [ok({ status: "baseline_recorded", deducted: 0 })] });
+  const res = await claimAndDeduct([order({})], CATALOG, new Set(), true, new Map(), ports, PLANNERS);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.deducted, 0);
+  assert.equal(res.recorded, 1);
+  assert.equal(res.baseline, true);
+  assert.equal(calls[0].args.p_baseline, true);
+});
+
+// ── channel comes ONLY from paymentGatewayNames ────────────────────────────
+
+test("Talabat payment → RPC receives channel 'talabat'", async () => {
+  const { ports, calls } = harness();
+  await claimAndDeduct([order({ paymentGatewayNames: ["Talabat"] })], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.equal(calls[0].args.p_channel, "talabat");
+  assert.deepEqual(calls[0].args.p_payment_gateway_names, ["Talabat"]);
+});
+
+test("other payment → RPC receives channel 'shopify'", async () => {
+  const { ports, calls } = harness();
+  await claimAndDeduct([order({ paymentGatewayNames: ["Cash"] })], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.equal(calls[0].args.p_channel, "shopify");
+});
+
+// ── the same order can never be deducted twice ─────────────────────────────
+
+test("same order id across two runs → exactly one deduction", async () => {
+  // Run 1: fresh order → RPC processes it (deduct 1).
+  const h1 = harness({ rpc: [processed(1)] });
+  const r1 = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), h1.ports, PLANNERS);
+  assert.equal(r1.ok, true);
+  if (!r1.ok) return;
+  assert.equal(r1.deducted, 1);
+
+  // Run 2: the order is now in the ledger (alreadySynced) → excluded up front,
+  // the RPC is never even called for it.
+  const h2 = harness();
+  const r2 = await claimAndDeduct([order({})], CATALOG, new Set(["gid://1"]), false, new Map(), h2.ports, PLANNERS);
+  assert.equal(r2.ok, true);
+  if (!r2.ok) return;
+  assert.equal(r2.deducted, 0);
+  assert.equal(h2.calls.length, 0);
+});
+
+// ── matching logic feeds the RPC (quantities unchanged) ────────────────────
+
+test("per-order deductions are computed with the existing matching and passed to the RPC", async () => {
+  const { ports, calls } = harness();
+  await claimAndDeduct(
+    [order({ items: [{ title: "Rose Serum", qty: 2, sku: "MK-1" }, { title: "Gold Mask", qty: 3 }] })],
     CATALOG,
     new Set(),
     false,
@@ -250,50 +250,35 @@ test("partial inventory-write failure: order stays recorded, only successful wri
     ports,
     PLANNERS,
   );
-  assert.equal(res.ok, true);
-  if (!res.ok) return;
-  // the ledger claim already happened (recorded) — so a re-run would skip it
-  assert.equal(calls.filter((c) => c.op === "upsert").length, 1);
-  assert.equal(res.deducted, 1); // only the successful row counted
+  const ded = [...calls[0].args.p_deductions].sort((a, b) => a.product_id.localeCompare(b.product_id));
+  assert.deepEqual(ded, [
+    { product_id: "p1", quantity: 2 },
+    { product_id: "p2", quantity: 3 },
+  ]);
 });
 
-// ── baseline first run records but never deducts ───────────────────────────
-
-test("baseline first run: records the orders, deducts nothing", async () => {
-  const { ports, calls } = harness({ inventory: { p1: [{ id: "r1", stock_quantity: 5 }] } });
-  const res = await claimAndDeduct([order({})], CATALOG, new Set(), true, new Map(), ports, PLANNERS);
-
-  assert.equal(res.ok, true);
-  if (!res.ok) return;
-  assert.equal(res.deducted, 0);
-  assert.equal(res.ordersProcessed, 1);
-  assert.equal(calls.filter((c) => c.op === "upsert").length, 1); // recorded
-  assert.equal(calls.some((c) => c.op === "read" || c.op === "write"), false); // no deduction
-});
-
-// ── representation unavailable degrades to claim-first over the considered set ──
-
-test("ledger without RETURNING representation still deducts the considered set (claim-first)", async () => {
-  const { ports, calls } = harness({
-    upsertResponses: [{ data: null, error: null }], // success but no rows returned
-    inventory: { p1: [{ id: "r1", stock_quantity: 5 }] },
-  });
-  const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
-  assert.equal(res.ok, true);
-  if (!res.ok) return;
-  assert.equal(res.deducted, 1); // fell back to considered set, still deducted once
-  assert.equal(calls.filter((c) => c.op === "write").length, 1);
-});
-
-// ── void orders are recorded but never deducted ────────────────────────────
-
-test("a refunded order is recorded (idempotency) but deducts nothing", async () => {
-  const { ports, calls } = harness({ inventory: { p1: [{ id: "r1", stock_quantity: 5 }] } });
+test("a refunded order is sent to the RPC to be recorded, with no deductions", async () => {
+  const { ports, calls } = harness({ rpc: [processed(0)] });
   const res = await claimAndDeduct([order({ financial: "REFUNDED" })], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
   assert.equal(res.ok, true);
   if (!res.ok) return;
-  assert.equal(res.ordersProcessed, 1);
-  assert.equal(res.deducted, 0);
-  assert.equal(calls.filter((c) => c.op === "upsert").length, 1); // recorded
-  assert.equal(calls.some((c) => c.op === "write"), false);
+  assert.deepEqual(calls[0].args.p_deductions, []); // void → nothing to deduct
+  assert.equal(res.recorded, 1); // still recorded for idempotency
+});
+
+// ── OOS task hook fires from the RPC's reported before/after ────────────────
+
+test("processed order logs stock transitions from the RPC-reported product deltas", async () => {
+  const { ports, logs } = harness({ rpc: [processed(1, [{ product_id: "p1", before: 3, after: 0 }])] });
+  await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.deepEqual(logs, [{ productId: "p1", before: 3, after: 0 }]);
+});
+
+test("nothing considered → no RPC calls at all", async () => {
+  const { ports, calls } = harness();
+  const res = await claimAndDeduct([order({})], CATALOG, new Set(["gid://1"]), false, new Map(), ports, PLANNERS);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.ordersProcessed, 0);
+  assert.equal(calls.length, 0);
 });

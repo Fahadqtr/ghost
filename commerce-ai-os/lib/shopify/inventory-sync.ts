@@ -1,7 +1,7 @@
 import "server-only";
 import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, setInventoryQuantities, fetchRecentShopifyOrders } from "./admin";
 import { planInventorySync } from "@/lib/shopify-diff";
-import { planOrderDeductions, spreadDeduction, type CatalogRowLite } from "./order-deduct-compute";
+import { planOrderDeductions, type CatalogRowLite } from "./order-deduct-compute";
 import { classifyShopifyOrderChannel } from "./orders-compute";
 import { claimAndDeduct, type ClaimDeductPorts, type ClaimDeductPlanners } from "./order-ledger";
 import { logStockTransition } from "@/lib/tasks/stock-tasks";
@@ -44,13 +44,14 @@ async function pageAll<T>(fetchPage: (from: number, to: number) => any): Promise
  * shopify_synced_orders is the idempotency ledger; the very first run only
  * baselines existing orders without touching stock.
  *
- * Safety: this is a thin adapter around order-ledger's CLAIM-BEFORE-DEDUCT
- * contract. Orders are recorded in the ledger FIRST (verified), and inventory is
- * deducted ONLY for the orders this run atomically claimed — so a store sale is
- * never subtracted from our stock unless its order is durably recorded, and the
- * same order can never be deducted twice (after a partial failure OR by a
- * concurrent run). An unexpected DB error skips the step with a note instead of
- * deducting; only a genuine missing-migration-column error falls back silently.
+ * Safety: this is a thin adapter around order-ledger's TRANSACTIONAL contract.
+ * The idempotency claim, ALL inventory deductions, and the ledger completion for
+ * an order happen inside ONE Postgres transaction (the process_shopify_order_
+ * deduction RPC), so a store sale is never subtracted unless its order is
+ * durably recorded, the same order can never be deducted twice (partial failure
+ * OR concurrent run), and a partial failure rolls back the claim AND the stock
+ * together. This module does NO direct inventory writes on this path; it fails
+ * closed — nothing is deducted unless the RPC explicitly reports success.
  */
 async function deductRecentOrders(
   sb: any,
@@ -78,29 +79,23 @@ async function deductRecentOrders(
     const baseline = (count ?? 0) === 0;
     const nameOf = new Map<string, string>(orders.map((o) => [o.id, o.name]));
 
-    // Supabase-backed ports for the claim-before-deduct contract. The ledger upsert
-    // uses ON CONFLICT (order_id) DO NOTHING and RETURNING (.select) so the caller
-    // learns exactly which orders this run won and may deduct.
+    // Supabase-backed ports. The deduction RPC is the sole writer of the ledger AND
+    // inventory (one transaction); TypeScript never writes inventory on this path.
     const ports: ClaimDeductPorts = {
-      upsertLedger: (rows) =>
-        sb.from("shopify_synced_orders").upsert(rows, { onConflict: "order_id", ignoreDuplicates: true }).select("order_id"),
-      readInventory: (productId) =>
-        sb.from("inventory").select("id, stock_quantity").eq("product_id", productId),
-      writeInventory: (rowKey, stock) =>
-        sb.from("inventory").update({ stock_quantity: stock }).eq("id", rowKey),
-      setLedgerDeducted: async (orderIds, deducted) => {
-        try {
-          await sb.from("shopify_synced_orders").update({ deducted }).in("order_id", orderIds);
-        } catch {
-          /* telemetry only — idempotency already holds */
-        }
-      },
+      callDeduction: (args) =>
+        sb.rpc("process_shopify_order_deduction", {
+          p_order_id: args.p_order_id,
+          p_order_name: args.p_order_name,
+          p_channel: args.p_channel,
+          p_payment_gateway_names: args.p_payment_gateway_names,
+          p_deductions: args.p_deductions,
+          p_baseline: args.p_baseline,
+        }),
       logStock: (args) =>
         logStockTransition(sb, { productId: args.productId, before: args.before, after: args.after, actor: "شوبي فاي — طلب متجر" }),
     };
     const planners: ClaimDeductPlanners = {
       plan: planOrderDeductions,
-      spread: spreadDeduction,
       classifyChannel: classifyShopifyOrderChannel,
     };
 
