@@ -1,7 +1,9 @@
 // Loads stock snapshots for the RESOLVED targets only, in the exact shape the
-// pure planner (buildTalabatDeductionPlan) expects. Data access is dependency-
-// injected via an admin client; only TYPES are imported from siblings (erased at
-// runtime), so node:test can import it with a fake client.
+// pure planner (buildTalabatDeductionPlan) expects. SERVER-ONLY: the browser can
+// never import it. Data access is dependency-injected via an admin client; only
+// TYPES are imported from siblings (erased at runtime), so node:test (run under
+// --conditions=react-server, where server-only is a no-op) can import it with a
+// fake client.
 //
 // Fail-closed rules:
 //   * NULL / negative values are passed THROUGH unchanged (never coerced to 0) —
@@ -11,6 +13,7 @@
 //   * ANY query error → { status: "error" } (the caller maps that to
 //     inventory_inconsistent). This module NEVER mutates stock.
 
+import "server-only";
 import type { StockSnapshot, ShelfRow } from "./deduction-plan";
 
 export interface SnapshotTarget {

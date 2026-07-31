@@ -1,11 +1,14 @@
 // Loads the EXACT-Talabat-channel resolution context (mappings + products +
-// variants) for the order resolver. Server-side data access is dependency-
-// injected via an admin client (passed in), and the module imports only TYPES
-// from its siblings (erased at runtime), so it stays self-contained and
-// node:test can import it with a fake client. Fails CLOSED: a channel that does
-// not resolve to exactly one Talabat channel → manual_review; any query error →
-// error (no partial context).
+// variants) for the order resolver. SERVER-ONLY: the browser can never import it.
+// Data access is dependency-injected via an admin client (passed in), and the
+// module imports only TYPES from its siblings (erased at runtime), so node:test
+// (run under --conditions=react-server, where server-only is a no-op) can import
+// it with a fake client. Fails CLOSED: a channel that does not resolve to exactly
+// one Talabat channel → manual_review; any query error → error (no partial
+// context). Every paginated query uses a DETERMINISTIC, unique order by id so no
+// row is lost or duplicated across pages.
 
+import "server-only";
 import type { MappingSnapshot, ProductSnapshot, VariantSnapshot, ResolveContext } from "./order-resolver";
 
 export type ChannelResolution =
@@ -82,15 +85,16 @@ export async function loadTalabatResolutionContext(admin: any): Promise<ContextR
     const mappingRows = await fetchAllPages((from, to) =>
       admin
         .from("channel_variant_mappings")
-        .select("channel_product_id, exported_sku, exported_barcode, master_product_id, master_variant_sku, mapping_status")
+        .select("id, channel_product_id, exported_sku, exported_barcode, master_product_id, master_variant_sku, mapping_status")
         .eq("channel_id", ch.id)
+        .order("id", { ascending: true })
         .range(from, to),
     );
     const productRows = await fetchAllPages((from, to) =>
-      admin.from("products").select("id, sku, barcode, name_en").range(from, to),
+      admin.from("products").select("id, sku, barcode, name_en").order("id", { ascending: true }).range(from, to),
     );
     const variantRows = await fetchAllPages((from, to) =>
-      admin.from("product_variants").select("parent_product_id, sku, barcode").range(from, to),
+      admin.from("product_variants").select("id, parent_product_id, sku, barcode").order("id", { ascending: true }).range(from, to),
     );
 
     const context: ResolveContext = {

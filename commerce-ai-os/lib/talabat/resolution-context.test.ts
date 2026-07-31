@@ -15,13 +15,15 @@ function makeAdmin(tables: Record<string, any>, calls: any[] = []) {
     from(table: string) {
       const filters: Record<string, unknown> = {};
       let rng: [number, number] | null = null;
+      let orderCol: string | null = null;
       const b: any = {
         select() { return b; },
         eq(col: string, val: unknown) { filters[col] = val; return b; },
+        order(col: string) { orderCol = col; return b; },
         range(from: number, to: number) { rng = [from, to]; return b; },
         then(resolve: (v: any) => void, reject: (e: any) => void) {
           try {
-            calls.push({ table, filters: { ...filters }, range: rng });
+            calls.push({ table, filters: { ...filters }, range: rng, order: orderCol });
             const src = tables[table];
             if (typeof src === "function") return resolve(src(filters, rng));
             let rows: any[] = Array.isArray(src) ? src : [];
@@ -57,8 +59,8 @@ test("ambiguous Talabat channels → manual_review talabat_channel_unresolved", 
   assert.deepEqual(res, { status: "manual_review", reason: "talabat_channel_unresolved" });
 });
 
-test("resolution context paginates past 1000 rows", async () => {
-  const products = Array.from({ length: 1503 }, (_, i) => ({ id: `p${i}`, sku: `S${i}`, barcode: null, name_en: `N${i}` }));
+test("resolution context paginates past 1000 rows (no row lost or duplicated)", async () => {
+  const products = Array.from({ length: 1503 }, (_, i) => ({ id: `p${String(i).padStart(5, "0")}`, sku: `S${i}`, barcode: null, name_en: `N${i}` }));
   const admin = makeAdmin({
     channels: [{ id: "cT", name: "Talabat" }],
     channel_variant_mappings: [],
@@ -67,7 +69,27 @@ test("resolution context paginates past 1000 rows", async () => {
   });
   const res = await loadTalabatResolutionContext(admin);
   assert.equal(res.status, "ok");
-  if (res.status === "ok") assert.equal(res.context.products.length, 1503); // all pages loaded, not just 1000
+  if (res.status === "ok") {
+    assert.equal(res.context.products.length, 1503);                 // all pages loaded
+    assert.equal(new Set(res.context.products.map((p) => p.id)).size, 1503); // none duplicated
+  }
+});
+
+test("every paginated query orders by id BEFORE range (deterministic pagination)", async () => {
+  const calls: any[] = [];
+  const admin = makeAdmin({
+    channels: [{ id: "cT", name: "Talabat" }],
+    channel_variant_mappings: [],
+    products: [],
+    product_variants: [],
+  }, calls);
+  await loadTalabatResolutionContext(admin);
+  for (const table of ["channel_variant_mappings", "products", "product_variants"]) {
+    const c = calls.find((x) => x.table === table);
+    assert.ok(c, `${table} queried`);
+    assert.equal(c.order, "id", `${table} must order by id`);        // deterministic key
+    assert.ok(Array.isArray(c.range), `${table} must use range()`);  // paginated
+  }
 });
 
 test("the mapping query is restricted to the exact resolved channel id", async () => {

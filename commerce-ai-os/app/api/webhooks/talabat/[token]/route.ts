@@ -1,14 +1,13 @@
 import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseTalabatOrder } from "@/lib/talabat/order-compute";
-import { parseTalabatOrderLines } from "@/lib/talabat/order-lines";
-import { buildTalabatDedupKey } from "@/lib/talabat/order-lines";
+import { parseTalabatOrderLines, buildTalabatDedupKey } from "@/lib/talabat/order-lines";
 import { resolveTalabatOrder } from "@/lib/talabat/order-resolver";
 import { buildTalabatDeductionPlan, sanitizeResolution } from "@/lib/talabat/deduction-plan";
 import { evaluateDeductGate, isAutoDeductEnabled } from "@/lib/talabat/event-gate";
 import { loadTalabatResolutionContext } from "@/lib/talabat/resolution-context";
 import { loadStockSnapshots } from "@/lib/talabat/stock-snapshots";
-import { processStoredTalabatOrder, type ProcessOrderDeps } from "@/lib/talabat/process-order";
+import { processStoredTalabatOrder, handleScheduleFailure, type ProcessOrderDeps } from "@/lib/talabat/process-order";
 import {
   handleTalabatWebhookPost,
   handleTalabatWebhookGet,
@@ -18,12 +17,12 @@ import {
 // Talabat / Delivery Hero ORDER webhook receiver. Register this URL in the
 // Vendor Portal (Order Webhook Settings):
 //   https://<app>/api/webhooks/talabat/<TALABAT_WEBHOOK_TOKEN>
-// The token in the path is the shared secret. We STORE the full raw payload +
-// best-effort display fields and ack 200 quickly. Automatic stock deduction is
-// CLOSED BY DEFAULT — it runs server-side (after the response) only when
-// TALABAT_AUTO_DEDUCT_ENABLED === "true" and the event is in
-// TALABAT_DEDUCT_EVENT_ALLOWLIST. All processing/deduction logic lives in the
-// self-contained, unit-tested modules under lib/talabat.
+// The token in the path is the shared secret. We validate it BEFORE reading the
+// body, STORE the full raw payload + best-effort display fields, and ack 200
+// quickly. Automatic stock deduction is CLOSED BY DEFAULT — it runs server-side
+// (after the response) only when TALABAT_AUTO_DEDUCT_ENABLED === "true" and the
+// event is in TALABAT_DEDUCT_EVENT_ALLOWLIST. All processing/deduction logic
+// lives in the self-contained, unit-tested modules under lib/talabat.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,13 +53,19 @@ function buildProcessDeps(): ProcessOrderDeps {
 
 export async function POST(req: Request, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params;
-  const rawText = await req.text().catch(() => "");
+
+  // TOKEN FIRST — return 404 before touching the body, JSON, the admin client,
+  // the DB, or scheduling. (webhook-core re-checks the token as defense-in-depth.)
+  if (!tokenOk(String(token || ""))) return new Response("Not found", { status: 404 });
+
+  // Header-derived event only (no body access yet).
   const headerEvent = req.headers.get("x-event-type") || req.headers.get("x-dh-event") || null;
 
   const result = await handleTalabatWebhookPost(
     {
       tokenOk,
-      parseLines: (payload: any) => ({ orderCode: parseTalabatOrderLines(payload).orderCode }),
+      readBody: () => req.text().catch(() => ""),
+      parseLines: (payload: any) => { const x = parseTalabatOrderLines(payload); return { orderCode: x.orderCode, event: x.event }; },
       parseDisplay: (payload: any) => {
         const p = parseTalabatOrder(payload);
         return { status: p.status, customerName: p.customerName, total: p.total, currency: p.currency, placedAt: p.placedAt, items: p.items };
@@ -81,9 +86,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ token: string 
         const admin = createAdminClient();
         return processStoredTalabatOrder(admin, orderId, buildProcessDeps());
       },
+      handleScheduleFailure: async (orderId: string) => {
+        const admin = createAdminClient();
+        return handleScheduleFailure(admin, orderId, buildProcessDeps());
+      },
       log: (msg: string) => console.error(msg),
     },
-    { token: String(token || ""), rawText, headerEvent },
+    { token: String(token || ""), headerEvent },
   );
 
   return new Response(result.body, {
