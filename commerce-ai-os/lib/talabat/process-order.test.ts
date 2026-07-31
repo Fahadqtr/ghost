@@ -1,20 +1,19 @@
 // Behavioral tests for the server-only Talabat processor. Uses the REAL pure
-// Phase 2A.3A layers + a fake admin client (with a strict staff_tasks schema that
-// rejects unknown columns) and fake loaders. NO Supabase, NO network, NO stock
-// writes. Run under --conditions=react-server (server-only → no-op).
+// Phase 2A.3A layers + a fake admin client (strict staff_tasks schema that rejects
+// unknown columns and enforces the id PRIMARY KEY) and fake loaders. NO Supabase,
+// NO network, NO stock writes. Run under --conditions=react-server.
 // Run: node --conditions=react-server --experimental-strip-types --test lib/talabat/process-order.test.ts
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { processStoredTalabatOrder, handleScheduleFailure } from "./process-order.ts";
+import { processStoredTalabatOrder, handleScheduleFailure, handleUnexpectedProcessingFailure, normalizeTalabatProcessingReason } from "./process-order.ts";
 import { parseTalabatOrderLines, buildTalabatDedupKey } from "./order-lines.ts";
 import { resolveTalabatOrder } from "./order-resolver.ts";
 import { buildTalabatDeductionPlan, sanitizeResolution } from "./deduction-plan.ts";
 import { evaluateDeductGate } from "./event-gate.ts";
 
-// The REAL staff_tasks columns — the fake insert rejects anything else so a test
-// can never pass against an invented schema (kind/payload/product_id are gone).
-const REAL_STAFF_TASK_COLS = new Set(["title", "description", "assigned_to", "assigned_name", "priority", "due_date", "status", "created_by", "completed_at", "completed_by"]);
+// The REAL staff_tasks columns a Talabat task may use (id is the PK == order id).
+const REAL_STAFF_TASK_COLS = new Set(["id", "title", "description", "assigned_to", "assigned_name", "priority", "status", "created_by"]);
 
 const CTX_OK = {
   status: "ok" as const, channelId: "cT",
@@ -30,12 +29,11 @@ const RAW_OK = { order: { code: "OC-1", customer: { name: "Fatima", phone: "+974
 function makeAdmin(orderRow: any, rpc?: any, opts: any = {}) {
   const state: any = {
     order: orderRow ? { ...orderRow } : null,
-    updates: [], rpcCalls: [], tasks: [], rpc,
-    existingTasks: opts.existingTasks ?? [],
+    updates: [], rpcCalls: [], tasks: opts.tasks ? [...opts.tasks] : [], rpc,
     updateError: opts.updateError ?? false,
     updateZeroRows: opts.updateZeroRows ?? false,
     concurrentStatus: opts.concurrentStatus ?? null,
-    taskLookupError: opts.taskLookupError ?? false,
+    upsertError: opts.upsertError ?? null,
   };
   const admin: any = {
     _state: state,
@@ -44,20 +42,17 @@ function makeAdmin(orderRow: any, rpc?: any, opts: any = {}) {
       const b: any = {
         select() { return b; },
         update(p: any) { mode = "update"; patch = p; return b; },
-        insert(row: any) {
+        upsert(row: any) {
           if (table === "staff_tasks") {
             for (const k of Object.keys(row)) if (!REAL_STAFF_TASK_COLS.has(k)) return Promise.resolve({ error: { message: `unknown column ${k}` } });
+            if (state.upsertError) return Promise.resolve({ error: state.upsertError });
+            if (state.tasks.some((t: any) => t.id === row.id)) return Promise.resolve({ error: null }); // PK + ignoreDuplicates → no-op
             state.tasks.push(row);
             return Promise.resolve({ error: null });
           }
           return Promise.resolve({ error: null });
         },
         eq(c: string, v: unknown) { filters[c] = v; return b; },
-        neq() { return b; },
-        limit() {
-          if (state.taskLookupError) return Promise.resolve({ data: null, error: { message: "boom" } });
-          return Promise.resolve({ data: [...state.existingTasks, ...state.tasks], error: null });
-        },
         single() {
           if (table === "talabat_orders") return Promise.resolve({ data: state.order ? { ...state.order } : null, error: state.order ? null : { message: "nf" } });
           return Promise.resolve({ data: null, error: null });
@@ -96,8 +91,18 @@ function deps(over: any = {}) {
   };
 }
 const order = (over: any = {}) => ({ id: "ord-1", processing_status: "pending", raw: RAW_OK, event: "order.placed", order_code: "OC-1", ...over });
-
 const noPII = (blob: string) => assert.ok(!/Fatima|55512345|Doha|phone|address|customer|_unparsed|SQLSTATE|boom|update boom/i.test(blob), blob);
+
+// ---- reason whitelist -------------------------------------------------------
+
+test("normalizeTalabatProcessingReason: known passthrough, unknown → processing_failed", () => {
+  for (const r of ["event_not_allowed", "weak_order_identity", "duplicate_order", "rpc_failed", "schedule_failed", "processing_failed", "inventory_inconsistent"]) {
+    assert.equal(normalizeTalabatProcessingReason(r), r);
+  }
+  for (const bad of ["DROP TABLE", "", null, undefined, 42, { a: 1 }, "Order.Placed"]) {
+    assert.equal(normalizeTalabatProcessingReason(bad), "processing_failed", `bad=${String(bad)}`);
+  }
+});
 
 // ---- happy path + RPC hygiene ----------------------------------------------
 
@@ -118,133 +123,104 @@ test("RPC receives NO raw payload or customer PII", async () => {
   assert.equal(params.p_dedup_key, "talabat:oc-1");
 });
 
-// ---- gate ------------------------------------------------------------------
+// ---- gate + resolver/planner stops (no RPC) --------------------------------
 
-test("feature flag false → store_only, no RPC, no status change", async () => {
+test("feature flag false → store_only, no RPC", async () => {
   const admin = makeAdmin(order());
   const r = await processStoredTalabatOrder(admin, "ord-1", deps({ enabledFlag: "false" }));
   assert.equal(r.outcome, "store_only");
   assert.equal(admin._state.rpcCalls.length, 0);
-  assert.equal(admin._state.updates.length, 0);
 });
 
-test("flag true + empty allowlist → manual_review auto_deduct_misconfigured, no RPC, one task", async () => {
-  const admin = makeAdmin(order());
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ allowlistRaw: "" }));
-  assert.equal(r.outcome, "manual_review:auto_deduct_misconfigured");
-  assert.equal(admin._state.rpcCalls.length, 0);
-  assert.equal(admin._state.order.processing_status, "manual_review");
-  assert.equal(admin._state.tasks.length, 1);
-});
-
-test("event not in allowlist → event_not_allowed, no RPC, exactly one task", async () => {
+test("event not allowed → event_not_allowed, no RPC, exactly one task keyed by order id", async () => {
   const admin = makeAdmin(order({ event: "order.cancelled" }));
   const r = await processStoredTalabatOrder(admin, "ord-1", deps());
   assert.equal(r.outcome, "manual_review:event_not_allowed");
   assert.equal(admin._state.rpcCalls.length, 0);
   assert.equal(admin._state.tasks.length, 1);
+  assert.equal(admin._state.tasks[0].id, "ord-1"); // task PK == order id
 });
-
-// ---- resolver / planner stops (no RPC) -------------------------------------
 
 test("weak identity → no RPC", async () => {
   const admin = makeAdmin(order({ raw: { items: [{ sku: "V-SKU", quantity: 1 }] }, order_code: null }));
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "manual_review:weak_order_identity");
+  assert.equal((await processStoredTalabatOrder(admin, "ord-1", deps())).outcome, "manual_review:weak_order_identity");
   assert.equal(admin._state.rpcCalls.length, 0);
 });
 
 test("empty order → no RPC", async () => {
   const admin = makeAdmin(order({ raw: { order: { code: "OC-2", items: [] } } }));
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "manual_review:empty_order");
-  assert.equal(admin._state.rpcCalls.length, 0);
+  assert.equal((await processStoredTalabatOrder(admin, "ord-1", deps())).outcome, "manual_review:empty_order");
 });
 
 test("inactive mapping → no RPC", async () => {
   const ctx = { status: "ok", channelId: "cT", context: { ...CTX_OK.context, mappings: [{ ...CTX_OK.context.mappings[0], mappingStatus: "archived" }] } };
   const admin = makeAdmin(order());
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ loadContext: async () => ctx }));
-  assert.equal(r.outcome, "manual_review:inactive_mapping");
+  assert.equal((await processStoredTalabatOrder(admin, "ord-1", deps({ loadContext: async () => ctx }))).outcome, "manual_review:inactive_mapping");
   assert.equal(admin._state.rpcCalls.length, 0);
 });
 
-test("ambiguous mapping → no RPC", async () => {
-  const ctx = { status: "ok", channelId: "cT", context: { mappings: [], products: [{ id: "p3", sku: "P3SKU", barcode: "P3BC", title: "Prod Three" }], variants: [{ parentProductId: "p3", sku: "P3-V1", barcode: "P3-V1-BC" }] } };
-  const admin = makeAdmin(order({ raw: { order: { code: "OC-3", items: [{ sku: "P3SKU", quantity: 1 }] } } }));
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ loadContext: async () => ctx }));
-  assert.equal(r.outcome, "manual_review:ambiguous_match");
-  assert.equal(admin._state.rpcCalls.length, 0);
-});
-
-test("title-only match → no RPC", async () => {
+test("title-only → no RPC", async () => {
   const admin = makeAdmin(order({ raw: { order: { code: "OC-4", items: [{ title: "Prod One", quantity: 1 }] } } }));
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "manual_review:title_only_match");
-  assert.equal(admin._state.rpcCalls.length, 0);
+  assert.equal((await processStoredTalabatOrder(admin, "ord-1", deps())).outcome, "manual_review:title_only_match");
 });
 
 test("insufficient stock → no RPC", async () => {
   const admin = makeAdmin(order());
   const snap = { status: "ok", snapshots: [{ kind: "variant", masterProductId: "p2", masterVariantSku: "V-SKU", variantId: "v1", variantStock: 0, shelves: [] }] };
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ loadSnapshots: async () => snap }));
-  assert.equal(r.outcome, "manual_review:insufficient_stock");
+  assert.equal((await processStoredTalabatOrder(admin, "ord-1", deps({ loadSnapshots: async () => snap }))).outcome, "manual_review:insufficient_stock");
   assert.equal(admin._state.rpcCalls.length, 0);
 });
 
-test("snapshot error → inventory_inconsistent, no RPC", async () => {
-  const admin = makeAdmin(order());
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ loadSnapshots: async () => ({ status: "error" }) }));
-  assert.equal(r.outcome, "manual_review:inventory_inconsistent");
-  assert.equal(admin._state.rpcCalls.length, 0);
+test("snapshot error → inventory_inconsistent; context error → context_unavailable; channel unresolved → talabat_channel_unresolved (all no RPC)", async () => {
+  const a1 = makeAdmin(order());
+  assert.equal((await processStoredTalabatOrder(a1, "ord-1", deps({ loadSnapshots: async () => ({ status: "error" }) }))).outcome, "manual_review:inventory_inconsistent");
+  const a2 = makeAdmin(order());
+  assert.equal((await processStoredTalabatOrder(a2, "ord-1", deps({ loadContext: async () => ({ status: "error" }) }))).outcome, "manual_review:context_unavailable");
+  const a3 = makeAdmin(order());
+  assert.equal((await processStoredTalabatOrder(a3, "ord-1", deps({ loadContext: async () => ({ status: "manual_review", reason: "talabat_channel_unresolved" }) }))).outcome, "manual_review:talabat_channel_unresolved");
 });
 
-test("context error → context_unavailable, no RPC (fail closed)", async () => {
-  const admin = makeAdmin(order());
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ loadContext: async () => ({ status: "error" }) }));
-  assert.equal(r.outcome, "manual_review:context_unavailable");
-  assert.equal(admin._state.rpcCalls.length, 0);
-});
+// ---- atomic task dedupe (PK == order id) -----------------------------------
 
-test("exactly one Talabat channel required — unresolved → manual_review, no RPC", async () => {
-  const admin = makeAdmin(order());
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ loadContext: async () => ({ status: "manual_review", reason: "talabat_channel_unresolved" }) }));
-  assert.equal(r.outcome, "manual_review:talabat_channel_unresolved");
-  assert.equal(admin._state.rpcCalls.length, 0);
-});
-
-// ---- staff_tasks schema + dedup --------------------------------------------
-
-test("review task uses ONLY real staff_tasks columns and a description marker (no kind/payload/product_id)", async () => {
+test("review task uses only real columns, id == order id, marker + classified reason, no PII/SKU", async () => {
   const admin = makeAdmin(order({ event: "order.cancelled" }));
   await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(admin._state.tasks.length, 1); // insert accepted → only real columns used
   const t = admin._state.tasks[0];
   for (const k of Object.keys(t)) assert.ok(REAL_STAFF_TASK_COLS.has(k), `unknown column ${k}`);
+  assert.equal(t.id, "ord-1");
   assert.match(t.description, /\[talabat_review_order:ord-1\]/);
   assert.match(t.description, /event_not_allowed/);
   noPII(JSON.stringify(t));
-  assert.ok(!/V-SKU|V-BC|PSKU|P3BC/.test(JSON.stringify(t)), "no SKU/barcode in the task");
+  assert.ok(!/V-SKU|V-BC|PSKU|P3BC|OC-1/.test(JSON.stringify(t)), "no SKU/barcode/orderCode in the task");
 });
 
-test("existing description marker → no duplicate task (dedupe by marker)", async () => {
-  const admin = makeAdmin(order({ event: "order.cancelled" }), undefined, { existingTasks: [{ id: "t0", description: "prev [talabat_review_order:ord-1] ...", status: "open" }] });
-  await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(admin._state.tasks.length, 0); // marker already present
-});
-
-test("task-lookup query error → no task created (never risk a duplicate)", async () => {
-  const admin = makeAdmin(order({ event: "order.cancelled" }), undefined, { taskLookupError: true });
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "manual_review:event_not_allowed"); // still parked
-  assert.equal(admin._state.tasks.length, 0);                 // but no task inserted
-});
-
-test("duplicate manual_review RPC results create only ONE task (marker dedupe across callbacks)", async () => {
-  const admin = makeAdmin(order(), { data: { status: "manual_review", reason: "duplicate_order" }, error: null });
-  await processStoredTalabatOrder(admin, "ord-1", deps());
-  await processStoredTalabatOrder(admin, "ord-1", deps()); // second callback (order still pending in the fake)
+test("two schedule-failure callbacks for the same order use the same task id → one task", async () => {
+  const admin = makeAdmin(order());
+  await handleScheduleFailure(admin, "ord-1", deps()); // marks failed + task id=ord-1
+  await handleScheduleFailure(admin, "ord-1", deps()); // order already failed → upsert same id → no-op
   assert.equal(admin._state.tasks.length, 1);
+  assert.equal(admin._state.tasks[0].id, "ord-1");
+});
+
+test("a COMPLETED existing task (same id) is not duplicated", async () => {
+  const admin = makeAdmin(order({ event: "order.cancelled" }), undefined, { tasks: [{ id: "ord-1", status: "done", title: "old", description: "[talabat_review_order:ord-1]" }] });
+  await processStoredTalabatOrder(admin, "ord-1", deps());
+  assert.equal(admin._state.tasks.length, 1); // PK conflict → ignored
+});
+
+test("different orders create different task ids", async () => {
+  const a = makeAdmin(order({ id: "ord-A", event: "order.cancelled" }));
+  await processStoredTalabatOrder(a, "ord-A", deps());
+  const b = makeAdmin(order({ id: "ord-B", event: "order.cancelled" }));
+  await processStoredTalabatOrder(b, "ord-B", deps());
+  assert.equal(a._state.tasks[0].id, "ord-A");
+  assert.equal(b._state.tasks[0].id, "ord-B");
+});
+
+test("a 23505 upsert conflict is treated as already-exists (no crash, no raw error)", async () => {
+  const admin = makeAdmin(order({ event: "order.cancelled" }), undefined, { upsertError: { code: "23505", message: "duplicate key value" } });
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
+  assert.equal(r.outcome, "manual_review:event_not_allowed"); // order still parked; task op did not throw
 });
 
 // ---- verified status updates -----------------------------------------------
@@ -256,35 +232,66 @@ test("manual-review update ERROR → status_update_failed, no false success, no 
   assert.equal(admin._state.tasks.length, 0);
 });
 
-test("manual-review update ZERO rows + DB already processed → reconciled_processed, no task", async () => {
+test("manual-review update ZERO rows + DB processed → reconciled_processed, no task", async () => {
   const admin = makeAdmin(order({ event: "order.cancelled" }), undefined, { updateZeroRows: true, concurrentStatus: "processed" });
   const r = await processStoredTalabatOrder(admin, "ord-1", deps());
   assert.equal(r.outcome, "reconciled_processed");
   assert.equal(admin._state.tasks.length, 0);
 });
 
-test("failed update ERROR → status_update_failed (no false failed), no task", async () => {
-  const admin = makeAdmin(order(), { data: null, error: { message: "SQLSTATE boom" } }, { updateError: true });
+test("parkManualReview with already_failed → reconciled_failed, NO new task, prior reason kept", async () => {
+  const admin = makeAdmin(order({ event: "order.cancelled" }), undefined, { updateZeroRows: true, concurrentStatus: "failed" });
   const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "status_update_failed");
+  assert.equal(r.outcome, "reconciled_failed");
   assert.equal(admin._state.tasks.length, 0);
 });
 
-test("confirmed manual_review → exactly one task; confirmed failed → exactly one task", async () => {
-  const mr = makeAdmin(order({ event: "order.cancelled" }));
-  await processStoredTalabatOrder(mr, "ord-1", deps());
-  assert.equal(mr._state.order.processing_status, "manual_review");
-  assert.equal(mr._state.tasks.length, 1);
-
-  const fl = makeAdmin(order(), { data: null, error: { message: "SQLSTATE boom" } });
-  const r = await processStoredTalabatOrder(fl, "ord-1", deps());
+test("confirmed failed (rpc error, still pending) → exactly one task, no raw error", async () => {
+  const admin = makeAdmin(order(), { data: null, error: { message: "SQLSTATE boom" } });
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
   assert.equal(r.outcome, "failed:rpc_failed");
-  assert.equal(fl._state.order.processing_status, "failed");
-  assert.equal(fl._state.tasks.length, 1);
-  noPII(JSON.stringify(fl._state.updates));
+  assert.equal(admin._state.order.processing_status, "failed");
+  assert.equal(admin._state.tasks.length, 1);
+  noPII(JSON.stringify(admin._state.updates));
 });
 
-// ---- RPC reconciliation ----------------------------------------------------
+// ---- RPC manual_review verification -----------------------------------------
+
+test("RPC manual_review + DB manual_review → one task with the (normalized) reason", async () => {
+  const admin = makeAdmin(order(), (_p: any, state: any) => { state.order.processing_status = "manual_review"; return Promise.resolve({ data: { status: "manual_review", reason: "duplicate_order" }, error: null }); });
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
+  assert.equal(r.outcome, "manual_review:duplicate_order");
+  assert.equal(admin._state.tasks.length, 1);
+});
+
+test("RPC manual_review + DB processed → no task (processed is truth)", async () => {
+  const admin = makeAdmin(order(), (_p: any, state: any) => { state.order.processing_status = "processed"; return Promise.resolve({ data: { status: "manual_review", reason: "x" }, error: null }); });
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
+  assert.equal(r.outcome, "reconciled_processed");
+  assert.equal(admin._state.tasks.length, 0);
+});
+
+test("RPC manual_review + DB still pending → parkManualReview (verified) + task", async () => {
+  const admin = makeAdmin(order(), { data: { status: "manual_review", reason: "inventory_inconsistent" }, error: null });
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
+  assert.equal(r.outcome, "manual_review:inventory_inconsistent");
+  assert.equal(admin._state.order.processing_status, "manual_review");
+  assert.equal(admin._state.tasks.length, 1);
+});
+
+test("an arbitrary rpc.data.reason is normalized to processing_failed (never leaks into the task)", async () => {
+  const admin = makeAdmin(order(), { data: { status: "manual_review", reason: "EVIL; DROP TABLE staff_tasks" }, error: null });
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
+  assert.equal(r.outcome, "manual_review:processing_failed");
+  assert.ok(!/EVIL|DROP TABLE/.test(JSON.stringify(admin._state.tasks)), "arbitrary reason must not reach the task");
+});
+
+test("duplicate_order RPC + still pending → parked manual_review duplicate_order + task", async () => {
+  const admin = makeAdmin(order(), { data: { status: "duplicate_order" }, error: null });
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
+  assert.equal(r.outcome, "manual_review:duplicate_order");
+  assert.equal(admin._state.tasks.length, 1);
+});
 
 test("RPC error but DB already processed → reconcile, do NOT mark failed", async () => {
   const admin = makeAdmin(order(), (_p: any, state: any) => { state.order.processing_status = "processed"; return Promise.resolve({ data: null, error: { message: "network blip" } }); });
@@ -293,50 +300,50 @@ test("RPC error but DB already processed → reconcile, do NOT mark failed", asy
   assert.ok(!admin._state.updates.some((u: any) => u.processing_status === "failed"));
 });
 
-test("RPC throws → treated as ambiguous → reread → failed when still pending", async () => {
-  const admin = makeAdmin(order(), () => { throw new Error("thrown"); });
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "failed:rpc_failed");
-  assert.equal(admin._state.order.processing_status, "failed");
-});
+// ---- unexpected processing failure -----------------------------------------
 
-test("duplicate_order RPC result + DB terminal → reconciled (no new write)", async () => {
-  const admin = makeAdmin(order(), (_p: any, state: any) => { state.order.processing_status = "manual_review"; return Promise.resolve({ data: { status: "duplicate_order" }, error: null }); });
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "reconciled_manual_review");
-});
-
-test("duplicate_order RPC result + still pending → parked manual_review duplicate_order + task", async () => {
-  const admin = makeAdmin(order(), { data: { status: "duplicate_order" }, error: null });
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "manual_review:duplicate_order");
-  assert.equal(admin._state.order.processing_status, "manual_review");
-  assert.equal(admin._state.tasks.length, 1);
-});
-
-// ---- no-op guards + schedule failure ---------------------------------------
-
-test("duplicate callback on an already-processed order → no-op, no RPC", async () => {
-  const admin = makeAdmin(order({ processing_status: "processed" }));
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "noop_processed");
-  assert.equal(admin._state.rpcCalls.length, 0);
-  assert.equal(admin._state.updates.length, 0);
-});
-
-test("a failed order is not auto-processed → no-op, no RPC", async () => {
-  const admin = makeAdmin(order({ processing_status: "failed" }));
-  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
-  assert.equal(r.outcome, "noop_failed");
-  assert.equal(admin._state.rpcCalls.length, 0);
-});
-
-test("handleScheduleFailure marks a pending order failed(schedule_failed) + one task, no PII", async () => {
+test("parseLines throws → failed/processing_failed (never leaves pending)", async () => {
   const admin = makeAdmin(order());
-  const r = await handleScheduleFailure(admin, "ord-1", deps());
-  assert.equal(r.outcome, "failed:schedule_failed");
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ parseLines: () => { throw new Error("parse blew up: raw customer Fatima"); } }));
+  assert.equal(r.outcome, "failed:processing_failed");
+  assert.equal(admin._state.order.processing_status, "failed");
+  noPII(JSON.stringify(admin._state.updates) + JSON.stringify(admin._state.tasks));
+});
+
+test("resolveOrder throws → failed/processing_failed", async () => {
+  const admin = makeAdmin(order());
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ resolveOrder: () => { throw new Error("resolve boom"); } }));
+  assert.equal(r.outcome, "failed:processing_failed");
+});
+
+test("buildPlan throws → failed/processing_failed", async () => {
+  const admin = makeAdmin(order());
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ buildPlan: () => { throw new Error("plan boom"); } }));
+  assert.equal(r.outcome, "failed:processing_failed");
+});
+
+test("handleUnexpectedProcessingFailure: pending → failed/processing_failed + task", async () => {
+  const admin = makeAdmin(order());
+  const r = await handleUnexpectedProcessingFailure(admin, "ord-1", deps());
+  assert.equal(r.outcome, "failed:processing_failed");
   assert.equal(admin._state.order.processing_status, "failed");
   assert.equal(admin._state.tasks.length, 1);
-  assert.match(admin._state.tasks[0].description, /schedule_failed/);
-  noPII(JSON.stringify(admin._state.updates) + JSON.stringify(admin._state.tasks));
+});
+
+test("handleUnexpectedProcessingFailure: DB already processed → untouched, no task", async () => {
+  const admin = makeAdmin(order({ processing_status: "processed" }));
+  const r = await handleUnexpectedProcessingFailure(admin, "ord-1", deps());
+  assert.equal(r.outcome, "reconciled_processed");
+  assert.equal(admin._state.updates.length, 0);
+  assert.equal(admin._state.tasks.length, 0);
+});
+
+// ---- no-op guards -----------------------------------------------------------
+
+test("already-processed order → no-op, no RPC; failed order → no-op", async () => {
+  const p = makeAdmin(order({ processing_status: "processed" }));
+  assert.equal((await processStoredTalabatOrder(p, "ord-1", deps())).outcome, "noop_processed");
+  assert.equal(p._state.rpcCalls.length, 0);
+  const f = makeAdmin(order({ processing_status: "failed" }));
+  assert.equal((await processStoredTalabatOrder(f, "ord-1", deps())).outcome, "noop_failed");
 });

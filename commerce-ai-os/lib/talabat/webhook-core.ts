@@ -53,6 +53,9 @@ export interface WebhookPostDeps {
   processOrder: (orderId: string) => Promise<unknown>;
   /** Called (and awaited) when schedule() throws, so the order is not left pending. */
   handleScheduleFailure: (orderId: string) => Promise<unknown>;
+  /** Called when the background processOrder() rejects unexpectedly, so a crashed
+   *  callback marks the order failed (verified) instead of leaving it pending. */
+  handleUnexpectedProcessingFailure: (orderId: string) => Promise<unknown>;
   /** Generic, PII-free logger. */
   log: (msg: string) => void;
 }
@@ -124,7 +127,14 @@ export async function handleTalabatWebhookPost(
         try {
           await deps.processOrder(orderId);
         } catch {
-          deps.log(`[talabat-processing] stage failed order=${orderId} stage=schedule`);
+          // The background run rejected unexpectedly — mark the order failed
+          // (verified) instead of leaving it silently pending. Never re-run.
+          deps.log(`[talabat-processing] stage failed order=${orderId} stage=processing`);
+          try {
+            await deps.handleUnexpectedProcessingFailure(orderId);
+          } catch {
+            deps.log(`[talabat-processing] stage failed order=${orderId} stage=processing_failure_handler`);
+          }
         }
       });
     } catch {

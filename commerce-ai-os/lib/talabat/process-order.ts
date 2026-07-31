@@ -13,8 +13,11 @@
 // and the planner returns "ready". The RPC is the sole arbiter of dedup and
 // concurrency; this module performs NO stock writes. Every status update is
 // VERIFIED (error + affected-row count, re-reading the DB on a zero-row update),
-// and a manual-review task is opened ONLY after the DB state is confirmed. No raw
-// payload / customer PII / DB error text ever enters resolution, a task, or a log.
+// a manual-review task is opened ONLY after the DB state is confirmed, and the
+// task is keyed on the internal order id so the staff_tasks PRIMARY KEY makes it
+// at-most-one-per-order (no scan-then-insert race). An unexpected exception can
+// never escape unclassified or leave the order silently pending. No raw payload /
+// customer PII / DB error text ever enters resolution, a task, or a log.
 
 import "server-only";
 import type { ContextResult } from "./resolution-context";
@@ -48,6 +51,21 @@ type UpdateOutcome = "updated" | "already_processed" | "already_manual_review" |
 const nowIsoDefault = () => new Date().toISOString();
 const log = (stage: string, orderId: string) => console.error(`[talabat-processing] stage failed order=${orderId} stage=${stage}`);
 
+// Only these classified reasons may ever reach resolution / a task / an outcome.
+// Anything else (a rogue rpc.data.reason, a stray resolver value) collapses to
+// processing_failed — no arbitrary string can leak through.
+const KNOWN_REASONS = new Set([
+  "auto_deduct_misconfigured", "event_not_allowed", "talabat_channel_unresolved", "context_unavailable",
+  "weak_order_identity", "empty_order", "invalid_quantity", "inactive_mapping", "ambiguous_match",
+  "conflicting_identifiers", "title_only_match", "unmatched", "inventory_inconsistent", "invalid_plan",
+  "insufficient_stock", "duplicate_order", "rpc_failed", "schedule_failed", "processing_failed", "manual_review",
+]);
+
+/** Map any value to a KNOWN classified reason; unknown → "processing_failed". */
+export function normalizeTalabatProcessingReason(value: unknown): string {
+  return typeof value === "string" && KNOWN_REASONS.has(value) ? value : "processing_failed";
+}
+
 async function readOrder(admin: any, orderId: string): Promise<StoredOrder | null> {
   try {
     const { data, error } = await admin
@@ -62,7 +80,7 @@ async function readOrder(admin: any, orderId: string): Promise<StoredOrder | nul
   }
 }
 
-/** Re-read only the processing_status (used to reconcile updates / ambiguous RPC). */
+/** Re-read only the processing_status. Returns null when it cannot be read. */
 async function rereadStatus(admin: any, orderId: string): Promise<string | null> {
   try {
     const { data, error } = await admin.from("talabat_orders").select("processing_status").eq("id", orderId).single();
@@ -91,7 +109,6 @@ async function markStatus(
       .select("id");
     if (error) return "status_update_failed";
     if (Array.isArray(data) && data.length === 1) return "updated";
-    // Zero rows changed → confirm the real state before claiming anything.
     const st = await rereadStatus(admin, orderId);
     if (st === "processed") return "already_processed";
     if (st === "manual_review") return "already_manual_review";
@@ -103,61 +120,60 @@ async function markStatus(
 }
 
 /**
- * Open ONE safe manual-review task for the order, deduped by an internal-id marker
- * embedded in the description. staff_tasks has ONLY the base columns
- * (title/description/priority/status/created_by/…) — no kind/payload/product_id —
- * so nothing else is written. The description carries no raw/PII/token/SKU/
- * customer/orderCode: just the internal UUID marker and the classified reason.
- * Best-effort: a lookup error is logged and NO task is created (so a duplicate is
- * never risked).
+ * Open ONE safe manual-review task for the order. ATOMIC dedupe: the task's
+ * primary key IS the internal order id, so the staff_tasks PRIMARY KEY guarantees
+ * at most one Talabat task per order — no open-task scan, no lookup-then-insert
+ * race. Uses upsert(onConflict:id, ignoreDuplicates) and treats a 23505 as an
+ * existing task. Only real base columns are written; the description carries no
+ * raw/PII/token/SKU/barcode/customer/orderCode — just the internal-id marker and
+ * a classified reason.
  */
 async function createReviewTask(admin: any, args: { orderId: string; reason: string }): Promise<void> {
+  const reason = normalizeTalabatProcessingReason(args.reason);
   const marker = `[talabat_review_order:${args.orderId}]`;
-  let existing: any[];
+  const row = {
+    id: args.orderId, // = talabat_orders.id → PK makes it one-per-order
+    title: "🔴 مراجعة طلب Talabat",
+    description: `${marker}\nنوع المهمة: talabat_review\nالسبب: ${reason}`,
+    assigned_to: null,
+    assigned_name: null,
+    priority: "high",
+    status: "open",
+    created_by: "talabat",
+  };
   try {
-    const { data, error } = await admin.from("staff_tasks").select("id, description, status").neq("status", "done").limit(200);
-    if (error) { log("review_task_lookup", args.orderId); return; }
-    existing = data ?? [];
-  } catch {
-    log("review_task_lookup", args.orderId);
-    return;
-  }
-  if (existing.some((t) => typeof t?.description === "string" && t.description.includes(marker))) return; // already open
-
-  try {
-    const { error } = await admin.from("staff_tasks").insert({
-      title: "🔴 مراجعة طلب Talabat",
-      description: `${marker}\nنوع المهمة: talabat_review\nالسبب: ${args.reason}`,
-      assigned_to: null,
-      assigned_name: null,
-      priority: "high",
-      status: "open",
-      created_by: "talabat",
-    });
-    if (error) log("review_task", args.orderId);
+    const { error } = await admin.from("staff_tasks").upsert(row, { onConflict: "id", ignoreDuplicates: true });
+    if (error) {
+      if (error.code === "23505") return; // already exists — expected, not an error
+      log("review_task", args.orderId);
+    }
   } catch {
     log("review_task", args.orderId);
   }
 }
 
-/** Park a pending order in manual_review with a safe reason, then (only after the
- *  DB confirms a review-worthy state) open one task. Never touches a processed row. */
+/** Park a pending order in manual_review, then (only after the DB confirms a
+ *  manual_review state) open the atomic task. A concurrently processed/failed
+ *  order is left untouched with its own reason as the truth. */
 async function parkManualReview(
-  admin: any, orderId: string, reason: string, resolution: Record<string, unknown>, nowIso: () => string,
+  admin: any, orderId: string, rawReason: string, resolution: Record<string, unknown>, nowIso: () => string,
 ): Promise<{ outcome: string }> {
+  const reason = normalizeTalabatProcessingReason(rawReason);
   const res = await markStatus(admin, orderId, "manual_review", resolution, nowIso);
   if (res === "already_processed") return { outcome: "reconciled_processed" };
+  if (res === "already_failed") return { outcome: "reconciled_failed" }; // prior failed reason wins; no retask
   if (res === "status_update_failed") return { outcome: "status_update_failed" };
-  // updated / already_manual_review / already_failed → a confirmed non-pending, review-worthy state.
+  // updated / already_manual_review → confirmed manual_review.
   await createReviewTask(admin, { orderId, reason });
-  return { outcome: res === "already_failed" ? `reconciled_failed:${reason}` : `manual_review:${reason}` };
+  return { outcome: `manual_review:${reason}` };
 }
 
-/** Park a pending order as failed with a safe reason, then (only after confirming
- *  the failed state) open one task. Never overwrites processed/manual_review. */
+/** Park a pending order as failed, then (only after confirming failed) open the
+ *  atomic task. Never overwrites processed/manual_review. */
 async function parkFailed(
-  admin: any, orderId: string, reason: string, resolution: Record<string, unknown>, nowIso: () => string,
+  admin: any, orderId: string, rawReason: string, resolution: Record<string, unknown>, nowIso: () => string,
 ): Promise<{ outcome: string }> {
+  const reason = normalizeTalabatProcessingReason(rawReason);
   const res = await markStatus(admin, orderId, "failed", resolution, nowIso);
   if (res === "already_processed") return { outcome: "reconciled_processed" };
   if (res === "already_manual_review") return { outcome: "reconciled_manual_review" };
@@ -168,9 +184,8 @@ async function parkFailed(
 }
 
 /**
- * Handle a failure to REGISTER the after() callback: the order must not be left
- * silently pending. Mark it failed (schedule_failed), verified, and open a task
- * once confirmed. Exposed so the webhook adapter can call it synchronously.
+ * Safe handler for a failure to REGISTER the after() callback: the order must not
+ * be left silently pending. Mark it failed (schedule_failed), verified, then task.
  */
 export async function handleScheduleFailure(admin: any, orderId: string, deps: ProcessOrderDeps): Promise<{ outcome: string }> {
   const nowIso = deps.nowIso ?? nowIsoDefault;
@@ -178,8 +193,24 @@ export async function handleScheduleFailure(admin: any, orderId: string, deps: P
 }
 
 /**
- * Process ONE stored Talabat order. No-op unless it is still "pending".
- * Returns a small classified outcome (for tests/telemetry) — never PII.
+ * Safe handler for an UNEXPECTED processing exception (the background callback
+ * rejected, or a pure layer threw). Never re-runs the processor. Re-reads state:
+ * processed/manual_review/failed → untouched; pending → failed/processing_failed
+ * (verified). No raw error is ever stored/logged.
+ */
+export async function handleUnexpectedProcessingFailure(admin: any, orderId: string, deps: ProcessOrderDeps): Promise<{ outcome: string }> {
+  const nowIso = deps.nowIso ?? nowIsoDefault;
+  const st = await rereadStatus(admin, orderId);
+  if (st === "processed") return { outcome: "reconciled_processed" };
+  if (st === "manual_review") return { outcome: "reconciled_manual_review" };
+  if (st === "failed") return { outcome: "reconciled_failed" };
+  return parkFailed(admin, orderId, "processing_failed", deps.sanitize({ reason: "processing_failed", method: "auto" }), nowIso);
+}
+
+/**
+ * Process ONE stored Talabat order. No-op unless it is still "pending". An outer
+ * boundary guarantees no unclassified exception escapes — any throw collapses to
+ * a verified failed/processing_failed.
  */
 export async function processStoredTalabatOrder(
   admin: any, orderId: string, deps: ProcessOrderDeps,
@@ -190,79 +221,88 @@ export async function processStoredTalabatOrder(
   if (!order) { log("read", orderId); return { outcome: "read_failed" }; }
   if (order.processing_status !== "pending") return { outcome: `noop_${order.processing_status}` };
 
-  // 1) Event gate — closed by default.
-  const gate = deps.evaluateGate({ enabledFlag: deps.enabledFlag, allowlistRaw: deps.allowlistRaw, event: order.event });
-  if (gate.action === "store_only") return { outcome: "store_only" };
-  if (gate.action === "manual_review") {
-    return parkManualReview(admin, orderId, gate.reason, deps.sanitize({ reason: gate.reason, method: "auto" }), nowIso);
-  }
-
-  // 2) Parse structured lines + dedup identity from the STORED raw payload.
-  const parsed = deps.parseLines(order.raw);
-  const dedup = deps.buildDedupKey(parsed);
-
-  // 3) Exact Talabat channel + resolution context.
-  const ctx = await deps.loadContext(admin);
-  if (ctx.status === "error") {
-    return parkManualReview(admin, orderId, "context_unavailable", deps.sanitize({ reason: "context_unavailable", method: "auto" }), nowIso);
-  }
-  if (ctx.status === "manual_review") {
-    return parkManualReview(admin, orderId, ctx.reason, deps.sanitize({ reason: ctx.reason, method: "auto" }), nowIso);
-  }
-
-  // 4) Resolve (weak identity, empty order, or any unresolved line stops here).
-  const resolved = deps.resolveOrder(parsed.lines, ctx.context, { dedupConfidence: dedup.confidence });
-  if (resolved.status !== "resolved") {
-    const reason = String(resolved.reason ?? "manual_review");
-    return parkManualReview(admin, orderId, reason, deps.sanitize({ ...(resolved.resolution ?? {}), reason, method: "auto" }), nowIso);
-  }
-
-  // 5) Stock snapshots for the resolved targets only.
-  const targets: SnapshotTarget[] = (resolved.targets ?? []).map((t: any) => ({ masterProductId: t.masterProductId, masterVariantSku: t.masterVariantSku }));
-  const snap = await deps.loadSnapshots(admin, targets);
-  if (snap.status === "error") {
-    return parkManualReview(admin, orderId, "inventory_inconsistent", deps.sanitize({ reason: "inventory_inconsistent", method: "auto" }), nowIso);
-  }
-
-  // 6) Final pre-RPC plan (last classifier before any deduction).
-  const planTargets = (resolved.targets ?? []).map((t: any) => ({ masterProductId: t.masterProductId, masterVariantSku: t.masterVariantSku, quantity: t.quantity, lineKeys: t.lineKeys }));
-  const plan = deps.buildPlan(planTargets, snap.snapshots);
-  if (plan.status !== "ready") {
-    const reason = String(plan.reason ?? "manual_review");
-    return parkManualReview(admin, orderId, reason, deps.sanitize({ ...(resolved.resolution ?? {}), reason, method: "auto" }), nowIso);
-  }
-
-  // 7) One atomic RPC call. p_resolution is the deep-safe classified projection.
-  const pResolution = deps.sanitize({ lines: resolved.resolution?.lines, targets: resolved.resolution?.targets, method: "auto" });
-  let rpc: { data: any; error: any } | null = null;
   try {
-    rpc = await admin.rpc("process_talabat_order_deduction", { p_order_id: orderId, p_dedup_key: dedup.key, p_plan: plan, p_resolution: pResolution });
+    // 1) Event gate — closed by default.
+    const gate = deps.evaluateGate({ enabledFlag: deps.enabledFlag, allowlistRaw: deps.allowlistRaw, event: order.event });
+    if (gate.action === "store_only") return { outcome: "store_only" };
+    if (gate.action === "manual_review") {
+      return await parkManualReview(admin, orderId, gate.reason, deps.sanitize({ reason: gate.reason, method: "auto" }), nowIso);
+    }
+
+    // 2) Parse structured lines + dedup identity from the STORED raw payload.
+    const parsed = deps.parseLines(order.raw);
+    const dedup = deps.buildDedupKey(parsed);
+
+    // 3) Exact Talabat channel + resolution context.
+    const ctx = await deps.loadContext(admin);
+    if (ctx.status === "error") {
+      return await parkManualReview(admin, orderId, "context_unavailable", deps.sanitize({ reason: "context_unavailable", method: "auto" }), nowIso);
+    }
+    if (ctx.status === "manual_review") {
+      return await parkManualReview(admin, orderId, ctx.reason, deps.sanitize({ reason: ctx.reason, method: "auto" }), nowIso);
+    }
+
+    // 4) Resolve (weak identity, empty order, or any unresolved line stops here).
+    const resolved = deps.resolveOrder(parsed.lines, ctx.context, { dedupConfidence: dedup.confidence });
+    if (resolved.status !== "resolved") {
+      const reason = normalizeTalabatProcessingReason(resolved.reason);
+      return await parkManualReview(admin, orderId, reason, deps.sanitize({ ...(resolved.resolution ?? {}), reason, method: "auto" }), nowIso);
+    }
+
+    // 5) Stock snapshots for the resolved targets only.
+    const targets: SnapshotTarget[] = (resolved.targets ?? []).map((t: any) => ({ masterProductId: t.masterProductId, masterVariantSku: t.masterVariantSku }));
+    const snap = await deps.loadSnapshots(admin, targets);
+    if (snap.status === "error") {
+      return await parkManualReview(admin, orderId, "inventory_inconsistent", deps.sanitize({ reason: "inventory_inconsistent", method: "auto" }), nowIso);
+    }
+
+    // 6) Final pre-RPC plan (last classifier before any deduction).
+    const planTargets = (resolved.targets ?? []).map((t: any) => ({ masterProductId: t.masterProductId, masterVariantSku: t.masterVariantSku, quantity: t.quantity, lineKeys: t.lineKeys }));
+    const plan = deps.buildPlan(planTargets, snap.snapshots);
+    if (plan.status !== "ready") {
+      const reason = normalizeTalabatProcessingReason(plan.reason);
+      return await parkManualReview(admin, orderId, reason, deps.sanitize({ ...(resolved.resolution ?? {}), reason, method: "auto" }), nowIso);
+    }
+
+    // 7) One atomic RPC call. p_resolution is the deep-safe classified projection.
+    const pResolution = deps.sanitize({ lines: resolved.resolution?.lines, targets: resolved.resolution?.targets, method: "auto" });
+    let rpc: { data: any; error: any } | null = null;
+    try {
+      rpc = await admin.rpc("process_talabat_order_deduction", { p_order_id: orderId, p_dedup_key: dedup.key, p_plan: plan, p_resolution: pResolution });
+    } catch {
+      rpc = null;
+    }
+
+    // 8) Reconcile ONLY classified outcomes; never store a raw error.
+    if (!rpc || rpc.error || !rpc.data) {
+      const state = await rereadStatus(admin, orderId);
+      if (state === "processed" || state === "manual_review") return { outcome: `reconciled_${state}` };
+      return await parkFailed(admin, orderId, "rpc_failed", deps.sanitize({ reason: "rpc_failed", method: "auto" }), nowIso);
+    }
+
+    const status = String(rpc.data.status ?? "");
+    if (status === "processed") return { outcome: "processed" };
+    if (status === "manual_review") {
+      // Verify the DB state before creating/parking anything.
+      const reason = normalizeTalabatProcessingReason(rpc.data.reason);
+      const state = await rereadStatus(admin, orderId);
+      if (state === "manual_review") { await createReviewTask(admin, { orderId, reason }); return { outcome: `manual_review:${reason}` }; }
+      if (state === "processed") return { outcome: "reconciled_processed" };            // processed is truth, no task
+      if (state === "failed") return { outcome: "reconciled_failed" };                  // do not mislabel
+      if (state === "pending") return await parkManualReview(admin, orderId, reason, deps.sanitize({ reason, method: "auto" }), nowIso);
+      return { outcome: "manual_review_unconfirmed" };                                  // reread failed → no guess
+    }
+    if (status === "duplicate_order") {
+      const state = await rereadStatus(admin, orderId);
+      if (state === "processed" || state === "manual_review") return { outcome: `reconciled_${state}` };
+      return await parkManualReview(admin, orderId, "duplicate_order", deps.sanitize({ reason: "duplicate_order", method: "auto" }), nowIso);
+    }
+    // status === 'error' → reconcile like an ambiguous failure.
+    const state = await rereadStatus(admin, orderId);
+    if (state === "processed" || state === "manual_review") return { outcome: `reconciled_${state}` };
+    return await parkFailed(admin, orderId, "rpc_failed", deps.sanitize({ reason: "rpc_failed", method: "auto" }), nowIso);
   } catch {
-    rpc = null;
+    // OUTER BOUNDARY: no unclassified exception escapes; never leave it pending.
+    return handleUnexpectedProcessingFailure(admin, orderId, deps);
   }
-
-  // 8) Reconcile ONLY classified outcomes; never store a raw error.
-  if (!rpc || rpc.error || !rpc.data) {
-    const state = await rereadStatus(admin, orderId);
-    if (state === "processed" || state === "manual_review") return { outcome: `reconciled_${state}` };
-    return parkFailed(admin, orderId, "rpc_failed", deps.sanitize({ reason: "rpc_failed", method: "auto" }), nowIso);
-  }
-
-  const status = String(rpc.data.status ?? "");
-  if (status === "processed") return { outcome: "processed" };
-  if (status === "manual_review") {
-    // The RPC already set status+resolution atomically — open one safe task.
-    await createReviewTask(admin, { orderId, reason: String(rpc.data.reason ?? "manual_review") });
-    return { outcome: `manual_review:${rpc.data.reason ?? "manual_review"}` };
-  }
-  if (status === "duplicate_order") {
-    // Reconcile: the DB is truth if terminal; a still-pending order is parked.
-    const state = await rereadStatus(admin, orderId);
-    if (state === "processed" || state === "manual_review") return { outcome: `reconciled_${state}` };
-    return parkManualReview(admin, orderId, "duplicate_order", deps.sanitize({ reason: "duplicate_order", method: "auto" }), nowIso);
-  }
-  // status === 'error' (missing_dedup_key/order_not_found/…): reconcile like an ambiguous failure.
-  const state = await rereadStatus(admin, orderId);
-  if (state === "processed" || state === "manual_review") return { outcome: `reconciled_${state}` };
-  return parkFailed(admin, orderId, "rpc_failed", deps.sanitize({ reason: "rpc_failed", method: "auto" }), nowIso);
 }

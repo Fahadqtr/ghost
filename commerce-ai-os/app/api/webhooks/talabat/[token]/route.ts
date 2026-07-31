@@ -7,7 +7,7 @@ import { buildTalabatDeductionPlan, sanitizeResolution } from "@/lib/talabat/ded
 import { evaluateDeductGate, isAutoDeductEnabled } from "@/lib/talabat/event-gate";
 import { loadTalabatResolutionContext } from "@/lib/talabat/resolution-context";
 import { loadStockSnapshots } from "@/lib/talabat/stock-snapshots";
-import { processStoredTalabatOrder, handleScheduleFailure, type ProcessOrderDeps } from "@/lib/talabat/process-order";
+import { processStoredTalabatOrder, handleScheduleFailure, handleUnexpectedProcessingFailure, type ProcessOrderDeps } from "@/lib/talabat/process-order";
 import {
   handleTalabatWebhookPost,
   handleTalabatWebhookGet,
@@ -89,6 +89,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ token: string 
       handleScheduleFailure: async (orderId: string) => {
         const admin = createAdminClient();
         return handleScheduleFailure(admin, orderId, buildProcessDeps());
+      },
+      handleUnexpectedProcessingFailure: async (orderId: string) => {
+        const admin = createAdminClient();
+        return handleUnexpectedProcessingFailure(admin, orderId, buildProcessDeps());
       },
       log: (msg: string) => console.error(msg),
     },

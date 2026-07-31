@@ -20,6 +20,7 @@ function makeDeps(over: any = {}) {
   const scheduled: Array<() => any> = [];
   const processed: string[] = [];
   const scheduleFailed: string[] = [];
+  const unexpectedFailed: string[] = [];
   const deps: any = {
     tokenOk: () => true,
     readBody: async () => { seq.push("read"); return over.rawText ?? JSON.stringify({ order: { code: "OC1" } }); },
@@ -30,10 +31,11 @@ function makeDeps(over: any = {}) {
     schedule: (fn: () => any) => { seq.push("schedule"); scheduled.push(fn); },
     processOrder: async (id: string) => { processed.push(id); },
     handleScheduleFailure: async (id: string) => { scheduleFailed.push(id); },
+    handleUnexpectedProcessingFailure: async (id: string) => { unexpectedFailed.push(id); },
     log: () => {},
     ...over,
   };
-  return { deps, seq, inserted, scheduled, processed, scheduleFailed };
+  return { deps, seq, inserted, scheduled, processed, scheduleFailed, unexpectedFailed };
 }
 
 test("unauthorized request → 404, and the body is NEVER read (no parser/insert/schedule)", async () => {
@@ -127,6 +129,14 @@ test("schedule THROWS → still 200, processor NOT called inline, order handed t
   assert.ok(!/after\(\)|blew up/.test(res.body));
   assert.equal(processed.length, 0);                 // never run inline
   assert.deepEqual(scheduleFailed, ["ord-1"]);       // order not left silently pending
+});
+
+test("an unexpected background callback rejection invokes the safe failure handler (order not left pending)", async () => {
+  const { deps, scheduled, unexpectedFailed } = makeDeps({ processOrder: async () => { throw new Error("processor crashed: stack ..."); } });
+  const res = await handleTalabatWebhookPost(deps, { token: "ok", headerEvent: "order.placed" });
+  assert.equal(res.status, 200);
+  await scheduled[0]();                                 // run the after() callback (which rejects)
+  assert.deepEqual(unexpectedFailed, ["ord-1"]);        // handled safely, not just logged
 });
 
 test("GET health behavior unchanged: bad token 404, good token 200 ready body", () => {
