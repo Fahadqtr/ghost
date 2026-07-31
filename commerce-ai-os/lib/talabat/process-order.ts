@@ -51,6 +51,15 @@ type UpdateOutcome = "updated" | "already_processed" | "already_manual_review" |
 const nowIsoDefault = () => new Date().toISOString();
 const log = (stage: string, orderId: string) => console.error(`[talabat-processing] stage failed order=${orderId} stage=${stage}`);
 
+/**
+ * A CONSTANT, self-contained safe resolution for the final rescue paths. It never
+ * calls deps.sanitize() — that collaborator might be the very thing that threw —
+ * and contains only a classified reason, never raw/PII.
+ */
+function safeFailureResolution(reason: "schedule_failed" | "processing_failed"): Record<string, unknown> {
+  return { reason, method: "auto" };
+}
+
 // Only these classified reasons may ever reach resolution / a task / an outcome.
 // Anything else (a rogue rpc.data.reason, a stray resolver value) collapses to
 // processing_failed — no arbitrary string can leak through.
@@ -188,23 +197,31 @@ async function parkFailed(
  * be left silently pending. Mark it failed (schedule_failed), verified, then task.
  */
 export async function handleScheduleFailure(admin: any, orderId: string, deps: ProcessOrderDeps): Promise<{ outcome: string }> {
-  const nowIso = deps.nowIso ?? nowIsoDefault;
-  return parkFailed(admin, orderId, "schedule_failed", deps.sanitize({ reason: "schedule_failed", method: "auto" }), nowIso);
+  try {
+    // Does NOT use deps.sanitize (rescue path). Any internal failure → status_update_failed.
+    return await parkFailed(admin, orderId, "schedule_failed", safeFailureResolution("schedule_failed"), deps.nowIso ?? nowIsoDefault);
+  } catch {
+    return { outcome: "status_update_failed" };
+  }
 }
 
 /**
  * Safe handler for an UNEXPECTED processing exception (the background callback
- * rejected, or a pure layer threw). Never re-runs the processor. Re-reads state:
- * processed/manual_review/failed → untouched; pending → failed/processing_failed
- * (verified). No raw error is ever stored/logged.
+ * rejected, or a pure layer/sanitize threw). Never re-runs the processor and
+ * never calls deps.sanitize. Re-reads state: processed/manual_review/failed →
+ * untouched; pending → failed/processing_failed (verified); otherwise
+ * status_update_failed. No raw error is ever stored/logged and it never throws.
  */
 export async function handleUnexpectedProcessingFailure(admin: any, orderId: string, deps: ProcessOrderDeps): Promise<{ outcome: string }> {
-  const nowIso = deps.nowIso ?? nowIsoDefault;
-  const st = await rereadStatus(admin, orderId);
-  if (st === "processed") return { outcome: "reconciled_processed" };
-  if (st === "manual_review") return { outcome: "reconciled_manual_review" };
-  if (st === "failed") return { outcome: "reconciled_failed" };
-  return parkFailed(admin, orderId, "processing_failed", deps.sanitize({ reason: "processing_failed", method: "auto" }), nowIso);
+  try {
+    const st = await rereadStatus(admin, orderId);
+    if (st === "processed") return { outcome: "reconciled_processed" };
+    if (st === "manual_review") return { outcome: "reconciled_manual_review" };
+    if (st === "failed") return { outcome: "reconciled_failed" };
+    return await parkFailed(admin, orderId, "processing_failed", safeFailureResolution("processing_failed"), deps.nowIso ?? nowIsoDefault);
+  } catch {
+    return { outcome: "status_update_failed" };
+  }
 }
 
 /**
@@ -218,7 +235,14 @@ export async function processStoredTalabatOrder(
   const nowIso = deps.nowIso ?? nowIsoDefault;
 
   const order = await readOrder(admin, orderId);
-  if (!order) { log("read", orderId); return { outcome: "read_failed" }; }
+  if (!order) {
+    // The FIRST read failed — don't give up. Log a generic stage and route through
+    // the safe failure handler, which re-reads state and, if still pending,
+    // marks it failed/processing_failed (a transient read blip must not leave a
+    // pending order stuck).
+    log("read", orderId);
+    return handleUnexpectedProcessingFailure(admin, orderId, deps);
+  }
   if (order.processing_status !== "pending") return { outcome: `noop_${order.processing_status}` };
 
   try {

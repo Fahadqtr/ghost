@@ -34,6 +34,8 @@ function makeAdmin(orderRow: any, rpc?: any, opts: any = {}) {
     updateZeroRows: opts.updateZeroRows ?? false,
     concurrentStatus: opts.concurrentStatus ?? null,
     upsertError: opts.upsertError ?? null,
+    failFirstRead: opts.failFirstRead ?? false,
+    readCount: 0,
   };
   const admin: any = {
     _state: state,
@@ -54,7 +56,11 @@ function makeAdmin(orderRow: any, rpc?: any, opts: any = {}) {
         },
         eq(c: string, v: unknown) { filters[c] = v; return b; },
         single() {
-          if (table === "talabat_orders") return Promise.resolve({ data: state.order ? { ...state.order } : null, error: state.order ? null : { message: "nf" } });
+          if (table === "talabat_orders") {
+            state.readCount += 1;
+            if (state.failFirstRead && state.readCount === 1) return Promise.resolve({ data: null, error: { message: "transient read" } });
+            return Promise.resolve({ data: state.order ? { ...state.order } : null, error: state.order ? null : { message: "nf" } });
+          }
           return Promise.resolve({ data: null, error: null });
         },
         then(resolve: (v: any) => void) {
@@ -346,4 +352,53 @@ test("already-processed order → no-op, no RPC; failed order → no-op", async 
   assert.equal(p._state.rpcCalls.length, 0);
   const f = makeAdmin(order({ processing_status: "failed" }));
   assert.equal((await processStoredTalabatOrder(f, "ord-1", deps())).outcome, "noop_failed");
+});
+
+// ---- initial read failure ---------------------------------------------------
+
+test("transient first-read failure + second read pending → failed/processing_failed + one task", async () => {
+  const admin = makeAdmin(order(), undefined, { failFirstRead: true });
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
+  assert.equal(r.outcome, "failed:processing_failed");
+  assert.equal(admin._state.order.processing_status, "failed");
+  assert.equal(admin._state.tasks.length, 1);
+  assert.equal(admin._state.rpcCalls.length, 0);
+});
+
+test("first-read failure + second read says processed → no update, no task", async () => {
+  const admin = makeAdmin(order({ processing_status: "processed" }), undefined, { failFirstRead: true });
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps());
+  assert.equal(r.outcome, "reconciled_processed");
+  assert.equal(admin._state.updates.length, 0);
+  assert.equal(admin._state.tasks.length, 0);
+});
+
+// ---- failure handlers independent of sanitize / nowIso ----------------------
+
+test("sanitize throws during main processing → failed/processing_failed (outer boundary)", async () => {
+  const admin = makeAdmin(order());
+  const r = await processStoredTalabatOrder(admin, "ord-1", deps({ sanitize: () => { throw new Error("sanitize boom: Fatima"); } }));
+  assert.equal(r.outcome, "failed:processing_failed");
+  assert.equal(admin._state.order.processing_status, "failed");
+  noPII(JSON.stringify(admin._state.updates) + JSON.stringify(admin._state.tasks));
+});
+
+test("sanitize throws inside the failure path → handler still does not throw", async () => {
+  const admin = makeAdmin(order());
+  const r = await handleUnexpectedProcessingFailure(admin, "ord-1", deps({ sanitize: () => { throw new Error("sanitize boom"); } }));
+  assert.equal(r.outcome, "failed:processing_failed"); // uses safeFailureResolution, not sanitize
+  assert.equal(admin._state.order.processing_status, "failed");
+});
+
+test("nowIso throws → classified outcome, no exception escapes", async () => {
+  const admin = makeAdmin(order());
+  const r = await handleUnexpectedProcessingFailure(admin, "ord-1", deps({ nowIso: () => { throw new Error("clock boom"); } }));
+  assert.equal(r.outcome, "status_update_failed"); // markStatus swallowed the throw → classified
+});
+
+test("failure handler DB update error → status_update_failed", async () => {
+  const admin = makeAdmin(order(), undefined, { updateError: true });
+  const r = await handleUnexpectedProcessingFailure(admin, "ord-1", deps());
+  assert.equal(r.outcome, "status_update_failed");
+  assert.equal(admin._state.tasks.length, 0);
 });

@@ -139,6 +139,38 @@ test("an unexpected background callback rejection invokes the safe failure handl
   assert.deepEqual(unexpectedFailed, ["ord-1"]);        // handled safely, not just logged
 });
 
+test("readBody throws → safe 200, order still stored, no raw error leaked", async () => {
+  const { deps, inserted } = makeDeps({ readBody: async () => { throw new Error("stream read exploded"); } });
+  const res = await handleTalabatWebhookPost(deps, { token: "ok", headerEvent: "order.placed" });
+  assert.equal(res.status, 200);
+  assert.ok(!/stream read exploded/.test(res.body));
+  assert.equal(inserted.length, 1);                 // store-first still attempted
+  assert.equal(inserted[0].order_code, null);       // empty body → null identity
+});
+
+test("parseLines throws → order stored with null identity, safe 200", async () => {
+  const { deps, inserted } = makeDeps({ parseLines: () => { throw new Error("parse blew up"); } });
+  const res = await handleTalabatWebhookPost(deps, { token: "ok", headerEvent: "order.placed" });
+  assert.equal(res.status, 200);
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].order_code, null);
+  assert.equal(inserted[0].event, "order.placed"); // header event still used
+  assert.ok(!/parse blew up/.test(res.body));
+});
+
+test("parseDisplay throws → safe display defaults are stored, safe 200", async () => {
+  const { deps, inserted } = makeDeps({ parseDisplay: () => { throw new Error("display blew up"); } });
+  const res = await handleTalabatWebhookPost(deps, { token: "ok", headerEvent: "order.placed" });
+  assert.equal(res.status, 200);
+  const row = inserted[0];
+  assert.equal(row.status, "RECEIVED");
+  assert.equal(row.customer_name, null);   // "" → null
+  assert.equal(row.total, null);
+  assert.equal(row.currency, "QAR");
+  assert.deepEqual(row.items, []);
+  assert.ok(!/display blew up/.test(res.body));
+});
+
 test("GET health behavior unchanged: bad token 404, good token 200 ready body", () => {
   assert.equal(handleTalabatWebhookGet({ tokenOk: () => false }, { token: "x" }).status, 404);
   const ok = handleTalabatWebhookGet({ tokenOk: () => true }, { token: "x" });

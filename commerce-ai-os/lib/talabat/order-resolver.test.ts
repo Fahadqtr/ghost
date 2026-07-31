@@ -124,6 +124,7 @@ test("16: lines resolving to the same variant are aggregated (summed, both lineK
   const order = resolveTalabatOrder(
     [line({ lineKey: "line-0", sku: "V-SKU", quantity: 2 }), line({ lineKey: "line-1", barcode: "V-BC", quantity: 3 })],
     ctx(),
+    { dedupConfidence: "strong" },
   );
   assert.equal(order.status, "resolved");
   if (order.status === "resolved") {
@@ -134,16 +135,32 @@ test("16: lines resolving to the same variant are aggregated (summed, both lineK
 });
 
 test("17: a single unmatched line makes the WHOLE order manual_review", () => {
-  const order = resolveTalabatOrder([line({ sku: "V-SKU", quantity: 1 }), line({ lineKey: "line-1", sku: "NOPE", quantity: 1 })], ctx());
+  const order = resolveTalabatOrder([line({ sku: "V-SKU", quantity: 1 }), line({ lineKey: "line-1", sku: "NOPE", quantity: 1 })], ctx(), { dedupConfidence: "strong" });
   assert.equal(order.status === "manual_review" && order.reason, "unmatched");
 });
 
 test("empty: an empty order → manual_review empty_order", () => {
-  const order = resolveTalabatOrder([], ctx());
+  const order = resolveTalabatOrder([], ctx(), { dedupConfidence: "strong" });
   assert.equal(order.status === "manual_review" && order.reason, "empty_order");
 });
 
 test("weak: a weak dedup identity blocks automatic deduction", () => {
   const order = resolveTalabatOrder([line({ sku: "V-SKU", quantity: 1 })], ctx(), { dedupConfidence: "weak" });
   assert.equal(order.status === "manual_review" && order.reason, "weak_order_identity");
+});
+
+test("fail-closed: only dedupConfidence === 'strong' may auto-resolve", () => {
+  const good = [line({ sku: "V-SKU", quantity: 1 })];
+  // opts object omitted entirely (runtime fail-closed)
+  const omitted = resolveTalabatOrder(good, ctx(), undefined as any);
+  assert.equal(omitted.status === "manual_review" && omitted.reason, "weak_order_identity");
+  // dedupConfidence undefined
+  const undef = resolveTalabatOrder(good, ctx(), { dedupConfidence: undefined as any });
+  assert.equal(undef.status === "manual_review" && undef.reason, "weak_order_identity");
+  // an unexpected runtime value
+  const bogus = resolveTalabatOrder(good, ctx(), { dedupConfidence: "medium" as any });
+  assert.equal(bogus.status === "manual_review" && bogus.reason, "weak_order_identity");
+  // strong → normal resolution
+  const strong = resolveTalabatOrder(good, ctx(), { dedupConfidence: "strong" });
+  assert.equal(strong.status, "resolved");
 });

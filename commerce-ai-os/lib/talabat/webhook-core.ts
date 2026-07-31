@@ -78,7 +78,14 @@ export async function handleTalabatWebhookPost(
   // TOKEN FIRST — the body is NOT read until this passes.
   if (!deps.tokenOk(String(input.token || ""))) return { status: 404, body: "Not found" };
 
-  const rawText = await deps.readBody();
+  // Reading the body must not crash the webhook — on any throw, fall back to an
+  // empty body and log only a generic stage (never the body/token).
+  let rawText = "";
+  try {
+    rawText = await deps.readBody();
+  } catch {
+    deps.log("[talabat-webhook] read_body threw");
+  }
   let payload: any = null;
   try {
     payload = rawText ? JSON.parse(rawText) : null;
@@ -86,8 +93,22 @@ export async function handleTalabatWebhookPost(
     payload = { _unparsed: String(rawText).slice(0, 20000) };
   }
 
-  const parsed = deps.parseLines(payload);   // order_code + structured event source of truth
-  const disp = deps.parseDisplay(payload);   // display-only secondary fields
+  // Parsing must not crash the webhook either. A throwing parser falls back to a
+  // null identity / safe display defaults; nothing is lost (raw is still stored).
+  let parsed: { orderCode: string | null; event: string | null };
+  try {
+    parsed = deps.parseLines(payload);
+  } catch {
+    deps.log("[talabat-webhook] parse_lines threw");
+    parsed = { orderCode: null, event: null };
+  }
+  let disp: { status: string; customerName: string; total: number | null; currency: string; placedAt: string | null; items: any[] };
+  try {
+    disp = deps.parseDisplay(payload);
+  } catch {
+    deps.log("[talabat-webhook] parse_display threw");
+    disp = { status: "RECEIVED", customerName: "", total: null, currency: "QAR", placedAt: null, items: [] };
+  }
   // Event: a validated header event first, else the NEW parser's event (so a
   // nested order.event is not lost). String only, capped at 80; else null.
   const event = normalizeStoredEvent(input.headerEvent) ?? normalizeStoredEvent(parsed.event);
