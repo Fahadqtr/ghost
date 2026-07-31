@@ -94,9 +94,56 @@ test("4e: masterVariantSku must be JSON null or a non-empty string", () => {
 });
 
 test("4f: quantity / aggregated total must stay within int4 range (bigint aggregation)", () => {
-  assert.match(SQL_CODE, /\(v_ded ->> 'quantity'\)::numeric > 2147483647/);      // per-row
+  assert.match(SQL_CODE, /\(v_ded ->> 'quantity'\)::bigint > 2147483647/);        // per-row (cast only after format proven)
   assert.match(SQL_CODE, /sum\(\(d ->> 'quantity'\)::bigint\)/);                  // aggregate in bigint
   assert.match(SQL_CODE, /s\.qsum > 2147483647/);                                 // reject overflow
+});
+
+test("3-staged: no cast shares a boolean expression with the type/regex guard that protects it", () => {
+  // The UUID regex check and the ::uuid cast never sit in the same statement.
+  assert.ok(!/!~ v_uuid_re[^;]*::/.test(SQL_CODE), "uuid regex and a cast must not share an expression");
+  // The quantity regex check and any numeric/bigint/int cast never share a statement.
+  assert.ok(!/!~ '\^\[1-9\]\[0-9\]\*\$'[^;]*::(numeric|bigint|int)/.test(SQL_CODE), "quantity regex and a cast must not share an expression");
+  // The removed pattern (regex OR-ed with a cast) must be gone entirely.
+  assert.ok(!/::numeric > 2147483647/.test(SQL_CODE), "the ::numeric-in-OR pattern must be removed");
+  // Each validation stage is its own guarded IF that fails to invalid_plan.
+  assert.match(SQL_CODE, /jsonb_typeof\(v_ded -> 'quantity'\) <> 'number' then\s*v_fail := 'invalid_plan'/i);
+});
+
+test("5c-sql: a NULL / negative SIBLING variant stock blocks the deduction (fail-closed rollup)", () => {
+  assert.match(SQL_CODE, /product_variants where parent_product_id = v_pid and \(stock_quantity is null or stock_quantity < 0\)/i);
+});
+
+test("5d-sql: sibling variant rows are locked in a DETERMINISTIC order before the parent inventory", () => {
+  assert.match(SQL_CODE, /product_variants where parent_product_id = v_pid order by sku, id for update/i);
+  // the deterministic sibling lock precedes locking the parent inventory row
+  const sib = SQL_CODE.search(/product_variants where parent_product_id = v_pid order by sku, id for update/i);
+  const par = SQL_CODE.search(/select id, sold_quantity into v_inv_id, v_sold_before\s*\n\s*from inventory where product_id = v_pid for update/i);
+  assert.ok(sib >= 0 && par >= 0 && sib < par, "siblings locked before the parent inventory");
+});
+
+test("5e-sql: aggregated targets use deterministic ordering (masterProductId, masterVariantSku)", () => {
+  assert.match(SQL_CODE, /order by pid, vsku/i);
+});
+
+test("6-sold: a Talabat sale advances sold_quantity in BOTH branches (additive, never reset)", () => {
+  const incs = (SQL_CODE.match(/sold_quantity = coalesce\(sold_quantity, 0\) \+ v_qty/gi) ?? []).length;
+  assert.ok(incs >= 2, `expected sold_quantity increments in both branches, found ${incs}`);
+  assert.ok(!/sold_quantity\s*=\s*v_qty\b/.test(SQL_CODE), "must ADD to sold_quantity, not overwrite it");
+  assert.ok(!/sold_quantity\s*=\s*0\b/.test(SQL_CODE), "must never reset sold_quantity to 0");
+});
+
+test("6-sold: a negative existing sold_quantity is inventory_inconsistent", () => {
+  assert.ok((SQL_CODE.match(/v_sold_before is not null and v_sold_before < 0/g) ?? []).length >= 2);
+});
+
+test("6-audit: the sale movement records reason='sale' and source='talabat' (no raw payload / PII)", () => {
+  assert.ok((SQL_CODE.match(/'reason', 'sale'/g) ?? []).length >= 2);
+  assert.ok((SQL_CODE.match(/'source', 'talabat'/g) ?? []).length >= 2);
+  assert.ok(!/'reason', 'talabat_order'/.test(SQL_CODE), "the movement reason must be the 'sale' contract");
+  // only the safe internal order id + ids/quantity are in details — no raw/customer/phone
+  assert.match(SQL_CODE, /'orderId', p_order_id/);
+  assert.ok(!/customer|phone|address|p_resolution\b/i.test(SQL_CODE.match(/insert into malak_audit[\s\S]*?'done'\);/g)?.join("\n") ?? ""));
 });
 
 test("5-sql: NULL / negative stock → inventory_inconsistent (no coalesce-to-0 masking)", () => {
@@ -119,7 +166,7 @@ test("6d: the shelf spread must place the whole quantity (v_rem = 0) or roll bac
 });
 
 test("7b: the parent-inventory rollup update is row-count checked (exactly one row)", () => {
-  assert.match(SQL_CODE, /update inventory set stock_quantity = v_sum[\s\S]{0,140}?get diagnostics v_rows = row_count[\s\S]{0,60}?v_rows <> 1 then raise exception/i);
+  assert.match(SQL_CODE, /update inventory\s*\n\s*set stock_quantity = v_sum[\s\S]{0,220}?get diagnostics v_rows = row_count[\s\S]{0,60}?v_rows <> 1 then raise exception/i);
 });
 
 test("7c: the final processed update is row-count checked", () => {
@@ -133,10 +180,23 @@ test("9-deep: the resolution is rebuilt element-by-element, never copied through
   // v_safe must NOT copy p_resolution collections directly
   assert.ok(!/'lines',\s*p_resolution -> 'lines'/.test(SQL_CODE), "lines must not be copied raw");
   assert.ok(!/'targets',\s*p_resolution -> 'targets'/.test(SQL_CODE), "targets must not be copied raw");
-  // nested line target is projected to id + variant only
-  assert.match(SQL_CODE, /'masterProductId',\s*e #> '\{target,masterProductId\}'/);
+  // nested line target is projected to id + variant only (type-guarded)
+  assert.match(SQL_CODE, /jsonb_typeof\(e #> '\{target,masterProductId\}'\) = 'string'/);
   // nested lineKeys inside a target keep only string elements
   assert.match(SQL_CODE, /where jsonb_typeof\(y\) = 'string'/);
+});
+
+test("1-scalar-sql: every whitelisted scalar field is type-guarded (a nested object in an allowed key's value is dropped)", () => {
+  // string scalars are kept only when jsonb_typeof = 'string'
+  assert.match(SQL_CODE, /'lineKey',\s*case when jsonb_typeof\(e -> 'lineKey'\) = 'string'/);
+  assert.match(SQL_CODE, /'status',\s*case when jsonb_typeof\(e -> 'status'\)\s*= 'string'/);
+  assert.match(SQL_CODE, /'via',\s*case when jsonb_typeof\(e -> 'via'\)\s*= 'string'/);
+  // quantity kept only when it is a positive-integer NUMBER
+  assert.match(SQL_CODE, /'quantity', case when jsonb_typeof\(e -> 'quantity'\) = 'number' and \(e ->> 'quantity'\) ~ '\^\[1-9\]\[0-9\]\*\$'/);
+  // top-level reason/via/method kept only when string (never a number/object)
+  assert.match(SQL_CODE, /'reason',\s*case when jsonb_typeof\(p_resolution -> 'reason'\)\s*= 'string'/);
+  // no scalar is copied through unguarded — 'lineKey' is always followed by a case guard, never a bare `e -> 'lineKey'`
+  assert.ok(!/'lineKey',\s*e -> 'lineKey'/.test(SQL_CODE), "lineKey must be type-guarded, not copied raw");
 });
 
 test("6: the plan is aggregated by (product, variant) before pass 1/2", () => {
@@ -162,8 +222,9 @@ test("19: underflow is a verified RAISE, not hidden by greatest()", () => {
   assert.match(SQL_CODE, /if v_after < 0 then raise exception/i);
 });
 
-test("22: rollup uses SUM of variants, never max()", () => {
-  assert.match(SQL_CODE, /sum\(coalesce\(stock_quantity/i);
+test("22: rollup uses SUM of variants, never max(), and NEVER an inner coalesce on variant stock", () => {
+  assert.match(SQL_CODE, /coalesce\(sum\(stock_quantity\), 0\)/i);         // outer coalesce for empty set only
+  assert.ok(!/sum\(coalesce\(stock_quantity/i.test(SQL_CODE), "must not coalesce variant stock inside SUM");
   assert.ok(!/\bmax\(/i.test(SQL_CODE));
 });
 

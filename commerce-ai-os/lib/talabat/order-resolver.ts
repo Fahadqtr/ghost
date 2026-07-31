@@ -77,6 +77,7 @@ interface IdentifierMatch {
   targets: ResolvedTarget[];   // distinct targets resolved from ACTIVE mappings / catalog
   inactiveBlocked: boolean;    // a matching mapping exists but none is active
   parentBlocked: boolean;      // matched a product SKU/barcode whose product HAS variants
+  variantMissingSku: boolean;  // matched a variant row (e.g. by barcode) that has NO durable SKU
 }
 
 /**
@@ -100,23 +101,30 @@ function matchIdentifier(
   const mappingMatches = ctx.mappings.filter((m) => mapField(m) != null && norm(mapField(m)) === v);
   if (mappingMatches.length > 0) {
     const active = mappingMatches.filter((m) => m.mappingStatus === "active");
-    if (active.length === 0) return { targets: [], inactiveBlocked: true, parentBlocked: false };
+    if (active.length === 0) return { targets: [], inactiveBlocked: true, parentBlocked: false, variantMissingSku: false };
     return {
       targets: uniqueTargets(active.map((m) => ({ masterProductId: m.masterProductId, masterVariantSku: m.masterVariantSku }))),
       inactiveBlocked: false,
       parentBlocked: false,
+      variantMissingSku: false,
     };
   }
 
   // No mapping for this identifier → master-catalogue fallback (cpid never falls
   // back — it is a channel identifier only).
-  if (kind === "cpid") return { targets: [], inactiveBlocked: false, parentBlocked: false };
+  if (kind === "cpid") return { targets: [], inactiveBlocked: false, parentBlocked: false, variantMissingSku: false };
 
   const targets: ResolvedTarget[] = [];
   let parentBlocked = false;
+  let variantMissingSku = false;
   for (const variant of ctx.variants) {
     const field = kind === "sku" ? variant.sku : variant.barcode;
-    if (field != null && norm(field) === v) targets.push({ masterProductId: variant.parentProductId, masterVariantSku: variant.sku });
+    if (field != null && norm(field) === v) {
+      // A variant row with no durable SKU can NEVER be resolved as a no-variant
+      // parent (masterVariantSku = null means a real product with no variants).
+      if (variant.sku == null || norm(variant.sku) === "") { variantMissingSku = true; continue; }
+      targets.push({ masterProductId: variant.parentProductId, masterVariantSku: variant.sku });
+    }
   }
   for (const product of ctx.products) {
     const field = kind === "sku" ? product.sku : product.barcode;
@@ -125,7 +133,7 @@ function matchIdentifier(
       else targets.push({ masterProductId: product.id, masterVariantSku: null });
     }
   }
-  return { targets: uniqueTargets(targets), inactiveBlocked: false, parentBlocked };
+  return { targets: uniqueTargets(targets), inactiveBlocked: false, parentBlocked, variantMissingSku };
 }
 
 /**
@@ -157,12 +165,14 @@ export function resolveLine(line: ResolverLine, ctx: ResolveContext): LineResolu
     const m = matchIdentifier(ctx, p.kind, p.value, productHasVariants);
     if (m.inactiveBlocked) inactive = true;
     if (m.parentBlocked) parentBlocked = true;
+    if (m.variantMissingSku) parentBlocked = true; // a SKU-less variant hit is never auto-resolvable
     if (m.targets.length > 1) ambiguous = true;
     if (m.targets.length >= 1) levelTargets.push({ via: p.via, targets: m.targets });
   }
 
   // Precedence: a non-active mapping blocks first (can't be bypassed), then a
-  // parent-with-variants / per-level ambiguity, then cross-level conflicts.
+  // parent-with-variants / SKU-less-variant / per-level ambiguity, then
+  // cross-level conflicts.
   if (inactive) return { lineKey: line.lineKey, status: "manual_review", reason: "inactive_mapping" };
   if (ambiguous || parentBlocked) return { lineKey: line.lineKey, status: "manual_review", reason: "ambiguous_match" };
 

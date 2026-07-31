@@ -70,11 +70,16 @@ function numOrNull(v: unknown): number | null {
  */
 export function parseTalabatOrderLines(payload: any): ParsedTalabatOrder {
   const o = payload && typeof payload === "object" ? payload : {};
-  const order = o.order && typeof o.order === "object" ? o.order : o;
+  const hasOrderNode = Boolean(o.order && typeof o.order === "object");
+  const order = hasOrderNode ? o.order : o;
 
-  // Only safe, commercial order identifiers are eligible as the order code — a
-  // "token" (webhook auth token) is NEVER used as an order identity or dedup key.
-  const orderCode = orNull(pick(order, "orderCode", "code", "orderId", "order_id", "id", "shortCode", "short_code", "merchantOrderId", "merchant_order_id"));
+  // Only safe, EXPLICIT commercial order identifiers are eligible as the order
+  // code — a "token" (webhook auth token) is NEVER an order identity. The bare
+  // generic "id" is NOT trusted from a top-level payload (it may be an event id);
+  // it is accepted ONLY when it lives under an explicit `order` node (order.id).
+  let rawCode = pick(order, "orderCode", "code", "orderId", "order_id", "shortCode", "short_code", "merchantOrderId", "merchant_order_id");
+  if (rawCode === undefined && hasOrderNode) rawCode = pick(order, "id");
+  const orderCode = orNull(rawCode);
   const event = orNull(pick(o, "event", "eventType", "type") ?? pick(order, "event", "eventType", "type"));
   const reference = orNull(pick(order, "posOrderId", "pos_order_id", "externalId", "external_id", "reference", "order_reference", "merchantOrderId", "remoteOrderId"));
   const createdAt = orNull(pick(order, "createdAt", "created_at", "placedAt", "orderTime", "order_time"));
@@ -114,9 +119,10 @@ function sha256Hex(input: string): string {
  *  - Otherwise a SHA-256 over a CANONICAL, non-personal projection of the order
  *    (event, merchant reference, created timestamp, and per-line identifiers +
  *    quantity + unit price), sorted so JSON key order and line order never
- *    change it. If a trusted per-order identifier (reference or createdAt)
- *    exists → strong; if only the cart is available (two independent orders with
- *    the same basket could collide) → WEAK.
+ *    change it. If a trusted commercial per-order identifier (merchant/pos/
+ *    external reference) exists → strong; createdAt and event feed the hash but
+ *    do NOT make it strong; if only the cart is available (two independent orders
+ *    with the same basket could collide) → WEAK.
  * The webhook token, authorization header, signature, raw payload, customer
  * name, phone, and address are NEVER part of the key (and a token can never make
  * the confidence "strong").
@@ -138,6 +144,8 @@ export function buildTalabatDedupKey(parsed: ParsedTalabatOrder): TalabatDedupKe
     lines: canonicalLines,
   });
 
-  const hasTrustedId = Boolean(parsed.reference || parsed.createdAt);
+  // Strong ONLY with a trusted commercial reference (merchant/pos/external order
+  // id). A createdAt or event timestamp alone is NOT a trusted per-order id.
+  const hasTrustedId = Boolean(parsed.reference);
   return { key: `talabat:h:${sha256Hex(canonical)}`, confidence: hasTrustedId ? "strong" : "weak" };
 }

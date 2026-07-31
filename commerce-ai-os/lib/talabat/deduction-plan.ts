@@ -64,17 +64,17 @@ const keyOf = (pid: string, vsku: string | null): string => `${pid}||${vsku ?? "
 
 /**
  * inventory.stock_quantity rollup = SUM of the product's variant stock. FAIL-
- * CLOSED: a malformed value (negative, fractional, NaN, Infinity, numeric string,
- * or any non-number) returns null instead of being silently coerced to 0. An
- * absent value (null/undefined) counts as 0. The caller turns null into
- * inventory_inconsistent. Overflow past the safe-integer range also returns null.
+ * CLOSED: ANY malformed value — null, undefined, negative, fractional, NaN,
+ * Infinity, numeric string, or any non-number — returns null instead of being
+ * silently coerced to 0 (a NULL sibling stock means the rollup is untrustworthy,
+ * not "zero"). The caller turns null into inventory_inconsistent. Overflow past
+ * the safe-integer range also returns null.
  */
 export function sumVariantStock(variantStocks: Array<{ stock_quantity: number | null | undefined }>): number | null {
   let sum = 0;
   for (const v of variantStocks ?? []) {
     const n = v?.stock_quantity;
-    if (n === null || n === undefined) continue; // absent = 0
-    if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null; // null/undefined included
     sum += n;
     if (!Number.isSafeInteger(sum)) return null;
   }
@@ -193,45 +193,68 @@ const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof
 const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const stringKeys = (v: unknown): string[] => asArray(v).filter((x): x is string => typeof x === "string");
 
-/** Deep-project one object, keeping only the allowed keys (plus a nested target). */
-function pickShallow(src: unknown, keys: readonly string[]): Record<string, unknown> {
-  const o = isObj(src) ? src : {};
-  const out: Record<string, unknown> = {};
-  for (const k of keys) if (k in o && o[k] !== undefined) out[k] = o[k];
-  return out;
-}
+// Scalar type guards — a field declared scalar can NEVER hold a nested object /
+// array / wrong-typed value (so `lineKey: { phone, token }` is dropped even
+// though "lineKey" is an allowed key). `undefined` means "omit this field".
+const asStr = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+const asStrOrNull = (v: unknown): string | null | undefined => (typeof v === "string" ? v : v === null ? null : undefined);
+const asPosInt = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined);
+const put = (out: Record<string, unknown>, k: string, v: unknown): void => { if (v !== undefined) out[k] = v; };
 
-/** A resolution line — only classifier fields + a whitelisted target survive. */
+/** A resolution line — every kept field is type-checked to a scalar/target. */
 function sanitizeLine(l: unknown): Record<string, unknown> {
-  const out = pickShallow(l, ["lineKey", "status", "via", "reason", "quantity"]);
-  if (isObj(l) && isObj(l.target)) out.target = pickShallow(l.target, ["masterProductId", "masterVariantSku"]);
+  const src = isObj(l) ? l : {};
+  const out: Record<string, unknown> = {};
+  put(out, "lineKey", asStr(src.lineKey));
+  put(out, "status", asStr(src.status));
+  put(out, "via", asStr(src.via));
+  put(out, "reason", asStr(src.reason));
+  put(out, "quantity", asPosInt(src.quantity));
+  if (isObj(src.target)) {
+    const t: Record<string, unknown> = {};
+    put(t, "masterProductId", asStr(src.target.masterProductId));
+    put(t, "masterVariantSku", asStrOrNull(src.target.masterVariantSku));
+    out.target = t;
+  }
   return out;
 }
 
-/** A resolution target — id/variant/quantity + string lineKeys only. */
+/** A resolution target — scalar ids/quantity + a string-only lineKeys array. */
 function sanitizeTarget(t: unknown): Record<string, unknown> {
-  const out = pickShallow(t, ["masterProductId", "masterVariantSku", "quantity"]);
-  if (isObj(t) && "lineKeys" in t) out.lineKeys = stringKeys(t.lineKeys);
+  const src = isObj(t) ? t : {};
+  const out: Record<string, unknown> = {};
+  put(out, "masterProductId", asStr(src.masterProductId));
+  put(out, "masterVariantSku", asStrOrNull(src.masterVariantSku));
+  put(out, "quantity", asPosInt(src.quantity));
+  if ("lineKeys" in src) out.lineKeys = stringKeys(src.lineKeys);
+  return out;
+}
+
+/** A resolution reason — scalar lineKey + reason only. */
+function sanitizeReason(r: unknown): Record<string, unknown> {
+  const src = isObj(r) ? r : {};
+  const out: Record<string, unknown> = {};
+  put(out, "lineKey", asStr(src.lineKey));
+  put(out, "reason", asStr(src.reason));
   return out;
 }
 
 /**
- * DEEP whitelist of a resolution object — never raw payloads, customer/phone/
- * address, tokens, headers, cookies, authorization, or DB errors, even when
- * nested inside `lines`/`targets`/`reasons`. Only classifier fields survive at
- * every level; `lines`/`targets`/`reasons` are rebuilt element-by-element rather
- * than copied through.
+ * DEEP, TYPE-AWARE whitelist of a resolution object — never raw payloads,
+ * customer/phone/address, tokens, headers, cookies, authorization, or DB errors,
+ * even when nested inside `lines`/`targets`/`reasons` OR hidden inside the VALUE
+ * of an allowed scalar key (e.g. `lineKey: { token: "…" }`). Every scalar field
+ * is type-checked; `lines`/`targets`/`reasons` are rebuilt element-by-element,
+ * never copied through.
  */
 export function sanitizeResolution(input: unknown): Record<string, unknown> {
   const src = isObj(input) ? input : {};
   const out: Record<string, unknown> = {};
   if ("lines" in src) out.lines = asArray(src.lines).map(sanitizeLine);
   if ("targets" in src) out.targets = asArray(src.targets).map(sanitizeTarget);
-  if ("reasons" in src) out.reasons = asArray(src.reasons).map((r) => pickShallow(r, ["lineKey", "reason"]));
+  if ("reasons" in src) out.reasons = asArray(src.reasons).map(sanitizeReason);
   if ("lineKeys" in src) out.lineKeys = stringKeys(src.lineKeys);
-  for (const k of ["reason", "via", "method"] as const) {
-    if (k in src && (typeof src[k] === "string" || typeof src[k] === "number")) out[k] = src[k];
-  }
+  for (const k of ["reason", "via", "method"] as const) put(out, k, asStr(src[k]));
   return out;
 }
 

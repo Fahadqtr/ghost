@@ -22,9 +22,14 @@
 -- final order — checks GET DIAGNOSTICS ROW_COUNT = 1, and the shelf spread must
 -- place the whole quantity (v_rem = 0) or the apply rolls back). It records each
 -- movement in `malak_audit` (this project's stock-movement ledger — there is NO
--- stock_movements table), rolls the parent inventory up to the SUM of its
--- variants (never max(parent, variants)), never writes a negative quantity, and
--- never adds a per-channel stock column.
+-- stock_movements table) with details.reason = 'sale' and source = 'talabat',
+-- rolls the parent inventory up to the SUM of its variants (never
+-- max(parent, variants); no inner coalesce — every sibling stock is pre-verified
+-- non-null/non-negative and the sibling rows are locked in a deterministic order
+-- to avoid deadlocks), advances the cumulative `inventory.sold_quantity` by the
+-- sold quantity (a Talabat order IS a sale — matching the shared movement
+-- contract so it can be reviewed/reversed later), never writes a negative
+-- quantity, and never adds a per-channel stock column.
 --
 -- Only a DEEP-whitelisted, non-personal projection of the resolution is stored:
 -- lines/targets/reasons are rebuilt element-by-element (never copied through), so
@@ -71,6 +76,7 @@ declare
   v_variant_id uuid;
   v_before     integer;
   v_after      integer;
+  v_sold_before integer;
   v_sum        integer;
   v_rem        integer;
   v_rows       integer;
@@ -82,28 +88,31 @@ begin
     return jsonb_build_object('status', 'error', 'reason', 'missing_dedup_key');
   end if;
 
-  -- DEEP whitelist of the resolution — arbitrary/raw fields are dropped even if
-  -- nested inside lines/targets/reasons. Each collection is rebuilt element-by-
-  -- element (never `p_resolution -> 'lines'`/`'targets'` copied through), so a
-  -- token / phone / address / raw payload nested one level down cannot survive.
+  -- DEEP, TYPE-AWARE whitelist of the resolution — arbitrary/raw fields are
+  -- dropped even if nested inside lines/targets/reasons, AND every scalar field
+  -- is type-checked so a nested object/array hidden inside an allowed key's VALUE
+  -- (e.g. lineKey: {token: "..."}) is dropped too. Each collection is rebuilt
+  -- element-by-element (never `p_resolution -> 'lines'`/`'targets'` copied
+  -- through). A string field keeps only jsonb strings; quantity keeps only a
+  -- positive-integer number; masterVariantSku keeps only a string or JSON null.
   select jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
-           'lineKey',  e -> 'lineKey',
-           'status',   e -> 'status',
-           'via',      e -> 'via',
-           'reason',   e -> 'reason',
-           'quantity', e -> 'quantity',
+           'lineKey',  case when jsonb_typeof(e -> 'lineKey') = 'string' then e -> 'lineKey' else null end,
+           'status',   case when jsonb_typeof(e -> 'status')  = 'string' then e -> 'status'  else null end,
+           'via',      case when jsonb_typeof(e -> 'via')     = 'string' then e -> 'via'     else null end,
+           'reason',   case when jsonb_typeof(e -> 'reason')  = 'string' then e -> 'reason'  else null end,
+           'quantity', case when jsonb_typeof(e -> 'quantity') = 'number' and (e ->> 'quantity') ~ '^[1-9][0-9]*$' then e -> 'quantity' else null end,
            'target',   case when jsonb_typeof(e -> 'target') = 'object'
                             then jsonb_strip_nulls(jsonb_build_object(
-                                   'masterProductId',  e #> '{target,masterProductId}',
-                                   'masterVariantSku', e #> '{target,masterVariantSku}'))
+                                   'masterProductId',  case when jsonb_typeof(e #> '{target,masterProductId}') = 'string' then e #> '{target,masterProductId}' else null end,
+                                   'masterVariantSku', case when jsonb_typeof(e #> '{target,masterVariantSku}') = 'string' then e #> '{target,masterVariantSku}' else null end))
                             else null end)))
     into v_lines
     from jsonb_array_elements(case when jsonb_typeof(p_resolution -> 'lines') = 'array' then p_resolution -> 'lines' else '[]'::jsonb end) e;
 
   select jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
-           'masterProductId',  e -> 'masterProductId',
-           'masterVariantSku', e -> 'masterVariantSku',
-           'quantity',         e -> 'quantity',
+           'masterProductId',  case when jsonb_typeof(e -> 'masterProductId')  = 'string' then e -> 'masterProductId'  else null end,
+           'masterVariantSku', case when jsonb_typeof(e -> 'masterVariantSku') = 'string' then e -> 'masterVariantSku' else null end,
+           'quantity',         case when jsonb_typeof(e -> 'quantity') = 'number' and (e ->> 'quantity') ~ '^[1-9][0-9]*$' then e -> 'quantity' else null end,
            'lineKeys',         (select jsonb_agg(y) from jsonb_array_elements(
                                   case when jsonb_typeof(e -> 'lineKeys') = 'array' then e -> 'lineKeys' else '[]'::jsonb end) y
                                  where jsonb_typeof(y) = 'string'))))
@@ -111,8 +120,8 @@ begin
     from jsonb_array_elements(case when jsonb_typeof(p_resolution -> 'targets') = 'array' then p_resolution -> 'targets' else '[]'::jsonb end) e;
 
   select jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
-           'lineKey', e -> 'lineKey',
-           'reason',  e -> 'reason')))
+           'lineKey', case when jsonb_typeof(e -> 'lineKey') = 'string' then e -> 'lineKey' else null end,
+           'reason',  case when jsonb_typeof(e -> 'reason')  = 'string' then e -> 'reason'  else null end)))
     into v_reasons
     from jsonb_array_elements(case when jsonb_typeof(p_resolution -> 'reasons') = 'array' then p_resolution -> 'reasons' else '[]'::jsonb end) e;
 
@@ -123,9 +132,9 @@ begin
     'lineKeys', (select jsonb_agg(y) from jsonb_array_elements(
                    case when jsonb_typeof(p_resolution -> 'lineKeys') = 'array' then p_resolution -> 'lineKeys' else '[]'::jsonb end) y
                   where jsonb_typeof(y) = 'string'),
-    'reason',   case when jsonb_typeof(p_resolution -> 'reason') in ('string', 'number') then p_resolution -> 'reason' else null end,
-    'via',      case when jsonb_typeof(p_resolution -> 'via')    in ('string', 'number') then p_resolution -> 'via'    else null end,
-    'method',   case when jsonb_typeof(p_resolution -> 'method') in ('string', 'number') then p_resolution -> 'method' else null end
+    'reason',   case when jsonb_typeof(p_resolution -> 'reason')  = 'string' then p_resolution -> 'reason'  else null end,
+    'via',      case when jsonb_typeof(p_resolution -> 'via')     = 'string' then p_resolution -> 'via'     else null end,
+    'method',   case when jsonb_typeof(p_resolution -> 'method')  = 'string' then p_resolution -> 'method'  else null end
   ));
 
   -- Serialize concurrent calls for the same dedup key BEFORE any inventory lock,
@@ -170,17 +179,19 @@ begin
     if v_rows <> 1 then v_fail := 'duplicate_order'; end if;
   end if;
 
-  -- STRICT plan-shape validation (BEFORE any inventory lock). Every check is a
-  -- type/format test — no `::uuid` / `::int` cast runs until the value is proven
-  -- valid — so a malformed plan can NEVER raise a raw PostgreSQL cast error; it
+  -- STRICT plan-shape validation (BEFORE any inventory lock). Each field is
+  -- validated in SEPARATE STAGED STEPS and NO cast (`::uuid` / `::bigint`) ever
+  -- shares a boolean expression with the type/regex test that guards it — the
+  -- cast runs only in its own statement AFTER the format is proven, so a
+  -- malformed plan can NEVER raise a raw PostgreSQL cast error; it
   -- deterministically becomes invalid_plan → manual_review.
   --   * p_plan is a JSON object
   --   * p_plan.status = 'ready'
   --   * p_plan.deductions is a non-empty array
   --   * masterProductId is a valid UUID string
   --   * masterVariantSku is JSON null or a non-empty string
-  --   * quantity is a JSON *number*, a positive integer, within int4 range
-  --     (the string "2" is rejected)
+  --   * quantity is a JSON *number* (the string "2" is rejected), a positive
+  --     integer, within int4 range
   if v_fail is null then
     if p_plan is null or jsonb_typeof(p_plan) <> 'object'
        or (p_plan ->> 'status') is distinct from 'ready'
@@ -190,13 +201,25 @@ begin
     else
       for v_ded in select * from jsonb_array_elements(p_plan -> 'deductions') loop
         v_msku := v_ded -> 'masterVariantSku';
-        if (v_ded ->> 'masterProductId') is null
-           or (v_ded ->> 'masterProductId') !~ v_uuid_re
-           or not (jsonb_typeof(v_msku) = 'null'
-                   or (jsonb_typeof(v_msku) = 'string' and length(v_ded ->> 'masterVariantSku') > 0))
-           or jsonb_typeof(v_ded -> 'quantity') <> 'number'
-           or (v_ded ->> 'quantity') !~ '^[1-9][0-9]*$'
-           or (v_ded ->> 'quantity')::numeric > 2147483647 then
+        -- Stage 1: masterProductId is a UUID string (guard only — no cast).
+        if (v_ded ->> 'masterProductId') is null or (v_ded ->> 'masterProductId') !~ v_uuid_re then
+          v_fail := 'invalid_plan'; exit;
+        end if;
+        -- Stage 2: masterVariantSku is JSON null or a non-empty string.
+        if not (jsonb_typeof(v_msku) = 'null'
+                or (jsonb_typeof(v_msku) = 'string' and length(v_ded ->> 'masterVariantSku') > 0)) then
+          v_fail := 'invalid_plan'; exit;
+        end if;
+        -- Stage 3: quantity is a JSON number (rejects the string "2").
+        if jsonb_typeof(v_ded -> 'quantity') <> 'number' then
+          v_fail := 'invalid_plan'; exit;
+        end if;
+        -- Stage 4: quantity is a safe positive-integer format (guard only).
+        if (v_ded ->> 'quantity') !~ '^[1-9][0-9]*$' then
+          v_fail := 'invalid_plan'; exit;
+        end if;
+        -- Stage 5: ONLY NOW cast (format proven) and range-check.
+        if (v_ded ->> 'quantity')::bigint > 2147483647 then
           v_fail := 'invalid_plan'; exit;
         end if;
       end loop;
@@ -215,7 +238,10 @@ begin
     ) then
       v_fail := 'invalid_plan';
     else
-      select jsonb_agg(jsonb_build_object('masterProductId', pid, 'masterVariantSku', vsku, 'quantity', qsum))
+      -- Deterministic target ordering (masterProductId, masterVariantSku) so the
+      -- lock sequence in PASS 1/2 is stable across concurrent orders.
+      select jsonb_agg(jsonb_build_object('masterProductId', pid, 'masterVariantSku', vsku, 'quantity', qsum)
+                       order by pid, vsku)
         into v_agg
         from (
           select (d ->> 'masterProductId') as pid,
@@ -242,11 +268,14 @@ begin
         if v_cnt <> 0 then v_fail := 'inventory_inconsistent'; exit; end if;
         select count(*) into v_cnt from inventory where product_id = v_pid;
         if v_cnt <> 1 then v_fail := 'inventory_inconsistent'; exit; end if;
-        select id, stock_quantity into v_inv_id, v_avail_raw
+        select id, stock_quantity, sold_quantity into v_inv_id, v_avail_raw, v_sold_before
           from inventory where product_id = v_pid for update;
         -- NULL is NOT silently coalesced to 0: an unexpected NULL or a negative
         -- stock is treated as an inconsistency, never a valid zero.
         if v_avail_raw is null or v_avail_raw < 0 then v_fail := 'inventory_inconsistent'; exit; end if;
+        -- sold_quantity is a cumulative sales counter; NULL = never sold (0), but
+        -- a negative value is corrupt → inventory_inconsistent.
+        if v_sold_before is not null and v_sold_before < 0 then v_fail := 'inventory_inconsistent'; exit; end if;
         v_avail := v_avail_raw;
         perform 1 from shelf_stock where inventory_id = v_inv_id for update;
         if exists (select 1 from shelf_stock where inventory_id = v_inv_id) then
@@ -258,18 +287,30 @@ begin
         end if;
         if v_qty > v_avail then v_fail := 'insufficient_stock'; exit; end if;
       else
-        -- Variant target: exactly one variant for (parent, sku), and exactly one
-        -- parent inventory row.
+        -- Variant target: exactly one variant for (parent, sku).
         select count(*) into v_cnt from product_variants where parent_product_id = v_pid and sku = v_vsku;
         if v_cnt <> 1 then v_fail := 'inventory_inconsistent'; exit; end if;
+        -- Lock ALL sibling variant rows of the parent in a DETERMINISTIC order
+        -- (sku, id) BEFORE the parent inventory row — two concurrent orders
+        -- touching different variants of the same parent acquire these rollup
+        -- dependencies in the same sequence, so they serialize instead of
+        -- deadlocking.
+        perform 1 from product_variants where parent_product_id = v_pid order by sku, id for update;
+        -- Fail-closed rollup precheck: NO sibling variant may have a NULL or
+        -- negative stock — the parent rollup would otherwise be untrustworthy.
+        if exists (select 1 from product_variants where parent_product_id = v_pid and (stock_quantity is null or stock_quantity < 0)) then
+          v_fail := 'inventory_inconsistent'; exit;
+        end if;
         select id, stock_quantity into v_variant_id, v_avail_raw
-          from product_variants where parent_product_id = v_pid and sku = v_vsku for update;
+          from product_variants where parent_product_id = v_pid and sku = v_vsku;
         if v_avail_raw is null or v_avail_raw < 0 then v_fail := 'inventory_inconsistent'; exit; end if;
         v_avail := v_avail_raw;
         -- Exactly one parent inventory row must exist for the rollup target.
         select count(*) into v_cnt from inventory where product_id = v_pid;
         if v_cnt <> 1 then v_fail := 'inventory_inconsistent'; exit; end if;
-        perform 1 from inventory where product_id = v_pid for update;
+        select id, sold_quantity into v_inv_id, v_sold_before
+          from inventory where product_id = v_pid for update;
+        if v_sold_before is not null and v_sold_before < 0 then v_fail := 'inventory_inconsistent'; exit; end if;
         perform 1 from variant_shelf_stock where variant_id = v_variant_id for update;
         if exists (select 1 from variant_shelf_stock where variant_id = v_variant_id) then
           if exists (select 1 from variant_shelf_stock where variant_id = v_variant_id and (quantity is null or quantity < 0)) then
@@ -317,13 +358,20 @@ begin
           end loop;
           if v_rem <> 0 then raise exception 'talabat_shelf_remainder'; end if;
         end if;
-        update inventory set stock_quantity = v_after, updated_at = now() where id = v_inv_id;
+        -- A Talabat order is a SALE: reduce stock AND advance the cumulative
+        -- sold_quantity (matches the shared movement contract reason='sale').
+        update inventory
+           set stock_quantity = v_after,
+               sold_quantity = coalesce(sold_quantity, 0) + v_qty,
+               updated_at = now()
+         where id = v_inv_id;
         get diagnostics v_rows = row_count;
         if v_rows <> 1 then raise exception 'talabat_rowcount'; end if;
         insert into malak_audit (action_type, agent, sku, product_id, field, old_value, new_value, details, status)
         values ('stock_out', 'talabat', null, v_pid, 'stock_quantity', v_before::text, v_after::text,
-                jsonb_build_object('source', 'talabat', 'productId', v_pid, 'inventoryId', v_inv_id,
-                                   'quantity', v_qty, 'direction', 'out', 'reason', 'talabat_order'), 'done');
+                jsonb_build_object('source', 'talabat', 'direction', 'out', 'reason', 'sale',
+                                   'orderId', p_order_id, 'productId', v_pid, 'inventoryId', v_inv_id,
+                                   'quantity', v_qty), 'done');
       else
         select id, coalesce(stock_quantity, 0) into v_variant_id, v_before
           from product_variants where parent_product_id = v_pid and sku = v_vsku;
@@ -343,17 +391,29 @@ begin
         update product_variants set stock_quantity = v_after where id = v_variant_id;
         get diagnostics v_rows = row_count;
         if v_rows <> 1 then raise exception 'talabat_rowcount'; end if;
-        -- Rollup: parent inventory = SUM of its variants (never max()). Exactly
-        -- one inventory row must change.
-        select coalesce(sum(coalesce(stock_quantity, 0)), 0) into v_sum
+        -- Rollup: parent inventory = SUM of its variants (never max(); no inner
+        -- coalesce — PASS 1 already proved every sibling stock is non-null and
+        -- non-negative). The order is ALSO a SALE: advance the parent
+        -- sold_quantity by this variant's quantity. Because v_agg is aggregated
+        -- per (parent, variant), two variants of the same parent arrive as two
+        -- entries and each ADDS its quantity → the parent sold_quantity grows by
+        -- the combined total, independent of line order. Exactly one inventory
+        -- row must change.
+        select coalesce(sum(stock_quantity), 0) into v_sum
           from product_variants where parent_product_id = v_pid;
-        update inventory set stock_quantity = v_sum, updated_at = now() where product_id = v_pid;
+        update inventory
+           set stock_quantity = v_sum,
+               sold_quantity = coalesce(sold_quantity, 0) + v_qty,
+               updated_at = now()
+         where product_id = v_pid
+        returning id into v_inv_id;
         get diagnostics v_rows = row_count;
         if v_rows <> 1 then raise exception 'talabat_rowcount'; end if;
         insert into malak_audit (action_type, agent, sku, product_id, field, old_value, new_value, details, status)
         values ('stock_out', 'talabat', v_vsku, v_pid, 'variant_stock_quantity', v_before::text, v_after::text,
-                jsonb_build_object('source', 'talabat', 'productId', v_pid, 'variantSku', v_vsku, 'variantId', v_variant_id,
-                                   'quantity', v_qty, 'direction', 'out', 'reason', 'talabat_order'), 'done');
+                jsonb_build_object('source', 'talabat', 'direction', 'out', 'reason', 'sale',
+                                   'orderId', p_order_id, 'productId', v_pid, 'variantSku', v_vsku,
+                                   'variantId', v_variant_id, 'inventoryId', v_inv_id, 'quantity', v_qty), 'done');
       end if;
     end loop;
   exception when others then

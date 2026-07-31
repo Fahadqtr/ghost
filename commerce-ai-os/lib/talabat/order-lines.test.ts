@@ -53,6 +53,39 @@ test("4: JSON key order and line order do not change the fallback hash; price do
   assert.notEqual(p1.key, p3.key);
 });
 
+test("identity: createdAt alone stays weak (a timestamp is not a trusted order id)", () => {
+  const k = buildTalabatDedupKey(parseTalabatOrderLines({ createdAt: "2026-07-31T10:00:00Z", items: [{ sku: "A", quantity: 1 }] }));
+  assert.equal(k.confidence, "weak");
+  assert.match(k.key, /^talabat:h:[0-9a-f]{64}$/);
+});
+
+test("identity: event alone stays weak", () => {
+  const k = buildTalabatDedupKey(parseTalabatOrderLines({ event: "order.placed", items: [{ sku: "A", quantity: 1 }] }));
+  assert.equal(k.confidence, "weak");
+});
+
+test("identity: a top-level generic id is NOT an order identity", () => {
+  const parsed = parseTalabatOrderLines({ id: "EVT-123", items: [{ sku: "A", quantity: 1 }] });
+  assert.equal(parsed.orderCode, null);                 // bare top-level id ignored
+  const k = buildTalabatDedupKey(parsed);
+  assert.equal(k.confidence, "weak");
+  assert.ok(!/EVT-123/.test(k.key));
+});
+
+test("identity: an explicit order.orderId (under an order node) is strong", () => {
+  const k = buildTalabatDedupKey(parseTalabatOrderLines({ order: { orderId: "OID-5", items: [{ sku: "A", quantity: 1 }] } }));
+  assert.deepEqual(k, { key: "talabat:oid-5", confidence: "strong" });
+  // an explicit order.id under an order node is also accepted
+  const k2 = buildTalabatDedupKey(parseTalabatOrderLines({ order: { id: "OID-9", items: [{ sku: "A", quantity: 1 }] } }));
+  assert.deepEqual(k2, { key: "talabat:oid-9", confidence: "strong" });
+});
+
+test("identity: a merchant reference is strong", () => {
+  const k = buildTalabatDedupKey(parseTalabatOrderLines({ reference: "REF-9", items: [{ sku: "A", quantity: 1 }] }));
+  assert.equal(k.confidence, "strong");
+  assert.match(k.key, /^talabat:h:[0-9a-f]{64}$/);
+});
+
 test("weak: an order with no trusted identifier (cart only) is confidence=weak", () => {
   const k = buildTalabatDedupKey(parseTalabatOrderLines({ items: [{ sku: "A", quantity: 1 }] }));
   assert.equal(k.confidence, "weak");

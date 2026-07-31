@@ -101,6 +101,15 @@ test("3: a parent barcode on a product WITH variants never deducts the generic p
   assert.equal(reasonOf(resolveLine(line({ barcode: "P3BC" }), ctx())), "ambiguous_match");
 });
 
+test("4: a variant barcode hit whose variant row has NO SKU never resolves as a no-variant parent", () => {
+  // A variant row matched by barcode but with a null/empty SKU has no durable
+  // identity — it must NOT become masterVariantSku=null (a real no-variant product).
+  const cNull = ctx({ mappings: [], products: [], variants: [{ parentProductId: "pX", sku: null, barcode: "NBC" }] });
+  assert.equal(reasonOf(resolveLine(line({ barcode: "NBC" }), cNull)), "ambiguous_match");
+  const cEmpty = ctx({ mappings: [], products: [], variants: [{ parentProductId: "pX", sku: "  ", barcode: "EBC" }] });
+  assert.equal(reasonOf(resolveLine(line({ barcode: "EBC" }), cEmpty)), "ambiguous_match");
+});
+
 test("3: the unique variant SKU of a variant product resolves to that variant", () => {
   const r = resolveLine(line({ sku: "P3-V1" }), ctx());
   assert.equal(r.status, "matched");

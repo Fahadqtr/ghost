@@ -78,14 +78,14 @@ test("20/21: a variant target deducts the exact variant, never the generic paren
 
 test("22: inventory rollup uses SUM of variant stock (never max)", () => {
   assert.equal(sumVariantStock([{ stock_quantity: 2 }, { stock_quantity: 3 }, { stock_quantity: 0 }]), 5);
-  assert.equal(sumVariantStock([{ stock_quantity: null }, { stock_quantity: 4 }]), 4);
 });
 
-test("6-pure: sumVariantStock is fail-closed for malformed stock (null, never silently 0)", () => {
-  for (const bad of [-1, 1.5, NaN, Infinity, -Infinity, "3" as unknown as number, true as unknown as number]) {
+test("6-pure: sumVariantStock is fail-closed — null/undefined sibling → null (never silently 0)", () => {
+  for (const bad of [null, undefined, -1, 1.5, NaN, Infinity, -Infinity, "3" as unknown as number, true as unknown as number]) {
     assert.equal(sumVariantStock([{ stock_quantity: 2 }, { stock_quantity: bad }]), null, `bad=${String(bad)}`);
   }
   assert.equal(sumVariantStock([{ stock_quantity: 2 }, { stock_quantity: 3 }]), 5); // valid still sums
+  assert.equal(sumVariantStock([{ stock_quantity: Number.MAX_SAFE_INTEGER }, { stock_quantity: 1 }]), null); // overflow
 });
 
 test("6-pure: spreadAcrossShelves is fail-closed for malformed values (null, never silently 0)", () => {
@@ -166,6 +166,29 @@ test("9-deep: nested raw / PII inside lines, targets and reasons is stripped", (
   assert.deepEqual(Object.keys((out.reasons as any[])[0]).sort(), ["lineKey", "reason"]);
   assert.deepEqual(out.lineKeys, ["l0"]);
   assert.ok(!/raw|customer|phone|token|stack|sqlerrm|authorization|Bearer|secret|555111|Doha|evil/i.test(JSON.stringify(out)), JSON.stringify(out));
+});
+
+test("1-scalar: an allowed key whose VALUE is a nested object/array is dropped (not preserved)", () => {
+  const out = sanitizeResolution({
+    lines: [{
+      lineKey: { phone: "+974555", token: "secret" },      // allowed key, malicious object value
+      status: ["x"],                                          // wrong type → dropped
+      via: "sku",                                             // valid scalar → kept
+      quantity: { raw: 1 },                                   // wrong type → dropped
+      reason: 2,                                              // number where string expected → dropped
+      target: { masterProductId: { token: "t" }, masterVariantSku: 5 }, // both wrong type → dropped
+    }],
+    targets: [{ masterProductId: { evil: 1 }, masterVariantSku: { phone: "x" }, quantity: "2", lineKeys: [{ t: 1 }, "ok"] }],
+    reasons: [{ lineKey: { token: "z" }, reason: "ambiguous_match" }],
+    reason: { nested: "bad" },                                // wrong type → dropped
+    via: "sku",
+  });
+  assert.deepEqual((out.lines as any[])[0], { via: "sku", target: {} }); // only the valid scalar + empty target
+  assert.deepEqual((out.targets as any[])[0], { lineKeys: ["ok"] });     // only the string lineKey survives
+  assert.deepEqual((out.reasons as any[])[0], { reason: "ambiguous_match" });
+  assert.equal(out.reason, undefined);                                    // nested object reason dropped
+  assert.equal(out.via, "sku");
+  assert.ok(!/phone|token|secret|evil|555|nested/i.test(JSON.stringify(out)), JSON.stringify(out));
 });
 
 test("manual-review payload carries only safe fields", () => {
