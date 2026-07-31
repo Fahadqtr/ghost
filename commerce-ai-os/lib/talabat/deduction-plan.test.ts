@@ -81,6 +81,41 @@ test("22: inventory rollup uses SUM of variant stock (never max)", () => {
   assert.equal(sumVariantStock([{ stock_quantity: null }, { stock_quantity: 4 }]), 4);
 });
 
+test("6-pure: sumVariantStock is fail-closed for malformed stock (null, never silently 0)", () => {
+  for (const bad of [-1, 1.5, NaN, Infinity, -Infinity, "3" as unknown as number, true as unknown as number]) {
+    assert.equal(sumVariantStock([{ stock_quantity: 2 }, { stock_quantity: bad }]), null, `bad=${String(bad)}`);
+  }
+  assert.equal(sumVariantStock([{ stock_quantity: 2 }, { stock_quantity: 3 }]), 5); // valid still sums
+});
+
+test("6-pure: spreadAcrossShelves is fail-closed for malformed values (null, never silently 0)", () => {
+  assert.equal(spreadAcrossShelves([{ location: "A", quantity: -1 }], 1), null);
+  assert.equal(spreadAcrossShelves([{ location: "A", quantity: 1.5 }], 1), null);
+  assert.equal(spreadAcrossShelves([{ location: "A", quantity: NaN }], 1), null);
+  assert.equal(spreadAcrossShelves([{ location: "A", quantity: Infinity }], 1), null);
+  assert.equal(spreadAcrossShelves([{ location: "A", quantity: "3" as unknown as number }], 1), null);
+  assert.equal(spreadAcrossShelves([{ location: "A", quantity: 3 }], 1.5), null);   // bad qty
+  assert.equal(spreadAcrossShelves([{ location: "A", quantity: 3 }], -2), null);
+  assert.deepEqual(spreadAcrossShelves([{ location: "A", quantity: 3 }], 2), [{ location: "A", deduct: 2 }]);
+});
+
+test("overflow: an aggregated quantity beyond the safe-integer range is invalid_plan", () => {
+  const big = Number.MAX_SAFE_INTEGER;
+  const plan = buildTalabatDeductionPlan(
+    [{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: big }, { masterProductId: "p2", masterVariantSku: "V-SKU", quantity: big }],
+    [variantStock({ variantStock: big })],
+  );
+  assert.equal(plan.status === "manual_review" && plan.reason, "invalid_plan");
+});
+
+test("shelf-spread-null: a malformed shelf value makes the target inventory_inconsistent", () => {
+  const plan = buildTalabatDeductionPlan(
+    [{ masterProductId: "p1", masterVariantSku: null, quantity: 1 }],
+    [productStock({ inventoryStock: 3, shelves: [{ location: "A", quantity: 1.5 as unknown as number }, { location: "B", quantity: 1.5 as unknown as number }] })],
+  );
+  assert.equal(plan.status === "manual_review" && plan.reason, "inventory_inconsistent");
+});
+
 test("5: a negative / non-integer stock value → inventory_inconsistent (not coerced to 0)", () => {
   assert.equal((buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 1 }], [variantStock({ variantStock: -3 })]) as any).reason, "inventory_inconsistent");
   assert.equal((buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 1 }], [variantStock({ variantStock: 2.5 as unknown as number })]) as any).reason, "inventory_inconsistent");
@@ -109,6 +144,28 @@ test("9: sanitizeResolution keeps only whitelisted keys (drops raw/customer/toke
   });
   assert.deepEqual(Object.keys(out).sort(), ["lineKeys", "lines", "reason", "reasons", "targets", "via"]);
   assert.ok(!/secret|123|boom|Bearer/.test(JSON.stringify(out)));
+});
+
+test("9-deep: nested raw / PII inside lines, targets and reasons is stripped", () => {
+  const out = sanitizeResolution({
+    lines: [{
+      lineKey: "l0", status: "matched", via: "sku", quantity: 1,
+      target: { masterProductId: "p", masterVariantSku: "s", raw: { x: 1 }, phone: "+974555111" },
+      raw: { big: 1 }, customer: { phone: "+974555111", address: "Doha" }, token: "secret-1",
+    }],
+    targets: [{ masterProductId: "p", masterVariantSku: "s", quantity: 2, lineKeys: ["l0", { evil: 1 }], phone: "+974555111", token: "secret-2", raw: {}, authorization: "Bearer z" }],
+    reasons: [{ lineKey: "l0", reason: "ambiguous_match", token: "secret-3", stack: "boom", sqlerrm: "err" }],
+    lineKeys: ["l0", { evil: 1 }],
+  });
+  const l0 = (out.lines as any[])[0];
+  assert.deepEqual(Object.keys(l0).sort(), ["lineKey", "quantity", "status", "target", "via"]);
+  assert.deepEqual(Object.keys(l0.target).sort(), ["masterProductId", "masterVariantSku"]);
+  const t0 = (out.targets as any[])[0];
+  assert.deepEqual(Object.keys(t0).sort(), ["lineKeys", "masterProductId", "masterVariantSku", "quantity"]);
+  assert.deepEqual(t0.lineKeys, ["l0"]); // non-string entries dropped
+  assert.deepEqual(Object.keys((out.reasons as any[])[0]).sort(), ["lineKey", "reason"]);
+  assert.deepEqual(out.lineKeys, ["l0"]);
+  assert.ok(!/raw|customer|phone|token|stack|sqlerrm|authorization|Bearer|secret|555111|Doha|evil/i.test(JSON.stringify(out)), JSON.stringify(out));
 });
 
 test("manual-review payload carries only safe fields", () => {

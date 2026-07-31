@@ -67,3 +67,21 @@ test("5: the dedup key never contains customer name / phone / address", () => {
   }));
   assert.ok(!/Fatima|55512345|Doha/i.test(k.key));
 });
+
+test("token: a webhook token is never used as order code, dedup key, or a strong id", () => {
+  // A payload whose ONLY id-like field is a token (no order code / reference).
+  const parsed = parseTalabatOrderLines({
+    token: "SECRET-TOKEN-abc123",
+    authorization: "Bearer SECRET-TOKEN-abc123",
+    signature: "sig-xyz",
+    items: [{ sku: "A", quantity: 1 }],
+    customer: { phone: "+97455599999", address: "Doha" },
+  });
+  assert.equal(parsed.orderCode, null); // token is NOT an order code
+  const k = buildTalabatDedupKey(parsed);
+  assert.ok(!/SECRET-TOKEN-abc123|Bearer|sig-xyz|55599999|Doha/i.test(k.key), "no token/auth/sig/PII in key");
+  assert.equal(k.confidence, "weak"); // a token can never make the identity strong
+  // A real order code still produces a strong key.
+  const strong = buildTalabatDedupKey(parseTalabatOrderLines({ order: { code: "OC-77", token: "T", items: [{ sku: "A", quantity: 1 }] } }));
+  assert.deepEqual(strong, { key: "talabat:oc-77", confidence: "strong" });
+});

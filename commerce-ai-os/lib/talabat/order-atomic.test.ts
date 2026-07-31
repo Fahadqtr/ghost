@@ -41,16 +41,102 @@ test("8: a per-dedup-key advisory lock is taken before any inventory lock", () =
   assert.match(SQL_CODE, /missing_dedup_key/); // non-empty dedup key mandatory
 });
 
-test("8b: a duplicate dedup key across orders blocks deduction (not via unique-index failure)", () => {
-  assert.match(SQL_CODE, /dedup_key\s*=\s*p_dedup_key\s+and\s+id\s*<>\s*p_order_id\s+and\s+processing_status\s*=\s*'processed'/is);
+test("8b: ANY other order holding the key blocks deduction — not restricted to 'processed', not via unique-index failure", () => {
+  // The cross-order duplicate check must NOT be narrowed to processing_status='processed'.
+  assert.match(SQL_CODE, /dedup_key\s*=\s*p_dedup_key\s+and\s+id\s*<>\s*p_order_id\s*\)/is);
+  assert.ok(!/dedup_key\s*=\s*p_dedup_key\s+and\s+id\s*<>\s*p_order_id\s+and\s+processing_status/is.test(SQL_CODE),
+    "duplicate check must cover pending/manual_review/failed, not only processed");
   assert.match(SQL_CODE, /'duplicate_order'/);
 });
 
+test("8c: an already-processed order with a DIFFERENT stored key returns duplicate_order (no change)", () => {
+  assert.match(SQL_CODE, /v_status in \('processed', 'manual_review'\)/i);
+  assert.match(SQL_CODE, /v_dedup is not null and v_dedup <> p_dedup_key then\s*return jsonb_build_object\('status', 'duplicate_order', 'idempotent', true\)/is);
+});
+
+test("8d: the key is reserved on THIS order before inventory locks, with a row-count check", () => {
+  assert.match(SQL_CODE, /update talabat_orders set dedup_key = p_dedup_key[\s\S]{0,220}?get diagnostics v_rows = row_count[\s\S]{0,90}?v_rows <> 1 then v_fail := 'duplicate_order'/i);
+  // reservation precedes the first inventory lock
+  const resIdx = SQL_CODE.search(/update talabat_orders set dedup_key = p_dedup_key/i);
+  const invIdx = SQL_CODE.search(/from\s+inventory\s+where\s+product_id\s*=\s*v_pid\s+for\s+update/is);
+  assert.ok(resIdx >= 0 && invIdx >= 0 && resIdx < invIdx, "key reserved before inventory lock");
+});
+
 test("4: invalid / empty plan is rejected (invalid_plan, no deduction)", () => {
+  assert.match(SQL_CODE, /jsonb_typeof\(p_plan\) <> 'object'/);                       // must be an object
+  assert.match(SQL_CODE, /\(p_plan ->> 'status'\) is distinct from 'ready'/);          // status must be "ready"
   assert.match(SQL_CODE, /jsonb_typeof\(p_plan -> 'deductions'\) <> 'array'/);
   assert.match(SQL_CODE, /jsonb_array_length\(p_plan -> 'deductions'\) = 0/);
   assert.match(SQL_CODE, /'invalid_plan'/);
   assert.match(SQL_CODE, /!~ '\^\[1-9\]\[0-9\]\*\$'/); // quantity must be a positive integer string
+});
+
+test("4b: only a plan with status='ready' can be applied (a manual_review plan is invalid_plan)", () => {
+  assert.match(SQL_CODE, /\(p_plan ->> 'status'\) is distinct from 'ready'/);
+});
+
+test("4c: quantity must be a JSON number — the string \"2\" is rejected", () => {
+  assert.match(SQL_CODE, /jsonb_typeof\(v_ded -> 'quantity'\) <> 'number'/);
+});
+
+test("4d: masterProductId must be a valid UUID string (no cast until validated)", () => {
+  assert.match(SQL_CODE, /v_uuid_re\s+text\s*:=\s*'\^\[0-9a-fA-F\]\{8\}/);
+  assert.match(SQL_CODE, /\(v_ded ->> 'masterProductId'\) !~ v_uuid_re/);
+  // the ::uuid cast happens only in PASS 1, AFTER validation
+  const valIdx = SQL_CODE.search(/!~ v_uuid_re/);
+  const castIdx = SQL_CODE.search(/\(v_ded ->> 'masterProductId'\)::uuid/);
+  assert.ok(valIdx >= 0 && castIdx >= 0 && valIdx < castIdx, "uuid validated before it is cast");
+});
+
+test("4e: masterVariantSku must be JSON null or a non-empty string", () => {
+  assert.match(SQL_CODE, /jsonb_typeof\(v_msku\) = 'null'/);
+  assert.match(SQL_CODE, /jsonb_typeof\(v_msku\) = 'string' and length\(v_ded ->> 'masterVariantSku'\) > 0/);
+});
+
+test("4f: quantity / aggregated total must stay within int4 range (bigint aggregation)", () => {
+  assert.match(SQL_CODE, /\(v_ded ->> 'quantity'\)::numeric > 2147483647/);      // per-row
+  assert.match(SQL_CODE, /sum\(\(d ->> 'quantity'\)::bigint\)/);                  // aggregate in bigint
+  assert.match(SQL_CODE, /s\.qsum > 2147483647/);                                 // reject overflow
+});
+
+test("5-sql: NULL / negative stock → inventory_inconsistent (no coalesce-to-0 masking)", () => {
+  assert.ok((SQL_CODE.match(/v_avail_raw is null or v_avail_raw < 0/g) ?? []).length >= 2); // both branches
+  assert.match(SQL_CODE, /v_fail := 'inventory_inconsistent'/);
+});
+
+test("5b-sql: a negative / NULL shelf quantity → inventory_inconsistent", () => {
+  assert.match(SQL_CODE, /shelf_stock where inventory_id = v_inv_id and \(quantity is null or quantity < 0\)/i);
+  assert.match(SQL_CODE, /variant_shelf_stock where variant_id = v_variant_id and \(quantity is null or quantity < 0\)/i);
+});
+
+test("6c: EVERY critical UPDATE checks the affected row count (>= 6 checks)", () => {
+  const checks = (SQL_CODE.match(/get diagnostics v_rows = row_count/gi) ?? []).length;
+  assert.ok(checks >= 6, `expected >=6 row-count checks, found ${checks}`);
+});
+
+test("6d: the shelf spread must place the whole quantity (v_rem = 0) or roll back", () => {
+  assert.ok((SQL_CODE.match(/v_rem <> 0 then raise exception/gi) ?? []).length >= 2);
+});
+
+test("7b: the parent-inventory rollup update is row-count checked (exactly one row)", () => {
+  assert.match(SQL_CODE, /update inventory set stock_quantity = v_sum[\s\S]{0,140}?get diagnostics v_rows = row_count[\s\S]{0,60}?v_rows <> 1 then raise exception/i);
+});
+
+test("7c: the final processed update is row-count checked", () => {
+  assert.match(SQL_CODE, /processing_status = 'processed'[\s\S]{0,240}?get diagnostics v_rows = row_count[\s\S]{0,60}?v_rows <> 1 then raise exception/i);
+});
+
+test("9-deep: the resolution is rebuilt element-by-element, never copied through", () => {
+  assert.match(SQL_CODE, /'lines',\s*v_lines/);
+  assert.match(SQL_CODE, /'targets',\s*v_targets/);
+  assert.match(SQL_CODE, /'reasons',\s*v_reasons/);
+  // v_safe must NOT copy p_resolution collections directly
+  assert.ok(!/'lines',\s*p_resolution -> 'lines'/.test(SQL_CODE), "lines must not be copied raw");
+  assert.ok(!/'targets',\s*p_resolution -> 'targets'/.test(SQL_CODE), "targets must not be copied raw");
+  // nested line target is projected to id + variant only
+  assert.match(SQL_CODE, /'masterProductId',\s*e #> '\{target,masterProductId\}'/);
+  // nested lineKeys inside a target keep only string elements
+  assert.match(SQL_CODE, /where jsonb_typeof\(y\) = 'string'/);
 });
 
 test("6: the plan is aggregated by (product, variant) before pass 1/2", () => {

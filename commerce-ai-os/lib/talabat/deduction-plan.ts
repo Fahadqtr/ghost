@@ -62,20 +62,43 @@ function strictNonNegInt(v: unknown): number | null {
 }
 const keyOf = (pid: string, vsku: string | null): string => `${pid}||${vsku ?? ""}`;
 
-/** inventory.stock_quantity rollup = SUM of the product's variant stock. */
-export function sumVariantStock(variantStocks: Array<{ stock_quantity: number | null | undefined }>): number {
-  return (variantStocks ?? []).reduce((s, v) => s + Math.max(0, Number(v.stock_quantity) || 0), 0);
+/**
+ * inventory.stock_quantity rollup = SUM of the product's variant stock. FAIL-
+ * CLOSED: a malformed value (negative, fractional, NaN, Infinity, numeric string,
+ * or any non-number) returns null instead of being silently coerced to 0. An
+ * absent value (null/undefined) counts as 0. The caller turns null into
+ * inventory_inconsistent. Overflow past the safe-integer range also returns null.
+ */
+export function sumVariantStock(variantStocks: Array<{ stock_quantity: number | null | undefined }>): number | null {
+  let sum = 0;
+  for (const v of variantStocks ?? []) {
+    const n = v?.stock_quantity;
+    if (n === null || n === undefined) continue; // absent = 0
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null;
+    sum += n;
+    if (!Number.isSafeInteger(sum)) return null;
+  }
+  return sum;
 }
 
-/** Spread a deduction across shelves, biggest-first, never below zero. */
-export function spreadAcrossShelves(shelves: ShelfRow[], qty: number): ShelfDeduction[] {
+/**
+ * Spread a deduction across shelves, biggest-first, never below zero. FAIL-CLOSED:
+ * a malformed quantity or any malformed shelf quantity (negative, fractional,
+ * NaN, Infinity, numeric string, non-number) returns null rather than coercing to
+ * 0. The caller turns null into inventory_inconsistent.
+ */
+export function spreadAcrossShelves(shelves: ShelfRow[], qty: number): ShelfDeduction[] | null {
+  if (typeof qty !== "number" || !Number.isInteger(qty) || qty < 0) return null;
+  const rows = shelves ?? [];
+  for (const r of rows) {
+    if (typeof r.quantity !== "number" || !Number.isInteger(r.quantity) || r.quantity < 0) return null;
+  }
   const out: ShelfDeduction[] = [];
-  let remaining = Math.max(0, Number(qty) || 0);
-  for (const r of [...shelves].sort((a, b) => (Number(b.quantity) || 0) - (Number(a.quantity) || 0))) {
+  let remaining = qty;
+  for (const r of [...rows].sort((a, b) => b.quantity - a.quantity)) {
     if (remaining <= 0) break;
-    const have = Math.max(0, Number(r.quantity) || 0);
-    if (!have) continue;
-    const take = Math.min(have, remaining);
+    if (r.quantity === 0) continue;
+    const take = Math.min(r.quantity, remaining);
     out.push({ location: r.location, deduct: take });
     remaining -= take;
   }
@@ -103,6 +126,7 @@ export function buildTalabatDeductionPlan(targets: TargetInput[], stock: StockSn
     const k = keyOf(t.masterProductId, t.masterVariantSku);
     const cur = agg.get(k) ?? { masterProductId: t.masterProductId, masterVariantSku: t.masterVariantSku, quantity: 0, lineKeys: [] };
     cur.quantity += q;
+    if (!Number.isSafeInteger(cur.quantity)) return review("invalid_plan", { detail: "quantity_overflow" });
     if (t.lineKeys) cur.lineKeys.push(...t.lineKeys);
     agg.set(k, cur);
   }
@@ -144,11 +168,18 @@ export function buildTalabatDeductionPlan(targets: TargetInput[], stock: StockSn
 
     if (t.quantity > available) return review("insufficient_stock", { failed: k, need: t.quantity, have: available });
 
+    let shelfPlan: ShelfDeduction[] = [];
+    if (snap.shelves && snap.shelves.length > 0) {
+      const spread = spreadAcrossShelves(snap.shelves, t.quantity);
+      if (spread === null) return review("inventory_inconsistent", { failed: k, detail: "shelf_spread_failed" });
+      shelfPlan = spread;
+    }
+
     deductions.push({
       masterProductId: t.masterProductId,
       masterVariantSku: t.masterVariantSku,
       quantity: t.quantity,
-      shelfPlan: snap.shelves && snap.shelves.length > 0 ? spreadAcrossShelves(snap.shelves, t.quantity) : [],
+      shelfPlan,
       lineKeys: t.lineKeys,
     });
   }
@@ -158,17 +189,49 @@ export function buildTalabatDeductionPlan(targets: TargetInput[], stock: StockSn
 
 // ---- Resolution whitelist + manual-review payload (safe) --------------------
 
-const RESOLUTION_ALLOWED = ["lines", "targets", "lineKeys", "reason", "reasons", "via", "method", "deductions"] as const;
+const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
+const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const stringKeys = (v: unknown): string[] => asArray(v).filter((x): x is string => typeof x === "string");
+
+/** Deep-project one object, keeping only the allowed keys (plus a nested target). */
+function pickShallow(src: unknown, keys: readonly string[]): Record<string, unknown> {
+  const o = isObj(src) ? src : {};
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (k in o && o[k] !== undefined) out[k] = o[k];
+  return out;
+}
+
+/** A resolution line — only classifier fields + a whitelisted target survive. */
+function sanitizeLine(l: unknown): Record<string, unknown> {
+  const out = pickShallow(l, ["lineKey", "status", "via", "reason", "quantity"]);
+  if (isObj(l) && isObj(l.target)) out.target = pickShallow(l.target, ["masterProductId", "masterVariantSku"]);
+  return out;
+}
+
+/** A resolution target — id/variant/quantity + string lineKeys only. */
+function sanitizeTarget(t: unknown): Record<string, unknown> {
+  const out = pickShallow(t, ["masterProductId", "masterVariantSku", "quantity"]);
+  if (isObj(t) && "lineKeys" in t) out.lineKeys = stringKeys(t.lineKeys);
+  return out;
+}
 
 /**
- * Keep ONLY known-safe keys from a resolution object — never raw payloads,
- * customer/phone/address, tokens, headers, or DB errors, even if a caller
- * mistakenly included them.
+ * DEEP whitelist of a resolution object — never raw payloads, customer/phone/
+ * address, tokens, headers, cookies, authorization, or DB errors, even when
+ * nested inside `lines`/`targets`/`reasons`. Only classifier fields survive at
+ * every level; `lines`/`targets`/`reasons` are rebuilt element-by-element rather
+ * than copied through.
  */
 export function sanitizeResolution(input: unknown): Record<string, unknown> {
-  const src = (input && typeof input === "object") ? (input as Record<string, unknown>) : {};
+  const src = isObj(input) ? input : {};
   const out: Record<string, unknown> = {};
-  for (const k of RESOLUTION_ALLOWED) if (k in src && src[k] !== undefined) out[k] = src[k];
+  if ("lines" in src) out.lines = asArray(src.lines).map(sanitizeLine);
+  if ("targets" in src) out.targets = asArray(src.targets).map(sanitizeTarget);
+  if ("reasons" in src) out.reasons = asArray(src.reasons).map((r) => pickShallow(r, ["lineKey", "reason"]));
+  if ("lineKeys" in src) out.lineKeys = stringKeys(src.lineKeys);
+  for (const k of ["reason", "via", "method"] as const) {
+    if (k in src && (typeof src[k] === "string" || typeof src[k] === "number")) out[k] = src[k];
+  }
   return out;
 }
 

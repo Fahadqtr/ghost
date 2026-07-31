@@ -72,7 +72,9 @@ export function parseTalabatOrderLines(payload: any): ParsedTalabatOrder {
   const o = payload && typeof payload === "object" ? payload : {};
   const order = o.order && typeof o.order === "object" ? o.order : o;
 
-  const orderCode = orNull(pick(order, "code", "orderId", "order_id", "id", "token", "shortCode", "short_code", "orderCode"));
+  // Only safe, commercial order identifiers are eligible as the order code — a
+  // "token" (webhook auth token) is NEVER used as an order identity or dedup key.
+  const orderCode = orNull(pick(order, "orderCode", "code", "orderId", "order_id", "id", "shortCode", "short_code", "merchantOrderId", "merchant_order_id"));
   const event = orNull(pick(o, "event", "eventType", "type") ?? pick(order, "event", "eventType", "type"));
   const reference = orNull(pick(order, "posOrderId", "pos_order_id", "externalId", "external_id", "reference", "order_reference", "merchantOrderId", "remoteOrderId"));
   const createdAt = orNull(pick(order, "createdAt", "created_at", "placedAt", "orderTime", "order_time"));
@@ -115,7 +117,9 @@ function sha256Hex(input: string): string {
  *    change it. If a trusted per-order identifier (reference or createdAt)
  *    exists → strong; if only the cart is available (two independent orders with
  *    the same basket could collide) → WEAK.
- * The raw payload, customer name, phone, and address are NEVER part of the key.
+ * The webhook token, authorization header, signature, raw payload, customer
+ * name, phone, and address are NEVER part of the key (and a token can never make
+ * the confidence "strong").
  */
 export function buildTalabatDedupKey(parsed: ParsedTalabatOrder): TalabatDedupKey {
   if (parsed.orderCode) {
