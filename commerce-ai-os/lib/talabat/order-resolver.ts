@@ -44,6 +44,8 @@ export type LineResolution =
 
 export type ManualReviewReason =
   | "invalid_quantity"
+  | "empty_order"
+  | "weak_order_identity"
   | "unmatched"
   | "ambiguous_match"
   | "conflicting_identifiers"
@@ -71,94 +73,132 @@ function uniqueTargets(targets: ResolvedTarget[]): ResolvedTarget[] {
   return [...seen.values()];
 }
 
+interface IdentifierMatch {
+  targets: ResolvedTarget[];   // distinct targets resolved from ACTIVE mappings / catalog
+  inactiveBlocked: boolean;    // a matching mapping exists but none is active
+  parentBlocked: boolean;      // matched a product SKU/barcode whose product HAS variants
+}
+
+/**
+ * Resolve one identifier value. A matching mapping (any status) is authoritative
+ * for that identifier: if it is active → its target; if only non-active mappings
+ * match → inactiveBlocked (the master catalogue is NOT used to bypass it). The
+ * master catalogue is consulted ONLY when NO mapping matches the identifier —
+ * and a product-level SKU/barcode hit on a product that HAS variants is refused
+ * (parentBlocked), never resolved to masterVariantSku = null.
+ */
+function matchIdentifier(
+  ctx: ResolveContext,
+  kind: "cpid" | "sku" | "barcode",
+  value: string,
+  productHasVariants: (id: string) => boolean,
+): IdentifierMatch {
+  const v = norm(value);
+  const mapField = (m: MappingSnapshot) =>
+    kind === "cpid" ? m.channelProductId : kind === "sku" ? m.exportedSku : m.exportedBarcode;
+
+  const mappingMatches = ctx.mappings.filter((m) => mapField(m) != null && norm(mapField(m)) === v);
+  if (mappingMatches.length > 0) {
+    const active = mappingMatches.filter((m) => m.mappingStatus === "active");
+    if (active.length === 0) return { targets: [], inactiveBlocked: true, parentBlocked: false };
+    return {
+      targets: uniqueTargets(active.map((m) => ({ masterProductId: m.masterProductId, masterVariantSku: m.masterVariantSku }))),
+      inactiveBlocked: false,
+      parentBlocked: false,
+    };
+  }
+
+  // No mapping for this identifier → master-catalogue fallback (cpid never falls
+  // back — it is a channel identifier only).
+  if (kind === "cpid") return { targets: [], inactiveBlocked: false, parentBlocked: false };
+
+  const targets: ResolvedTarget[] = [];
+  let parentBlocked = false;
+  for (const variant of ctx.variants) {
+    const field = kind === "sku" ? variant.sku : variant.barcode;
+    if (field != null && norm(field) === v) targets.push({ masterProductId: variant.parentProductId, masterVariantSku: variant.sku });
+  }
+  for (const product of ctx.products) {
+    const field = kind === "sku" ? product.sku : product.barcode;
+    if (field != null && norm(field) === v) {
+      if (productHasVariants(product.id)) parentBlocked = true; // never deduct the generic parent
+      else targets.push({ masterProductId: product.id, masterVariantSku: null });
+    }
+  }
+  return { targets: uniqueTargets(targets), inactiveBlocked: false, parentBlocked };
+}
+
 /**
  * Resolve one line through the ladder:
  *   1. channel_product_id (active mappings only)
  *   2. SKU (active mapping exported_sku / variant SKU / product SKU)
  *   3. barcode (active mapping exported_barcode / variant barcode / product barcode)
  *   4. exact normalized title → NEVER auto-matches (title_only_match → review)
- *
- * A level with >1 distinct target ⇒ ambiguous_match. Different levels pointing
- * at different targets ⇒ conflicting_identifiers. A match found only via a
- * non-active mapping ⇒ inactive_mapping. No id/title hit ⇒ unmatched.
  */
 export function resolveLine(line: ResolverLine, ctx: ResolveContext): LineResolution {
   if (line.invalidQuantity || !Number.isInteger(line.quantity) || line.quantity <= 0) {
     return { lineKey: line.lineKey, status: "manual_review", reason: "invalid_quantity" };
   }
 
-  const active = ctx.mappings.filter((m) => m.mappingStatus === "active");
-  let sawInactiveOnly = false;
+  const variantParents = new Set(ctx.variants.map((v) => v.parentProductId));
+  const productHasVariants = (id: string) => variantParents.has(id);
 
-  // Each level returns the distinct targets it resolves to (from active sources).
+  const present: { via: MatchVia; kind: "cpid" | "sku" | "barcode"; value: string }[] = [];
+  if (line.channelProductId != null) present.push({ via: "channel_product_id", kind: "cpid", value: line.channelProductId });
+  if (line.sku != null) present.push({ via: "sku", kind: "sku", value: line.sku });
+  if (line.barcode != null) present.push({ via: "barcode", kind: "barcode", value: line.barcode });
+
   const levelTargets: { via: MatchVia; targets: ResolvedTarget[] }[] = [];
+  let inactive = false;
+  let parentBlocked = false;
+  let ambiguous = false;
 
-  // 1) channel_product_id — mappings only.
-  if (line.channelProductId != null) {
-    const id = norm(line.channelProductId);
-    const hits = active.filter((m) => m.channelProductId != null && norm(m.channelProductId) === id)
-      .map((m) => ({ masterProductId: m.masterProductId, masterVariantSku: m.masterVariantSku }));
-    const uniq = uniqueTargets(hits);
-    if (uniq.length > 0) levelTargets.push({ via: "channel_product_id", targets: uniq });
-    else if (ctx.mappings.some((m) => m.channelProductId != null && norm(m.channelProductId) === id)) sawInactiveOnly = true;
+  for (const p of present) {
+    const m = matchIdentifier(ctx, p.kind, p.value, productHasVariants);
+    if (m.inactiveBlocked) inactive = true;
+    if (m.parentBlocked) parentBlocked = true;
+    if (m.targets.length > 1) ambiguous = true;
+    if (m.targets.length >= 1) levelTargets.push({ via: p.via, targets: m.targets });
   }
 
-  // 2) SKU — active mapping exported_sku, variant SKU, product SKU.
-  if (line.sku != null) {
-    const sku = norm(line.sku);
-    const hits: ResolvedTarget[] = [];
-    for (const m of active) if (m.exportedSku != null && norm(m.exportedSku) === sku) hits.push({ masterProductId: m.masterProductId, masterVariantSku: m.masterVariantSku });
-    for (const v of ctx.variants) if (v.sku != null && norm(v.sku) === sku) hits.push({ masterProductId: v.parentProductId, masterVariantSku: v.sku });
-    for (const p of ctx.products) if (p.sku != null && norm(p.sku) === sku) hits.push({ masterProductId: p.id, masterVariantSku: null });
-    const uniq = uniqueTargets(hits);
-    if (uniq.length > 0) levelTargets.push({ via: "sku", targets: uniq });
-    else if (ctx.mappings.some((m) => m.exportedSku != null && norm(m.exportedSku) === sku)) sawInactiveOnly = true;
-  }
+  // Precedence: a non-active mapping blocks first (can't be bypassed), then a
+  // parent-with-variants / per-level ambiguity, then cross-level conflicts.
+  if (inactive) return { lineKey: line.lineKey, status: "manual_review", reason: "inactive_mapping" };
+  if (ambiguous || parentBlocked) return { lineKey: line.lineKey, status: "manual_review", reason: "ambiguous_match" };
 
-  // 3) barcode — active mapping exported_barcode, variant barcode, product barcode.
-  if (line.barcode != null) {
-    const bc = norm(line.barcode);
-    const hits: ResolvedTarget[] = [];
-    for (const m of active) if (m.exportedBarcode != null && norm(m.exportedBarcode) === bc) hits.push({ masterProductId: m.masterProductId, masterVariantSku: m.masterVariantSku });
-    for (const v of ctx.variants) if (v.barcode != null && norm(v.barcode) === bc) hits.push({ masterProductId: v.parentProductId, masterVariantSku: v.sku });
-    for (const p of ctx.products) if (p.barcode != null && norm(p.barcode) === bc) hits.push({ masterProductId: p.id, masterVariantSku: null });
-    const uniq = uniqueTargets(hits);
-    if (uniq.length > 0) levelTargets.push({ via: "barcode", targets: uniq });
-    else if (ctx.mappings.some((m) => m.exportedBarcode != null && norm(m.exportedBarcode) === bc)) sawInactiveOnly = true;
-  }
-
-  // Any level ambiguous → ambiguous_match.
-  if (levelTargets.some((l) => l.targets.length > 1)) {
-    return { lineKey: line.lineKey, status: "manual_review", reason: "ambiguous_match" };
-  }
-
-  // Union across levels — each level here has exactly one target.
   const union = uniqueTargets(levelTargets.map((l) => l.targets[0]));
-  if (union.length === 1) {
-    return { lineKey: line.lineKey, status: "matched", via: levelTargets[0].via, target: union[0], quantity: line.quantity };
-  }
-  if (union.length > 1) {
-    return { lineKey: line.lineKey, status: "manual_review", reason: "conflicting_identifiers" };
-  }
+  if (union.length === 1) return { lineKey: line.lineKey, status: "matched", via: levelTargets[0].via, target: union[0], quantity: line.quantity };
+  if (union.length > 1) return { lineKey: line.lineKey, status: "manual_review", reason: "conflicting_identifiers" };
 
   // No id match. Title NEVER auto-matches.
   if (line.title != null) {
     const t = norm(line.title);
-    const titleHit =
-      ctx.products.some((p) => p.title != null && norm(p.title) === t);
-    if (titleHit) return { lineKey: line.lineKey, status: "manual_review", reason: "title_only_match" };
+    if (ctx.products.some((p) => p.title != null && norm(p.title) === t)) {
+      return { lineKey: line.lineKey, status: "manual_review", reason: "title_only_match" };
+    }
   }
-  if (sawInactiveOnly) return { lineKey: line.lineKey, status: "manual_review", reason: "inactive_mapping" };
   return { lineKey: line.lineKey, status: "manual_review", reason: "unmatched" };
 }
 
+export interface ResolveOrderOptions {
+  /** From buildTalabatDedupKey — a "weak" identity can never auto-deduct. */
+  dedupConfidence?: "strong" | "weak";
+}
+
 /**
- * Resolve a whole order. ANY line that lands in manual_review makes the WHOLE
- * order manual_review (all-or-nothing). Matched lines resolving to the same
- * (product, variant SKU) are aggregated — quantities summed, original lineKeys
- * kept — so a target is never deducted twice.
+ * Resolve a whole order. An empty order, a weak dedup identity, or ANY line in
+ * manual_review makes the WHOLE order manual_review (all-or-nothing). Matched
+ * lines resolving to the same (product, variant SKU) are aggregated — quantities
+ * summed, original lineKeys kept — so a target is never deducted twice.
  */
-export function resolveTalabatOrder(lines: ResolverLine[], ctx: ResolveContext): OrderResolution {
+export function resolveTalabatOrder(lines: ResolverLine[], ctx: ResolveContext, opts: ResolveOrderOptions = {}): OrderResolution {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return { status: "manual_review", reason: "empty_order", resolution: { reason: "empty_order" } };
+  }
+  if (opts.dedupConfidence === "weak") {
+    return { status: "manual_review", reason: "weak_order_identity", resolution: { reason: "weak_order_identity" } };
+  }
+
   const perLine = lines.map((l) => resolveLine(l, ctx));
   const reviewed = perLine.filter((r): r is Extract<LineResolution, { status: "manual_review" }> => r.status === "manual_review");
 

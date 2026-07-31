@@ -1,4 +1,4 @@
-// Tests for the pure Talabat deduction planner + manual-review payload. Fixtures
+// Tests for the pure Talabat deduction planner + resolution whitelist. Fixtures
 // only — NO Supabase, NO network.
 // Run: node --conditions=react-server --experimental-strip-types --test lib/talabat/deduction-plan.test.ts
 
@@ -8,6 +8,7 @@ import {
   buildTalabatDeductionPlan,
   sumVariantStock,
   spreadAcrossShelves,
+  sanitizeResolution,
   buildManualReviewPayload,
   type StockSnapshot,
 } from "./deduction-plan.ts";
@@ -19,84 +20,98 @@ const productStock = (over: Partial<Extract<StockSnapshot, { kind: "product" }>>
   kind: "product", masterProductId: "p1", inventoryId: "inv-1", inventoryStock: 10, ...over,
 });
 
-test("18: insufficient stock blocks the whole order (manual_review, no deductions)", () => {
+test("empty: an empty plan is never ready (invalid_plan)", () => {
+  const plan = buildTalabatDeductionPlan([], []);
+  assert.equal(plan.status, "manual_review");
+  if (plan.status === "manual_review") assert.equal(plan.reason, "invalid_plan");
+});
+
+test("fractional quantity is rejected (invalid_plan, no floor)", () => {
+  for (const q of [1.5, 0, -1, NaN]) {
+    const plan = buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: q }], [variantStock()]);
+    assert.equal(plan.status === "manual_review" && plan.reason, "invalid_plan", `qty ${q}`);
+  }
+});
+
+test("6: duplicate targets are aggregated BEFORE the stock check", () => {
+  // Variant A ×4 + Variant A ×4 = 8 required, only 5 available → insufficient.
   const plan = buildTalabatDeductionPlan(
-    [{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 5 }],
-    [variantStock({ variantStock: 3 })],
+    [{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 4 }, { masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 4 }],
+    [variantStock({ variantStock: 5 })],
   );
   assert.equal(plan.status, "manual_review");
   if (plan.status === "manual_review") assert.equal(plan.reason, "insufficient_stock");
 });
 
-test("18b: one short target blocks EVERY target (all-or-nothing)", () => {
+test("6b: duplicate targets that fit are aggregated into one deduction", () => {
   const plan = buildTalabatDeductionPlan(
-    [{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 1 }, { masterProductId: "p1", masterVariantSku: null, quantity: 99 }],
-    [variantStock({ variantStock: 10 }), productStock({ inventoryStock: 2 })],
+    [{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 2, lineKeys: ["l0"] }, { masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 3, lineKeys: ["l1"] }],
+    [variantStock({ variantStock: 10 })],
   );
-  assert.equal(plan.status, "manual_review"); // the p1 shortfall blocks the p2 deduction too
+  assert.equal(plan.status, "ready");
+  if (plan.status === "ready") { assert.equal(plan.deductions.length, 1); assert.equal(plan.deductions[0].quantity, 5); }
 });
 
-test("19: deductions never exceed available; shelf spread never goes negative", () => {
+test("18: insufficient stock blocks the whole order", () => {
+  const plan = buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 5 }], [variantStock({ variantStock: 3 })]);
+  assert.equal(plan.status === "manual_review" && plan.reason, "insufficient_stock");
+});
+
+test("19: shelf spread totals the quantity and never goes negative", () => {
   const plan = buildTalabatDeductionPlan(
     [{ masterProductId: "p1", masterVariantSku: null, quantity: 7 }],
     [productStock({ inventoryStock: 7, shelves: [{ location: "A", quantity: 5 }, { location: "B", quantity: 2 }] })],
   );
   assert.equal(plan.status, "ready");
   if (plan.status === "ready") {
-    const total = plan.deductions[0].shelfPlan.reduce((s, d) => s + d.deduct, 0);
-    assert.equal(total, 7);
+    assert.equal(plan.deductions[0].shelfPlan.reduce((s, d) => s + d.deduct, 0), 7);
     assert.ok(plan.deductions[0].shelfPlan.every((d) => d.deduct >= 0));
   }
-  // spreadAcrossShelves caps at what each shelf has (never negative).
   assert.deepEqual(spreadAcrossShelves([{ location: "A", quantity: 3 }], 3), [{ location: "A", deduct: 3 }]);
 });
 
-test("20: a variant target deducts the exact variant", () => {
+test("20/21: a variant target deducts the exact variant, never the generic parent", () => {
   const plan = buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 2 }], [variantStock()]);
   assert.equal(plan.status, "ready");
-  if (plan.status === "ready") {
-    assert.equal(plan.deductions.length, 1);
-    assert.equal(plan.deductions[0].masterVariantSku, "V-SKU");
-    assert.equal(plan.deductions[0].quantity, 2);
-  }
+  if (plan.status === "ready") { assert.equal(plan.deductions[0].masterVariantSku, "V-SKU"); assert.ok(plan.deductions.every((d) => d.masterVariantSku !== null)); }
 });
 
-test("21: a variant target never becomes a generic parent deduction", () => {
-  const plan = buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 2 }], [variantStock()]);
-  assert.equal(plan.status, "ready");
-  if (plan.status === "ready") {
-    assert.ok(plan.deductions.every((d) => d.masterVariantSku !== null), "no null-variant (parent) deduction for a variant target");
-  }
-});
-
-test("22: inventory rollup uses the SUM of variant stock (never max)", () => {
+test("22: inventory rollup uses SUM of variant stock (never max)", () => {
   assert.equal(sumVariantStock([{ stock_quantity: 2 }, { stock_quantity: 3 }, { stock_quantity: 0 }]), 5);
   assert.equal(sumVariantStock([{ stock_quantity: null }, { stock_quantity: 4 }]), 4);
 });
 
-test("inconsistent: variant stock vs shelf sum mismatch → inventory_inconsistent", () => {
-  const plan = buildTalabatDeductionPlan(
-    [{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 1 }],
-    [variantStock({ variantStock: 10, shelves: [{ location: "A", quantity: 4 }] })], // 4 != 10
-  );
-  assert.equal(plan.status, "manual_review");
-  if (plan.status === "manual_review") assert.equal(plan.reason, "inventory_inconsistent");
+test("5: a negative / non-integer stock value → inventory_inconsistent (not coerced to 0)", () => {
+  assert.equal((buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 1 }], [variantStock({ variantStock: -3 })]) as any).reason, "inventory_inconsistent");
+  assert.equal((buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 1 }], [variantStock({ variantStock: 2.5 as unknown as number })]) as any).reason, "inventory_inconsistent");
 });
 
-test("missing snapshot / wrong kind → inventory_inconsistent (no deduction)", () => {
+test("5b: a duplicate stock snapshot for one target → inventory_inconsistent", () => {
+  const plan = buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 1 }], [variantStock(), variantStock({ variantStock: 99 })]);
+  assert.equal(plan.status === "manual_review" && plan.reason, "inventory_inconsistent");
+});
+
+test("inconsistent: variant stock vs shelf-sum mismatch → inventory_inconsistent", () => {
+  const plan = buildTalabatDeductionPlan([{ masterProductId: "p2", masterVariantSku: "V-SKU", quantity: 1 }], [variantStock({ variantStock: 10, shelves: [{ location: "A", quantity: 4 }] })]);
+  assert.equal(plan.status === "manual_review" && plan.reason, "inventory_inconsistent");
+});
+
+test("missing snapshot / wrong kind → inventory_inconsistent", () => {
   assert.equal(buildTalabatDeductionPlan([{ masterProductId: "pX", masterVariantSku: "S", quantity: 1 }], []).status, "manual_review");
-  // variant target given a product snapshot
   const bad = buildTalabatDeductionPlan([{ masterProductId: "p1", masterVariantSku: "S", quantity: 1 }], [productStock({ masterProductId: "p1" })]);
   assert.equal(bad.status === "manual_review" && bad.reason, "inventory_inconsistent");
 });
 
-test("manual-review payload carries only safe fields (no raw/phone/token/DB error)", () => {
-  const payload = buildManualReviewPayload({
-    orderId: "o1", orderCode: "OC1", reason: "ambiguous_match",
-    lineKeys: ["line-0"],
-    candidates: [{ lineKey: "line-0", reason: "ambiguous_match", sku: "S1", barcode: "B1", channelProductId: "CP1" }],
+test("9: sanitizeResolution keeps only whitelisted keys (drops raw/customer/token/errors)", () => {
+  const out = sanitizeResolution({
+    lines: [1], targets: [2], lineKeys: ["l0"], reason: "x", reasons: [], via: "sku",
+    raw: { big: 1 }, customer: { phone: "123" }, token: "secret", authorization: "Bearer x", sqlerrm: "boom", headers: {},
   });
-  const json = JSON.stringify(payload);
-  assert.equal((payload as any).kind, "talabat_review");
-  assert.ok(!/phone|address|token|sqlerrm|raw/i.test(json), `payload leaked a forbidden field: ${json}`);
+  assert.deepEqual(Object.keys(out).sort(), ["lineKeys", "lines", "reason", "reasons", "targets", "via"]);
+  assert.ok(!/secret|123|boom|Bearer/.test(JSON.stringify(out)));
+});
+
+test("manual-review payload carries only safe fields", () => {
+  const payload = buildManualReviewPayload({ orderId: "o1", orderCode: "OC1", reason: "ambiguous_match", lineKeys: ["line-0"], candidates: [{ lineKey: "line-0", reason: "ambiguous_match", sku: "S1", barcode: "B1", channelProductId: "CP1" }] });
+  assert.ok(!/phone|address|token|sqlerrm|\braw\b/i.test(JSON.stringify(payload)));
 });

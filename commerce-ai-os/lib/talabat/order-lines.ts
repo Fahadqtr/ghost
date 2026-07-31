@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 // Pure Talabat order-line parser + deterministic dedup key. NO Supabase, NO
 // network, NO filesystem, NO DB writes — self-contained so node:test imports it
 // directly. It keeps every identifier SEPARATE (channel product id vs SKU vs
@@ -17,7 +19,16 @@ export interface TalabatOrderLine {
 
 export interface ParsedTalabatOrder {
   orderCode: string | null;
+  event: string | null;               // safe, non-personal event/type
+  reference: string | null;           // safe, merchant order reference
+  createdAt: string | null;           // order timestamp
   lines: TalabatOrderLine[];
+}
+
+export type DedupConfidence = "strong" | "weak";
+export interface TalabatDedupKey {
+  key: string;
+  confidence: DedupConfidence;
 }
 
 const s = (v: unknown): string => (v == null ? "" : String(v).trim());
@@ -32,16 +43,16 @@ function pick(obj: any, ...keys: string[]): unknown {
   return undefined;
 }
 
-/** Locate the line-items array wherever it lives. */
 function findItems(o: any): any[] {
   const cands = [o?.items, o?.products, o?.orderItems, o?.lineItems, o?.order?.items, o?.order?.products, o?.basket?.items, o?.cart?.items];
   for (const c of cands) if (Array.isArray(c) && c.length) return c;
   return [];
 }
 
-/** A strictly-positive integer, else null (invalid). */
+/** A strictly-positive integer, else null (invalid) — no coercion/flooring. */
 function positiveInt(v: unknown): number | null {
-  const n = Number(v);
+  if (typeof v === "boolean") return null;
+  const n = typeof v === "number" ? v : Number(String(v).trim());
   if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return null;
   return n;
 }
@@ -62,6 +73,9 @@ export function parseTalabatOrderLines(payload: any): ParsedTalabatOrder {
   const order = o.order && typeof o.order === "object" ? o.order : o;
 
   const orderCode = orNull(pick(order, "code", "orderId", "order_id", "id", "token", "shortCode", "short_code", "orderCode"));
+  const event = orNull(pick(o, "event", "eventType", "type") ?? pick(order, "event", "eventType", "type"));
+  const reference = orNull(pick(order, "posOrderId", "pos_order_id", "externalId", "external_id", "reference", "order_reference", "merchantOrderId", "remoteOrderId"));
+  const createdAt = orNull(pick(order, "createdAt", "created_at", "placedAt", "orderTime", "order_time"));
 
   const lines: TalabatOrderLine[] = findItems(order).map((it: any, i: number) => {
     const qty = positiveInt(pick(it, "quantity", "qty", "count"));
@@ -77,42 +91,49 @@ export function parseTalabatOrderLines(payload: any): ParsedTalabatOrder {
     };
   });
 
-  return { orderCode, lines };
+  return { orderCode, event, reference, createdAt, lines };
 }
 
 // ---- Deterministic dedup key -------------------------------------------------
 
-/** Normalize an order code for the dedup key (trim + collapse whitespace). */
+/** Normalize an order code deterministically (trim + collapse + lowercase). */
 function normalizeOrderCode(code: string): string {
-  return code.replace(/\s+/g, " ").trim();
+  return code.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-/** Dependency-free 32-bit FNV-1a hash → 8-char hex. Deterministic, non-crypto. */
-function fnv1aHex(input: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, "0");
+/** SHA-256 hex (64 chars). Strong, collision-resistant — no 32-bit fallback. */
+function sha256Hex(input: string): string {
+  return createHash("sha256").update(input, "utf8").digest("hex");
 }
 
 /**
- * Build a deterministic dedup key. When a valid order code exists →
- * "talabat:<normalized-order-code>". Otherwise a stable hash over a CANONICAL
- * projection of the order (only the structured identifier fields + quantity),
- * sorted so JSON key order and line order never change it — but a genuinely
- * different order (different items/quantities) yields a different key. The raw
- * payload, customer name, and phone are NEVER part of the key.
+ * Build a deterministic dedup key + a confidence.
+ *  - A valid order code → "talabat:<normalized-order-code>" (strong).
+ *  - Otherwise a SHA-256 over a CANONICAL, non-personal projection of the order
+ *    (event, merchant reference, created timestamp, and per-line identifiers +
+ *    quantity + unit price), sorted so JSON key order and line order never
+ *    change it. If a trusted per-order identifier (reference or createdAt)
+ *    exists → strong; if only the cart is available (two independent orders with
+ *    the same basket could collide) → WEAK.
+ * The raw payload, customer name, phone, and address are NEVER part of the key.
  */
-export function buildTalabatDedupKey(parsed: ParsedTalabatOrder): string {
+export function buildTalabatDedupKey(parsed: ParsedTalabatOrder): TalabatDedupKey {
   if (parsed.orderCode) {
     const norm = normalizeOrderCode(parsed.orderCode);
-    if (norm !== "") return `talabat:${norm}`;
+    if (norm !== "") return { key: `talabat:${norm}`, confidence: "strong" };
   }
+
   const canonicalLines = parsed.lines
-    .map((l) => [l.channelProductId ?? "", l.sku ?? "", l.barcode ?? "", (l.title ?? "").toLowerCase(), l.quantity] as const)
-    .map((t) => t.join(""))
+    .map((l) => [l.channelProductId ?? "", l.sku ?? "", l.barcode ?? "", (l.title ?? "").toLowerCase(), String(l.quantity), l.unitPrice == null ? "" : String(l.unitPrice)].join(""))
     .sort(); // line order must not matter
-  return `talabat:h:${fnv1aHex(canonicalLines.join(""))}`;
+
+  const canonical = JSON.stringify({
+    event: parsed.event ?? "",
+    reference: parsed.reference ?? "",
+    createdAt: parsed.createdAt ?? "",
+    lines: canonicalLines,
+  });
+
+  const hasTrustedId = Boolean(parsed.reference || parsed.createdAt);
+  return { key: `talabat:h:${sha256Hex(canonical)}`, confidence: hasTrustedId ? "strong" : "weak" };
 }
