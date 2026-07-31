@@ -12,6 +12,7 @@ export interface ShopifyOrderLite {
   cancelledAt?: string | null;
   items: { title: string; qty: number; sku?: string }[];
   paymentGatewayNames?: string[]; // Shopify order.paymentGatewayNames (drives channel attribution)
+  itemsTruncated?: boolean;       // true when the order had more line items than were fetched
 }
 
 /** Sales channel a Shopify order is attributed to. */

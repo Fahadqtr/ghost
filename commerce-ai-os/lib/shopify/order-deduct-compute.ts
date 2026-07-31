@@ -19,6 +19,7 @@ export interface OrderForDeduction {
   cancelledAt?: string | null;
   items: OrderItemLite[];
   paymentGatewayNames?: string[]; // carried through for channel attribution (does NOT affect deduction)
+  itemsTruncated?: boolean;       // line-item data was paginated/cut off → fail closed (never processed)
 }
 
 export interface CatalogRowLite {

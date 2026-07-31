@@ -3,7 +3,7 @@ import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, set
 import { planInventorySync } from "@/lib/shopify-diff";
 import { planOrderDeductions, type CatalogRowLite } from "./order-deduct-compute";
 import { classifyShopifyOrderChannel } from "./orders-compute";
-import { claimAndDeduct, type ClaimDeductPorts, type ClaimDeductPlanners } from "./order-ledger";
+import { claimAndDeduct, syncCanPush, type ClaimDeductPorts, type ClaimDeductPlanners, type BlockedReason } from "./order-ledger";
 import { logStockTransition } from "@/lib/tasks/stock-tasks";
 
 // Stock → Shopify sync core, shared by the manual button on /import-export/
@@ -53,21 +53,50 @@ async function pageAll<T>(fetchPage: (from: number, to: number) => any): Promise
  * together. This module does NO direct inventory writes on this path; it fails
  * closed — nothing is deducted unless the RPC explicitly reports success.
  */
-async function deductRecentOrders(
-  sb: any,
-  catalog: CatalogRowLite[],
-): Promise<{ ordersProcessed: number; deducted: number; ordersNote?: string }> {
+/** A safe, non-raw note for each way the order step can block the Shopify push. */
+function safeBlockNote(reason?: BlockedReason): string {
+  switch (reason) {
+    case "migration_required":
+      return "تخطى مزامنة المخزون — required migration: شغّل supabase/shopify_synced_orders_deduction.sql مرة واحدة.";
+    case "orders_truncated":
+      return "تخطى مزامنة المخزون — طلبات المتجر أكثر من أن تُقرأ دفعة واحدة (سيُعاد المحاولة).";
+    case "line_items_truncated":
+      return "تخطى مزامنة المخزون — أصناف أحد الطلبات غير مكتملة القراءة (سيُعاد المحاولة).";
+    case "unmatched_order":
+      return "تخطى مزامنة المخزون — طلب فيه صنف غير مطابق للكتالوج (يلزم مطابقة يدوية).";
+    case "db_error":
+      return "تخطى مزامنة المخزون — خطأ قاعدة بيانات مؤقت (سيُعاد المحاولة).";
+    case "unknown_response":
+      return "تخطى مزامنة المخزون — استجابة غير متوقعة من قاعدة البيانات (سيُعاد المحاولة).";
+    default:
+      return "تخطى مزامنة المخزون — لم تكتمل تسوية الطلبات (سيُعاد المحاولة).";
+  }
+}
+
+/** The order step's result surfaced to runShopifyInventorySync. `complete=false`
+ *  BLOCKS the Shopify stock push for this run (see the module header). `deducted`
+ *  is always truthful — it counts only rows the RPC actually committed. */
+interface OrderStep {
+  complete: boolean;
+  ordersProcessed: number;
+  deducted: number;
+  ordersNote?: string;
+}
+
+async function deductRecentOrders(sb: any, catalog: CatalogRowLite[]): Promise<OrderStep> {
   const none = { ordersProcessed: 0, deducted: 0 };
   try {
     const since = new Date(Date.now() - 72 * 3600_000).toISOString();
-    const { orders, error } = await fetchRecentShopifyOrders(since, 100);
-    if (error) return { ...none, ordersNote: `تخطى خصم الطلبات: ${error}` };
-    if (!orders?.length) return none;
+    // Pull the whole 72h window (paginated); a high cap so `complete` only trips on
+    // extreme volume. A truncated fetch (complete=false) blocks the push below.
+    const { orders, error, complete: fetchComplete } = await fetchRecentShopifyOrders(since, 1000);
+    if (error) return { complete: false, ...none, ordersNote: safeBlockNote("db_error") };
+    if (!orders?.length) return { complete: true, ...none };
 
     const { count, error: cntErr } = await sb
       .from("shopify_synced_orders")
       .select("order_id", { count: "exact", head: true });
-    if (cntErr) return { ...none, ordersNote: "تخطى خصم الطلبات — شغّل supabase/shopify_synced_orders.sql مرة وحدة." };
+    if (cntErr) return { complete: false, ...none, ordersNote: safeBlockNote("migration_required") };
 
     const { data: seen } = await sb
       .from("shopify_synced_orders")
@@ -99,15 +128,16 @@ async function deductRecentOrders(
       classifyChannel: classifyShopifyOrderChannel,
     };
 
-    const res = await claimAndDeduct(orders, catalog, alreadySynced, baseline, nameOf, ports, planners);
-    if (!res.ok) return { ...none, ordersNote: res.note };
+    const res = await claimAndDeduct(orders, catalog, alreadySynced, baseline, nameOf, ports, planners, fetchComplete !== false);
     return {
-      ordersProcessed: res.ordersProcessed,
+      complete: res.complete,
+      ordersProcessed: res.processed,
       deducted: res.deducted,
-      ...(res.note ? { ordersNote: res.note } : {}),
+      ...(res.complete ? (res.note ? { ordersNote: res.note } : {}) : { ordersNote: safeBlockNote(res.blockedReason) }),
     };
-  } catch (e) {
-    return { ...none, ordersNote: `تخطى خصم الطلبات: ${e instanceof Error ? e.message : "خطأ"}` };
+  } catch {
+    // No raw error text ever surfaced. Fail closed → block the push.
+    return { complete: false, ...none, ordersNote: safeBlockNote() };
   }
 }
 
@@ -129,6 +159,23 @@ export async function runShopifyInventorySync(sb: any): Promise<InventorySyncRes
     // Store sales first: subtract new Shopify orders from our inventory, then
     // push the (now-correct) truth back to the store below.
     const orderStep = await deductRecentOrders(sb, prods);
+
+    // FAIL CLOSED: if the order step did not fully settle (RPC error, missing
+    // migration, null/unknown response, an unmatched order line, or truncated
+    // Shopify data) we must NOT push stock to Shopify — a partial view would
+    // re-raise sold-out stock. Skip the location fetch and the push entirely.
+    // Counts stay truthful for whatever the RPC already committed.
+    if (!syncCanPush(orderStep)) {
+      return {
+        ok: false,
+        error: orderStep.ordersNote ?? safeBlockNote(),
+        ...EMPTY,
+        ordersProcessed: orderStep.ordersProcessed,
+        deducted: orderStep.deducted,
+        ...(orderStep.ordersNote ? { ordersNote: orderStep.ordersNote } : {}),
+      };
+    }
+
     const invRows = orderStep.deducted
       ? await pageAll<{ product_id: string; stock_quantity: number | null }>(
           (from, to) => sb.from("inventory").select("product_id, stock_quantity").range(from, to))

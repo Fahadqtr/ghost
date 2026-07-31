@@ -8,18 +8,21 @@
 // Why this exists (the security invariant it enforces):
 //   Inventory is our source of truth that the nightly sync PUSHES to Shopify. A
 //   store sale must lower OUR stock EXACTLY once. Doing the idempotency claim and
-//   the stock deduction as two separate REST calls is not safe: a failure between
-//   them can leave stock deducted-but-unrecorded (→ the next sync deducts again)
-//   or recorded-but-under-deducted (→ the nightly push re-raises the sold stock).
-//
-//   So the actual claim + deduction + ledger completion happen inside ONE Postgres
-//   transaction (the process_shopify_order_deduction RPC). This module only:
+//   the stock deduction as two separate REST calls is not safe, so the claim +
+//   deduction + ledger completion for an order happen inside ONE Postgres
+//   transaction (the process_shopify_order_deduction RPC). This module:
 //     • computes each order's per-product plan with the SAME pure matching logic;
+//     • is ALL-OR-NOTHING per order — an order with ANY unmatched positive-qty
+//       line, or truncated line-item data, is NOT sent to the RPC and NOT recorded
+//       (never deduct a matched subset of an incomplete order);
 //     • calls the RPC once per order (Shopify Order GID is the idempotency key);
 //     • FAILS CLOSED — it deducts nothing on its own and trusts ONLY an explicit
-//       RPC success. A null/empty/unknown RPC result, a DB error, or a missing
-//       migration all yield "nothing deducted for this order" (safe skip / retry).
-//   There is NO TypeScript inventory write on this path.
+//       RPC success; a null/empty/unknown result, a DB error, or a missing
+//       migration all mean "nothing deducted for this order".
+//   It reports `complete`: the run is complete ONLY when every considered order
+//   was fully settled. When !complete the caller MUST NOT push stock to Shopify
+//   (a partial view would re-raise sold-out stock). There is NO TypeScript
+//   inventory write on this path.
 
 import type { CatalogRowLite, OrderForDeduction } from "./order-deduct-compute";
 
@@ -43,7 +46,7 @@ export interface DeductionRpcArgs {
 
 /**
  * True when the RPC / its migration is not present yet, so the whole step can skip
- * safely with a "migration required" note instead of being mistaken for a normal
+ * safely with a "migration required" reason instead of being mistaken for a normal
  * failure. Covers: undefined_function (42883 / PostgREST PGRST202), a missing
  * relation the function depends on (42P01 / PGRST205), and a message naming the
  * function or one of the added ledger columns. A permission / connection /
@@ -72,31 +75,47 @@ export interface ClaimDeductPlanners {
     orders: OrderForDeduction[],
     catalog: CatalogRowLite[],
     alreadySynced: Set<string>,
-  ): { considered: { id: string }[]; deductions: { product_id: string; qty: number }[] };
+  ): {
+    considered: { id: string }[];
+    deductions: { product_id: string; qty: number }[];
+    unmatched: { title: string; qty: number }[];
+  };
   classifyChannel(paymentGatewayNames: string[] | null | undefined): string;
 }
 
-export type ClaimDeductResult =
-  | { ok: true; ordersProcessed: number; deducted: number; recorded: number; skipped: number; baseline: boolean; note?: string }
-  | { ok: false; ordersProcessed: 0; deducted: 0; note: string };
+export type BlockedReason =
+  | "orders_truncated"
+  | "line_items_truncated"
+  | "unmatched_order"
+  | "migration_required"
+  | "db_error"
+  | "unknown_response";
 
-const MIGRATION_NOTE = "تخطى خصم الطلبات — required migration: شغّل supabase/shopify_synced_orders_deduction.sql مرة واحدة.";
-const SKIP_NOTE = "تخطى بعض الطلبات بأمان (خطأ قاعدة بيانات مؤقت) — سيُعاد المحاولة في التشغيل القادم.";
+export interface ClaimDeductResult {
+  complete: boolean; // when false the caller MUST NOT push stock to Shopify
+  processed: number; // orders confirmed recorded (processed | already | baseline)
+  deducted: number; // inventory rows actually deducted (committed by the RPC)
+  skipped: number; // orders safely skipped (not recorded, retried next run)
+  baseline: boolean;
+  blockedReason?: BlockedReason;
+  note?: string;
+}
+
 const BASELINE_NOTE = "أول تشغيل — سجّل الطلبات الحالية كخط أساس بدون خصم.";
 
 type Interpreted =
   | { kind: "processed"; deducted: number; products: { product_id: string; before: number; after: number }[] }
   | { kind: "recorded" } // already_processed | baseline_recorded — recorded, nothing deducted here
-  | { kind: "skip" } // FAIL CLOSED — null/empty/unknown/error → deduct nothing
+  | { kind: "skip"; reason: "db_error" | "unknown_response" } // FAIL CLOSED → deduct nothing
   | { kind: "migration" };
 
 /** Map an RPC result to an outcome. Anything not an explicit success is a safe skip. */
 function interpret(res: RpcResult): Interpreted {
-  if (res.error) return isMissingDeductionMigration(res.error) ? { kind: "migration" } : { kind: "skip" };
+  if (res.error) return isMissingDeductionMigration(res.error) ? { kind: "migration" } : { kind: "skip", reason: "db_error" };
   const d = res.data;
-  // FAIL CLOSED: no rows / null / non-object / array → we do NOT know a deduction
-  // happened, so we deduct nothing (and never claim success) for this order.
-  if (!d || typeof d !== "object" || Array.isArray(d)) return { kind: "skip" };
+  // FAIL CLOSED: null / non-object / array → we do NOT know a deduction happened,
+  // so we deduct nothing (and never claim success) for this order.
+  if (!d || typeof d !== "object" || Array.isArray(d)) return { kind: "skip", reason: "unknown_response" };
   const status = String((d as { status?: unknown }).status ?? "");
   if (status === "processed") {
     const products = (d as { products?: unknown }).products;
@@ -107,15 +126,19 @@ function interpret(res: RpcResult): Interpreted {
     };
   }
   if (status === "already_processed" || status === "baseline_recorded") return { kind: "recorded" };
-  return { kind: "skip" }; // 'error' or any unknown status → fail closed
+  return { kind: "skip", reason: "unknown_response" }; // 'error' or any unknown status → fail closed
+}
+
+/** The Shopify stock push may proceed ONLY when the order step is fully complete. */
+export function syncCanPush(step: { complete?: boolean } | null | undefined): boolean {
+  return step?.complete === true;
 }
 
 /**
  * Record + deduct every considered order through the single-transaction RPC. See
- * the file header for the invariant. Never throws for a DB error — a missing
- * migration returns { ok:false } with a migration note (nothing touched); any
- * other per-order error is a safe skip (that order is neither recorded nor
- * deducted, so the next run retries it cleanly).
+ * the file header for the invariant. Never throws for a DB error. `ordersComplete`
+ * is false when the upstream Shopify fetch was truncated (more orders than were
+ * read) — that alone blocks the push.
  */
 export async function claimAndDeduct(
   orders: OrderForDeduction[],
@@ -125,21 +148,44 @@ export async function claimAndDeduct(
   nameOf: Map<string, string>,
   ports: ClaimDeductPorts,
   planners: ClaimDeductPlanners,
+  ordersComplete: boolean = true,
 ): Promise<ClaimDeductResult> {
-  const plan = planners.plan(orders, catalog, alreadySynced);
-  if (!plan.considered.length) return { ok: true, ordersProcessed: 0, deducted: 0, recorded: 0, skipped: 0, baseline };
-
-  const consideredIds = new Set(plan.considered.map((c) => c.id));
+  let complete = ordersComplete;
+  let blockedReason: BlockedReason | undefined = ordersComplete ? undefined : "orders_truncated";
+  let processed = 0;
   let deducted = 0;
-  let recorded = 0;
   let skipped = 0;
+
+  const block = (reason: BlockedReason) => {
+    complete = false;
+    blockedReason ??= reason;
+  };
+
+  const plan = planners.plan(orders, catalog, alreadySynced);
+  const consideredIds = new Set(plan.considered.map((c) => c.id));
 
   for (const o of orders) {
     if (!consideredIds.has(o.id)) continue;
 
+    // Truncated line-item data → we don't know the full order; never process it.
+    if (o.itemsTruncated) {
+      block("line_items_truncated");
+      skipped++;
+      continue;
+    }
+
     // Per-order plan with the SAME pure matching/quantity logic. The RPC only
     // spreads/clamps these already-decided quantities — it never re-matches.
     const per = planners.plan([o], catalog, new Set<string>());
+
+    // ALL-OR-NOTHING: any unmatched positive-qty line blocks the whole order — no
+    // RPC call, no record, no partial deduction of the matched subset.
+    if (per.unmatched.length > 0) {
+      block("unmatched_order");
+      skipped++;
+      continue;
+    }
+
     const gateways = Array.isArray(o.paymentGatewayNames) ? o.paymentGatewayNames : [];
     const res = await ports.callDeduction({
       p_order_id: o.id,
@@ -152,14 +198,16 @@ export async function claimAndDeduct(
 
     const outcome = interpret(res);
     if (outcome.kind === "migration") {
-      // The whole step needs the migration — abort without claiming any success.
-      return { ok: false, ordersProcessed: 0, deducted: 0, note: MIGRATION_NOTE };
+      // The whole step needs the migration — stop, block the push, keep truthful
+      // counts for anything the RPC already committed before this call.
+      return { complete: false, processed, deducted, skipped, baseline, blockedReason: "migration_required" };
     }
     if (outcome.kind === "skip") {
-      skipped++; // fail closed: not recorded, not deducted → retried next run
+      block(outcome.reason);
+      skipped++;
       continue;
     }
-    recorded++;
+    processed++;
     if (outcome.kind === "processed") {
       deducted += outcome.deducted;
       // OOS "mark unavailable" tasks — reads totals, opens a task; no stock write.
@@ -169,6 +217,6 @@ export async function claimAndDeduct(
     }
   }
 
-  const note = baseline ? BASELINE_NOTE : skipped > 0 ? SKIP_NOTE : undefined;
-  return { ok: true, ordersProcessed: recorded, deducted, recorded, skipped, baseline, ...(note ? { note } : {}) };
+  const note = baseline && complete ? BASELINE_NOTE : undefined;
+  return { complete, processed, deducted, skipped, baseline, ...(blockedReason ? { blockedReason } : {}), ...(note ? { note } : {}) };
 }
