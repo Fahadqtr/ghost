@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ordersSummary, ordersWithin, morningOrdersLine, topProducts, type ShopifyOrderLite } from "./orders-compute.ts";
+import { ordersSummary, ordersWithin, morningOrdersLine, topProducts, classifyShopifyOrderChannel, type ShopifyOrderLite } from "./orders-compute.ts";
 
 const order = (over: Partial<ShopifyOrderLite>): ShopifyOrderLite => ({
   id: "gid://1", name: "#1001", createdAt: "2026-07-07T08:00:00Z",
@@ -39,6 +39,20 @@ test("topProducts ranks by total quantity and groups by sku/title", () => {
   assert.equal(top[0].orders, 2);
   assert.equal(top[1].sku, "C1");
   assert.equal(top[1].qty, 5);
+});
+
+test("classifyShopifyOrderChannel: only the Talabat payment method → talabat, else shopify", () => {
+  assert.equal(classifyShopifyOrderChannel(["Talabat"]), "talabat");        // exact
+  assert.equal(classifyShopifyOrderChannel(["talabat"]), "talabat");        // lowercase
+  assert.equal(classifyShopifyOrderChannel(["TALABAT"]), "talabat");        // uppercase
+  assert.equal(classifyShopifyOrderChannel(["  Talabat  "]), "talabat");    // surrounding spaces
+  assert.equal(classifyShopifyOrderChannel(["Cash", "Talabat"]), "talabat"); // multiple, one is Talabat
+  assert.equal(classifyShopifyOrderChannel(["Cash on Delivery"]), "shopify"); // other gateway
+  assert.equal(classifyShopifyOrderChannel(["Shopify Payments", "manual"]), "shopify"); // multiple, none Talabat
+  assert.equal(classifyShopifyOrderChannel(["Talabatty"]), "shopify");      // not an exact match (no fuzzy/substring)
+  assert.equal(classifyShopifyOrderChannel([]), "shopify");                 // empty
+  assert.equal(classifyShopifyOrderChannel(null), "shopify");               // null
+  assert.equal(classifyShopifyOrderChannel(undefined), "shopify");          // undefined
 });
 
 test("morning line summarizes the day or stays silent", () => {

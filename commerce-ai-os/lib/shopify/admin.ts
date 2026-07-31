@@ -192,47 +192,78 @@ import type { ShopifyOrderLite } from "./orders-compute";
 
 interface OrdersQuery {
   orders: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
     nodes: {
       id: string; name: string; createdAt: string;
       displayFinancialStatus: string | null; displayFulfillmentStatus: string | null;
       totalPriceSet: { shopMoney: { amount: string; currencyCode: string } } | null;
       customer: { displayName: string | null } | null;
       cancelledAt: string | null;
-      lineItems: { nodes: { title: string; quantity: number; sku: string | null }[] };
+      paymentGatewayNames: string[] | null;
+      lineItems: { pageInfo: { hasNextPage: boolean }; nodes: { title: string; quantity: number; sku: string | null }[] };
     }[];
   };
 }
 
-/** Newest orders since `sinceIso` (custom apps see the last 60 days). */
-export async function fetchRecentShopifyOrders(sinceIso: string, limit = 50): Promise<{ orders?: ShopifyOrderLite[]; error?: string }> {
-  const resp: { data?: OrdersQuery; error?: string } = await shopifyGraphQL<OrdersQuery>(
-    `query($q: String, $first: Int!) {
-      orders(first: $first, query: $q, sortKey: CREATED_AT, reverse: true) {
-        nodes {
-          id name createdAt displayFinancialStatus displayFulfillmentStatus
-          totalPriceSet { shopMoney { amount currencyCode } }
-          customer { displayName }
-          cancelledAt
-          lineItems(first: 25) { nodes { title quantity sku } }
+/**
+ * Newest orders since `sinceIso` (custom apps see the last 60 days), paginated
+ * DETERMINISTICALLY across the whole window. Returns `complete`: false when the
+ * batch was truncated — either the order pages hit the `limit` safety cap while
+ * more remained, or a page cursor was missing. Each order carries `itemsTruncated`
+ * when it had more line items than were fetched. Callers that deduct stock MUST
+ * treat `complete === false` (or any `itemsTruncated`) as "do not process / do
+ * not push" — a truncated view would re-raise sold-out stock on the next push.
+ */
+export async function fetchRecentShopifyOrders(
+  sinceIso: string,
+  limit = 50,
+): Promise<{ orders?: ShopifyOrderLite[]; error?: string; complete?: boolean }> {
+  const pageSize = Math.max(1, Math.min(100, limit));
+  const out: ShopifyOrderLite[] = [];
+  let after: string | null = null;
+  let complete = true;
+  for (let guard = 0; guard <= 200; guard++) {
+    const resp: { data?: OrdersQuery; error?: string } = await shopifyGraphQL<OrdersQuery>(
+      `query($q: String, $first: Int!, $after: String) {
+        orders(first: $first, query: $q, after: $after, sortKey: CREATED_AT, reverse: true) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id name createdAt displayFinancialStatus displayFulfillmentStatus
+            totalPriceSet { shopMoney { amount currencyCode } }
+            customer { displayName }
+            cancelledAt
+            paymentGatewayNames
+            lineItems(first: 100) { pageInfo { hasNextPage } nodes { title quantity sku } }
+          }
         }
-      }
-    }`,
-    { q: `created_at:>=${sinceIso}`, first: Math.max(1, Math.min(100, limit)) },
-  );
-  if (resp.error) return { error: resp.error };
-  const orders: ShopifyOrderLite[] = (resp.data?.orders?.nodes ?? []).map((n) => ({
-    id: n.id,
-    name: n.name,
-    createdAt: n.createdAt,
-    financial: String(n.displayFinancialStatus ?? ""),
-    fulfillment: String(n.displayFulfillmentStatus ?? ""),
-    total: Number(n.totalPriceSet?.shopMoney?.amount ?? NaN),
-    currency: String(n.totalPriceSet?.shopMoney?.currencyCode ?? "QAR"),
-    customer: String(n.customer?.displayName ?? ""),
-    cancelledAt: n.cancelledAt ?? null,
-    items: (n.lineItems?.nodes ?? []).map((li) => ({ title: li.title, qty: li.quantity, sku: li.sku ?? undefined })),
-  }));
-  return { orders };
+      }`,
+      { q: `created_at:>=${sinceIso}`, first: pageSize, after },
+    );
+    if (resp.error) return { error: resp.error };
+    const conn = resp.data?.orders;
+    for (const n of conn?.nodes ?? []) {
+      out.push({
+        id: n.id,
+        name: n.name,
+        createdAt: n.createdAt,
+        financial: String(n.displayFinancialStatus ?? ""),
+        fulfillment: String(n.displayFulfillmentStatus ?? ""),
+        total: Number(n.totalPriceSet?.shopMoney?.amount ?? NaN),
+        currency: String(n.totalPriceSet?.shopMoney?.currencyCode ?? "QAR"),
+        customer: String(n.customer?.displayName ?? ""),
+        cancelledAt: n.cancelledAt ?? null,
+        paymentGatewayNames: Array.isArray(n.paymentGatewayNames) ? n.paymentGatewayNames.map((g) => String(g)) : [],
+        items: (n.lineItems?.nodes ?? []).map((li) => ({ title: li.title, qty: li.quantity, sku: li.sku ?? undefined })),
+        itemsTruncated: Boolean(n.lineItems?.pageInfo?.hasNextPage),
+      });
+    }
+    if (!conn?.pageInfo?.hasNextPage) break;         // fetched the whole window
+    if (out.length >= limit) { complete = false; break; } // hit the cap, more remain → truncated
+    after = conn.pageInfo.endCursor ?? null;
+    if (!after) { complete = false; break; }         // cursor missing but more remain → cannot continue
+    if (guard === 200) complete = false;             // absolute backstop
+  }
+  return { orders: out, complete };
 }
 
 /** First active location's id (single-location stores → the main one). */

@@ -18,6 +18,8 @@ export interface OrderForDeduction {
   financial: string;     // PAID | REFUNDED | VOIDED …
   cancelledAt?: string | null;
   items: OrderItemLite[];
+  paymentGatewayNames?: string[]; // carried through for channel attribution (does NOT affect deduction)
+  itemsTruncated?: boolean;       // line-item data was paginated/cut off → fail closed (never processed)
 }
 
 export interface CatalogRowLite {
@@ -30,6 +32,9 @@ export interface OrderDeductionPlan {
   orderIds: string[];                                            // to mark as synced (all considered)
   deductions: { product_id: string; name_en: string; qty: number }[];
   unmatched: { title: string; qty: number }[];                   // items we couldn't map to the catalog
+  // Per considered (not-already-synced) order — carries the payment data so the
+  // caller can persist channel attribution. Does NOT influence what is deducted.
+  considered: { id: string; name: string; paymentGatewayNames: string[] }[];
 }
 
 const key = (v: unknown): string =>
@@ -62,12 +67,14 @@ export function planOrderDeductions(
   }
 
   const orderIds: string[] = [];
+  const considered: { id: string; name: string; paymentGatewayNames: string[] }[] = [];
   const perProduct = new Map<string, { product_id: string; name_en: string; qty: number }>();
   const unmatched: { title: string; qty: number }[] = [];
 
   for (const o of orders) {
     if (alreadySynced.has(o.id)) continue;
     orderIds.push(o.id);
+    considered.push({ id: o.id, name: o.name, paymentGatewayNames: Array.isArray(o.paymentGatewayNames) ? o.paymentGatewayNames : [] });
     if (isVoidOrder(o)) continue;
     for (const it of o.items) {
       const qty = Math.max(0, Math.round(Number(it.qty) || 0));
@@ -80,7 +87,7 @@ export function planOrderDeductions(
     }
   }
 
-  return { orderIds, deductions: [...perProduct.values()], unmatched };
+  return { orderIds, deductions: [...perProduct.values()], unmatched, considered };
 }
 
 /**
