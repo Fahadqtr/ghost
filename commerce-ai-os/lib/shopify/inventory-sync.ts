@@ -2,6 +2,7 @@ import "server-only";
 import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, setInventoryQuantities, fetchRecentShopifyOrders } from "./admin";
 import { planInventorySync } from "@/lib/shopify-diff";
 import { planOrderDeductions, spreadDeduction, type CatalogRowLite } from "./order-deduct-compute";
+import { classifyShopifyOrderChannel } from "./orders-compute";
 import { logStockTransition } from "@/lib/tasks/stock-tasks";
 
 // Stock → Shopify sync core, shared by the manual button on /import-export/
@@ -101,10 +102,21 @@ async function deductRecentOrders(
       }
     }
 
-    await sb.from("shopify_synced_orders").upsert(
-      plan.orderIds.map((id) => ({ order_id: id, order_name: nameOf.get(id) ?? null, deducted: baseline ? 0 : deducted })),
-      { onConflict: "order_id", ignoreDuplicates: true },
-    );
+    // Record every considered order (idempotency by order_id) WITH its channel
+    // attribution, classified purely from the Shopify payment gateway names.
+    // Tiered write: if the channel columns don't exist yet (migration not applied),
+    // fall back to the base columns so the order is still recorded and can never
+    // be deducted twice.
+    const baseRows = plan.considered.map((c) => ({ order_id: c.id, order_name: c.name ?? nameOf.get(c.id) ?? null, deducted: baseline ? 0 : deducted }));
+    const richRows = plan.considered.map((c, i) => ({
+      ...baseRows[i],
+      channel: classifyShopifyOrderChannel(c.paymentGatewayNames),
+      payment_gateway_names: c.paymentGatewayNames,
+    }));
+    const { error: upErr } = await sb.from("shopify_synced_orders").upsert(richRows, { onConflict: "order_id", ignoreDuplicates: true });
+    if (upErr) {
+      await sb.from("shopify_synced_orders").upsert(baseRows, { onConflict: "order_id", ignoreDuplicates: true });
+    }
     return {
       ordersProcessed: plan.orderIds.length,
       deducted,

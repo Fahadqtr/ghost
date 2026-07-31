@@ -11,6 +11,25 @@ export interface ShopifyOrderLite {
   customer: string;      // display name ("" when guest)
   cancelledAt?: string | null;
   items: { title: string; qty: number; sku?: string }[];
+  paymentGatewayNames?: string[]; // Shopify order.paymentGatewayNames (drives channel attribution)
+}
+
+/** Sales channel a Shopify order is attributed to. */
+export type ShopifyOrderChannel = "talabat" | "shopify";
+
+/**
+ * Classify a Shopify order's channel PURELY from its payment gateway names.
+ * A staff member records a Talabat order in Shopify POS with the custom payment
+ * method "Talabat", so any gateway that (trimmed + lowercased) equals "talabat"
+ * → "talabat"; anything else, an empty list, or null/undefined → "shopify".
+ * Never uses product name, employee, or notes — payment method only.
+ */
+export function classifyShopifyOrderChannel(paymentGatewayNames: string[] | null | undefined): ShopifyOrderChannel {
+  if (!Array.isArray(paymentGatewayNames)) return "shopify";
+  for (const g of paymentGatewayNames) {
+    if (typeof g === "string" && g.trim().toLowerCase() === "talabat") return "talabat";
+  }
+  return "shopify";
 }
 
 /** Count + revenue of a batch (revenue ignores unparsable totals). */

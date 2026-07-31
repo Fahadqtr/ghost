@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { shopifyConfigured, fetchRecentShopifyOrders } from "@/lib/shopify/admin";
-import { ordersSummary, ordersWithin } from "@/lib/shopify/orders-compute";
+import { ordersSummary, ordersWithin, classifyShopifyOrderChannel } from "@/lib/shopify/orders-compute";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -61,7 +61,14 @@ export default async function ShopifyOrdersPage() {
           {list.map((o) => (
             <div key={o.id} className="card space-y-1.5 p-3" dir="rtl">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-sm font-bold text-ink">{o.name} {o.customer ? `· ${o.customer}` : ""}</span>
+                <span className="flex items-center gap-1.5 text-sm font-bold text-ink">
+                  {o.name} {o.customer ? `· ${o.customer}` : ""}
+                  {classifyShopifyOrderChannel(o.paymentGatewayNames) === "talabat" ? (
+                    <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700">Talabat</span>
+                  ) : (
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">Shopify</span>
+                  )}
+                </span>
                 <span className="text-sm font-semibold text-ink">{Number.isFinite(o.total) ? `${o.total.toFixed(2)} ${o.currency}` : "—"}</span>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">

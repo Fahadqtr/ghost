@@ -198,6 +198,7 @@ interface OrdersQuery {
       totalPriceSet: { shopMoney: { amount: string; currencyCode: string } } | null;
       customer: { displayName: string | null } | null;
       cancelledAt: string | null;
+      paymentGatewayNames: string[] | null;
       lineItems: { nodes: { title: string; quantity: number; sku: string | null }[] };
     }[];
   };
@@ -213,6 +214,7 @@ export async function fetchRecentShopifyOrders(sinceIso: string, limit = 50): Pr
           totalPriceSet { shopMoney { amount currencyCode } }
           customer { displayName }
           cancelledAt
+          paymentGatewayNames
           lineItems(first: 25) { nodes { title quantity sku } }
         }
       }
@@ -230,6 +232,7 @@ export async function fetchRecentShopifyOrders(sinceIso: string, limit = 50): Pr
     currency: String(n.totalPriceSet?.shopMoney?.currencyCode ?? "QAR"),
     customer: String(n.customer?.displayName ?? ""),
     cancelledAt: n.cancelledAt ?? null,
+    paymentGatewayNames: Array.isArray(n.paymentGatewayNames) ? n.paymentGatewayNames.map((g) => String(g)) : [],
     items: (n.lineItems?.nodes ?? []).map((li) => ({ title: li.title, qty: li.quantity, sku: li.sku ?? undefined })),
   }));
   return { orders };

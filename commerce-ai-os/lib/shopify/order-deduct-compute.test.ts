@@ -51,6 +51,41 @@ test("cancelled/refunded orders are recorded but never deduct", () => {
   assert.deepEqual(plan.deductions, []);
 });
 
+test("payment gateway names are carried through `considered` without affecting deductions", () => {
+  const plan = planOrderDeductions(
+    [
+      order({ id: "gid://1", paymentGatewayNames: ["Talabat"] }),
+      order({ id: "gid://2", items: [{ title: "Rose Serum", qty: 2, sku: "MK-1" }], paymentGatewayNames: ["Cash"] }),
+    ],
+    CATALOG,
+    new Set(),
+  );
+  // considered mirrors orderIds and preserves the raw gateway names for the caller
+  assert.deepEqual(plan.considered.map((c) => c.id), ["gid://1", "gid://2"]);
+  assert.deepEqual(plan.considered.find((c) => c.id === "gid://1")?.paymentGatewayNames, ["Talabat"]);
+  assert.deepEqual(plan.considered.find((c) => c.id === "gid://2")?.paymentGatewayNames, ["Cash"]);
+  // deduction quantities are unchanged (channel never influences what is deducted)
+  assert.deepEqual(plan.deductions, [{ product_id: "p1", name_en: "Rose Serum", qty: 3 }]);
+});
+
+test("a void Talabat order is recorded in `considered` but still deducts nothing", () => {
+  const plan = planOrderDeductions([order({ financial: "REFUNDED", paymentGatewayNames: ["Talabat"] })], CATALOG, new Set());
+  assert.deepEqual(plan.considered.map((c) => c.id), ["gid://1"]); // recorded (idempotency + channel)
+  assert.deepEqual(plan.deductions, []);
+});
+
+test("a repeated (already-synced) order id is never re-considered or re-deducted", () => {
+  const plan = planOrderDeductions([order({ paymentGatewayNames: ["Talabat"] })], CATALOG, new Set(["gid://1"]));
+  assert.deepEqual(plan.orderIds, []);
+  assert.deepEqual(plan.considered, []);
+  assert.deepEqual(plan.deductions, []);
+});
+
+test("missing paymentGatewayNames defaults to an empty array in `considered`", () => {
+  const plan = planOrderDeductions([order({})], CATALOG, new Set());
+  assert.deepEqual(plan.considered[0].paymentGatewayNames, []);
+});
+
 test("spreadDeduction drains biggest rows first and clamps at zero", () => {
   const updates = spreadDeduction(
     [{ rowKey: "a", stock: 2 }, { rowKey: "b", stock: 5 }],
