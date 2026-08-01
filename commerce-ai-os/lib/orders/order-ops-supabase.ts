@@ -77,50 +77,94 @@ function rejected(): Error {
 }
 
 /**
- * Fail-closed validation: returns the matching canonical spec, or throws the
- * constant rejection. Any deviation in table, columns, order count/columns/
- * direction, extra ordering, or an out-of-range/non-safe-integer limit is denied.
+ * An immutable, fully-captured execution plan. Nothing here is a reference back
+ * into the (untrusted) query — every field is a snapshot taken exactly once
+ * during validation, so execution can never observe a different value than the
+ * one that was checked (no TOCTOU via a mutating getter / Proxy).
  */
-function validateQuery(q: OrderOpsQuery): CanonicalQuerySpec {
-  if (q === null || typeof q !== "object") throw rejected();
+interface ValidatedQueryPlan {
+  table: OrderOpsQuery["table"];
+  columns: string;
+  orderBy: readonly [OrderSpec, OrderSpec];
+  limit: number;
+}
 
-  const spec = CANONICAL_SPECS.find((s) => s.table === q.table);
-  if (!spec) throw rejected();
-  if (q.columns !== spec.columns) throw rejected();
-
-  if (!Array.isArray(q.orderBy) || q.orderBy.length !== spec.orderBy.length) throw rejected();
-  for (let i = 0; i < spec.orderBy.length; i++) {
-    const got = q.orderBy[i];
-    const want = spec.orderBy[i];
-    if (got === null || typeof got !== "object") throw rejected();
-    if (got.column !== want.column || got.ascending !== want.ascending) throw rejected();
+/**
+ * Fail-closed validation. Reads EVERY untrusted field EXACTLY ONCE (inside a
+ * try/catch, so a throwing getter/Proxy becomes the constant rejection), then
+ * validates only the captured snapshot and returns a fresh immutable plan built
+ * from canonical values + the single captured limit. After this returns, the
+ * query object is never read again.
+ */
+function validateQuery(q: OrderOpsQuery): ValidatedQueryPlan {
+  // 1) Capture — one read per untrusted field. Any throw → constant rejection.
+  let table: unknown;
+  let columns: unknown;
+  let limit: unknown;
+  let firstColumn: unknown;
+  let firstAscending: unknown;
+  let secondColumn: unknown;
+  let secondAscending: unknown;
+  try {
+    if (q === null || typeof q !== "object") throw rejected();
+    table = q.table;
+    columns = q.columns;
+    limit = q.limit;
+    const orderBy: unknown = q.orderBy; // single read of the array reference
+    if (!Array.isArray(orderBy) || orderBy.length !== 2) throw rejected();
+    const first: unknown = orderBy[0];
+    const second: unknown = orderBy[1];
+    if (first === null || typeof first !== "object") throw rejected();
+    if (second === null || typeof second !== "object") throw rejected();
+    firstColumn = (first as { column?: unknown }).column;
+    firstAscending = (first as { ascending?: unknown }).ascending;
+    secondColumn = (second as { column?: unknown }).column;
+    secondAscending = (second as { ascending?: unknown }).ascending;
+  } catch {
+    throw rejected(); // never leak the original getter/Proxy error text
   }
 
-  const limit = q.limit;
+  // 2) Validate the captured snapshot ONLY (no further reads of q).
+  const spec = CANONICAL_SPECS.find((s) => s.table === table);
+  if (!spec) throw rejected();
+  if (columns !== spec.columns) throw rejected();
+  if (firstColumn !== spec.orderBy[0].column || firstAscending !== spec.orderBy[0].ascending) throw rejected();
+  if (secondColumn !== spec.orderBy[1].column || secondAscending !== spec.orderBy[1].ascending) throw rejected();
   if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < MIN_LIMIT || limit > MAX_LIMIT) {
     throw rejected();
   }
-  return spec;
+
+  // 3) Build a fresh immutable plan (canonical strings + the ONE captured limit;
+  //    order values are copied, never references into the query).
+  return {
+    table: spec.table,
+    columns: spec.columns,
+    orderBy: [
+      { column: spec.orderBy[0].column, ascending: spec.orderBy[0].ascending },
+      { column: spec.orderBy[1].column, ascending: spec.orderBy[1].ascending },
+    ],
+    limit,
+  };
 }
 
 /**
  * Build an OrderOpsReadClient backed by the injected Supabase-like client. The
- * validated query is executed as from → select → order → order → limit; the
- * result's data/error are forwarded verbatim. A rejected query or a thrown
+ * query is validated into an immutable plan and executed ONLY from that plan
+ * (from → select → order → order → limit); the query object is never read again.
+ * The result's data/error are forwarded verbatim. A rejected query or a thrown
  * builder both surface as an exception for Phase 2B.2 to classify as a read
  * failure — nothing here is logged or transformed.
  */
 export function createSupabaseOrderOpsReadClient(client: SupabaseOrderOpsClient): OrderOpsReadClient {
   return {
     async query(q: OrderOpsQuery): Promise<OrderOpsQueryResult> {
-      const spec = validateQuery(q); // throws `order_ops_query_rejected` BEFORE any client call
-      const [first, second] = spec.orderBy;
+      const plan = validateQuery(q); // throws `order_ops_query_rejected` BEFORE any client call
       const result = await client
-        .from(spec.table)
-        .select(spec.columns)
-        .order(first.column, { ascending: first.ascending })
-        .order(second.column, { ascending: second.ascending })
-        .limit(q.limit);
+        .from(plan.table)
+        .select(plan.columns)
+        .order(plan.orderBy[0].column, { ascending: plan.orderBy[0].ascending })
+        .order(plan.orderBy[1].column, { ascending: plan.orderBy[1].ascending })
+        .limit(plan.limit);
       return { data: result.data, error: result.error };
     },
   };

@@ -190,6 +190,141 @@ test("a thrown builder error propagates as an exception (for Phase 2B.2 to class
   await assert.rejects(adapter.query(talabatQuery())); // not caught/transformed here
 });
 
+// ── TOCTOU: untrusted fields read once; execution uses the validated plan ─────
+
+test("alternating limit getter is read ONCE; executed limit is exactly the first (validated) value", async () => {
+  const { client, calls } = fakeSupabase({ talabat_orders: { result: { data: [], error: null } } });
+  const adapter = createSupabaseOrderOpsReadClient(client);
+  let reads = 0;
+  const q = {
+    table: "talabat_orders",
+    columns: TALABAT_COLUMNS,
+    orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+    get limit() {
+      reads++;
+      return reads === 1 ? 101 : 1_000_000;
+    },
+  } as unknown as OrderOpsQuery;
+  await adapter.query(q);
+  assert.equal(reads, 1);
+  assert.deepEqual(calls.limit, [{ table: "talabat_orders", count: 101 }]);
+});
+
+test("alternating table getter is read ONCE; canonical table executed", async () => {
+  const { client, calls } = fakeSupabase({ talabat_orders: { result: { data: [], error: null } } });
+  const adapter = createSupabaseOrderOpsReadClient(client);
+  let reads = 0;
+  const q = {
+    get table() {
+      reads++;
+      return reads === 1 ? "talabat_orders" : "shopify_synced_orders";
+    },
+    columns: TALABAT_COLUMNS,
+    orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+    limit: 101,
+  } as unknown as OrderOpsQuery;
+  await adapter.query(q);
+  assert.equal(reads, 1);
+  assert.deepEqual(calls.from, ["talabat_orders"]);
+});
+
+test("alternating columns getter is read ONCE; canonical columns executed", async () => {
+  const { client, calls } = fakeSupabase({ talabat_orders: { result: { data: [], error: null } } });
+  const adapter = createSupabaseOrderOpsReadClient(client);
+  let reads = 0;
+  const q = {
+    table: "talabat_orders",
+    get columns() {
+      reads++;
+      return reads === 1 ? TALABAT_COLUMNS : "id, raw, customer";
+    },
+    orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+    limit: 101,
+  } as unknown as OrderOpsQuery;
+  await adapter.query(q);
+  assert.equal(reads, 1);
+  assert.deepEqual(calls.select, [{ table: "talabat_orders", columns: TALABAT_COLUMNS }]);
+});
+
+test("orderBy getter is read ONCE; copied validated ordering executed", async () => {
+  const { client, calls } = fakeSupabase({ talabat_orders: { result: { data: [], error: null } } });
+  const adapter = createSupabaseOrderOpsReadClient(client);
+  let reads = 0;
+  const good = [{ column: "created_at", ascending: false }, { column: "id", ascending: false }];
+  const q = {
+    table: "talabat_orders",
+    columns: TALABAT_COLUMNS,
+    get orderBy() {
+      reads++;
+      return reads === 1 ? good : [{ column: "id", ascending: true }, { column: "created_at", ascending: true }];
+    },
+    limit: 101,
+  } as unknown as OrderOpsQuery;
+  await adapter.query(q);
+  assert.equal(reads, 1);
+  assert.deepEqual(calls.order, [
+    { table: "talabat_orders", column: "created_at", ascending: false },
+    { table: "talabat_orders", column: "id", ascending: false },
+  ]);
+});
+
+test("nested order column/ascending getters read ONCE; copied values executed", async () => {
+  const { client, calls } = fakeSupabase({ talabat_orders: { result: { data: [], error: null } } });
+  const adapter = createSupabaseOrderOpsReadClient(client);
+  let colReads = 0;
+  let ascReads = 0;
+  const first = {
+    get column() {
+      colReads++;
+      return "created_at";
+    },
+    get ascending() {
+      ascReads++;
+      return false;
+    },
+  };
+  const q = {
+    table: "talabat_orders",
+    columns: TALABAT_COLUMNS,
+    orderBy: [first, { column: "id", ascending: false }],
+    limit: 101,
+  } as unknown as OrderOpsQuery;
+  await adapter.query(q);
+  assert.equal(colReads, 1);
+  assert.equal(ascReads, 1);
+  assert.deepEqual(calls.order[0], { table: "talabat_orders", column: "created_at", ascending: false });
+});
+
+test("a getter that throws during validation → constant rejection, from() not called, no leak", async () => {
+  const { client, calls } = fakeSupabase();
+  const adapter = createSupabaseOrderOpsReadClient(client);
+  const q = {
+    get table(): string {
+      throw new Error("GETTER BOOM SECRET");
+    },
+    columns: TALABAT_COLUMNS,
+    orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+    limit: 101,
+  } as unknown as OrderOpsQuery;
+  await assert.rejects(adapter.query(q), (e: unknown) => e instanceof Error && e.message === "order_ops_query_rejected" && !e.message.includes("BOOM"));
+  assert.equal(calls.from.length, 0);
+});
+
+test("a Proxy that throws on any property access → constant rejection, from() not called", async () => {
+  const { client, calls } = fakeSupabase();
+  const adapter = createSupabaseOrderOpsReadClient(client);
+  const q = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error("PROXY SECRET");
+      },
+    },
+  ) as unknown as OrderOpsQuery;
+  await assert.rejects(adapter.query(q), (e: unknown) => e instanceof Error && e.message === "order_ops_query_rejected" && !e.message.includes("PROXY"));
+  assert.equal(calls.from.length, 0);
+});
+
 // ── Integration with Phase 2B.2 (real loadOrderOpsData + real adapter) ───────
 
 test("integration: both sources succeed → complete", async () => {
