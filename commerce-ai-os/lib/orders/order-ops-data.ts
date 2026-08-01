@@ -51,11 +51,12 @@ export interface OrderOpsQuery {
   limit: number; // already limit + 1 (to detect hasMore)
 }
 
-/** A generic read result. `error` is intentionally opaque — its contents are
- *  NEVER read or surfaced; any truthy value means the read failed. */
+/** A generic read result. A read is SUCCESSFUL only when the whole result is a
+ *  plain object with `error === null` and `Array.isArray(data) === true`; the
+ *  error's contents are NEVER read or surfaced. */
 export interface OrderOpsQueryResult {
   data: unknown[] | null;
-  error: unknown;
+  error: unknown | null;
 }
 
 export interface OrderOpsReadClient {
@@ -83,6 +84,7 @@ export interface OrderOpsSourceReadState {
 
 export interface ShopifyReadState extends OrderOpsSourceReadState {
   ledger: "empty" | "populated" | "unavailable";
+  ledgerReasonCode: "no_synced_orders" | null; // preserved from Phase 2B.1; null when populated/unavailable
 }
 
 export interface OrderOpsDataResult {
@@ -164,9 +166,15 @@ function projectShopifyRow(row: Record<string, unknown>): ShopifyLedgerInput {
 
 async function runQuery(client: OrderOpsReadClient, q: OrderOpsQuery): Promise<{ ok: boolean; rows: unknown[] }> {
   try {
-    const res = await client.query(q);
-    if (!res || res.error) return { ok: false, rows: [] }; // Supabase-style { error } → failed; contents never read
-    return { ok: true, rows: Array.isArray(res.data) ? res.data : [] };
+    const res: unknown = await client.query(q);
+    // STRICT success shape: a plain-object result with error === null AND a real
+    // array in data. Anything else (null/undefined/non-object result, a truthy
+    // error, or data that is null/object/string) is a classified source failure —
+    // never a false "empty" read. Only data: [] is a successful empty read.
+    if (isPlainObject(res) && res.error === null && Array.isArray(res.data)) {
+      return { ok: true, rows: res.data };
+    }
+    return { ok: false, rows: [] };
   } catch {
     return { ok: false, rows: [] }; // thrown exception → failed; never re-surfaced
   }
@@ -186,21 +194,18 @@ export async function loadOrderOpsData(
   const compute = options?.compute ?? (await defaultCompute());
   const limit = normalizeLimit(options?.limit);
 
-  // Talabat — created_at desc, then id desc.
+  // Talabat — created_at desc, then id desc. Filter NON-plain-object rows BEFORE
+  // paginating, so junk rows never displace valid rows inside the limit nor cause
+  // a false hasMore. hasMore is based on valid PAGE rows, never a full-table count.
   const talabatResult = await runQuery(client, {
     table: "talabat_orders",
     columns: TALABAT_COLUMNS,
     orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
     limit: limit + 1,
   });
-  const talabatHasMore = talabatResult.ok && talabatResult.rows.length > limit;
-  const talabatInputs = talabatResult.ok ? talabatResult.rows.slice(0, limit).filter(isPlainObject).map(projectTalabatRow) : [];
-  const talabatState: OrderOpsSourceReadState = {
-    status: talabatResult.ok ? "ok" : "error",
-    returned: talabatInputs.length,
-    hasMore: talabatHasMore,
-    errorCode: talabatResult.ok ? null : "talabat_read_failed",
-  };
+  const talabatValid = talabatResult.rows.filter(isPlainObject);
+  const talabatHasMore = talabatResult.ok && talabatValid.length > limit;
+  const talabatInputs = talabatResult.ok ? talabatValid.slice(0, limit).map(projectTalabatRow) : [];
 
   // Shopify — synced_at desc, then order_id desc.
   const shopifyResult = await runQuery(client, {
@@ -209,19 +214,36 @@ export async function loadOrderOpsData(
     orderBy: [{ column: "synced_at", ascending: false }, { column: "order_id", ascending: false }],
     limit: limit + 1,
   });
-  const shopifyHasMore = shopifyResult.ok && shopifyResult.rows.length > limit;
-  const shopifyInputs = shopifyResult.ok ? shopifyResult.rows.slice(0, limit).filter(isPlainObject).map(projectShopifyRow) : [];
-  const shopifyState: ShopifyReadState = {
-    status: shopifyResult.ok ? "ok" : "error",
-    returned: shopifyInputs.length,
-    hasMore: shopifyHasMore,
-    errorCode: shopifyResult.ok ? null : "shopify_read_failed",
-    // A FAILED read is "unavailable" — never conflated with an empty ledger.
-    ledger: shopifyResult.ok ? compute.classifyShopifyLedgerState(shopifyInputs).state : "unavailable",
-  };
+  const shopifyValid = shopifyResult.rows.filter(isPlainObject);
+  const shopifyHasMore = shopifyResult.ok && shopifyValid.length > limit;
+  const shopifyInputs = shopifyResult.ok ? shopifyValid.slice(0, limit).map(projectShopifyRow) : [];
 
+  // Unified rows are the single source of truth for `returned` (so an injected
+  // compute that drops a row is reflected accurately).
   const rows = compute.buildOrderOpsRows({ talabat: talabatInputs, shopify: shopifyInputs });
   const summary = compute.summarizeOrderOps(rows);
+  const talabatReturned = rows.filter((r) => r.source === "talabat").length;
+  const shopifyReturned = rows.filter((r) => r.source === "shopify").length;
+
+  // Classify the Shopify ledger ONCE from the successful read; a failed/malformed
+  // read is "unavailable" (never conflated with an empty ledger), reason null.
+  const shopifyLedger = shopifyResult.ok ? compute.classifyShopifyLedgerState(shopifyInputs) : null;
+
+  const talabatState: OrderOpsSourceReadState = {
+    status: talabatResult.ok ? "ok" : "error",
+    returned: talabatReturned,
+    hasMore: talabatHasMore,
+    errorCode: talabatResult.ok ? null : "talabat_read_failed",
+  };
+  const shopifyState: ShopifyReadState = {
+    status: shopifyResult.ok ? "ok" : "error",
+    returned: shopifyReturned,
+    hasMore: shopifyHasMore,
+    errorCode: shopifyResult.ok ? null : "shopify_read_failed",
+    ledger: shopifyLedger ? shopifyLedger.state : "unavailable",
+    ledgerReasonCode: shopifyLedger && shopifyLedger.reason === "no_synced_orders" ? "no_synced_orders" : null,
+  };
+
   const complete = talabatState.status === "ok" && shopifyState.status === "ok";
 
   return {

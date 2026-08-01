@@ -269,19 +269,29 @@ test("no DeductionEvidence fabricated → a processed Shopify row is under_deduc
 
 // ── Shopify ledger states ────────────────────────────────────────────────────
 
-test("successful empty Shopify query → ledger empty (no_synced_orders), status ok", async () => {
+test("successful empty Shopify (data:[]) → ledger empty + ledgerReasonCode no_synced_orders", async () => {
   const { client } = fakeClient({ talabat_orders: { data: [] }, shopify_synced_orders: { data: [] } });
   const res = await load(client);
   assert.equal(res.sources.shopify.status, "ok");
   assert.equal(res.sources.shopify.ledger, "empty");
+  assert.equal(res.sources.shopify.ledgerReasonCode, "no_synced_orders");
   assert.equal(res.sources.shopify.returned, 0);
   assert.equal(res.complete, true);
 });
 
-test("failed Shopify query → ledger unavailable (never empty)", async () => {
+test("populated Shopify → ledger populated + ledgerReasonCode null", async () => {
+  const { client } = fakeClient({ shopify_synced_orders: { data: [shopifyRow()] } });
+  const res = await load(client);
+  assert.equal(res.sources.shopify.ledger, "populated");
+  assert.equal(res.sources.shopify.ledgerReasonCode, null);
+});
+
+test("failed Shopify query → ledger unavailable + ledgerReasonCode null (never empty)", async () => {
   const { client } = fakeClient({ shopify_synced_orders: { error: { message: "x" } } });
   const res = await load(client);
   assert.equal(res.sources.shopify.ledger, "unavailable");
+  assert.equal(res.sources.shopify.ledgerReasonCode, null);
+  assert.equal(res.sources.shopify.errorCode, "shopify_read_failed");
   assert.notEqual(res.sources.shopify.ledger, "empty");
 });
 
@@ -290,6 +300,7 @@ test("malformed-only Shopify rows → 2B.1 ledger semantics (empty) but the malf
   const res = await load(client);
   assert.equal(res.sources.shopify.status, "ok");
   assert.equal(res.sources.shopify.ledger, "empty"); // no valid order_id → empty per 2B.1
+  assert.equal(res.sources.shopify.ledgerReasonCode, "no_synced_orders");
   assert.equal(res.sources.shopify.returned, 1); // the malformed row is still a unified operational row
   const row = findByPrefix(res, "shopify")!;
   assert.equal(row.sourceOrderId, "");
@@ -320,6 +331,88 @@ test("non-plain-object DB rows are ignored (not counted, no throw)", async () =>
   const res = await load(client);
   assert.equal(res.sources.talabat.returned, 1);
   assert.equal(res.rows.filter((r) => r.source === "talabat").length, 1);
+});
+
+// ── Blocker 1: strict successful-query shape ─────────────────────────────────
+
+test("malformed query shapes fail closed (data null/{}/string/undefined) → source error", async () => {
+  const shapes = [
+    { data: null, error: null },
+    { data: {} as unknown as unknown[], error: null },
+    { data: "bad" as unknown as unknown[], error: null },
+    { data: undefined, error: null },
+  ];
+  for (const shape of shapes) {
+    const { client } = fakeClient({ talabat_orders: shape as Responder, shopify_synced_orders: shape as Responder });
+    const res = await load(client);
+    assert.equal(res.sources.talabat.status, "error", `talabat ${JSON.stringify(shape)}`);
+    assert.equal(res.sources.talabat.errorCode, "talabat_read_failed");
+    assert.equal(res.sources.shopify.status, "error", `shopify ${JSON.stringify(shape)}`);
+    assert.equal(res.sources.shopify.ledger, "unavailable");
+    assert.equal(res.sources.shopify.ledgerReasonCode, null);
+    assert.equal(res.complete, false);
+    assert.equal(res.rows.length, 0);
+  }
+});
+
+test("only data:[] is a successful empty read; error object + data:[] is a failure", async () => {
+  const okEmpty = await load(fakeClient({ talabat_orders: { data: [] }, shopify_synced_orders: { data: [] } }).client);
+  assert.equal(okEmpty.sources.talabat.status, "ok");
+  assert.equal(okEmpty.sources.shopify.status, "ok");
+  const errWithEmptyData = await load(fakeClient({ shopify_synced_orders: { data: [], error: { message: "x" } } }).client);
+  assert.equal(errWithEmptyData.sources.shopify.status, "error");
+  assert.equal(errWithEmptyData.sources.shopify.ledger, "unavailable");
+});
+
+test("non-object query result → source error (fail closed)", async () => {
+  const client: OrderOpsReadClient = { async query() { return undefined as unknown as OrderOpsQueryResult; } };
+  const res = await loadOrderOpsData(client, { compute: REAL_COMPUTE });
+  assert.equal(res.sources.talabat.status, "error");
+  assert.equal(res.sources.shopify.status, "error");
+  assert.equal(res.sources.shopify.ledger, "unavailable");
+});
+
+// ── Blocker 2: valid-row pagination BEFORE slice ─────────────────────────────
+
+test("[null, A, B] limit 2 → returned 2, hasMore false (junk row never displaces valid rows or fakes hasMore)", async () => {
+  const { client } = fakeClient({ talabat_orders: { data: [null, talabatRow({ id: "A" }), talabatRow({ id: "B" })] as unknown[] } });
+  const res = await load(client, { limit: 2 });
+  assert.equal(res.sources.talabat.returned, 2);
+  assert.equal(res.sources.talabat.hasMore, false);
+  assert.deepEqual(res.rows.filter((r) => r.source === "talabat").map((r) => r.sourceOrderId).sort(), ["A", "B"]);
+});
+
+test("[A, null, B, C] limit 2 → valid page rows 3 → returned 2, hasMore true", async () => {
+  const { client } = fakeClient({
+    talabat_orders: { data: [talabatRow({ id: "A" }), null, talabatRow({ id: "B" }), talabatRow({ id: "C" })] as unknown[] },
+  });
+  const res = await load(client, { limit: 2 });
+  assert.equal(res.sources.talabat.returned, 2);
+  assert.equal(res.sources.talabat.hasMore, true);
+});
+
+test("plain malformed-ID rows remain page rows (counted, surfaced as malformed)", async () => {
+  const { client } = fakeClient({ talabat_orders: { data: [{ processing_status: "failed" }, talabatRow({ id: "A" })] as unknown[] } });
+  const res = await load(client, { limit: 5 });
+  assert.equal(res.sources.talabat.returned, 2);
+  const malformed = res.rows.find((r) => r.source === "talabat" && r.sourceOrderId === "");
+  assert.ok(malformed);
+  assert.equal(signal(malformed!, "malformed_result"), "flagged");
+});
+
+// ── Blocker 4: returned derives from unified rows ────────────────────────────
+
+test("returned derives from unified rows: an injected compute dropping a row changes returned", async () => {
+  const dropFirstCompute = {
+    buildOrderOpsRows: (input: Parameters<typeof buildOrderOpsRows>[0]) => buildOrderOpsRows(input).slice(1), // drop one unified row
+    summarizeOrderOps,
+    classifyShopifyLedgerState,
+  };
+  const { client } = fakeClient({ shopify_synced_orders: { data: [shopifyRow({ order_id: "a" }), shopifyRow({ order_id: "b" })] } });
+  const res = await loadOrderOpsData(client, { compute: dropFirstCompute });
+  assert.equal(res.rows.length, 1); // 2 inputs, compute dropped 1
+  assert.equal(res.sources.shopify.returned, 1); // reflects unified output, not input length
+  assert.equal(res.summary.total, 1); // summary uses final unified rows too
 });
 
 // ── Source safety scan ───────────────────────────────────────────────────────
