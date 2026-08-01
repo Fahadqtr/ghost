@@ -92,6 +92,37 @@ test("baseline never flags under_deduction", () => {
   const r = projectShopifyLedger({ order_id: "s1", deducted: 0, deduction_result: { status: "baseline_recorded" }, evidence: { expectedUnits: 5, appliedUnits: 0 } });
   assert.equal(signal(r, "under_deduction"), "clear");
 });
+test("refunded → under_deduction clear even with a discrepancy", () => {
+  const r = projectShopifyLedger({ order_id: "s1", refunded: true, deduction_result: { status: "processed" }, evidence: { expectedUnits: 3, appliedUnits: 0 } });
+  assert.equal(signal(r, "under_deduction"), "clear");
+});
+test("non-processed statuses → under_deduction unknown (no evidence, no false clear)", () => {
+  assert.equal(signal(projectTalabatOrder({ id: "t1", processing_status: "pending" }), "under_deduction"), "unknown");
+  assert.equal(signal(projectTalabatOrder({ id: "t1", processing_status: "failed" }), "under_deduction"), "unknown");
+  assert.equal(signal(projectTalabatOrder({ id: "t1", processing_status: "manual_review" }), "under_deduction"), "unknown");
+  assert.equal(signal(projectTalabatOrder({ id: "t1", processing_status: "weird" }), "under_deduction"), "unknown"); // unknown status
+  assert.equal(signal(projectShopifyLedger({ order_id: "s1", deduction_result: { status: "unmatched_order" } }), "under_deduction"), "unknown"); // blocked
+  assert.equal(signal(projectShopifyLedger({ order_id: "s1", processing_status: "pending" }), "under_deduction"), "unknown");
+});
+test("already_processed with no evidence → under_deduction unknown", () => {
+  const r = projectShopifyLedger({ order_id: "s1", deduction_result: { status: "already_processed" } });
+  assert.equal(r.status, "processed");
+  assert.equal(signal(r, "under_deduction"), "unknown");
+});
+test("already_processed with DISCREPANT evidence → STILL unknown (this attempt didn't re-deduct)", () => {
+  const r = projectShopifyLedger({ order_id: "s1", deduction_result: { status: "already_processed" }, evidence: { expectedUnits: 3, appliedUnits: 1 } });
+  assert.equal(signal(r, "under_deduction"), "unknown"); // must not be flagged/clear from a re-run
+});
+test("fractional / unsafe-integer unit evidence → under_deduction unknown", () => {
+  assert.equal(signal(projectShopifyLedger({ order_id: "s1", deduction_result: { status: "processed" }, evidence: { expectedUnits: 3.5, appliedUnits: 1 } }), "under_deduction"), "unknown");
+  assert.equal(signal(projectShopifyLedger({ order_id: "s1", deduction_result: { status: "processed" }, evidence: { expectedUnits: 3, appliedUnits: 1.5 } }), "under_deduction"), "unknown");
+  assert.equal(signal(projectShopifyLedger({ order_id: "s1", deduction_result: { status: "processed" }, evidence: { expectedUnits: Number.MAX_SAFE_INTEGER + 1, appliedUnits: 1 } }), "under_deduction"), "unknown");
+  assert.equal(signal(projectShopifyLedger({ order_id: "s1", deduction_result: { status: "processed" }, evidence: { expectedUnits: 3, appliedUnits: -1 } }), "under_deduction"), "unknown");
+});
+test("zero safe-integer evidence is valid (expected 1 applied 0 → flagged)", () => {
+  assert.equal(signal(projectShopifyLedger({ order_id: "s1", deduction_result: { status: "processed" }, evidence: { expectedUnits: 1, appliedUnits: 0 } }), "under_deduction"), "flagged");
+  assert.equal(signal(projectShopifyLedger({ order_id: "s1", deduction_result: { status: "processed" }, evidence: { expectedUnits: 0, appliedUnits: 0 } }), "under_deduction"), "clear");
+});
 
 // ── Blocker 2: unknown deducted preserved as null (never 0) ───────────────────
 
@@ -101,12 +132,14 @@ test("Talabat deductedRows is null (no reliable measurement)", () => {
 test("missing Shopify deducted → null", () => {
   assert.equal(projectShopifyLedger({ order_id: "s1" }).deductedRows, null);
 });
-test("negative / NaN / Infinity deducted → null; valid finite → number", () => {
+test("negative / fractional / NaN / Infinity / unsafe-integer deducted → null; safe integer → number", () => {
   assert.equal(projectShopifyLedger({ order_id: "s1", deducted: -1 }).deductedRows, null);
+  assert.equal(projectShopifyLedger({ order_id: "s1", deducted: 1.5 }).deductedRows, null); // fractional
   assert.equal(projectShopifyLedger({ order_id: "s1", deducted: Number.NaN }).deductedRows, null);
   assert.equal(projectShopifyLedger({ order_id: "s1", deducted: Number.POSITIVE_INFINITY }).deductedRows, null);
+  assert.equal(projectShopifyLedger({ order_id: "s1", deducted: (Number.MAX_SAFE_INTEGER + 1) as number }).deductedRows, null); // unsafe integer
   assert.equal(projectShopifyLedger({ order_id: "s1", deducted: 3 }).deductedRows, 3);
-  assert.equal(projectShopifyLedger({ order_id: "s1", deducted: 0 }).deductedRows, 0);
+  assert.equal(projectShopifyLedger({ order_id: "s1", deducted: 0 }).deductedRows, 0); // zero safe integer is valid
 });
 
 // ── Blocker 3: channel attribution fails closed ──────────────────────────────
@@ -118,6 +151,27 @@ test("unknown/absent channel with no gateway evidence → unknown (not shopify)"
 });
 test("explicit shopify channel (no contradicting gateway) → shopify", () => {
   assert.equal(projectShopifyLedger({ order_id: "s1", channel: "shopify" }).channel, "shopify");
+});
+test("empty / malformed gateway arrays are NO evidence (do not contradict saved talabat)", () => {
+  for (const gw of [[], [null], [{}], ["   "], [null, {}], [123, false]]) {
+    const r = projectShopifyLedger({ order_id: "s1", channel: "talabat", payment_gateway_names: gw as unknown });
+    assert.equal(r.channel, "talabat", `gw=${JSON.stringify(gw)}`);
+    assert.equal(signal(r, "channel_attribution_mismatch"), "clear", `gw=${JSON.stringify(gw)}`);
+  }
+});
+test("saved shopify + empty gateway array → shopify / no mismatch", () => {
+  const r = projectShopifyLedger({ order_id: "s1", channel: "shopify", payment_gateway_names: [] });
+  assert.equal(r.channel, "shopify");
+  assert.equal(signal(r, "channel_attribution_mismatch"), "clear");
+});
+test("saved shopify + explicit non-Talabat gateway → shopify / no mismatch", () => {
+  const r = projectShopifyLedger({ order_id: "s1", channel: "shopify", payment_gateway_names: ["Cash"] });
+  assert.equal(r.channel, "shopify");
+  assert.equal(signal(r, "channel_attribution_mismatch"), "clear");
+});
+test("missing channel + empty/non-Talabat gateway → unknown", () => {
+  assert.equal(projectShopifyLedger({ order_id: "s1", payment_gateway_names: [] }).channel, "unknown");
+  assert.equal(projectShopifyLedger({ order_id: "s1", payment_gateway_names: ["Cash"] }).channel, "unknown");
 });
 test("missing channel + Talabat gateway → talabat", () => {
   const r = projectShopifyLedger({ order_id: "s1", payment_gateway_names: [" TALABAT "] });

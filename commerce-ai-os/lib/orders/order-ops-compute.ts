@@ -195,9 +195,13 @@ function safeLower(v: unknown): string {
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
-/** Finite, non-negative number, else null. */
-function finiteNonNeg(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+/**
+ * A count/unit is valid ONLY as a finite, non-negative SAFE integer. Rejects
+ * negatives, fractions (1.5), NaN, ±Infinity, and out-of-safe-range values
+ * (> Number.MAX_SAFE_INTEGER). Zero is valid.
+ */
+function finiteNonNegativeSafeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 /** Read ONLY the classified reason string from a Talabat resolution object. */
@@ -217,13 +221,26 @@ function shopifyResult(deductionResult: unknown): { present: boolean; shapeInval
   return { present: true, shapeInvalid: false, status: safeString(deductionResult["status"]) };
 }
 
-/** True only if the gateway list explicitly contains an exact "talabat" entry. */
-function hasTalabatGateway(paymentGatewayNames: unknown): boolean {
-  if (!Array.isArray(paymentGatewayNames)) return false;
+type GatewayEvidence = "none" | "talabat" | "non_talabat";
+
+/**
+ * Classify the payment-gateway evidence. Evidence EXISTS only when the array has
+ * at least one non-empty (trimmed) string; `[]`, `[null]`, `[{}]`, `["   "]`, or
+ * a non-array all count as "none". An exact case-insensitive "talabat" entry →
+ * "talabat"; any other non-empty string(s) → "non_talabat". Non-string elements
+ * are never coerced.
+ */
+function gatewayEvidence(paymentGatewayNames: unknown): GatewayEvidence {
+  if (!Array.isArray(paymentGatewayNames)) return "none";
+  let sawNonEmptyString = false;
   for (const g of paymentGatewayNames) {
-    if (typeof g === "string" && g.trim().toLowerCase() === "talabat") return true; // no coercion of non-strings
+    if (typeof g !== "string") continue; // never coerce non-strings
+    const t = g.trim();
+    if (t.length === 0) continue;
+    sawNonEmptyString = true;
+    if (t.toLowerCase() === "talabat") return "talabat";
   }
-  return false;
+  return sawNonEmptyString ? "non_talabat" : "none";
 }
 
 // ── Status normalization ─────────────────────────────────────────────────────
@@ -284,25 +301,25 @@ function shopifyReason(res: ReturnType<typeof shopifyResult>): string | null {
 // ── Channel attribution (fail-closed) ────────────────────────────────────────
 
 /**
- * Resolve the Shopify-source order's channel. Saved channel wins only when it does
- * NOT contradict explicit gateway evidence; a missing/unknown saved channel maps to
- * "unknown" (never silently "shopify") unless the gateway proves Talabat; and a
- * saved-vs-gateway contradiction yields "unknown" + a mismatch flag.
+ * Resolve the Shopify-source order's channel from the saved channel + EXPLICIT
+ * gateway evidence (empty/whitespace/malformed gateway arrays are "none", never a
+ * contradiction). Saved channel is honored unless explicit gateway evidence
+ * contradicts it (→ "unknown" + mismatch); a missing/unknown saved channel is
+ * "unknown" unless the gateway explicitly proves Talabat.
  */
 function resolveShopifyChannel(rawChannel: unknown, gateways: unknown): { channel: OrderOpsChannel; mismatch: boolean } {
   const ch = safeLower(rawChannel);
-  const gwPresent = Array.isArray(gateways);
-  const gwTalabat = hasTalabatGateway(gateways);
+  const ev = gatewayEvidence(gateways);
   if (ch === "talabat") {
-    if (gwPresent && !gwTalabat) return { channel: "unknown", mismatch: true }; // saved talabat, gateway says otherwise
-    return { channel: "talabat", mismatch: false };
+    if (ev === "non_talabat") return { channel: "unknown", mismatch: true }; // saved talabat, gateway says otherwise
+    return { channel: "talabat", mismatch: false }; // none | talabat
   }
   if (ch === "shopify") {
-    if (gwTalabat) return { channel: "unknown", mismatch: true }; // saved shopify, gateway says talabat
-    return { channel: "shopify", mismatch: false };
+    if (ev === "talabat") return { channel: "unknown", mismatch: true }; // saved shopify, gateway says talabat
+    return { channel: "shopify", mismatch: false }; // none | non_talabat
   }
-  // missing / unknown saved channel → only trust explicit gateway evidence
-  if (gwTalabat) return { channel: "talabat", mismatch: false };
+  // missing / unknown saved channel → trust ONLY explicit Talabat gateway evidence
+  if (ev === "talabat") return { channel: "talabat", mismatch: false };
   return { channel: "unknown", mismatch: false };
 }
 
@@ -315,17 +332,31 @@ function voidState(refunded: unknown): SignalState {
 }
 
 /**
- * under_deduction needs INDEPENDENT unit evidence (expectedUnits vs appliedUnits).
- * The ledger's row-write count is NOT used. Flagged only when both are present and
- * appliedUnits < expectedUnits; clear on baseline/refund or when both present and
- * appliedUnits >= expectedUnits; unknown when either is missing.
+ * under_deduction needs INDEPENDENT unit evidence (expectedUnits vs appliedUnits,
+ * both finite non-negative safe integers). The ledger's row-write count is NOT
+ * used. Tri-state:
+ *   - refunded → clear (a refund legitimately deducts nothing)
+ *   - baseline → clear (baseline never deducts by design)
+ *   - already_processed → unknown (this attempt re-deducted nothing; it is NOT
+ *     evidence about the original order's units — even if a caller mistakenly
+ *     passes evidence)
+ *   - non-processed (pending/failed/blocked/manual_review/unknown) → unknown
+ *     (no success claimed AND no evidence → we cannot assert either way)
+ *   - processed + complete valid evidence → flagged if applied < expected, else clear
+ *   - processed + incomplete/invalid evidence → unknown
  */
-function underDeductionState(status: OrderOpsStatus, refunded: unknown, evidence: DeductionEvidence | null | undefined): SignalState {
-  if (refunded === true) return "clear"; // a refund legitimately deducts nothing
-  if (status === "baseline") return "clear"; // baseline never deducts by design
-  if (status !== "processed") return "clear"; // no success claimed → no silent under-deduction
-  const exp = finiteNonNeg(evidence?.expectedUnits);
-  const app = finiteNonNeg(evidence?.appliedUnits);
+function underDeductionState(
+  status: OrderOpsStatus,
+  refunded: unknown,
+  evidence: DeductionEvidence | null | undefined,
+  isAlreadyProcessed: boolean,
+): SignalState {
+  if (refunded === true) return "clear";
+  if (status === "baseline") return "clear";
+  if (isAlreadyProcessed) return "unknown"; // no re-deduction happened this attempt
+  if (status !== "processed") return "unknown"; // no evidence → do not claim clear
+  const exp = finiteNonNegativeSafeInteger(evidence?.expectedUnits);
+  const app = finiteNonNegativeSafeInteger(evidence?.appliedUnits);
   if (exp === null || app === null) return "unknown"; // no independent numeric evidence → do not invent
   return app < exp ? "flagged" : "clear";
 }
@@ -337,8 +368,9 @@ function buildSignals(args: {
   refunded: unknown;
   evidence: DeductionEvidence | null | undefined;
   channelMismatch: boolean;
+  isAlreadyProcessed: boolean;
 }): ReconciliationSignal[] {
-  const { status, reasonCode, malformed, refunded, evidence, channelMismatch } = args;
+  const { status, reasonCode, malformed, refunded, evidence, channelMismatch, isAlreadyProcessed } = args;
   const states: Record<SignalKind, SignalState> = {
     manual_review: status === "manual_review" ? "flagged" : status === "unknown" ? "unknown" : "clear",
     unmatched:
@@ -348,7 +380,7 @@ function buildSignals(args: {
           ? "clear"
           : "unknown",
     possible_duplicate: "clear", // upgraded to flagged in buildOrderOpsRows on exact-key repeats
-    under_deduction: underDeductionState(status, refunded, evidence),
+    under_deduction: underDeductionState(status, refunded, evidence, isAlreadyProcessed),
     void_or_refunded: voidState(refunded),
     blocked: status === "blocked" ? "flagged" : status === "unknown" ? "unknown" : "clear",
     malformed_result: malformed ? "flagged" : "clear",
@@ -371,6 +403,7 @@ export function projectTalabatOrder(input: TalabatOrderInput): OrderOpsRow {
     refunded: input?.refunded,
     evidence: input?.evidence,
     channelMismatch: false, // Talabat-source rows are inherently the Talabat channel
+    isAlreadyProcessed: false, // no Shopify "already_processed" concept for Talabat rows
   });
   return {
     source: "talabat",
@@ -400,6 +433,7 @@ export function projectShopifyLedger(input: ShopifyLedgerInput): OrderOpsRow {
     refunded: input?.refunded,
     evidence: input?.evidence,
     channelMismatch: mismatch,
+    isAlreadyProcessed: res.status === "already_processed",
   });
   return {
     source: "shopify",
@@ -408,7 +442,7 @@ export function projectShopifyLedger(input: ShopifyLedgerInput): OrderOpsRow {
     channel,
     status,
     reasonCode,
-    deductedRows: finiteNonNeg(input?.deducted), // finite non-negative → number; else null
+    deductedRows: finiteNonNegativeSafeInteger(input?.deducted), // finite non-negative safe integer → number; else null
     createdAt: safeString(input?.synced_at),
     processedAt: safeString(input?.processed_at),
     signals,
