@@ -7,12 +7,28 @@
 // (talabat_orders.raw, deduction_result.products, line items, customer, phone,
 // email, address, tokens, headers). Callers pass ONLY the whitelisted columns
 // below; any extra keys on the input objects are ignored, never copied out.
+//
+// Untrusted-input safety: identity values are accepted ONLY when they are already
+// strings — non-string ids (object/array/boolean/number/symbol/function/null) are
+// never coerced with String(...), so a hostile toString / Symbol.toPrimitive is
+// never invoked and can neither throw nor leak.
 
 // ── Whitelisted inputs (mirror the real, non-sensitive columns only) ─────────
 
+/**
+ * Explicit, trusted deduction measurement. These are NOT columns in the current
+ * production tables — the ledger only stores a row-write COUNT, not units. A later
+ * PR may pass these ONLY when computed from a trusted source; without both, the
+ * under_deduction signal stays "unknown".
+ */
+export interface DeductionEvidence {
+  expectedUnits: number | null;
+  appliedUnits: number | null;
+}
+
 export interface TalabatOrderInput {
-  id: string;
-  order_code?: string | null;
+  id: unknown; // accepted only if a non-empty trimmed string
+  order_code?: unknown;
   event?: string | null;
   processing_status?: string | null; // pending | processed | manual_review | failed
   processed_at?: string | null;
@@ -20,26 +36,30 @@ export interface TalabatOrderInput {
   resolution?: unknown; // jsonb — ONLY resolution.reason (a classified string) is read
   /** Optional, caller-supplied CLASSIFIED void state. Never a raw payload. */
   refunded?: boolean | null;
+  /** Optional, trusted deduction measurement (not a production column). */
+  evidence?: DeductionEvidence | null;
 }
 
 export interface ShopifyLedgerInput {
-  order_id: string;
-  order_name?: string | null;
+  order_id: unknown; // accepted only if a non-empty trimmed string
+  order_name?: unknown;
   channel?: string | null; // "talabat" | "shopify"
   payment_gateway_names?: unknown; // read only to confirm channel; never projected
-  deducted?: number | null;
+  deducted?: number | null; // COUNT of inventory rows written — NOT units
   processing_status?: string | null; // pending | completed
   processed_at?: string | null;
   synced_at?: string | null;
-  deduction_result?: unknown; // jsonb — ONLY .status and numeric .deducted are read
+  deduction_result?: unknown; // jsonb — ONLY .status is read
   /** Optional, caller-supplied CLASSIFIED void state. Never a raw payload. */
   refunded?: boolean | null;
+  /** Optional, trusted deduction measurement (not a production column). */
+  evidence?: DeductionEvidence | null;
 }
 
 // ── Unified projection ───────────────────────────────────────────────────────
 
 export type OrderOpsSource = "talabat" | "shopify";
-export type OrderOpsChannel = "talabat" | "shopify";
+export type OrderOpsChannel = "talabat" | "shopify" | "unknown";
 export type OrderOpsStatus =
   | "pending"
   | "processed"
@@ -56,7 +76,8 @@ export type SignalKind =
   | "under_deduction"
   | "void_or_refunded"
   | "blocked"
-  | "malformed_result";
+  | "malformed_result"
+  | "channel_attribution_mismatch";
 
 export type SignalState = "flagged" | "clear" | "unknown";
 
@@ -67,12 +88,12 @@ export interface ReconciliationSignal {
 
 export interface OrderOpsRow {
   source: OrderOpsSource;
-  sourceOrderId: string;
-  displayOrderCode: string;
+  sourceOrderId: string; // "" when the persisted id was missing/malformed
+  displayOrderCode: string; // display-only; NEVER used as a duplicate key
   channel: OrderOpsChannel;
   status: OrderOpsStatus;
   reasonCode: string | null;
-  deducted: number;
+  deductedRows: number | null; // inventory ROW-write count (not units); null = unknown
   createdAt: string | null;
   processedAt: string | null;
   signals: ReconciliationSignal[];
@@ -86,7 +107,7 @@ export const ORDER_OPS_ROW_KEYS: readonly string[] = [
   "channel",
   "status",
   "reasonCode",
-  "deducted",
+  "deductedRows",
   "createdAt",
   "processedAt",
   "signals",
@@ -101,6 +122,7 @@ const SIGNAL_ORDER: SignalKind[] = [
   "void_or_refunded",
   "blocked",
   "malformed_result",
+  "channel_attribution_mismatch",
 ];
 
 // ── Classified reason whitelists (never leak arbitrary text) ─────────────────
@@ -157,6 +179,13 @@ const UNKNOWN_REASON = "unknown_reason";
 
 // ── Small safe helpers ───────────────────────────────────────────────────────
 
+/** A valid identity is ONLY a non-empty trimmed string. Non-strings are never
+ *  coerced (no String(...)), so hostile toString/Symbol.toPrimitive never runs. */
+function validId(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t.length > 0 ? t : null;
+}
 function safeString(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
@@ -166,8 +195,9 @@ function safeLower(v: unknown): string {
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
-function finiteNumber(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
+/** Finite, non-negative number, else null. */
+function finiteNonNeg(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 /** Read ONLY the classified reason string from a Talabat resolution object. */
@@ -179,19 +209,21 @@ function talabatReason(resolution: unknown): { reasonCode: string | null; shapeI
   return { reasonCode: TALABAT_REASONS.has(r) ? r : UNKNOWN_REASON, shapeInvalid: false };
 }
 
-/** Read ONLY status + numeric deducted from a Shopify deduction_result object. */
-function shopifyResult(deductionResult: unknown): {
-  present: boolean;
-  shapeInvalid: boolean;
-  status: string | null;
-  deducted: number | null;
-} {
+/** Read ONLY the status string from a Shopify deduction_result object. */
+function shopifyResult(deductionResult: unknown): { present: boolean; shapeInvalid: boolean; status: string | null } {
   const present = deductionResult !== null && deductionResult !== undefined;
-  if (!present) return { present: false, shapeInvalid: false, status: null, deducted: null };
-  if (!isPlainObject(deductionResult)) return { present: true, shapeInvalid: true, status: null, deducted: null };
-  const status = safeString(deductionResult["status"]);
-  const deducted = finiteNumber(deductionResult["deducted"]);
-  return { present: true, shapeInvalid: false, status, deducted };
+  if (!present) return { present: false, shapeInvalid: false, status: null };
+  if (!isPlainObject(deductionResult)) return { present: true, shapeInvalid: true, status: null };
+  return { present: true, shapeInvalid: false, status: safeString(deductionResult["status"]) };
+}
+
+/** True only if the gateway list explicitly contains an exact "talabat" entry. */
+function hasTalabatGateway(paymentGatewayNames: unknown): boolean {
+  if (!Array.isArray(paymentGatewayNames)) return false;
+  for (const g of paymentGatewayNames) {
+    if (typeof g === "string" && g.trim().toLowerCase() === "talabat") return true; // no coercion of non-strings
+  }
+  return false;
 }
 
 // ── Status normalization ─────────────────────────────────────────────────────
@@ -229,7 +261,6 @@ function normalizeShopifyStatus(
     if (SHOPIFY_BLOCK_REASONS.has(s)) return { status: "blocked", malformed: false };
     return { status: "unknown", malformed: true }; // unrecognized status value
   }
-  // No usable result object.
   const ps = safeLower(processingStatus);
   if (ps === "pending") return { status: "pending", malformed: false };
   if (ps === "completed") return { status: "unknown", malformed: true }; // completed but unproven → NOT processed
@@ -250,7 +281,32 @@ function shopifyReason(res: ReturnType<typeof shopifyResult>): string | null {
   return null;
 }
 
-// ── Reconciliation signals (per row; possible_duplicate resolved in batch) ───
+// ── Channel attribution (fail-closed) ────────────────────────────────────────
+
+/**
+ * Resolve the Shopify-source order's channel. Saved channel wins only when it does
+ * NOT contradict explicit gateway evidence; a missing/unknown saved channel maps to
+ * "unknown" (never silently "shopify") unless the gateway proves Talabat; and a
+ * saved-vs-gateway contradiction yields "unknown" + a mismatch flag.
+ */
+function resolveShopifyChannel(rawChannel: unknown, gateways: unknown): { channel: OrderOpsChannel; mismatch: boolean } {
+  const ch = safeLower(rawChannel);
+  const gwPresent = Array.isArray(gateways);
+  const gwTalabat = hasTalabatGateway(gateways);
+  if (ch === "talabat") {
+    if (gwPresent && !gwTalabat) return { channel: "unknown", mismatch: true }; // saved talabat, gateway says otherwise
+    return { channel: "talabat", mismatch: false };
+  }
+  if (ch === "shopify") {
+    if (gwTalabat) return { channel: "unknown", mismatch: true }; // saved shopify, gateway says talabat
+    return { channel: "shopify", mismatch: false };
+  }
+  // missing / unknown saved channel → only trust explicit gateway evidence
+  if (gwTalabat) return { channel: "talabat", mismatch: false };
+  return { channel: "unknown", mismatch: false };
+}
+
+// ── Reconciliation signals ───────────────────────────────────────────────────
 
 function voidState(refunded: unknown): SignalState {
   if (refunded === true) return "flagged";
@@ -258,12 +314,20 @@ function voidState(refunded: unknown): SignalState {
   return "unknown"; // only classified when explicitly supplied
 }
 
-function underDeductionState(status: OrderOpsStatus, rowDeducted: number | null, resultDeducted: number | null): SignalState {
-  // Only meaningful for a claimed-successful, non-baseline deduction.
+/**
+ * under_deduction needs INDEPENDENT unit evidence (expectedUnits vs appliedUnits).
+ * The ledger's row-write count is NOT used. Flagged only when both are present and
+ * appliedUnits < expectedUnits; clear on baseline/refund or when both present and
+ * appliedUnits >= expectedUnits; unknown when either is missing.
+ */
+function underDeductionState(status: OrderOpsStatus, refunded: unknown, evidence: DeductionEvidence | null | undefined): SignalState {
+  if (refunded === true) return "clear"; // a refund legitimately deducts nothing
+  if (status === "baseline") return "clear"; // baseline never deducts by design
   if (status !== "processed") return "clear"; // no success claimed → no silent under-deduction
-  const evidence = rowDeducted !== null ? rowDeducted : resultDeducted;
-  if (evidence === null) return "unknown"; // no numeric evidence → do not invent
-  return evidence === 0 ? "flagged" : "clear"; // processed but zero rows deducted
+  const exp = finiteNonNeg(evidence?.expectedUnits);
+  const app = finiteNonNeg(evidence?.appliedUnits);
+  if (exp === null || app === null) return "unknown"; // no independent numeric evidence → do not invent
+  return app < exp ? "flagged" : "clear";
 }
 
 function buildSignals(args: {
@@ -271,11 +335,10 @@ function buildSignals(args: {
   reasonCode: string | null;
   malformed: boolean;
   refunded: unknown;
-  rowDeducted: number | null;
-  resultDeducted: number | null;
+  evidence: DeductionEvidence | null | undefined;
+  channelMismatch: boolean;
 }): ReconciliationSignal[] {
-  const { status, reasonCode, malformed, refunded, rowDeducted, resultDeducted } = args;
-
+  const { status, reasonCode, malformed, refunded, evidence, channelMismatch } = args;
   const states: Record<SignalKind, SignalState> = {
     manual_review: status === "manual_review" ? "flagged" : status === "unknown" ? "unknown" : "clear",
     unmatched:
@@ -284,67 +347,70 @@ function buildSignals(args: {
         : status === "processed" || status === "baseline"
           ? "clear"
           : "unknown",
-    possible_duplicate: "clear", // upgraded to flagged in buildOrderOpsRows when a key repeats
-    under_deduction: underDeductionState(status, rowDeducted, resultDeducted),
+    possible_duplicate: "clear", // upgraded to flagged in buildOrderOpsRows on exact-key repeats
+    under_deduction: underDeductionState(status, refunded, evidence),
     void_or_refunded: voidState(refunded),
     blocked: status === "blocked" ? "flagged" : status === "unknown" ? "unknown" : "clear",
     malformed_result: malformed ? "flagged" : "clear",
+    channel_attribution_mismatch: channelMismatch ? "flagged" : "clear",
   };
-
   return SIGNAL_ORDER.map((kind) => ({ kind, state: states[kind] }));
 }
 
 // ── Single-row projectors ────────────────────────────────────────────────────
 
 export function projectTalabatOrder(input: TalabatOrderInput): OrderOpsRow {
-  const status = normalizeTalabatStatus(input.processing_status);
-  const { reasonCode, shapeInvalid } = talabatReason(input.resolution);
+  const status = normalizeTalabatStatus(input?.processing_status);
+  const { reasonCode, shapeInvalid } = talabatReason(input?.resolution);
+  const id = validId(input?.id);
+  const code = validId(input?.order_code);
   const signals = buildSignals({
     status,
     reasonCode,
-    malformed: shapeInvalid,
-    refunded: input.refunded,
-    rowDeducted: null, // talabat row-level deducted count is not exposed at this layer
-    resultDeducted: null,
+    malformed: shapeInvalid || id === null,
+    refunded: input?.refunded,
+    evidence: input?.evidence,
+    channelMismatch: false, // Talabat-source rows are inherently the Talabat channel
   });
   return {
     source: "talabat",
-    sourceOrderId: String(input.id ?? ""),
-    displayOrderCode: safeString(input.order_code) ?? String(input.id ?? ""),
+    sourceOrderId: id ?? "",
+    displayOrderCode: code ?? id ?? "",
     channel: "talabat",
     status,
     reasonCode,
-    deducted: 0,
-    createdAt: safeString(input.created_at),
-    processedAt: safeString(input.processed_at),
+    deductedRows: null, // Talabat row-level deduction count is not measured at this layer
+    createdAt: safeString(input?.created_at),
+    processedAt: safeString(input?.processed_at),
     signals,
   };
 }
 
 export function projectShopifyLedger(input: ShopifyLedgerInput): OrderOpsRow {
-  const res = shopifyResult(input.deduction_result);
-  const { status, malformed } = normalizeShopifyStatus(input.processing_status, res);
+  const res = shopifyResult(input?.deduction_result);
+  const { status, malformed } = normalizeShopifyStatus(input?.processing_status, res);
   const reasonCode = shopifyReason(res);
-  const rowDeducted = finiteNumber(input.deducted);
-  const channel: OrderOpsChannel = safeLower(input.channel) === "talabat" ? "talabat" : "shopify"; // unknown → safe default
+  const id = validId(input?.order_id);
+  const code = validId(input?.order_name);
+  const { channel, mismatch } = resolveShopifyChannel(input?.channel, input?.payment_gateway_names);
   const signals = buildSignals({
     status,
     reasonCode,
-    malformed,
-    refunded: input.refunded,
-    rowDeducted,
-    resultDeducted: res.deducted,
+    malformed: malformed || id === null,
+    refunded: input?.refunded,
+    evidence: input?.evidence,
+    channelMismatch: mismatch,
   });
   return {
     source: "shopify",
-    sourceOrderId: String(input.order_id ?? ""),
-    displayOrderCode: safeString(input.order_name) ?? String(input.order_id ?? ""),
+    sourceOrderId: id ?? "",
+    displayOrderCode: code ?? id ?? "",
     channel,
     status,
     reasonCode,
-    deducted: rowDeducted ?? 0,
-    createdAt: safeString(input.synced_at),
-    processedAt: safeString(input.processed_at),
+    deductedRows: finiteNonNeg(input?.deducted), // finite non-negative → number; else null
+    createdAt: safeString(input?.synced_at),
+    processedAt: safeString(input?.processed_at),
     signals,
   };
 }
@@ -363,38 +429,47 @@ function setSignal(row: OrderOpsRow, kind: SignalKind, state: SignalState): void
 
 /**
  * Project both sources into a unified, deterministically-ordered list and flag
- * possible_duplicate for rows that share an EXACT identity key within the input
- * (same source + order id, or same source + non-empty order code). Never uses
- * names, titles, or fuzzy similarity.
+ * possible_duplicate for rows sharing an EXACT identity key within the input:
+ * validated non-empty sourceOrderId, or validated non-empty EXPLICIT order code
+ * (Talabat order_code only). Shopify order_name is display-only and never a key;
+ * ID-derived display codes are never keys. Rows with no valid id AND no valid
+ * explicit code are excluded from duplicate detection entirely.
  */
 export function buildOrderOpsRows(input: OrderOpsInput): OrderOpsRow[] {
-  const rows: OrderOpsRow[] = [];
+  const entries: { row: OrderOpsRow; idKey: string | null; codeKey: string | null }[] = [];
+
   for (const t of Array.isArray(input?.talabat) ? input.talabat : []) {
-    if (isPlainObject(t)) rows.push(projectTalabatOrder(t as TalabatOrderInput));
+    if (!isPlainObject(t)) continue;
+    const id = validId((t as TalabatOrderInput).id);
+    const code = validId((t as TalabatOrderInput).order_code);
+    entries.push({
+      row: projectTalabatOrder(t as TalabatOrderInput),
+      idKey: id ? `talabat|id|${id}` : null,
+      codeKey: code ? `talabat|code|${code}` : null,
+    });
   }
   for (const s of Array.isArray(input?.shopify) ? input.shopify : []) {
-    if (isPlainObject(s)) rows.push(projectShopifyLedger(s as ShopifyLedgerInput));
+    if (!isPlainObject(s)) continue;
+    const id = validId((s as ShopifyLedgerInput).order_id);
+    entries.push({
+      row: projectShopifyLedger(s as ShopifyLedgerInput),
+      idKey: id ? `shopify|id|${id}` : null,
+      codeKey: null, // Shopify order_name is a display name, NOT a duplicate key
+    });
   }
 
-  // Exact-key duplicate detection.
   const idCounts = new Map<string, number>();
   const codeCounts = new Map<string, number>();
-  for (const r of rows) {
-    const idKey = `${r.source} id ${r.sourceOrderId}`;
-    idCounts.set(idKey, (idCounts.get(idKey) ?? 0) + 1);
-    if (r.displayOrderCode) {
-      const codeKey = `${r.source} code ${r.displayOrderCode}`;
-      codeCounts.set(codeKey, (codeCounts.get(codeKey) ?? 0) + 1);
-    }
+  for (const e of entries) {
+    if (e.idKey) idCounts.set(e.idKey, (idCounts.get(e.idKey) ?? 0) + 1);
+    if (e.codeKey) codeCounts.set(e.codeKey, (codeCounts.get(e.codeKey) ?? 0) + 1);
   }
-  for (const r of rows) {
-    const idKey = `${r.source} id ${r.sourceOrderId}`;
-    const codeKey = `${r.source} code ${r.displayOrderCode}`;
-    const dup = (idCounts.get(idKey) ?? 0) > 1 || (r.displayOrderCode !== "" && (codeCounts.get(codeKey) ?? 0) > 1);
-    if (dup) setSignal(r, "possible_duplicate", "flagged");
+  for (const e of entries) {
+    const dup = (e.idKey !== null && (idCounts.get(e.idKey) ?? 0) > 1) || (e.codeKey !== null && (codeCounts.get(e.codeKey) ?? 0) > 1);
+    if (dup) setSignal(e.row, "possible_duplicate", "flagged");
   }
 
-  // Deterministic ordering: source, then order id, then order code.
+  const rows = entries.map((e) => e.row);
   rows.sort(
     (a, b) =>
       a.source.localeCompare(b.source) ||
@@ -417,7 +492,8 @@ export interface OrderOpsSummary {
   blocked: number;
 }
 
-// Signals that constitute an operational "problem" (void is informational only).
+// Reconciliation signals that constitute an operational "problem" (void is
+// informational only).
 const PROBLEM_SIGNALS = new Set<SignalKind>([
   "manual_review",
   "unmatched",
@@ -425,13 +501,14 @@ const PROBLEM_SIGNALS = new Set<SignalKind>([
   "under_deduction",
   "blocked",
   "malformed_result",
+  "channel_attribution_mismatch",
 ]);
 
 export function summarizeOrderOps(rows: OrderOpsRow[]): OrderOpsSummary {
   const summary: OrderOpsSummary = {
     total: 0,
     bySource: { shopify: 0, talabat: 0 },
-    byChannel: { shopify: 0, talabat: 0 },
+    byChannel: { shopify: 0, talabat: 0, unknown: 0 },
     byStatus: { pending: 0, processed: 0, baseline: 0, manual_review: 0, failed: 0, blocked: 0, unknown: 0 },
     flagged: 0,
     manualReview: 0,
@@ -447,8 +524,10 @@ export function summarizeOrderOps(rows: OrderOpsRow[]): OrderOpsSummary {
     if (r.status === "manual_review") summary.manualReview++;
     if (r.status === "failed") summary.failed++;
     if (r.status === "blocked") summary.blocked++;
-    const hasProblem = Array.isArray(r.signals) && r.signals.some((s) => s.state === "flagged" && PROBLEM_SIGNALS.has(s.kind));
-    if (hasProblem) summary.flagged++;
+    // A row is flagged once if its status is a problem state OR any problem signal fired.
+    const statusFlagged = r.status === "failed" || r.status === "blocked" || r.status === "manual_review";
+    const signalFlagged = Array.isArray(r.signals) && r.signals.some((s) => s.state === "flagged" && PROBLEM_SIGNALS.has(s.kind));
+    if (statusFlagged || signalFlagged) summary.flagged++;
   }
   return summary;
 }
@@ -461,17 +540,19 @@ export interface ShopifyLedgerState {
 }
 
 /**
- * Classify whether the Shopify ledger is empty. It NEVER invents a cause — an
+ * Classify whether the Shopify ledger is empty. Populated ONLY when at least one
+ * PLAIN-OBJECT row carries a valid, non-empty order_id — a list of null/malformed
+ * rows (or rows missing order_id) is still "empty". It NEVER invents a cause; an
  * empty ledger is "no_synced_orders" unless the caller passes a pre-classified
- * reason (from the SHOPIFY_REASONS whitelist). It will not claim "OAuth failed",
- * "cron failed", etc. on its own.
+ * whitelisted reason.
  */
 export function classifyShopifyLedgerState(
   rows: ShopifyLedgerInput[] | null | undefined,
   evidence?: { reasonCode?: string | null },
 ): ShopifyLedgerState {
-  const count = Array.isArray(rows) ? rows.length : 0;
-  if (count > 0) return { state: "populated", reason: null };
+  const populated =
+    Array.isArray(rows) && rows.some((r) => isPlainObject(r) && validId((r as ShopifyLedgerInput).order_id) !== null);
+  if (populated) return { state: "populated", reason: null };
   const supplied = evidence?.reasonCode;
   const reason = typeof supplied === "string" && SHOPIFY_REASONS.has(supplied) ? supplied : "no_synced_orders";
   return { state: "empty", reason };
