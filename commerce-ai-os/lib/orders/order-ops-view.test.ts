@@ -339,6 +339,78 @@ test("reason: known → Arabic, unknown → generic (never reflected), null → 
   assert.equal(getReasonLabel(null), null);
 });
 
+// ── Prototype-safe label lookup (inherited keys fail closed) ─────────────────
+
+test("getReasonLabel: inherited Object keys fall closed to the generic reason label", () => {
+  for (const key of ["__proto__", "constructor", "toString", "valueOf", "hasOwnProperty"]) {
+    const out = getReasonLabel(key);
+    assert.equal(out, "سبب غير معروف", `reason key ${key}`);
+    assert.equal(typeof out, "string", `reason key ${key} returns a string, never a function/object`);
+  }
+});
+
+test("getReasonLabel: known code still maps, unknown text is never reflected", () => {
+  assert.equal(getReasonLabel("insufficient_stock"), "مخزون غير كافٍ");
+  const hostile = getReasonLabel("constructor");
+  assert.ok(!hostile!.includes("constructor"), "inherited key text not reflected");
+});
+
+test("label getters: runtime-invalid / prototype keys → fixed generic label", () => {
+  // Casts ONLY to simulate runtime-invalid inputs the TS contract forbids.
+  assert.equal(getSourceLabel("__proto__" as unknown as OrderOpsRow["source"]), "غير معروف");
+  assert.equal(getChannelLabel("constructor" as unknown as OrderOpsRow["channel"]), "غير معروف");
+  assert.equal(getStatusLabel("toString" as unknown as OrderOpsStatus), "غير معروف");
+  assert.equal(getSignalKindLabel("valueOf" as unknown as SignalKind), "غير معروف");
+  assert.equal(getSignalStateLabel("hasOwnProperty" as unknown as ReconciliationSignal["state"]), "غير معروف");
+  // known values still map correctly (no regression)
+  assert.equal(getSourceLabel("shopify"), "Shopify");
+  assert.equal(getSignalStateLabel("clear"), "سليم");
+});
+
+// ── Identity fields are read without value coercion ──────────────────────────
+
+test("filter: displayOrderCode with a throwing toString is never coerced and never matches", () => {
+  const hostile = {
+    toString() {
+      throw new Error("toString must never be called");
+    },
+  } as unknown as string;
+  const rows = [row({ displayOrderCode: hostile, sourceOrderId: "plain-id" })];
+  let out: OrderOpsRow[] = [];
+  assert.doesNotThrow(() => {
+    out = filterOrderOpsRows(rows, { ...DEFAULT_FILTERS, query: "anything" });
+  }, "filter does not throw on a hostile displayOrderCode");
+  assert.equal(out.length, 0, "hostile value never matches a query through coercion");
+});
+
+test("filter: sourceOrderId with a throwing Symbol.toPrimitive is never invoked and never matches", () => {
+  const hostile = {
+    [Symbol.toPrimitive]() {
+      throw new Error("Symbol.toPrimitive must never be called");
+    },
+  } as unknown as string;
+  const rows = [row({ sourceOrderId: hostile, displayOrderCode: "no-match-code" })];
+  let out: OrderOpsRow[] = [];
+  assert.doesNotThrow(() => {
+    out = filterOrderOpsRows(rows, { ...DEFAULT_FILTERS, query: "anything" });
+  }, "filter does not throw on a hostile sourceOrderId");
+  assert.equal(out.length, 0, "coercion hook never runs, so no match");
+});
+
+test("filter: a hostile identity field does not break matching of other valid rows", () => {
+  const hostile = {
+    toString() {
+      throw new Error("nope");
+    },
+  } as unknown as string;
+  const rows = [
+    row({ sourceOrderId: hostile, displayOrderCode: "bad" }),
+    row({ sourceOrderId: "GOOD-1", displayOrderCode: "TAL-55" }),
+  ];
+  const out = filterOrderOpsRows(rows, { ...DEFAULT_FILTERS, query: "tal-55" });
+  assert.deepEqual(out.map((r) => r.displayOrderCode), ["TAL-55"], "normal search still works");
+});
+
 // ── formatOrderOpsDate ───────────────────────────────────────────────────────
 
 test("valid date string formats to a non-dash string", () => {
@@ -385,6 +457,15 @@ test("view source (comments stripped) is DB-free / framework-free / any-free", (
   assert.ok(!/\bas\s+any\b/.test(src), "no as any");
   assert.ok(!/<any>/.test(src), "no <any>");
   assert.ok(!/\bany\[\]/.test(src), "no any[]");
+  // No value-coercion of identity/label inputs in executable code:
+  // `\bString\s*\(` avoids false-matching `toLocaleString(`.
+  assert.ok(!/\bString\s*\(/.test(src), "no String() coercion");
+  assert.ok(!/\.toString\s*\(/.test(src), "no .toString() coercion");
+  assert.ok(!/toPrimitive/.test(src), "no Symbol.toPrimitive usage");
+  // No direct fixed-label bracket lookup (which would bypass own-key protection);
+  // every lookup must go through the prototype-safe fixedLabel() helper.
+  assert.ok(!/[A-Z][A-Z_]*_LABELS\s*\[/.test(src), "no direct *_LABELS[...] lookup");
+  assert.ok(/Object\.hasOwn\s*\(/.test(src), "fixed-label lookup uses Object.hasOwn own-key guard");
 });
 
 // ── Source safety scan + wiring assertions: page file ────────────────────────

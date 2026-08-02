@@ -128,8 +128,12 @@ export function filterOrderOpsRows(rows: OrderOpsRow[], filters: OrderOpsViewFil
     if (filters.status !== "all" && r.status !== filters.status) return false;
     if (!matchesAttention(r, filters.attention)) return false;
     if (q.length > 0) {
-      const code = String(r.displayOrderCode ?? "").toLowerCase();
-      const id = String(r.sourceOrderId ?? "").toLowerCase();
+      // Read identity fields with a runtime type guard only — NEVER trigger value
+      // coercion (no String(), no .toString(), no Symbol.toPrimitive). A
+      // non-string (e.g. a hostile object) is treated as an empty string, so a
+      // malformed value can never match a query through coercion.
+      const code = typeof r.displayOrderCode === "string" ? r.displayOrderCode.toLowerCase() : "";
+      const id = typeof r.sourceOrderId === "string" ? r.sourceOrderId.toLowerCase() : "";
       // search ONLY the code and id — never reason or any raw data
       if (!code.includes(q) && !id.includes(q)) return false;
     }
@@ -257,25 +261,40 @@ const REASON_LABELS: Record<string, string> = {
   unknown_reason: "سبب غير معروف",
 };
 
+/**
+ * Prototype-safe fixed-label lookup. Returns the mapped label ONLY when `key` is
+ * a string that is an OWN, enumerable-or-not property of `labels` whose value is
+ * itself a string. Inherited keys (`__proto__`, `constructor`, `toString`,
+ * `valueOf`, `hasOwnProperty`, …) and any non-string key or value fall closed to
+ * `fallback` — so an unknown or hostile key can never surface an inherited
+ * function/object or reflect its own text.
+ */
+function fixedLabel<T extends object>(labels: T, key: unknown, fallback: string): string {
+  if (typeof key !== "string") return fallback;
+  if (!Object.hasOwn(labels, key)) return fallback;
+  const value = (labels as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : fallback;
+}
+
 export function getSourceLabel(source: OrderOpsSource): string {
-  return SOURCE_LABELS[source] ?? UNKNOWN_LABEL;
+  return fixedLabel(SOURCE_LABELS, source, UNKNOWN_LABEL);
 }
 export function getChannelLabel(channel: OrderOpsChannel): string {
-  return CHANNEL_LABELS[channel] ?? UNKNOWN_LABEL;
+  return fixedLabel(CHANNEL_LABELS, channel, UNKNOWN_LABEL);
 }
 export function getStatusLabel(status: OrderOpsStatus): string {
-  return STATUS_LABELS[status] ?? UNKNOWN_LABEL;
+  return fixedLabel(STATUS_LABELS, status, UNKNOWN_LABEL);
 }
 export function getSignalKindLabel(kind: SignalKind): string {
-  return SIGNAL_KIND_LABELS[kind] ?? UNKNOWN_LABEL;
+  return fixedLabel(SIGNAL_KIND_LABELS, kind, UNKNOWN_LABEL);
 }
 export function getSignalStateLabel(state: SignalState): string {
-  return SIGNAL_STATE_LABELS[state] ?? UNKNOWN_LABEL;
+  return fixedLabel(SIGNAL_STATE_LABELS, state, UNKNOWN_LABEL);
 }
-/** null reason → null (omit). Known → fixed label. Unknown code → generic. */
+/** null reason → null (omit). Known → fixed label. Unknown/inherited → generic. */
 export function getReasonLabel(reasonCode: string | null): string | null {
   if (reasonCode === null) return null;
-  return REASON_LABELS[reasonCode] ?? UNKNOWN_REASON_LABEL;
+  return fixedLabel(REASON_LABELS, reasonCode, UNKNOWN_REASON_LABEL);
 }
 
 // ── Date formatting (Asia/Qatar; safe) ───────────────────────────────────────
