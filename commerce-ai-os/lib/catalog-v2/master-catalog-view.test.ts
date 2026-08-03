@@ -18,6 +18,16 @@ import {
   CATALOG_FILTER_OPTIONS,
   type MasterCatalogProduct,
 } from "./master-catalog-view.ts";
+import {
+  loadMasterCatalog,
+  type CatalogReadClient,
+  type CatalogQueryResult,
+  type CatalogRangeBuilder,
+} from "./master-catalog-read.ts";
+
+// Inject the REAL pure projector so the read layer never resolves its lazy
+// dynamic import under node:test.
+const PROJECTOR = { projectCatalogRows };
 
 // ── Builders ─────────────────────────────────────────────────────────────────
 
@@ -371,4 +381,221 @@ test("legacy AppShell/Sidebar/BottomNav/constants do not reference V2 (unchanged
     assert.ok(!/components\/v2/.test(src), `${rel} must not reference components/v2`);
     assert.ok(!/["']\/v2/.test(src), `${rel} must not link to /v2`);
   }
+});
+
+// ── Paginated read (server row-limit safe) ───────────────────────────────────
+
+const SERVER_MAX = 1000; // simulate the PostgREST default max-rows per response
+
+interface FakeTableCfg {
+  rows?: unknown[];
+  failAtCall?: number; // 1-based page index whose result is an error
+  throwAtCall?: number; // 1-based page index whose builder throws synchronously
+}
+interface CallRecord {
+  table: string;
+  orders: { column: string; ascending: boolean }[];
+  range: [number, number];
+}
+
+function fakePagedClient(cfg: Record<string, FakeTableCfg>): { client: CatalogReadClient; calls: CallRecord[] } {
+  const calls: CallRecord[] = [];
+  const counts: Record<string, number> = {};
+  const client: CatalogReadClient = {
+    from(table: string) {
+      const orders: { column: string; ascending: boolean }[] = [];
+      let pending: CatalogQueryResult = { data: [], error: null };
+      const builder: CatalogRangeBuilder = {
+        order(column: string, options: { ascending: boolean }) {
+          orders.push({ column, ascending: options.ascending });
+          return builder;
+        },
+        range(from: number, to: number) {
+          const n = (counts[table] = (counts[table] ?? 0) + 1);
+          calls.push({ table, orders: orders.map((o) => ({ ...o })), range: [from, to] });
+          const t = cfg[table] ?? {};
+          if (t.throwAtCall === n) throw new Error("BUILDER BOOM SECRET");
+          if (t.failAtCall === n) {
+            pending = { data: null, error: { message: "PAGE SECRET", code: "42P01", hint: "SHINT" } };
+          } else {
+            const all = t.rows ?? [];
+            // The server never returns more than SERVER_MAX rows in one response.
+            const end = Math.min(to, from + SERVER_MAX - 1);
+            pending = { data: all.slice(from, end + 1), error: null };
+          }
+          return builder;
+        },
+        then<TResult1 = CatalogQueryResult, TResult2 = never>(
+          onfulfilled?: ((value: CatalogQueryResult) => TResult1 | PromiseLike<TResult1>) | null,
+          onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+        ): PromiseLike<TResult1 | TResult2> {
+          return Promise.resolve(pending).then(onfulfilled, onrejected);
+        },
+      };
+      return { select: () => builder };
+    },
+  };
+  return { client, calls };
+}
+
+const rangesFor = (calls: CallRecord[], table: string): [number, number][] =>
+  calls.filter((c) => c.table === table).map((c) => c.range);
+const ordersFor = (calls: CallRecord[], table: string): { column: string; ascending: boolean }[][] =>
+  calls.filter((c) => c.table === table).map((c) => c.orders);
+
+function makeProducts(n: number): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push({ id: `p${i}`, sku: `SKU-${i}`, barcode: `B-${i}`, name_ar: `منتج ${i}`, name_en: `Product ${i}`, price: i, discount_price: null, image_url: `https://img/${i}.jpg`, approval: "Approved" });
+  }
+  return out;
+}
+function makeVariants(parentIds: string[]): Record<string, unknown>[] {
+  return parentIds.map((pid, i) => ({ id: `v${i}`, parent_product_id: pid }));
+}
+
+test("products: 1146 rows across two pages → all preserved, partial false, ranges 0..999 then 1000..1999", async () => {
+  const products = makeProducts(1146);
+  const { client, calls } = fakePagedClient({ products: { rows: products }, product_variants: { rows: [] } });
+  const res = await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.equal(res.status, "ok");
+  assert.equal(res.products.length, 1146, "all rows across both pages preserved");
+  assert.equal(res.partial, false);
+  assert.deepEqual(rangesFor(calls, "products"), [
+    [0, 999],
+    [1000, 1999],
+  ]);
+});
+
+test("products exactly 1000 → performs next-page check, returns 1000, partial false", async () => {
+  const { client, calls } = fakePagedClient({ products: { rows: makeProducts(1000) }, product_variants: { rows: [] } });
+  const res = await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.equal(res.products.length, 1000);
+  assert.equal(res.partial, false);
+  assert.deepEqual(rangesFor(calls, "products"), [
+    [0, 999],
+    [1000, 1999],
+  ], "a second page is requested to prove the source ended");
+});
+
+test("products over PRODUCT_CAP → returns only 5000, partial true, never exceeds the cap", async () => {
+  const { client } = fakePagedClient({ products: { rows: makeProducts(5001) }, product_variants: { rows: [] } });
+  const res = await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.equal(res.products.length, 5000, "capped to PRODUCT_CAP");
+  assert.ok(res.products.length <= 5000, "does not exceed the cap");
+  assert.equal(res.partial, true);
+});
+
+test("products page 2 failure → status error, products [], raw error not exposed", async () => {
+  const { client } = fakePagedClient({ products: { rows: makeProducts(1500), failAtCall: 2 }, product_variants: { rows: [] } });
+  const res = await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.equal(res.status, "error");
+  assert.equal(res.products.length, 0, "no partial first-page success");
+  const json = JSON.stringify(res);
+  for (const leak of ["PAGE SECRET", "42P01", "SHINT"]) assert.ok(!json.includes(leak), `leaked: ${leak}`);
+});
+
+test("variants: >1000 counted across pages, duplicate parent ids across the boundary counted correctly", async () => {
+  // 600 × p1 then 600 × p2 → page1 = 600 p1 + 400 p2, page2 = 200 p2.
+  const variantParents = [...Array(600).fill("p1"), ...Array(600).fill("p2")];
+  const { client, calls } = fakePagedClient({
+    products: { rows: [{ id: "p1", sku: "S1" }, { id: "p2", sku: "S2" }, { id: "p3", sku: "S3" }] },
+    product_variants: { rows: makeVariants(variantParents) },
+  });
+  const res = await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.equal(res.status, "ok");
+  assert.equal(res.partial, false);
+  const byId = new Map(res.products.map((p) => [p.id, p.variantCount]));
+  assert.equal(byId.get("p1"), 600, "p1 counted across pages");
+  assert.equal(byId.get("p2"), 600, "p2 (crossing the page boundary) counted correctly");
+  assert.equal(byId.get("p3"), 0);
+  assert.deepEqual(rangesFor(calls, "product_variants"), [
+    [0, 999],
+    [1000, 1999],
+  ]);
+});
+
+test("variants over VARIANT_CAP → partial true, products still render", async () => {
+  const { client } = fakePagedClient({
+    products: { rows: [{ id: "p1", sku: "S1" }] },
+    product_variants: { rows: makeVariants(Array(20001).fill("p1")) },
+  });
+  const res = await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.equal(res.status, "ok");
+  assert.equal(res.partial, true);
+  assert.equal(res.products.length, 1);
+});
+
+test("variants page 2 failure → all variant rows discarded, products render with variantCount 0, partial true", async () => {
+  const { client } = fakePagedClient({
+    products: { rows: [{ id: "p1", sku: "S1" }, { id: "p2", sku: "S2" }] },
+    product_variants: { rows: makeVariants([...Array(1000).fill("p1"), ...Array(200).fill("p2")]), failAtCall: 2 },
+  });
+  const res = await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.equal(res.status, "ok", "products still render");
+  assert.equal(res.partial, true);
+  assert.ok(res.products.length > 0);
+  for (const p of res.products) assert.equal(p.variantCount, 0, "no partial variant counts");
+  const json = JSON.stringify(res);
+  for (const leak of ["PAGE SECRET", "42P01", "SHINT"]) assert.ok(!json.includes(leak), `leaked: ${leak}`);
+});
+
+test("deterministic ordering: every products page uses sku asc then id asc", async () => {
+  const { client, calls } = fakePagedClient({ products: { rows: makeProducts(1500) }, product_variants: { rows: [] } });
+  await loadMasterCatalog(client, { project: PROJECTOR });
+  const orderSets = ordersFor(calls, "products");
+  assert.ok(orderSets.length >= 2);
+  for (const o of orderSets) {
+    assert.deepEqual(o, [
+      { column: "sku", ascending: true },
+      { column: "id", ascending: true },
+    ]);
+  }
+});
+
+test("deterministic ordering: every variants page uses parent_product_id asc then id asc", async () => {
+  const { client, calls } = fakePagedClient({
+    products: { rows: [{ id: "p1", sku: "S1" }] },
+    product_variants: { rows: makeVariants(Array(1500).fill("p1")) },
+  });
+  await loadMasterCatalog(client, { project: PROJECTOR });
+  const orderSets = ordersFor(calls, "product_variants");
+  assert.ok(orderSets.length >= 2);
+  for (const o of orderSets) {
+    assert.deepEqual(o, [
+      { column: "parent_product_id", ascending: true },
+      { column: "id", ascending: true },
+    ]);
+  }
+});
+
+test("page ranges never overlap and never skip", async () => {
+  const { client, calls } = fakePagedClient({ products: { rows: makeProducts(3200) }, product_variants: { rows: makeVariants(Array(2100).fill("p0")) } });
+  await loadMasterCatalog(client, { project: PROJECTOR });
+  for (const table of ["products", "product_variants"]) {
+    const ranges = rangesFor(calls, table);
+    ranges.forEach(([from, to], i) => {
+      assert.equal(from, i * 1000, `${table} page ${i} starts contiguously`);
+      assert.equal(to, i * 1000 + 999, `${table} page ${i} spans exactly PAGE_SIZE`);
+    });
+  }
+});
+
+test("paginated read: builder throw is caught → products fail closed, no raw leak", async () => {
+  const { client } = fakePagedClient({ products: { rows: makeProducts(1500), throwAtCall: 2 }, product_variants: { rows: [] } });
+  const res = await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.equal(res.status, "error");
+  assert.equal(res.products.length, 0);
+  assert.ok(!JSON.stringify(res).includes("BOOM"), "builder error not exposed");
+});
+
+test("paginated read does not mutate the input row arrays", async () => {
+  const products = makeProducts(1200);
+  const variants = makeVariants([...Array(1000).fill("p0"), ...Array(100).fill("p1")]);
+  const pSnap = JSON.parse(JSON.stringify(products));
+  const vSnap = JSON.parse(JSON.stringify(variants));
+  const { client } = fakePagedClient({ products: { rows: products }, product_variants: { rows: variants } });
+  await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.deepEqual(products, pSnap, "product rows not mutated");
+  assert.deepEqual(variants, vSnap, "variant rows not mutated");
 });
