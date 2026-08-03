@@ -100,7 +100,12 @@ export interface OrderOpsDataResult {
 
 // ── Explicit column whitelists (no raw/items/customer/phone/email/address) ───
 
-const TALABAT_COLUMNS = "id, order_code, event, processing_status, processed_at, created_at, resolution";
+// `talabat_orders` has no `created_at` column; its creation timestamp is
+// `received_at`. We alias it to `created_at` at the PostgREST layer so the row
+// arrives already keyed as `created_at` — the projector, TalabatOrderInput, and
+// the whole downstream contract stay unchanged, and `received_at` is never
+// returned as a separate field.
+const TALABAT_COLUMNS = "id, order_code, event, processing_status, processed_at, created_at:received_at, resolution";
 const SHOPIFY_COLUMNS =
   "order_id, order_name, channel, payment_gateway_names, deducted, processing_status, processed_at, synced_at, deduction_result";
 
@@ -194,13 +199,15 @@ export async function loadOrderOpsData(
   const compute = options?.compute ?? (await defaultCompute());
   const limit = normalizeLimit(options?.limit);
 
-  // Talabat — created_at desc, then id desc. Filter NON-plain-object rows BEFORE
-  // paginating, so junk rows never displace valid rows inside the limit nor cause
-  // a false hasMore. hasMore is based on valid PAGE rows, never a full-table count.
+  // Talabat — received_at desc, then id desc (received_at is the real creation
+  // timestamp column; it is aliased to created_at in the projection above). Filter
+  // NON-plain-object rows BEFORE paginating, so junk rows never displace valid
+  // rows inside the limit nor cause a false hasMore. hasMore is based on valid
+  // PAGE rows, never a full-table count.
   const talabatResult = await runQuery(client, {
     table: "talabat_orders",
     columns: TALABAT_COLUMNS,
-    orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+    orderBy: [{ column: "received_at", ascending: false }, { column: "id", ascending: false }],
     limit: limit + 1,
   });
   const talabatValid = talabatResult.rows.filter(isPlainObject);
