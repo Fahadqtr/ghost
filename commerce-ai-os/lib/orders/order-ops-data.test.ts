@@ -23,7 +23,7 @@ const REAL_COMPUTE = { buildOrderOpsRows, summarizeOrderOps, classifyShopifyLedg
 const load = (client: OrderOpsReadClient, opts?: { limit?: number }): Promise<OrderOpsDataResult> =>
   loadOrderOpsData(client, { compute: REAL_COMPUTE, ...(opts ?? {}) });
 
-const TALABAT_COLUMNS = "id, order_code, event, processing_status, processed_at, created_at, resolution";
+const TALABAT_COLUMNS = "id, order_code, event, processing_status, processed_at, created_at:received_at, resolution";
 const SHOPIFY_COLUMNS =
   "order_id, order_name, channel, payment_gateway_names, deducted, processing_status, processed_at, synced_at, deduction_result";
 
@@ -207,11 +207,20 @@ test("hasMore reflects raw page rows > limit (not a full-table count)", async ()
 
 // ── Deterministic ordering ───────────────────────────────────────────────────
 
-test("Talabat deterministic ordering: created_at desc, then id desc", async () => {
+test("Talabat select aliases created_at:received_at (real column) — no bare created_at", async () => {
+  const { client, calls } = fakeClient({});
+  await load(client);
+  const cols = call(calls, "talabat_orders")?.columns ?? "";
+  assert.equal(cols, TALABAT_COLUMNS);
+  assert.ok(cols.includes("created_at:received_at"), "aliases received_at to created_at");
+  assert.ok(!/(^|[ ,])created_at([ ,]|$)/.test(cols), "no bare created_at column selected");
+});
+
+test("Talabat deterministic ordering: received_at desc, then id desc", async () => {
   const { client, calls } = fakeClient({});
   await load(client);
   assert.deepEqual(call(calls, "talabat_orders")?.orderBy, [
-    { column: "created_at", ascending: false },
+    { column: "received_at", ascending: false },
     { column: "id", ascending: false },
   ]);
 });
@@ -257,6 +266,28 @@ test("extra DB keys, gateway names, and raw deduction_result never appear in the
   for (const bad of ["resolution", "deduction_result", "payment_gateway_names", "customer", "phone", "email", "address", "raw", "products", "secretExtra", "secretField"]) {
     assert.ok(!keys.has(bad), `leaked key: ${bad}`);
   }
+});
+
+test("Talabat createdAt is preserved (from aliased received_at); received_at/raw never spread into output", async () => {
+  const { client } = fakeClient({
+    talabat_orders: {
+      // The aliased PostgREST response arrives keyed as created_at; a misbehaving
+      // source may also echo received_at/raw — neither may reach the unified row.
+      data: [talabatRow({ created_at: "2026-07-15T12:00:00Z", received_at: "2026-07-15T12:00:00Z", raw: { body: "SECRETRAW" } })],
+    },
+  });
+  const res = await load(client);
+  const row = findByPrefix(res, "talabat")!;
+  assert.equal(row.createdAt, "2026-07-15T12:00:00Z", "createdAt preserved through the pipeline");
+  assert.ok(!JSON.stringify(res).includes("SECRETRAW"), "raw value never leaks");
+  const keys = new Set<string>();
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") for (const k of Object.keys(v)) { keys.add(k); walk((v as Record<string, unknown>)[k]); }
+  };
+  walk(res);
+  assert.ok(!keys.has("received_at"), "received_at never appears as an output key");
+  assert.ok(!keys.has("raw"), "raw never appears as an output key");
 });
 
 test("no DeductionEvidence fabricated → a processed Shopify row is under_deduction unknown", async () => {

@@ -15,14 +15,18 @@ import { buildOrderOpsRows, summarizeOrderOps, classifyShopifyLedgerState } from
 
 const REAL_COMPUTE = { buildOrderOpsRows, summarizeOrderOps, classifyShopifyLedgerState };
 
-const TALABAT_COLUMNS = "id, order_code, event, processing_status, processed_at, created_at, resolution";
+const TALABAT_COLUMNS = "id, order_code, event, processing_status, processed_at, created_at:received_at, resolution";
 const SHOPIFY_COLUMNS =
   "order_id, order_name, channel, payment_gateway_names, deducted, processing_status, processed_at, synced_at, deduction_result";
+
+// The pre-2B.3C Talabat contract (bare created_at column + created_at ordering)
+// is no longer canonical and must be rejected before .from().
+const OLD_TALABAT_COLUMNS = "id, order_code, event, processing_status, processed_at, created_at, resolution";
 
 const talabatQuery = (over: Partial<OrderOpsQuery> = {}): OrderOpsQuery => ({
   table: "talabat_orders",
   columns: TALABAT_COLUMNS,
-  orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+  orderBy: [{ column: "received_at", ascending: false }, { column: "id", ascending: false }],
   limit: 101,
   ...over,
 });
@@ -89,7 +93,7 @@ test("valid Talabat query executes with exact table/columns/order/limit", async 
   assert.deepEqual(calls.from, ["talabat_orders"]);
   assert.deepEqual(calls.select, [{ table: "talabat_orders", columns: TALABAT_COLUMNS }]);
   assert.deepEqual(calls.order, [
-    { table: "talabat_orders", column: "created_at", ascending: false },
+    { table: "talabat_orders", column: "received_at", ascending: false },
     { table: "talabat_orders", column: "id", ascending: false },
   ]);
   assert.deepEqual(calls.limit, [{ table: "talabat_orders", count: 101 }]);
@@ -145,16 +149,16 @@ test("wrong Shopify columns rejected", () => assertRejectedBeforeFrom(shopifyQue
 test("wrong first order column rejected", () =>
   assertRejectedBeforeFrom(talabatQuery({ orderBy: [{ column: "id", ascending: false }, { column: "id", ascending: false }] })));
 test("wrong second order column rejected", () =>
-  assertRejectedBeforeFrom(talabatQuery({ orderBy: [{ column: "created_at", ascending: false }, { column: "order_code", ascending: false }] })));
+  assertRejectedBeforeFrom(talabatQuery({ orderBy: [{ column: "received_at", ascending: false }, { column: "order_code", ascending: false }] })));
 test("ascending true rejected", () =>
-  assertRejectedBeforeFrom(talabatQuery({ orderBy: [{ column: "created_at", ascending: true }, { column: "id", ascending: false }] })));
+  assertRejectedBeforeFrom(talabatQuery({ orderBy: [{ column: "received_at", ascending: true }, { column: "id", ascending: false }] })));
 test("missing (single) order rejected", () =>
-  assertRejectedBeforeFrom(talabatQuery({ orderBy: [{ column: "created_at", ascending: false }] })));
+  assertRejectedBeforeFrom(talabatQuery({ orderBy: [{ column: "received_at", ascending: false }] })));
 test("extra third order rejected", () =>
   assertRejectedBeforeFrom(
     talabatQuery({
       orderBy: [
-        { column: "created_at", ascending: false },
+        { column: "received_at", ascending: false },
         { column: "id", ascending: false },
         { column: "id", ascending: false },
       ],
@@ -167,6 +171,33 @@ test("NaN / Infinity / unsafe-integer limit rejected", async () => {
   for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
     await assertRejectedBeforeFrom(talabatQuery({ limit: bad }));
   }
+});
+
+// ── Phase 2B.3C: old Talabat contract rejected, new canonical accepted ───────
+
+test("old bare created_at ordering rejected before from()", () =>
+  assertRejectedBeforeFrom(
+    talabatQuery({ orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }] }),
+  ));
+test("old Talabat columns (bare created_at, no alias) rejected before from()", () =>
+  assertRejectedBeforeFrom(talabatQuery({ columns: OLD_TALABAT_COLUMNS })));
+test("wrong received_at direction (ascending) rejected before from()", () =>
+  assertRejectedBeforeFrom(
+    talabatQuery({ orderBy: [{ column: "received_at", ascending: true }, { column: "id", ascending: false }] }),
+  ));
+
+test("new canonical Talabat query executes: created_at:received_at alias + received_at desc, id desc", async () => {
+  const { client, calls } = fakeSupabase({ talabat_orders: { result: { data: [], error: null } } });
+  const adapter = createSupabaseOrderOpsReadClient(client);
+  await adapter.query(talabatQuery());
+  assert.deepEqual(calls.select, [
+    { table: "talabat_orders", columns: "id, order_code, event, processing_status, processed_at, created_at:received_at, resolution" },
+  ]);
+  assert.deepEqual(calls.order, [
+    { table: "talabat_orders", column: "received_at", ascending: false },
+    { table: "talabat_orders", column: "id", ascending: false },
+  ]);
+  assert.equal(calls.from.length, 1);
 });
 
 test("rejection error is EXACTLY 'order_ops_query_rejected' with no table/column/value details", async () => {
@@ -199,7 +230,7 @@ test("alternating limit getter is read ONCE; executed limit is exactly the first
   const q = {
     table: "talabat_orders",
     columns: TALABAT_COLUMNS,
-    orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+    orderBy: [{ column: "received_at", ascending: false }, { column: "id", ascending: false }],
     get limit() {
       reads++;
       return reads === 1 ? 101 : 1_000_000;
@@ -220,7 +251,7 @@ test("alternating table getter is read ONCE; canonical table executed", async ()
       return reads === 1 ? "talabat_orders" : "shopify_synced_orders";
     },
     columns: TALABAT_COLUMNS,
-    orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+    orderBy: [{ column: "received_at", ascending: false }, { column: "id", ascending: false }],
     limit: 101,
   } as unknown as OrderOpsQuery;
   await adapter.query(q);
@@ -238,7 +269,7 @@ test("alternating columns getter is read ONCE; canonical columns executed", asyn
       reads++;
       return reads === 1 ? TALABAT_COLUMNS : "id, raw, customer";
     },
-    orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+    orderBy: [{ column: "received_at", ascending: false }, { column: "id", ascending: false }],
     limit: 101,
   } as unknown as OrderOpsQuery;
   await adapter.query(q);
@@ -250,7 +281,7 @@ test("orderBy getter is read ONCE; copied validated ordering executed", async ()
   const { client, calls } = fakeSupabase({ talabat_orders: { result: { data: [], error: null } } });
   const adapter = createSupabaseOrderOpsReadClient(client);
   let reads = 0;
-  const good = [{ column: "created_at", ascending: false }, { column: "id", ascending: false }];
+  const good = [{ column: "received_at", ascending: false }, { column: "id", ascending: false }];
   const q = {
     table: "talabat_orders",
     columns: TALABAT_COLUMNS,
@@ -263,7 +294,7 @@ test("orderBy getter is read ONCE; copied validated ordering executed", async ()
   await adapter.query(q);
   assert.equal(reads, 1);
   assert.deepEqual(calls.order, [
-    { table: "talabat_orders", column: "created_at", ascending: false },
+    { table: "talabat_orders", column: "received_at", ascending: false },
     { table: "talabat_orders", column: "id", ascending: false },
   ]);
 });
@@ -276,7 +307,7 @@ test("nested order column/ascending getters read ONCE; copied values executed", 
   const first = {
     get column() {
       colReads++;
-      return "created_at";
+      return "received_at";
     },
     get ascending() {
       ascReads++;
@@ -292,7 +323,7 @@ test("nested order column/ascending getters read ONCE; copied values executed", 
   await adapter.query(q);
   assert.equal(colReads, 1);
   assert.equal(ascReads, 1);
-  assert.deepEqual(calls.order[0], { table: "talabat_orders", column: "created_at", ascending: false });
+  assert.deepEqual(calls.order[0], { table: "talabat_orders", column: "received_at", ascending: false });
 });
 
 test("a getter that throws during validation → constant rejection, from() not called, no leak", async () => {
@@ -303,7 +334,7 @@ test("a getter that throws during validation → constant rejection, from() not 
       throw new Error("GETTER BOOM SECRET");
     },
     columns: TALABAT_COLUMNS,
-    orderBy: [{ column: "created_at", ascending: false }, { column: "id", ascending: false }],
+    orderBy: [{ column: "received_at", ascending: false }, { column: "id", ascending: false }],
     limit: 101,
   } as unknown as OrderOpsQuery;
   await assert.rejects(adapter.query(q), (e: unknown) => e instanceof Error && e.message === "order_ops_query_rejected" && !e.message.includes("BOOM"));
@@ -402,4 +433,33 @@ test("source (comments stripped) has no write/RPC/fetch/client-creation/env/logg
   // no Shopify/Talabat API module imports (only relative + server-only)
   assert.ok(!/from\s+["'][^"']*\/(admin|shopify\/admin|talabat)/.test(src), "no shopify/talabat API imports");
   assert.ok(!/from\s+["']@\//.test(src), "no @/ imports");
+});
+
+// ── Phase 2B.3C migration static assertions (SQL, comments stripped) ─────────
+// Verifies the Shopify SELECT-policy migration is additive, authenticated-only,
+// idempotent, and performs no data mutation. Scans executable SQL, not comments.
+
+test("migration shopify_synced_orders_select_policy.sql: additive authenticated SELECT policy only", () => {
+  const raw = readFileSync(new URL("../../supabase/shopify_synced_orders_select_policy.sql", import.meta.url), "utf8");
+  const sql = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/--.*$/gm, "").toLowerCase();
+
+  // Targets the right table, enables RLS, creates a SELECT policy for authenticated using(true).
+  assert.ok(/alter\s+table\s+public\.shopify_synced_orders\s+enable\s+row\s+level\s+security/.test(sql), "enables RLS on public.shopify_synced_orders");
+  assert.ok(/create\s+policy\s+\w+\s+on\s+public\.shopify_synced_orders/.test(sql), "creates a policy on public.shopify_synced_orders");
+  assert.ok(/for\s+select/.test(sql), "policy is for SELECT");
+  assert.ok(/to\s+authenticated/.test(sql), "policy role is authenticated");
+  assert.ok(/using\s*\(\s*true\s*\)/.test(sql), "using expression is true");
+
+  // Idempotent (drop-if-exists before create).
+  assert.ok(/drop\s+policy\s+if\s+exists\s+\w+\s+on\s+public\.shopify_synced_orders/.test(sql), "idempotent: drop policy if exists first");
+
+  // Fail-closed scope.
+  assert.ok(!/to\s+anon/.test(sql), "does not grant anon");
+  assert.ok(!/service_role/.test(sql), "no service_role");
+  assert.ok(!/for\s+(insert|update|delete|all)\b/.test(sql), "no insert/update/delete/all policy");
+  for (const verb of [/\binsert\s+into\b/, /\bupdate\s+\w/, /\bdelete\s+from\b/, /\btruncate\b/, /\bgrant\b/, /\bupsert\b/]) {
+    assert.ok(!verb.test(sql), `no data mutation / grant statement: ${verb}`);
+  }
+  // Scope guard: only the Shopify orders table is touched (not talabat or others).
+  assert.ok(!/talabat/.test(sql), "does not touch talabat tables");
 });
