@@ -1,14 +1,16 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { LOGIN_ERRORS, requestPasswordReset } from "@/lib/auth/recovery";
+import { safeInternalPath } from "@/lib/v2/legacy-redirect";
 
 type Mode = "signin" | "forgot";
 
 export default function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,8 +39,10 @@ export default function LoginForm() {
         return;
       }
       // Session cookie is set; refresh so the server (middleware + layout) sees it.
+      // Default post-login destination is Malikas V2; a `next` param is honored
+      // ONLY when it is a safe same-origin path (open-redirect protection).
       router.refresh();
-      router.push("/dashboard");
+      router.push(safeInternalPath(searchParams.get("next")));
     } catch {
       setError(LOGIN_ERRORS.generic);
     } finally {
