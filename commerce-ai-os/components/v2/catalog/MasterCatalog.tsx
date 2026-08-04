@@ -1,25 +1,32 @@
-// Malikas V2 Master Catalog view (Phase UI.1). Read-only presentation: summary
-// cards, a GET-form search/filter bar (no client JS, no polling), a clean table
-// on desktop and cards on mobile. Renders ONLY catalog-safe fields — never
-// stock, channel/platform presence, platform IDs, orders, raw JSON, or PII.
+// Malikas V2 Catalog Control Center (Phase UI.2A). Read-only presentation:
+// whole-catalog KPI cards, a GET-form search/filter/sort bar (no client JS, no
+// polling), server-paginated results as a desktop table and mobile cards, and
+// prev/next pagination that preserves the current query/filter/sort. Renders
+// ONLY catalog-safe fields — never stock, channel/platform presence, platform
+// IDs, orders, raw JSON/approval text, or PII.
 
 import Link from "next/link";
 import {
   CATALOG_FILTER_OPTIONS,
+  CATALOG_SORT_OPTIONS,
+  catalogHref,
+  getApprovalLabel,
   getCompleteness,
   getCompletenessLabel,
   getDisplayName,
   hasBarcode,
-  hasImage,
   hasSku,
-  type CatalogFilters,
+  hasImage,
+  hasValidDiscount,
+  hasValidPrice,
+  isApproved,
+  type CatalogControls,
+  type CatalogPage,
   type CatalogSummary,
   type MasterCatalogProduct,
 } from "@/lib/catalog-v2/master-catalog-view";
 
-function formatPrice(p: MasterCatalogProduct): string {
-  const value = p.discountPrice ?? p.price;
-  if (value === null) return "—";
+function money(value: number): string {
   return `${value} ر.ق`;
 }
 
@@ -50,6 +57,21 @@ function ProductImage({ product }: { product: MasterCatalogProduct }) {
   return <ImagePlaceholder />;
 }
 
+function PriceCell({ product }: { product: MasterCatalogProduct }) {
+  if (hasValidDiscount(product)) {
+    return (
+      <span className="inline-flex flex-wrap items-baseline gap-1.5">
+        <span className="text-xs text-muted line-through">{money(product.price as number)}</span>
+        <span className="font-semibold text-emerald-700">{money(product.discountPrice as number)}</span>
+      </span>
+    );
+  }
+  if (hasValidPrice(product)) {
+    return <span className="text-ink">{money(product.price as number)}</span>;
+  }
+  return <span className="text-rose-600">—</span>;
+}
+
 function CompletenessBadge({ product }: { product: MasterCatalogProduct }) {
   const state = getCompleteness(product);
   const complete = state === "complete";
@@ -65,7 +87,21 @@ function CompletenessBadge({ product }: { product: MasterCatalogProduct }) {
   );
 }
 
-function SummaryCard({ label, value }: { label: string; value: number }) {
+function ApprovalBadge({ product }: { product: MasterCatalogProduct }) {
+  const ok = isApproved(product);
+  return (
+    <span
+      className={
+        "inline-block rounded-full px-2 py-0.5 text-[11px] font-medium " +
+        (ok ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")
+      }
+    >
+      {getApprovalLabel(product)}
+    </span>
+  );
+}
+
+function KpiCard({ label, value }: { label: string; value: number }) {
   return (
     <div className="card p-4 text-center">
       <div className="text-2xl font-bold text-ink">{value}</div>
@@ -75,18 +111,26 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
 }
 
 export default function MasterCatalog({
-  products,
+  pageResult,
   allCount,
+  matchCount,
   summary,
-  filters,
+  controls,
   partial,
 }: {
-  products: MasterCatalogProduct[];
+  pageResult: CatalogPage;
   allCount: number;
+  matchCount: number;
   summary: CatalogSummary;
-  filters: CatalogFilters;
+  controls: CatalogControls;
   partial: boolean;
 }) {
+  const { items, page, totalPages, startIndex } = pageResult;
+  const firstOnPage = matchCount === 0 ? 0 : startIndex + 1;
+  const lastOnPage = startIndex + items.length;
+  const hasPrev = page > 1;
+  const hasNext = page < totalPages;
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -94,7 +138,7 @@ export default function MasterCatalog({
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="font-serif text-2xl font-semibold text-ink">كتالوج ماليكاس</h1>
           <span className="rounded-full bg-brand-light px-2.5 py-0.5 text-[11px] font-semibold text-brand">
-            الكتالوج الرئيسي
+            مركز التحكم بالكتالوج
           </span>
         </div>
         <p className="text-sm text-muted">المصدر الرئيسي لجميع منتجات ومنصات Malikas Universe</p>
@@ -106,31 +150,39 @@ export default function MasterCatalog({
         </div>
       ) : null}
 
-      {/* Summary */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <SummaryCard label="إجمالي المنتجات" value={summary.totalProducts} />
-        <SummaryCard label="لديها خيارات" value={summary.withVariants} />
-        <SummaryCard label="ناقص SKU" value={summary.missingSku} />
-        <SummaryCard label="ناقص باركود" value={summary.missingBarcode} />
-        <SummaryCard label="ناقص صورة" value={summary.missingImage} />
+      {/* KPIs — whole loaded catalog */}
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-muted">المؤشرات تشمل كامل الكتالوج المحمّل (وليس الصفحة الحالية فقط)</div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <KpiCard label="إجمالي المنتجات" value={summary.totalProducts} />
+          <KpiCard label="مكتمل" value={summary.complete} />
+          <KpiCard label="ناقص أكثر من حقل" value={summary.missingMultiple} />
+          <KpiCard label="ناقص SKU" value={summary.missingSku} />
+          <KpiCard label="ناقص باركود" value={summary.missingBarcode} />
+          <KpiCard label="ناقص صورة" value={summary.missingImage} />
+          <KpiCard label="بدون سعر" value={summary.missingPrice} />
+          <KpiCard label="عليه خصم" value={summary.withDiscount} />
+          <KpiCard label="لديها خيارات" value={summary.withVariants} />
+        </div>
       </div>
 
-      {/* Search + filters (GET form; no client JS) */}
-      <form method="get" className="card flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
-        <label className="flex flex-1 flex-col gap-1">
+      {/* Search + filter + sort (GET form; no client JS). No page field → any
+          submit resets to page 1. */}
+      <form method="get" className="card grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+        <label className="flex flex-col gap-1 lg:col-span-2">
           <span className="label">بحث</span>
           <input
             type="search"
             name="query"
-            defaultValue={filters.query}
+            defaultValue={controls.query}
             maxLength={80}
             placeholder="SKU أو باركود أو الاسم"
             className="input"
           />
         </label>
-        <label className="flex flex-col gap-1 sm:w-56">
+        <label className="flex flex-col gap-1">
           <span className="label">الفلتر</span>
-          <select name="filter" defaultValue={filters.filter} className="input">
+          <select name="filter" defaultValue={controls.filter} className="input">
             {CATALOG_FILTER_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
@@ -138,7 +190,17 @@ export default function MasterCatalog({
             ))}
           </select>
         </label>
-        <div className="flex items-center gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="label">الترتيب</span>
+          <select name="sort" defaultValue={controls.sort} className="input">
+            {CATALOG_SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-center gap-2 sm:col-span-2 lg:col-span-4">
           <button type="submit" className="btn-primary">
             تطبيق
           </button>
@@ -151,10 +213,20 @@ export default function MasterCatalog({
       {/* Results */}
       {allCount === 0 ? (
         <div className="card text-center text-sm text-muted">لا توجد منتجات في كتالوج ماليكاس.</div>
-      ) : products.length === 0 ? (
+      ) : matchCount === 0 ? (
         <div className="card text-center text-sm text-muted">لا توجد نتائج مطابقة للبحث أو الفلاتر الحالية.</div>
       ) : (
         <>
+          {/* Result info */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+            <span>
+              عرض {firstOnPage}–{lastOnPage} من {matchCount} نتيجة
+            </span>
+            <span>
+              صفحة {page} من {totalPages}
+            </span>
+          </div>
+
           {/* Desktop table */}
           <div className="card hidden overflow-x-auto p-0 md:block">
             <table className="w-full text-right text-sm">
@@ -166,11 +238,12 @@ export default function MasterCatalog({
                   <th className="px-4 py-3 font-medium">الباركود</th>
                   <th className="px-4 py-3 font-medium">السعر</th>
                   <th className="px-4 py-3 font-medium">الخيارات</th>
+                  <th className="px-4 py-3 font-medium">الاعتماد</th>
                   <th className="px-4 py-3 font-medium">الحالة</th>
                 </tr>
               </thead>
               <tbody>
-                {products.map((p) => (
+                {items.map((p) => (
                   <tr key={p.id} className="border-b border-[#f5ece1] last:border-0">
                     <td className="px-4 py-3">
                       <ProductImage product={p} />
@@ -178,8 +251,13 @@ export default function MasterCatalog({
                     <td className="px-4 py-3 font-medium text-ink">{getDisplayName(p)}</td>
                     <td className="px-4 py-3 text-muted">{hasSku(p) ? p.sku : "—"}</td>
                     <td className="px-4 py-3 text-muted">{hasBarcode(p) ? p.barcode : "—"}</td>
-                    <td className="px-4 py-3 text-ink">{formatPrice(p)}</td>
+                    <td className="px-4 py-3">
+                      <PriceCell product={p} />
+                    </td>
                     <td className="px-4 py-3 text-muted">{p.variantCount}</td>
+                    <td className="px-4 py-3">
+                      <ApprovalBadge product={p} />
+                    </td>
                     <td className="px-4 py-3">
                       <CompletenessBadge product={p} />
                     </td>
@@ -191,7 +269,7 @@ export default function MasterCatalog({
 
           {/* Mobile cards */}
           <div className="space-y-3 md:hidden">
-            {products.map((p) => (
+            {items.map((p) => (
               <div key={p.id} className="card flex gap-3 p-3">
                 <ProductImage product={p} />
                 <div className="min-w-0 flex-1 space-y-1">
@@ -204,11 +282,43 @@ export default function MasterCatalog({
                     <span>باركود: {hasBarcode(p) ? p.barcode : "—"}</span>
                     <span>الخيارات: {p.variantCount}</span>
                   </div>
-                  <div className="text-sm text-ink">{formatPrice(p)}</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm">
+                      <PriceCell product={p} />
+                    </div>
+                    <ApprovalBadge product={p} />
+                  </div>
                 </div>
               </div>
             ))}
           </div>
+
+          {/* Pagination — preserves query/filter/sort */}
+          {totalPages > 1 ? (
+            <div className="flex items-center justify-between gap-2">
+              {hasPrev ? (
+                <Link href={catalogHref(controls, page - 1)} className="btn-ghost" rel="prev">
+                  السابق
+                </Link>
+              ) : (
+                <span className="btn-ghost cursor-default opacity-40" aria-disabled="true">
+                  السابق
+                </span>
+              )}
+              <span className="text-xs text-muted">
+                صفحة {page} من {totalPages}
+              </span>
+              {hasNext ? (
+                <Link href={catalogHref(controls, page + 1)} className="btn-ghost" rel="next">
+                  التالي
+                </Link>
+              ) : (
+                <span className="btn-ghost cursor-default opacity-40" aria-disabled="true">
+                  التالي
+                </span>
+              )}
+            </div>
+          ) : null}
         </>
       )}
     </div>

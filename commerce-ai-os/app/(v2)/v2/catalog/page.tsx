@@ -1,18 +1,21 @@
-// /v2/catalog — Malikas Master Catalog (Phase UI.1). Read-only Server Component.
-// Loads the catalog through the injected Supabase client (from the existing user
-// session) and renders it. Data loading is isolated in try/catch; JSX is built
-// only afterwards, so on any failure it shows a single constant Arabic message —
-// never a raw error message/stack/code/details/hint/table/column/JSON.
+// /v2/catalog — Malikas Catalog Control Center (Phase UI.2A). Read-only Server
+// Component. Loads the catalog through the injected Supabase client (existing
+// user session), then filters → sorts → paginates with pure helpers. Data
+// loading is isolated in try/catch; JSX is built only afterwards, so on any
+// failure it shows a single constant Arabic message — never a raw error
+// message/stack/code/details/hint/table/column/JSON.
 
 import { createClient } from "@/lib/supabase/server";
 import { loadMasterCatalog } from "@/lib/catalog-v2/master-catalog-read";
 import {
   filterCatalogProducts,
-  parseCatalogFilters,
+  paginateCatalog,
+  parseCatalogControls,
+  sortCatalogProducts,
   summarizeCatalog,
-  type CatalogFilters,
+  type CatalogControls,
+  type CatalogPage,
   type CatalogSummary,
-  type MasterCatalogProduct,
 } from "@/lib/catalog-v2/master-catalog-view";
 import MasterCatalog from "@/components/v2/catalog/MasterCatalog";
 
@@ -24,24 +27,29 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export default async function CatalogPage({ searchParams }: { searchParams?: SearchParams }) {
   let loaded: {
-    products: MasterCatalogProduct[];
+    pageResult: CatalogPage;
     allCount: number;
+    matchCount: number;
     summary: CatalogSummary;
-    filters: CatalogFilters;
+    controls: CatalogControls;
     partial: boolean;
   } | null = null;
 
   try {
     const params = searchParams ? await searchParams : {};
-    const filters = parseCatalogFilters(params);
+    const controls = parseCatalogControls(params);
     const supabase = createClient();
     const result = await loadMasterCatalog(supabase);
     if (result.status === "ok") {
+      const filtered = filterCatalogProducts(result.products, { query: controls.query, filter: controls.filter });
+      const sorted = sortCatalogProducts(filtered, controls.sort);
+      const pageResult = paginateCatalog(sorted, controls.page);
       loaded = {
-        products: filterCatalogProducts(result.products, filters),
+        pageResult,
         allCount: result.products.length,
+        matchCount: sorted.length,
         summary: summarizeCatalog(result.products),
-        filters,
+        controls,
         partial: result.partial,
       };
     }
@@ -60,10 +68,11 @@ export default async function CatalogPage({ searchParams }: { searchParams?: Sea
 
   return (
     <MasterCatalog
-      products={loaded.products}
+      pageResult={loaded.pageResult}
       allCount={loaded.allCount}
+      matchCount={loaded.matchCount}
       summary={loaded.summary}
-      filters={loaded.filters}
+      controls={loaded.controls}
       partial={loaded.partial}
     />
   );
