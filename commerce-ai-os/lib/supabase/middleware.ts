@@ -5,6 +5,7 @@ import {
   type CookieOptions,
 } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { legacyRedirectPath, V2_HOME } from "@/lib/v2/legacy-redirect";
 
 // Paths that are reachable WITHOUT being logged in. `/staff` is the employees'
 // stock IN/OUT page — it has its own shared-PIN gate (no Supabase account).
@@ -79,11 +80,26 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  // Already logged in and visiting /login -> /dashboard
+  // Already logged in and visiting /login -> V2 home
   if (user && path === "/login") {
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/dashboard";
+    redirectUrl.pathname = V2_HOME;
+    redirectUrl.search = "";
     return NextResponse.redirect(redirectUrl);
+  }
+
+  // Malikas V2 is the only active interface: authenticated requests to the root
+  // and the legacy admin entry points are redirected to V2. (No legacy code is
+  // removed; excluded paths — /login, /api/**, /auth/**, /v2/**, webhooks,
+  // /staff, /rewards, static — are never matched here.)
+  if (user) {
+    const dest = legacyRedirectPath(path);
+    if (dest) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = dest;
+      redirectUrl.search = "";
+      return NextResponse.redirect(redirectUrl);
+    }
   }
 
   return supabaseResponse;

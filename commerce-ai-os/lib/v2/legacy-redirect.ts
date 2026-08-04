@@ -1,0 +1,66 @@
+// Central, pure routing helpers that make Malikas V2 the only active interface.
+// DB-free, framework-free, no side effects — safe to unit-test and to import from
+// the proxy/middleware. This round only BLOCKS access to the legacy admin entry
+// points (it deletes no legacy code); requests to them are redirected to V2.
+
+/** The single V2 destination every blocked/legacy entry point resolves to. */
+export const V2_HOME = "/v2/catalog";
+
+// Legacy admin entry points that V2 replaces. A path matches when it equals one
+// of these or is a sub-path (prefix + "/"). Root "/" is handled explicitly.
+// NOTE: deliberately scoped to these entries (not a blanket block of every old
+// route) so still-used public/back-office paths — /login, /api/**, /auth/**,
+// /staff, /rewards, webhooks, /v2/** — keep working.
+const LEGACY_PREFIXES: readonly string[] = ["/dashboard", "/products", "/inventory", "/platforms"];
+
+/** Paths that must NEVER be redirected by the legacy block. */
+function isExcludedFromLegacyBlock(pathname: string): boolean {
+  return (
+    pathname === "/login" ||
+    pathname.startsWith("/login/") ||
+    pathname.startsWith("/v2") ||
+    pathname.startsWith("/api/") ||
+    pathname === "/api" ||
+    pathname.startsWith("/auth/") ||
+    pathname === "/auth"
+  );
+}
+
+/**
+ * Resolve where a request to the legacy interface should be sent. Returns the V2
+ * home for the root and the legacy admin entry points, or null when the path
+ * must be left untouched (V2 routes, auth, APIs, webhooks, other public pages).
+ * Never returns a target that would loop (V2 paths are always excluded).
+ */
+export function legacyRedirectPath(pathname: unknown): string | null {
+  if (typeof pathname !== "string" || pathname.length === 0) return null;
+  if (isExcludedFromLegacyBlock(pathname)) return null;
+  if (pathname === "/") return V2_HOME;
+  for (const p of LEGACY_PREFIXES) {
+    if (pathname === p || pathname.startsWith(p + "/")) return V2_HOME;
+  }
+  return null;
+}
+
+/** True if the string contains any ASCII control character (0x00–0x1F). */
+function hasControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    if (value.charCodeAt(i) < 0x20) return true;
+  }
+  return false;
+}
+
+/**
+ * Open-redirect-safe post-login destination. Accepts ONLY a same-origin absolute
+ * path (starts with a single "/", no "//"/"/\" scheme-relative form, no
+ * backslashes or control chars); anything else (external URL, non-string,
+ * garbage) falls back to the V2 home.
+ */
+export function safeInternalPath(next: unknown, fallback: string = V2_HOME): string {
+  if (typeof next !== "string" || next.length === 0) return fallback;
+  if (!next.startsWith("/")) return fallback; // rejects "https://…", "evil.com", etc.
+  if (next.startsWith("//") || next.startsWith("/\\")) return fallback; // scheme-relative
+  if (next.includes("\\")) return fallback;
+  if (hasControlChar(next)) return fallback;
+  return next;
+}

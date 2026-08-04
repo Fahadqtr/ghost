@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import LoginForm from "@/components/LoginForm";
 import LanguageToggle from "@/components/LanguageToggle";
@@ -20,7 +21,9 @@ export default async function LoginPage() {
           <p className="text-sm text-muted">{APP_OWNER}</p>
         </div>
         <div className="card">
-          <LoginForm />
+          <Suspense fallback={null}>
+            <LoginForm />
+          </Suspense>
           <p className="mt-4 text-center text-xs text-muted">
             {t("login.internalNote")}
           </p>
