@@ -43,7 +43,10 @@ interface CanonicalQuerySpec {
   orderBy: readonly [OrderSpec, OrderSpec];
 }
 
-const TALABAT_COLUMNS = "id, order_code, event, processing_status, processed_at, created_at, resolution";
+// Talabat selects `received_at` aliased to `created_at` and orders by the real
+// `received_at` column; the old `created_at` column/order is not part of any
+// canonical contract and is therefore rejected before `.from()`.
+const TALABAT_COLUMNS = "id, order_code, event, processing_status, processed_at, created_at:received_at, resolution";
 const SHOPIFY_COLUMNS =
   "order_id, order_name, channel, payment_gateway_names, deducted, processing_status, processed_at, synced_at, deduction_result";
 
@@ -52,7 +55,7 @@ const CANONICAL_SPECS: readonly CanonicalQuerySpec[] = [
     table: "talabat_orders",
     columns: TALABAT_COLUMNS,
     orderBy: [
-      { column: "created_at", ascending: false },
+      { column: "received_at", ascending: false },
       { column: "id", ascending: false },
     ],
   },
