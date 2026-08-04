@@ -248,7 +248,11 @@ export default function MasterCatalog({
                     <td className="px-4 py-3">
                       <ProductImage product={p} />
                     </td>
-                    <td className="px-4 py-3 font-medium text-ink">{getDisplayName(p)}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <Link href={`/v2/catalog/${encodeURIComponent(p.id)}`} className="text-ink hover:text-brand hover:underline">
+                        {getDisplayName(p)}
+                      </Link>
+                    </td>
                     <td className="px-4 py-3 text-muted">{hasSku(p) ? p.sku : "—"}</td>
                     <td className="px-4 py-3 text-muted">{hasBarcode(p) ? p.barcode : "—"}</td>
                     <td className="px-4 py-3">
@@ -274,7 +278,12 @@ export default function MasterCatalog({
                 <ProductImage product={p} />
                 <div className="min-w-0 flex-1 space-y-1">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="truncate font-medium text-ink">{getDisplayName(p)}</div>
+                    <Link
+                      href={`/v2/catalog/${encodeURIComponent(p.id)}`}
+                      className="truncate font-medium text-ink hover:text-brand hover:underline"
+                    >
+                      {getDisplayName(p)}
+                    </Link>
                     <CompletenessBadge product={p} />
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted">

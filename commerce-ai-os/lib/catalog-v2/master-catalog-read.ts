@@ -14,7 +14,7 @@ import "server-only";
 // PROJECTOR is injectable and, when not injected, is loaded lazily from the SAME
 // relative module. Tests inject the real projector so no extensionless value
 // import is resolved at test time.
-import type { MasterCatalogProduct } from "./master-catalog-view";
+import type { CatalogVariant, MasterCatalogProduct } from "./master-catalog-view";
 
 export interface CatalogProjector {
   projectCatalogRows(productRows: readonly unknown[], variantRows: readonly unknown[]): MasterCatalogProduct[];
@@ -24,6 +24,17 @@ export interface CatalogProjector {
 async function defaultProjector(): Promise<CatalogProjector> {
   const m = await import("./master-catalog-view");
   return { projectCatalogRows: m.projectCatalogRows };
+}
+
+export interface CatalogDetailProjector {
+  projectCatalogRows(productRows: readonly unknown[], variantRows: readonly unknown[]): MasterCatalogProduct[];
+  projectCatalogVariants(variantRows: readonly unknown[]): CatalogVariant[];
+}
+
+/** Lazily bind the real detail projector (single product + its variants). */
+async function defaultDetailProjector(): Promise<CatalogDetailProjector> {
+  const m = await import("./master-catalog-view");
+  return { projectCatalogRows: m.projectCatalogRows, projectCatalogVariants: m.projectCatalogVariants };
 }
 
 // ── Minimal Supabase-like read surface (only what this reader needs) ─────────
@@ -41,6 +52,21 @@ export interface CatalogSelectBuilder {
 }
 export interface CatalogReadClient {
   from(table: string): CatalogSelectBuilder;
+}
+
+// Detail reads use a separate minimal filter surface (select → filter → limit)
+// kept deliberately small. We use PostgREST's generic `.filter(col, op, val)`
+// rather than `.eq` because `.eq`'s value type derives from the row generic and
+// makes the real Supabase client's structural assignment instantiate too deeply.
+export interface CatalogDetailFilterBuilder extends PromiseLike<CatalogQueryResult> {
+  filter(column: string, operator: string, value: string): CatalogDetailFilterBuilder;
+  limit(count: number): CatalogDetailFilterBuilder;
+}
+export interface CatalogDetailSelectBuilder {
+  select(columns: string): CatalogDetailFilterBuilder;
+}
+export interface CatalogDetailReadClient {
+  from(table: string): CatalogDetailSelectBuilder;
 }
 
 // ── Explicit column whitelists (no *, no inventory/channel/platform/order) ───
@@ -156,4 +182,102 @@ export async function loadMasterCatalog(
   const partial = productRead.capped || !variantRead.ok || variantRead.capped;
 
   return { status: "ok", products, partial };
+}
+
+// ── Single product detail (Phase UI.2B) ──────────────────────────────────────
+
+// Variant detail whitelist. `parent_product_id` is read only so the projector can
+// count variants for this product; it is NOT exposed by projectCatalogVariants.
+// stock_quantity and any platform/order/PII fields are never selected.
+const VARIANT_DETAIL_COLUMNS = "id, parent_product_id, variant_name, variant_name_en, sku, barcode, price";
+
+const PRODUCT_DETAIL_LIMIT = 1;
+const VARIANT_DETAIL_LIMIT = 500; // a product's variants are small; bounded defensively
+
+const MAX_ID_LENGTH = 200;
+
+export interface LoadCatalogProductResult {
+  status: "ok" | "error";
+  product: MasterCatalogProduct | null; // null with status "ok" = not found
+  variants: CatalogVariant[];
+}
+
+export interface LoadCatalogProductOptions {
+  /** Inject the detail projector (tests). Defaults to the real view module. */
+  project?: CatalogDetailProjector;
+}
+
+/** A read is successful only when error === null AND data is a real array. */
+async function readByEq(
+  client: CatalogDetailReadClient,
+  table: string,
+  columns: string,
+  column: string,
+  value: string,
+  limit: number,
+): Promise<{ ok: boolean; rows: unknown[] }> {
+  try {
+    // Parameterized equality filter — the value is passed as a bound argument,
+    // never interpolated into a query string.
+    const res: unknown = await client.from(table).select(columns).filter(column, "eq", value).limit(limit);
+    if (isPlainObject(res) && res.error === null && Array.isArray(res.data)) {
+      return { ok: true, rows: res.data };
+    }
+    return { ok: false, rows: [] };
+  } catch {
+    return { ok: false, rows: [] }; // never re-surface the raw error
+  }
+}
+
+/**
+ * Load one catalog product by id plus its catalog-safe variants.
+ * - An invalid id resolves to a safe not-found (product: null) without querying.
+ * - A product read failure → status "error" (never a false not-found).
+ * - A missing product → status "ok", product null.
+ * - A variant read failure is NON-fatal: the product still returns with an empty
+ *   variant list (and variantCount from the product read alone), details hidden.
+ * The id is used ONLY as a parameterized .eq value — never interpolated.
+ */
+export async function loadCatalogProduct(
+  client: CatalogDetailReadClient,
+  id: unknown,
+  options?: LoadCatalogProductOptions,
+): Promise<LoadCatalogProductResult> {
+  // Defensive re-validation (the page validates too): non-string / empty / too
+  // long → safe not-found, no query.
+  if (typeof id !== "string" || id.length === 0 || id.trim().length === 0 || id.length > MAX_ID_LENGTH) {
+    return { status: "ok", product: null, variants: [] };
+  }
+
+  const projector = options?.project ?? (await defaultDetailProjector());
+
+  const productRead = await readByEq(client, "products", PRODUCT_COLUMNS, "id", id, PRODUCT_DETAIL_LIMIT);
+  if (!productRead.ok) {
+    return { status: "error", product: null, variants: [] };
+  }
+  if (productRead.rows.length === 0) {
+    return { status: "ok", product: null, variants: [] };
+  }
+
+  const variantRead = await readByEq(
+    client,
+    "product_variants",
+    VARIANT_DETAIL_COLUMNS,
+    "parent_product_id",
+    id,
+    VARIANT_DETAIL_LIMIT,
+  );
+  const variantRows = variantRead.ok ? variantRead.rows : [];
+
+  // Project the single product (variantCount is derived from the variant rows,
+  // which carry parent_product_id) and the catalog-safe variant list.
+  const products = projector.projectCatalogRows([productRead.rows[0]], variantRows);
+  const product = products[0] ?? null;
+  if (product === null) {
+    // The product row had a malformed/missing id → treat as not found.
+    return { status: "ok", product: null, variants: [] };
+  }
+  const variants = projector.projectCatalogVariants(variantRows);
+
+  return { status: "ok", product, variants };
 }
