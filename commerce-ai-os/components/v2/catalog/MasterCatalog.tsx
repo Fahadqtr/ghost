@@ -10,6 +10,7 @@ import {
   CATALOG_FILTER_OPTIONS,
   CATALOG_SORT_OPTIONS,
   catalogHref,
+  catalogDetailHref,
   getApprovalLabel,
   getCompleteness,
   getCompletenessLabel,
@@ -249,7 +250,7 @@ export default function MasterCatalog({
                       <ProductImage product={p} />
                     </td>
                     <td className="px-4 py-3 font-medium">
-                      <Link href={`/v2/catalog/${encodeURIComponent(p.id)}`} className="text-ink hover:text-brand hover:underline">
+                      <Link href={catalogDetailHref(p.id, controls)} className="text-ink hover:text-brand hover:underline">
                         {getDisplayName(p)}
                       </Link>
                     </td>
@@ -279,7 +280,7 @@ export default function MasterCatalog({
                 <div className="min-w-0 flex-1 space-y-1">
                   <div className="flex items-start justify-between gap-2">
                     <Link
-                      href={`/v2/catalog/${encodeURIComponent(p.id)}`}
+                      href={catalogDetailHref(p.id, controls)}
                       className="truncate font-medium text-ink hover:text-brand hover:underline"
                     >
                       {getDisplayName(p)}

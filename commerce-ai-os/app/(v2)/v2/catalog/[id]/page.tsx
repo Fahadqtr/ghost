@@ -9,7 +9,13 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { loadCatalogProduct } from "@/lib/catalog-v2/master-catalog-read";
-import { parseProductId, type CatalogVariant, type MasterCatalogProduct } from "@/lib/catalog-v2/master-catalog-view";
+import {
+  catalogHref,
+  parseCatalogControls,
+  parseProductId,
+  type CatalogVariant,
+  type MasterCatalogProduct,
+} from "@/lib/catalog-v2/master-catalog-view";
 import ProductDetail from "@/components/v2/catalog/ProductDetail";
 
 export const dynamic = "force-dynamic";
@@ -18,14 +24,29 @@ const LOAD_ERROR = "تعذر تحميل كتالوج ماليكاس.";
 const NOT_FOUND = "لا يوجد منتج بهذا المعرّف.";
 
 type Params = Promise<{ id: string }>;
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-export default async function ProductDetailPage({ params }: { params: Params }) {
+export default async function ProductDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Params;
+  searchParams?: SearchParams;
+}) {
+  // Re-parse the carried catalog state through the validated helper and rebuild
+  // the return link via catalogHref — raw searchParams are NEVER copied into an
+  // href. On any failure the back link falls back to the clean /v2/catalog.
+  let backHref = "/v2/catalog";
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
     | { kind: "error" } = { kind: "error" };
 
   try {
+    const sp = searchParams ? await searchParams : {};
+    const controls = parseCatalogControls(sp);
+    backHref = catalogHref(controls, controls.page);
+
     const { id } = await params;
     const validId = parseProductId(id);
     if (validId === null) {
@@ -48,7 +69,7 @@ export default async function ProductDetailPage({ params }: { params: Params }) 
   if (state.kind === "error") {
     return (
       <div className="space-y-4">
-        <Link href="/v2/catalog" className="btn-ghost">
+        <Link href={backHref} className="btn-ghost">
           رجوع للكتالوج
         </Link>
         <div className="card border-rose-200 bg-rose-50 text-sm text-rose-700">{LOAD_ERROR}</div>
@@ -59,7 +80,7 @@ export default async function ProductDetailPage({ params }: { params: Params }) 
   if (state.kind === "notfound") {
     return (
       <div className="space-y-4">
-        <Link href="/v2/catalog" className="btn-ghost">
+        <Link href={backHref} className="btn-ghost">
           رجوع للكتالوج
         </Link>
         <div className="card text-center text-sm text-muted">{NOT_FOUND}</div>
@@ -67,5 +88,5 @@ export default async function ProductDetailPage({ params }: { params: Params }) 
     );
   }
 
-  return <ProductDetail product={state.product} variants={state.variants} />;
+  return <ProductDetail product={state.product} variants={state.variants} backHref={backHref} />;
 }
