@@ -493,18 +493,40 @@ export function paginateCatalog(
 // ── URL state (preserve query/filter/sort across pagination) ─────────────────
 
 /**
- * Build a `/v2/catalog` href for a given page, preserving the current query,
- * filter and sort. Only non-default params are emitted, so page-1 default links
- * stay clean. Values are encoded via URLSearchParams (never reflected raw).
+ * Canonical control → query-param builder shared by every catalog link. Emits
+ * ONLY non-default values, in a fixed order (query, filter, sort, page), all
+ * encoded by URLSearchParams. Never mutates `controls`.
  */
-export function catalogHref(controls: CatalogControls, page: number): string {
+function catalogControlParams(controls: CatalogControls, page: number): URLSearchParams {
   const params = new URLSearchParams();
   if (controls.query) params.set("query", controls.query);
   if (controls.filter !== "all") params.set("filter", controls.filter);
   if (controls.sort !== "readiness") params.set("sort", controls.sort);
   if (Number.isSafeInteger(page) && page > 1) params.set("page", `${page}`);
-  const qs = params.toString();
+  return params;
+}
+
+/**
+ * Build a `/v2/catalog` href for a given page, preserving the current query,
+ * filter and sort. Only non-default params are emitted, so page-1 default links
+ * stay clean. Values are encoded via URLSearchParams (never reflected raw).
+ */
+export function catalogHref(controls: CatalogControls, page: number): string {
+  const qs = catalogControlParams(controls, page).toString();
   return qs ? `/v2/catalog?${qs}` : "/v2/catalog";
+}
+
+/**
+ * Build a `/v2/catalog/<id>` detail href that carries the CURRENT catalog
+ * controls (query, filter, sort, page) so the detail page can restore the exact
+ * list view. The id is encoded as a path segment; control values reuse the same
+ * canonical names + omission rules as catalogHref (defaults → clean URL). Never
+ * mutates `controls` and never emits arbitrary extra params.
+ */
+export function catalogDetailHref(id: string, controls: CatalogControls): string {
+  const base = `/v2/catalog/${encodeURIComponent(id)}`;
+  const qs = catalogControlParams(controls, controls.page).toString();
+  return qs ? `${base}?${qs}` : base;
 }
 
 // ── Fixed Arabic labels (never reflect unknown/raw text) ─────────────────────

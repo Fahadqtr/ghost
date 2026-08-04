@@ -112,14 +112,16 @@ function variantPrice(v: CatalogVariant): string {
 export default function ProductDetail({
   product,
   variants,
+  backHref = "/v2/catalog",
 }: {
   product: MasterCatalogProduct;
   variants: CatalogVariant[];
+  backHref?: string;
 }) {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link href="/v2/catalog" className="btn-ghost">
+        <Link href={backHref} className="btn-ghost">
           رجوع للكتالوج
         </Link>
         <span className="rounded-full bg-brand-light px-2.5 py-0.5 text-[11px] font-semibold text-brand">

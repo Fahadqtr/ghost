@@ -20,6 +20,7 @@ import {
   sortCatalogProducts,
   paginateCatalog,
   catalogHref,
+  catalogDetailHref,
   summarizeCatalog,
   projectCatalogRows,
   getCompleteness,
@@ -1284,8 +1285,178 @@ test("ProductDetail component: read-only, lazy image, fixed approval, no stock/p
   }
 });
 
-test("MasterCatalog links product rows to /v2/catalog/[id] (desktop + mobile)", () => {
+test("MasterCatalog links product rows to the detail route (desktop + mobile)", () => {
   const src = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
-  const matches = src.match(/\/v2\/catalog\/\$\{encodeURIComponent\(p\.id\)\}/g) ?? [];
-  assert.ok(matches.length >= 2, "both desktop and mobile rows link to the detail route with encoded id");
+  // Detail links now go through the shared catalogDetailHref helper (which builds
+  // /v2/catalog/<encoded id> and carries the active controls).
+  const matches = src.match(/catalogDetailHref\(p\.id, controls\)/g) ?? [];
+  assert.ok(matches.length >= 2, "both desktop and mobile rows link via catalogDetailHref");
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase UI.2C — Catalog ↔ Detail navigation state preservation
+// ════════════════════════════════════════════════════════════════════════════
+
+function controls(over: Partial<CatalogControls> = {}): CatalogControls {
+  return { ...DEFAULT_CONTROLS, ...over };
+}
+
+function queryPart(href: string): string {
+  const i = href.indexOf("?");
+  return i === -1 ? "" : href.slice(i + 1);
+}
+
+function hrefParams(href: string): Record<string, string> {
+  const usp = new URLSearchParams(queryPart(href));
+  const obj: Record<string, string> = {};
+  for (const [k, v] of usp) obj[k] = v;
+  return obj;
+}
+
+// ── catalogDetailHref ────────────────────────────────────────────────────────
+
+test("catalogDetailHref: default controls → clean URL, no query string", () => {
+  assert.equal(catalogDetailHref("p1", DEFAULT_CONTROLS), "/v2/catalog/p1");
+});
+
+test("catalogDetailHref: encodes normal and special-character ids as a path segment", () => {
+  assert.equal(catalogDetailHref("gid://shopify/Product/12 34", DEFAULT_CONTROLS), `/v2/catalog/${encodeURIComponent("gid://shopify/Product/12 34")}`);
+  assert.ok(!catalogDetailHref("a/b?c#d", DEFAULT_CONTROLS).includes("a/b?c#d"), "raw special chars not present");
+  assert.ok(catalogDetailHref("a/b?c#d", DEFAULT_CONTROLS).startsWith("/v2/catalog/"), "stays under /v2/catalog");
+});
+
+test("catalogDetailHref: includes a non-empty query", () => {
+  assert.deepEqual(hrefParams(catalogDetailHref("p1", controls({ query: "serum" }))), { query: "serum" });
+});
+
+test("catalogDetailHref: includes a non-default filter", () => {
+  assert.deepEqual(hrefParams(catalogDetailHref("p1", controls({ filter: "approved" }))), { filter: "approved" });
+});
+
+test("catalogDetailHref: includes a non-default sort", () => {
+  assert.deepEqual(hrefParams(catalogDetailHref("p1", controls({ sort: "price_asc" }))), { sort: "price_asc" });
+});
+
+test("catalogDetailHref: includes a page greater than 1 (and omits page 1)", () => {
+  assert.deepEqual(hrefParams(catalogDetailHref("p1", controls({ page: 3 }))), { page: "3" });
+  assert.equal(catalogDetailHref("p1", controls({ page: 1 })), "/v2/catalog/p1");
+});
+
+test("catalogDetailHref: includes all active controls in canonical order query→filter→sort→page", () => {
+  const href = catalogDetailHref("p1", controls({ query: "serum", filter: "approved", sort: "price_asc", page: 3 }));
+  assert.equal(queryPart(href), "query=serum&filter=approved&sort=price_asc&page=3");
+});
+
+test("catalogDetailHref: omits default/empty controls and never emits arbitrary params", () => {
+  const href = catalogDetailHref("p1", controls({ query: "", filter: "all", sort: "readiness", page: 1 }));
+  assert.equal(href, "/v2/catalog/p1");
+  const keys = Object.keys(hrefParams(catalogDetailHref("p1", controls({ query: "x", filter: "approved", sort: "sku", page: 2 }))));
+  for (const k of keys) assert.ok(["query", "filter", "sort", "page"].includes(k), `unexpected param ${k}`);
+});
+
+test("catalogDetailHref: does not mutate the input controls", () => {
+  const c = controls({ query: "serum", filter: "approved", sort: "price_asc", page: 3 });
+  const snap = JSON.parse(JSON.stringify(c));
+  catalogDetailHref("p1", c);
+  assert.deepEqual(c, snap);
+});
+
+// ── Round-trip: catalogDetailHref → parseCatalogControls ─────────────────────
+
+test("round-trip: detail URL params re-parse to the original validated controls", () => {
+  const cases: CatalogControls[] = [
+    DEFAULT_CONTROLS,
+    controls({ query: "serum" }),
+    controls({ filter: "missing_price" }),
+    controls({ sort: "variants_desc" }),
+    controls({ page: 7 }),
+    controls({ query: "night cream", filter: "has_discount", sort: "price_desc", page: 12 }),
+    controls({ query: "كريم مرطب" }),
+    controls({ query: "a&b=c d/e?f#g" }),
+  ];
+  for (const c of cases) {
+    const parsed = parseCatalogControls(hrefParams(catalogDetailHref("p1", c)));
+    assert.deepEqual(parsed, c, `round-trip failed for ${JSON.stringify(c)}`);
+  }
+});
+
+// ── Detail page wiring / source assertions ───────────────────────────────────
+
+test("detail page: accepts searchParams, parses via parseCatalogControls, builds return link via catalogHref", () => {
+  const raw = readFileSync(new URL("../../app/(v2)/v2/catalog/[id]/page.tsx", import.meta.url), "utf8");
+  const src = strip(raw);
+  assert.ok(/searchParams/.test(src), "accepts searchParams");
+  assert.ok(/parseCatalogControls\s*\(/.test(src), "uses parseCatalogControls");
+  assert.ok(/backHref\s*=\s*catalogHref\s*\(/.test(src), "return link built via catalogHref");
+  // raw searchParams are never copied into an href
+  assert.ok(!/href=\{[^}]*searchParams/.test(src), "raw searchParams not used in an href");
+  assert.ok(!/href=\{[^}]*\bsp\b/.test(src), "raw sp not used in an href");
+  // the same safe backHref is used across states
+  const backLinkUses = (src.match(/href=\{backHref\}/g) ?? []).length;
+  assert.ok(backLinkUses >= 2, "error and not-found states use backHref");
+  assert.ok(/backHref=\{backHref\}/.test(src), "success state passes backHref to ProductDetail");
+  // no hardcoded raw catalog href left behind
+  assert.ok(!/href="\/v2\/catalog"/.test(src), "no hardcoded /v2/catalog href remains");
+});
+
+// ── MasterCatalog wiring / source assertions ─────────────────────────────────
+
+test("MasterCatalog: desktop + mobile links use catalogDetailHref(p.id, controls); no manual detail query building", () => {
+  const src = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
+  const uses = (src.match(/catalogDetailHref\(p\.id, controls\)/g) ?? []).length;
+  assert.ok(uses >= 2, "both desktop and mobile rows use catalogDetailHref(p.id, controls)");
+  assert.ok(!/\/v2\/catalog\/\$\{encodeURIComponent\(p\.id\)\}/.test(src), "no manual detail URL construction remains");
+});
+
+// ── ProductDetail backHref ───────────────────────────────────────────────────
+
+test("ProductDetail: accepts backHref (default /v2/catalog), renders the fixed label, no raw URL state", () => {
+  const src = readFileSync(new URL("../../components/v2/catalog/ProductDetail.tsx", import.meta.url), "utf8");
+  assert.ok(/backHref\s*=\s*"\/v2\/catalog"/.test(src), "default backHref is /v2/catalog");
+  assert.ok(/href=\{backHref\}/.test(src), "back link uses backHref");
+  assert.ok(/رجوع للكتالوج/.test(src), "fixed Arabic label rendered");
+  assert.ok(!/searchParams/.test(src), "ProductDetail does not touch raw searchParams");
+});
+
+// ── UI.2C safety scan across changed files (incl. history/storage bans) ──────
+
+test("UI.2C changed files: no writes/RPC/fetch/admin/env/logging/storage/history/dangerous html", () => {
+  const files = [
+    "./master-catalog-view.ts",
+    "../../components/v2/catalog/MasterCatalog.tsx",
+    "../../components/v2/catalog/ProductDetail.tsx",
+    "../../app/(v2)/v2/catalog/[id]/page.tsx",
+  ];
+  for (const rel of files) {
+    const src = strip(readFileSync(new URL(rel, import.meta.url), "utf8"));
+    for (const [re, msg] of [
+      [/\bfetch\s*\(/, "fetch("],
+      [/\.rpc\s*\(/, ".rpc("],
+      [/\.insert\s*\(/, ".insert("],
+      [/\.update\s*\(/, ".update("],
+      [/\.upsert\s*\(/, ".upsert("],
+      [/\.delete\s*\(/, ".delete("],
+      [/createAdminClient/, "createAdminClient"],
+      [/service_role/, "service_role"],
+      [/process\.env/, "process.env"],
+      [/console\./, "console."],
+      [/dangerouslySetInnerHTML/, "dangerouslySetInnerHTML"],
+      [/select\(\s*["']\*["']\s*\)/, 'select("*")'],
+      [/localStorage/, "localStorage"],
+      [/sessionStorage/, "sessionStorage"],
+      [/history\.(pushState|replaceState)/, "history state manipulation"],
+    ] as const) {
+      assert.ok(!re.test(src), `forbidden in ${rel}: ${msg}`);
+    }
+  }
+});
+
+test("UI.2C: images stay lazy and no stock/platform/order/customer fields introduced in the detail UI", () => {
+  const src = strip(readFileSync(new URL("../../components/v2/catalog/ProductDetail.tsx", import.meta.url), "utf8"));
+  assert.ok(/loading="lazy"/.test(src), "product image lazy-loaded");
+  assert.ok(/getApprovalLabel/.test(src), "approval via fixed-label helper");
+  assert.ok(
+    !/stock_quantity|\bstock\b|\binventory\b|channel_status|platform_status|\border_id\b|\bcustomer\b/.test(src),
+    "no stock/platform/order/customer field",
+  );
 });
