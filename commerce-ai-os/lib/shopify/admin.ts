@@ -64,6 +64,7 @@ export async function shopifyGraphQL<T = any>(
 export interface ShopifyVariant {
   id: string;            // gid://shopify/ProductVariant/…
   sku: string;
+  barcode: string;       // "" when absent
   price: string;
   compareAtPrice: string | null;
   inventoryItemId: string;        // gid://shopify/InventoryItem/… ("" when absent)
@@ -83,7 +84,7 @@ export interface ShopifyProduct {
 interface ProductsQuery {
   products: {
     pageInfo: { hasNextPage: boolean; endCursor: string | null };
-    nodes: { id: string; title: string; status: string; handle: string; descriptionHtml: string | null; featuredMedia: { preview: { image: { url: string } | null } | null } | null; variants: { nodes: { id: string; sku: string | null; price: string; compareAtPrice: string | null; inventoryQuantity: number | null; inventoryItem: { id: string } | null }[] } }[];
+    nodes: { id: string; title: string; status: string; handle: string; descriptionHtml: string | null; featuredMedia: { preview: { image: { url: string } | null } | null } | null; variants: { nodes: { id: string; sku: string | null; barcode: string | null; price: string; compareAtPrice: string | null; inventoryQuantity: number | null; inventoryItem: { id: string } | null }[] } }[];
   };
 }
 
@@ -99,7 +100,7 @@ export async function fetchAllShopifyProducts(): Promise<{ products?: ShopifyPro
           nodes {
             id title status handle descriptionHtml
             featuredMedia { preview { image { url } } }
-            variants(first: 50) { nodes { id sku price compareAtPrice inventoryQuantity inventoryItem { id } } }
+            variants(first: 50) { nodes { id sku barcode price compareAtPrice inventoryQuantity inventoryItem { id } } }
           }
         }
       }`,
@@ -113,7 +114,7 @@ export async function fetchAllShopifyProducts(): Promise<{ products?: ShopifyPro
         descriptionHtml: String(n.descriptionHtml ?? ""),
         imageUrl: String(n.featuredMedia?.preview?.image?.url ?? ""),
         variants: (n.variants?.nodes ?? []).map((v) => ({
-          id: v.id, sku: String(v.sku ?? "").trim(), price: v.price, compareAtPrice: v.compareAtPrice,
+          id: v.id, sku: String(v.sku ?? "").trim(), barcode: String(v.barcode ?? "").trim(), price: v.price, compareAtPrice: v.compareAtPrice,
           inventoryItemId: String(v.inventoryItem?.id ?? ""),
           inventoryQuantity: typeof v.inventoryQuantity === "number" ? v.inventoryQuantity : null,
         })),
