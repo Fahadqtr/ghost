@@ -8,14 +8,28 @@ import { readFileSync } from "node:fs";
 
 import {
   DEFAULT_FILTERS,
+  DEFAULT_CONTROLS,
+  PAGE_SIZE,
   parseCatalogFilters,
+  parseCatalogControls,
+  parseCatalogPage,
   filterCatalogProducts,
+  sortCatalogProducts,
+  paginateCatalog,
+  catalogHref,
   summarizeCatalog,
   projectCatalogRows,
   getCompleteness,
   getCompletenessLabel,
+  getApprovalLabel,
   getDisplayName,
+  hasValidPrice,
+  hasValidDiscount,
+  isApproved,
+  readinessPriority,
   CATALOG_FILTER_OPTIONS,
+  CATALOG_SORT_OPTIONS,
+  type CatalogControls,
   type MasterCatalogProduct,
 } from "./master-catalog-view.ts";
 import {
@@ -166,7 +180,17 @@ test("summary totals + counts products (not variants) + missing fields", () => {
 test("summary contract exposes only aggregate keys", () => {
   assert.deepEqual(
     Object.keys(summarizeCatalog([product()])).sort(),
-    ["missingBarcode", "missingImage", "missingSku", "totalProducts", "withVariants"].sort(),
+    [
+      "complete",
+      "missingBarcode",
+      "missingImage",
+      "missingMultiple",
+      "missingPrice",
+      "missingSku",
+      "totalProducts",
+      "withDiscount",
+      "withVariants",
+    ].sort(),
   );
 });
 
@@ -598,4 +622,358 @@ test("paginated read does not mutate the input row arrays", async () => {
   await loadMasterCatalog(client, { project: PROJECTOR });
   assert.deepEqual(products, pSnap, "product rows not mutated");
   assert.deepEqual(variants, vSnap, "variant rows not mutated");
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase UI.2A — Catalog Control Center (sorting, filters, pagination)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── parseCatalogPage ─────────────────────────────────────────────────────────
+
+test("parseCatalogPage: valid positive integers pass through", () => {
+  assert.equal(parseCatalogPage("1"), 1);
+  assert.equal(parseCatalogPage("23"), 23);
+  assert.equal(parseCatalogPage("007"), 7);
+});
+
+test("parseCatalogPage: invalid / non-string / negative / zero / NaN / huge → 1", () => {
+  for (const bad of [undefined, null, "", "0", "-3", "1.5", "abc", "2e3", " 5 ", "12x", "NaN", "99999999999999999999", [] as unknown as string, {} as unknown as string, 5 as unknown as string]) {
+    assert.equal(parseCatalogPage(bad), 1, `page=${JSON.stringify(bad)}`);
+  }
+});
+
+test("parseCatalogPage: array picks first usable string", () => {
+  assert.equal(parseCatalogPage(["4", "9"]), 4);
+});
+
+// ── parseCatalogControls (sort) ──────────────────────────────────────────────
+
+test("parseCatalogControls: empty → defaults (readiness, page 1, all)", () => {
+  assert.deepEqual(parseCatalogControls({}), DEFAULT_CONTROLS);
+  assert.deepEqual(parseCatalogControls(null), DEFAULT_CONTROLS);
+});
+
+test("parseCatalogControls: every valid sort value parses", () => {
+  for (const s of ["readiness", "name_ar", "name_en", "sku", "price_asc", "price_desc", "variants_desc"]) {
+    assert.equal(parseCatalogControls({ sort: s }).sort, s);
+  }
+});
+
+test("parseCatalogControls: unknown / hostile sort → readiness", () => {
+  assert.equal(parseCatalogControls({ sort: "__proto__" }).sort, "readiness");
+  assert.equal(parseCatalogControls({ sort: "DROP" }).sort, "readiness");
+  assert.equal(parseCatalogControls({ sort: ["x"] }).sort, "readiness");
+});
+
+test("parseCatalogControls: query trimmed + capped, filter validated, page validated", () => {
+  const c = parseCatalogControls({ query: `  ${"a".repeat(200)}  `, filter: "approved", sort: "sku", page: "3" });
+  assert.equal(c.query.length, 80);
+  assert.equal(c.filter, "approved");
+  assert.equal(c.sort, "sku");
+  assert.equal(c.page, 3);
+  assert.equal(parseCatalogControls({ filter: "nonsense" }).filter, "all");
+});
+
+// ── Price / discount / approval detection ────────────────────────────────────
+
+test("hasValidPrice: positive finite only", () => {
+  assert.equal(hasValidPrice(product({ price: 10 })), true);
+  assert.equal(hasValidPrice(product({ price: 0 })), false);
+  assert.equal(hasValidPrice(product({ price: -5 })), false);
+  assert.equal(hasValidPrice(product({ price: null })), false);
+});
+
+test("hasValidDiscount: valid only when 0 < discount < price", () => {
+  assert.equal(hasValidDiscount(product({ price: 100, discountPrice: 80 })), true);
+  assert.equal(hasValidDiscount(product({ price: 100, discountPrice: 100 })), false, "equal is not a discount");
+  assert.equal(hasValidDiscount(product({ price: 100, discountPrice: 120 })), false, "higher is not a discount");
+  assert.equal(hasValidDiscount(product({ price: 100, discountPrice: 0 })), false);
+  assert.equal(hasValidDiscount(product({ price: 100, discountPrice: null })), false);
+  assert.equal(hasValidDiscount(product({ price: null, discountPrice: 50 })), false, "no base price");
+});
+
+test("isApproved: only exact 'approved' (case/space-insensitive); raw text never leaks", () => {
+  assert.equal(isApproved(product({ approval: "Approved" })), true);
+  assert.equal(isApproved(product({ approval: "  approved " })), true);
+  assert.equal(isApproved(product({ approval: "Rejected" })), false);
+  assert.equal(isApproved(product({ approval: "staff_pending" })), false);
+  assert.equal(isApproved(product({ approval: null })), false);
+});
+
+test("getApprovalLabel: only the two fixed labels, never raw approval", () => {
+  assert.equal(getApprovalLabel(product({ approval: "Approved" })), "معتمد");
+  for (const raw of ["Rejected", "staff_pending", "WEIRD_RAW_STATUS", "<script>", null]) {
+    const label = getApprovalLabel(product({ approval: raw as string | null }));
+    assert.ok(label === "معتمد" || label === "غير معتمد", `label must be fixed, got ${label}`);
+    if (typeof raw === "string") assert.ok(!label.includes(raw), `raw approval ${raw} leaked into label`);
+  }
+});
+
+// ── Readiness priority ───────────────────────────────────────────────────────
+
+test("readinessPriority: ordering missing_multiple < sku < barcode < image < price < not_approved < complete", () => {
+  const missingMultiple = product({ sku: null, barcode: null });
+  const missingSku = product({ sku: null });
+  const missingBarcode = product({ barcode: null });
+  const missingImage = product({ imageUrl: null });
+  const missingPrice = product({ price: null });
+  const notApproved = product({ approval: "Rejected" });
+  const complete = product({ approval: "Approved" });
+  assert.equal(readinessPriority(missingMultiple), 0);
+  assert.equal(readinessPriority(missingSku), 1);
+  assert.equal(readinessPriority(missingBarcode), 2);
+  assert.equal(readinessPriority(missingImage), 3);
+  assert.equal(readinessPriority(missingPrice), 4);
+  assert.equal(readinessPriority(notApproved), 5);
+  assert.equal(readinessPriority(complete), 6);
+});
+
+// ── Sorting ──────────────────────────────────────────────────────────────────
+
+test("default readiness sort: most-incomplete first, complete last, id tie-break", () => {
+  const rows = [
+    product({ id: "c", approval: "Approved" }), // complete → 6
+    product({ id: "a", sku: null, barcode: null }), // missing_multiple → 0
+    product({ id: "b", sku: null }), // missing_sku → 1
+    product({ id: "a2", sku: null, barcode: null }), // missing_multiple → 0 (tie with a)
+  ];
+  const out = sortCatalogProducts(rows, "readiness");
+  assert.deepEqual(out.map((p) => p.id), ["a", "a2", "b", "c"]);
+});
+
+test("sort name_ar / name_en / sku are deterministic with id tie-break", () => {
+  const rows = [
+    product({ id: "2", nameAr: "باء", sku: "S2" }),
+    product({ id: "1", nameAr: "ألف", sku: "S1" }),
+    product({ id: "3", nameAr: "ألف", sku: "S1" }), // tie on name/sku → id
+  ];
+  assert.deepEqual(sortCatalogProducts(rows, "name_ar").map((p) => p.id), ["1", "3", "2"]);
+  assert.deepEqual(sortCatalogProducts(rows, "sku").map((p) => p.id), ["1", "3", "2"]);
+});
+
+test("sort price_asc / price_desc; missing prices always sort last", () => {
+  const rows = [
+    product({ id: "hi", price: 90 }),
+    product({ id: "lo", price: 10 }),
+    product({ id: "none", price: null }),
+    product({ id: "zero", price: 0 }),
+  ];
+  const asc = sortCatalogProducts(rows, "price_asc").map((p) => p.id);
+  assert.deepEqual(asc.slice(0, 2), ["lo", "hi"], "valid prices ascending");
+  assert.deepEqual(asc.slice(2).sort(), ["none", "zero"], "missing/zero last");
+  const desc = sortCatalogProducts(rows, "price_desc").map((p) => p.id);
+  assert.deepEqual(desc.slice(0, 2), ["hi", "lo"], "valid prices descending");
+  assert.deepEqual(desc.slice(2).sort(), ["none", "zero"], "missing/zero still last");
+});
+
+test("sort variants_desc: most variants first, id tie-break", () => {
+  const rows = [product({ id: "a", variantCount: 1 }), product({ id: "b", variantCount: 5 }), product({ id: "c", variantCount: 5 })];
+  assert.deepEqual(sortCatalogProducts(rows, "variants_desc").map((p) => p.id), ["b", "c", "a"]);
+});
+
+test("sort does not mutate the input array", () => {
+  const rows = [product({ id: "2", price: 5 }), product({ id: "1", price: 9 })];
+  const snap = JSON.parse(JSON.stringify(rows));
+  sortCatalogProducts(rows, "price_asc");
+  assert.deepEqual(rows, snap);
+});
+
+// ── Expanded filters ─────────────────────────────────────────────────────────
+
+test("filters: complete / missing_multiple", () => {
+  const rows = [product({ id: "ok" }), product({ id: "mm", sku: null, barcode: null }), product({ id: "one", sku: null })];
+  assert.deepEqual(filterCatalogProducts(rows, { query: "", filter: "complete" }).map((p) => p.id), ["ok"]);
+  assert.deepEqual(filterCatalogProducts(rows, { query: "", filter: "missing_multiple" }).map((p) => p.id), ["mm"]);
+});
+
+test("filters: approved / not_approved", () => {
+  const rows = [product({ id: "a", approval: "Approved" }), product({ id: "r", approval: "Rejected" }), product({ id: "n", approval: null })];
+  assert.deepEqual(filterCatalogProducts(rows, { query: "", filter: "approved" }).map((p) => p.id), ["a"]);
+  assert.deepEqual(filterCatalogProducts(rows, { query: "", filter: "not_approved" }).map((p) => p.id).sort(), ["n", "r"]);
+});
+
+test("filters: has_discount / missing_price", () => {
+  const rows = [
+    product({ id: "disc", price: 100, discountPrice: 70 }),
+    product({ id: "nodisc", price: 100, discountPrice: 100 }),
+    product({ id: "noprice", price: null }),
+  ];
+  assert.deepEqual(filterCatalogProducts(rows, { query: "", filter: "has_discount" }).map((p) => p.id), ["disc"]);
+  assert.deepEqual(filterCatalogProducts(rows, { query: "", filter: "missing_price" }).map((p) => p.id), ["noprice"]);
+});
+
+// ── Summary (new KPI counts) ─────────────────────────────────────────────────
+
+test("summary counts discount / missing price / complete / missing multiple over whole list", () => {
+  const rows = [
+    product({ id: "1", price: 100, discountPrice: 60 }), // discount, complete
+    product({ id: "2", price: null }), // missing price, complete(sku/barcode/image)
+    product({ id: "3", sku: null, barcode: null }), // missing multiple
+    product({ id: "4" }), // complete
+  ];
+  const s = summarizeCatalog(rows);
+  assert.equal(s.withDiscount, 1);
+  assert.equal(s.missingPrice, 1);
+  assert.equal(s.missingMultiple, 1);
+  assert.equal(s.complete, 3, "sku/barcode/image present on 1,2,4");
+});
+
+// ── Pagination ───────────────────────────────────────────────────────────────
+
+const makeList = (n: number): MasterCatalogProduct[] => Array.from({ length: n }, (_, i) => product({ id: `p${String(i).padStart(5, "0")}` }));
+
+test("paginate: PAGE_SIZE is 50", () => {
+  assert.equal(PAGE_SIZE, 50);
+});
+
+test("paginate: 0 products → one empty page, no false emptiness", () => {
+  const r = paginateCatalog([], 1);
+  assert.equal(r.totalItems, 0);
+  assert.equal(r.totalPages, 1);
+  assert.equal(r.page, 1);
+  assert.equal(r.items.length, 0);
+});
+
+test("paginate: 1 product", () => {
+  const r = paginateCatalog(makeList(1), 1);
+  assert.equal(r.totalItems, 1);
+  assert.equal(r.totalPages, 1);
+  assert.equal(r.items.length, 1);
+});
+
+test("paginate: exactly 50 → one full page", () => {
+  const r = paginateCatalog(makeList(50), 1);
+  assert.equal(r.totalPages, 1);
+  assert.equal(r.items.length, 50);
+});
+
+test("paginate: 51 → two pages (50 + 1)", () => {
+  const p1 = paginateCatalog(makeList(51), 1);
+  assert.equal(p1.totalPages, 2);
+  assert.equal(p1.items.length, 50);
+  assert.equal(p1.startIndex, 0);
+  const p2 = paginateCatalog(makeList(51), 2);
+  assert.equal(p2.page, 2);
+  assert.equal(p2.items.length, 1);
+  assert.equal(p2.startIndex, 50);
+});
+
+test("paginate: 1146 → 23 pages, last page has 46", () => {
+  const list = makeList(1146);
+  const p1 = paginateCatalog(list, 1);
+  assert.equal(p1.totalPages, 23);
+  assert.equal(p1.items.length, 50);
+  const last = paginateCatalog(list, 23);
+  assert.equal(last.items.length, 1146 - 22 * 50); // 46
+});
+
+test("paginate: out-of-range page is clamped to the last page (never false-empty)", () => {
+  const list = makeList(1146);
+  const r = paginateCatalog(list, 100);
+  assert.equal(r.page, 23, "clamped to last real page");
+  assert.ok(r.items.length > 0, "shows the last page, not an empty state");
+});
+
+test("paginate: pages never overlap and cover everything in order", () => {
+  const list = makeList(120); // 3 pages: 50 + 50 + 20
+  const seen: string[] = [];
+  for (let pg = 1; pg <= 3; pg++) seen.push(...paginateCatalog(list, pg).items.map((p) => p.id));
+  assert.equal(seen.length, 120);
+  assert.equal(new Set(seen).size, 120, "no duplicates across pages");
+  assert.deepEqual(seen, list.map((p) => p.id), "contiguous, in order");
+});
+
+// ── catalogHref (state preservation) ─────────────────────────────────────────
+
+test("catalogHref: page 1 with defaults → clean base path", () => {
+  assert.equal(catalogHref(DEFAULT_CONTROLS, 1), "/v2/catalog");
+});
+
+test("catalogHref: preserves query/filter/sort and sets page", () => {
+  const controls: CatalogControls = { query: "cream", filter: "approved", sort: "price_asc", page: 1 };
+  const href = catalogHref(controls, 3);
+  const url = new URL(href, "https://x.test");
+  assert.equal(url.pathname, "/v2/catalog");
+  assert.equal(url.searchParams.get("query"), "cream");
+  assert.equal(url.searchParams.get("filter"), "approved");
+  assert.equal(url.searchParams.get("sort"), "price_asc");
+  assert.equal(url.searchParams.get("page"), "3");
+});
+
+test("catalogHref: omits default filter/sort and page 1", () => {
+  const href = catalogHref({ query: "x", filter: "all", sort: "readiness", page: 5 }, 1);
+  const url = new URL(href, "https://x.test");
+  assert.equal(url.searchParams.get("query"), "x");
+  assert.equal(url.searchParams.get("filter"), null);
+  assert.equal(url.searchParams.get("sort"), null);
+  assert.equal(url.searchParams.get("page"), null);
+});
+
+test("catalogHref: query value is URL-encoded, never reflected raw", () => {
+  const href = catalogHref({ query: "a&b <x>", filter: "all", sort: "readiness", page: 1 }, 2);
+  assert.ok(!href.includes("<x>"), "raw angle brackets not reflected");
+  assert.ok(!href.includes("a&b <"), "raw ampersand/space not reflected");
+  const url = new URL(href, "https://x.test");
+  assert.equal(url.searchParams.get("query"), "a&b <x>");
+});
+
+// ── Option lists ─────────────────────────────────────────────────────────────
+
+test("filter + sort option lists have safe fixed values", () => {
+  assert.equal(CATALOG_FILTER_OPTIONS[0]!.value, "all");
+  const filterValues = CATALOG_FILTER_OPTIONS.map((o) => o.value);
+  for (const v of ["complete", "missing_multiple", "approved", "not_approved", "has_discount", "missing_price"]) {
+    assert.ok(filterValues.includes(v as (typeof filterValues)[number]), `filter option ${v} present`);
+  }
+  assert.equal(CATALOG_SORT_OPTIONS[0]!.value, "readiness");
+  assert.equal(CATALOG_SORT_OPTIONS.length, 7);
+});
+
+// ── Page/component source scans (Phase UI.2A) ────────────────────────────────
+
+test("catalog page wires controls → sort → paginate and stays read-only", () => {
+  const raw = readFileSync(new URL("../../app/(v2)/v2/catalog/page.tsx", import.meta.url), "utf8");
+  const src = strip(raw);
+  assert.ok(/parseCatalogControls\s*\(/.test(src), "parses controls");
+  assert.ok(/sortCatalogProducts\s*\(/.test(src), "sorts");
+  assert.ok(/paginateCatalog\s*\(/.test(src), "paginates");
+  assert.ok(/export const dynamic = "force-dynamic"/.test(src), "force-dynamic");
+  assert.ok(/تعذر تحميل كتالوج ماليكاس\./.test(src), "constant load error");
+  for (const [re, msg] of [
+    [/\bfetch\s*\(/, "fetch("],
+    [/\.rpc\s*\(/, ".rpc("],
+    [/\.insert\s*\(/, ".insert("],
+    [/\.update\s*\(/, ".update("],
+    [/\.upsert\s*\(/, ".upsert("],
+    [/\.delete\s*\(/, ".delete("],
+    [/createAdminClient/, "createAdminClient"],
+    [/service_role/, "service_role"],
+    [/process\.env/, "process.env"],
+    [/console\./, "console."],
+    [/dangerouslySetInnerHTML/, "dangerouslySetInnerHTML"],
+    [/select\(\s*["']\*["']\s*\)/, 'select("*")'],
+  ] as const) {
+    assert.ok(!re.test(src), `forbidden in page: ${msg}`);
+  }
+});
+
+test("MasterCatalog component: read-only, no bulk/edit controls, no raw approval, lazy images", () => {
+  const raw = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
+  const src = strip(raw);
+  // read-only: no mutation/select/bulk affordances
+  for (const [re, msg] of [
+    [/dangerouslySetInnerHTML/, "dangerouslySetInnerHTML"],
+    [/process\.env/, "process.env"],
+    [/\bfetch\s*\(/, "fetch("],
+    [/\.rpc\s*\(/, ".rpc("],
+    [/console\./, "console."],
+    [/type="checkbox"/, "checkbox (bulk select)"],
+    [/onClick/, "onClick handler"],
+    [/<button[^>]*type="submit"[^>]*>[\s\S]*?(حذف|تعديل|أرشفة|delete|edit)/i, "mutation button"],
+  ] as const) {
+    assert.ok(!re.test(src), `forbidden in component: ${msg}`);
+  }
+  assert.ok(/loading="lazy"/.test(src), "images lazy-loaded");
+  assert.ok(/getApprovalLabel/.test(src), "approval shown via fixed-label helper");
+  assert.ok(!/\.approval\b(?!\s*[),])/.test(src.replace(/getApprovalLabel/g, "")), "raw .approval not rendered directly");
 });

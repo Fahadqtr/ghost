@@ -27,11 +27,34 @@ export type CatalogFilter =
   | "no_variants"
   | "missing_sku"
   | "missing_barcode"
-  | "missing_image";
+  | "missing_image"
+  | "complete"
+  | "missing_multiple"
+  | "approved"
+  | "not_approved"
+  | "has_discount"
+  | "missing_price";
+
+export type CatalogSort =
+  | "readiness"
+  | "name_ar"
+  | "name_en"
+  | "sku"
+  | "price_asc"
+  | "price_desc"
+  | "variants_desc";
 
 export interface CatalogFilters {
   query: string;
   filter: CatalogFilter;
+}
+
+/** Full validated URL state for the control center. */
+export interface CatalogControls {
+  query: string;
+  filter: CatalogFilter;
+  sort: CatalogSort;
+  page: number; // requested page (>= 1); clamped to a real page by paginate()
 }
 
 export type CatalogSearchParams = Record<string, string | string[] | undefined> | null | undefined;
@@ -42,6 +65,10 @@ export interface CatalogSummary {
   missingSku: number;
   missingBarcode: number;
   missingImage: number;
+  withDiscount: number;
+  missingPrice: number;
+  complete: number;
+  missingMultiple: number;
 }
 
 export type CompletenessState =
@@ -60,11 +87,30 @@ const FILTER_VALUES: readonly CatalogFilter[] = [
   "missing_sku",
   "missing_barcode",
   "missing_image",
+  "complete",
+  "missing_multiple",
+  "approved",
+  "not_approved",
+  "has_discount",
+  "missing_price",
+];
+
+const SORT_VALUES: readonly CatalogSort[] = [
+  "readiness",
+  "name_ar",
+  "name_en",
+  "sku",
+  "price_asc",
+  "price_desc",
+  "variants_desc",
 ];
 
 const MAX_QUERY_LENGTH = 80;
+export const PAGE_SIZE = 50;
+const MAX_PAGE = 1_000_000; // absurd/overflowing page requests fall back to 1
 
 export const DEFAULT_FILTERS: CatalogFilters = { query: "", filter: "all" };
+export const DEFAULT_CONTROLS: CatalogControls = { query: "", filter: "all", sort: "readiness", page: 1 };
 
 /** First usable string of a search param (first string of an array); never coerces. */
 function pickParam(v: unknown): string | null {
@@ -87,6 +133,32 @@ export function parseCatalogFilters(params: CatalogSearchParams): CatalogFilters
   return {
     query: rawQuery === null ? "" : rawQuery.trim().slice(0, MAX_QUERY_LENGTH),
     filter: oneOf(p.filter, FILTER_VALUES, "all"),
+  };
+}
+
+/**
+ * Strictly parse the requested page. Only a plain positive integer string within
+ * a sane bound is accepted; non-string, non-integer, negative, zero, NaN, or
+ * excessively large values → 1. (Merely-too-high but plausible pages are left
+ * as-is here and clamped to the last real page by paginate().)
+ */
+export function parseCatalogPage(v: unknown): number {
+  const s = pickParam(v);
+  if (s === null || !/^\d+$/.test(s)) return 1;
+  const n = Number(s);
+  if (!Number.isSafeInteger(n) || n < 1 || n > MAX_PAGE) return 1;
+  return n;
+}
+
+/** Parse the full validated control state (query, filter, sort, page). */
+export function parseCatalogControls(params: CatalogSearchParams): CatalogControls {
+  const p: Record<string, unknown> = params && typeof params === "object" ? params : {};
+  const base = parseCatalogFilters(params);
+  return {
+    query: base.query,
+    filter: base.filter,
+    sort: oneOf(p.sort, SORT_VALUES, "readiness"),
+    page: parseCatalogPage(p.page),
   };
 }
 
@@ -173,6 +245,49 @@ export function getCompleteness(p: MasterCatalogProduct): CompletenessState {
   return missing[0]!;
 }
 
+// ── Price, discount, approval ────────────────────────────────────────────────
+
+/** A usable price: a finite number greater than zero. */
+export function hasValidPrice(p: MasterCatalogProduct): boolean {
+  return typeof p.price === "number" && Number.isFinite(p.price) && p.price > 0;
+}
+
+/**
+ * A valid discount requires a usable base price and a positive discount price
+ * strictly LESS than it. A discount >= the original price is never valid.
+ */
+export function hasValidDiscount(p: MasterCatalogProduct): boolean {
+  return (
+    hasValidPrice(p) &&
+    typeof p.discountPrice === "number" &&
+    Number.isFinite(p.discountPrice) &&
+    p.discountPrice > 0 &&
+    p.discountPrice < (p.price as number)
+  );
+}
+
+/** Approval is normalized to a boolean; raw approval text is never surfaced. */
+export function isApproved(p: MasterCatalogProduct): boolean {
+  return typeof p.approval === "string" && p.approval.trim().toLowerCase() === "approved";
+}
+
+/**
+ * Readiness priority for the default sort — LOWER sorts first (most in need of
+ * attention). Order: missing multiple → missing SKU → missing barcode → missing
+ * image → missing price → not approved → complete (last).
+ */
+export function readinessPriority(p: MasterCatalogProduct): number {
+  const c = getCompleteness(p);
+  if (c === "missing_multiple") return 0;
+  if (c === "missing_sku") return 1;
+  if (c === "missing_barcode") return 2;
+  if (c === "missing_image") return 3;
+  // sku, barcode and image are all present past this point
+  if (!hasValidPrice(p)) return 4;
+  if (!isApproved(p)) return 5;
+  return 6;
+}
+
 // ── Search + filtering (in-memory only; no coercion of untrusted values) ──────
 
 function matchesQuery(p: MasterCatalogProduct, q: string): boolean {
@@ -198,6 +313,18 @@ function matchesFilter(p: MasterCatalogProduct, filter: CatalogFilter): boolean 
       return !hasBarcode(p);
     case "missing_image":
       return !hasImage(p);
+    case "complete":
+      return getCompleteness(p) === "complete";
+    case "missing_multiple":
+      return getCompleteness(p) === "missing_multiple";
+    case "approved":
+      return isApproved(p);
+    case "not_approved":
+      return !isApproved(p);
+    case "has_discount":
+      return hasValidDiscount(p);
+    case "missing_price":
+      return !hasValidPrice(p);
     default:
       return true;
   }
@@ -223,7 +350,114 @@ export function summarizeCatalog(products: readonly MasterCatalogProduct[]): Cat
     missingSku: list.filter((p) => !hasSku(p)).length,
     missingBarcode: list.filter((p) => !hasBarcode(p)).length,
     missingImage: list.filter((p) => !hasImage(p)).length,
+    withDiscount: list.filter((p) => hasValidDiscount(p)).length,
+    missingPrice: list.filter((p) => !hasValidPrice(p)).length,
+    complete: list.filter((p) => getCompleteness(p) === "complete").length,
+    missingMultiple: list.filter((p) => getCompleteness(p) === "missing_multiple").length,
   };
+}
+
+// ── Sorting (deterministic, non-mutating) ────────────────────────────────────
+
+/** Compare two nullable strings; missing values always sort LAST. */
+function compareStrings(a: string | null, b: string | null): number {
+  const av = hasText(a) ? (a as string).trim().toLowerCase() : null;
+  const bv = hasText(b) ? (b as string).trim().toLowerCase() : null;
+  if (av === null && bv === null) return 0;
+  if (av === null) return 1;
+  if (bv === null) return -1;
+  return av.localeCompare(bv);
+}
+
+/** Compare two prices; missing/invalid always sort LAST regardless of direction. */
+function comparePrices(a: MasterCatalogProduct, b: MasterCatalogProduct, direction: 1 | -1): number {
+  const av = hasValidPrice(a) ? (a.price as number) : null;
+  const bv = hasValidPrice(b) ? (b.price as number) : null;
+  if (av === null && bv === null) return 0;
+  if (av === null) return 1;
+  if (bv === null) return -1;
+  return (av - bv) * direction;
+}
+
+function primaryCompare(a: MasterCatalogProduct, b: MasterCatalogProduct, sort: CatalogSort): number {
+  switch (sort) {
+    case "name_ar":
+      return compareStrings(a.nameAr, b.nameAr);
+    case "name_en":
+      return compareStrings(a.nameEn, b.nameEn);
+    case "sku":
+      return compareStrings(a.sku, b.sku);
+    case "price_asc":
+      return comparePrices(a, b, 1);
+    case "price_desc":
+      return comparePrices(a, b, -1);
+    case "variants_desc":
+      return b.variantCount - a.variantCount;
+    case "readiness":
+    default:
+      return readinessPriority(a) - readinessPriority(b);
+  }
+}
+
+/**
+ * Sort a COPY of the products by the chosen key, with a deterministic
+ * tie-breaker on the product id. The input array is never mutated.
+ */
+export function sortCatalogProducts(
+  products: readonly MasterCatalogProduct[],
+  sort: CatalogSort,
+): MasterCatalogProduct[] {
+  const arr = [...(Array.isArray(products) ? products : [])];
+  arr.sort((a, b) => primaryCompare(a, b, sort) || a.id.localeCompare(b.id));
+  return arr;
+}
+
+// ── Pagination (pure) ────────────────────────────────────────────────────────
+
+export interface CatalogPage {
+  page: number; // clamped current page (always in [1, totalPages])
+  pageSize: number;
+  totalItems: number;
+  totalPages: number; // at least 1
+  startIndex: number; // 0-based index of the first item on this page
+  items: MasterCatalogProduct[];
+}
+
+/**
+ * Slice a page out of an already filtered+sorted list. `requestedPage` above the
+ * real page count is clamped to the last page (never a false empty state); an
+ * empty list yields one empty page.
+ */
+export function paginateCatalog(
+  products: readonly MasterCatalogProduct[],
+  requestedPage: number,
+  pageSize: number = PAGE_SIZE,
+): CatalogPage {
+  const list = Array.isArray(products) ? products : [];
+  const size = Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : PAGE_SIZE;
+  const totalItems = list.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / size));
+  const req = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const page = Math.min(req, totalPages);
+  const startIndex = (page - 1) * size;
+  return { page, pageSize: size, totalItems, totalPages, startIndex, items: list.slice(startIndex, startIndex + size) };
+}
+
+// ── URL state (preserve query/filter/sort across pagination) ─────────────────
+
+/**
+ * Build a `/v2/catalog` href for a given page, preserving the current query,
+ * filter and sort. Only non-default params are emitted, so page-1 default links
+ * stay clean. Values are encoded via URLSearchParams (never reflected raw).
+ */
+export function catalogHref(controls: CatalogControls, page: number): string {
+  const params = new URLSearchParams();
+  if (controls.query) params.set("query", controls.query);
+  if (controls.filter !== "all") params.set("filter", controls.filter);
+  if (controls.sort !== "readiness") params.set("sort", controls.sort);
+  if (Number.isSafeInteger(page) && page > 1) params.set("page", `${page}`);
+  const qs = params.toString();
+  return qs ? `/v2/catalog?${qs}` : "/v2/catalog";
 }
 
 // ── Fixed Arabic labels (never reflect unknown/raw text) ─────────────────────
@@ -248,6 +482,11 @@ export function getCompletenessLabel(state: CompletenessState): string {
   return fixedLabel(COMPLETENESS_LABELS, state, COMPLETENESS_LABELS.complete);
 }
 
+/** Fixed approval label — never reflects the raw approval text. */
+export function getApprovalLabel(p: MasterCatalogProduct): string {
+  return isApproved(p) ? "معتمد" : "غير معتمد";
+}
+
 /** Display name: Arabic first, then English; otherwise a dash. */
 export function getDisplayName(p: MasterCatalogProduct): string {
   if (hasText(p.nameAr)) return p.nameAr as string;
@@ -263,9 +502,29 @@ export interface CatalogFilterOption {
 }
 export const CATALOG_FILTER_OPTIONS: readonly CatalogFilterOption[] = [
   { value: "all", label: "الكل" },
-  { value: "has_variants", label: "لديه خيارات" },
-  { value: "no_variants", label: "بدون خيارات" },
+  { value: "complete", label: "مكتمل" },
+  { value: "missing_multiple", label: "ناقص أكثر من حقل" },
   { value: "missing_sku", label: "ناقص SKU" },
   { value: "missing_barcode", label: "ناقص باركود" },
   { value: "missing_image", label: "ناقص صورة" },
+  { value: "missing_price", label: "بدون سعر" },
+  { value: "has_discount", label: "عليه خصم" },
+  { value: "approved", label: "معتمد" },
+  { value: "not_approved", label: "غير معتمد" },
+  { value: "has_variants", label: "لديه خيارات" },
+  { value: "no_variants", label: "بدون خيارات" },
+];
+
+export interface CatalogSortOption {
+  value: CatalogSort;
+  label: string;
+}
+export const CATALOG_SORT_OPTIONS: readonly CatalogSortOption[] = [
+  { value: "readiness", label: "الأولوية (نقص البيانات)" },
+  { value: "name_ar", label: "الاسم (عربي)" },
+  { value: "name_en", label: "الاسم (إنجليزي)" },
+  { value: "sku", label: "SKU" },
+  { value: "price_asc", label: "السعر (تصاعدي)" },
+  { value: "price_desc", label: "السعر (تنازلي)" },
+  { value: "variants_desc", label: "الأكثر خيارات" },
 ];
