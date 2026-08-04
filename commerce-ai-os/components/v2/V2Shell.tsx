@@ -21,9 +21,9 @@ export default function V2Shell({
     <div dir="rtl" className="min-h-screen bg-[#fffaf4] text-ink">
       <V2Topbar userEmail={userEmail} onMenu={() => setOpen(true)} />
 
-      <div className="mx-auto flex w-full max-w-7xl">
-        {/* Desktop sidebar */}
-        <aside className="hidden w-60 shrink-0 border-l border-[#efe3d6] md:block">
+      <div className="mx-auto flex w-full max-w-[92rem]">
+        {/* Desktop sidebar — deliberately narrow so the catalog tables get the width */}
+        <aside className="hidden w-52 shrink-0 border-l border-[#efe3d6] md:block">
           <div className="sticky top-[57px] h-[calc(100vh-57px)] overflow-y-auto">
             <V2Sidebar />
           </div>

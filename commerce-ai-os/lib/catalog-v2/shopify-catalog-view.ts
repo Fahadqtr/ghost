@@ -497,3 +497,285 @@ export function getShopifyStatusLabel(status: ShopifyStatus): string {
 export function getOrphanReasonLabel(reason: OrphanReason): string {
   return fixedLabel(ORPHAN_REASON_LABELS, reason, ORPHAN_REASON_LABELS.no_master_match);
 }
+
+/** Display name for a catalog row: Arabic first, then English; else a dash. */
+export function getRowDisplayName(row: ShopifyCatalogRow): string {
+  if (typeof row.nameAr === "string" && row.nameAr.trim().length > 0) return row.nameAr;
+  if (typeof row.nameEn === "string" && row.nameEn.trim().length > 0) return row.nameEn;
+  return "—";
+}
+
+// ── Presentation helpers (Phase UI.3C) ───────────────────────────────────────
+//
+// Pure search / filter / sort / pagination over ALREADY-MATCHED rows. These
+// never re-derive a match: they only read the matchStatus / presenceStatus the
+// matching layer above already decided. Kept here (not in the page/component) so
+// the UI holds no catalog logic and every rule stays unit-testable.
+
+export type ShopifyCatalogFilter =
+  | "all"
+  | "present"
+  | "missing"
+  | "matched_sku"
+  | "matched_barcode"
+  | "ambiguous"
+  | "unknown";
+
+export type ShopifyCatalogSort = "name" | "sku" | "status";
+
+export interface ShopifyCatalogControls {
+  query: string;
+  filter: ShopifyCatalogFilter;
+  sort: ShopifyCatalogSort;
+  page: number;
+}
+
+const SHOPIFY_FILTER_VALUES: readonly ShopifyCatalogFilter[] = [
+  "all",
+  "present",
+  "missing",
+  "matched_sku",
+  "matched_barcode",
+  "ambiguous",
+  "unknown",
+];
+const SHOPIFY_SORT_VALUES: readonly ShopifyCatalogSort[] = ["name", "sku", "status"];
+
+const MAX_QUERY_LENGTH = 80;
+const MAX_PAGE = 1_000_000;
+
+export const SHOPIFY_PAGE_SIZE = 50;
+
+export const DEFAULT_SHOPIFY_CONTROLS: ShopifyCatalogControls = {
+  query: "",
+  filter: "all",
+  sort: "name",
+  page: 1,
+};
+
+export type ShopifyCatalogSearchParams = Record<string, string | string[] | undefined> | null | undefined;
+
+/** First usable string of a search param (first string of an array); never coerces. */
+function pickParam(v: unknown): string | null {
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) {
+    for (const el of v) if (typeof el === "string") return el;
+  }
+  return null;
+}
+
+function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
+  const s = pickParam(v);
+  return s !== null && (allowed as readonly string[]).includes(s) ? (s as T) : fallback;
+}
+
+/**
+ * Parse untrusted GET params into safe controls. Unknown / hostile values fall
+ * back to defaults silently — no error, and no raw value is ever reflected.
+ */
+export function parseShopifyCatalogControls(params: ShopifyCatalogSearchParams): ShopifyCatalogControls {
+  const p: Record<string, unknown> = params && typeof params === "object" ? params : {};
+  const rawQuery = pickParam(p.query);
+  const rawPage = pickParam(p.page);
+  let page = 1;
+  if (rawPage !== null && /^\d+$/.test(rawPage)) {
+    const n = Number(rawPage);
+    if (Number.isSafeInteger(n) && n >= 1 && n <= MAX_PAGE) page = n;
+  }
+  return {
+    query: rawQuery === null ? "" : rawQuery.trim().slice(0, MAX_QUERY_LENGTH),
+    filter: oneOf(p.filter, SHOPIFY_FILTER_VALUES, "all"),
+    sort: oneOf(p.sort, SHOPIFY_SORT_VALUES, "name"),
+    page,
+  };
+}
+
+/** Search matches SKU, barcode, Arabic name, or English name (case-insensitive). */
+function matchesShopifyQuery(row: ShopifyCatalogRow, q: string): boolean {
+  if (q.length === 0) return true;
+  for (const field of [row.sku, row.barcode, row.nameAr, row.nameEn]) {
+    if (typeof field === "string" && field.toLowerCase().includes(q)) return true;
+  }
+  return false;
+}
+
+function matchesShopifyFilter(row: ShopifyCatalogRow, filter: ShopifyCatalogFilter): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "present":
+      return row.presenceStatus === "present";
+    case "missing":
+      return row.presenceStatus === "missing";
+    case "matched_sku":
+      return row.matchStatus === "matched_sku";
+    case "matched_barcode":
+      return row.matchStatus === "matched_barcode";
+    case "ambiguous":
+      return row.matchStatus === "ambiguous";
+    case "unknown":
+      return row.matchStatus === "unknown";
+    default:
+      return true;
+  }
+}
+
+export function filterShopifyCatalogRows(
+  rows: readonly ShopifyCatalogRow[],
+  filters: { query: string; filter: ShopifyCatalogFilter },
+): ShopifyCatalogRow[] {
+  const q = filters.query.trim().toLowerCase();
+  return (Array.isArray(rows) ? rows : []).filter(
+    (r) => matchesShopifyFilter(r, filters.filter) && matchesShopifyQuery(r, q),
+  );
+}
+
+/** Compare two nullable strings; missing values always sort LAST. */
+function compareText(a: string | null, b: string | null): number {
+  const av = typeof a === "string" && a.trim().length > 0 ? a.trim().toLowerCase() : null;
+  const bv = typeof b === "string" && b.trim().length > 0 ? b.trim().toLowerCase() : null;
+  if (av === null && bv === null) return 0;
+  if (av === null) return 1;
+  if (bv === null) return -1;
+  return av.localeCompare(bv);
+}
+
+/** Attention priority for the status sort — LOWER sorts first (needs review). */
+function statusPriority(row: ShopifyCatalogRow): number {
+  switch (row.matchStatus) {
+    case "unmatched":
+      return 0;
+    case "ambiguous":
+      return 1;
+    case "unknown":
+      return 2;
+    case "matched_barcode":
+      return 3;
+    case "matched_sku":
+      return 4;
+    default:
+      return 5;
+  }
+}
+
+/** Stable identity for tie-breaking (product + variant), never rendered. */
+function rowKey(row: ShopifyCatalogRow): string {
+  return `${row.masterProductId}::${row.masterVariantId ?? ""}`;
+}
+
+/** Sort a COPY; the input array is never mutated. */
+export function sortShopifyCatalogRows(
+  rows: readonly ShopifyCatalogRow[],
+  sort: ShopifyCatalogSort,
+): ShopifyCatalogRow[] {
+  const arr = [...(Array.isArray(rows) ? rows : [])];
+  arr.sort((a, b) => {
+    let primary = 0;
+    if (sort === "sku") primary = compareText(a.sku, b.sku);
+    else if (sort === "status") primary = statusPriority(a) - statusPriority(b);
+    else primary = compareText(getRowDisplayName(a) === "—" ? null : getRowDisplayName(a), getRowDisplayName(b) === "—" ? null : getRowDisplayName(b));
+    return primary || rowKey(a).localeCompare(rowKey(b));
+  });
+  return arr;
+}
+
+export interface ShopifyCatalogPage {
+  page: number; // clamped into [1, totalPages]
+  pageSize: number;
+  totalItems: number;
+  totalPages: number; // at least 1
+  startIndex: number; // 0-based index of the first item on this page
+  items: ShopifyCatalogRow[];
+}
+
+/**
+ * Slice a page out of an already filtered+sorted list. A page above the real
+ * count is clamped to the last page (never a false empty state).
+ */
+export function paginateShopifyCatalog(
+  rows: readonly ShopifyCatalogRow[],
+  requestedPage: number,
+  pageSize: number = SHOPIFY_PAGE_SIZE,
+): ShopifyCatalogPage {
+  const list = Array.isArray(rows) ? rows : [];
+  const size = Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : SHOPIFY_PAGE_SIZE;
+  const totalItems = list.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / size));
+  const req = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const page = Math.min(req, totalPages);
+  const startIndex = (page - 1) * size;
+  return { page, pageSize: size, totalItems, totalPages, startIndex, items: list.slice(startIndex, startIndex + size) };
+}
+
+/**
+ * Summary counts over the WHOLE loaded row set.
+ *
+ * `total` is always a real number. The Shopify-dependent counts are null when
+ * Shopify was unavailable — an unknown presence must never be presented as a
+ * confirmed "missing"/"unmatched". The UI renders null as a dash.
+ */
+export interface ShopifyCatalogSummary {
+  total: number;
+  present: number | null;
+  missing: number | null;
+  unmatched: number | null;
+  ambiguous: number | null;
+}
+
+export function summarizeShopifyCatalog(
+  rows: readonly ShopifyCatalogRow[],
+  shopifyAvailable: boolean,
+): ShopifyCatalogSummary {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!shopifyAvailable) {
+    return { total: list.length, present: null, missing: null, unmatched: null, ambiguous: null };
+  }
+  return {
+    total: list.length,
+    present: list.filter((r) => r.presenceStatus === "present").length,
+    missing: list.filter((r) => r.presenceStatus === "missing").length,
+    unmatched: list.filter((r) => r.matchStatus === "unmatched").length,
+    ambiguous: list.filter((r) => r.matchStatus === "ambiguous").length,
+  };
+}
+
+/**
+ * Build a `/v2/catalog/shopify` href for a page, preserving query/filter/sort.
+ * Only non-default values are emitted and all are encoded by URLSearchParams,
+ * so a raw param value is never reflected into the markup.
+ */
+export function shopifyCatalogHref(controls: ShopifyCatalogControls, page: number): string {
+  const params = new URLSearchParams();
+  if (controls.query) params.set("query", controls.query);
+  if (controls.filter !== "all") params.set("filter", controls.filter);
+  if (controls.sort !== "name") params.set("sort", controls.sort);
+  if (Number.isSafeInteger(page) && page > 1) params.set("page", `${page}`);
+  const qs = params.toString();
+  return qs ? `/v2/catalog/shopify?${qs}` : "/v2/catalog/shopify";
+}
+
+// ── Fixed option lists for the GET <form> selects ────────────────────────────
+
+export interface ShopifyFilterOption {
+  value: ShopifyCatalogFilter;
+  label: string;
+}
+export const SHOPIFY_FILTER_OPTIONS: readonly ShopifyFilterOption[] = [
+  { value: "all", label: "الكل" },
+  { value: "present", label: "موجود" },
+  { value: "missing", label: "غير موجود" },
+  { value: "matched_sku", label: "مطابق بالـSKU" },
+  { value: "matched_barcode", label: "مطابق بالباركود" },
+  { value: "ambiguous", label: "يتطلب مراجعة" },
+  { value: "unknown", label: "غير معروف" },
+];
+
+export interface ShopifySortOption {
+  value: ShopifyCatalogSort;
+  label: string;
+}
+export const SHOPIFY_SORT_OPTIONS: readonly ShopifySortOption[] = [
+  { value: "name", label: "الاسم" },
+  { value: "sku", label: "SKU" },
+  { value: "status", label: "الحالة" },
+];
