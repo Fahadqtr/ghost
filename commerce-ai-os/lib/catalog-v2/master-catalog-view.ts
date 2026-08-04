@@ -21,6 +21,16 @@ export interface MasterCatalogProduct {
   variantCount: number;
 }
 
+/** A catalog-safe variant row (NO stock/inventory/platform/order/PII fields). */
+export interface CatalogVariant {
+  id: string | null;
+  variantName: string | null; // variant_name
+  variantNameEn: string | null; // variant_name_en
+  sku: string | null;
+  barcode: string | null;
+  price: number | null;
+}
+
 export type CatalogFilter =
   | "all"
   | "has_variants"
@@ -150,6 +160,19 @@ export function parseCatalogPage(v: unknown): number {
   return n;
 }
 
+const MAX_ID_LENGTH = 200;
+
+/**
+ * Validate a product id route parameter. Accepts only a non-empty string within
+ * a sane length; anything else → null (the caller then shows the fixed
+ * not-found state). Never coerces and never reflects the value anywhere.
+ */
+export function parseProductId(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  if (v.length === 0 || v.trim().length === 0 || v.length > MAX_ID_LENGTH) return null;
+  return v;
+}
+
 /** Parse the full validated control state (query, filter, sort, page). */
 export function parseCatalogControls(params: CatalogSearchParams): CatalogControls {
   const p: Record<string, unknown> = params && typeof params === "object" ? params : {};
@@ -214,6 +237,30 @@ export function projectCatalogRows(
       imageUrl: stringOrNull(row.image_url),
       approval: stringOrNull(row.approval),
       variantCount: variantCounts.get(id) ?? 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * Project raw product_variants rows into catalog-safe variants. Only whitelisted
+ * fields are copied (a new object per row, no spread); non-plain rows are
+ * skipped; values are never coerced. `parent_product_id` (used only for counting
+ * upstream) and any stock/inventory/platform/order/PII fields are never copied.
+ * The input array is not mutated.
+ */
+export function projectCatalogVariants(variantRows: readonly unknown[]): CatalogVariant[] {
+  const out: CatalogVariant[] = [];
+  const rows = Array.isArray(variantRows) ? variantRows : [];
+  for (const row of rows) {
+    if (!isPlainObject(row)) continue;
+    out.push({
+      id: stringOrNull(row.id),
+      variantName: stringOrNull(row.variant_name),
+      variantNameEn: stringOrNull(row.variant_name_en),
+      sku: stringOrNull(row.sku),
+      barcode: stringOrNull(row.barcode),
+      price: numberOrNull(row.price),
     });
   }
   return out;
@@ -491,6 +538,13 @@ export function getApprovalLabel(p: MasterCatalogProduct): string {
 export function getDisplayName(p: MasterCatalogProduct): string {
   if (hasText(p.nameAr)) return p.nameAr as string;
   if (hasText(p.nameEn)) return p.nameEn as string;
+  return "—";
+}
+
+/** Variant display name: Arabic first, then English; otherwise a dash. */
+export function getVariantDisplayName(v: CatalogVariant): string {
+  if (hasText(v.variantName)) return v.variantName as string;
+  if (hasText(v.variantNameEn)) return v.variantNameEn as string;
   return "—";
 }
 

@@ -13,6 +13,9 @@ import {
   parseCatalogFilters,
   parseCatalogControls,
   parseCatalogPage,
+  parseProductId,
+  projectCatalogVariants,
+  getVariantDisplayName,
   filterCatalogProducts,
   sortCatalogProducts,
   paginateCatalog,
@@ -34,14 +37,18 @@ import {
 } from "./master-catalog-view.ts";
 import {
   loadMasterCatalog,
+  loadCatalogProduct,
   type CatalogReadClient,
   type CatalogQueryResult,
   type CatalogRangeBuilder,
+  type CatalogDetailReadClient,
+  type CatalogDetailFilterBuilder,
 } from "./master-catalog-read.ts";
 
 // Inject the REAL pure projector so the read layer never resolves its lazy
 // dynamic import under node:test.
 const PROJECTOR = { projectCatalogRows };
+const DETAIL_PROJECTOR = { projectCatalogRows, projectCatalogVariants };
 
 // ── Builders ─────────────────────────────────────────────────────────────────
 
@@ -976,4 +983,309 @@ test("MasterCatalog component: read-only, no bulk/edit controls, no raw approval
   assert.ok(/loading="lazy"/.test(src), "images lazy-loaded");
   assert.ok(/getApprovalLabel/.test(src), "approval shown via fixed-label helper");
   assert.ok(!/\.approval\b(?!\s*[),])/.test(src.replace(/getApprovalLabel/g, "")), "raw .approval not rendered directly");
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase UI.2B — Read-only Product Detail
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── parseProductId ───────────────────────────────────────────────────────────
+
+test("parseProductId: accepts a non-empty string within max length", () => {
+  assert.equal(parseProductId("p1"), "p1");
+  assert.equal(parseProductId("gid://shopify/Product/123"), "gid://shopify/Product/123");
+});
+
+test("parseProductId: rejects non-string / empty / whitespace / too long → null", () => {
+  for (const bad of [undefined, null, "", "   ", 5 as unknown as string, {} as unknown as string, ["p"] as unknown as string, "a".repeat(201)]) {
+    assert.equal(parseProductId(bad), null, `id=${JSON.stringify(bad)}`);
+  }
+});
+
+// ── projectCatalogVariants ───────────────────────────────────────────────────
+
+test("projectCatalogVariants: keeps only whitelisted catalog-safe fields", () => {
+  const out = projectCatalogVariants([
+    { id: "v1", parent_product_id: "p1", variant_name: "أحمر", variant_name_en: "Red", sku: "MK-1-R", barcode: "B-R", price: 12 },
+  ]);
+  assert.equal(out.length, 1);
+  assert.deepEqual(Object.keys(out[0]!).sort(), ["barcode", "id", "price", "sku", "variantName", "variantNameEn"].sort());
+  assert.equal(out[0]!.variantName, "أحمر");
+  assert.equal(out[0]!.variantNameEn, "Red");
+  assert.equal(out[0]!.price, 12);
+});
+
+test("projectCatalogVariants: never copies stock/inventory/platform/order/customer/raw fields", () => {
+  const out = projectCatalogVariants([
+    {
+      id: "v1",
+      parent_product_id: "p1",
+      variant_name: "X",
+      sku: "S",
+      barcode: "B",
+      price: 5,
+      stock_quantity: 99,
+      inventory: { qty: 3 },
+      channel_status: "active",
+      platform_status: "approved",
+      shopify_id: "gid://s/1",
+      order_id: "O1",
+      customer: { phone: "+974" },
+      raw: { secret: "SECRETV" },
+    },
+  ]);
+  const json = JSON.stringify(out);
+  for (const bad of ["stock", "inventory", "channel", "platform", "shopify", "order_id", "customer", "+974", "SECRETV", "parent_product_id"]) {
+    assert.ok(!json.includes(bad), `leaked: ${bad}`);
+  }
+});
+
+test("projectCatalogVariants: skips non-object rows, never coerces, never mutates input", () => {
+  const rows: unknown[] = [null, 5, "x", { id: 123, variant_name: 456, sku: {}, price: "10" }];
+  const snap = JSON.parse(JSON.stringify(rows));
+  const out = projectCatalogVariants(rows);
+  assert.equal(out.length, 1, "only the one object row is kept");
+  assert.equal(out[0]!.id, null, "numeric id → null (not coerced)");
+  assert.equal(out[0]!.variantName, null, "numeric name → null");
+  assert.equal(out[0]!.sku, null, "object sku → null");
+  assert.equal(out[0]!.price, null, "string price → null");
+  assert.deepEqual(rows, snap, "input not mutated");
+});
+
+test("getVariantDisplayName: Arabic first, then English, else dash", () => {
+  assert.equal(getVariantDisplayName({ id: "1", variantName: "كبير", variantNameEn: "Large", sku: null, barcode: null, price: null }), "كبير");
+  assert.equal(getVariantDisplayName({ id: "1", variantName: null, variantNameEn: "Large", sku: null, barcode: null, price: null }), "Large");
+  assert.equal(getVariantDisplayName({ id: "1", variantName: null, variantNameEn: null, sku: null, barcode: null, price: null }), "—");
+});
+
+// ── loadCatalogProduct (fake .eq client) ─────────────────────────────────────
+
+interface EqTableCfg {
+  rows?: unknown[];
+  fail?: boolean;
+  throwOnCall?: boolean;
+}
+interface EqCall {
+  table: string;
+  columns: string;
+  eq: [string, string];
+  limit: number;
+}
+
+function fakeEqClient(cfg: Record<string, EqTableCfg>): { client: CatalogDetailReadClient; calls: EqCall[] } {
+  const calls: EqCall[] = [];
+  const client: CatalogDetailReadClient = {
+    from(table: string) {
+      let columns = "";
+      let eqPair: [string, string] = ["", ""];
+      let pending: CatalogQueryResult = { data: [], error: null };
+      const resolve = () => {
+        const t = cfg[table] ?? {};
+        if (t.fail) pending = { data: null, error: { message: "DETAIL SECRET", code: "42P01", hint: "SHINT" } };
+        else pending = { data: t.rows ?? [], error: null };
+      };
+      const builder: CatalogDetailFilterBuilder = {
+        filter(column: string, operator: string, value: string) {
+          if (operator === "eq") eqPair = [column, value];
+          return builder;
+        },
+        limit(count: number) {
+          const t = cfg[table] ?? {};
+          if (t.throwOnCall) throw new Error("BUILDER BOOM SECRET");
+          calls.push({ table, columns, eq: eqPair, limit: count });
+          resolve();
+          return builder;
+        },
+        then<TResult1 = CatalogQueryResult, TResult2 = never>(
+          onfulfilled?: ((value: CatalogQueryResult) => TResult1 | PromiseLike<TResult1>) | null,
+          onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+        ): PromiseLike<TResult1 | TResult2> {
+          return Promise.resolve(pending).then(onfulfilled, onrejected);
+        },
+      };
+      return {
+        select: (cols: string) => {
+          columns = cols;
+          return builder;
+        },
+      };
+    },
+  };
+  return { client, calls };
+}
+
+const productRow = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  id: "p1",
+  sku: "MK-1",
+  barcode: "B-1",
+  name_ar: "منتج",
+  name_en: "Product",
+  price: 100,
+  discount_price: 70,
+  image_url: "https://img/x.jpg",
+  approval: "Approved",
+  ...over,
+});
+
+test("loadCatalogProduct: product success + variants → product with correct variantCount and variants", async () => {
+  const { client, calls } = fakeEqClient({
+    products: { rows: [productRow({ id: "p1" })] },
+    product_variants: {
+      rows: [
+        { id: "v1", parent_product_id: "p1", variant_name: "أحمر", variant_name_en: "Red", sku: "S1", barcode: "B1", price: 90 },
+        { id: "v2", parent_product_id: "p1", variant_name: "أزرق", variant_name_en: "Blue", sku: "S2", barcode: "B2", price: 95 },
+      ],
+    },
+  });
+  const res = await loadCatalogProduct(client, "p1", { project: DETAIL_PROJECTOR });
+  assert.equal(res.status, "ok");
+  assert.ok(res.product);
+  assert.equal(res.product!.id, "p1");
+  assert.equal(res.product!.variantCount, 2, "count derived from variant rows");
+  assert.equal(res.variants.length, 2);
+  assert.equal(res.variants[0]!.variantName, "أحمر");
+  // correct eq + explicit columns + no forbidden columns
+  const prodCall = calls.find((c) => c.table === "products")!;
+  const varCall = calls.find((c) => c.table === "product_variants")!;
+  assert.deepEqual(prodCall.eq, ["id", "p1"]);
+  assert.deepEqual(varCall.eq, ["parent_product_id", "p1"]);
+  assert.ok(!prodCall.columns.includes("*") && !varCall.columns.includes("*"), "no select(*)");
+  assert.ok(!varCall.columns.includes("stock_quantity"), "variant columns exclude stock_quantity");
+});
+
+test("loadCatalogProduct: product missing → status ok, product null (safe not-found)", async () => {
+  const { client } = fakeEqClient({ products: { rows: [] } });
+  const res = await loadCatalogProduct(client, "nope", { project: DETAIL_PROJECTOR });
+  assert.equal(res.status, "ok");
+  assert.equal(res.product, null);
+  assert.deepEqual(res.variants, []);
+});
+
+test("loadCatalogProduct: invalid id → safe not-found without querying", async () => {
+  const { client, calls } = fakeEqClient({ products: { rows: [productRow()] } });
+  for (const bad of ["", "   ", "a".repeat(201), 5 as unknown as string, null as unknown as string]) {
+    const res = await loadCatalogProduct(client, bad, { project: DETAIL_PROJECTOR });
+    assert.equal(res.status, "ok");
+    assert.equal(res.product, null);
+  }
+  assert.equal(calls.length, 0, "no query issued for invalid ids");
+});
+
+test("loadCatalogProduct: product read failure → status error, no leak", async () => {
+  const { client } = fakeEqClient({ products: { fail: true } });
+  const res = await loadCatalogProduct(client, "p1", { project: DETAIL_PROJECTOR });
+  assert.equal(res.status, "error");
+  assert.equal(res.product, null);
+  const json = JSON.stringify(res);
+  for (const leak of ["DETAIL SECRET", "42P01", "SHINT"]) assert.ok(!json.includes(leak), `leaked: ${leak}`);
+});
+
+test("loadCatalogProduct: product builder throw → status error, no leak", async () => {
+  const { client } = fakeEqClient({ products: { throwOnCall: true } });
+  const res = await loadCatalogProduct(client, "p1", { project: DETAIL_PROJECTOR });
+  assert.equal(res.status, "error");
+  assert.ok(!JSON.stringify(res).includes("BOOM"), "builder error not exposed");
+});
+
+test("loadCatalogProduct: variant read failure is non-fatal → product shows, variants empty, no leak", async () => {
+  const { client } = fakeEqClient({
+    products: { rows: [productRow({ id: "p1" })] },
+    product_variants: { fail: true },
+  });
+  const res = await loadCatalogProduct(client, "p1", { project: DETAIL_PROJECTOR });
+  assert.equal(res.status, "ok", "product still renders");
+  assert.ok(res.product);
+  assert.deepEqual(res.variants, [], "no partial variant data");
+  const json = JSON.stringify(res);
+  for (const leak of ["DETAIL SECRET", "42P01", "SHINT"]) assert.ok(!json.includes(leak), `leaked: ${leak}`);
+});
+
+test("loadCatalogProduct: only products / product_variants tables are queried", async () => {
+  const { client, calls } = fakeEqClient({
+    products: { rows: [productRow()] },
+    product_variants: { rows: [] },
+  });
+  await loadCatalogProduct(client, "p1", { project: DETAIL_PROJECTOR });
+  for (const c of calls) {
+    assert.ok(c.table === "products" || c.table === "product_variants", `unexpected table ${c.table}`);
+  }
+});
+
+// ── Detail read-layer source scan ────────────────────────────────────────────
+
+test("read source (detail additions): SELECT/eq-only, no writes/RPC/fetch/admin/env/logging/select(*)", () => {
+  const src = strip(readFileSync(new URL("./master-catalog-read.ts", import.meta.url), "utf8"));
+  for (const [re, msg] of [
+    [/\bfetch\s*\(/, "fetch("],
+    [/\.rpc\s*\(/, ".rpc("],
+    [/\.insert\s*\(/, ".insert("],
+    [/\.update\s*\(/, ".update("],
+    [/\.upsert\s*\(/, ".upsert("],
+    [/\.delete\s*\(/, ".delete("],
+    [/createAdminClient/, "createAdminClient"],
+    [/service_role/, "service_role"],
+    [/process\.env/, "process.env"],
+    [/console\./, "console."],
+    [/select\(\s*["']\*["']\s*\)/, 'select("*")'],
+    [/stock_quantity/, "stock_quantity"],
+    [/:\s*any\b/, ": any"],
+  ] as const) {
+    assert.ok(!re.test(src), `forbidden in read source: ${msg}`);
+  }
+  assert.ok(/\.filter\(/.test(src), "uses a parameterized .filter equality");
+  assert.ok(/["']id["']\s*,\s*id/.test(src), "product read filters by id (\"id\", id)");
+  assert.ok(/["']parent_product_id["']\s*,\s*id/.test(src), "variant read filters by parent_product_id (\"parent_product_id\", id)");
+});
+
+// ── Detail page + component source scans ─────────────────────────────────────
+
+test("detail page: force-dynamic, wired to loadCatalogProduct, safe states, no id reflection, read-only", () => {
+  const raw = readFileSync(new URL("../../app/(v2)/v2/catalog/[id]/page.tsx", import.meta.url), "utf8");
+  const src = strip(raw);
+  assert.ok(/export const dynamic = "force-dynamic"/.test(src), "force-dynamic");
+  assert.ok(/parseProductId\s*\(/.test(src), "validates id");
+  assert.ok(/loadCatalogProduct\s*\(/.test(src), "calls loadCatalogProduct");
+  assert.ok(/تعذر تحميل كتالوج ماليكاس\./.test(src), "constant load error");
+  assert.ok(/لا يوجد منتج بهذا المعرّف\./.test(src), "constant not-found");
+  for (const [re, msg] of [
+    [/\bfetch\s*\(/, "fetch("],
+    [/\.rpc\s*\(/, ".rpc("],
+    [/\.insert\s*\(/, ".insert("],
+    [/\.update\s*\(/, ".update("],
+    [/\.upsert\s*\(/, ".upsert("],
+    [/\.delete\s*\(/, ".delete("],
+    [/createAdminClient/, "createAdminClient"],
+    [/service_role/, "service_role"],
+    [/process\.env/, "process.env"],
+    [/console\./, "console."],
+    [/dangerouslySetInnerHTML/, "dangerouslySetInnerHTML"],
+    [/select\(\s*["']\*["']\s*\)/, 'select("*")'],
+  ] as const) {
+    assert.ok(!re.test(src), `forbidden in detail page: ${msg}`);
+  }
+});
+
+test("ProductDetail component: read-only, lazy image, fixed approval, no stock/platform/order/PII", () => {
+  const raw = readFileSync(new URL("../../components/v2/catalog/ProductDetail.tsx", import.meta.url), "utf8");
+  const src = strip(raw);
+  assert.ok(/loading="lazy"/.test(src), "product image lazy-loaded");
+  assert.ok(/getApprovalLabel/.test(src), "approval via fixed-label helper");
+  for (const [re, msg] of [
+    [/dangerouslySetInnerHTML/, "dangerouslySetInnerHTML"],
+    [/process\.env/, "process.env"],
+    [/\bfetch\s*\(/, "fetch("],
+    [/\.rpc\s*\(/, ".rpc("],
+    [/console\./, "console."],
+    [/type="checkbox"/, "checkbox (bulk select)"],
+    [/onClick/, "onClick handler"],
+    [/stock_quantity|\bstock\b|\binventory\b|channel_status|platform_status|\border_id\b|\bcustomer\b/, "stock/platform/order/customer field"],
+  ] as const) {
+    assert.ok(!re.test(src), `forbidden in ProductDetail: ${msg}`);
+  }
+});
+
+test("MasterCatalog links product rows to /v2/catalog/[id] (desktop + mobile)", () => {
+  const src = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
+  const matches = src.match(/\/v2\/catalog\/\$\{encodeURIComponent\(p\.id\)\}/g) ?? [];
+  assert.ok(matches.length >= 2, "both desktop and mobile rows link to the detail route with encoded id");
 });
