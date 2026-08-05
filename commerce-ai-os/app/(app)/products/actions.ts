@@ -12,6 +12,8 @@ import { isSignedIn } from "@/lib/auth/requireUser";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
 import { buildDraftPrompt, parseProductDraft } from "@/lib/products/draft-compute";
+import { planVariantDiff } from "@/lib/products/variant-diff";
+import { deleteShelfStockForProduct } from "@/lib/products/shelf-cleanup";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
 
 // --- input shapes (sent from the client form) -----------------------------
@@ -148,6 +150,84 @@ function toVariantRows(parentId: string, variants: VariantInput[]) {
     }));
 }
 
+// Fixed, user-safe messages for every variant-sync failure. They never contain
+// a uuid, a constraint name, SQL, a table name, or a raw database message.
+const VARIANT_SYNC_MESSAGES: Record<string, string> = {
+  unknown_variant_id: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
+  duplicate_variant_id: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
+  variant_has_shelf_stock: "لا يمكن حذف خيار لا تزال عليه كمية في الرفوف — أفرغ الكمية أولًا ثم احذفه.",
+  variant_has_channel_mapping: "لا يمكن حذف خيار مرتبط بمنصة بيع — عالِج ارتباط المنصة أولًا ثم احذفه.",
+  variant_sync_failed: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
+};
+
+/** Prototype-safe fixed-message lookup; unknown codes fall back to the generic. */
+function variantSyncMessage(code: unknown): string {
+  const fallback = VARIANT_SYNC_MESSAGES.variant_sync_failed;
+  if (typeof code !== "string") return fallback;
+  if (!Object.hasOwn(VARIANT_SYNC_MESSAGES, code)) return fallback;
+  const msg = VARIANT_SYNC_MESSAGES[code];
+  return typeof msg === "string" ? msg : fallback;
+}
+
+/** The payload shape the sync RPC expects: trimmed text, real JSON numbers. */
+function toVariantPayload(variants: VariantInput[]) {
+  return (Array.isArray(variants) ? variants : []).map((v) => ({
+    id: typeof v.id === "string" && v.id.trim().length > 0 ? v.id.trim() : null,
+    variant_name: str(v.variant_name),
+    variant_name_en: str(v.variant_name_en),
+    sku: str(v.sku),
+    barcode: str(v.barcode),
+    color: str(v.color),
+    size: str(v.size),
+    price: num(v.price),
+    stock_quantity: num(v.stock_quantity),
+  }));
+}
+
+/**
+ * Sync a product's variants without changing the id of any retained row.
+ *
+ * Two layers on purpose. First a pure server-side pre-check against the
+ * authoritative id set, so a stale or foreign id is rejected before ANY variant
+ * write is attempted. Then one atomic RPC that re-validates and performs
+ * update/insert/delete in a single transaction — the database, not the client,
+ * is the authority, and a partial failure cannot leave the product with fewer
+ * variants than it started with.
+ *
+ * Returns a fixed user-facing message on failure, or null on success.
+ */
+async function syncProductVariants(
+  supabase: ReturnType<typeof createClient>,
+  productId: string,
+  variants: VariantInput[],
+): Promise<string | null> {
+  const { data: existing, error: readErr } = await supabase
+    .from("product_variants")
+    .select("id")
+    .eq("parent_product_id", productId);
+  if (readErr) return variantSyncMessage("variant_sync_failed");
+
+  const existingIds = (existing ?? [])
+    .map((r) => (r as { id?: unknown }).id)
+    .filter((v): v is string => typeof v === "string");
+
+  // Fail fast, before touching anything.
+  const plan = planVariantDiff(existingIds, variants);
+  if (!plan.ok) return variantSyncMessage(plan.error);
+
+  const { data, error } = await supabase.rpc("sync_product_variants", {
+    p_product_id: productId,
+    p_variants: toVariantPayload(variants),
+  });
+  if (error) return variantSyncMessage("variant_sync_failed");
+
+  const result = data as { ok?: unknown; error?: unknown } | null;
+  if (result === null || typeof result !== "object" || result.ok !== true) {
+    return variantSyncMessage(result?.error);
+  }
+  return null;
+}
+
 // --- actions --------------------------------------------------------------
 
 export async function createProduct(input: ProductInput) {
@@ -262,13 +342,18 @@ export async function updateProduct(id: string, input: ProductInput) {
     });
   } catch { /* best-effort */ }
 
-  // Replace variants: delete existing, re-insert the submitted set.
-  await supabase.from("product_variants").delete().eq("parent_product_id", id);
-  const variantRows = toVariantRows(id, input.variants);
-  if (variantRows.length > 0) {
-    const vErr = (await supabase.from("product_variants").insert(variantRows)).error;
-    if (vErr) return { error: friendlyWriteError(vErr, "Could not save variants.") };
-  }
+  // Sync variants WITHOUT churning their ids. The old code deleted every row
+  // and re-inserted the submitted set, so `product_variants.id` changed on each
+  // save and anything holding a variant id (variant_shelf_stock, which has no
+  // FK) was silently orphaned — and a failed re-insert left the product with no
+  // variants at all, because the delete had already committed.
+  //
+  // Now: validate the submitted ids against the authoritative set first, then
+  // hand the whole set to one atomic RPC that updates, inserts and deletes in a
+  // single transaction. The session client is used deliberately (no admin
+  // client) so existing RLS still governs the write.
+  const variantSyncError = await syncProductVariants(supabase, id, input.variants);
+  if (variantSyncError) return { error: variantSyncError };
 
   const changes = computeFieldChanges(
     (beforeRow ?? {}) as Record<string, unknown>,
@@ -589,6 +674,9 @@ export async function deleteProduct(id: string) {
     .select("variant_name, sku, barcode, color, size, price")
     .eq("parent_product_id", id);
   // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).
+  // variant_shelf_stock holds variant ids with NO foreign key, so it must be
+  // cleared BEFORE the variants go — otherwise its rows outlive them silently.
+  await deleteShelfStockForProduct(supabase, id);
   await supabase.from("product_variants").delete().eq("parent_product_id", id);
   await supabase.from("channel_products").delete().eq("product_id", id);
   await supabase.from("inventory").delete().eq("product_id", id);
