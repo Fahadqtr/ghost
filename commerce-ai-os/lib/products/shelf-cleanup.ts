@@ -33,34 +33,46 @@ function inList(values: readonly string[]): string {
   return `(${values.map((v) => `"${v.replace(/"/g, '""')}"`).join(",")})`;
 }
 
+export type ShelfCleanupResult = { ok: true; deletedVariantIds: number } | { ok: false };
+
 /**
  * Delete every variant_shelf_stock row belonging to this product's variants.
  *
- * Best-effort by design: the caller is in the middle of an explicit, confirmed
- * product deletion, and a cleanup failure must not abort it and strand the
- * product half-deleted. Returns the number of variant ids it attempted to
- * clear, so callers/tests can assert it actually ran.
+ * FAILS CLOSED. This is deliberately not best-effort: if the cleanup cannot be
+ * proven to have succeeded and the caller deleted the variants anyway, the
+ * shelf rows would be stranded pointing at ids that no longer exist — exactly
+ * the orphaning this phase exists to eliminate. A caller that gets ok:false
+ * must abort the whole deletion rather than continue.
+ *
+ * ok:false on a failed id read, a failed delete (the delete's own `error` is
+ * checked, never ignored), or any thrown exception. A product with no variants
+ * is ok:true with zero ids — there is nothing to strand.
  */
 export async function deleteShelfStockForProduct(
   client: ShelfCleanupClient,
   productId: string,
-): Promise<number> {
-  if (typeof productId !== "string" || productId.length === 0) return 0;
+): Promise<ShelfCleanupResult> {
+  if (typeof productId !== "string" || productId.length === 0) return { ok: false };
   try {
     const { data, error } = await client
       .from("product_variants")
       .select("id")
       .filter("parent_product_id", "eq", productId);
-    if (error) return 0;
+    if (error) return { ok: false };
 
     const ids = (Array.isArray(data) ? data : [])
       .map((r) => (r as { id?: unknown }).id)
       .filter((v): v is string => typeof v === "string" && v.length > 0);
-    if (ids.length === 0) return 0;
+    if (ids.length === 0) return { ok: true, deletedVariantIds: 0 };
 
-    await client.from("variant_shelf_stock").delete().filter("variant_id", "in", inList(ids));
-    return ids.length;
+    const del = await client
+      .from("variant_shelf_stock")
+      .delete()
+      .filter("variant_id", "in", inList(ids));
+    if (del.error) return { ok: false };
+
+    return { ok: true, deletedVariantIds: ids.length };
   } catch {
-    return 0; // never block an explicit product deletion
+    return { ok: false };
   }
 }

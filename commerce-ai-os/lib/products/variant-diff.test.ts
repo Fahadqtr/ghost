@@ -162,7 +162,10 @@ test("malformed input is tolerated without throwing", () => {
 
 // ── Shelf cleanup helper ─────────────────────────────────────────────────────
 
-function fakeClient(variantIds: string[], opts: { selectError?: boolean } = {}) {
+function fakeClient(
+  variantIds: string[],
+  opts: { selectError?: boolean; deleteError?: boolean; throwOnSelect?: boolean } = {},
+) {
   const calls: { table: string; op: string; column?: string; operator?: string; value?: string }[] = [];
   const client = {
     from(table: string) {
@@ -172,6 +175,7 @@ function fakeClient(variantIds: string[], opts: { selectError?: boolean } = {}) 
           return {
             filter(column: string, operator: string, value: string) {
               calls.push({ table, op: "select.filter", column, operator, value });
+              if (opts.throwOnSelect) throw new Error("boom");
               return Promise.resolve(
                 opts.selectError
                   ? { data: null, error: { message: "boom" } }
@@ -184,7 +188,7 @@ function fakeClient(variantIds: string[], opts: { selectError?: boolean } = {}) 
           return {
             filter(column: string, operator: string, value: string) {
               calls.push({ table, op: "delete.filter", column, operator, value });
-              return Promise.resolve({ error: null });
+              return Promise.resolve(opts.deleteError ? { error: { message: "boom" } } : { error: null });
             },
           };
         },
@@ -196,8 +200,8 @@ function fakeClient(variantIds: string[], opts: { selectError?: boolean } = {}) 
 
 test("shelf cleanup deletes the shelf rows of every variant of the product", async () => {
   const { client, calls } = fakeClient([V1, V2]);
-  const n = await deleteShelfStockForProduct(client, "p1");
-  assert.equal(n, 2);
+  const r = await deleteShelfStockForProduct(client, "p1");
+  assert.deepEqual(r, { ok: true, deletedVariantIds: 2 });
   const del = calls.find((c) => c.op === "delete.filter");
   assert.equal(del?.table, "variant_shelf_stock");
   assert.equal(del?.column, "variant_id");
@@ -205,16 +209,61 @@ test("shelf cleanup deletes the shelf rows of every variant of the product", asy
   assert.ok(del?.value?.includes(V1) && del?.value?.includes(V2));
 });
 
-test("shelf cleanup is a no-op for a product with no variants", async () => {
+test("a product with no variants is a clean success — nothing can be stranded", async () => {
   const { client, calls } = fakeClient([]);
-  assert.equal(await deleteShelfStockForProduct(client, "p1"), 0);
+  assert.deepEqual(await deleteShelfStockForProduct(client, "p1"), { ok: true, deletedVariantIds: 0 });
   assert.equal(calls.some((c) => c.op === "delete.filter"), false, "no delete is issued");
 });
 
-test("shelf cleanup never throws and never blocks the deletion it serves", async () => {
-  const { client } = fakeClient([V1], { selectError: true });
-  assert.equal(await deleteShelfStockForProduct(client, "p1"), 0);
-  assert.equal(await deleteShelfStockForProduct(client, ""), 0);
+test("shelf cleanup FAILS CLOSED on a read error, a delete error, a throw, or a bad id", async () => {
+  assert.deepEqual(await deleteShelfStockForProduct(fakeClient([V1], { selectError: true }).client, "p1"), { ok: false });
+  assert.deepEqual(await deleteShelfStockForProduct(fakeClient([V1], { deleteError: true }).client, "p1"), { ok: false });
+  assert.deepEqual(await deleteShelfStockForProduct(fakeClient([V1], { throwOnSelect: true }).client, "p1"), { ok: false });
+  assert.deepEqual(await deleteShelfStockForProduct(fakeClient([V1]).client, ""), { ok: false });
+});
+
+test("the DELETE error is checked, never ignored", () => {
+  const src = strip(readFileSync(new URL("./shelf-cleanup.ts", import.meta.url), "utf8"));
+  assert.ok(/if \(del\.error\) return \{ ok: false \}/.test(src), "the delete result's error is inspected");
+  assert.ok(!/Best-effort/i.test(src), "the helper is no longer best-effort");
+});
+
+// ── Full-product delete aborts when cleanup fails ────────────────────────────
+
+test("a cleanup failure aborts the whole product deletion in both paths", () => {
+  for (const [name, raw] of [["deleteProduct", ACTIONS_SRC], ["deleteProductById", HEALTH_SRC]] as const) {
+    const src = strip(raw);
+    const guardAt = src.indexOf("if (!shelfCleanup.ok) return");
+    const variantDeleteAt = src.indexOf('from("product_variants").delete()');
+    const productDeleteAt = src.indexOf('from("products").delete()');
+    assert.ok(guardAt > 0, `${name} guards on the cleanup result`);
+    assert.ok(guardAt < variantDeleteAt, `${name} returns before deleting variant rows`);
+    assert.ok(guardAt < productDeleteAt, `${name} returns before deleting the product`);
+  }
+});
+
+test("the abort message is fixed and leaks nothing", () => {
+  const msg = "تعذّر حذف بيانات رفوف خيارات المنتج. لم يتم حذف المنتج.";
+  assert.ok(ACTIONS_SRC.includes(msg), "deleteProduct uses the fixed message");
+  assert.ok(HEALTH_SRC.includes(msg), "deleteProductById uses the fixed message");
+  for (const [name, raw] of [["actions", ACTIONS_SRC], ["health", HEALTH_SRC]] as const) {
+    const guardLine = strip(raw)
+      .split("\n")
+      .find((l) => l.includes("shelfCleanup.ok"));
+    assert.ok(guardLine !== undefined, `${name} has the guard`);
+    for (const banned of ["error.message", "variant_shelf_stock", "product_variants"]) {
+      assert.ok(!guardLine.includes(banned), `${name} guard must not leak ${banned}`);
+    }
+  }
+});
+
+test("a successful cleanup still runs before the variants are deleted", () => {
+  for (const [name, raw] of [["deleteProduct", ACTIONS_SRC], ["deleteProductById", HEALTH_SRC]] as const) {
+    const src = strip(raw);
+    const cleanupAt = src.indexOf("deleteShelfStockForProduct(supabase, id)");
+    const variantDeleteAt = src.indexOf('from("product_variants").delete()');
+    assert.ok(cleanupAt > 0 && cleanupAt < variantDeleteAt, `${name} cleans shelf rows first`);
+  }
 });
 
 // ── Edit path: the blanket delete is gone ────────────────────────────────────
@@ -242,17 +291,6 @@ test("the atomic sync validates before writing and uses the session client", () 
   assert.ok(/if \(!plan\.ok\) return/.test(body), "a rejected plan returns before any write");
   assert.ok(/\.rpc\("sync_product_variants"/.test(body), "one atomic RPC call");
   assert.ok(!/createAdminClient/.test(body), "no admin client — RLS must still apply");
-});
-
-test("full product delete clears shelf rows BEFORE deleting the variants", () => {
-  for (const [name, raw] of [["deleteProduct", ACTIONS_SRC], ["deleteProductById", HEALTH_SRC]] as const) {
-    const src = strip(raw);
-    const cleanupAt = src.indexOf("deleteShelfStockForProduct(supabase, id)");
-    const variantDeleteAt = src.indexOf('from("product_variants").delete()');
-    assert.ok(cleanupAt > 0, `${name} calls the shelf cleanup`);
-    assert.ok(variantDeleteAt > 0, `${name} still deletes variants`);
-    assert.ok(cleanupAt < variantDeleteAt, `${name} cleans shelf rows before the variants disappear`);
-  }
 });
 
 // ── Error safety ─────────────────────────────────────────────────────────────
@@ -344,6 +382,39 @@ test("the RPC generates variant UUIDs itself and re-checks ownership on write", 
 test("execute is granted to authenticated only, never anon", () => {
   assert.ok(/GRANT EXECUTE ON FUNCTION public\.sync_product_variants\(uuid, jsonb\) TO authenticated/.test(SQL_SRC));
   assert.ok(/REVOKE ALL ON FUNCTION public\.sync_product_variants\(uuid, jsonb\) FROM anon/.test(SQL_SRC));
+});
+
+test("SQL preserves NULL semantics — a blank text field is never stored as ''", () => {
+  const sql = stripSql(SQL_SRC);
+  // Every one of the six text columns is projected through nullif(...) in BOTH
+  // the update CTE and the insert CTE, matching the old str() helper, which
+  // returned null for a blank value rather than an empty string.
+  for (const field of ["variant_name", "variant_name_en", "sku", "barcode", "color", "size"]) {
+    const projections = sql.match(
+      new RegExp(`nullif\\(btrim\\(coalesce\\(e->>'${field}', ''\\)\\), ''\\)\\s+AS\\s+${field}`, "g"),
+    ) ?? [];
+    assert.equal(projections.length, 2, `${field} is NULL-preserving in both the update and insert CTEs`);
+  }
+  // No bare btrim(coalesce(...)) survives as a projected value.
+  const bare = sql.match(/(?<!nullif\()btrim\(coalesce\(e->>'[a-z_]+', ''\)\)\s+AS/g) ?? [];
+  assert.deepEqual(bare, [], "no projection stores an empty string instead of NULL");
+});
+
+test("verification block is read-only and never calls the RPC", () => {
+  // An empty array is a valid instruction to remove every removable variant, so
+  // a "just try it" verification call would delete real data.
+  assert.ok(
+    !/select\s+public\.sync_product_variants\s*\(/i.test(SQL_SRC),
+    "the file must not contain a call to sync_product_variants",
+  );
+  assert.ok(!/'\[\]'::jsonb/.test(SQL_SRC), "no empty-array invocation example");
+  // What it must contain instead: catalog lookups only.
+  assert.ok(/pg_indexes/.test(SQL_SRC), "checks the index exists");
+  assert.ok(/product_variants_parent_id_id_uk/.test(SQL_SRC), "names the index");
+  assert.ok(/pg_proc/.test(SQL_SRC), "checks the function exists");
+  assert.ok(/prosecdef/.test(SQL_SRC), "checks SECURITY INVOKER");
+  assert.ok(/proconfig/.test(SQL_SRC), "checks the pinned search_path");
+  assert.ok(/role_routine_grants/.test(SQL_SRC), "checks EXECUTE grants");
 });
 
 test("the migration contains no data-repair statement (production backlog was zero)", () => {

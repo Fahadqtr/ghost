@@ -152,6 +152,10 @@ function toVariantRows(parentId: string, variants: VariantInput[]) {
 
 // Fixed, user-safe messages for every variant-sync failure. They never contain
 // a uuid, a constraint name, SQL, a table name, or a raw database message.
+// Fixed message for a full-product delete aborted because its shelf rows
+// could not be cleared. Leaks no table name, uuid, or database text.
+const SHELF_CLEANUP_FAILED = "تعذّر حذف بيانات رفوف خيارات المنتج. لم يتم حذف المنتج.";
+
 const VARIANT_SYNC_MESSAGES: Record<string, string> = {
   unknown_variant_id: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
   duplicate_variant_id: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
@@ -676,7 +680,10 @@ export async function deleteProduct(id: string) {
   // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).
   // variant_shelf_stock holds variant ids with NO foreign key, so it must be
   // cleared BEFORE the variants go — otherwise its rows outlive them silently.
-  await deleteShelfStockForProduct(supabase, id);
+  // Fail closed: if the cleanup cannot be proven to have succeeded, abort the
+  // whole deletion rather than strand shelf rows pointing at deleted variants.
+  const shelfCleanup = await deleteShelfStockForProduct(supabase, id);
+  if (!shelfCleanup.ok) return { error: SHELF_CLEANUP_FAILED };
   await supabase.from("product_variants").delete().eq("parent_product_id", id);
   await supabase.from("channel_products").delete().eq("product_id", id);
   await supabase.from("inventory").delete().eq("product_id", id);

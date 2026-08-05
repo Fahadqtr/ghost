@@ -16,7 +16,9 @@ export async function deleteProductById(id: string): Promise<{ ok: true } | { er
   const { data: doomed } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   // variant_shelf_stock holds variant ids with NO foreign key, so clear it
   // BEFORE the variants go — otherwise its rows outlive them silently.
-  await deleteShelfStockForProduct(supabase, id);
+  // Fail closed: abort the deletion rather than strand orphaned shelf rows.
+  const shelfCleanup = await deleteShelfStockForProduct(supabase, id);
+  if (!shelfCleanup.ok) return { error: "تعذّر حذف بيانات رفوف خيارات المنتج. لم يتم حذف المنتج." };
   await supabase.from("product_variants").delete().eq("parent_product_id", id);
   await supabase.from("channel_products").delete().eq("product_id", id);
   await supabase.from("inventory").delete().eq("product_id", id);
