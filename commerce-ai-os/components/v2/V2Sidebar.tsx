@@ -8,7 +8,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { V2_NAV_LINKS, activeNavHref } from "@/lib/v2/nav";
+import { activeNavHref, groupNavLinks } from "@/lib/v2/nav";
 
 function CatalogIcon() {
   return (
@@ -30,6 +30,20 @@ function ShopifyIcon() {
   );
 }
 
+function RewardsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <path d="M12 20s-7-4.35-7-9a4 4 0 0 1 7-2.65A4 4 0 0 1 19 11c0 4.65-7 9-7 9Z" />
+    </svg>
+  );
+}
+
+function NavIcon({ icon }: { icon: "catalog" | "shopify" | "rewards" }) {
+  if (icon === "shopify") return <ShopifyIcon />;
+  if (icon === "rewards") return <RewardsIcon />;
+  return <CatalogIcon />;
+}
+
 export default function V2Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   // Exactly one href can win, so a parent never lights up alongside its child.
@@ -37,25 +51,38 @@ export default function V2Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <nav className="flex h-full flex-col gap-1 p-2.5" aria-label="التنقّل">
-      <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted">الكتالوج</div>
-      {V2_NAV_LINKS.map((link) => {
-        const active = activeHref === link.href;
-        return (
-          <Link
-            key={link.href}
-            href={link.href}
-            onClick={onNavigate}
-            aria-current={active ? "page" : undefined}
-            className={
-              "flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors " +
-              (active ? "bg-brand-light text-brand" : "text-ink hover:bg-[#faf3ec]")
-            }
-          >
-            {link.icon === "shopify" ? <ShopifyIcon /> : <CatalogIcon />}
-            {link.label}
-          </Link>
-        );
-      })}
+      {groupNavLinks().map((section) => (
+        <div key={section.title} className="flex flex-col gap-1">
+          <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
+            {section.title}
+          </div>
+          {section.links.map((link) => {
+            const active = activeHref === link.href;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                onClick={onNavigate}
+                aria-current={active ? "page" : undefined}
+                className={
+                  "flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors " +
+                  (active ? "bg-brand-light text-brand" : "text-ink hover:bg-[#faf3ec]")
+                }
+              >
+                <NavIcon icon={link.icon} />
+                <span className="min-w-0 flex-1 truncate">{link.label}</span>
+                {/* These pages live in the previous interface — say so rather
+                    than letting the shell change without warning. */}
+                {link.external ? (
+                  <span className="shrink-0 text-[11px] text-muted" title="يفتح في الواجهة السابقة" aria-label="يفتح في الواجهة السابقة">
+                    ↗
+                  </span>
+                ) : null}
+              </Link>
+            );
+          })}
+        </div>
+      ))}
     </nav>
   );
 }
