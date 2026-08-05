@@ -604,3 +604,84 @@ export const CATALOG_SORT_OPTIONS: readonly CatalogSortOption[] = [
   { value: "price_desc", label: "السعر (تنازلي)" },
   { value: "variants_desc", label: "الأكثر خيارات" },
 ];
+
+// ── Client-safe preview projection (Phase UI.3C.1) ───────────────────────────
+
+export type ApprovalStatus = "approved" | "not_approved";
+
+/**
+ * The ONLY product shape allowed to cross into a Client Component.
+ *
+ * Anything handed to a Client Component is serialized into the HTML payload and
+ * is readable in page source, so this is an explicit whitelist. It carries
+ * display fields plus already-normalized states — never the raw `approval` text,
+ * and never a stock / inventory / channel / platform / order / customer field
+ * (the catalog row does not hold those to begin with, and this keeps it that
+ * way if it ever grows one).
+ */
+export interface MasterCatalogPreviewItem {
+  /** Stable list key + modal identity. */
+  key: string;
+  productId: string;
+  /** Detail link that preserves the current query/filter/sort/page. */
+  detailHref: string;
+  nameAr: string | null;
+  nameEn: string | null;
+  sku: string | null;
+  barcode: string | null;
+  imageUrl: string | null;
+  price: number | null;
+  /** Present ONLY when the discount is valid; otherwise null. */
+  discountPrice: number | null;
+  variantCount: number;
+  /** Normalized — the raw approval text is never exposed. */
+  approvalStatus: ApprovalStatus;
+  completenessStatus: CompletenessState;
+}
+
+/**
+ * Narrow one catalog product to the client-safe preview shape. `controls` is
+ * used only to build the detail href, so opening the product from the preview
+ * returns to the exact list state.
+ */
+export function toMasterCatalogPreviewItem(
+  product: MasterCatalogProduct,
+  controls: CatalogControls,
+): MasterCatalogPreviewItem {
+  return {
+    key: product.id,
+    productId: product.id,
+    detailHref: catalogDetailHref(product.id, controls),
+    nameAr: product.nameAr,
+    nameEn: product.nameEn,
+    sku: product.sku,
+    barcode: product.barcode,
+    imageUrl: product.imageUrl,
+    price: hasValidPrice(product) ? product.price : null,
+    // An invalid discount (missing, zero, or >= the base price) is dropped here
+    // so the client cannot render a misleading strikethrough.
+    discountPrice: hasValidDiscount(product) ? product.discountPrice : null,
+    variantCount: product.variantCount,
+    approvalStatus: isApproved(product) ? "approved" : "not_approved",
+    completenessStatus: getCompleteness(product),
+  };
+}
+
+export function toMasterCatalogPreviewItems(
+  products: readonly MasterCatalogProduct[],
+  controls: CatalogControls,
+): MasterCatalogPreviewItem[] {
+  return (Array.isArray(products) ? products : []).map((p) => toMasterCatalogPreviewItem(p, controls));
+}
+
+/** Display name for a preview item: Arabic first, then English, else a dash. */
+export function getPreviewItemDisplayName(item: MasterCatalogPreviewItem): string {
+  if (hasText(item.nameAr)) return item.nameAr as string;
+  if (hasText(item.nameEn)) return item.nameEn as string;
+  return "—";
+}
+
+/** Fixed approval label for a preview item — never the raw approval text. */
+export function getPreviewApprovalLabel(item: MasterCatalogPreviewItem): string {
+  return item.approvalStatus === "approved" ? "معتمد" : "غير معتمد";
+}

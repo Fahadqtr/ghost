@@ -37,6 +37,12 @@ const CATALOG_SRC = readFileSync(
   "utf8",
 );
 const CSS_SRC = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf8");
+// The dialog chrome + lightbox were extracted in UI.3C.1 so the Malikas catalog
+// reuses the exact same approved behaviour; the guarantees are asserted there.
+const SHELL_SRC = readFileSync(
+  new URL("../../components/v2/catalog/CatalogPreviewDialog.tsx", import.meta.url),
+  "utf8",
+);
 
 function row(over: Partial<ShopifyCatalogRow> = {}): ShopifyCatalogRow {
   return {
@@ -169,49 +175,52 @@ test("preview shows exactly the catalog-safe fields", () => {
 });
 
 test("dialog has a close button, outside-click, Escape, scroll lock and focus handling", () => {
-  assert.ok(/aria-label="إغلاق"/.test(PREVIEW_SRC), "explicit close button");
-  assert.ok(/onClick=\{onClose\}/.test(PREVIEW_SRC), "backdrop click closes");
-  assert.ok(/e\.stopPropagation\(\)/.test(PREVIEW_SRC), "clicks inside do not close");
-  assert.ok(/e\.key !== "Escape"/.test(PREVIEW_SRC), "Escape handling");
-  assert.ok(/document\.body\.style\.overflow = "hidden"/.test(PREVIEW_SRC), "background scroll locked");
-  assert.ok(/closeRef\.current\?\.focus\(\)/.test(PREVIEW_SRC), "focus moves into the dialog");
+  assert.ok(/aria-label="إغلاق"/.test(SHELL_SRC), "explicit close button");
+  assert.ok(/onClick=\{onClose\}/.test(SHELL_SRC), "backdrop click closes");
+  assert.ok(/e\.stopPropagation\(\)/.test(SHELL_SRC), "clicks inside do not close");
+  assert.ok(/e\.key !== "Escape"/.test(SHELL_SRC), "Escape handling");
+  assert.ok(/if \(lightbox\) setLightbox\(false\);/.test(SHELL_SRC), "Escape closes the lightbox first");
+  assert.ok(/document\.body\.style\.overflow = "hidden"/.test(SHELL_SRC), "background scroll locked");
+  assert.ok(/closeRef\.current\?\.focus\(\)/.test(SHELL_SRC), "focus moves into the dialog");
+  assert.ok(/role="dialog"/.test(SHELL_SRC) && /aria-modal="true"/.test(SHELL_SRC), "dialog semantics");
+  assert.ok(/aria-labelledby=\{titleId\}/.test(SHELL_SRC), "dialog is labelled");
+  // The Shopify side supplies the label id and restores focus to its own row.
+  assert.ok(/titleId="shopify-preview-title"/.test(PREVIEW_SRC), "shopify dialog label id");
   assert.ok(/triggerRef\.current\?\.focus\(\)/.test(PREVIEW_SRC), "focus returns to the trigger");
-  assert.ok(/role="dialog"/.test(PREVIEW_SRC) && /aria-modal="true"/.test(PREVIEW_SRC), "dialog semantics");
-  assert.ok(/aria-labelledby="shopify-preview-title"/.test(PREVIEW_SRC), "dialog is labelled");
 });
 
 test("preview is a bottom sheet on mobile and a centered modal on desktop", () => {
-  assert.ok(/items-end justify-center[^"]*sm:items-center/.test(PREVIEW_SRC), "bottom on mobile, centered on desktop");
-  assert.ok(/rounded-t-2xl[^"]*sm:rounded-2xl/.test(PREVIEW_SRC), "sheet corners on mobile");
+  assert.ok(/items-end justify-center[^"]*sm:items-center/.test(SHELL_SRC), "bottom on mobile, centered on desktop");
+  assert.ok(/rounded-t-2xl[^"]*sm:rounded-2xl/.test(SHELL_SRC), "sheet corners on mobile");
 });
 
 // ── 4. Image lightbox ────────────────────────────────────────────────────────
 
 test("tapping the image opens a fullscreen lightbox with zoom controls", () => {
-  assert.ok(/setLightbox\(true\)/.test(PREVIEW_SRC), "image opens the lightbox");
-  assert.ok(/aria-label="تكبير الصورة"/.test(PREVIEW_SRC), "image trigger is labelled");
-  assert.ok(/aria-label="تكبير"/.test(PREVIEW_SRC) && /aria-label="تصغير"/.test(PREVIEW_SRC), "+ and − buttons");
-  assert.ok(/aria-label="إعادة الحجم إلى 100%"/.test(PREVIEW_SRC), "reset to 100%");
-  assert.ok(/aria-label="إغلاق الصورة"/.test(PREVIEW_SRC), "lightbox close button");
-  assert.ok(/object-contain/.test(PREVIEW_SRC), "object-contain");
-  assert.ok(/bg-black\/90/.test(PREVIEW_SRC), "dark backdrop");
+  assert.ok(/setLightbox\(true\)/.test(SHELL_SRC), "image opens the lightbox");
+  assert.ok(/aria-label="تكبير الصورة"/.test(SHELL_SRC), "image trigger is labelled");
+  assert.ok(/aria-label="تكبير"/.test(SHELL_SRC) && /aria-label="تصغير"/.test(SHELL_SRC), "+ and − buttons");
+  assert.ok(/aria-label="إعادة الحجم إلى 100%"/.test(SHELL_SRC), "reset to 100%");
+  assert.ok(/aria-label="إغلاق الصورة"/.test(SHELL_SRC), "lightbox close button");
+  assert.ok(/object-contain/.test(SHELL_SRC), "object-contain");
+  assert.ok(/bg-black\/90/.test(SHELL_SRC), "dark backdrop");
 });
 
 test("lightbox zoom is bounded and the image cannot overflow a phone screen", () => {
-  assert.ok(/const MAX_ZOOM = 4/.test(PREVIEW_SRC), "sane maximum zoom");
-  assert.ok(/const MIN_ZOOM = 1/.test(PREVIEW_SRC), "minimum zoom");
-  assert.ok(/Math\.min\(MAX_ZOOM/.test(PREVIEW_SRC) && /Math\.max\(MIN_ZOOM/.test(PREVIEW_SRC), "clamped");
+  assert.ok(/const MAX_ZOOM = 4/.test(SHELL_SRC), "sane maximum zoom");
+  assert.ok(/const MIN_ZOOM = 1/.test(SHELL_SRC), "minimum zoom");
+  assert.ok(/Math\.min\(MAX_ZOOM/.test(SHELL_SRC) && /Math\.max\(MIN_ZOOM/.test(SHELL_SRC), "clamped");
   // A zoomed image is panned inside a scroll container instead of spilling out.
-  assert.ok(/overflow-auto/.test(PREVIEW_SRC), "scrollable stage");
-  assert.ok(/max-h-\[78vh\] max-w-full/.test(PREVIEW_SRC), "bounded to the viewport");
+  assert.ok(/overflow-auto/.test(SHELL_SRC), "scrollable stage");
+  assert.ok(/max-h-\[78vh\] max-w-full/.test(SHELL_SRC), "bounded to the viewport");
 });
 
 test("no image → placeholder, and the lightbox cannot be opened", () => {
   // The trigger button only exists when an image exists.
-  assert.ok(/imageAvailable \?/.test(PREVIEW_SRC), "image trigger is conditional");
-  assert.ok(/<ImagePlaceholder className="h-44 w-44" \/>/.test(PREVIEW_SRC), "placeholder otherwise");
+  assert.ok(/imageAvailable \?/.test(SHELL_SRC), "image trigger is conditional");
+  assert.ok(/<ImagePlaceholder className="h-44 w-44" \/>/.test(SHELL_SRC), "placeholder otherwise");
   // Even if state were set, rendering is guarded by imageAvailable.
-  assert.ok(/lightbox && imageAvailable \?/.test(PREVIEW_SRC), "lightbox render is image-guarded");
+  assert.ok(/lightbox && imageAvailable \?/.test(SHELL_SRC), "lightbox render is image-guarded");
 });
 
 // ── 5. Nothing sensitive crosses into the client ─────────────────────────────
@@ -274,7 +283,7 @@ test("preview display name prefers Arabic, then English, else a dash", () => {
 // ── 6. No writes, no fetching, no timers ─────────────────────────────────────
 
 test("the client component performs no fetch, write, timer, polling or subscription", () => {
-  const src = strip(PREVIEW_SRC);
+  const src = strip(PREVIEW_SRC) + strip(SHELL_SRC);
   for (const banned of [
     "fetch(",
     "setInterval",

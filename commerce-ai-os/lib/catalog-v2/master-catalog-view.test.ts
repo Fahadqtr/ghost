@@ -966,24 +966,38 @@ test("catalog page wires controls → sort → paginate and stays read-only", ()
 });
 
 test("MasterCatalog component: read-only, no bulk/edit controls, no raw approval, lazy images", () => {
-  const raw = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
-  const src = strip(raw);
-  // read-only: no mutation/select/bulk affordances
-  for (const [re, msg] of [
-    [/dangerouslySetInnerHTML/, "dangerouslySetInnerHTML"],
-    [/process\.env/, "process.env"],
-    [/\bfetch\s*\(/, "fetch("],
-    [/\.rpc\s*\(/, ".rpc("],
-    [/console\./, "console."],
-    [/type="checkbox"/, "checkbox (bulk select)"],
-    [/onClick/, "onClick handler"],
-    [/<button[^>]*type="submit"[^>]*>[\s\S]*?(حذف|تعديل|أرشفة|delete|edit)/i, "mutation button"],
-  ] as const) {
-    assert.ok(!re.test(src), `forbidden in component: ${msg}`);
+  // Since UI.3C.1 the results list lives in the client component; both halves
+  // must stay read-only.
+  const serverSrc = strip(readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8"));
+  const resultsSrc = strip(
+    readFileSync(new URL("../../components/v2/catalog/MasterCatalogPreview.tsx", import.meta.url), "utf8"),
+  );
+
+  for (const [name, src] of [["server", serverSrc], ["results", resultsSrc]] as const) {
+    for (const [re, msg] of [
+      [/dangerouslySetInnerHTML/, "dangerouslySetInnerHTML"],
+      [/process\.env/, "process.env"],
+      [/\bfetch\s*\(/, "fetch("],
+      [/\.rpc\s*\(/, ".rpc("],
+      [/console\./, "console."],
+      [/type="checkbox"/, "checkbox (bulk select)"],
+      [/<button[^>]*type="submit"[^>]*>[\s\S]*?(حذف|تعديل|أرشفة|delete|edit)/i, "mutation button"],
+    ] as const) {
+      assert.ok(!re.test(src), `forbidden in ${name}: ${msg}`);
+    }
+    // Raw approval text is never rendered on either side.
+    assert.ok(
+      !/\.approval\b(?!\s*[),])/.test(src.replace(/getApprovalLabel|getPreviewApprovalLabel/g, "")),
+      `raw .approval not rendered directly in ${name}`,
+    );
   }
-  assert.ok(/loading="lazy"/.test(src), "images lazy-loaded");
-  assert.ok(/getApprovalLabel/.test(src), "approval shown via fixed-label helper");
-  assert.ok(!/\.approval\b(?!\s*[),])/.test(src.replace(/getApprovalLabel/g, "")), "raw .approval not rendered directly");
+
+  // The Server Component stays free of client handlers…
+  assert.ok(!/onClick/.test(serverSrc), "server half has no onClick handler");
+  // …while the results list intentionally opens the preview on click.
+  assert.ok(/onClick=/.test(resultsSrc), "results open the preview on click");
+  assert.ok(/loading="lazy"/.test(resultsSrc), "images lazy-loaded");
+  assert.ok(/getPreviewApprovalLabel/.test(resultsSrc), "approval shown via fixed-label helper");
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1285,12 +1299,20 @@ test("ProductDetail component: read-only, lazy image, fixed approval, no stock/p
   }
 });
 
-test("MasterCatalog links product rows to the detail route (desktop + mobile)", () => {
-  const src = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
-  // Detail links now go through the shared catalogDetailHref helper (which builds
-  // /v2/catalog/<encoded id> and carries the active controls).
-  const matches = src.match(/catalogDetailHref\(p\.id, controls\)/g) ?? [];
-  assert.ok(matches.length >= 2, "both desktop and mobile rows link via catalogDetailHref");
+test("MasterCatalog reaches the detail route through the preview (desktop + mobile)", () => {
+  const serverSrc = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
+  const resultsSrc = readFileSync(
+    new URL("../../components/v2/catalog/MasterCatalogPreview.tsx", import.meta.url),
+    "utf8",
+  );
+  // Since UI.3C.1 the href is built ONCE in the projection (which carries the
+  // active controls) and the preview renders it, instead of each row linking.
+  assert.ok(
+    /toMasterCatalogPreviewItems\(items, controls\)/.test(serverSrc),
+    "controls are threaded into the projection",
+  );
+  assert.ok(/href=\{item\.detailHref\}/.test(resultsSrc), "the preview links to the detail route");
+  assert.ok(resultsSrc.includes("فتح صفحة المنتج"), "explicit secondary action");
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1401,11 +1423,24 @@ test("detail page: accepts searchParams, parses via parseCatalogControls, builds
 
 // ── MasterCatalog wiring / source assertions ─────────────────────────────────
 
-test("MasterCatalog: desktop + mobile links use catalogDetailHref(p.id, controls); no manual detail query building", () => {
-  const src = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
-  const uses = (src.match(/catalogDetailHref\(p\.id, controls\)/g) ?? []).length;
-  assert.ok(uses >= 2, "both desktop and mobile rows use catalogDetailHref(p.id, controls)");
-  assert.ok(!/\/v2\/catalog\/\$\{encodeURIComponent\(p\.id\)\}/.test(src), "no manual detail URL construction remains");
+test("MasterCatalog detail URLs come from catalogDetailHref; no manual query building", () => {
+  const serverSrc = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
+  const resultsSrc = readFileSync(
+    new URL("../../components/v2/catalog/MasterCatalogPreview.tsx", import.meta.url),
+    "utf8",
+  );
+  const viewSrc = readFileSync(new URL("./master-catalog-view.ts", import.meta.url), "utf8");
+  // The single construction point is the projection.
+  assert.ok(
+    /detailHref: catalogDetailHref\(product\.id, controls\)/.test(viewSrc),
+    "projection builds the href via catalogDetailHref",
+  );
+  for (const [name, src] of [["server", serverSrc], ["results", resultsSrc]] as const) {
+    assert.ok(
+      !/\/v2\/catalog\/\$\{encodeURIComponent\(/.test(src),
+      `no manual detail URL construction in ${name}`,
+    );
+  }
 });
 
 // ── ProductDetail backHref ───────────────────────────────────────────────────
