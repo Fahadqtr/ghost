@@ -7,14 +7,55 @@
 export interface V2NavLink {
   href: string;
   label: string;
-  icon: "catalog" | "shopify";
+  icon: "catalog" | "shopify" | "rewards";
+  /** Heading this link sits under in the sidebar. */
+  section: string;
+  /**
+   * True when the link leaves the V2 shell for the legacy interface. Those
+   * pages are fully working today and are NOT in the legacy-redirect list, so
+   * they are linked rather than reimplemented — but the sidebar marks them so
+   * the change of shell is not a surprise.
+   */
+  external?: true;
 }
 
 /** The V2 sidebar links, in display order. */
 export const V2_NAV_LINKS: readonly V2NavLink[] = [
-  { href: "/v2/catalog", label: "كتالوج ماليكاس", icon: "catalog" },
-  { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify" },
+  { href: "/v2/catalog", label: "كتالوج ماليكاس", icon: "catalog", section: "الكتالوج" },
+  { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify", section: "الكتالوج" },
+
+  // «مكافآت الجمال» (Beauty Rewards) — the customer page calls it
+  // «دليل المسابقة». Every page below already exists and works; none of them is
+  // redirected away (only /dashboard, /products, /inventory and /platforms are).
+  { href: "/loyalty", label: "مكافآت الجمال", icon: "rewards", section: "العملاء", external: true },
+  { href: "/loyalty/customers", label: "الزبائن", icon: "rewards", section: "العملاء", external: true },
+  { href: "/loyalty/prizes", label: "الجوائز", icon: "rewards", section: "العملاء", external: true },
+  { href: "/loyalty/cards", label: "بطاقات للطباعة", icon: "rewards", section: "العملاء", external: true },
+  { href: "/loyalty/qr", label: "بطاقة QR", icon: "rewards", section: "العملاء", external: true },
+  { href: "/rewards", label: "صفحة العميل", icon: "rewards", section: "العملاء", external: true },
 ];
+
+export interface V2NavSection {
+  title: string;
+  links: V2NavLink[];
+}
+
+/**
+ * Group the links by section, preserving both the section order and the link
+ * order in which they were declared. Beauty Rewards is not a catalog entry, so
+ * it must not render under the "الكتالوج" heading.
+ */
+export function groupNavLinks(links: readonly V2NavLink[] = V2_NAV_LINKS): V2NavSection[] {
+  const sections: V2NavSection[] = [];
+  for (const link of Array.isArray(links) ? links : []) {
+    if (link === null || typeof link !== "object") continue;
+    const title = typeof link.section === "string" && link.section.length > 0 ? link.section : "";
+    const existing = sections.find((s) => s.title === title);
+    if (existing) existing.links.push(link);
+    else sections.push({ title, links: [link] });
+  }
+  return sections;
+}
 
 /**
  * Pick the highlighted link: the LONGEST link href that the current path either
