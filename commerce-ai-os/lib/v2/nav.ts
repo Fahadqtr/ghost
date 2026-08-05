@@ -25,13 +25,16 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify", section: "الكتالوج" },
 
   // «مكافآت الجمال» (Beauty Rewards) — the customer page calls it
-  // «دليل المسابقة». Every page below already exists and works; none of them is
-  // redirected away (only /dashboard, /products, /inventory and /platforms are).
-  { href: "/loyalty", label: "مكافآت الجمال", icon: "rewards", section: "العملاء", external: true },
-  { href: "/loyalty/customers", label: "الزبائن", icon: "rewards", section: "العملاء", external: true },
-  { href: "/loyalty/prizes", label: "الجوائز", icon: "rewards", section: "العملاء", external: true },
-  { href: "/loyalty/cards", label: "بطاقات للطباعة", icon: "rewards", section: "العملاء", external: true },
-  { href: "/loyalty/qr", label: "بطاقة QR", icon: "rewards", section: "العملاء", external: true },
+  // «دليل المسابقة». These pages now live INSIDE the V2 route group, so they
+  // render in the V2 shell instead of the legacy AppShell.
+  { href: "/v2/loyalty", label: "مكافآت الجمال", icon: "rewards", section: "العملاء" },
+  { href: "/v2/loyalty/customers", label: "الزبائن", icon: "rewards", section: "العملاء" },
+  { href: "/v2/loyalty/prizes", label: "الجوائز", icon: "rewards", section: "العملاء" },
+  { href: "/v2/loyalty/cards", label: "بطاقات للطباعة", icon: "rewards", section: "العملاء" },
+  { href: "/v2/loyalty/qr", label: "بطاقة QR", icon: "rewards", section: "العملاء" },
+  // The customer card stays OUTSIDE V2 on purpose: /rewards is public (listed in
+  // the middleware PUBLIC_PATHS) and is reached from the printed QR, so moving
+  // it behind the V2 auth gate would break it for customers.
   { href: "/rewards", label: "صفحة العميل", icon: "rewards", section: "العملاء", external: true },
 ];
 

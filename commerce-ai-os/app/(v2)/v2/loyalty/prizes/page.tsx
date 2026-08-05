@@ -25,7 +25,7 @@ export default async function LoyaltyPrizesPage() {
           </p>
         </div>
         <Link
-          href="/loyalty"
+          href="/v2/loyalty"
           className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
         >
           ← المراجعة

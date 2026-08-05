@@ -5,7 +5,7 @@ import {
   type CookieOptions,
 } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { legacyRedirectPath, V2_HOME } from "@/lib/v2/legacy-redirect";
+import { legacyRedirectPath, movedRoutePath, V2_HOME } from "@/lib/v2/legacy-redirect";
 
 // Paths that are reachable WITHOUT being logged in. `/staff` is the employees'
 // stock IN/OUT page — it has its own shared-PIN gate (no Supabase account).
@@ -93,6 +93,15 @@ export async function updateSession(request: NextRequest) {
   // removed; excluded paths — /login, /api/**, /auth/**, /v2/**, webhooks,
   // /staff, /rewards, static — are never matched here.)
   if (user) {
+    // Relocated pages keep their sub-path AND their query string — these pages
+    // use it for search/filters, so an old bookmark must land on the same view.
+    const moved = movedRoutePath(path);
+    if (moved) {
+      const movedUrl = request.nextUrl.clone();
+      movedUrl.pathname = moved;
+      return NextResponse.redirect(movedUrl);
+    }
+
     const dest = legacyRedirectPath(path);
     if (dest) {
       const redirectUrl = request.nextUrl.clone();

@@ -42,6 +42,37 @@ export function legacyRedirectPath(pathname: unknown): string | null {
   return null;
 }
 
+// ── Moved routes (Phase: Beauty Rewards port) ───────────────────────────────
+//
+// Pages that were RELOCATED into the V2 route group rather than blocked. Unlike
+// the legacy block above — which funnels everything to one destination — these
+// keep their sub-path, so /loyalty/customers lands on /v2/loyalty/customers and
+// an old bookmark still reaches the page it named.
+//
+// `/rewards` is deliberately NOT here: it is the public customer card opened
+// from the printed QR (listed in the middleware PUBLIC_PATHS), and moving it
+// behind the V2 auth gate would break it for people with no account.
+const MOVED_PREFIXES: readonly { from: string; to: string }[] = [{ from: "/loyalty", to: "/v2/loyalty" }];
+
+/**
+ * Resolve a relocated path, preserving the rest of the sub-path. Returns null
+ * when nothing moved. The caller must keep the query string — these pages use
+ * it for search and filters, unlike the legacy block.
+ *
+ * The static card artwork lives at /loyalty/beauty-card.png and is served from
+ * public/; the proxy matcher excludes image extensions, so it never reaches
+ * this function.
+ */
+export function movedRoutePath(pathname: unknown): string | null {
+  if (typeof pathname !== "string" || pathname.length === 0) return null;
+  if (pathname.startsWith("/v2")) return null; // already moved — never loop
+  for (const { from, to } of MOVED_PREFIXES) {
+    if (pathname === from) return to;
+    if (pathname.startsWith(from + "/")) return to + pathname.slice(from.length);
+  }
+  return null;
+}
+
 /** True if the string contains any ASCII control character (0x00–0x1F). */
 function hasControlChar(value: string): boolean {
   for (let i = 0; i < value.length; i++) {

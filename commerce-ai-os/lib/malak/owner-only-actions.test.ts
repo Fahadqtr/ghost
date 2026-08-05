@@ -21,7 +21,7 @@ const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 
 const SOCIAL = read("app/(app)/social/actions.ts");
 const INBOX = read("app/(app)/inbox/actions.ts");
-const LOYALTY = read("app/(app)/loyalty/actions.ts");
+const LOYALTY = read("app/(v2)/v2/loyalty/actions.ts");
 const IG_TEST_PUBLISH = read("app/api/social/ig-test-publish/route.ts");
 const IG_VERIFY = read("app/api/social/ig-verify/route.ts");
 const AUTHZ = read("lib/malak/authz.ts");

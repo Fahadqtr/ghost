@@ -30,19 +30,19 @@ async function requireUser() {
 export async function approveAction(submissionId: string) {
   await requireUser();
   await approveSubmission(submissionId);
-  revalidatePath("/loyalty");
+  revalidatePath("/v2/loyalty");
 }
 
 export async function rejectAction(submissionId: string, note?: string) {
   await requireUser();
   await rejectSubmission(submissionId, note);
-  revalidatePath("/loyalty");
+  revalidatePath("/v2/loyalty");
 }
 
 export async function redeemAction(customerId: string) {
   await requireUser();
   await redeemReward(customerId);
-  revalidatePath("/loyalty");
+  revalidatePath("/v2/loyalty");
 }
 
 export async function updateCustomerAction(
@@ -51,13 +51,13 @@ export async function updateCustomerAction(
 ) {
   await requireUser();
   await updateCustomer(id, fields);
-  revalidatePath("/loyalty/customers");
+  revalidatePath("/v2/loyalty/customers");
 }
 
 export async function deleteCustomerAction(id: string) {
   await requireUser();
   await deleteCustomer(id);
-  revalidatePath("/loyalty/customers");
+  revalidatePath("/v2/loyalty/customers");
 }
 
 // --- Prizes ---
@@ -91,20 +91,20 @@ export async function addPrizeAction(formData: FormData): Promise<{ error?: stri
 
   const imageUrl = admin.storage.from(PRIZE_BUCKET).getPublicUrl(path).data.publicUrl;
   await addPrize(name, path, imageUrl);
-  revalidatePath("/loyalty/prizes");
+  revalidatePath("/v2/loyalty/prizes");
   return {};
 }
 
 export async function setPrizeActiveAction(id: string, active: boolean) {
   await requireUser();
   await setPrizeActive(id, active);
-  revalidatePath("/loyalty/prizes");
+  revalidatePath("/v2/loyalty/prizes");
 }
 
 export async function deletePrizeAction(id: string) {
   await requireUser();
   await deletePrize(id);
-  revalidatePath("/loyalty/prizes");
+  revalidatePath("/v2/loyalty/prizes");
 }
 
 /** Send the win-confirmation WhatsApp to a customer. Reports the send result. */
