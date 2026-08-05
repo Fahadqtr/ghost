@@ -1,11 +1,14 @@
 "use client";
 // Malikas V2 sidebar (Phase UI.3C). Two catalog links — no future or empty
-// sections. Highlights the active route with an EXACT match so the Malikas link
-// does not stay lit while the Shopify page is open; on mobile it lives in the
+// sections. The highlighted link comes from the pure longest-match rule in
+// lib/v2/nav, so a parent link stays active on its own sub-pages
+// (/v2/catalog/<id> → كتالوج ماليكاس) while a more specific link
+// (/v2/catalog/shopify) claims its own subtree. On mobile it lives in the
 // drawer and closing is handled by the caller via onNavigate.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { V2_NAV_LINKS, activeNavHref } from "@/lib/v2/nav";
 
 function CatalogIcon() {
   return (
@@ -27,20 +30,16 @@ function ShopifyIcon() {
   );
 }
 
-const LINKS: readonly { href: string; label: string; icon: "catalog" | "shopify" }[] = [
-  { href: "/v2/catalog", label: "كتالوج ماليكاس", icon: "catalog" },
-  { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify" },
-];
-
 export default function V2Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  // Exactly one href can win, so a parent never lights up alongside its child.
+  const activeHref = activeNavHref(pathname);
 
   return (
     <nav className="flex h-full flex-col gap-1 p-2.5" aria-label="التنقّل">
       <div className="px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted">الكتالوج</div>
-      {LINKS.map((link) => {
-        // Exact match only: /v2/catalog must not stay active on /v2/catalog/shopify.
-        const active = pathname === link.href;
+      {V2_NAV_LINKS.map((link) => {
+        const active = activeHref === link.href;
         return (
           <Link
             key={link.href}

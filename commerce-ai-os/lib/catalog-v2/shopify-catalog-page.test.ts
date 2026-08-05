@@ -28,6 +28,7 @@ import {
   projectShopifyCatalog,
   type ShopifyCatalogRow,
 } from "./shopify-catalog-view.ts";
+import { V2_NAV_LINKS, activeNavHref } from "../v2/nav.ts";
 
 // ── Builders ─────────────────────────────────────────────────────────────────
 
@@ -319,14 +320,25 @@ test("component renders header, read-only badge and the five summary cards", () 
   assert.ok(COMPONENT_SRC.includes("مقارنة منتجات ماليكاس مع منتجات Shopify"), "description");
   assert.ok(COMPONENT_SRC.includes("قراءة فقط"), "read-only badge");
   for (const label of [
-    "إجمالي منتجات ماليكاس",
-    "موجود في Shopify",
-    "غير موجود في Shopify",
-    "غير مطابق",
-    "يتطلب مراجعة",
+    "إجمالي العناصر القابلة للبيع",
+    "موجودة في Shopify",
+    "غير موجودة في Shopify",
+    "غير مطابقة",
+    "تتطلب مراجعة",
   ]) {
     assert.ok(COMPONENT_SRC.includes(label), `summary card: ${label}`);
   }
+});
+
+test("terminology matches the row grain: sellable entities, not products", () => {
+  // A row is one sellable entity (a variant-less product, or one variant), so
+  // the aggregate labels must not claim to count products.
+  assert.ok(!COMPONENT_SRC.includes("إجمالي منتجات ماليكاس"), "no product-grain total label");
+  assert.ok(COMPONENT_SRC.includes("لا توجد عناصر قابلة للبيع في كتالوج ماليكاس."), "sellable-entity empty state");
+  assert.ok(!COMPONENT_SRC.includes("لا توجد منتجات في كتالوج ماليكاس."), "old product-grain empty state removed");
+  // The orphan section reports Shopify VARIANTS.
+  assert.ok(COMPONENT_SRC.includes("متغيرات Shopify غير المرتبطة"), "variant-grain orphan title");
+  assert.ok(!COMPONENT_SRC.includes("منتجات Shopify غير المرتبطة"), "old product-grain orphan title removed");
 });
 
 test("component shows the fixed Shopify-unavailable and partial messages", () => {
@@ -352,7 +364,7 @@ test("rows link to the MASTER product page; no Shopify detail route is created",
 // ── Orphan section ───────────────────────────────────────────────────────────
 
 test("orphan section is separate, collapsed, and hidden when Shopify is unavailable", () => {
-  assert.ok(COMPONENT_SRC.includes("منتجات Shopify غير المرتبطة"), "orphan section title");
+  assert.ok(COMPONENT_SRC.includes("متغيرات Shopify غير المرتبطة"), "orphan section title");
   assert.ok(/<details/.test(COMPONENT_SRC), "collapsed by default (details without open)");
   assert.ok(!/<details[^>]*\sopen/.test(COMPONENT_SRC), "not open by default");
   assert.ok(
@@ -360,11 +372,11 @@ test("orphan section is separate, collapsed, and hidden when Shopify is unavaila
     "hidden entirely when Shopify unavailable",
   );
   // It is rendered outside the main results table branch.
-  assert.ok(COMPONENT_SRC.indexOf("منتجات Shopify غير المرتبطة") > COMPONENT_SRC.indexOf("Mobile cards"), "below the table");
+  assert.ok(COMPONENT_SRC.indexOf("متغيرات Shopify غير المرتبطة") > COMPONENT_SRC.indexOf("Mobile cards"), "below the table");
 });
 
 test("orphan rows show only title/sku/barcode/status/reason — never an ID", () => {
-  const orphan = COMPONENT_SRC.slice(COMPONENT_SRC.indexOf("منتجات Shopify غير المرتبطة"));
+  const orphan = COMPONENT_SRC.slice(COMPONENT_SRC.indexOf("متغيرات Shopify غير المرتبطة"));
   assert.ok(/o\.title/.test(orphan) && /o\.sku/.test(orphan) && /o\.barcode/.test(orphan), "title/sku/barcode");
   assert.ok(/getShopifyStatusLabel\(o\.status\)/.test(orphan), "status");
   assert.ok(/getOrphanReasonLabel\(o\.reason\)/.test(orphan), "reason");
@@ -461,23 +473,72 @@ test("the component is a Server Component (no client directive, no state)", () =
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 
 test("sidebar contains exactly the Malikas and Shopify catalog links", () => {
-  assert.ok(SIDEBAR_SRC.includes("كتالوج ماليكاس"), "Malikas link");
-  assert.ok(SIDEBAR_SRC.includes("كتالوج Shopify"), "Shopify link");
-  assert.ok(SIDEBAR_SRC.includes('"/v2/catalog"'), "/v2/catalog href");
-  assert.ok(SIDEBAR_SRC.includes('"/v2/catalog/shopify"'), "/v2/catalog/shopify href");
-
+  assert.deepEqual(
+    V2_NAV_LINKS.map((l) => l.href),
+    ["/v2/catalog", "/v2/catalog/shopify"],
+    "exactly two nav links, in order",
+  );
+  assert.deepEqual(
+    V2_NAV_LINKS.map((l) => l.label),
+    ["كتالوج ماليكاس", "كتالوج Shopify"],
+  );
   // No other platform is introduced yet.
+  const serialized = JSON.stringify(V2_NAV_LINKS) + SIDEBAR_SRC;
   for (const banned of ["Talabat", "طلبات", "Pure Seoul", "Rafeeq", "رفيق", "Snoonu", "سنونو"]) {
-    assert.ok(!SIDEBAR_SRC.includes(banned), `sidebar must not link ${banned} yet`);
+    assert.ok(!serialized.includes(banned), `sidebar must not link ${banned} yet`);
   }
-  // Exactly two hrefs.
-  const hrefs = SIDEBAR_SRC.match(/href:\s*"\/v2\/[^"]*"/g) ?? [];
-  assert.equal(hrefs.length, 2, "exactly two nav links");
 });
 
-test("sidebar highlights the active route exactly (Malikas not lit on the Shopify page)", () => {
-  assert.ok(/pathname === link\.href/.test(SIDEBAR_SRC), "exact match, not startsWith");
-  assert.ok(!/startsWith\(/.test(SIDEBAR_SRC), "no prefix matching that would light both links");
+test("sidebar drives its highlight from the shared nav rule", () => {
+  assert.ok(/activeNavHref\s*\(/.test(SIDEBAR_SRC), "uses the pure rule");
+  assert.ok(/V2_NAV_LINKS/.test(SIDEBAR_SRC), "renders the shared link list");
+  assert.ok(/activeHref === link\.href/.test(SIDEBAR_SRC), "one winner per render");
+});
+
+// The three cases the review asked to pin down.
+
+test("/v2/catalog → Malikas active only", () => {
+  const active = activeNavHref("/v2/catalog");
+  assert.equal(active, "/v2/catalog");
+  assert.notEqual(active, "/v2/catalog/shopify");
+});
+
+test("/v2/catalog/<product-id> → Malikas active only", () => {
+  for (const id of ["abc123", "7f3d-9e21", "منتج", "a%2Fb"]) {
+    const active = activeNavHref(`/v2/catalog/${id}`);
+    assert.equal(active, "/v2/catalog", `detail page keeps Malikas lit: ${id}`);
+  }
+});
+
+test("/v2/catalog/shopify → Shopify active only (Malikas not lit)", () => {
+  const active = activeNavHref("/v2/catalog/shopify");
+  assert.equal(active, "/v2/catalog/shopify");
+  assert.notEqual(active, "/v2/catalog");
+});
+
+test("nav rule: a future platform link claims its subtree without re-lighting Malikas", () => {
+  // Simulate adding platforms later — the parent must never win over a child.
+  const future = [
+    ...V2_NAV_LINKS,
+    { href: "/v2/catalog/talabat", label: "كتالوج طلبات", icon: "catalog" as const },
+  ];
+  assert.equal(activeNavHref("/v2/catalog/talabat", future), "/v2/catalog/talabat");
+  assert.equal(activeNavHref("/v2/catalog/talabat/xyz", future), "/v2/catalog/talabat", "and its sub-pages");
+  // The existing routes are unaffected by the addition.
+  assert.equal(activeNavHref("/v2/catalog", future), "/v2/catalog");
+  assert.equal(activeNavHref("/v2/catalog/shopify", future), "/v2/catalog/shopify");
+  assert.equal(activeNavHref("/v2/catalog/some-product", future), "/v2/catalog");
+});
+
+test("nav rule: matches whole segments only, and tolerates missing/foreign paths", () => {
+  // A sibling route that merely shares a prefix must NOT light the catalog link.
+  assert.equal(activeNavHref("/v2/catalogue"), null);
+  assert.equal(activeNavHref("/v2/catalog-archive"), null);
+  assert.equal(activeNavHref("/v2"), null);
+  assert.equal(activeNavHref("/dashboard"), null);
+  assert.equal(activeNavHref(null), null);
+  assert.equal(activeNavHref(undefined), null);
+  assert.equal(activeNavHref(""), null);
 });
 
 // ── Auth ─────────────────────────────────────────────────────────────────────

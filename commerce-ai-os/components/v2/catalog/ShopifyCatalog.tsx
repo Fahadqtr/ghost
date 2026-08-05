@@ -178,11 +178,11 @@ export default function ShopifyCatalog({
 
       {/* Summary — whole loaded set, not just this page */}
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
-        <SummaryCard label="إجمالي منتجات ماليكاس" value={summary.total} />
-        <SummaryCard label="موجود في Shopify" value={summary.present} />
-        <SummaryCard label="غير موجود في Shopify" value={summary.missing} />
-        <SummaryCard label="غير مطابق" value={summary.unmatched} />
-        <SummaryCard label="يتطلب مراجعة" value={summary.ambiguous} />
+        <SummaryCard label="إجمالي العناصر القابلة للبيع" value={summary.total} />
+        <SummaryCard label="موجودة في Shopify" value={summary.present} />
+        <SummaryCard label="غير موجودة في Shopify" value={summary.missing} />
+        <SummaryCard label="غير مطابقة" value={summary.unmatched} />
+        <SummaryCard label="تتطلب مراجعة" value={summary.ambiguous} />
       </div>
 
       {/* Search + filter + sort — one row on desktop. No page field, so any
@@ -231,7 +231,7 @@ export default function ShopifyCatalog({
 
       {/* Results */}
       {allCount === 0 ? (
-        <div className="card text-center text-sm text-muted">لا توجد منتجات في كتالوج ماليكاس.</div>
+        <div className="card text-center text-sm text-muted">لا توجد عناصر قابلة للبيع في كتالوج ماليكاس.</div>
       ) : matchCount === 0 ? (
         <div className="card text-center text-sm text-muted">لا توجد نتائج مطابقة للبحث أو الفلاتر الحالية.</div>
       ) : (
@@ -354,7 +354,7 @@ export default function ShopifyCatalog({
       {shopifyAvailable && orphanVariants.length > 0 ? (
         <details className="card p-0">
           <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-ink">
-            منتجات Shopify غير المرتبطة
+            متغيرات Shopify غير المرتبطة
             <span className="mr-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
               {orphanVariants.length}
             </span>
