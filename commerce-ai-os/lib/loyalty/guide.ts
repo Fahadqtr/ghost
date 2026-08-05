@@ -3,6 +3,21 @@
 // public /rewards card (and anywhere else we show the rules). `required` is the
 // hearts-per-card goal (STAMPS_REQUIRED) so the copy always matches the config.
 
+/**
+ * Minimum order value that qualifies for a stamp, in Qatari riyal.
+ *
+ * Copy-only: nothing in the codebase enforces this today, so it is stated here
+ * as a rule for customers and kept in one place so the wording can never drift
+ * from the number.
+ */
+export const MIN_ORDER_QAR = 60;
+
+/** Arabic-Indic digits, matching the way the number was written for the card. */
+function arDigits(n: number): string {
+  const map = "٠١٢٣٤٥٦٧٨٩";
+  return String(Math.trunc(Math.abs(n))).replace(/\d/g, (d) => map[Number(d)] ?? d);
+}
+
 /** Arabic number word for the small counts we use (falls back to the digit). */
 function arCount(n: number): string {
   const words: Record<number, string> = {
@@ -27,10 +42,12 @@ export function rewardsSteps(required = 6): string[] {
 }
 
 /** The rules / terms & conditions. */
-export function rewardsTerms(required = 6): string[] {
+export function rewardsTerms(required = 6, minOrderQar = MIN_ORDER_QAR): string[] {
   return [
     "كل تقييم صادق ومنشور فعلاً في سنونو = ختمة واحدة.",
     "التقييم لازم يكون لمنتج اشتريتيه من Malika's Universe.",
+    // Sits with the other qualifying-order rules, not down with the voucher terms.
+    `أقل قيمة للطلب ${arDigits(minOrderQar)} ريال.`,
     "الصور المكررة أو غير الحقيقية لا تُعتمد.",
     "الختمة تُعتمد بعد مراجعة الإدارة (ليست فورية).",
     `تكتمل البطاقة عند جمع ${arCount(required)}.`,
