@@ -482,14 +482,17 @@ test("the component is a Server Component (no client directive, no state)", () =
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 
-test("sidebar contains exactly the Malikas and Shopify catalog links", () => {
+test("the catalog section contains exactly the Malikas and Shopify catalog links", () => {
+  // The sidebar has grown beyond the catalog (a contest section was added), so
+  // this asserts the CATALOG SECTION specifically rather than the whole list.
+  const catalog = V2_NAV_LINKS.filter((l) => l.section === "الكتالوج");
   assert.deepEqual(
-    V2_NAV_LINKS.map((l) => l.href),
+    catalog.map((l) => l.href),
     ["/v2/catalog", "/v2/catalog/shopify"],
-    "exactly two nav links, in order",
+    "exactly two catalog links, in order",
   );
   assert.deepEqual(
-    V2_NAV_LINKS.map((l) => l.label),
+    catalog.map((l) => l.label),
     ["كتالوج ماليكاس", "كتالوج Shopify"],
   );
   // No other platform is introduced yet.
@@ -501,7 +504,7 @@ test("sidebar contains exactly the Malikas and Shopify catalog links", () => {
 
 test("sidebar drives its highlight from the shared nav rule", () => {
   assert.ok(/activeNavHref\s*\(/.test(SIDEBAR_SRC), "uses the pure rule");
-  assert.ok(/V2_NAV_LINKS/.test(SIDEBAR_SRC), "renders the shared link list");
+  assert.ok(/groupNavLinks\(\)/.test(SIDEBAR_SRC), "renders the shared link list, grouped by section");
   assert.ok(/activeHref === link\.href/.test(SIDEBAR_SRC), "one winner per render");
 });
 
