@@ -60,6 +60,10 @@ function strip(src: string): string {
 const PAGE_SRC = readFileSync(new URL("../../app/(v2)/v2/catalog/shopify/page.tsx", import.meta.url), "utf8");
 const COMPONENT_SRC = readFileSync(new URL("../../components/v2/catalog/ShopifyCatalog.tsx", import.meta.url), "utf8");
 const SIDEBAR_SRC = readFileSync(new URL("../../components/v2/V2Sidebar.tsx", import.meta.url), "utf8");
+const RESULTS_SRC = readFileSync(
+  new URL("../../components/v2/catalog/ShopifyProductPreview.tsx", import.meta.url),
+  "utf8",
+);
 
 // ── Page wiring ──────────────────────────────────────────────────────────────
 
@@ -298,15 +302,17 @@ test("display name prefers Arabic, then English, else a dash", () => {
 // ── Component: rendered content ──────────────────────────────────────────────
 
 test("component renders the required desktop table headers", () => {
+  // The results table moved into the client component in UI.3C.1 so a row can
+  // open the preview dialog; the required columns are unchanged.
   for (const header of ["الصورة", "الاسم", "SKU", "الباركود", "السعر", "حالة الوجود", "طريقة المطابقة", "حالة Shopify"]) {
-    assert.ok(COMPONENT_SRC.includes(header), `desktop table header: ${header}`);
+    assert.ok(RESULTS_SRC.includes(header), `desktop table header: ${header}`);
   }
 });
 
 test("component renders the mobile card fields", () => {
-  const mobile = COMPONENT_SRC.slice(COMPONENT_SRC.indexOf("Mobile cards"));
-  assert.ok(/RowImage/.test(mobile), "image");
-  assert.ok(/getRowDisplayName/.test(mobile), "name");
+  const mobile = RESULTS_SRC.slice(RESULTS_SRC.indexOf("Mobile cards"));
+  assert.ok(/Thumb/.test(mobile), "image");
+  assert.ok(/getPreviewDisplayName/.test(mobile), "name");
   assert.ok(/SKU:/.test(mobile), "sku");
   assert.ok(/باركود:/.test(mobile), "barcode");
   assert.ok(/السعر:/.test(mobile), "price");
@@ -356,9 +362,13 @@ test("component renders pagination controls and the result counter", () => {
   assert.ok(/صفحة \{page\} من \{totalPages\}/.test(COMPONENT_SRC), "page N of M");
 });
 
-test("rows link to the MASTER product page; no Shopify detail route is created", () => {
-  assert.ok(/\/v2\/catalog\/\$\{encodeURIComponent\(row\.masterProductId\)\}/.test(COMPONENT_SRC), "row → master detail");
-  assert.ok(!/\/v2\/catalog\/shopify\/\[/.test(COMPONENT_SRC), "no Shopify detail route");
+test("rows reach the MASTER product page; no Shopify detail route is created", () => {
+  // Since UI.3C.1 a row opens the preview dialog, and the dialog carries the
+  // explicit link to the master product page.
+  assert.ok(/previewProductHref\(item\)/.test(RESULTS_SRC), "dialog links to the master detail");
+  assert.ok(RESULTS_SRC.includes("فتح صفحة المنتج"), "explicit secondary action");
+  assert.ok(!/\/v2\/catalog\/shopify\/\[/.test(RESULTS_SRC), "no Shopify detail route");
+  assert.ok(!/\/v2\/catalog\/shopify\/\[/.test(COMPONENT_SRC), "no Shopify detail route in the page component");
 });
 
 // ── Orphan section ───────────────────────────────────────────────────────────

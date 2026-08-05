@@ -454,10 +454,28 @@ export function projectShopifyCatalog(
 const MATCH_STATUS_LABELS: Record<MatchStatus, string> = {
   matched_sku: "مطابق (SKU)",
   matched_barcode: "مطابق (باركود)",
-  ambiguous: "غير محدد (تكرار)",
+  ambiguous: "مطابقة مكررة",
   unmatched: "غير مطابق",
   unknown: "غير معروف",
 };
+
+/**
+ * Fixed, user-facing explanations for a match state. Only the ambiguous state
+ * needs one; every other state is self-explanatory from its label. The text is a
+ * constant — it never embeds a raw matchReason, a SKU/barcode value, or an ID.
+ */
+const MATCH_STATUS_EXPLANATIONS: Partial<Record<MatchStatus, string>> = {
+  ambiguous:
+    "يوجد أكثر من متغير في Shopify يحمل نفس SKU أو الباركود، لذلك تتطلب المطابقة مراجعة يدوية.",
+};
+
+/** The fixed explanation for a match state, or null when none applies. */
+export function getMatchStatusExplanation(status: MatchStatus): string | null {
+  if (typeof status !== "string") return null;
+  if (!Object.hasOwn(MATCH_STATUS_EXPLANATIONS, status)) return null;
+  const value = (MATCH_STATUS_EXPLANATIONS as Record<string, unknown>)[status];
+  return typeof value === "string" ? value : null;
+}
 
 const PRESENCE_LABELS: Record<PresenceStatus, string> = {
   present: "موجود في Shopify",
@@ -762,11 +780,11 @@ export interface ShopifyFilterOption {
 }
 export const SHOPIFY_FILTER_OPTIONS: readonly ShopifyFilterOption[] = [
   { value: "all", label: "الكل" },
-  { value: "present", label: "موجود" },
-  { value: "missing", label: "غير موجود" },
+  { value: "present", label: "موجود في Shopify" },
+  { value: "missing", label: "غير موجود في Shopify" },
   { value: "matched_sku", label: "مطابق بالـSKU" },
   { value: "matched_barcode", label: "مطابق بالباركود" },
-  { value: "ambiguous", label: "يتطلب مراجعة" },
+  { value: "ambiguous", label: "مطابقة مكررة" },
   { value: "unknown", label: "غير معروف" },
 ];
 
@@ -779,3 +797,62 @@ export const SHOPIFY_SORT_OPTIONS: readonly ShopifySortOption[] = [
   { value: "sku", label: "SKU" },
   { value: "status", label: "الحالة" },
 ];
+
+// ── Client-safe preview projection (Phase UI.3C.1) ───────────────────────────
+
+/**
+ * The ONLY row shape allowed to cross into a Client Component.
+ *
+ * Anything sent to the client is serialized into the HTML payload and is
+ * readable in page source, so this type deliberately OMITS every Shopify
+ * identifier (product / variant / inventory-item GID) and the raw matchReason.
+ * It carries display fields plus the already-decided status enums — no matching
+ * is re-derived downstream.
+ */
+export interface ShopifyPreviewItem {
+  /** Stable list key + modal identity. Not a Shopify id. */
+  key: string;
+  masterProductId: string;
+  nameAr: string | null;
+  nameEn: string | null;
+  sku: string | null;
+  barcode: string | null;
+  imageUrl: string | null;
+  price: number | null;
+  presenceStatus: PresenceStatus;
+  matchStatus: MatchStatus;
+  shopifyStatus: ShopifyStatus;
+}
+
+/** Strip a catalog row down to the client-safe preview shape. */
+export function toPreviewItem(row: ShopifyCatalogRow): ShopifyPreviewItem {
+  return {
+    key: `${row.masterProductId}::${row.masterVariantId ?? ""}`,
+    masterProductId: row.masterProductId,
+    nameAr: row.nameAr,
+    nameEn: row.nameEn,
+    sku: row.sku,
+    barcode: row.barcode,
+    imageUrl: row.imageUrl,
+    price: row.price,
+    presenceStatus: row.presenceStatus,
+    matchStatus: row.matchStatus,
+    shopifyStatus: row.shopifyStatus,
+  };
+}
+
+export function toPreviewItems(rows: readonly ShopifyCatalogRow[]): ShopifyPreviewItem[] {
+  return (Array.isArray(rows) ? rows : []).map(toPreviewItem);
+}
+
+/** Display name for a preview item: Arabic first, then English, else a dash. */
+export function getPreviewDisplayName(item: ShopifyPreviewItem): string {
+  if (typeof item.nameAr === "string" && item.nameAr.trim().length > 0) return item.nameAr;
+  if (typeof item.nameEn === "string" && item.nameEn.trim().length > 0) return item.nameEn;
+  return "—";
+}
+
+/** The master product detail route for a preview item. */
+export function previewProductHref(item: ShopifyPreviewItem): string {
+  return `/v2/catalog/${encodeURIComponent(item.masterProductId)}`;
+}
