@@ -1,106 +1,25 @@
-// Malikas V2 Catalog Control Center (Phase UI.2A). Read-only presentation:
-// whole-catalog KPI cards, a GET-form search/filter/sort bar (no client JS, no
-// polling), server-paginated results as a desktop table and mobile cards, and
-// prev/next pagination that preserves the current query/filter/sort. Renders
-// ONLY catalog-safe fields — never stock, channel/platform presence, platform
-// IDs, orders, raw JSON/approval text, or PII.
+// Malikas V2 Catalog Control Center (Phase UI.2A / UI.3C.1). Read-only Server
+// Component: whole-catalog KPI cards, a GET-form search/filter/sort bar (no
+// client JS, no polling), and prev/next pagination that preserves the current
+// query/filter/sort. The interactive results list (table, cards, preview dialog,
+// image lightbox) is delegated to MasterCatalogResults.
+//
+// Renders ONLY catalog-safe fields — never stock, channel/platform presence,
+// platform IDs, orders, raw JSON/approval text, or PII. Rows crossing into the
+// client are narrowed by toMasterCatalogPreviewItems(), an explicit whitelist
+// that also normalizes the approval text away.
 
 import Link from "next/link";
 import {
   CATALOG_FILTER_OPTIONS,
   CATALOG_SORT_OPTIONS,
   catalogHref,
-  catalogDetailHref,
-  getApprovalLabel,
-  getCompleteness,
-  getCompletenessLabel,
-  getDisplayName,
-  hasBarcode,
-  hasSku,
-  hasImage,
-  hasValidDiscount,
-  hasValidPrice,
-  isApproved,
+  toMasterCatalogPreviewItems,
   type CatalogControls,
   type CatalogPage,
   type CatalogSummary,
-  type MasterCatalogProduct,
 } from "@/lib/catalog-v2/master-catalog-view";
-
-function money(value: number): string {
-  return `${value} ر.ق`;
-}
-
-function ImagePlaceholder() {
-  return (
-    <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-[#efe3d6] bg-[#faf3ec] text-[#d9b48f]">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-        <rect x="3" y="4" width="18" height="16" rx="2.5" />
-        <circle cx="8.5" cy="9.5" r="1.6" />
-        <path d="M21 16l-5-5-8 8" />
-      </svg>
-    </div>
-  );
-}
-
-function ProductImage({ product }: { product: MasterCatalogProduct }) {
-  if (hasImage(product)) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element -- catalog thumbnails use the stored URL directly; no next/image remote config here.
-      <img
-        src={product.imageUrl as string}
-        alt={getDisplayName(product)}
-        loading="lazy"
-        className="h-12 w-12 rounded-lg border border-[#efe3d6] object-cover"
-      />
-    );
-  }
-  return <ImagePlaceholder />;
-}
-
-function PriceCell({ product }: { product: MasterCatalogProduct }) {
-  if (hasValidDiscount(product)) {
-    return (
-      <span className="inline-flex flex-wrap items-baseline gap-1.5">
-        <span className="text-xs text-muted line-through">{money(product.price as number)}</span>
-        <span className="font-semibold text-emerald-700">{money(product.discountPrice as number)}</span>
-      </span>
-    );
-  }
-  if (hasValidPrice(product)) {
-    return <span className="text-ink">{money(product.price as number)}</span>;
-  }
-  return <span className="text-rose-600">—</span>;
-}
-
-function CompletenessBadge({ product }: { product: MasterCatalogProduct }) {
-  const state = getCompleteness(product);
-  const complete = state === "complete";
-  return (
-    <span
-      className={
-        "inline-block rounded-full px-2 py-0.5 text-[11px] font-medium " +
-        (complete ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700")
-      }
-    >
-      {getCompletenessLabel(state)}
-    </span>
-  );
-}
-
-function ApprovalBadge({ product }: { product: MasterCatalogProduct }) {
-  const ok = isApproved(product);
-  return (
-    <span
-      className={
-        "inline-block rounded-full px-2 py-0.5 text-[11px] font-medium " +
-        (ok ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")
-      }
-    >
-      {getApprovalLabel(product)}
-    </span>
-  );
-}
+import MasterCatalogResults from "@/components/v2/catalog/MasterCatalogPreview";
 
 function KpiCard({ label, value }: { label: string; value: number }) {
   return (
@@ -183,7 +102,7 @@ export default function MasterCatalog({
         </label>
         <label className="flex flex-col gap-1">
           <span className="label">الفلتر</span>
-          <select name="filter" defaultValue={controls.filter} className="input">
+          <select name="filter" defaultValue={controls.filter} className="select-input">
             {CATALOG_FILTER_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
@@ -193,7 +112,7 @@ export default function MasterCatalog({
         </label>
         <label className="flex flex-col gap-1">
           <span className="label">الترتيب</span>
-          <select name="sort" defaultValue={controls.sort} className="input">
+          <select name="sort" defaultValue={controls.sort} className="select-input">
             {CATALOG_SORT_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
@@ -228,80 +147,8 @@ export default function MasterCatalog({
             </span>
           </div>
 
-          {/* Desktop table */}
-          <div className="card hidden overflow-x-auto p-0 md:block">
-            <table className="w-full text-right text-sm">
-              <thead className="border-b border-[#efe3d6] text-xs text-muted">
-                <tr>
-                  <th className="px-4 py-3 font-medium">الصورة</th>
-                  <th className="px-4 py-3 font-medium">الاسم</th>
-                  <th className="px-4 py-3 font-medium">SKU</th>
-                  <th className="px-4 py-3 font-medium">الباركود</th>
-                  <th className="px-4 py-3 font-medium">السعر</th>
-                  <th className="px-4 py-3 font-medium">الخيارات</th>
-                  <th className="px-4 py-3 font-medium">الاعتماد</th>
-                  <th className="px-4 py-3 font-medium">الحالة</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((p) => (
-                  <tr key={p.id} className="border-b border-[#f5ece1] last:border-0">
-                    <td className="px-4 py-3">
-                      <ProductImage product={p} />
-                    </td>
-                    <td className="px-4 py-3 font-medium">
-                      <Link href={catalogDetailHref(p.id, controls)} className="text-ink hover:text-brand hover:underline">
-                        {getDisplayName(p)}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 text-muted">{hasSku(p) ? p.sku : "—"}</td>
-                    <td className="px-4 py-3 text-muted">{hasBarcode(p) ? p.barcode : "—"}</td>
-                    <td className="px-4 py-3">
-                      <PriceCell product={p} />
-                    </td>
-                    <td className="px-4 py-3 text-muted">{p.variantCount}</td>
-                    <td className="px-4 py-3">
-                      <ApprovalBadge product={p} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <CompletenessBadge product={p} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile cards */}
-          <div className="space-y-3 md:hidden">
-            {items.map((p) => (
-              <div key={p.id} className="card flex gap-3 p-3">
-                <ProductImage product={p} />
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <Link
-                      href={catalogDetailHref(p.id, controls)}
-                      className="truncate font-medium text-ink hover:text-brand hover:underline"
-                    >
-                      {getDisplayName(p)}
-                    </Link>
-                    <CompletenessBadge product={p} />
-                  </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted">
-                    <span>SKU: {hasSku(p) ? p.sku : "—"}</span>
-                    <span>باركود: {hasBarcode(p) ? p.barcode : "—"}</span>
-                    <span>الخيارات: {p.variantCount}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm">
-                      <PriceCell product={p} />
-                    </div>
-                    <ApprovalBadge product={p} />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          {/* Results — interactive: a row/card opens the preview dialog. */}
+          <MasterCatalogResults items={toMasterCatalogPreviewItems(items, controls)} />
 
           {/* Pagination — preserves query/filter/sort */}
           {totalPages > 1 ? (

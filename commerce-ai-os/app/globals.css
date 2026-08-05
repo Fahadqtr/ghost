@@ -59,6 +59,36 @@
 @utility label {
   @apply mb-1 block text-xs font-medium text-[#8a7461];
 }
+/*
+  Native <select> that stays readable on mobile.
+
+  The native option popup is drawn by the OS, not by the page, so it can never be
+  hidden behind a card or a z-index. What actually broke it on Android Chrome was
+  colour: with the device in dark mode the popup is painted dark while the option
+  text kept inheriting the page's dark ink, leaving dark-on-dark text. Pinning
+  `color-scheme: light` makes the browser render the native popup in light mode,
+  and the explicit option colours below guarantee dark text on white regardless
+  of the device theme. 16px on the control also stops iOS Safari zooming in on
+  focus. The arrow is drawn on the left for RTL.
+*/
+@utility select-input {
+  @apply input appearance-none bg-white bg-no-repeat pl-9 text-ink;
+  color-scheme: light;
+  font-size: 16px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%238a7461' stroke-width='1.8'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+  background-position: left 0.65rem center;
+  background-size: 1.1rem 1.1rem;
+}
+@media (min-width: 640px) {
+  .select-input {
+    font-size: 0.875rem;
+  }
+}
+/* The option list itself — explicit so no inherited/system colour can hide it. */
+.select-input option {
+  background-color: #ffffff;
+  color: #3f2a1d;
+}
 @utility badge {
   @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
 }
