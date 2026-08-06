@@ -42,6 +42,8 @@ export default async function ProductDetailPage({
   // Phase UI.4: the editor redirects back here with saved=1 after a successful
   // save. Strict literal comparison — the value itself is never rendered.
   let saved = false;
+  // Phase UI.5: the AI creator redirects here with created=1 after a create.
+  let created = false;
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
@@ -52,6 +54,7 @@ export default async function ProductDetailPage({
     const controls = parseCatalogControls(sp);
     backHref = catalogHref(controls, controls.page);
     saved = sp.saved === "1";
+    created = sp.created === "1";
 
     const { id } = await params;
     const validId = parseProductId(id);
@@ -100,6 +103,11 @@ export default async function ProductDetailPage({
       {saved ? (
         <div className="card border-emerald-200 bg-emerald-50 text-sm text-emerald-700">
           تم حفظ التغييرات.
+        </div>
+      ) : null}
+      {created ? (
+        <div className="card border-emerald-200 bg-emerald-50 text-sm text-emerald-700">
+          تم إنشاء المنتج — وهو غير معتمد ولن يُرسل لأي منصة حتى تعتمده.
         </div>
       ) : null}
       <ProductDetail
