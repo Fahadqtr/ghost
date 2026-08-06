@@ -33,7 +33,13 @@ const UPDATE_BATCH = 50;
 const CREATE_GROUP_BATCH = 10;
 const CREATE_VARIANT_BATCH = 25;
 
-type Step = "upload" | "sheets" | "mapping" | "preview" | "report";
+type Step = "upload" | "info" | "sheets" | "mapping" | "preview" | "report";
+
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} ميغابايت`;
+  if (n >= 1024) return `${Math.round(n / 1024)} كيلوبايت`;
+  return `${n} بايت`;
+}
 
 type Tab = "product_updates" | "variant_updates" | "new_products" | "new_variants" | "problems" | "unchanged";
 
@@ -108,10 +114,16 @@ export default function CatalogExcelImport() {
         setSheetName(res.data.headers.sheetName);
         setMapping(res.data.headers.mapping);
         setFormulaCells(res.data.headers.formulaCells);
-        setStep("mapping");
+        // One sheet: show the file summary first — the user confirms with
+        // «تحليل ملف Excel» before seeing the mapping.
+        setStep("info");
       } else {
         setStep("sheets");
       }
+    } catch {
+      // A dead/failed server call must NEVER leave the user with silence.
+      setError("تعذّر قراءة الملف — أعد المحاولة. (رمز: IMPORT-UI-01)");
+      setFile(null);
     } finally {
       setBusy(false);
     }
@@ -134,6 +146,8 @@ export default function CatalogExcelImport() {
       setMapping(res.data.mapping);
       setFormulaCells(res.data.formulaCells);
       setStep("mapping");
+    } catch {
+      setError("تعذّر قراءة الورقة — أعد المحاولة. (رمز: IMPORT-UI-02)");
     } finally {
       setBusy(false);
     }
@@ -181,6 +195,8 @@ export default function CatalogExcelImport() {
       setSelectedNewVariants(new Set(res.data.newVariants.filter((v) => !v.blockedReason).map((v) => v.rowNum)));
       setTab(res.data.updates.some((u) => u.recordKind === "product") ? "product_updates" : res.data.newGroups.length > 0 ? "new_products" : "product_updates");
       setStep("preview");
+    } catch {
+      setError("تعذّر تحليل الملف — أعد المحاولة. (رمز: IMPORT-UI-03)");
     } finally {
       setBusy(false);
     }
@@ -258,6 +274,10 @@ export default function CatalogExcelImport() {
       }
       setResults(all);
       setStep("report");
+    } catch {
+      setError("تعذّر تطبيق التحديثات — لم يكتمل بعض الدفعات. أعد المعاينة قبل المحاولة مجددًا. (رمز: IMPORT-UI-04)");
+      setResults(all);
+      if (all.length > 0) setStep("report");
     } finally {
       setProgress(null);
       setBusy(false);
@@ -309,6 +329,10 @@ export default function CatalogExcelImport() {
       }
       setResults(all);
       setStep("report");
+    } catch {
+      setError("تعذّر إنشاء بعض المنتجات — راجع التقرير ثم أعد المعاينة. (رمز: IMPORT-UI-05)");
+      setResults(all);
+      if (all.length > 0) setStep("report");
     } finally {
       setProgress(null);
       setBusy(false);
@@ -373,11 +397,50 @@ export default function CatalogExcelImport() {
             type="file"
             accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             className="hidden"
-            onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              e.target.value = ""; // allow re-picking the same file after a failure
+              void onPickFile(f);
+            }}
           />
           <button type="button" className="btn-primary disabled:opacity-60" disabled={busy} onClick={() => fileInputRef.current?.click()}>
-            {busy ? "جارٍ الفحص…" : "اختيار ملف Excel"}
+            {busy ? "جاري قراءة ملف Malikas..." : "اختيار ملف Excel"}
           </button>
+        </section>
+      ) : null}
+
+      {/* Step 1b: file summary — the user sees what was read BEFORE mapping */}
+      {step === "info" && file ? (
+        <section className="card space-y-3">
+          <h2 className="text-sm font-semibold text-ink">٢ · ملخص الملف</h2>
+          <ul className="space-y-1 text-sm text-ink">
+            <li>
+              الملف: <span dir="ltr" className="font-medium">{file.name}</span>
+            </li>
+            <li>الحجم: {formatBytes(file.size)}</li>
+            <li>
+              تم اختيار {sheets[0]?.rows ?? 0} صفًا من {sheetName || sheets[0]?.name || "الورقة"}
+            </li>
+            {formulaCells > 0 ? (
+              <li className="text-amber-700">الملف يحتوي {formulaCells} خلية معادلات — ستُقرأ القيم المحفوظة فقط.</li>
+            ) : null}
+          </ul>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn-primary" disabled={busy} onClick={() => setStep("mapping")}>
+              تحليل ملف Excel
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={busy}
+              onClick={() => {
+                setFile(null);
+                setStep("upload");
+              }}
+            >
+              تغيير الملف
+            </button>
+          </div>
         </section>
       ) : null}
 
@@ -385,6 +448,11 @@ export default function CatalogExcelImport() {
       {step === "sheets" ? (
         <section className="card space-y-3">
           <h2 className="text-sm font-semibold text-ink">٢ · اختيار الورقة</h2>
+          {file ? (
+            <p className="text-xs text-muted">
+              الملف: <span dir="ltr">{file.name}</span> · {formatBytes(file.size)}
+            </p>
+          ) : null}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {sheets.map((s) => (
               <button key={s.name} type="button" disabled={busy} onClick={() => void chooseSheet(s.name)} className="rounded-xl border border-[#efe3d6] bg-white p-3 text-right hover:shadow-md">
@@ -469,7 +537,7 @@ export default function CatalogExcelImport() {
             <button type="button" className="btn-primary disabled:opacity-60" disabled={busy || !!mappingProblem} onClick={() => void runPreview()}>
               {busy ? "جارٍ التحليل والمطابقة…" : "تحليل ومعاينة"}
             </button>
-            <button type="button" className="btn-ghost" disabled={busy} onClick={() => setStep(sheets.length > 1 ? "sheets" : "upload")}>
+            <button type="button" className="btn-ghost" disabled={busy} onClick={() => setStep(sheets.length > 1 ? "sheets" : "info")}>
               رجوع
             </button>
           </div>

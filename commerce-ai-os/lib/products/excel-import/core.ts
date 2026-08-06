@@ -57,7 +57,7 @@ export const CATALOG_FIELD_DEFS: readonly FieldDef[] = [
   {
     field: "sku",
     label: "SKU",
-    aliases: ["sku", "productsku", "malikassku", "variantsku", "skucode"],
+    aliases: ["sku", "productsku", "malikassku", "variantsku", "skucode", "skuupdate"],
     scope: "both",
     kind: "identifier",
     clearable: false,
@@ -66,7 +66,7 @@ export const CATALOG_FIELD_DEFS: readonly FieldDef[] = [
   {
     field: "barcode",
     label: "الباركود",
-    aliases: ["barcode", "barcod", "ean", "ean13", "gtin", "upc"],
+    aliases: ["barcode", "barcod", "ean", "ean13", "gtin", "upc", "barcodeupdate"],
     scope: "both",
     kind: "identifier",
     clearable: false,
@@ -75,7 +75,7 @@ export const CATALOG_FIELD_DEFS: readonly FieldDef[] = [
   {
     field: "name_en",
     label: "الاسم (إنجليزي)",
-    aliases: ["nameen", "englishname", "productnameen", "name_en", "nameeng", "productname", "name"],
+    aliases: ["nameen", "englishname", "productnameen", "name_en", "nameeng", "productname", "name", "productnameenupdate"],
     scope: "product",
     kind: "text",
     clearable: false,
@@ -84,7 +84,7 @@ export const CATALOG_FIELD_DEFS: readonly FieldDef[] = [
   {
     field: "name_ar",
     label: "الاسم (عربي)",
-    aliases: ["namear", "arabicname", "productnamear", "name_ar", "الاسم", "الاسمالعربي"],
+    aliases: ["namear", "arabicname", "productnamear", "name_ar", "الاسم", "الاسمالعربي", "productnamearupdate"],
     scope: "product",
     kind: "text",
     clearable: false,
@@ -93,7 +93,7 @@ export const CATALOG_FIELD_DEFS: readonly FieldDef[] = [
   {
     field: "description_en",
     label: "الوصف (إنجليزي)",
-    aliases: ["descriptionen", "englishdescription", "description_en", "descen", "description"],
+    aliases: ["descriptionen", "englishdescription", "description_en", "descen", "description", "productdescriptionenupdate"],
     scope: "product",
     kind: "text",
     clearable: true,
@@ -102,7 +102,7 @@ export const CATALOG_FIELD_DEFS: readonly FieldDef[] = [
   {
     field: "description_ar",
     label: "الوصف (عربي)",
-    aliases: ["descriptionar", "arabicdescription", "description_ar", "descar", "الوصف"],
+    aliases: ["descriptionar", "arabicdescription", "description_ar", "descar", "الوصف", "productdescriptionarupdate"],
     scope: "product",
     kind: "text",
     clearable: true,
@@ -138,7 +138,7 @@ export const CATALOG_FIELD_DEFS: readonly FieldDef[] = [
   {
     field: "price",
     label: "السعر",
-    aliases: ["price", "regularprice", "السعر", "sellingprice"],
+    aliases: ["price", "regularprice", "السعر", "sellingprice", "priceglobal", "priceglobalupdate"],
     scope: "both",
     kind: "price",
     clearable: false,
@@ -216,7 +216,34 @@ export const IGNORED_HEADER_ALIASES: readonly string[] = [
   "shopify", "shopifyid", "gid", "snoonu", "talabat", "rafeeq",
   "platformstatus", "platform_status",
   "id", "uuid", "productid", "variantid", "parentproductid",
+  // Malikas platform exports (Snoonu AllExportData): the exporter's own id is
+  // NOT a Malikas database id — reference only, never a match or write key.
+  "spi", "spiuniqueidentifier",
+  "preparationtime", "preparationtimeupdate",
 ];
+
+/** Recognized-but-refused header PREFIXES (normalized). Platform exports
+ *  embed the store address in availability/stock headers, so exact aliases
+ *  can't cover them. Stock/availability/prep-time are out of scope in UI.6. */
+export const IGNORED_HEADER_PREFIXES: readonly string[] = [
+  "availability",
+  "stockfor",
+  "preparationtime",
+];
+
+/** Platform-export (ReadOnly) headers: shown as reference only. When the
+ *  matching (Update) column is present, these are auto-ignored so they never
+ *  produce a duplicate mapping; without the (Update) twin the user may
+ *  confirm them manually (matching stays SKU→Barcode; writing identifiers
+ *  still requires enabling those fields in the field picker). */
+export const READONLY_REFERENCE_ALIASES: Readonly<Record<string, CatalogImportField>> = {
+  productnameenreadonly: "name_en",
+  productnamearreadonly: "name_ar",
+  productdescriptionenreadonly: "description_en",
+  productdescriptionarreadonly: "description_ar",
+  skureadonly: "sku",
+  barcodereadonly: "barcode",
+};
 
 export const CLEAR_TOKEN = "__CLEAR__";
 
@@ -254,27 +281,42 @@ export interface ColumnMapping {
   status: ColumnStatus;
 }
 
-/** Exact-alias headers auto-map; recognized-but-banned headers are ignored;
- *  everything else is unknown and stays unused unless the user maps it. */
+/** Exact-alias headers auto-map; recognized-but-banned headers (and empty
+ *  headers) are ignored; platform-export (ReadOnly) headers auto-ignore when
+ *  their (Update) twin is present; everything else is unknown and stays
+ *  unused unless the user maps it. */
 export function detectCatalogColumns(headers: readonly unknown[]): ColumnMapping[] {
-  return headers.map((h, index) => {
+  const first = headers.map((h, index) => {
     const header = typeof h === "string" ? h.trim() : h == null ? "" : String(h).trim();
     const norm = normalizeHeader(header);
-    if (norm === "") return { index, header, field: null, status: "unknown" as const };
-    if (IGNORED_HEADER_ALIASES.includes(norm)) {
-      return { index, header, field: null, status: "ignored" as const };
+    // An empty header (trailing export column) is deliberately ignored — it
+    // must never crash, block mapping, or read as a duplicate.
+    if (norm === "") return { index, header, norm, field: null as CatalogImportField | null, status: "ignored" as ColumnStatus, readonlyRef: false };
+    if (IGNORED_HEADER_ALIASES.includes(norm) || IGNORED_HEADER_PREFIXES.some((p) => norm.startsWith(p))) {
+      return { index, header, norm, field: null as CatalogImportField | null, status: "ignored" as ColumnStatus, readonlyRef: false };
     }
     for (const def of CATALOG_FIELD_DEFS) {
-      const hit = def.aliases.indexOf(norm);
-      if (hit >= 0) {
+      if (def.aliases.includes(norm)) {
         // The primary alias (index 0) is unambiguous; looser aliases like
         // "name" or generic "keywords"/"status" need the user's confirmation.
         const loose = ["name", "productname", "description", "keywords", "tags", "status"].includes(norm);
-        return { index, header, field: def.field, status: loose ? ("needs_confirm" as const) : ("auto" as const) };
+        return { index, header, norm, field: def.field as CatalogImportField | null, status: (loose ? "needs_confirm" : "auto") as ColumnStatus, readonlyRef: false };
       }
     }
-    return { index, header, field: null, status: "unknown" as const };
+    const ref = READONLY_REFERENCE_ALIASES[norm];
+    if (ref) return { index, header, norm, field: ref as CatalogImportField | null, status: "needs_confirm" as ColumnStatus, readonlyRef: true };
+    return { index, header, norm, field: null as CatalogImportField | null, status: "unknown" as ColumnStatus, readonlyRef: false };
   });
+
+  // Second pass: a (ReadOnly) column whose field is already claimed by a
+  // direct alias column (its (Update) twin) becomes reference-only/ignored,
+  // so the proposed mapping is never duplicate-invalid out of the box.
+  const claimed = new Set(first.filter((m) => !m.readonlyRef && m.field !== null).map((m) => m.field));
+  return first.map((m) =>
+    m.readonlyRef && m.field !== null && claimed.has(m.field)
+      ? { index: m.index, header: m.header, field: null, status: "ignored" as const }
+      : { index: m.index, header: m.header, field: m.field, status: m.status },
+  );
 }
 
 export type MappingValidation = { ok: true } | { ok: false; error: MappingError };
@@ -694,7 +736,8 @@ export type NewRecordClass =
   | "new_variant_parent_in_file" // parent is itself a new product in this file
   | "orphan_variant" // parent neither in catalog nor in file
   | "new_product_needs_sku" // barcode only — sku can be generated
-  | "needs_review" // no identifiers at all
+  | "new_product_needs_ids" // named row with NO sku and NO barcode — both can be generated
+  | "needs_review" // no identifiers and no name
   | "blocked"; // an identifier or conflict forbids creation
 
 export interface NewRowClassification {
@@ -709,6 +752,7 @@ export const NEW_CLASS_LABELS: Record<NewRecordClass, string> = {
   new_variant_parent_in_file: "خيار جديد ومنتجه الأب داخل الملف",
   orphan_variant: "خيار جديد لكن المنتج الأب غير موجود",
   new_product_needs_sku: "منتج جديد محتمل — يحتاج SKU",
+  new_product_needs_ids: "منتج جديد محتمل — يحتاج SKU وBarcode",
   needs_review: "صف جديد محتمل يحتاج مراجعة",
   blocked: "تعارض يمنع الإنشاء",
 };
@@ -747,6 +791,17 @@ export function detectNewCatalogRecord(
 
   if (row.barcode) {
     return { rowNum: row.rowNum, cls: "new_product_needs_sku", reason: null };
+  }
+
+  // No identifiers at all. A NAMED row (real case: platform exports carry
+  // rows with names/prices but empty SKU/Barcode) is still a creatable new
+  // product — both identifiers can be generated. It is NEVER matched by
+  // name; it only ever lands in the new-products tab.
+  const hasName = row.values.some(
+    (v) => (v.field === "name_en" || v.field === "name_ar") && !v.clear && v.value !== "",
+  );
+  if (hasName) {
+    return { rowNum: row.rowNum, cls: "new_product_needs_ids", reason: null };
   }
 
   return { rowNum: row.rowNum, cls: "needs_review", reason: "لا يوجد SKU ولا باركود." };
@@ -788,7 +843,7 @@ export function groupNewProductRows(
       };
       g.mainRowNum = c.rowNum;
       groups.set(row.sku, g);
-    } else if (c.cls === "new_product_needs_sku") {
+    } else if (c.cls === "new_product_needs_sku" || c.cls === "new_product_needs_ids") {
       loose.push({ mainRowNum: c.rowNum, mainSku: null, variantRowNums: [], blockedRowNums: [], needsSku: true });
     }
   }
