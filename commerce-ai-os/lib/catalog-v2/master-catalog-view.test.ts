@@ -21,6 +21,7 @@ import {
   paginateCatalog,
   catalogHref,
   catalogDetailHref,
+  catalogEditHref,
   summarizeCatalog,
   projectCatalogRows,
   getCompleteness,
@@ -1494,4 +1495,52 @@ test("UI.2C: images stay lazy and no stock/platform/order/customer fields introd
     !/stock_quantity|\bstock\b|\binventory\b|channel_status|platform_status|\border_id\b|\bcustomer\b/.test(src),
     "no stock/platform/order/customer field",
   );
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase UI.4 — catalogEditHref (product editor entry, controls preserved)
+// ════════════════════════════════════════════════════════════════════════════
+
+test("catalogEditHref: default controls → clean URL, no query string", () => {
+  assert.equal(catalogEditHref("p1", DEFAULT_CONTROLS), "/v2/catalog/p1/edit");
+});
+
+test("catalogEditHref: encodes special-character ids as one path segment", () => {
+  assert.ok(!catalogEditHref("a/b?c#d", DEFAULT_CONTROLS).includes("a/b?c#d"), "raw special chars not present");
+  assert.ok(catalogEditHref("a/b?c#d", DEFAULT_CONTROLS).startsWith("/v2/catalog/"), "stays under /v2/catalog");
+  assert.ok(catalogEditHref("a/b?c#d", DEFAULT_CONTROLS).endsWith("/edit"), "edit segment survives encoding");
+});
+
+test("catalogEditHref: carries exactly the same controls query as catalogDetailHref", () => {
+  const cases = [
+    DEFAULT_CONTROLS,
+    controls({ query: "serum" }),
+    controls({ filter: "approved" }),
+    controls({ sort: "price_asc" }),
+    controls({ page: 3 }),
+    controls({ query: "night cream", filter: "has_discount", sort: "price_desc", page: 12 }),
+  ];
+  for (const c of cases) {
+    assert.equal(queryPart(catalogEditHref("p1", c)), queryPart(catalogDetailHref("p1", c)));
+  }
+});
+
+test("catalogEditHref: canonical param order and no arbitrary params", () => {
+  const href = catalogEditHref("p1", controls({ query: "serum", filter: "approved", sort: "price_asc", page: 3 }));
+  assert.equal(queryPart(href), "query=serum&filter=approved&sort=price_asc&page=3");
+  const keys = Object.keys(hrefParams(href));
+  for (const k of keys) assert.ok(["query", "filter", "sort", "page"].includes(k), `unexpected param ${k}`);
+});
+
+test("catalogEditHref: round-trips through parseCatalogControls", () => {
+  const c = controls({ query: "كريم مرطب", filter: "missing_price", sort: "variants_desc", page: 7 });
+  const parsed = parseCatalogControls(hrefParams(catalogEditHref("p1", c)));
+  assert.deepEqual(parsed, c);
+});
+
+test("catalogEditHref: does not mutate the input controls", () => {
+  const c = controls({ query: "serum", filter: "approved", sort: "price_asc", page: 3 });
+  const snap = JSON.parse(JSON.stringify(c));
+  catalogEditHref("p1", c);
+  assert.deepEqual(c, snap);
 });

@@ -12,127 +12,23 @@ import { isSignedIn } from "@/lib/auth/requireUser";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
 import { buildDraftPrompt, parseProductDraft } from "@/lib/products/draft-compute";
-import { planVariantDiff } from "@/lib/products/variant-diff";
 import { deleteShelfStockForProduct } from "@/lib/products/shelf-cleanup";
-import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
+import {
+  friendlyWriteError,
+  num,
+  str,
+  toProductRow,
+  updateProductCore,
+  type ProductInput,
+  type VariantInput,
+} from "@/lib/products/product-save";
 
-// --- input shapes (sent from the client form) -----------------------------
-
-export interface VariantInput {
-  id?: string;
-  variant_name: string;
-  variant_name_en: string;
-  sku: string;
-  barcode: string;
-  color: string;
-  size: string;
-  price: string;
-  stock_quantity: string;
-}
-
-export interface ProductInput {
-  sku: string;
-  barcode: string;
-  name_en: string;
-  name_ar: string;
-  brand_id: string;
-  main_category: string;
-  sub_category: string;
-  product_type: string;
-  color: string;
-  size: string;
-  price: string;
-  discount_price: string;
-  cost: string;
-  stock_quantity: string;
-  stock_status: string;
-  platform_status: string;
-  approval: string;
-  rejection_reason: string;
-  image_filename: string;
-  image_url: string;
-  description_en: string;
-  description_ar: string;
-  keywords_en: string;
-  keywords_ar: string;
-  notes: string;
-  variants: VariantInput[];
-}
-
-// --- helpers --------------------------------------------------------------
-
-const str = (v: string) => {
-  const t = (v ?? "").trim();
-  return t === "" ? null : t;
-};
-// Like str(), but also strips emojis/decorative symbols (names & descriptions),
-// so anything typed/pasted in the editor lands clean — matches the export.
-const cleanStr = (v: string) => {
-  const t = clean(v);
-  return t === "" ? null : t;
-};
-// For descriptions: same cleanup but the house bullets (🔸 / ✔️) survive.
-const cleanDesc = (v: string) => {
-  const t = cleanDescription(v);
-  return t === "" ? null : t;
-};
-const num = (v: string) => {
-  const t = (v ?? "").trim();
-  if (t === "") return null;
-  const n = Number(t);
-  return isNaN(n) ? null : n;
-};
-
-function toProductRow(input: ProductInput) {
-  // Enforce the locked category list (defence in depth; UI also restricts it).
-  const category = str(input.main_category);
-  if (category && !CATEGORIES.includes(category as (typeof CATEGORIES)[number])) {
-    throw new Error(`Invalid category "${category}". Must be one of the known categories.`);
-  }
-  return {
-    sku: str(input.sku),
-    barcode: str(input.barcode),
-    name_en: cleanStr(input.name_en),
-    name_ar: cleanStr(input.name_ar),
-    brand_id: str(input.brand_id),
-    main_category: category,
-    sub_category: str(input.sub_category),
-    product_type: str(input.product_type),
-    color: str(input.color),
-    size: str(input.size),
-    price: num(input.price),
-    discount_price: num(input.discount_price),
-    cost: num(input.cost),
-    stock_quantity: num(input.stock_quantity),
-    stock_status: str(input.stock_status),
-    platform_status: str(input.platform_status),
-    approval: str(input.approval),
-    rejection_reason: str(input.rejection_reason),
-    image_filename: str(input.image_filename),
-    image_url: str(input.image_url),
-    // Descriptions keep the house bullet markers (🔸 / ✔️) — the platform
-    // exports strip them at export time.
-    description_en: cleanDesc(input.description_en),
-    description_ar: cleanDesc(input.description_ar),
-    keywords_en: str(input.keywords_en),
-    keywords_ar: str(input.keywords_ar),
-    notes: str(input.notes),
-  };
-}
-
-// Turn a raw Postgres write error into something a human can act on. The most
-// common one is a duplicate SKU/barcode (unique violation, code 23505) which
-// otherwise surfaces as "duplicate key value violates unique constraint …".
-function friendlyWriteError(
-  error: { code?: string; message: string } | null,
-  fallback: string
-): string {
-  if (!error) return fallback;
-  if (error.code === "23505") {
-    return "A product with this SKU or barcode already exists. Please use a unique value.";
-  }
-  return error.message || fallback;
-}
+// The form input shapes and the whole update-save core (row projection,
+// inventory sync, id-preserving variant sync) moved to
+// lib/products/product-save.ts in Phase UI.4 so the V2 product editor shares
+// this exact write path. The types are re-exported so existing importers
+// (ProductForm, the edit page, quick views) keep working unchanged.
+export type { ProductInput, VariantInput };
 
 function toVariantRows(parentId: string, variants: VariantInput[]) {
   return variants
@@ -150,87 +46,9 @@ function toVariantRows(parentId: string, variants: VariantInput[]) {
     }));
 }
 
-// Fixed, user-safe messages for every variant-sync failure. They never contain
-// a uuid, a constraint name, SQL, a table name, or a raw database message.
 // Fixed message for a full-product delete aborted because its shelf rows
 // could not be cleared. Leaks no table name, uuid, or database text.
 const SHELF_CLEANUP_FAILED = "تعذّر حذف بيانات رفوف خيارات المنتج. لم يتم حذف المنتج.";
-
-const VARIANT_SYNC_MESSAGES: Record<string, string> = {
-  unknown_variant_id: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
-  duplicate_variant_id: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
-  variant_has_shelf_stock: "لا يمكن حذف خيار لا تزال عليه كمية في الرفوف — أفرغ الكمية أولًا ثم احذفه.",
-  variant_has_channel_mapping: "لا يمكن حذف خيار مرتبط بمنصة بيع — عالِج ارتباط المنصة أولًا ثم احذفه.",
-  variant_sync_failed: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
-};
-
-/** Prototype-safe fixed-message lookup; unknown codes fall back to the generic. */
-function variantSyncMessage(code: unknown): string {
-  const fallback = VARIANT_SYNC_MESSAGES.variant_sync_failed;
-  if (typeof code !== "string") return fallback;
-  if (!Object.hasOwn(VARIANT_SYNC_MESSAGES, code)) return fallback;
-  const msg = VARIANT_SYNC_MESSAGES[code];
-  return typeof msg === "string" ? msg : fallback;
-}
-
-/** The payload shape the sync RPC expects: trimmed text, real JSON numbers. */
-function toVariantPayload(variants: VariantInput[]) {
-  return (Array.isArray(variants) ? variants : []).map((v) => ({
-    id: typeof v.id === "string" && v.id.trim().length > 0 ? v.id.trim() : null,
-    variant_name: str(v.variant_name),
-    variant_name_en: str(v.variant_name_en),
-    sku: str(v.sku),
-    barcode: str(v.barcode),
-    color: str(v.color),
-    size: str(v.size),
-    price: num(v.price),
-    stock_quantity: num(v.stock_quantity),
-  }));
-}
-
-/**
- * Sync a product's variants without changing the id of any retained row.
- *
- * Two layers on purpose. First a pure server-side pre-check against the
- * authoritative id set, so a stale or foreign id is rejected before ANY variant
- * write is attempted. Then one atomic RPC that re-validates and performs
- * update/insert/delete in a single transaction — the database, not the client,
- * is the authority, and a partial failure cannot leave the product with fewer
- * variants than it started with.
- *
- * Returns a fixed user-facing message on failure, or null on success.
- */
-async function syncProductVariants(
-  supabase: ReturnType<typeof createClient>,
-  productId: string,
-  variants: VariantInput[],
-): Promise<string | null> {
-  const { data: existing, error: readErr } = await supabase
-    .from("product_variants")
-    .select("id")
-    .eq("parent_product_id", productId);
-  if (readErr) return variantSyncMessage("variant_sync_failed");
-
-  const existingIds = (existing ?? [])
-    .map((r) => (r as { id?: unknown }).id)
-    .filter((v): v is string => typeof v === "string");
-
-  // Fail fast, before touching anything.
-  const plan = planVariantDiff(existingIds, variants);
-  if (!plan.ok) return variantSyncMessage(plan.error);
-
-  const { data, error } = await supabase.rpc("sync_product_variants", {
-    p_product_id: productId,
-    p_variants: toVariantPayload(variants),
-  });
-  if (error) return variantSyncMessage("variant_sync_failed");
-
-  const result = data as { ok?: unknown; error?: unknown } | null;
-  if (result === null || typeof result !== "object" || result.ok !== true) {
-    return variantSyncMessage(result?.error);
-  }
-  return null;
-}
 
 // --- actions --------------------------------------------------------------
 
@@ -240,7 +58,7 @@ export async function createProduct(input: ProductInput) {
 
   let productRow;
   try {
-    productRow = toProductRow(input);
+    productRow = await toProductRow(input);
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Invalid product data." };
   }
@@ -290,74 +108,25 @@ export async function updateProduct(id: string, input: ProductInput) {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   const supabase = createClient();
 
-  let productRow;
-  try {
-    productRow = toProductRow(input);
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Invalid product data." };
-  }
+  // The whole save path (row projection, product update, inventory sync, and
+  // the id-preserving variant sync through the atomic RPC) lives in
+  // lib/products/product-save.ts and is shared with the V2 product editor.
+  // The session client is used deliberately (no admin client) so existing RLS
+  // still governs the write. Failure messages are the same strings this action
+  // returned before the extraction.
+  const core = await updateProductCore(supabase, id, input);
+  if (!core.ok) return { error: core.message };
 
-  // Snapshot BEFORE the write so the auto-task can show old -> new.
-  const { data: beforeRow } = await supabase
-    .from("products")
-    .select("name_en, name_ar, sku, barcode, price, discount_price, description_en, description_ar, main_category, sub_category, image_url, approval")
-    .eq("id", id)
-    .maybeSingle();
-
-  const { error } = await supabase
-    .from("products")
-    .update(productRow)
-    .eq("id", id);
-
-  if (error) return { error: friendlyWriteError(error, "Could not update product.") };
-
-  // Keep the inventory pool in sync. The Inventory & Dashboard pages read stock
-  // from the `inventory` table (not `products`), so an edit that doesn't write
-  // `inventory` would leave the displayed stock stale. Update the existing row
-  // if there is one, otherwise seed a new one (older products may predate it).
-  const { data: invRow } = await supabase
-    .from("inventory")
-    .select("id, stock_quantity")
-    .eq("product_id", id)
-    .maybeSingle();
-  const invErr = invRow
-    ? (
-        await supabase
-          .from("inventory")
-          .update({ stock_quantity: productRow.stock_quantity ?? 0 })
-          .eq("product_id", id)
-      ).error
-    : (
-        await supabase.from("inventory").insert({
-          product_id: id,
-          stock_quantity: productRow.stock_quantity ?? 0,
-          low_stock_threshold: 5,
-          sold_quantity: 0,
-        })
-      ).error;
-  if (invErr) return { error: `Product saved, but stock sync failed: ${invErr.message}` };
+  const { before: beforeRow, row: productRow } = core;
 
   // Stock crossed zero in this edit? Open the manual-platforms task.
   try {
     await logStockTransition(createAdminClient(), {
       productId: id,
-      before: Number(invRow?.stock_quantity) || 0,
-      after: productRow.stock_quantity ?? 0,
+      before: core.stockBefore,
+      after: core.stockAfter,
     });
   } catch { /* best-effort */ }
-
-  // Sync variants WITHOUT churning their ids. The old code deleted every row
-  // and re-inserted the submitted set, so `product_variants.id` changed on each
-  // save and anything holding a variant id (variant_shelf_stock, which has no
-  // FK) was silently orphaned — and a failed re-insert left the product with no
-  // variants at all, because the delete had already committed.
-  //
-  // Now: validate the submitted ids against the authoritative set first, then
-  // hand the whole set to one atomic RPC that updates, inserts and deletes in a
-  // single transaction. The session client is used deliberately (no admin
-  // client) so existing RLS still governs the write.
-  const variantSyncError = await syncProductVariants(supabase, id, input.variants);
-  if (variantSyncError) return { error: variantSyncError };
 
   const changes = computeFieldChanges(
     (beforeRow ?? {}) as Record<string, unknown>,

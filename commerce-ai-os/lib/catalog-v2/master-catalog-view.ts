@@ -529,6 +529,18 @@ export function catalogDetailHref(id: string, controls: CatalogControls): string
   return qs ? `${base}?${qs}` : base;
 }
 
+/**
+ * Build the `/v2/catalog/<id>/edit` href for the product editor (Phase UI.4),
+ * carrying the same catalog controls as catalogDetailHref so cancel/save can
+ * land back on the exact list view. Same encoding + omission rules; never
+ * emits arbitrary extra params.
+ */
+export function catalogEditHref(id: string, controls: CatalogControls): string {
+  const base = `/v2/catalog/${encodeURIComponent(id)}/edit`;
+  const qs = catalogControlParams(controls, controls.page).toString();
+  return qs ? `${base}?${qs}` : base;
+}
+
 // ── Fixed Arabic labels (never reflect unknown/raw text) ─────────────────────
 
 const COMPLETENESS_LABELS: Record<CompletenessState, string> = {

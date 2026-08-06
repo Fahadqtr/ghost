@@ -113,10 +113,13 @@ export default function ProductDetail({
   product,
   variants,
   backHref = "/v2/catalog",
+  editHref,
 }: {
   product: MasterCatalogProduct;
   variants: CatalogVariant[];
   backHref?: string;
+  /** Phase UI.4: link to /v2/catalog/<id>/edit carrying the catalog controls. */
+  editHref?: string;
 }) {
   return (
     <div className="space-y-5">
@@ -124,9 +127,16 @@ export default function ProductDetail({
         <Link href={backHref} className="btn-ghost">
           رجوع للكتالوج
         </Link>
-        <span className="rounded-full bg-brand-light px-2.5 py-0.5 text-[11px] font-semibold text-brand">
-          تفاصيل المنتج
-        </span>
+        <div className="flex items-center gap-2">
+          {editHref ? (
+            <Link href={editHref} className="btn-primary">
+              تعديل المنتج
+            </Link>
+          ) : null}
+          <span className="rounded-full bg-brand-light px-2.5 py-0.5 text-[11px] font-semibold text-brand">
+            تفاصيل المنتج
+          </span>
+        </div>
       </div>
 
       {/* Product header */}
