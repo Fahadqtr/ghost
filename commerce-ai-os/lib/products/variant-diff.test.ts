@@ -268,6 +268,12 @@ test("a successful cleanup still runs before the variants are deleted", () => {
 
 // ── Edit path: the blanket delete is gone ────────────────────────────────────
 
+// Phase UI.4 moved the save core (syncProductVariants + updateProductCore)
+// from the action file into lib/products/product-save.ts so the V2 editor
+// shares it. The invariants are unchanged — these scans now check the core
+// where it lives, plus that updateProduct actually routes through it.
+const SAVE_CORE_SRC = readFileSync(new URL("./product-save.ts", import.meta.url), "utf8");
+
 test("updateProduct no longer blanket-deletes the variant set", () => {
   const src = strip(ACTIONS_SRC);
   const updateStart = src.indexOf("export async function updateProduct");
@@ -279,24 +285,30 @@ test("updateProduct no longer blanket-deletes the variant set", () => {
     !/from\("product_variants"\)\s*\.delete\(\)/.test(body),
     "the edit path must not delete the variant set",
   );
-  assert.ok(/syncProductVariants\(/.test(body), "the edit path calls the atomic sync");
+  assert.ok(/updateProductCore\(/.test(body), "the edit path routes through the shared save core");
   assert.ok(!/toVariantRows\(/.test(body), "the edit path no longer rebuilds rows for re-insert");
+
+  const core = strip(SAVE_CORE_SRC);
+  const coreUpdate = core.slice(core.indexOf("export async function updateProductCore"));
+  assert.ok(!/from\("product_variants"\)\s*\.delete\(\)/.test(core), "the core never deletes the variant set");
+  assert.ok(/syncProductVariants\(/.test(coreUpdate), "the edit path calls the atomic sync");
 });
 
 test("the atomic sync validates before writing and uses the session client", () => {
-  const src = strip(ACTIONS_SRC);
-  const start = src.indexOf("async function syncProductVariants");
-  const body = src.slice(start, src.indexOf("export async function createProduct", start));
+  const src = strip(SAVE_CORE_SRC);
+  const start = src.indexOf("export async function syncProductVariants");
+  const body = src.slice(start, src.indexOf("export type UpdateProductCoreResult", start));
   assert.ok(/planVariantDiff\(/.test(body), "pure pre-validation runs first");
   assert.ok(/if \(!plan\.ok\) return/.test(body), "a rejected plan returns before any write");
   assert.ok(/\.rpc\("sync_product_variants"/.test(body), "one atomic RPC call");
   assert.ok(!/createAdminClient/.test(body), "no admin client — RLS must still apply");
+  assert.ok(!/createAdminClient/.test(src), "the whole save core never touches the admin client");
 });
 
 // ── Error safety ─────────────────────────────────────────────────────────────
 
 test("every variant-sync message is fixed and leaks nothing", () => {
-  const src = ACTIONS_SRC;
+  const src = SAVE_CORE_SRC;
   for (const code of [
     "unknown_variant_id",
     "duplicate_variant_id",
@@ -309,8 +321,8 @@ test("every variant-sync message is fixed and leaks nothing", () => {
   // The exact wording the spec requires for an unknown/foreign id.
   assert.ok(src.includes("تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا."), "fixed unknown-id message");
   // The raw postgres error is never surfaced from the sync path.
-  const start = strip(src).indexOf("async function syncProductVariants");
-  const body = strip(src).slice(start, strip(src).indexOf("export async function createProduct", start));
+  const start = strip(src).indexOf("export async function syncProductVariants");
+  const body = strip(src).slice(start, strip(src).indexOf("export type UpdateProductCoreResult", start));
   for (const b of ["error.message", "SQLERRM", "friendlyWriteError"]) {
     assert.ok(!body.includes(b), `sync path must not surface ${b}`);
   }
