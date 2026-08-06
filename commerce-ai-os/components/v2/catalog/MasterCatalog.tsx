@@ -64,10 +64,16 @@ export default function MasterCatalog({
           </div>
           <p className="text-sm text-muted">المصدر الرئيسي لجميع منتجات ومنصات Malikas Universe</p>
         </div>
-        {/* Phase UI.5: AI product creator entry */}
-        <Link href="/v2/catalog/new" className="btn-primary">
-          إضافة منتج بالذكاء الاصطناعي
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Phase UI.6: Excel catalog updater entry */}
+          <Link href="/v2/catalog/import" className="btn-ghost">
+            تحديث الكتالوج من Excel
+          </Link>
+          {/* Phase UI.5: AI product creator entry */}
+          <Link href="/v2/catalog/new" className="btn-primary">
+            إضافة منتج بالذكاء الاصطناعي
+          </Link>
+        </div>
       </div>
 
       {partial ? (
