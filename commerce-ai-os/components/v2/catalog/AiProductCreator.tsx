@@ -114,6 +114,10 @@ export default function AiProductCreator({
   const [rows, setRows] = useState<VariantRow[]>([]);
   const [duplicates, setDuplicates] = useState<DuplicateReport | null>(null);
   const [partialScan, setPartialScan] = useState(false);
+  // The image changed after an analysis: the AI-derived panels (confidence,
+  // package text, duplicate report) belong to the OLD image, so they are
+  // cleared until re-analysis. User-edited form fields are kept.
+  const [imageStale, setImageStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -149,6 +153,10 @@ export default function AiProductCreator({
     try {
       const prepared = await prepareImage(file);
       setImage(prepared);
+      if (step === "review") {
+        setImageStale(true);
+        setDuplicates(null);
+      }
     } catch {
       setError(CREATE_MESSAGES.image_type);
     }
@@ -156,6 +164,10 @@ export default function AiProductCreator({
 
   function clearImage() {
     setImage(null);
+    if (step === "review") {
+      setImageStale(true);
+      setDuplicates(null);
+    }
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -210,6 +222,7 @@ export default function AiProductCreator({
         return;
       }
       applyPrepared(x, prep.data);
+      setImageStale(false);
       setStep("review");
     } finally {
       setAnalyzing(false);
@@ -462,12 +475,21 @@ export default function AiProductCreator({
         <>
           {/* Confidence + duplicates */}
           <section className="card space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="badge">{CONFIDENCE_LABELS[extract.confidence]}</span>
-              {extract.visible_text ? (
-                <span className="text-xs text-muted">نص العبوة: {extract.visible_text}</span>
-              ) : null}
-            </div>
+            {imageStale ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                الصورة تغيّرت — نتائج التحليل السابقة أُخفيت. اضغط «إعادة التحليل» لتحديث البيانات المستخرجة.
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="badge">{CONFIDENCE_LABELS[extract.confidence]}</span>
+                {extract.visible_text ? (
+                  <span className="text-xs text-muted">نص العبوة: {extract.visible_text}</span>
+                ) : null}
+              </div>
+            )}
+            {!imageStale && extract.confidence === "low" ? (
+              <p className="text-xs text-amber-700">ثقة منخفضة — راجع الحقول بعناية قبل الحفظ.</p>
+            ) : null}
             {partialScan ? (
               <p className="text-xs text-amber-700">تم فحص جزء من الكتالوج فقط ضمن الحد الآمن للقراءة.</p>
             ) : null}
@@ -489,7 +511,18 @@ export default function AiProductCreator({
                   <ul className="mt-1 space-y-0.5">
                     {duplicates.matches.map((m) => (
                       <li key={`${m.kind}-${m.id}`}>
-                        {m.label} — {REASON_LABELS[m.reason] ?? "تشابه"}
+                        {m.kind === "product" ? (
+                          <Link
+                            href={`/v2/catalog/${encodeURIComponent(m.id)}`}
+                            target="_blank"
+                            className="underline underline-offset-2"
+                          >
+                            {m.label}
+                          </Link>
+                        ) : (
+                          m.label
+                        )}{" "}
+                        — {REASON_LABELS[m.reason] ?? "تشابه"}
                       </li>
                     ))}
                   </ul>
@@ -641,7 +674,7 @@ export default function AiProductCreator({
             <button
               type="button"
               onClick={onSave}
-              disabled={busy || duplicates?.level === "exact"}
+              disabled={busy || !image || duplicates?.level === "exact"}
               className="btn-primary disabled:opacity-60"
             >
               {saving ? "جارٍ الحفظ…" : "حفظ المنتج"}

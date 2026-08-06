@@ -75,7 +75,9 @@ export async function analyzeAiProductImage(
   if (!apiKey) return { error: CREATE_MESSAGES.ai_disabled };
 
   try {
-    const client = new Anthropic({ apiKey });
+    // Explicit deadline: one retry, 60s cap — a hung provider surfaces as the
+    // fixed analyze_failed message instead of an endless pending state.
+    const client = new Anthropic({ apiKey, timeout: 60_000, maxRetries: 1 });
     const resp = await client.messages.create({
       model: process.env.STAFF_MALAK_MODEL || "claude-sonnet-5",
       max_tokens: 1600,
@@ -204,9 +206,28 @@ export async function createAiProduct(
 
   // Upload the image FIRST (the row needs its URL), named after the main SKU,
   // never with the original filename, never a uuid/timestamp, never upsert.
+  // The extension comes from the server-validated MIME map only, and the SKU
+  // already matched ^mk\d+$ — so the object path cannot contain traversal or
+  // user-controlled characters of any kind.
   const ext = ALLOWED_MEDIA[imageMediaType];
   const filename = `${mainSku}.${ext}`;
   const admin = createAdminClient();
+
+  // A file for this SKU under ANY supported extension blocks the write — we
+  // never overwrite and never sit a .png next to an existing .jpg.
+  try {
+    const { data: existing, error: listErr } = await admin.storage
+      .from(BUCKET)
+      .list("", { limit: 100, search: `${mainSku}.` });
+    if (listErr) return { error: CREATE_MESSAGES.image_upload_failed };
+    const names = new Set((existing ?? []).map((f: { name: string }) => f.name));
+    for (const e of Object.values(ALLOWED_MEDIA)) {
+      if (names.has(`${mainSku}.${e}`)) return { error: CREATE_MESSAGES.image_name_taken };
+    }
+  } catch {
+    return { error: CREATE_MESSAGES.image_upload_failed };
+  }
+
   let imageUrl: string;
   try {
     const buf = Buffer.from(imageBase64.replace(/\s+/g, ""), "base64");
@@ -226,11 +247,20 @@ export async function createAiProduct(
     return { error: CREATE_MESSAGES.image_upload_failed };
   }
 
-  const removeImage = async () => {
+  // Removes ONLY the object this very request uploaded. Returns false instead
+  // of throwing so a failed cleanup is REPORTED to the user, and logged
+  // server-side with the filename only — never the error body or a URL.
+  const removeImage = async (): Promise<boolean> => {
     try {
-      await admin.storage.from(BUCKET).remove([filename]);
+      const { error: rmErr } = await admin.storage.from(BUCKET).remove([filename]);
+      if (rmErr) {
+        console.error("[ai-product-creator] image cleanup failed:", filename);
+        return false;
+      }
+      return true;
     } catch {
-      /* the failure path below already reports the create as failed */
+      console.error("[ai-product-creator] image cleanup failed:", filename);
+      return false;
     }
   };
 
@@ -248,14 +278,15 @@ export async function createAiProduct(
       image_url: imageUrl,
     });
   } catch {
-    await removeImage();
-    return { error: CREATE_MESSAGES.invalid_input };
+    const removed = await removeImage();
+    return { error: removed ? CREATE_MESSAGES.invalid_input : CREATE_MESSAGES.image_cleanup_failed };
   }
 
   const core = await createProductCore(supabase, row, projectVariantInsertRows(variants));
   if (!core.ok) {
-    await removeImage();
+    const removed = await removeImage();
     if (core.cleanup === "failed") return { error: CREATE_MESSAGES.cleanup_failed };
+    if (!removed) return { error: CREATE_MESSAGES.image_cleanup_failed };
     if (core.stage === "variant_insert") return { error: CREATE_MESSAGES.variant_create_failed };
     if (core.duplicateIdentity) return { error: CREATE_MESSAGES.sku_taken };
     return { error: CREATE_MESSAGES.create_failed };

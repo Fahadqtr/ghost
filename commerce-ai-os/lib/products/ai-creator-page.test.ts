@@ -100,6 +100,26 @@ test("actions: seller note and model output go through the pinned prompt + white
   assert.ok(ACTIONS_SRC.includes("parseVisionExtract"), "whitelist parser — raw model text never returned");
 });
 
+test("actions: the AI call has an explicit deadline and bounded retries", () => {
+  assert.ok(ACTIONS_SRC.includes("timeout: 60_000"), "explicit provider timeout");
+  assert.ok(ACTIONS_SRC.includes("maxRetries: 1"), "bounded retries");
+});
+
+test("actions: image collision is checked across EVERY supported extension before upload", () => {
+  assert.ok(ACTIONS_SRC.includes(".list("), "storage listing pre-check exists");
+  assert.ok(ACTIONS_SRC.includes("Object.values(ALLOWED_MEDIA)"), "all extensions checked, not just the uploaded one");
+  const listAt = ACTIONS_SRC.indexOf(".list(");
+  const uploadAt = ACTIONS_SRC.indexOf(".upload(");
+  assert.ok(listAt > 0 && listAt < uploadAt, "pre-check runs BEFORE the upload");
+});
+
+test("actions: a failed image cleanup is reported with a fixed message and logged safely", () => {
+  assert.ok(ACTIONS_SRC.includes("image_cleanup_failed"), "fixed cleanup-needs-review message");
+  assert.ok(ACTIONS_SRC.includes("console.error"), "internal log exists");
+  assert.ok(!/console\.error\([^)]*base64/i.test(ACTIONS_SRC), "the log never contains image data");
+  assert.ok(!/console\.error\([^)]*(rmErr|upErr|error)\b/.test(ACTIONS_SRC), "the log never contains an error object");
+});
+
 // ── page + loading + wizard scans ─────────────────────────────────────────────
 
 test("page: force-dynamic server component, session client, degrades brands, renders the wizard", () => {
@@ -125,6 +145,10 @@ test("wizard: client component with the full step/guard contract", () => {
     "حفظ المنتج",
     "إلغاء",
     "لا يمكن الحفظ",           // exact duplicate blocks saving
+    "imageStale",              // changing the image clears stale AI panels
+    "نتائج التحليل السابقة أُخفيت",
+    "ثقة منخفضة",              // low-confidence review warning
+    "encodeURIComponent(m.id)", // safe links to matched products
   ]) {
     assert.ok(WIZARD_SRC.includes(required), `wizard must contain ${required}`);
   }
