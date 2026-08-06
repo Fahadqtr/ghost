@@ -14,6 +14,7 @@ const ACTIONS_SRC = readFileSync(new URL("../../app/(v2)/v2/catalog/new/actions.
 const LOADING_SRC = readFileSync(new URL("../../app/(v2)/v2/catalog/new/loading.tsx", import.meta.url), "utf8");
 const WIZARD_SRC = readFileSync(new URL("../../components/v2/catalog/AiProductCreator.tsx", import.meta.url), "utf8");
 const MASTER_SRC = readFileSync(new URL("../../components/v2/catalog/MasterCatalog.tsx", import.meta.url), "utf8");
+const SIMILAR_SRC = readFileSync(new URL("../../components/v2/catalog/SimilarProducts.tsx", import.meta.url), "utf8");
 const DETAIL_SRC = readFileSync(new URL("../../app/(v2)/v2/catalog/[id]/page.tsx", import.meta.url), "utf8");
 
 // ── identity snapshot reader (runtime, fake paged client) ────────────────────
@@ -21,7 +22,7 @@ const DETAIL_SRC = readFileSync(new URL("../../app/(v2)/v2/catalog/[id]/page.tsx
 function makeClient(over: Record<string, unknown> = {}) {
   const o = {
     products: [{ id: "p1", sku: "mk10", barcode: "111", name_en: "A", name_ar: "أ", size: null, color: null }] as unknown[],
-    variants: [{ id: "v1", sku: "mk10-1", barcode: "222", variant_name: "و", variant_name_en: "P", size: null, color: null }] as unknown[],
+    variants: [{ id: "v1", parent_product_id: "p1", sku: "mk10-1", barcode: "222", variant_name: "و", variant_name_en: "P", size: null, color: null }] as unknown[],
     productsError: null as unknown,
     variantsError: null as unknown,
     ...over,
@@ -56,6 +57,8 @@ test("snapshot: collects skus and barcodes from BOTH products and variants", asy
   assert.ok(res.snapshot.barcodes.has("111") && res.snapshot.barcodes.has("222"));
   assert.equal(res.snapshot.rows.length, 2);
   assert.equal(res.snapshot.rows.find((r) => r.kind === "variant")?.nameEn, "P");
+  assert.equal(res.snapshot.rows.find((r) => r.kind === "variant")?.productId, "p1", "variant rows carry their parent product id");
+  assert.equal(res.snapshot.rows.find((r) => r.kind === "product")?.productId, "p1");
   assert.equal(res.snapshot.partial, false);
 });
 
@@ -93,6 +96,14 @@ test("actions: nothing leaks — no raw errors, no AI raw text, no storage paths
     assert.ok(!ACTIONS_SRC.includes(banned), `actions must not contain ${banned}`);
   }
   assert.ok(!/return\s*\{\s*error:\s*`/.test(ACTIONS_SRC), "no template-string error messages");
+});
+
+test("actions: duplicates travel as hydrated whitelisted cards — never the snapshot", () => {
+  assert.ok(ACTIONS_SRC.includes("loadSimilarProductCards"), "card hydration used");
+  assert.ok(
+    ACTIONS_SRC.includes("duplicates: { level: report.level, cards: hydrated.cards, total: hydrated.total }"),
+    "the browser payload is level + capped cards + total only",
+  );
 });
 
 test("actions: seller note and model output go through the pinned prompt + whitelist parser", () => {
@@ -144,13 +155,35 @@ test("wizard: client component with the full step/guard contract", () => {
     "إعادة التحليل",
     "حفظ المنتج",
     "إلغاء",
-    "لا يمكن الحفظ",           // exact duplicate blocks saving
     "imageStale",              // changing the image clears stale AI panels
     "نتائج التحليل السابقة أُخفيت",
     "ثقة منخفضة",              // low-confidence review warning
-    "encodeURIComponent(m.id)", // safe links to matched products
+    "SimilarProducts",         // the card panel component
   ]) {
     assert.ok(WIZARD_SRC.includes(required), `wizard must contain ${required}`);
+  }
+});
+
+test("similar-products panel: cards grid, preview via the SHARED dialog, capped with show-more", () => {
+  for (const required of [
+    "CatalogPreviewDialog",    // reuse, not a parallel dialog
+    "ImagePlaceholder",        // placeholder when there is no image
+    "PreviewField",
+    "grid-cols-1",
+    "sm:grid-cols-2",
+    "lg:grid-cols-3",
+    "VISIBLE_DEFAULT = 5",     // never more than 5 by default
+    "عرض المزيد",
+    "عرض المنتج",
+    "فتح صفحة المنتج",
+    "منتج مطابق موجود",
+    "منتج مشابه — راجعه قبل الحفظ",
+    "detailHref",              // real-id href built server-side
+  ]) {
+    assert.ok(SIMILAR_SRC.includes(required), `similar panel must contain ${required}`);
+  }
+  for (const banned of ["fetch(", "@supabase/", "@/lib/supabase", "window.alert", "gid://", "randomUUID"]) {
+    assert.ok(!SIMILAR_SRC.includes(banned), `similar panel must not contain ${banned}`);
   }
 });
 

@@ -36,8 +36,12 @@ import { generateUniqueEan13Batch } from "@/lib/products/barcode-ean13";
 import {
   findDuplicates,
   type DuplicateCandidate,
-  type DuplicateReport,
+  type DuplicateLevel,
 } from "@/lib/products/duplicate-detect";
+import {
+  loadSimilarProductCards,
+  type SimilarProductCard,
+} from "@/lib/products/similar-products-read";
 import { CREATE_MESSAGES, validateAiProductInput } from "@/lib/products/create-validation";
 import { toProductRow, type ProductInput } from "@/lib/products/product-save";
 import { createProductCore, projectVariantInsertRows } from "@/lib/products/product-create";
@@ -112,11 +116,19 @@ export async function analyzeAiProductImage(
 
 // ── Step 3/4: identity + duplicates ─────────────────────────────────────────
 
+/** Card-ready duplicate payload: only the hydrated top matches travel to the
+ *  browser — never the identity snapshot or the full catalog. */
+export interface DuplicateCards {
+  level: DuplicateLevel;
+  cards: SimilarProductCard[];
+  total: number;
+}
+
 export interface PreparedIdentity {
   sku: string;
   productBarcode: string;
   variantBarcodes: string[];
-  duplicates: DuplicateReport;
+  duplicates: DuplicateCards;
   partial: boolean;
 }
 
@@ -140,17 +152,17 @@ export async function prepareAiProduct(
     return { error: CREATE_MESSAGES.identity_scan_failed };
   }
 
-  const duplicates = findDuplicates(
-    { ...candidate, sku, barcodes: [] },
-    snapshot.rows,
-  );
+  const report = findDuplicates({ ...candidate, sku, barcodes: [] }, snapshot.rows);
+  // Hydrate ONLY the reported product ids into card/preview fields — the
+  // snapshot itself never leaves the server.
+  const hydrated = await loadSimilarProductCards(supabase, report.matches, report.total);
 
   return {
     data: {
       sku,
       productBarcode: barcodes[0],
       variantBarcodes: barcodes.slice(1),
-      duplicates,
+      duplicates: { level: report.level, cards: hydrated.cards, total: hydrated.total },
       partial: snapshot.partial,
     },
   };

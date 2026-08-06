@@ -22,25 +22,19 @@ import {
   analyzeAiProductImage,
   createAiProduct,
   prepareAiProduct,
+  type DuplicateCards,
   type PreparedIdentity,
 } from "@/app/(v2)/v2/catalog/new/actions";
+import SimilarProducts from "@/components/v2/catalog/SimilarProducts";
 import { prepareImage, type PreparedImage } from "@/lib/imagePrep";
 import { renumberVariantSkus, isValidMkSku, normalizeMkSku } from "@/lib/products/sku-generate";
 import { CREATE_MESSAGES, validateAiProductInput } from "@/lib/products/create-validation";
 import type { VisionExtract } from "@/lib/products/ai-extract";
-import type { DuplicateReport } from "@/lib/products/duplicate-detect";
 import type { ProductInput, VariantInput } from "@/lib/products/product-save";
 import type { EditBrand } from "@/lib/products/product-edit-read";
 
 const ALLOWED_FILE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
-
-const REASON_LABELS: Record<string, string> = {
-  same_sku: "نفس SKU",
-  same_barcode: "نفس الباركود",
-  same_identity: "نفس الهوية (الاسم والحجم والدرجة)",
-  similar_name: "اسم مشابه",
-};
 
 const CONFIDENCE_LABELS: Record<VisionExtract["confidence"], string> = {
   high: "ثقة عالية",
@@ -112,7 +106,7 @@ export default function AiProductCreator({
   const [extract, setExtract] = useState<VisionExtract | null>(null);
   const [scalars, setScalars] = useState<FormScalars>(EMPTY_SCALARS);
   const [rows, setRows] = useState<VariantRow[]>([]);
-  const [duplicates, setDuplicates] = useState<DuplicateReport | null>(null);
+  const [duplicates, setDuplicates] = useState<DuplicateCards | null>(null);
   const [partialScan, setPartialScan] = useState(false);
   // The image changed after an analysis: the AI-derived panels (confidence,
   // package text, duplicate report) belong to the OLD image, so they are
@@ -261,7 +255,7 @@ export default function AiProductCreator({
         {
           sku: "",
           barcodes: [],
-          brand: "",
+          brand: brands.find((b) => b.id === scalars.brand_id)?.name ?? "",
           nameEn: scalars.name_en,
           nameAr: scalars.name_ar,
           size: scalars.size,
@@ -494,40 +488,7 @@ export default function AiProductCreator({
               <p className="text-xs text-amber-700">تم فحص جزء من الكتالوج فقط ضمن الحد الآمن للقراءة.</p>
             ) : null}
             {duplicates ? (
-              duplicates.level === "none" ? (
-                <p className="text-sm text-emerald-700">لا يوجد تطابق في الكتالوج.</p>
-              ) : (
-                <div
-                  className={
-                    "rounded-lg border p-3 text-sm " +
-                    (duplicates.level === "exact"
-                      ? "border-rose-200 bg-rose-50 text-rose-700"
-                      : "border-amber-200 bg-amber-50 text-amber-800")
-                  }
-                >
-                  <p className="font-semibold">
-                    {duplicates.level === "exact" ? "منتج مطابق موجود — لا يمكن الحفظ." : "يوجد منتج مشابه — راجع قبل الحفظ."}
-                  </p>
-                  <ul className="mt-1 space-y-0.5">
-                    {duplicates.matches.map((m) => (
-                      <li key={`${m.kind}-${m.id}`}>
-                        {m.kind === "product" ? (
-                          <Link
-                            href={`/v2/catalog/${encodeURIComponent(m.id)}`}
-                            target="_blank"
-                            className="underline underline-offset-2"
-                          >
-                            {m.label}
-                          </Link>
-                        ) : (
-                          m.label
-                        )}{" "}
-                        — {REASON_LABELS[m.reason] ?? "تشابه"}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )
+              <SimilarProducts level={duplicates.level} cards={duplicates.cards} total={duplicates.total} />
             ) : null}
             <button type="button" className="btn-ghost" disabled={busy} onClick={() => void refreshIdentity(rows.length)}>
               {checking ? "جارٍ الفحص…" : "إعادة فحص التكرار والأرقام"}
