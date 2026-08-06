@@ -15,7 +15,7 @@ const PRODUCT_CAP = 20000;
 const VARIANT_CAP = 40000;
 
 const PRODUCT_COLUMNS = "id, sku, barcode, name_en, name_ar, size, color";
-const VARIANT_COLUMNS = "id, sku, barcode, variant_name, variant_name_en, size, color";
+const VARIANT_COLUMNS = "id, parent_product_id, sku, barcode, variant_name, variant_name_en, size, color";
 
 interface IdentityReadClient {
   from(table: string): {
@@ -91,6 +91,7 @@ export async function loadIdentitySnapshot(
       rows.push({
         id,
         kind: "product",
+        productId: id,
         sku,
         barcode,
         nameEn: fieldStr(p.name_en),
@@ -109,6 +110,8 @@ export async function loadIdentitySnapshot(
       rows.push({
         id,
         kind: "variant",
+        // Aggregation key: a variant match rolls up into its parent product.
+        productId: typeof v.parent_product_id === "string" ? v.parent_product_id : "",
         sku,
         barcode,
         nameEn: fieldStr(v.variant_name_en),
