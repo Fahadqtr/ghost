@@ -69,7 +69,7 @@ export default function LoyaltyClient({
                 </div>
                 <div className="flex shrink-0 flex-col items-stretch gap-1.5">
                   <Link
-                    href={`/loyalty/voucher/${c.id}`}
+                    href={`/v2/loyalty/voucher/${c.id}`}
                     className="rounded-lg border border-pink-300 bg-white px-3 py-1.5 text-center text-xs font-bold text-pink-700 hover:bg-pink-50"
                   >
                     🎁 قسيمة + واتساب
