@@ -31,7 +31,7 @@ export default async function RewardsQrPage() {
   return (
     <div className="mx-auto max-w-xl p-4 sm:p-6">
       <div className="mb-4 flex items-center justify-between gap-2" data-no-print>
-        <Link href="/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
+        <Link href="/v2/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
           ← رجوع
         </Link>
         <PrintButton />

@@ -29,25 +29,25 @@ export default async function LoyaltyAdminPage() {
         </div>
         <div className="flex flex-wrap gap-2 sm:shrink-0 sm:justify-end">
           <Link
-            href="/loyalty/prizes"
+            href="/v2/loyalty/prizes"
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             🎁 الجوائز
           </Link>
           <Link
-            href="/loyalty/customers"
+            href="/v2/loyalty/customers"
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             👥 الزبائن
           </Link>
           <Link
-            href="/loyalty/cards"
+            href="/v2/loyalty/cards"
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             🖨️ بطاقات الطلبات
           </Link>
           <Link
-            href="/loyalty/qr"
+            href="/v2/loyalty/qr"
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             🔳 باركود الطباعة

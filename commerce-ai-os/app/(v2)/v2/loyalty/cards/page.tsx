@@ -24,7 +24,7 @@ export default async function LoyaltyCardsPage({
       {/* controls — hidden when printing */}
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3" data-no-print>
         <div>
-          <Link href="/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
+          <Link href="/v2/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
             ← رجوع
           </Link>
           <h1 className="mt-1 text-lg font-bold text-slate-800">بطاقات للطباعة مع الطلبات</h1>
@@ -32,7 +32,7 @@ export default async function LoyaltyCardsPage({
             بطاقة مكافآت الجمال بتصميم المتجر — اطبعي على A4 بمقياس 100%، قصّي على الخطوط المتقطّعة، وحطّي بطاقة مع كل طلب.
           </p>
         </div>
-        <form action="/loyalty/cards" method="get" className="flex items-end gap-2">
+        <form action="/v2/loyalty/cards" method="get" className="flex items-end gap-2">
           <label className="text-sm">
             <span className="mb-1 block text-xs font-semibold text-slate-500">الكمية</span>
             <input

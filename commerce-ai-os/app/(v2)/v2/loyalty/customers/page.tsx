@@ -42,7 +42,7 @@ export default async function LoyaltyCustomersPage({
             ⬇️ تصدير Excel
           </a>
           <Link
-            href="/loyalty"
+            href="/v2/loyalty"
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             ← المراجعة
@@ -51,7 +51,7 @@ export default async function LoyaltyCustomersPage({
       </div>
 
       {/* search (plain GET form — no client JS needed) */}
-      <form className="mb-4 flex gap-2" action="/loyalty/customers" method="get">
+      <form className="mb-4 flex gap-2" action="/v2/loyalty/customers" method="get">
         <input
           name="q"
           defaultValue={q ?? ""}
@@ -63,7 +63,7 @@ export default async function LoyaltyCustomersPage({
         </button>
         {q ? (
           <Link
-            href="/loyalty/customers"
+            href="/v2/loyalty/customers"
             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-500 hover:bg-slate-50"
           >
             مسح

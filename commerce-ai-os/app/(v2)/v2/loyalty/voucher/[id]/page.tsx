@@ -28,7 +28,7 @@ export default async function VoucherPage({
   if (error || !voucher) {
     return (
       <div className="mx-auto max-w-lg p-6">
-        <Link href="/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
+        <Link href="/v2/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
           ← رجوع
         </Link>
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
@@ -43,7 +43,7 @@ export default async function VoucherPage({
   return (
     <div className="mx-auto max-w-lg p-4 sm:p-6">
       <div data-no-print className="mb-2">
-        <Link href="/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
+        <Link href="/v2/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
           ← رجوع
         </Link>
       </div>
