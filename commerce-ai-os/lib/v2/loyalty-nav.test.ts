@@ -166,7 +166,7 @@ test("the admin pages were MOVED, not duplicated", () => {
   }
 });
 
-// ── Old bookmarks still land on the moved pages ──────────────────────────────
+ ──────────────────────────────
 
 test("moved routes keep their sub-path", () => {
   assert.equal(movedRoutePath("/loyalty"), "/v2/loyalty");
