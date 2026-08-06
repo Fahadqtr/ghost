@@ -54,14 +54,20 @@ export default function MasterCatalog({
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="font-serif text-2xl font-semibold text-ink">كتالوج ماليكاس</h1>
-          <span className="rounded-full bg-brand-light px-2.5 py-0.5 text-[11px] font-semibold text-brand">
-            مركز التحكم بالكتالوج
-          </span>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="font-serif text-2xl font-semibold text-ink">كتالوج ماليكاس</h1>
+            <span className="rounded-full bg-brand-light px-2.5 py-0.5 text-[11px] font-semibold text-brand">
+              مركز التحكم بالكتالوج
+            </span>
+          </div>
+          <p className="text-sm text-muted">المصدر الرئيسي لجميع منتجات ومنصات Malikas Universe</p>
         </div>
-        <p className="text-sm text-muted">المصدر الرئيسي لجميع منتجات ومنصات Malikas Universe</p>
+        {/* Phase UI.5: AI product creator entry */}
+        <Link href="/v2/catalog/new" className="btn-primary">
+          إضافة منتج بالذكاء الاصطناعي
+        </Link>
       </div>
 
       {partial ? (
