@@ -1,4 +1,19 @@
-// Tests for the «مكافآت الجمال» (Beauty Rewards) entries in the V2 sidebar.
+test("moved loyalty pages do not link back through the legacy route", () => {
+  const client = readFileSync(
+    new URL("../../app/(v2)/v2/loyalty/LoyaltyClient.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(
+    client.includes('href={`/v2/loyalty/voucher/${c.id}`}'),
+    "voucher links stay inside the V2 shell",
+  );
+  assert.ok(
+    !client.includes('href={`/loyalty/voucher/${c.id}`}'),
+    "voucher links never bounce through the legacy redirect",
+  );
+});
+
+// ── Old bookmarks still land on the moved pages ──────────────────────────────// Tests for the «مكافآت الجمال» (Beauty Rewards) entries in the V2 sidebar.
 // PURE tests only — no database, no network, no rendering.
 //
 // Run: node --conditions=react-server --experimental-strip-types --test lib/v2/loyalty-nav.test.ts
