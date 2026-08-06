@@ -10,6 +10,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { loadCatalogProduct } from "@/lib/catalog-v2/master-catalog-read";
 import {
+  catalogEditHref,
   catalogHref,
   parseCatalogControls,
   parseProductId,
@@ -37,6 +38,10 @@ export default async function ProductDetailPage({
   // the return link via catalogHref — raw searchParams are NEVER copied into an
   // href. On any failure the back link falls back to the clean /v2/catalog.
   let backHref = "/v2/catalog";
+  let editHref: string | undefined;
+  // Phase UI.4: the editor redirects back here with saved=1 after a successful
+  // save. Strict literal comparison — the value itself is never rendered.
+  let saved = false;
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
@@ -46,12 +51,14 @@ export default async function ProductDetailPage({
     const sp = searchParams ? await searchParams : {};
     const controls = parseCatalogControls(sp);
     backHref = catalogHref(controls, controls.page);
+    saved = sp.saved === "1";
 
     const { id } = await params;
     const validId = parseProductId(id);
     if (validId === null) {
       state = { kind: "notfound" };
     } else {
+      editHref = catalogEditHref(validId, controls);
       const supabase = createClient();
       const result = await loadCatalogProduct(supabase, validId);
       if (result.status === "error") {
@@ -88,5 +95,19 @@ export default async function ProductDetailPage({
     );
   }
 
-  return <ProductDetail product={state.product} variants={state.variants} backHref={backHref} />;
+  return (
+    <div className="space-y-4">
+      {saved ? (
+        <div className="card border-emerald-200 bg-emerald-50 text-sm text-emerald-700">
+          تم حفظ التغييرات.
+        </div>
+      ) : null}
+      <ProductDetail
+        product={state.product}
+        variants={state.variants}
+        backHref={backHref}
+        editHref={editHref}
+      />
+    </div>
+  );
 }
