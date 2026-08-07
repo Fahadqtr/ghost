@@ -59,7 +59,7 @@ test("price: null, zero and negative all fail; positive passes", () => {
   assert.equal(computeProductReadiness(makeProduct({ price: 0.5 })).status, "ready");
 });
 
-test("variants: only checked when expected; missing variants block readiness", () => {
+test("variants: only checked when TRUSTED-expected; missing variants then block readiness", () => {
   const expected = computeProductReadiness(makeProduct({ expectsVariants: true, variantCount: 0 }));
   assert.equal(expected.status, "incomplete");
   assert.ok(expected.reasons.some((x) => x.code === "missing_variants"));
@@ -67,6 +67,20 @@ test("variants: only checked when expected; missing variants block readiness", (
 
   const satisfied = computeProductReadiness(makeProduct({ expectsVariants: true, variantCount: 3 }));
   assert.equal(satisfied.status, "ready");
+});
+
+test("variants unknown: no variant rows NEVER counts against readiness", () => {
+  const unknown = computeProductReadiness(makeProduct({ variantCount: 0 }));
+  assert.equal(unknown.status, "ready");
+  assert.equal(unknown.checks.length, 8, "no variants check when expectation is unknown");
+  assert.ok(!unknown.reasons.some((x) => x.code === "missing_variants"));
+});
+
+test("variants present: their existence CONFIRMS a multi-variant product (check passes)", () => {
+  const confirmed = computeProductReadiness(makeProduct({ variantCount: 2 }));
+  assert.equal(confirmed.status, "ready");
+  assert.equal(confirmed.checks.length, 9);
+  assert.ok(confirmed.checks.some((c) => c.code === "variants" && c.passed));
 });
 
 test("new product: never reviewed + never pushed → isNew and almost_ready when data is complete", () => {

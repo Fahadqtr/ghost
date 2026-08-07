@@ -95,8 +95,12 @@ export function computeProductReadiness(p: OperationsProduct): ProductReadiness 
       passed: typeof p.price === "number" && Number.isFinite(p.price) && p.price > 0,
     },
     { code: "category", required: true, passed: hasText(p.category) },
-    // Only applicable when the caller says variants are expected.
-    ...(p.expectsVariants
+    // Variants rule: the check only exists when we TRUST that variants are
+    // expected (expectsVariants === true from the reading layer) or when the
+    // product visibly has variants (their presence confirms a multi-variant
+    // product). expectsVariants undefined = unknown — and the absence of
+    // variant rows alone NEVER counts against readiness.
+    ...(p.expectsVariants === true || p.variantCount > 0
       ? [{ code: "variants" as const, required: true, passed: p.variantCount > 0 }]
       : []),
     { code: "description", required: false, passed: hasText(p.descriptionAr) || hasText(p.descriptionEn) },

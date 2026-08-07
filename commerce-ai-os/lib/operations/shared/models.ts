@@ -21,6 +21,12 @@ export type PlatformType = "shopify" | "puresoul" | "talabat" | "rafeeq";
  * What the caller already knows about one product on one platform, read
  * through the EXISTING read models (e.g. the UI.3 Shopify read model). This
  * engine never talks to a platform — it only interprets a snapshot.
+ *
+ * A PlatformPresence value is a TRUSTED snapshot: providing one with
+ * linked=false means the reader really looked and the product is confirmed
+ * absent. When there is NO trusted reader (or the reader is currently
+ * unavailable), the caller must OMIT the platform key entirely — the engine
+ * then reports "unknown" (غير مربوط), never "missing".
  */
 export interface PlatformPresence {
   /** the product is identity-matched on the platform (UI.3-style SKU/barcode match) */
@@ -57,9 +63,14 @@ export interface OperationsProduct {
   platformStatus: string | null;
   /** number of variant rows the product currently has */
   variantCount: number;
-  /** the caller says this product is SUPPOSED to have variants (e.g. shades) */
-  expectsVariants: boolean;
-  /** per-platform snapshots; a missing key = nothing known = not linked */
+  /**
+   * TRUSTED knowledge that this product is supposed to have variants (e.g.
+   * shades). Only set true when the reading layer really knows it; omit
+   * (undefined) when unknown — the absence of variant rows alone NEVER means
+   * the product is single-variant, and undefined never fails readiness.
+   */
+  expectsVariants?: boolean;
+  /** per-platform TRUSTED snapshots; an omitted key = no data = "unknown" */
   platforms?: Partial<Record<PlatformType, PlatformPresence>>;
 }
 
@@ -154,7 +165,8 @@ export interface OperationTask {
 // ── platform status ──────────────────────────────────────────────────────────
 
 export type PlatformStatusValue =
-  | "missing"
+  | "unknown" // no trusted snapshot for this platform (not connected / reader unavailable)
+  | "missing" // a trusted snapshot CONFIRMS the product is absent (and it is not yet publishable)
   | "ready"
   | "published"
   | "different"

@@ -19,11 +19,17 @@ export function makeProduct(overrides: Partial<OperationsProduct> = {}): Operati
     approval: "Approved",
     platformStatus: "shopify",
     variantCount: 0,
-    expectsVariants: false,
+    // expectsVariants deliberately omitted: unknown is the default reality
     ...overrides,
   };
 }
 
+/** A TRUSTED snapshot; default = the reader looked and found nothing. */
 export function presence(overrides: Partial<PlatformPresence> = {}): PlatformPresence {
   return { linked: false, live: false, drift: false, reviewRequired: false, ...overrides };
+}
+
+/** Trusted confirmed-absent snapshots for ALL platforms. */
+export function absentOnAllPlatforms() {
+  return { shopify: presence(), puresoul: presence(), talabat: presence(), rafeeq: presence() };
 }

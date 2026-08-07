@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { computeProductReadiness } from "../readiness/readiness.ts";
 import { computePlatformStatuses } from "../platforms/platform-status.ts";
 import { generateProductTasks, generateTasks, sortTasks } from "./task-engine.ts";
-import { makeProduct, presence } from "../shared/test-fixtures.ts";
+import { absentOnAllPlatforms, makeProduct, presence } from "../shared/test-fixtures.ts";
 import type { OperationsProduct } from "../shared/models";
 
 function tasksFor(p: OperationsProduct) {
@@ -16,8 +16,13 @@ function tasksFor(p: OperationsProduct) {
   return { readiness, statuses, tasks: generateProductTasks(p, readiness, statuses) };
 }
 
-test("ready product absent everywhere: exactly four publish tasks with deterministic ids", () => {
+test("no platform snapshots at all (all unknown): ZERO platform tasks — never act on untrusted data", () => {
   const { tasks } = tasksFor(makeProduct());
+  assert.deepEqual(tasks, [], "a ready product with only unknown platforms generates nothing");
+});
+
+test("ready product CONFIRMED absent everywhere: exactly four publish tasks with deterministic ids", () => {
+  const { tasks } = tasksFor(makeProduct({ platforms: absentOnAllPlatforms() }));
   assert.deepEqual(
     tasks.map((t) => t.id),
     [
@@ -88,6 +93,13 @@ test("a staged platform copy of an UNPUBLISHABLE product never yields a publish 
   assert.ok(tasks.every((t) => t.type !== "publish_platform"));
 });
 
+test("fixing the cause makes the task disappear on recompute (no stored state)", () => {
+  const broken = tasksFor(makeProduct({ imageUrl: null }));
+  assert.ok(broken.tasks.some((t) => t.type === "needs_image"));
+  const fixed = tasksFor(makeProduct({ imageUrl: "https://cdn.example.test/mk123.jpg" }));
+  assert.ok(fixed.tasks.every((t) => t.type !== "needs_image"));
+});
+
 test("determinism: same input → identical task list", () => {
   const p = makeProduct({ approval: "", platformStatus: "", imageUrl: null });
   assert.deepEqual(tasksFor(p).tasks, tasksFor(p).tasks);
@@ -95,7 +107,7 @@ test("determinism: same input → identical task list", () => {
 
 test("generateTasks over a catalog: one flat list, high priorities first", () => {
   const a = makeProduct({ id: "a", approval: "SentAI" });
-  const b = makeProduct({ id: "b" });
+  const b = makeProduct({ id: "b", platforms: absentOnAllPlatforms() });
   const entries = [a, b].map((p) => {
     const readiness = computeProductReadiness(p);
     return { product: p, readiness, platformStatuses: computePlatformStatuses(p, readiness.readyToPublish) };

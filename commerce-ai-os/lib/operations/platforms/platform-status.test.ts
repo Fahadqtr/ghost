@@ -12,9 +12,15 @@ import {
 } from "./platform-status.ts";
 import { makeProduct, presence } from "../shared/test-fixtures.ts";
 
-test("absent from the platform: ready when publishable, missing otherwise", () => {
-  assert.equal(computePlatformStatusValue(undefined, true), "ready");
-  assert.equal(computePlatformStatusValue(undefined, false), "missing");
+test("NO snapshot = unknown — a platform we cannot read is never guessed as missing", () => {
+  assert.equal(computePlatformStatusValue(undefined, true), "unknown");
+  assert.equal(computePlatformStatusValue(undefined, false), "unknown");
+  assert.equal(PLATFORM_STATUS_LABELS.unknown, "غير مربوط");
+});
+
+test("trusted confirmed-absent snapshot: ready when publishable, missing otherwise", () => {
+  assert.equal(computePlatformStatusValue(presence(), true), "ready");
+  assert.equal(computePlatformStatusValue(presence(), false), "missing");
 });
 
 test("review always wins — even over published/live", () => {
@@ -46,8 +52,8 @@ test("computePlatformStatuses: all four platforms, fixed order, Arabic labels", 
   assert.deepEqual(statuses.map((s) => s.platform), [...PLATFORM_TYPES]);
   assert.deepEqual(
     statuses.map((s) => s.status),
-    ["published", "ready", "different", "review_required"],
-    "puresoul has no snapshot → ready because the product is publishable",
+    ["published", "unknown", "different", "review_required"],
+    "puresoul has NO snapshot → unknown (غير مربوط), never a guessed verdict",
   );
   for (const s of statuses) assert.equal(s.label, PLATFORM_STATUS_LABELS[s.status]);
 });
