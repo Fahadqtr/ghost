@@ -280,8 +280,59 @@ test("wizard: file summary step, explicit analyze button, Malikas loading text, 
 });
 
 test("actions: every action has a fixed-Arabic safety net with an internal code — no raw errors, no silence", () => {
+  const MESSAGES_SRC = readFileSync(new URL("./messages.ts", import.meta.url), "utf8");
   for (const code of ["IMPORT-SRV-01", "IMPORT-SRV-02", "IMPORT-SRV-03"]) {
-    assert.ok(ACTIONS_SRC.includes(code), `actions must carry ${code}`);
+    assert.ok(MESSAGES_SRC.includes(code), `messages must carry ${code}`);
+  }
+  for (const used of ["unexpected_inspect", "unexpected_preview", "unexpected_apply"]) {
+    assert.ok(ACTIONS_SRC.includes(`IMPORT_MESSAGES.${used}`), `actions must use ${used}`);
   }
   assert.ok(ACTIONS_SRC.includes("too_many_columns"), "column cap surfaces as a fixed message");
+});
+
+// ── "use server" module-loading regression ──────────────────────────────────
+// Next.js refuses to evaluate a "use server" module whose runtime exports are
+// not exclusively async functions. Exporting IMPORT_MESSAGES (a plain object)
+// from the import actions file made EVERY action POST return 500 before any
+// code ran ("A \"use server\" file can only export async functions, found
+// object.") — the UI could only show IMPORT-UI-01. These checks fail the
+// build-time tests if anyone reintroduces a non-async runtime export.
+
+/** Every runtime export must be an async function; types/interfaces are fine. */
+function assertOnlyAsyncFunctionExports(src: string, name: string): void {
+  const lines = src.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!/^export\s/.test(line)) continue;
+    const ok =
+      /^export async function\s/.test(line) ||
+      /^export (type|interface)\s/.test(line);
+    assert.ok(
+      ok,
+      `${name}:${i + 1} — a "use server" file may only export async functions ` +
+        `(types/interfaces are erased). Offending line: ${line.trim()}`,
+    );
+  }
+}
+
+test('"use server" files export ONLY async functions — module evaluation can never 500 again', () => {
+  const files: [string, string][] = [
+    ["app/(v2)/v2/catalog/import/actions.ts", ACTIONS_SRC],
+    [
+      "app/(v2)/v2/catalog/new/actions.ts",
+      readFileSync(new URL("../../../app/(v2)/v2/catalog/new/actions.ts", import.meta.url), "utf8"),
+    ],
+    [
+      "app/(v2)/v2/catalog/[id]/edit/actions.ts",
+      readFileSync(new URL("../../../app/(v2)/v2/catalog/[id]/edit/actions.ts", import.meta.url), "utf8"),
+    ],
+  ];
+  for (const [name, src] of files) {
+    assert.ok(src.startsWith('"use server"'), `${name} must be a server-actions file`);
+    assertOnlyAsyncFunctionExports(src, name);
+  }
+  // the sentinel that caused the production outage must never come back
+  assert.ok(!ACTIONS_SRC.includes("export const IMPORT_MESSAGES"), "IMPORT_MESSAGES must live outside the use-server file");
+  // and the guard itself must catch the original offending shape
+  assert.throws(() => assertOnlyAsyncFunctionExports('"use server";\nexport const SOMETHING = {};\n', "self-check"));
 });
