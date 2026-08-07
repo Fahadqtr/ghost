@@ -14,6 +14,7 @@ import { generateProductTasks } from "./tasks/task-engine.ts";
 import { classifyNewProducts } from "./new-products/new-product-engine.ts";
 import { computeHealthSummary } from "./health/health-engine.ts";
 import { toListItem, mapProductRow } from "./dashboard-view.ts";
+import { flattenTasks } from "./tasks-view.ts";
 import { presence } from "./shared/test-fixtures.ts";
 
 const engines: OperationsEngines = {
@@ -24,6 +25,7 @@ const engines: OperationsEngines = {
   computeHealthSummary,
   toListItem,
   mapProductRow,
+  flattenTasks,
 };
 
 /** A fake session client returning fixed product/variant rows. */
