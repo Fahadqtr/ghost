@@ -77,6 +77,7 @@ export const IMPORT_MESSAGES = {
   sheet_required: "يجب اختيار ورقة.",
   sheet_not_found: "الورقة المحددة غير موجودة.",
   too_many_rows: "عدد الصفوف أكبر من المسموح (5000 صف).",
+  too_many_columns: "عدد الأعمدة أكبر من المسموح (200 عمود).",
   mapping_invalid: "ربط الأعمدة غير صالح.",
   mapping_identifier: "يجب ربط عمود SKU أو الباركود على الأقل.",
   mapping_duplicate: "لا يمكن ربط العمود نفسه بأكثر من حقل.",
@@ -95,6 +96,11 @@ export const IMPORT_MESSAGES = {
   name_required_create: "أدخل اسم المنتج بالعربية أو الإنجليزية.",
   unknown_category: "الفئة غير موجودة.",
   needs_image_note: "أُنشئ بدون صورة — أكمل الصورة من محرر المنتج.",
+  // Safety net: fixed text + a safe internal code only — NEVER parser text,
+  // raw errors, database codes or stacks.
+  unexpected_inspect: "تعذّر قراءة الملف — أعد المحاولة. (رمز داخلي: IMPORT-SRV-01)",
+  unexpected_preview: "تعذّر تحليل الملف — أعد المحاولة. (رمز داخلي: IMPORT-SRV-02)",
+  unexpected_apply: "تعذّر تنفيذ العملية — أعد المحاولة. (رمز داخلي: IMPORT-SRV-03)",
 } as const;
 
 // ── shared plumbing ──────────────────────────────────────────────────────────
@@ -173,6 +179,7 @@ async function runPipeline(
       ok: false,
       error: extracted.code === "sheet_not_found" ? IMPORT_MESSAGES.sheet_not_found
         : extracted.code === "too_many_rows" ? IMPORT_MESSAGES.too_many_rows
+        : extracted.code === "too_many_columns" ? IMPORT_MESSAGES.too_many_columns
         : extracted.code === "empty" ? IMPORT_MESSAGES.file_empty
         : IMPORT_MESSAGES.file_unreadable,
     };
@@ -180,7 +187,8 @@ async function runPipeline(
   const byField = mappingByField(mapping);
   const rows: NormalizedRow[] = [];
   for (let i = 0; i < extracted.rows.length; i++) {
-    const row = normalizeCatalogExcelRow(i + 2, extracted.rows[i], byField); // +2: header is row 1
+    // true Excel row number from the sparse reader (header is row 1)
+    const row = normalizeCatalogExcelRow(extracted.rowNums[i] ?? i + 2, extracted.rows[i], byField);
     if (!row.empty) rows.push(row);
   }
 
@@ -313,53 +321,63 @@ export async function inspectCatalogImport(
   formData: FormData,
 ): Promise<{ data: InspectResponse } | { error: string }> {
   if (!(await isSignedIn())) return { error: IMPORT_MESSAGES.not_signed_in };
-  const file = await readImportFile(formData);
-  if (!file.ok) return { error: file.error };
+  try {
+    const file = await readImportFile(formData);
+    if (!file.ok) return { error: file.error };
 
-  const inspected = await inspectWorkbook(file.bytes);
-  if (inspected.status !== "ok") {
-    return { error: inspected.code === "empty" ? IMPORT_MESSAGES.no_sheet : IMPORT_MESSAGES.file_unreadable };
-  }
-  if (inspected.sheets.length === 1) {
-    const sheetName = inspected.sheets[0].name;
-    const extracted = await extractSheetRows(file.bytes, sheetName);
-    if (extracted.status !== "ok") {
+    const inspected = await inspectWorkbook(file.bytes);
+    if (inspected.status !== "ok") {
+      return { error: inspected.code === "empty" ? IMPORT_MESSAGES.no_sheet : IMPORT_MESSAGES.file_unreadable };
+    }
+    if (inspected.sheets.length === 1) {
+      const sheetName = inspected.sheets[0].name;
+      const extracted = await extractSheetRows(file.bytes, sheetName);
+      if (extracted.status !== "ok") {
+        return {
+          error: extracted.code === "too_many_rows" ? IMPORT_MESSAGES.too_many_rows
+            : extracted.code === "too_many_columns" ? IMPORT_MESSAGES.too_many_columns
+            : extracted.code === "empty" ? IMPORT_MESSAGES.file_empty
+            : IMPORT_MESSAGES.file_unreadable,
+        };
+      }
       return {
-        error: extracted.code === "too_many_rows" ? IMPORT_MESSAGES.too_many_rows
-          : extracted.code === "empty" ? IMPORT_MESSAGES.file_empty
-          : IMPORT_MESSAGES.file_unreadable,
+        data: {
+          sheets: inspected.sheets,
+          headers: { mapping: detectCatalogColumns(extracted.headers), sheetName, formulaCells: extracted.formulaCells },
+        },
       };
     }
-    return {
-      data: {
-        sheets: inspected.sheets,
-        headers: { mapping: detectCatalogColumns(extracted.headers), sheetName, formulaCells: extracted.formulaCells },
-      },
-    };
+    return { data: { sheets: inspected.sheets } };
+  } catch {
+    return { error: IMPORT_MESSAGES.unexpected_inspect };
   }
-  return { data: { sheets: inspected.sheets } };
 }
 
 export async function readSheetHeaders(
   formData: FormData,
 ): Promise<{ data: { mapping: ColumnMapping[]; sheetName: string; formulaCells: number } } | { error: string }> {
   if (!(await isSignedIn())) return { error: IMPORT_MESSAGES.not_signed_in };
-  const file = await readImportFile(formData);
-  if (!file.ok) return { error: file.error };
-  const sheetName = formData.get("sheet");
-  if (typeof sheetName !== "string" || sheetName === "") return { error: IMPORT_MESSAGES.sheet_required };
-  const extracted = await extractSheetRows(file.bytes, sheetName.slice(0, 200));
-  if (extracted.status !== "ok") {
+  try {
+    const file = await readImportFile(formData);
+    if (!file.ok) return { error: file.error };
+    const sheetName = formData.get("sheet");
+    if (typeof sheetName !== "string" || sheetName === "") return { error: IMPORT_MESSAGES.sheet_required };
+    const extracted = await extractSheetRows(file.bytes, sheetName.slice(0, 200));
+    if (extracted.status !== "ok") {
+      return {
+        error: extracted.code === "sheet_not_found" ? IMPORT_MESSAGES.sheet_not_found
+          : extracted.code === "too_many_rows" ? IMPORT_MESSAGES.too_many_rows
+          : extracted.code === "too_many_columns" ? IMPORT_MESSAGES.too_many_columns
+          : extracted.code === "empty" ? IMPORT_MESSAGES.file_empty
+          : IMPORT_MESSAGES.file_unreadable,
+      };
+    }
     return {
-      error: extracted.code === "sheet_not_found" ? IMPORT_MESSAGES.sheet_not_found
-        : extracted.code === "too_many_rows" ? IMPORT_MESSAGES.too_many_rows
-        : extracted.code === "empty" ? IMPORT_MESSAGES.file_empty
-        : IMPORT_MESSAGES.file_unreadable,
+      data: { mapping: detectCatalogColumns(extracted.headers), sheetName: sheetName.slice(0, 200), formulaCells: extracted.formulaCells },
     };
+  } catch {
+    return { error: IMPORT_MESSAGES.unexpected_inspect };
   }
-  return {
-    data: { mapping: detectCatalogColumns(extracted.headers), sheetName: sheetName.slice(0, 200), formulaCells: extracted.formulaCells },
-  };
 }
 
 // ── Step 2: full preview plan ────────────────────────────────────────────────
@@ -453,214 +471,218 @@ export async function previewCatalogImport(
   formData: FormData,
 ): Promise<{ data: ImportPreview } | { error: string }> {
   if (!(await isSignedIn())) return { error: IMPORT_MESSAGES.not_signed_in };
-  const file = await readImportFile(formData);
-  if (!file.ok) return { error: file.error };
-  const sheetName = formData.get("sheet");
-  if (typeof sheetName !== "string" || sheetName === "") return { error: IMPORT_MESSAGES.sheet_required };
-  const mapping = parseMappingParam(formData.get("mapping"));
-  if (!mapping) return { error: IMPORT_MESSAGES.mapping_invalid };
-  const selectedFields = selectedFieldsParam(formData.get("fields"));
+  try {
+    const file = await readImportFile(formData);
+    if (!file.ok) return { error: file.error };
+    const sheetName = formData.get("sheet");
+    if (typeof sheetName !== "string" || sheetName === "") return { error: IMPORT_MESSAGES.sheet_required };
+    const mapping = parseMappingParam(formData.get("mapping"));
+    if (!mapping) return { error: IMPORT_MESSAGES.mapping_invalid };
+    const selectedFields = selectedFieldsParam(formData.get("fields"));
 
-  const supabase = createClient();
-  const pipe = await runPipeline(supabase, file.bytes, sheetName.slice(0, 200), mapping);
-  if (!pipe.ok) return { error: pipe.error };
-  const p = pipe.p;
+    const supabase = createClient();
+    const pipe = await runPipeline(supabase, file.bytes, sheetName.slice(0, 200), mapping);
+    if (!pipe.ok) return { error: pipe.error };
+    const p = pipe.p;
 
-  // current values for matched rows
-  const productIds: string[] = [];
-  const variantIds: string[] = [];
-  for (const r of p.rows) {
-    const m = p.matches.get(r.rowNum)!;
-    if (m.record) (m.record.kind === "product" ? productIds : variantIds).push(m.record.id);
-  }
-  const currents = await readCurrentRecords(supabase, productIds, variantIds);
-  if (!currents) return { error: IMPORT_MESSAGES.scan_failed };
-  const brandResolver = brandResolverFrom(currents.brands);
-
-  const updates: PreviewUpdateRow[] = [];
-  const problems: PreviewProblemRow[] = [];
-  const unchangedRows: number[] = [];
-
-  for (const r of p.rows) {
-    const m = p.matches.get(r.rowNum)!;
-    if (m.status === "conflict") {
-      problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: IMPORT_MESSAGES.conflict_ids });
-      continue;
+    // current values for matched rows
+    const productIds: string[] = [];
+    const variantIds: string[] = [];
+    for (const r of p.rows) {
+      const m = p.matches.get(r.rowNum)!;
+      if (m.record) (m.record.kind === "product" ? productIds : variantIds).push(m.record.id);
     }
-    if (m.status === "dup_in_file") {
-      problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: IMPORT_MESSAGES.dup_in_file });
-      continue;
-    }
-    if (m.status === "dup_in_db") {
-      problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: IMPORT_MESSAGES.dup_in_db });
-      continue;
-    }
-    if (m.status === "invalid") {
-      problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: r.errors[0] ?? IMPORT_MESSAGES.mapping_invalid });
-      continue;
-    }
-    if (!m.record) continue; // not_found → handled by new-record classification below
+    const currents = await readCurrentRecords(supabase, productIds, variantIds);
+    if (!currents) return { error: IMPORT_MESSAGES.scan_failed };
+    const brandResolver = brandResolverFrom(currents.brands);
 
-    const table = m.record.kind === "product" ? currents.products : currents.variants;
-    const rec = table.get(m.record.id);
-    if (!rec) {
-      problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: IMPORT_MESSAGES.scan_failed });
-      continue;
-    }
-    const current = currentFieldValues(rec, m.record.kind, currents.brands);
-    const plan = buildRowUpdatePlan(r, m.record.id, m.record.kind, current, {
-      categories: CATEGORIES,
-      brandResolver,
-      selectedFields,
-    });
-    if (plan.changes.length === 0 || plan.changes.every((c) => c.equal)) {
-      unchangedRows.push(r.rowNum);
-      continue;
-    }
-    updates.push({
-      rowNum: r.rowNum,
-      recordKind: m.record.kind,
-      recordId: m.record.id,
-      sku: r.sku ?? m.record.sku,
-      barcode: r.barcode ?? m.record.barcode,
-      displayName: m.record.nameAr || m.record.nameEn || m.record.sku || "سجل في الكتالوج",
-      imageUrl: null,
-      matchStatus: m.status,
-      plan,
-      warnings: r.warnings,
-    });
-  }
+    const updates: PreviewUpdateRow[] = [];
+    const problems: PreviewProblemRow[] = [];
+    const unchangedRows: number[] = [];
 
-  // new records
-  const newGroupsRaw = groupNewProductRows(p.classifications, p.rowsByNum);
-  const newGroups: PreviewNewGroup[] = [];
-  for (const g of newGroupsRaw) {
-    const main = p.rowsByNum.get(g.mainRowNum);
-    if (!main) continue;
-    const nameEn = rowFieldValue(main, "name_en");
-    const nameAr = rowFieldValue(main, "name_ar");
-    const missing: string[] = [];
-    if (!nameAr && !nameEn) missing.push("الاسم");
-    if (g.needsSku) missing.push("SKU (سيُولّد تلقائيًا)");
-    if (main.barcode === null) missing.push("الباركود (سيُولّد تلقائيًا)");
-    missing.push("الصورة");
+    for (const r of p.rows) {
+      const m = p.matches.get(r.rowNum)!;
+      if (m.status === "conflict") {
+        problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: IMPORT_MESSAGES.conflict_ids });
+        continue;
+      }
+      if (m.status === "dup_in_file") {
+        problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: IMPORT_MESSAGES.dup_in_file });
+        continue;
+      }
+      if (m.status === "dup_in_db") {
+        problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: IMPORT_MESSAGES.dup_in_db });
+        continue;
+      }
+      if (m.status === "invalid") {
+        problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: r.errors[0] ?? IMPORT_MESSAGES.mapping_invalid });
+        continue;
+      }
+      if (!m.record) continue; // not_found → handled by new-record classification below
 
-    const dup = findDuplicates(
-      {
-        sku: main.sku ?? "",
-        barcodes: main.barcode ? [main.barcode] : [],
-        brand: rowFieldValue(main, "brand"),
-        nameEn,
-        nameAr,
-        size: rowFieldValue(main, "size"),
-        shade: rowFieldValue(main, "color"),
-      },
-      p.snapshotRows,
-    );
-    let cards: SimilarProductCard[] = [];
-    let total = dup.total;
-    if (dup.level !== "none" && newGroups.length < SIMILAR_HYDRATION_GROUP_CAP) {
-      const hyd = await loadSimilarProductCards(supabase, dup.matches, dup.total, 5);
-      cards = hyd.cards;
-      total = hyd.total;
-    }
-    newGroups.push({
-      mainRowNum: g.mainRowNum,
-      mainSku: g.mainSku,
-      needsSku: g.needsSku,
-      needsImage: true,
-      displayName: nameAr || nameEn || g.mainSku || `صف ${g.mainRowNum}`,
-      fields: main.values.filter((v) => !v.clear).map((v) => ({
-        field: v.field,
-        label: CATALOG_FIELD_DEFS.find((d) => d.field === v.field)?.label ?? v.field,
-        value: v.value,
-      })),
-      variants: g.variantRowNums.map((n) => {
-        const vr = p.rowsByNum.get(n)!;
-        return { rowNum: n, sku: vr.sku, barcode: vr.barcode, name: rowFieldValue(vr, "variant_name") || rowFieldValue(vr, "variant_name_en") };
-      }),
-      missing,
-      blockedReason: dup.level === "exact" ? IMPORT_MESSAGES.duplicate_blocks_create : null,
-      similar: { level: dup.level, cards, total },
-    });
-  }
-
-  // new variants for EXISTING parents
-  const newVariantRows = p.classifications.filter((c) => c.cls === "new_variant_existing_parent");
-  const parentIdBySku = new Map<string, string>();
-  for (const row of p.snapshotRows) {
-    if (row.kind === "product" && row.sku) parentIdBySku.set(row.sku.toLowerCase(), row.id);
-  }
-  const parentIds = Array.from(
-    new Set(
-      newVariantRows
-        .map((c) => p.rowsByNum.get(c.rowNum)?.parentSku)
-        .filter((s): s is string => typeof s === "string")
-        .map((s) => parentIdBySku.get(s))
-        .filter((x): x is string => typeof x === "string"),
-    ),
-  );
-  const parentCards = await loadSimilarProductCards(
-    supabase,
-    parentIds.map((id) => ({ productId: id, level: "similar" as const, reasons: [], score: 0 })),
-    parentIds.length,
-    Math.min(parentIds.length, 50),
-  );
-  const parentCardById = new Map(parentCards.cards.map((c) => [c.id, c]));
-
-  const newVariants: PreviewNewVariant[] = [];
-  for (const c of newVariantRows) {
-    const row = p.rowsByNum.get(c.rowNum);
-    if (!row || !row.sku || !row.parentSku) continue;
-    const parentId = parentIdBySku.get(row.parentSku);
-    if (!parentId) {
-      problems.push({ rowNum: c.rowNum, kind: "variant", sku: row.sku, barcode: row.barcode, message: IMPORT_MESSAGES.parent_missing });
-      continue;
-    }
-    newVariants.push({
-      rowNum: c.rowNum,
-      sku: row.sku,
-      barcode: row.barcode,
-      name: rowFieldValue(row, "variant_name") || rowFieldValue(row, "variant_name_en") || row.sku,
-      parent: parentCardById.get(parentId) ?? null,
-      parentId,
-      parentFingerprint: parentVariantsFingerprint(p.snapshotRows, parentId),
-      blockedReason: null,
-    });
-  }
-
-  // remaining problem classes
-  for (const c of p.classifications) {
-    if (c.cls === "orphan_variant" || c.cls === "needs_review" || c.cls === "blocked") {
-      const row = p.rowsByNum.get(c.rowNum);
-      if (!row) continue;
-      const already = problems.some((x) => x.rowNum === c.rowNum);
-      if (already) continue;
-      problems.push({
-        rowNum: c.rowNum, kind: row.kind, sku: row.sku, barcode: row.barcode,
-        message: c.reason ?? NEW_CLASS_LABELS[c.cls],
+      const table = m.record.kind === "product" ? currents.products : currents.variants;
+      const rec = table.get(m.record.id);
+      if (!rec) {
+        problems.push({ rowNum: r.rowNum, kind: r.kind, sku: r.sku, barcode: r.barcode, message: IMPORT_MESSAGES.scan_failed });
+        continue;
+      }
+      const current = currentFieldValues(rec, m.record.kind, currents.brands);
+      const plan = buildRowUpdatePlan(r, m.record.id, m.record.kind, current, {
+        categories: CATEGORIES,
+        brandResolver,
+        selectedFields,
+      });
+      if (plan.changes.length === 0 || plan.changes.every((c) => c.equal)) {
+        unchangedRows.push(r.rowNum);
+        continue;
+      }
+      updates.push({
+        rowNum: r.rowNum,
+        recordKind: m.record.kind,
+        recordId: m.record.id,
+        sku: r.sku ?? m.record.sku,
+        barcode: r.barcode ?? m.record.barcode,
+        displayName: m.record.nameAr || m.record.nameEn || m.record.sku || "سجل في الكتالوج",
+        imageUrl: null,
+        matchStatus: m.status,
+        plan,
+        warnings: r.warnings,
       });
     }
-  }
 
-  return {
-    data: {
-      summary: {
-        productUpdates: updates.filter((u) => u.recordKind === "product").length,
-        variantUpdates: updates.filter((u) => u.recordKind === "variant").length,
-        newProducts: newGroups.length,
-        newVariants: newVariants.length,
-        problems: problems.length,
-        unchanged: unchangedRows.length,
+    // new records
+    const newGroupsRaw = groupNewProductRows(p.classifications, p.rowsByNum);
+    const newGroups: PreviewNewGroup[] = [];
+    for (const g of newGroupsRaw) {
+      const main = p.rowsByNum.get(g.mainRowNum);
+      if (!main) continue;
+      const nameEn = rowFieldValue(main, "name_en");
+      const nameAr = rowFieldValue(main, "name_ar");
+      const missing: string[] = [];
+      if (!nameAr && !nameEn) missing.push("الاسم");
+      if (g.needsSku) missing.push("SKU (سيُولّد تلقائيًا)");
+      if (main.barcode === null) missing.push("الباركود (سيُولّد تلقائيًا)");
+      missing.push("الصورة");
+
+      const dup = findDuplicates(
+        {
+          sku: main.sku ?? "",
+          barcodes: main.barcode ? [main.barcode] : [],
+          brand: rowFieldValue(main, "brand"),
+          nameEn,
+          nameAr,
+          size: rowFieldValue(main, "size"),
+          shade: rowFieldValue(main, "color"),
+        },
+        p.snapshotRows,
+      );
+      let cards: SimilarProductCard[] = [];
+      let total = dup.total;
+      if (dup.level !== "none" && newGroups.length < SIMILAR_HYDRATION_GROUP_CAP) {
+        const hyd = await loadSimilarProductCards(supabase, dup.matches, dup.total, 5);
+        cards = hyd.cards;
+        total = hyd.total;
+      }
+      newGroups.push({
+        mainRowNum: g.mainRowNum,
+        mainSku: g.mainSku,
+        needsSku: g.needsSku,
+        needsImage: true,
+        displayName: nameAr || nameEn || g.mainSku || `صف ${g.mainRowNum}`,
+        fields: main.values.filter((v) => !v.clear).map((v) => ({
+          field: v.field,
+          label: CATALOG_FIELD_DEFS.find((d) => d.field === v.field)?.label ?? v.field,
+          value: v.value,
+        })),
+        variants: g.variantRowNums.map((n) => {
+          const vr = p.rowsByNum.get(n)!;
+          return { rowNum: n, sku: vr.sku, barcode: vr.barcode, name: rowFieldValue(vr, "variant_name") || rowFieldValue(vr, "variant_name_en") };
+        }),
+        missing,
+        blockedReason: dup.level === "exact" ? IMPORT_MESSAGES.duplicate_blocks_create : null,
+        similar: { level: dup.level, cards, total },
+      });
+    }
+
+    // new variants for EXISTING parents
+    const newVariantRows = p.classifications.filter((c) => c.cls === "new_variant_existing_parent");
+    const parentIdBySku = new Map<string, string>();
+    for (const row of p.snapshotRows) {
+      if (row.kind === "product" && row.sku) parentIdBySku.set(row.sku.toLowerCase(), row.id);
+    }
+    const parentIds = Array.from(
+      new Set(
+        newVariantRows
+          .map((c) => p.rowsByNum.get(c.rowNum)?.parentSku)
+          .filter((s): s is string => typeof s === "string")
+          .map((s) => parentIdBySku.get(s))
+          .filter((x): x is string => typeof x === "string"),
+      ),
+    );
+    const parentCards = await loadSimilarProductCards(
+      supabase,
+      parentIds.map((id) => ({ productId: id, level: "similar" as const, reasons: [], score: 0 })),
+      parentIds.length,
+      Math.min(parentIds.length, 50),
+    );
+    const parentCardById = new Map(parentCards.cards.map((c) => [c.id, c]));
+
+    const newVariants: PreviewNewVariant[] = [];
+    for (const c of newVariantRows) {
+      const row = p.rowsByNum.get(c.rowNum);
+      if (!row || !row.sku || !row.parentSku) continue;
+      const parentId = parentIdBySku.get(row.parentSku);
+      if (!parentId) {
+        problems.push({ rowNum: c.rowNum, kind: "variant", sku: row.sku, barcode: row.barcode, message: IMPORT_MESSAGES.parent_missing });
+        continue;
+      }
+      newVariants.push({
+        rowNum: c.rowNum,
+        sku: row.sku,
+        barcode: row.barcode,
+        name: rowFieldValue(row, "variant_name") || rowFieldValue(row, "variant_name_en") || row.sku,
+        parent: parentCardById.get(parentId) ?? null,
+        parentId,
+        parentFingerprint: parentVariantsFingerprint(p.snapshotRows, parentId),
+        blockedReason: null,
+      });
+    }
+
+    // remaining problem classes
+    for (const c of p.classifications) {
+      if (c.cls === "orphan_variant" || c.cls === "needs_review" || c.cls === "blocked") {
+        const row = p.rowsByNum.get(c.rowNum);
+        if (!row) continue;
+        const already = problems.some((x) => x.rowNum === c.rowNum);
+        if (already) continue;
+        problems.push({
+          rowNum: c.rowNum, kind: row.kind, sku: row.sku, barcode: row.barcode,
+          message: c.reason ?? NEW_CLASS_LABELS[c.cls],
+        });
+      }
+    }
+
+    return {
+      data: {
+        summary: {
+          productUpdates: updates.filter((u) => u.recordKind === "product").length,
+          variantUpdates: updates.filter((u) => u.recordKind === "variant").length,
+          newProducts: newGroups.length,
+          newVariants: newVariants.length,
+          problems: problems.length,
+          unchanged: unchangedRows.length,
+        },
+        updates,
+        newGroups,
+        newVariants,
+        problems,
+        unchangedRows,
+        partialSnapshot: p.partial,
       },
-      updates,
-      newGroups,
-      newVariants,
-      problems,
-      unchangedRows,
-      partialSnapshot: p.partial,
-    },
-  };
+    };
+  } catch {
+    return { error: IMPORT_MESSAGES.unexpected_preview };
+  }
 }
 
 // ── Step 3a: apply UPDATES (batch) ───────────────────────────────────────────
@@ -678,107 +700,111 @@ export async function applyCatalogUpdates(
   formData: FormData,
 ): Promise<{ data: { results: ImportRecordResult[] } } | { error: string }> {
   if (!(await isSignedIn())) return { error: IMPORT_MESSAGES.not_signed_in };
-  const file = await readImportFile(formData);
-  if (!file.ok) return { error: file.error };
-  const sheetName = formData.get("sheet");
-  if (typeof sheetName !== "string" || sheetName === "") return { error: IMPORT_MESSAGES.sheet_required };
-  const mapping = parseMappingParam(formData.get("mapping"));
-  if (!mapping) return { error: IMPORT_MESSAGES.mapping_invalid };
-  const selectedFields = selectedFieldsParam(formData.get("fields"));
-  const rowNums = parseJsonParam<number[]>(formData.get("rows"), 50_000);
-  const fingerprints = parseJsonParam<Record<string, string>>(formData.get("fingerprints"), 200_000);
-  if (!rowNums || !Array.isArray(rowNums) || rowNums.length === 0 || rowNums.length > 100 || !fingerprints) {
-    return { error: IMPORT_MESSAGES.mapping_invalid };
-  }
-
-  const supabase = createClient();
-  const pipe = await runPipeline(supabase, file.bytes, sheetName.slice(0, 200), mapping);
-  if (!pipe.ok) return { error: pipe.error };
-  const p = pipe.p;
-
-  const wanted = new Set(rowNums.filter((n) => Number.isSafeInteger(n)));
-  const productIds: string[] = [];
-  const variantIds: string[] = [];
-  for (const r of p.rows) {
-    if (!wanted.has(r.rowNum)) continue;
-    const m = p.matches.get(r.rowNum)!;
-    if (m.record) (m.record.kind === "product" ? productIds : variantIds).push(m.record.id);
-  }
-  const currents = await readCurrentRecords(supabase, productIds, variantIds);
-  if (!currents) return { error: IMPORT_MESSAGES.scan_failed };
-  const brandResolver = brandResolverFrom(currents.brands);
-
-  const results: ImportRecordResult[] = [];
-  for (const r of p.rows) {
-    if (!wanted.has(r.rowNum)) continue;
-    const m = p.matches.get(r.rowNum)!;
-    const base = { rowNum: r.rowNum, sku: r.sku, barcode: r.barcode, changedFields: [] as string[] };
-
-    if (!m.record) {
-      results.push({ ...base, recordKind: r.kind === "variant" ? "variant" : "product", recordId: null, status: "conflict", message: IMPORT_MESSAGES.conflict_ids });
-      continue;
-    }
-    const kind = m.record.kind;
-    const table = kind === "product" ? currents.products : currents.variants;
-    const rec = table.get(m.record.id);
-    if (!rec) {
-      results.push({ ...base, recordKind: kind, recordId: m.record.id, status: "failed", message: kind === "product" ? IMPORT_MESSAGES.update_product_failed : IMPORT_MESSAGES.update_variant_failed });
-      continue;
-    }
-    const current = currentFieldValues(rec, kind, currents.brands);
-    const plan = buildRowUpdatePlan(r, m.record.id, kind, current, { categories: CATEGORIES, brandResolver, selectedFields });
-
-    // optimistic concurrency: the fingerprint the user PREVIEWED must still
-    // match the record's fresh fingerprint — otherwise someone edited it.
-    const previewFp = fingerprints[String(r.rowNum)];
-    if (typeof previewFp !== "string" || previewFp !== plan.fingerprint) {
-      results.push({ ...base, recordKind: kind, recordId: m.record.id, status: "changed_after_preview", message: IMPORT_MESSAGES.changed_after_preview });
-      continue;
+  try {
+    const file = await readImportFile(formData);
+    if (!file.ok) return { error: file.error };
+    const sheetName = formData.get("sheet");
+    if (typeof sheetName !== "string" || sheetName === "") return { error: IMPORT_MESSAGES.sheet_required };
+    const mapping = parseMappingParam(formData.get("mapping"));
+    if (!mapping) return { error: IMPORT_MESSAGES.mapping_invalid };
+    const selectedFields = selectedFieldsParam(formData.get("fields"));
+    const rowNums = parseJsonParam<number[]>(formData.get("rows"), 50_000);
+    const fingerprints = parseJsonParam<Record<string, string>>(formData.get("fingerprints"), 200_000);
+    if (!rowNums || !Array.isArray(rowNums) || rowNums.length === 0 || rowNums.length > 100 || !fingerprints) {
+      return { error: IMPORT_MESSAGES.mapping_invalid };
     }
 
-    const payload: Record<string, unknown> = {};
-    const changedFields: string[] = [];
-    for (const c of plan.changes) {
-      if (c.decision !== "update" || c.error) continue;
-      const column = fieldColumn(c.field, kind);
-      if (!column) continue;
-      if (c.field === "brand") {
-        const brandId = c.excel === null ? null : brandResolver(c.excel);
-        if (c.excel !== null && brandId === null) continue; // unknown brand → skip field
-        payload[column] = brandId;
-      } else if (c.field === "price" || c.field === "discount_price") {
-        payload[column] = c.excel === null ? null : Number(c.excel);
-      } else {
-        payload[column] = c.excel; // null on explicit clear
+    const supabase = createClient();
+    const pipe = await runPipeline(supabase, file.bytes, sheetName.slice(0, 200), mapping);
+    if (!pipe.ok) return { error: pipe.error };
+    const p = pipe.p;
+
+    const wanted = new Set(rowNums.filter((n) => Number.isSafeInteger(n)));
+    const productIds: string[] = [];
+    const variantIds: string[] = [];
+    for (const r of p.rows) {
+      if (!wanted.has(r.rowNum)) continue;
+      const m = p.matches.get(r.rowNum)!;
+      if (m.record) (m.record.kind === "product" ? productIds : variantIds).push(m.record.id);
+    }
+    const currents = await readCurrentRecords(supabase, productIds, variantIds);
+    if (!currents) return { error: IMPORT_MESSAGES.scan_failed };
+    const brandResolver = brandResolverFrom(currents.brands);
+
+    const results: ImportRecordResult[] = [];
+    for (const r of p.rows) {
+      if (!wanted.has(r.rowNum)) continue;
+      const m = p.matches.get(r.rowNum)!;
+      const base = { rowNum: r.rowNum, sku: r.sku, barcode: r.barcode, changedFields: [] as string[] };
+
+      if (!m.record) {
+        results.push({ ...base, recordKind: r.kind === "variant" ? "variant" : "product", recordId: null, status: "conflict", message: IMPORT_MESSAGES.conflict_ids });
+        continue;
       }
-      changedFields.push(c.label);
-    }
-    if (changedFields.length === 0) {
-      results.push({ ...base, recordKind: kind, recordId: m.record.id, status: "skipped", message: "لا توجد حقول مختارة للتحديث." });
-      continue;
-    }
-
-    try {
-      const table = kind === "product" ? "products" : "product_variants";
-      const { error } = await supabase.from(table).update(payload).filter("id", "eq", m.record.id);
-      if (error) {
+      const kind = m.record.kind;
+      const table = kind === "product" ? currents.products : currents.variants;
+      const rec = table.get(m.record.id);
+      if (!rec) {
         results.push({ ...base, recordKind: kind, recordId: m.record.id, status: "failed", message: kind === "product" ? IMPORT_MESSAGES.update_product_failed : IMPORT_MESSAGES.update_variant_failed });
         continue;
       }
-      results.push({
-        ...base,
-        changedFields,
-        recordKind: kind,
-        recordId: m.record.id,
-        status: kind === "product" ? "product_updated" : "variant_updated",
-        message: "تم التحديث.",
-      });
-    } catch {
-      results.push({ ...base, recordKind: kind, recordId: m.record.id, status: "failed", message: kind === "product" ? IMPORT_MESSAGES.update_product_failed : IMPORT_MESSAGES.update_variant_failed });
-    }
-  }
+      const current = currentFieldValues(rec, kind, currents.brands);
+      const plan = buildRowUpdatePlan(r, m.record.id, kind, current, { categories: CATEGORIES, brandResolver, selectedFields });
 
-  return { data: { results } };
+      // optimistic concurrency: the fingerprint the user PREVIEWED must still
+      // match the record's fresh fingerprint — otherwise someone edited it.
+      const previewFp = fingerprints[String(r.rowNum)];
+      if (typeof previewFp !== "string" || previewFp !== plan.fingerprint) {
+        results.push({ ...base, recordKind: kind, recordId: m.record.id, status: "changed_after_preview", message: IMPORT_MESSAGES.changed_after_preview });
+        continue;
+      }
+
+      const payload: Record<string, unknown> = {};
+      const changedFields: string[] = [];
+      for (const c of plan.changes) {
+        if (c.decision !== "update" || c.error) continue;
+        const column = fieldColumn(c.field, kind);
+        if (!column) continue;
+        if (c.field === "brand") {
+          const brandId = c.excel === null ? null : brandResolver(c.excel);
+          if (c.excel !== null && brandId === null) continue; // unknown brand → skip field
+          payload[column] = brandId;
+        } else if (c.field === "price" || c.field === "discount_price") {
+          payload[column] = c.excel === null ? null : Number(c.excel);
+        } else {
+          payload[column] = c.excel; // null on explicit clear
+        }
+        changedFields.push(c.label);
+      }
+      if (changedFields.length === 0) {
+        results.push({ ...base, recordKind: kind, recordId: m.record.id, status: "skipped", message: "لا توجد حقول مختارة للتحديث." });
+        continue;
+      }
+
+      try {
+        const table = kind === "product" ? "products" : "product_variants";
+        const { error } = await supabase.from(table).update(payload).filter("id", "eq", m.record.id);
+        if (error) {
+          results.push({ ...base, recordKind: kind, recordId: m.record.id, status: "failed", message: kind === "product" ? IMPORT_MESSAGES.update_product_failed : IMPORT_MESSAGES.update_variant_failed });
+          continue;
+        }
+        results.push({
+          ...base,
+          changedFields,
+          recordKind: kind,
+          recordId: m.record.id,
+          status: kind === "product" ? "product_updated" : "variant_updated",
+          message: "تم التحديث.",
+        });
+      } catch {
+        results.push({ ...base, recordKind: kind, recordId: m.record.id, status: "failed", message: kind === "product" ? IMPORT_MESSAGES.update_product_failed : IMPORT_MESSAGES.update_variant_failed });
+      }
+    }
+
+    return { data: { results } };
+  } catch {
+    return { error: IMPORT_MESSAGES.unexpected_apply };
+  }
 }
 
 // ── Step 3b: apply CREATES (batch) ───────────────────────────────────────────
@@ -797,242 +823,246 @@ export async function applyCatalogCreates(
   formData: FormData,
 ): Promise<{ data: { results: ImportRecordResult[] } } | { error: string }> {
   if (!(await isSignedIn())) return { error: IMPORT_MESSAGES.not_signed_in };
-  const file = await readImportFile(formData);
-  if (!file.ok) return { error: file.error };
-  const sheetName = formData.get("sheet");
-  if (typeof sheetName !== "string" || sheetName === "") return { error: IMPORT_MESSAGES.sheet_required };
-  const mapping = parseMappingParam(formData.get("mapping"));
-  if (!mapping) return { error: IMPORT_MESSAGES.mapping_invalid };
-  const groupRows = parseJsonParam<number[]>(formData.get("groups"), 20_000) ?? [];
-  const variantRows = parseJsonParam<number[]>(formData.get("newVariants"), 20_000) ?? [];
-  const parentFps = parseJsonParam<Record<string, string>>(formData.get("parentFingerprints"), 100_000) ?? {};
-  if (groupRows.length + variantRows.length === 0 || groupRows.length > 20 || variantRows.length > 50) {
-    return { error: IMPORT_MESSAGES.mapping_invalid };
-  }
-
-  const supabase = createClient();
-  const pipe = await runPipeline(supabase, file.bytes, sheetName.slice(0, 200), mapping);
-  if (!pipe.ok) return { error: pipe.error };
-  const p = pipe.p;
-
-  const { brands } = (await readCurrentRecords(supabase, [], [])) ?? { brands: new Map<string, string>() };
-  const brandResolver = brandResolverFrom(brands as Map<string, string>);
-
-  const groups = groupNewProductRows(p.classifications, p.rowsByNum);
-  const groupByMainRow = new Map(groups.map((g) => [g.mainRowNum, g]));
-
-  const usedSkus = new Set(p.snapshotSkus.map((s) => s.toLowerCase()));
-  const usedBarcodes = new Set(p.snapshotBarcodes);
-  const results: ImportRecordResult[] = [];
-
-  // ── new product groups ──
-  for (const mainRowNum of groupRows) {
-    const g = groupByMainRow.get(mainRowNum);
-    const main = g ? p.rowsByNum.get(g.mainRowNum) : undefined;
-    if (!g || !main) {
-      results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku: null, barcode: null, status: "conflict", message: IMPORT_MESSAGES.changed_after_preview, changedFields: [] });
-      continue;
-    }
-    const nameEn = rowFieldValue(main, "name_en");
-    const nameAr = rowFieldValue(main, "name_ar");
-    if (!nameAr && !nameEn) {
-      results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku: main.sku, barcode: main.barcode, status: "needs_review", message: IMPORT_MESSAGES.name_required_create, changedFields: [] });
-      continue;
-    }
-    const category = rowFieldValue(main, "main_category");
-    if (category && !CATEGORIES.includes(category as (typeof CATEGORIES)[number])) {
-      results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku: main.sku, barcode: main.barcode, status: "failed", message: IMPORT_MESSAGES.unknown_category, changedFields: [] });
-      continue;
+  try {
+    const file = await readImportFile(formData);
+    if (!file.ok) return { error: file.error };
+    const sheetName = formData.get("sheet");
+    if (typeof sheetName !== "string" || sheetName === "") return { error: IMPORT_MESSAGES.sheet_required };
+    const mapping = parseMappingParam(formData.get("mapping"));
+    if (!mapping) return { error: IMPORT_MESSAGES.mapping_invalid };
+    const groupRows = parseJsonParam<number[]>(formData.get("groups"), 20_000) ?? [];
+    const variantRows = parseJsonParam<number[]>(formData.get("newVariants"), 20_000) ?? [];
+    const parentFps = parseJsonParam<Record<string, string>>(formData.get("parentFingerprints"), 100_000) ?? {};
+    if (groupRows.length + variantRows.length === 0 || groupRows.length > 20 || variantRows.length > 50) {
+      return { error: IMPORT_MESSAGES.mapping_invalid };
     }
 
-    // fresh duplicate re-check — an exact match blocks creation
-    const dup = findDuplicates(
-      { sku: main.sku ?? "", barcodes: main.barcode ? [main.barcode] : [], brand: rowFieldValue(main, "brand"), nameEn, nameAr, size: rowFieldValue(main, "size"), shade: rowFieldValue(main, "color") },
-      p.snapshotRows,
-    );
-    if (dup.level === "exact") {
-      results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku: main.sku, barcode: main.barcode, status: "conflict", message: IMPORT_MESSAGES.duplicate_blocks_create, changedFields: [] });
-      continue;
-    }
+    const supabase = createClient();
+    const pipe = await runPipeline(supabase, file.bytes, sheetName.slice(0, 200), mapping);
+    if (!pipe.ok) return { error: pipe.error };
+    const p = pipe.p;
 
-    // identifiers — generated where missing, checked against catalog + batch
-    let sku = main.sku;
-    if (!sku) sku = nextMkSku([...usedSkus]);
-    if (usedSkus.has(sku)) {
-      results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode: main.barcode, status: "conflict", message: IMPORT_MESSAGES.dup_in_db, changedFields: [] });
-      continue;
-    }
-    let barcode = main.barcode;
-    if (barcode !== null && !isValidEan13(barcode)) {
-      results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode, status: "failed", message: IMPORT_MESSAGES.invalid_barcode, changedFields: [] });
-      continue;
-    }
-    const variantsNeedingBarcodes = g.variantRowNums.filter((n) => {
-      const vr = p.rowsByNum.get(n);
-      return vr && vr.barcode === null;
-    }).length;
-    let generated: string[] = [];
-    try {
-      generated = generateUniqueEan13Batch((barcode === null ? 1 : 0) + variantsNeedingBarcodes, usedBarcodes, Math.random);
-    } catch {
-      results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode, status: "failed", message: IMPORT_MESSAGES.create_product_failed, changedFields: [] });
-      continue;
-    }
-    let gi = 0;
-    if (barcode === null) barcode = generated[gi++];
+    const { brands } = (await readCurrentRecords(supabase, [], [])) ?? { brands: new Map<string, string>() };
+    const brandResolver = brandResolverFrom(brands as Map<string, string>);
 
-    const variants: VariantInput[] = [];
-    let variantProblem: string | null = null;
-    for (const n of g.variantRowNums) {
-      const vr = p.rowsByNum.get(n);
-      if (!vr || !vr.sku) { variantProblem = IMPORT_MESSAGES.create_variant_failed; break; }
-      if (!vr.sku.startsWith(`${sku}-`)) { variantProblem = IMPORT_MESSAGES.create_variant_failed; break; }
-      let vBarcode = vr.barcode;
-      if (vBarcode !== null && !isValidEan13(vBarcode)) { variantProblem = IMPORT_MESSAGES.invalid_barcode; break; }
-      if (vBarcode === null) vBarcode = generated[gi++];
-      variants.push({
-        variant_name: rowFieldValue(vr, "variant_name"),
-        variant_name_en: rowFieldValue(vr, "variant_name_en"),
-        sku: vr.sku,
-        barcode: vBarcode,
-        color: rowFieldValue(vr, "color"),
-        size: rowFieldValue(vr, "size"),
-        price: rowFieldValue(vr, "price"),
-        stock_quantity: "",
-      });
-    }
-    if (variantProblem) {
-      // a mandatory-variant failure blocks the WHOLE group — nothing partial
-      results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode, status: "failed", message: variantProblem, changedFields: [] });
-      continue;
-    }
+    const groups = groupNewProductRows(p.classifications, p.rowsByNum);
+    const groupByMainRow = new Map(groups.map((g) => [g.mainRowNum, g]));
 
-    const input: ProductInput = {
-      ...emptyProductInput(),
-      sku,
-      barcode: barcode ?? "",
-      name_en: nameEn,
-      name_ar: nameAr,
-      brand_id: brandResolver(rowFieldValue(main, "brand")) ?? "",
-      main_category: category,
-      size: rowFieldValue(main, "size"),
-      color: rowFieldValue(main, "color"),
-      price: rowFieldValue(main, "price"),
-      discount_price: rowFieldValue(main, "discount_price"),
-      description_en: rowFieldValue(main, "description_en"),
-      description_ar: rowFieldValue(main, "description_ar"),
-      keywords_en: rowFieldValue(main, "keywords_en"),
-      keywords_ar: rowFieldValue(main, "keywords_ar"),
-      // forced server-side regardless of any Excel value:
-      approval: "",
-      platform_status: "",
-      variants,
-    };
+    const usedSkus = new Set(p.snapshotSkus.map((s) => s.toLowerCase()));
+    const usedBarcodes = new Set(p.snapshotBarcodes);
+    const results: ImportRecordResult[] = [];
 
-    try {
-      const row = await toProductRow(input);
-      const core = await createProductCore(supabase, row, projectVariantInsertRows(variants));
-      if (!core.ok) {
-        results.push({
-          rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode,
-          status: core.duplicateIdentity ? "conflict" : "failed",
-          message: core.stage === "variant_insert" ? IMPORT_MESSAGES.create_variant_failed : IMPORT_MESSAGES.create_product_failed,
-          changedFields: [],
-        });
+    // ── new product groups ──
+    for (const mainRowNum of groupRows) {
+      const g = groupByMainRow.get(mainRowNum);
+      const main = g ? p.rowsByNum.get(g.mainRowNum) : undefined;
+      if (!g || !main) {
+        results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku: null, barcode: null, status: "conflict", message: IMPORT_MESSAGES.changed_after_preview, changedFields: [] });
         continue;
       }
-      usedSkus.add(sku);
-      if (barcode) usedBarcodes.add(barcode);
-      results.push({
-        rowNum: mainRowNum, recordKind: "product", recordId: core.productId, sku, barcode,
-        status: "product_created", changedFields: [],
-        message: `${IMPORT_MESSAGES.needs_image_note}`,
-      });
-      for (const v of variants) {
-        usedSkus.add((v.sku ?? "").toLowerCase());
-        if (v.barcode) usedBarcodes.add(v.barcode);
-        results.push({
-          rowNum: g.variantRowNums[variants.indexOf(v)], recordKind: "variant", recordId: core.productId,
-          sku: v.sku ?? null, barcode: v.barcode ?? null, status: "variant_created", changedFields: [], message: "تم إنشاء الخيار مع المنتج.",
-        });
+      const nameEn = rowFieldValue(main, "name_en");
+      const nameAr = rowFieldValue(main, "name_ar");
+      if (!nameAr && !nameEn) {
+        results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku: main.sku, barcode: main.barcode, status: "needs_review", message: IMPORT_MESSAGES.name_required_create, changedFields: [] });
+        continue;
       }
-    } catch {
-      results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode, status: "failed", message: IMPORT_MESSAGES.create_product_failed, changedFields: [] });
-    }
-  }
+      const category = rowFieldValue(main, "main_category");
+      if (category && !CATEGORIES.includes(category as (typeof CATEGORIES)[number])) {
+        results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku: main.sku, barcode: main.barcode, status: "failed", message: IMPORT_MESSAGES.unknown_category, changedFields: [] });
+        continue;
+      }
 
-  // ── new variants appended to EXISTING products ──
-  const parentIdBySku = new Map<string, string>();
-  for (const row of p.snapshotRows) {
-    if (row.kind === "product" && row.sku) parentIdBySku.set(row.sku.toLowerCase(), row.id);
-  }
-  for (const rowNum of variantRows) {
-    const r = p.rowsByNum.get(rowNum);
-    const cls = p.classifications.find((c) => c.rowNum === rowNum);
-    if (!r || !r.sku || !r.parentSku || cls?.cls !== "new_variant_existing_parent") {
-      results.push({ rowNum, recordKind: "variant", recordId: null, sku: r?.sku ?? null, barcode: r?.barcode ?? null, status: "conflict", message: IMPORT_MESSAGES.changed_after_preview, changedFields: [] });
-      continue;
-    }
-    const parentId = parentIdBySku.get(r.parentSku);
-    if (!parentId) {
-      results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: r.barcode, status: "failed", message: IMPORT_MESSAGES.parent_missing, changedFields: [] });
-      continue;
-    }
-    // parent unchanged since preview?
-    const freshFp = parentVariantsFingerprint(p.snapshotRows, parentId);
-    const previewFp = parentFps[String(rowNum)];
-    if (typeof previewFp !== "string" || previewFp !== freshFp) {
-      results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: r.barcode, status: "changed_after_preview", message: IMPORT_MESSAGES.changed_after_preview, changedFields: [] });
-      continue;
-    }
-    let vBarcode = r.barcode;
-    if (vBarcode !== null && !isValidEan13(vBarcode)) {
-      results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: IMPORT_MESSAGES.invalid_barcode, changedFields: [] });
-      continue;
-    }
-    if (vBarcode === null) {
+      // fresh duplicate re-check — an exact match blocks creation
+      const dup = findDuplicates(
+        { sku: main.sku ?? "", barcodes: main.barcode ? [main.barcode] : [], brand: rowFieldValue(main, "brand"), nameEn, nameAr, size: rowFieldValue(main, "size"), shade: rowFieldValue(main, "color") },
+        p.snapshotRows,
+      );
+      if (dup.level === "exact") {
+        results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku: main.sku, barcode: main.barcode, status: "conflict", message: IMPORT_MESSAGES.duplicate_blocks_create, changedFields: [] });
+        continue;
+      }
+
+      // identifiers — generated where missing, checked against catalog + batch
+      let sku = main.sku;
+      if (!sku) sku = nextMkSku([...usedSkus]);
+      if (usedSkus.has(sku)) {
+        results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode: main.barcode, status: "conflict", message: IMPORT_MESSAGES.dup_in_db, changedFields: [] });
+        continue;
+      }
+      let barcode = main.barcode;
+      if (barcode !== null && !isValidEan13(barcode)) {
+        results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode, status: "failed", message: IMPORT_MESSAGES.invalid_barcode, changedFields: [] });
+        continue;
+      }
+      const variantsNeedingBarcodes = g.variantRowNums.filter((n) => {
+        const vr = p.rowsByNum.get(n);
+        return vr && vr.barcode === null;
+      }).length;
+      let generated: string[] = [];
       try {
-        vBarcode = generateUniqueEan13Batch(1, usedBarcodes, Math.random)[0];
+        generated = generateUniqueEan13Batch((barcode === null ? 1 : 0) + variantsNeedingBarcodes, usedBarcodes, Math.random);
       } catch {
-        results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: null, status: "failed", message: IMPORT_MESSAGES.create_variant_failed, changedFields: [] });
+        results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode, status: "failed", message: IMPORT_MESSAGES.create_product_failed, changedFields: [] });
         continue;
       }
-    }
+      let gi = 0;
+      if (barcode === null) barcode = generated[gi++];
 
-    try {
-      // Load the parent's FULL current variant list and APPEND — a partial
-      // list would read as deletion of the existing variants. Existing rows
-      // keep their ids and skus verbatim; nothing is renumbered.
-      const parent = await loadProductForEdit(supabase, parentId);
-      if (parent.status !== "ok") {
-        results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: IMPORT_MESSAGES.parent_missing, changedFields: [] });
-        continue;
-      }
-      const full: VariantInput[] = [
-        ...parent.initial.variants.map((v) => ({ ...v })),
-        {
-          variant_name: rowFieldValue(r, "variant_name"),
-          variant_name_en: rowFieldValue(r, "variant_name_en"),
-          sku: r.sku,
+      const variants: VariantInput[] = [];
+      let variantProblem: string | null = null;
+      for (const n of g.variantRowNums) {
+        const vr = p.rowsByNum.get(n);
+        if (!vr || !vr.sku) { variantProblem = IMPORT_MESSAGES.create_variant_failed; break; }
+        if (!vr.sku.startsWith(`${sku}-`)) { variantProblem = IMPORT_MESSAGES.create_variant_failed; break; }
+        let vBarcode = vr.barcode;
+        if (vBarcode !== null && !isValidEan13(vBarcode)) { variantProblem = IMPORT_MESSAGES.invalid_barcode; break; }
+        if (vBarcode === null) vBarcode = generated[gi++];
+        variants.push({
+          variant_name: rowFieldValue(vr, "variant_name"),
+          variant_name_en: rowFieldValue(vr, "variant_name_en"),
+          sku: vr.sku,
           barcode: vBarcode,
-          color: rowFieldValue(r, "color"),
-          size: rowFieldValue(r, "size"),
-          price: rowFieldValue(r, "price"),
+          color: rowFieldValue(vr, "color"),
+          size: rowFieldValue(vr, "size"),
+          price: rowFieldValue(vr, "price"),
           stock_quantity: "",
-        },
-      ];
-      const syncError = await syncProductVariants(supabase, parentId, full);
-      if (syncError) {
-        results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: syncError, changedFields: [] });
+        });
+      }
+      if (variantProblem) {
+        // a mandatory-variant failure blocks the WHOLE group — nothing partial
+        results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode, status: "failed", message: variantProblem, changedFields: [] });
         continue;
       }
-      usedSkus.add(r.sku);
-      usedBarcodes.add(vBarcode);
-      results.push({ rowNum, recordKind: "variant", recordId: parentId, sku: r.sku, barcode: vBarcode, status: "variant_created", changedFields: [], message: "تمت إضافة الخيار للمنتج." });
-    } catch {
-      results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: IMPORT_MESSAGES.create_variant_failed, changedFields: [] });
-    }
-  }
 
-  return { data: { results } };
+      const input: ProductInput = {
+        ...emptyProductInput(),
+        sku,
+        barcode: barcode ?? "",
+        name_en: nameEn,
+        name_ar: nameAr,
+        brand_id: brandResolver(rowFieldValue(main, "brand")) ?? "",
+        main_category: category,
+        size: rowFieldValue(main, "size"),
+        color: rowFieldValue(main, "color"),
+        price: rowFieldValue(main, "price"),
+        discount_price: rowFieldValue(main, "discount_price"),
+        description_en: rowFieldValue(main, "description_en"),
+        description_ar: rowFieldValue(main, "description_ar"),
+        keywords_en: rowFieldValue(main, "keywords_en"),
+        keywords_ar: rowFieldValue(main, "keywords_ar"),
+        // forced server-side regardless of any Excel value:
+        approval: "",
+        platform_status: "",
+        variants,
+      };
+
+      try {
+        const row = await toProductRow(input);
+        const core = await createProductCore(supabase, row, projectVariantInsertRows(variants));
+        if (!core.ok) {
+          results.push({
+            rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode,
+            status: core.duplicateIdentity ? "conflict" : "failed",
+            message: core.stage === "variant_insert" ? IMPORT_MESSAGES.create_variant_failed : IMPORT_MESSAGES.create_product_failed,
+            changedFields: [],
+          });
+          continue;
+        }
+        usedSkus.add(sku);
+        if (barcode) usedBarcodes.add(barcode);
+        results.push({
+          rowNum: mainRowNum, recordKind: "product", recordId: core.productId, sku, barcode,
+          status: "product_created", changedFields: [],
+          message: `${IMPORT_MESSAGES.needs_image_note}`,
+        });
+        for (const v of variants) {
+          usedSkus.add((v.sku ?? "").toLowerCase());
+          if (v.barcode) usedBarcodes.add(v.barcode);
+          results.push({
+            rowNum: g.variantRowNums[variants.indexOf(v)], recordKind: "variant", recordId: core.productId,
+            sku: v.sku ?? null, barcode: v.barcode ?? null, status: "variant_created", changedFields: [], message: "تم إنشاء الخيار مع المنتج.",
+          });
+        }
+      } catch {
+        results.push({ rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode, status: "failed", message: IMPORT_MESSAGES.create_product_failed, changedFields: [] });
+      }
+    }
+
+    // ── new variants appended to EXISTING products ──
+    const parentIdBySku = new Map<string, string>();
+    for (const row of p.snapshotRows) {
+      if (row.kind === "product" && row.sku) parentIdBySku.set(row.sku.toLowerCase(), row.id);
+    }
+    for (const rowNum of variantRows) {
+      const r = p.rowsByNum.get(rowNum);
+      const cls = p.classifications.find((c) => c.rowNum === rowNum);
+      if (!r || !r.sku || !r.parentSku || cls?.cls !== "new_variant_existing_parent") {
+        results.push({ rowNum, recordKind: "variant", recordId: null, sku: r?.sku ?? null, barcode: r?.barcode ?? null, status: "conflict", message: IMPORT_MESSAGES.changed_after_preview, changedFields: [] });
+        continue;
+      }
+      const parentId = parentIdBySku.get(r.parentSku);
+      if (!parentId) {
+        results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: r.barcode, status: "failed", message: IMPORT_MESSAGES.parent_missing, changedFields: [] });
+        continue;
+      }
+      // parent unchanged since preview?
+      const freshFp = parentVariantsFingerprint(p.snapshotRows, parentId);
+      const previewFp = parentFps[String(rowNum)];
+      if (typeof previewFp !== "string" || previewFp !== freshFp) {
+        results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: r.barcode, status: "changed_after_preview", message: IMPORT_MESSAGES.changed_after_preview, changedFields: [] });
+        continue;
+      }
+      let vBarcode = r.barcode;
+      if (vBarcode !== null && !isValidEan13(vBarcode)) {
+        results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: IMPORT_MESSAGES.invalid_barcode, changedFields: [] });
+        continue;
+      }
+      if (vBarcode === null) {
+        try {
+          vBarcode = generateUniqueEan13Batch(1, usedBarcodes, Math.random)[0];
+        } catch {
+          results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: null, status: "failed", message: IMPORT_MESSAGES.create_variant_failed, changedFields: [] });
+          continue;
+        }
+      }
+
+      try {
+        // Load the parent's FULL current variant list and APPEND — a partial
+        // list would read as deletion of the existing variants. Existing rows
+        // keep their ids and skus verbatim; nothing is renumbered.
+        const parent = await loadProductForEdit(supabase, parentId);
+        if (parent.status !== "ok") {
+          results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: IMPORT_MESSAGES.parent_missing, changedFields: [] });
+          continue;
+        }
+        const full: VariantInput[] = [
+          ...parent.initial.variants.map((v) => ({ ...v })),
+          {
+            variant_name: rowFieldValue(r, "variant_name"),
+            variant_name_en: rowFieldValue(r, "variant_name_en"),
+            sku: r.sku,
+            barcode: vBarcode,
+            color: rowFieldValue(r, "color"),
+            size: rowFieldValue(r, "size"),
+            price: rowFieldValue(r, "price"),
+            stock_quantity: "",
+          },
+        ];
+        const syncError = await syncProductVariants(supabase, parentId, full);
+        if (syncError) {
+          results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: syncError, changedFields: [] });
+          continue;
+        }
+        usedSkus.add(r.sku);
+        usedBarcodes.add(vBarcode);
+        results.push({ rowNum, recordKind: "variant", recordId: parentId, sku: r.sku, barcode: vBarcode, status: "variant_created", changedFields: [], message: "تمت إضافة الخيار للمنتج." });
+      } catch {
+        results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: IMPORT_MESSAGES.create_variant_failed, changedFields: [] });
+      }
+    }
+
+    return { data: { results } };
+  } catch {
+    return { error: IMPORT_MESSAGES.unexpected_apply };
+  }
 }

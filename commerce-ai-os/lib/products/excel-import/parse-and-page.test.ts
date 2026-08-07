@@ -170,3 +170,118 @@ test("catalog page links to the importer", () => {
   assert.ok(MASTER_SRC.includes('href="/v2/catalog/import"'));
   assert.ok(MASTER_SRC.includes("تحديث الكتالوج من Excel"));
 });
+
+// ── Malikas platform export (Snoonu AllExportData) — real-file fixture ──────
+
+import { detectCatalogColumns, validateCatalogMapping } from "./core.ts";
+
+const MALIKAS_HEADERS = [
+  "SPI(UniqueIdentifier)",
+  "Product Name (En)(ReadOnly)",
+  "Product Name (Ar)(ReadOnly)",
+  "Product Description (En)(ReadOnly)",
+  "Product Description (Ar)(ReadOnly)",
+  "Price Global(Update)",
+  "Availability for Malikas Universe Beauty Al Aziziyah Building 13, first floor, Apartment 3(Update)",
+  "Stock for Malikas Universe Beauty Al Aziziyah Building 13, first floor, Apartment 3(Update)",
+  "Preparation Time(Update)",
+  "Product Name (En)(Update)",
+  "Product Name (Ar)(Update)",
+  "Product Description (En)(Update)",
+  "Product Description (Ar)(Update)",
+  "SKU(Update)",
+  "Barcode(Update)",
+  "SKU(ReadOnly)",
+  "Barcode(ReadOnly)",
+  "", // trailing empty header, exactly as exported
+];
+
+function malikasRow(i: number, withIds: boolean): unknown[] {
+  const sku = withIds ? `mk${900 + i}` : "";
+  const bc = withIds ? 6291041500900 + i : "";
+  return [
+    `spi-${i}`, `Old ${i}`, `قديم ${i}`, "old d", "قديم و",
+    25 + i, "TRUE", 10, "15", `Cream ${i}`, `كريم ${i}`, "desc", "وصف",
+    sku, bc, sku, bc, null,
+  ];
+}
+
+function malikasWorkbook(): { buf: Buffer; sheet: Record<string, unknown> } {
+  const aoa = [MALIKAS_HEADERS, malikasRow(1, true), malikasRow(2, true), malikasRow(3, true), malikasRow(4, false), malikasRow(5, false)];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  return { buf: XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer, sheet: ws as unknown as Record<string, unknown> };
+}
+
+test("malikas fixture: the export reaches mapping — real row count, ok extraction, valid auto-mapping", async () => {
+  const { buf } = malikasWorkbook();
+  assert.ok(looksLikeXlsx(buf));
+
+  const inspected = await inspectWorkbook(buf, X);
+  assert.equal(inspected.status, "ok");
+  if (inspected.status !== "ok") return;
+  assert.deepEqual(inspected.sheets, [{ name: "Sheet1", rows: 5 }], "REAL data rows, not the declared grid");
+
+  const res = await extractSheetRows(buf, "Sheet1", X);
+  assert.equal(res.status, "ok", "the export must never fail extraction");
+  if (res.status !== "ok") return;
+  assert.equal(res.rows.length, 5, "identifier-less rows are NOT dropped");
+  assert.deepEqual(res.rowNums, [2, 3, 4, 5, 6], "true Excel row numbers");
+
+  const det = detectCatalogColumns(res.headers);
+  assert.deepEqual(validateCatalogMapping(det), { ok: true }, "auto-mapping is valid without manual work");
+  const fields = det.filter((m) => m.field !== null).map((m) => m.field);
+  assert.deepEqual(
+    [...fields].sort(),
+    ["barcode", "description_ar", "description_en", "name_ar", "name_en", "price", "sku"],
+    "the seven (Update) columns and nothing else",
+  );
+});
+
+test("inflated declared range (A1:R1048576): parsing stays O(data), never O(grid)", async () => {
+  const { sheet } = malikasWorkbook();
+  sheet["!ref"] = "A1:R1048576"; // what platform exporters write in the dimension record
+  const fake = {
+    read: () => ({ SheetNames: ["Sheet1"], Sheets: { Sheet1: sheet } }),
+    utils: XLSX.utils,
+  } as unknown as Parameters<typeof extractSheetRows>[2];
+
+  const t0 = Date.now();
+  const res = await extractSheetRows(Buffer.from("PK\x03\x04"), "Sheet1", fake);
+  const elapsed = Date.now() - t0;
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.rows.length, 5, "all real rows survive an inflated range");
+  assert.ok(elapsed < 2000, `sparse extraction must be fast (took ${elapsed}ms; the dense reader took ~14s)`);
+
+  const ins = await inspectWorkbook(Buffer.from("PK\x03\x04"), fake);
+  assert.equal(ins.status, "ok");
+  if (ins.status !== "ok") return;
+  assert.equal(ins.sheets[0].rows, 5, "the row count shown to the user is the REAL count");
+});
+
+test("wizard: file summary step, explicit analyze button, Malikas loading text, and no-silence failure codes", () => {
+  for (const required of [
+    "تحليل ملف Excel",
+    "جاري قراءة ملف Malikas...",
+    "تم اختيار",
+    "ملخص الملف",
+    "تغيير الملف",
+    'e.target.value = ""', // same-file re-pick after a failure must work
+    "IMPORT-UI-01",
+    "IMPORT-UI-02",
+    "IMPORT-UI-03",
+    "IMPORT-UI-04",
+    "IMPORT-UI-05",
+  ]) {
+    assert.ok(WIZARD_SRC.includes(required), `wizard must contain ${required}`);
+  }
+});
+
+test("actions: every action has a fixed-Arabic safety net with an internal code — no raw errors, no silence", () => {
+  for (const code of ["IMPORT-SRV-01", "IMPORT-SRV-02", "IMPORT-SRV-03"]) {
+    assert.ok(ACTIONS_SRC.includes(code), `actions must carry ${code}`);
+  }
+  assert.ok(ACTIONS_SRC.includes("too_many_columns"), "column cap surfaces as a fixed message");
+});

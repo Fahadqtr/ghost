@@ -207,7 +207,10 @@ test("new detection: every class lands where the spec says", () => {
   assert.equal(detectNewCatalogRecord(mk(["mk2000-1", null, null, null, null, null], 4), "not_found", exists, inFile).cls, "new_variant_parent_in_file");
   assert.equal(detectNewCatalogRecord(mk(["mk9999-1", null, null, null, null, null], 5), "not_found", exists, inFile).cls, "orphan_variant");
   assert.equal(detectNewCatalogRecord(mk([null, "4006381333931", null, null, null, null], 6), "not_found", exists, inFile).cls, "new_product_needs_sku");
-  assert.equal(detectNewCatalogRecord(mk([null, null, "اسم فقط", null, null, null], 7), "not_found", exists, inFile).cls, "needs_review");
+  // a NAMED row with no identifiers is a creatable new product (both ids generated)
+  assert.equal(detectNewCatalogRecord(mk([null, null, "اسم فقط", null, null, null], 7), "not_found", exists, inFile).cls, "new_product_needs_ids");
+  // no identifiers AND no name -> nothing to create safely
+  assert.equal(detectNewCatalogRecord(mk([null, null, null, null, null, "وصف فقط"], 7), "not_found", exists, inFile).cls, "needs_review");
   assert.equal(detectNewCatalogRecord(mk(["mk1", "222222", null, null, null, null], 8), "conflict", exists, inFile).cls, "blocked");
 });
 
@@ -259,4 +262,98 @@ test("csv: formula-leading values are escaped (= + - @), quotes/commas are quote
     { rowNum: 2, recordKind: "product", recordId: "p", sku: "=HYPERLINK(1)", barcode: null, status: "failed", changedFields: [], message: "x" },
   ]);
   assert.ok(csv.includes("'=HYPERLINK(1)"), "sku escaped in the report");
+});
+
+// ── Malikas platform export (Snoonu AllExportData) — real header shapes ─────
+
+const MALIKAS_HEADERS = [
+  "SPI(UniqueIdentifier)",
+  "Product Name (En)(ReadOnly)",
+  "Product Name (Ar)(ReadOnly)",
+  "Product Description (En)(ReadOnly)",
+  "Product Description (Ar)(ReadOnly)",
+  "Price Global(Update)",
+  "Availability for Malikas Universe Beauty Al Aziziyah Building 13, first floor, Apartment 3(Update)",
+  "Stock for Malikas Universe Beauty Al Aziziyah Building 13, first floor, Apartment 3(Update)",
+  "Preparation Time(Update)",
+  "Product Name (En)(Update)",
+  "Product Name (Ar)(Update)",
+  "Product Description (En)(Update)",
+  "Product Description (Ar)(Update)",
+  "SKU(Update)",
+  "Barcode(Update)",
+  "SKU(ReadOnly)",
+  "Barcode(ReadOnly)",
+  "",
+];
+
+test("malikas headers: (Update) columns auto-map to the right fields", () => {
+  const det = detectCatalogColumns(MALIKAS_HEADERS);
+  assert.deepEqual(
+    [5, 9, 10, 11, 12, 13, 14].map((i) => [det[i].field, det[i].status]),
+    [
+      ["price", "auto"], // Price Global(Update)
+      ["name_en", "auto"],
+      ["name_ar", "auto"],
+      ["description_en", "auto"],
+      ["description_ar", "auto"],
+      ["sku", "auto"],
+      ["barcode", "auto"],
+    ],
+  );
+});
+
+test("malikas headers: ReadOnly twins become reference-only — no duplicate mapping, validation passes", () => {
+  const det = detectCatalogColumns(MALIKAS_HEADERS);
+  for (const i of [1, 2, 3, 4, 15, 16]) {
+    assert.equal(det[i].field, null, `ReadOnly column ${i} must not double-map`);
+    assert.equal(det[i].status, "ignored");
+  }
+  assert.equal(det.filter((m) => m.field !== null).length, 7, "exactly the seven Update columns are mapped");
+  assert.deepEqual(validateCatalogMapping(det), { ok: true }, "the proposed mapping is valid out of the box");
+});
+
+test("malikas headers: SPI / availability / stock / preparation time / empty header are all unused", () => {
+  const det = detectCatalogColumns(MALIKAS_HEADERS);
+  for (const i of [0, 6, 7, 8, 17]) {
+    assert.equal(det[i].field, null, `column ${i} must never import`);
+    assert.equal(det[i].status, "ignored", `column ${i} is recognized-and-refused, not a silent failure`);
+  }
+});
+
+test("malikas headers: a ReadOnly identifier is offered (needs confirmation) when its Update twin is absent", () => {
+  const det = detectCatalogColumns(["SKU(ReadOnly)", "Product Name (En)(Update)"]);
+  assert.deepEqual(det.map((m) => [m.field, m.status]), [
+    ["sku", "needs_confirm"],
+    ["name_en", "auto"],
+  ]);
+});
+
+test("malikas rows: identifier rows match; identifier-less named rows become «يحتاج SKU وBarcode» — never name-matched", () => {
+  const det = detectCatalogColumns(MALIKAS_HEADERS);
+  const byField = mappingByField(det);
+  const catalog = [idRow({ id: "p9", productId: "p9", sku: "mk900", barcode: "6291041500999", nameEn: "Rose Cream" })];
+  const idx = buildIdentityIndexes(catalog);
+
+  const cells = (sku: string, barcode: unknown, nameEn: string) => {
+    const row: unknown[] = new Array(18).fill(null);
+    row[0] = "spi-1"; row[5] = 39; row[9] = nameEn; row[10] = "اسم"; row[13] = sku; row[14] = barcode;
+    return row;
+  };
+
+  const matched = normalizeCatalogExcelRow(2, cells("mk900", 6291041500999, "Rose Cream"), byField);
+  assert.equal(matched.sku, "mk900");
+  assert.equal(matched.barcode, "6291041500999", "numeric barcode read as exact text");
+  assert.equal(matchCatalogRow(matched, idx, new Set()).status, "matched_both");
+
+  const noIds = normalizeCatalogExcelRow(3, cells("", null, "Rose Cream"), byField);
+  assert.equal(noIds.errors.length, 0, "a row without identifiers is NOT an error");
+  const m = matchCatalogRow(noIds, idx, new Set());
+  assert.equal(m.status, "not_found", "the identical NAME never matches a record");
+  const cls = detectNewCatalogRecord(noIds, m.status, () => false, new Set());
+  assert.equal(cls.cls, "new_product_needs_ids");
+  const groups = groupNewProductRows([cls], new Map([[3, noIds]]));
+  assert.equal(groups.length, 1);
+  assert.ok(groups[0].needsSku, "SKU (and barcode) will be generated");
+  assert.equal(groups[0].mainSku, null);
 });
