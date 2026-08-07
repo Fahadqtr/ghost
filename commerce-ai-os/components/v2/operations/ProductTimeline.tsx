@@ -7,21 +7,21 @@
 
 import Link from "next/link";
 import {
-  ACTIVITY_FILTER_LABELS,
-  ACTIVITY_FILTER_VALUES,
-  ACTIVITY_ICONS,
-  ACTIVITY_KIND_LABELS,
-  formatActivityDate,
-  type ActivityControls,
-  type ActivityFilter,
-  type ActivitySummary,
-} from "@/lib/operations/timeline/activity-view";
-import type { ActivityEvent, ActivityEventKind } from "@/lib/operations/shared/models";
+  TIMELINE_FILTER_LABELS,
+  TIMELINE_FILTER_VALUES,
+  TIMELINE_ICONS,
+  TIMELINE_KIND_LABELS,
+  formatTimelineDate,
+  type TimelineControls,
+  type TimelineFilter,
+  type TimelineSummary,
+} from "@/lib/operations/timeline/timeline-view";
+import type { TimelineEvent, TimelineEventKind } from "@/lib/operations/shared/models";
 
 function timelineHref(
   productId: string,
-  controls: ActivityControls,
-  over: Partial<ActivityControls>,
+  controls: TimelineControls,
+  over: Partial<TimelineControls>,
 ): string {
   const c = { ...controls, ...over };
   const p = new URLSearchParams();
@@ -32,7 +32,7 @@ function timelineHref(
   return qs ? `${base}?${qs}` : base;
 }
 
-// Purely-decorative glyph per icon key (single-sourced in ACTIVITY_ICONS).
+// Purely-decorative glyph per icon key (single-sourced in TIMELINE_ICONS).
 // aria-hidden — the kind label + title carry the meaning for screen readers.
 const ICON_GLYPH: Record<string, string> = {
   created: "➕",
@@ -43,7 +43,7 @@ const ICON_GLYPH: Record<string, string> = {
   published: "🚀",
 };
 
-const KIND_TONE: Record<ActivityEventKind, string> = {
+const KIND_TONE: Record<TimelineEventKind, string> = {
   created: "bg-[#f5ece1] text-ink",
   updated: "bg-amber-50 text-amber-800",
   approved: "bg-emerald-50 text-emerald-700",
@@ -52,8 +52,8 @@ const KIND_TONE: Record<ActivityEventKind, string> = {
   published: "bg-sky-50 text-sky-700",
 };
 
-function EventCard({ event }: { event: ActivityEvent }) {
-  const glyph = ICON_GLYPH[ACTIVITY_ICONS[event.kind]] ?? "•";
+function EventCard({ event }: { event: TimelineEvent }) {
+  const glyph = ICON_GLYPH[TIMELINE_ICONS[event.kind]] ?? "•";
   return (
     <div className="card space-y-2 p-3">
       <div className="flex items-start gap-3">
@@ -67,15 +67,15 @@ function EventCard({ event }: { event: ActivityEvent }) {
           <div className="flex items-start justify-between gap-2">
             <span className="min-w-0 text-sm font-semibold text-ink">{event.title}</span>
             <span className={"shrink-0 rounded-full px-2 py-0.5 text-[11px] " + KIND_TONE[event.kind]}>
-              {ACTIVITY_KIND_LABELS[event.kind]}
+              {TIMELINE_KIND_LABELS[event.kind]}
             </span>
           </div>
           <p className="mt-0.5 text-xs text-muted">{event.description}</p>
           <div className="mt-1 text-[11px] text-muted">
             {event.atKnown ? (
-              <span>{formatActivityDate(event.at)}</span>
+              <span>{formatTimelineDate(event.at)}</span>
             ) : (
-              <span>حتى {formatActivityDate(event.at)} (وقت التغيير غير مسجّل بدقة)</span>
+              <span>حتى {formatTimelineDate(event.at)} (وقت التغيير غير مسجّل بدقة)</span>
             )}
           </div>
         </div>
@@ -96,9 +96,9 @@ export default function ProductTimeline({
   productId: string;
   productName: string;
   backHref: string;
-  events: readonly ActivityEvent[];
-  summary: ActivitySummary;
-  controls: ActivityControls;
+  events: readonly TimelineEvent[];
+  summary: TimelineSummary;
+  controls: TimelineControls;
   matchCount: number;
 }) {
   return (
@@ -130,9 +130,9 @@ export default function ProductTimeline({
         <label className="flex flex-col gap-1">
           <span className="label">الفلتر</span>
           <select name="filter" defaultValue={controls.filter} className="select-input">
-            {ACTIVITY_FILTER_VALUES.map((f: ActivityFilter) => (
+            {TIMELINE_FILTER_VALUES.map((f: TimelineFilter) => (
               <option key={f} value={f}>
-                {ACTIVITY_FILTER_LABELS[f]}
+                {TIMELINE_FILTER_LABELS[f]}
               </option>
             ))}
           </select>

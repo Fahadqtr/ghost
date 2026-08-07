@@ -9,10 +9,10 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { loadCatalogProduct } from "@/lib/catalog-v2/master-catalog-read";
-import { loadProductOperations, loadProductActivity, type ProductOperations } from "@/lib/operations/read-model";
+import { loadProductOperations, loadProductTimeline, type ProductOperations } from "@/lib/operations/read-model";
 import ProductTasksWidget from "@/components/v2/operations/ProductTasksWidget";
 import ProductActivityWidget from "@/components/v2/operations/ProductActivityWidget";
-import type { ActivityEvent } from "@/lib/operations/shared/models";
+import type { TimelineEvent } from "@/lib/operations/shared/models";
 import {
   catalogEditHref,
   catalogHref,
@@ -53,7 +53,7 @@ export default async function ProductDetailPage({
   let operations: ProductOperations | null = null;
   // Activity timeline for this product (Phase UI.7.4). Best-effort and isolated:
   // a failure here NEVER breaks the product page — the widget just renders empty.
-  let activityEvents: ActivityEvent[] | null = null;
+  let activityEvents: TimelineEvent[] | null = null;
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
@@ -86,8 +86,8 @@ export default async function ProductDetailPage({
           operations = null;
         }
         try {
-          const activity = await loadProductActivity(supabase as never, validId);
-          activityEvents = activity.status === "ok" ? activity.activity.events : null;
+          const timeline = await loadProductTimeline(supabase as never, validId);
+          activityEvents = timeline.status === "ok" ? timeline.timeline.events : null;
         } catch {
           activityEvents = null;
         }

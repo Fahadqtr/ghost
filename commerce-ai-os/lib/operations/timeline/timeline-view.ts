@@ -1,42 +1,18 @@
 // Malikas V2 Operations — Product Timeline view layer (Phase UI.7.4).
 //
-// PURE: maps a whitelisted DB row into the engine snapshot, and filters /
-// searches / formats the engine-computed events for the UI. NO business logic
-// is re-implemented here — events come straight from the activity engine. No
+// PURE UI helpers: filter / search / format the engine-aggregated TimelineEvents
+// for the screen. NO business logic and NO source-derivation live here — events
+// arrive already built + ordered by the TimelineEngine (from its providers). No
 // database, no fetch, no "now" clock (dates are formatted by parsing the ISO
 // string, never Date.now()), no randomness.
 
-import type {
-  ActivityEvent,
-  ActivityEventKind,
-  ActivityProductSnapshot,
-} from "../shared/models";
-
-// ── raw row → snapshot (defensive; blank/unknown cells become null) ──────────
-
-/** Map a whitelisted `products` row into the timeline engine snapshot. Pure and
- *  defensive — non-string/blank cells become null, values are never coerced. */
-export function mapActivityRow(row: Record<string, unknown>): ActivityProductSnapshot {
-  const s = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
-  return {
-    id: typeof row.id === "string" ? row.id : "",
-    sku: s(row.sku),
-    barcode: s(row.barcode),
-    nameAr: s(row.name_ar),
-    nameEn: s(row.name_en),
-    imageUrl: s(row.image_url),
-    approval: s(row.approval),
-    platformStatus: s(row.platform_status),
-    createdAt: s(row.created_at),
-    updatedAt: s(row.updated_at),
-  };
-}
+import type { TimelineEvent, TimelineEventKind } from "../shared/models";
 
 // ── filters ──────────────────────────────────────────────────────────────────
 
-export type ActivityFilter = "all" | "created" | "updated" | "approval" | "platform";
+export type TimelineFilter = "all" | "created" | "updated" | "approval" | "platform";
 
-export const ACTIVITY_FILTER_VALUES: readonly ActivityFilter[] = [
+export const TIMELINE_FILTER_VALUES: readonly TimelineFilter[] = [
   "all",
   "created",
   "updated",
@@ -44,7 +20,7 @@ export const ACTIVITY_FILTER_VALUES: readonly ActivityFilter[] = [
   "platform",
 ];
 
-export const ACTIVITY_FILTER_LABELS: Record<ActivityFilter, string> = {
+export const TIMELINE_FILTER_LABELS: Record<TimelineFilter, string> = {
   all: "الكل",
   created: "الإنشاء",
   updated: "التحديثات",
@@ -53,7 +29,7 @@ export const ACTIVITY_FILTER_LABELS: Record<ActivityFilter, string> = {
 };
 
 /** Which filter bucket a kind belongs to. */
-const KIND_FILTER: Record<ActivityEventKind, Exclude<ActivityFilter, "all">> = {
+const KIND_FILTER: Record<TimelineEventKind, Exclude<TimelineFilter, "all">> = {
   created: "created",
   updated: "updated",
   approved: "approval",
@@ -62,21 +38,21 @@ const KIND_FILTER: Record<ActivityEventKind, Exclude<ActivityFilter, "all">> = {
   published: "platform",
 };
 
-/** Apply one filter (order-preserving; the engine already sorted the list). */
-export function filterActivityEvents(
-  events: readonly ActivityEvent[],
-  filter: ActivityFilter,
-): ActivityEvent[] {
+/** Apply one filter (order-preserving; the engine already ordered the list). */
+export function filterTimelineEvents(
+  events: readonly TimelineEvent[],
+  filter: TimelineFilter,
+): TimelineEvent[] {
   if (filter === "all") return [...events];
   return events.filter((e) => KIND_FILTER[e.kind] === filter);
 }
 
 /** Search the fixed Arabic title/description text (case-insensitive). A blank or
  *  whitespace-only query is a passthrough. */
-export function searchActivityEvents(
-  events: readonly ActivityEvent[],
+export function searchTimelineEvents(
+  events: readonly TimelineEvent[],
   query: string,
-): ActivityEvent[] {
+): TimelineEvent[] {
   const q = query.trim().toLowerCase();
   if (q === "") return [...events];
   return events.filter((e) =>
@@ -86,33 +62,33 @@ export function searchActivityEvents(
 
 // ── controls (validated GET state) ───────────────────────────────────────────
 
-export interface ActivityControls {
+export interface TimelineControls {
   query: string;
-  filter: ActivityFilter;
+  filter: TimelineFilter;
 }
 
-export function parseActivityControls(
+export function parseTimelineControls(
   params: Record<string, string | string[] | undefined> | null | undefined,
-): ActivityControls {
+): TimelineControls {
   const one = (v: string | string[] | undefined): string => (Array.isArray(v) ? (v[0] ?? "") : (v ?? ""));
   const rawFilter = one(params?.filter);
-  const filter = (ACTIVITY_FILTER_VALUES as readonly string[]).includes(rawFilter)
-    ? (rawFilter as ActivityFilter)
+  const filter = (TIMELINE_FILTER_VALUES as readonly string[]).includes(rawFilter)
+    ? (rawFilter as TimelineFilter)
     : "all";
   return { query: one(params?.query).slice(0, 80), filter };
 }
 
-/** Full server-side pipeline: filter → search (events arrive already sorted). */
-export function selectActivityEvents(
-  events: readonly ActivityEvent[],
-  controls: ActivityControls,
-): ActivityEvent[] {
-  return searchActivityEvents(filterActivityEvents(events, controls.filter), controls.query);
+/** Full server-side pipeline: filter → search (events arrive already ordered). */
+export function selectTimelineEvents(
+  events: readonly TimelineEvent[],
+  controls: TimelineControls,
+): TimelineEvent[] {
+  return searchTimelineEvents(filterTimelineEvents(events, controls.filter), controls.query);
 }
 
 // ── summary ──────────────────────────────────────────────────────────────────
 
-export interface ActivitySummary {
+export interface TimelineSummary {
   total: number;
   created: number;
   updated: number;
@@ -121,8 +97,8 @@ export interface ActivitySummary {
 }
 
 /** Counts over the WHOLE event set (never the filtered/searched subset). */
-export function summarizeActivity(events: readonly ActivityEvent[]): ActivitySummary {
-  const s: ActivitySummary = { total: 0, created: 0, updated: 0, approval: 0, platform: 0 };
+export function summarizeTimeline(events: readonly TimelineEvent[]): TimelineSummary {
+  const s: TimelineSummary = { total: 0, created: 0, updated: 0, approval: 0, platform: 0 };
   for (const e of events) {
     s.total++;
     s[KIND_FILTER[e.kind]]++;
@@ -133,7 +109,7 @@ export function summarizeActivity(events: readonly ActivityEvent[]): ActivitySum
 // ── labels / icons / date formatting (single-sourced + testable) ─────────────
 
 /** Fixed Arabic kind label (for a per-event chip). */
-export const ACTIVITY_KIND_LABELS: Record<ActivityEventKind, string> = {
+export const TIMELINE_KIND_LABELS: Record<TimelineEventKind, string> = {
   created: "إنشاء",
   updated: "تحديث",
   approved: "اعتماد",
@@ -143,7 +119,7 @@ export const ACTIVITY_KIND_LABELS: Record<ActivityEventKind, string> = {
 };
 
 /** Icon key per kind (the component turns it into a glyph). */
-export const ACTIVITY_ICONS: Record<ActivityEventKind, string> = {
+export const TIMELINE_ICONS: Record<TimelineEventKind, string> = {
   created: "created",
   updated: "updated",
   approved: "approved",
@@ -163,7 +139,7 @@ const AR_MONTHS = [
  * "now" — so the same input always yields the same output. Unknown/unparseable
  * input → "—".
  */
-export function formatActivityDate(at: string | null): string {
+export function formatTimelineDate(at: string | null): string {
   if (typeof at !== "string") return "—";
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(at.trim());
   if (m === null) return "—";
@@ -177,10 +153,10 @@ export function formatActivityDate(at: string | null): string {
 // ── product-detail widget ────────────────────────────────────────────────────
 
 /** The product-detail «النشاط» widget: the first N events + how many remain. */
-export function activityWidgetEvents(
-  events: readonly ActivityEvent[],
+export function timelineWidgetEvents(
+  events: readonly TimelineEvent[],
   limit = 3,
-): { shown: ActivityEvent[]; remaining: number } {
+): { shown: TimelineEvent[]; remaining: number } {
   const shown = events.slice(0, limit);
   return { shown, remaining: Math.max(0, events.length - shown.length) };
 }

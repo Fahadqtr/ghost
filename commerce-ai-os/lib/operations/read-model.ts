@@ -14,8 +14,6 @@ import "server-only";
 // — a degraded flag is returned instead of guessing "missing".
 
 import type {
-  ActivityEvent,
-  ActivityProductSnapshot,
   HealthSummary,
   NewProductBuckets,
   OperationsProduct,
@@ -24,9 +22,12 @@ import type {
   PlatformStatus,
   PlatformType,
   ProductReadiness,
+  TimelineEvent,
+  TimelineProductSnapshot,
 } from "./shared/models";
 import type { OperationsListItem } from "./dashboard-view";
 import type { TaskViewItem } from "./tasks-view";
+import type { TimelineProvider } from "./timeline/providers/timeline-provider";
 
 // ── minimal read surfaces (only what this reader needs) ──────────────────────
 
@@ -294,84 +295,95 @@ export async function loadProductOperations(
   }
 }
 
-// ── Product Timeline & Activity (Phase UI.7.4) ───────────────────────────────
+// ── Product Timeline (Phase UI.7.4) ──────────────────────────────────────────
 
 // A minimal single-row filter surface (select → filter → limit), kept separate
 // from the paged surface above. `.filter(col, op, val)` is a PARAMETERIZED
 // PostgREST equality — the id is passed as a bound argument, never interpolated
 // into a query string. Structurally satisfied by the real Supabase client.
-interface ActivityFilterBuilder extends PromiseLike<QueryResult> {
-  filter(column: string, operator: string, value: string): ActivityFilterBuilder;
-  limit(count: number): ActivityFilterBuilder;
+interface TimelineFilterBuilder extends PromiseLike<QueryResult> {
+  filter(column: string, operator: string, value: string): TimelineFilterBuilder;
+  limit(count: number): TimelineFilterBuilder;
 }
-interface ActivitySelectBuilder {
-  select(columns: string): ActivityFilterBuilder;
+interface TimelineSelectBuilder {
+  select(columns: string): TimelineFilterBuilder;
 }
-export interface ProductActivityReadClient {
-  from(table: string): ActivitySelectBuilder;
-}
-
-/** The pure timeline layer (injected in tests; lazily bound in production). */
-export interface ActivityEngines {
-  mapActivityRow(row: Record<string, unknown>): ActivityProductSnapshot;
-  deriveActivityEvents(snapshot: ActivityProductSnapshot): ActivityEvent[];
+export interface ProductTimelineReadClient {
+  from(table: string): TimelineSelectBuilder;
 }
 
-async function defaultActivityEngines(): Promise<ActivityEngines> {
-  const [view, engine] = await Promise.all([
-    import("./timeline/activity-view"),
-    import("./timeline/activity-engine"),
+/**
+ * The pure timeline layer (injected in tests; lazily bound in production). The
+ * reader wires source PROVIDERS into the source-agnostic engine — it maps the
+ * row into a snapshot, builds the snapshot provider, and asks the engine to
+ * aggregate. Adding a future provider (TickTick, Shopify, …) means passing it
+ * to buildTimeline here — the engine and this signature do not change.
+ */
+export interface TimelineEngines {
+  mapSnapshotRow(row: Record<string, unknown>): TimelineProductSnapshot;
+  createSnapshotTimelineProvider(snapshot: TimelineProductSnapshot): TimelineProvider;
+  buildTimeline(providers: readonly TimelineProvider[]): TimelineEvent[];
+}
+
+async function defaultTimelineEngines(): Promise<TimelineEngines> {
+  const [snapshotProvider, engine] = await Promise.all([
+    import("./timeline/providers/snapshot-provider"),
+    import("./timeline/timeline-engine"),
   ]);
-  return { mapActivityRow: view.mapActivityRow, deriveActivityEvents: engine.deriveActivityEvents };
+  return {
+    mapSnapshotRow: snapshotProvider.mapSnapshotRow,
+    createSnapshotTimelineProvider: snapshotProvider.createSnapshotTimelineProvider,
+    buildTimeline: engine.buildTimeline,
+  };
 }
 
 // created_at / updated_at are needed here (and NOT in the paged reads above),
 // so the timeline uses its own explicit whitelist. No stock/channel/order/PII.
-const PRODUCT_ACTIVITY_COLUMNS =
+const PRODUCT_TIMELINE_COLUMNS =
   "id, sku, barcode, name_ar, name_en, image_url, approval, platform_status, created_at, updated_at";
-const ACTIVITY_ID_MAX = 200;
+const TIMELINE_ID_MAX = 200;
 
-export interface ProductActivity {
-  snapshot: ActivityProductSnapshot;
-  events: ActivityEvent[];
+export interface ProductTimelineData {
+  snapshot: TimelineProductSnapshot;
+  events: TimelineEvent[];
 }
 
-export type ProductActivityResult =
-  | { status: "ok"; activity: ProductActivity }
+export type ProductTimelineResult =
+  | { status: "ok"; timeline: ProductTimelineData }
   | { status: "notfound" }
   | { status: "error" };
 
 /**
- * Load and compute the activity timeline for ONE product. A TARGETED single-row
- * read (parameterized id equality, limit 1) through the session client — RLS
- * only, no service role, no admin client, no write, no RPC. The pure timeline
- * layer derives the events; NO business logic lives here. Returns a single
- * constant error status on any read failure (never a raw DB error), "notfound"
- * for a valid id with no row, and "ok" otherwise.
+ * Load and compute the timeline for ONE product. A TARGETED single-row read
+ * (parameterized id equality, limit 1) through the session client — RLS only,
+ * no service role, no admin client, no write, no RPC. The snapshot provider
+ * derives its events and the source-agnostic engine aggregates them; NO business
+ * logic lives here. Returns a single constant error status on any read failure
+ * (never a raw DB error), "notfound" for a valid id with no row, else "ok".
  */
-export async function loadProductActivity(
-  client: ProductActivityReadClient,
+export async function loadProductTimeline(
+  client: ProductTimelineReadClient,
   productId: unknown,
-  deps?: { engines?: ActivityEngines },
-): Promise<ProductActivityResult> {
+  deps?: { engines?: TimelineEngines },
+): Promise<ProductTimelineResult> {
   // Defensive id validation — non-string / empty / too long → safe not-found,
   // no query, and the value is never reflected anywhere.
   if (
     typeof productId !== "string" ||
     productId.length === 0 ||
     productId.trim().length === 0 ||
-    productId.length > ACTIVITY_ID_MAX
+    productId.length > TIMELINE_ID_MAX
   ) {
     return { status: "notfound" };
   }
 
   try {
-    const engines = deps?.engines ?? (await defaultActivityEngines());
+    const engines = deps?.engines ?? (await defaultTimelineEngines());
     let res: QueryResult;
     try {
       res = await client
         .from("products")
-        .select(PRODUCT_ACTIVITY_COLUMNS)
+        .select(PRODUCT_TIMELINE_COLUMNS)
         .filter("id", "eq", productId)
         .limit(1);
     } catch {
@@ -381,10 +393,11 @@ export async function loadProductActivity(
     const raw = res.data[0];
     if (raw === undefined || raw === null || typeof raw !== "object") return { status: "notfound" };
 
-    const snapshot = engines.mapActivityRow(raw as Record<string, unknown>);
+    const snapshot = engines.mapSnapshotRow(raw as Record<string, unknown>);
     if (snapshot.id === "") return { status: "notfound" };
-    const events = engines.deriveActivityEvents(snapshot);
-    return { status: "ok", activity: { snapshot, events } };
+    const provider = engines.createSnapshotTimelineProvider(snapshot);
+    const events = engines.buildTimeline([provider]);
+    return { status: "ok", timeline: { snapshot, events } };
   } catch {
     return { status: "error" };
   }

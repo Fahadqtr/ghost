@@ -1,26 +1,25 @@
-// Malikas V2 Operations — Product Timeline & Activity Engine (Phase UI.7.4).
+// Malikas V2 Operations — Snapshot Timeline Provider (Phase UI.7.4).
 //
-// PURE: activity events are COMPUTED from a product snapshot, never stored.
-// Recomputing over the same snapshot yields the same events with the same
-// deterministic ids (`<kind>:<productId>`), so any surface (the timeline page,
-// the product-detail widget, a future export) can diff/de-duplicate safely.
-// No database, no fetch, no storage, no "now" clock, no randomness — the only
-// time input is the snapshot's own trusted column strings.
+// The FIRST (and today only) TimelineProvider: it derives TimelineEvents from a
+// Malikas product snapshot. This is the ONLY module that knows how a snapshot
+// becomes events — the TimelineEngine stays source-agnostic. PURE: models in,
+// events out; no database, no fetch, no storage, no "now" clock, no randomness.
 //
-// Malikas is the Single Source of Truth. Malikas keeps no per-field audit
-// history and this phase adds none, so the engine derives events ONLY from the
-// two trusted timestamp columns (created_at, updated_at) plus the current
-// approval / platform_status state — it never fabricates a timestamp and never
-// re-implements readiness/task business logic.
+// Honest by construction — Malikas keeps no per-field audit history and this
+// phase adds none, so events are derived ONLY from trusted sources and a
+// timestamp is never fabricated. An unknown/blank source yields no event.
 
 import type {
-  ActivityEvent,
-  ActivityEventKind,
-  ActivityProductSnapshot,
-} from "../shared/models";
+  TimelineEvent,
+  TimelineEventKind,
+  TimelineProductSnapshot,
+} from "../../shared/models";
+import type { TimelineProvider } from "./timeline-provider";
+
+const SOURCE = "snapshot" as const;
 
 // Fixed Arabic copy — never reflects raw data.
-const TITLES: Record<ActivityEventKind, string> = {
+const TITLES: Record<TimelineEventKind, string> = {
   created: "أُنشئ المنتج",
   updated: "تحديث البيانات",
   approved: "تم اعتماد المنتج",
@@ -29,24 +28,13 @@ const TITLES: Record<ActivityEventKind, string> = {
   published: "منشور على منصة",
 };
 
-const DESCRIPTIONS: Record<ActivityEventKind, string> = {
+const DESCRIPTIONS: Record<TimelineEventKind, string> = {
   created: "تمت إضافة المنتج إلى كتالوج ماليكاس.",
   updated: "جرى تعديل بيانات المنتج بعد إنشائه.",
   approved: "المنتج معتمد وجاهز ليُنشر على المنصات.",
   rejected: "المنتج مرفوض ولن يُنشر حتى تُعالج ملاحظاته.",
   sent_to_ai: "المنتج قيد التجهيز عبر الذكاء الاصطناعي.",
   published: "المنتج مدفوع إلى منصة بيع واحدة على الأقل.",
-};
-
-/** Order among events that share the same anchor time (lower = shown first,
- *  i.e. newest/topmost). "created" always sinks to the bottom on a tie. */
-const KIND_RANK: Record<ActivityEventKind, number> = {
-  updated: 0,
-  approved: 1,
-  rejected: 1,
-  sent_to_ai: 1,
-  published: 2,
-  created: 3,
 };
 
 function hasText(v: string | null | undefined): v is string {
@@ -61,13 +49,6 @@ function parseTime(s: string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Sort key for a time string: finite epoch, or -Infinity when unknown (an
- *  unknown time always sorts to the oldest/bottom position). */
-function timeKey(s: string | null): number {
-  const n = parseTime(s);
-  return n === null ? Number.NEGATIVE_INFINITY : n;
-}
-
 /** Normalize the raw approval text to a house state, or null when blank/other. */
 function normalizeApproval(raw: string | null): "approved" | "rejected" | "sent_to_ai" | null {
   if (!hasText(raw)) return null;
@@ -79,13 +60,15 @@ function normalizeApproval(raw: string | null): "approved" | "rejected" | "sent_
 }
 
 function mkEvent(
-  kind: ActivityEventKind,
+  kind: TimelineEventKind,
   productId: string,
   at: string | null,
   atKnown: boolean,
-): ActivityEvent {
+): TimelineEvent {
   return {
-    id: `${kind}:${productId}`,
+    // id carries the source so it stays unique when other providers are added.
+    id: `${SOURCE}:${kind}:${productId}`,
+    source: SOURCE,
     productId,
     kind,
     at,
@@ -96,34 +79,17 @@ function mkEvent(
 }
 
 /**
- * Stable, deterministic ordering: most recent first by anchor time, then by a
- * fixed per-kind rank (so events sharing a timestamp always order the same
- * way), then by id. Non-mutating; sorting the same list twice is idempotent.
- */
-export function sortActivityEvents(events: readonly ActivityEvent[]): ActivityEvent[] {
-  return [...events].sort((a, b) => {
-    const t = timeKey(b.at) - timeKey(a.at); // newest first
-    if (t !== 0) return t;
-    const r = KIND_RANK[a.kind] - KIND_RANK[b.kind];
-    if (r !== 0) return r;
-    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-  });
-}
-
-/**
- * Derive the timeline for ONE product from its snapshot. Rules (each event is
- * emitted only when its trusted source exists — an unknown source is silently
- * omitted, never guessed):
+ * Derive the snapshot's timeline events (UNORDERED — the engine owns global
+ * ordering across providers). Rules — each event is emitted only when its
+ * trusted source exists (an unknown source is silently omitted, never guessed):
  * - created: created_at is present and parseable.
- * - updated: updated_at is present, parseable, and strictly LATER than
- *   created_at (a genuine later edit; an unchanged row shows only "created").
+ * - updated: updated_at is present, parseable, and strictly LATER than created_at.
  * - approved / rejected / sent_to_ai: the current approval state, anchored to
  *   the last-change time (updated_at, else created_at) with atKnown=false.
  * - published: platform_status is non-empty, anchored the same way.
- * The result is returned in display order (newest first).
  */
-export function deriveActivityEvents(snapshot: ActivityProductSnapshot): ActivityEvent[] {
-  const events: ActivityEvent[] = [];
+export function deriveSnapshotEvents(snapshot: TimelineProductSnapshot): TimelineEvent[] {
+  const events: TimelineEvent[] = [];
   const pid = snapshot.id;
   if (!hasText(pid)) return events;
 
@@ -150,5 +116,34 @@ export function deriveActivityEvents(snapshot: ActivityProductSnapshot): Activit
     events.push(mkEvent("published", pid, anchor, false));
   }
 
-  return sortActivityEvents(events);
+  return events;
+}
+
+/** Build the snapshot provider — closes over the already-read snapshot. PURE. */
+export function createSnapshotTimelineProvider(
+  snapshot: TimelineProductSnapshot,
+): TimelineProvider {
+  return {
+    source: SOURCE,
+    getEvents: () => deriveSnapshotEvents(snapshot),
+  };
+}
+
+/** Map a whitelisted `products` row into the snapshot shape. Pure and defensive
+ *  — non-string/blank cells become null, values are never coerced. Lives with
+ *  the snapshot provider because the raw-row shape is snapshot-source-specific. */
+export function mapSnapshotRow(row: Record<string, unknown>): TimelineProductSnapshot {
+  const s = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    sku: s(row.sku),
+    barcode: s(row.barcode),
+    nameAr: s(row.name_ar),
+    nameEn: s(row.name_en),
+    imageUrl: s(row.image_url),
+    approval: s(row.approval),
+    platformStatus: s(row.platform_status),
+    createdAt: s(row.created_at),
+    updatedAt: s(row.updated_at),
+  };
 }

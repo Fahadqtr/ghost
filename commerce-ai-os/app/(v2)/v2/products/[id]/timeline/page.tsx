@@ -9,16 +9,16 @@
 
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { loadProductActivity } from "@/lib/operations/read-model";
+import { loadProductTimeline } from "@/lib/operations/read-model";
 import {
-  parseActivityControls,
-  selectActivityEvents,
-  summarizeActivity,
-  type ActivityControls,
-  type ActivitySummary,
-} from "@/lib/operations/timeline/activity-view";
+  parseTimelineControls,
+  selectTimelineEvents,
+  summarizeTimeline,
+  type TimelineControls,
+  type TimelineSummary,
+} from "@/lib/operations/timeline/timeline-view";
 import { parseProductId } from "@/lib/catalog-v2/master-catalog-view";
-import type { ActivityEvent } from "@/lib/operations/shared/models";
+import type { TimelineEvent } from "@/lib/operations/shared/models";
 import ProductTimeline from "@/components/v2/operations/ProductTimeline";
 
 export const dynamic = "force-dynamic";
@@ -41,9 +41,9 @@ export default async function ProductTimelinePage({
         kind: "ok";
         productId: string;
         productName: string;
-        events: ActivityEvent[];
-        summary: ActivitySummary;
-        controls: ActivityControls;
+        events: TimelineEvent[];
+        summary: TimelineSummary;
+        controls: TimelineControls;
         matchCount: number;
       }
     | { kind: "notfound" }
@@ -51,30 +51,31 @@ export default async function ProductTimelinePage({
 
   try {
     const sp = searchParams ? await searchParams : {};
-    const controls = parseActivityControls(sp);
+    const controls = parseTimelineControls(sp);
     const { id } = await params;
     const validId = parseProductId(id);
     if (validId === null) {
       state = { kind: "notfound" };
     } else {
       const supabase = createClient();
-      const result = await loadProductActivity(supabase as never, validId);
+      const result = await loadProductTimeline(supabase as never, validId);
       if (result.status === "error") {
         state = { kind: "error" };
       } else if (result.status === "notfound") {
         state = { kind: "notfound" };
       } else {
-        const all = result.activity.events;
-        const s = result.activity.snapshot;
+        const all = result.timeline.events;
+        const s = result.timeline.snapshot;
         const name = s.nameAr || s.nameEn || s.sku || "منتج بدون اسم";
+        const matched = selectTimelineEvents(all, controls);
         state = {
           kind: "ok",
           productId: validId,
           productName: name,
-          events: selectActivityEvents(all, controls),
-          summary: summarizeActivity(all),
+          events: matched,
+          summary: summarizeTimeline(all),
           controls,
-          matchCount: selectActivityEvents(all, controls).length,
+          matchCount: matched.length,
         };
       }
     }

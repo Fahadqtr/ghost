@@ -6,17 +6,17 @@
 
 import Link from "next/link";
 import {
-  activityWidgetEvents,
-  formatActivityDate,
-  ACTIVITY_KIND_LABELS,
-} from "@/lib/operations/timeline/activity-view";
-import type { ActivityEvent } from "@/lib/operations/shared/models";
+  timelineWidgetEvents,
+  formatTimelineDate,
+  TIMELINE_KIND_LABELS,
+} from "@/lib/operations/timeline/timeline-view";
+import type { TimelineEvent } from "@/lib/operations/shared/models";
 
 export default function ProductActivityWidget({
   events,
   productId,
 }: {
-  events: readonly ActivityEvent[];
+  events: readonly TimelineEvent[];
   productId: string;
 }) {
   const timelineHref = `/v2/products/${encodeURIComponent(productId)}/timeline`;
@@ -30,7 +30,7 @@ export default function ProductActivityWidget({
     );
   }
 
-  const { shown, remaining } = activityWidgetEvents(events, 3);
+  const { shown, remaining } = timelineWidgetEvents(events, 3);
 
   return (
     <div className="card space-y-2 p-4">
@@ -46,12 +46,12 @@ export default function ProductActivityWidget({
             <div className="min-w-0 flex-1">
               <div className="text-sm text-ink">
                 {e.title}
-                <span className="text-muted"> · {ACTIVITY_KIND_LABELS[e.kind]}</span>
+                <span className="text-muted"> · {TIMELINE_KIND_LABELS[e.kind]}</span>
               </div>
               {e.description ? <div className="text-[11px] text-muted">{e.description}</div> : null}
             </div>
             <span className="shrink-0 text-[11px] text-muted">
-              {e.atKnown ? formatActivityDate(e.at) : `حتى ${formatActivityDate(e.at)}`}
+              {e.atKnown ? formatTimelineDate(e.at) : `حتى ${formatTimelineDate(e.at)}`}
             </span>
           </li>
         ))}
