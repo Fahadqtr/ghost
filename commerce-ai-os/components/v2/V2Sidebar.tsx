@@ -38,9 +38,18 @@ function RewardsIcon() {
   );
 }
 
-function NavIcon({ icon }: { icon: "catalog" | "shopify" | "rewards" }) {
+function OperationsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <path d="M3 13h4l2 5 4-12 2 7h6" />
+    </svg>
+  );
+}
+
+function NavIcon({ icon }: { icon: "catalog" | "shopify" | "rewards" | "operations" }) {
   if (icon === "shopify") return <ShopifyIcon />;
   if (icon === "rewards") return <RewardsIcon />;
+  if (icon === "operations") return <OperationsIcon />;
   return <CatalogIcon />;
 }
 

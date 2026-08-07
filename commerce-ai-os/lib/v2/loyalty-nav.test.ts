@@ -56,8 +56,9 @@ test("the catalog section is unchanged", () => {
 
 test("links are grouped by section, in declaration order", () => {
   const sections = groupNavLinks();
-  assert.deepEqual(sections.map((s) => s.title), ["الكتالوج", "العملاء"]);
-  assert.deepEqual(sections[1]!.links.map((l) => l.href), LOYALTY_HREFS);
+  assert.deepEqual(sections.map((s) => s.title), ["الكتالوج", "العمليات", "العملاء"]);
+  assert.deepEqual(sections[1]!.links.map((l) => l.href), ["/v2/operations"]);
+  assert.deepEqual(sections[2]!.links.map((l) => l.href), LOYALTY_HREFS);
   const flat = sections.flatMap((s) => s.links.map((l) => l.href));
   assert.equal(flat.length, V2_NAV_LINKS.length);
   assert.equal(new Set(flat).size, flat.length, "no duplicate hrefs");
