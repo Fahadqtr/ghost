@@ -14,6 +14,8 @@ import "server-only";
 // — a degraded flag is returned instead of guessing "missing".
 
 import type {
+  ActivityEvent,
+  ActivityProductSnapshot,
   HealthSummary,
   NewProductBuckets,
   OperationsProduct,
@@ -289,5 +291,101 @@ export async function loadProductOperations(
     return { tasks, readinessPercent: readiness.percent };
   } catch {
     return null;
+  }
+}
+
+// ── Product Timeline & Activity (Phase UI.7.4) ───────────────────────────────
+
+// A minimal single-row filter surface (select → filter → limit), kept separate
+// from the paged surface above. `.filter(col, op, val)` is a PARAMETERIZED
+// PostgREST equality — the id is passed as a bound argument, never interpolated
+// into a query string. Structurally satisfied by the real Supabase client.
+interface ActivityFilterBuilder extends PromiseLike<QueryResult> {
+  filter(column: string, operator: string, value: string): ActivityFilterBuilder;
+  limit(count: number): ActivityFilterBuilder;
+}
+interface ActivitySelectBuilder {
+  select(columns: string): ActivityFilterBuilder;
+}
+export interface ProductActivityReadClient {
+  from(table: string): ActivitySelectBuilder;
+}
+
+/** The pure timeline layer (injected in tests; lazily bound in production). */
+export interface ActivityEngines {
+  mapActivityRow(row: Record<string, unknown>): ActivityProductSnapshot;
+  deriveActivityEvents(snapshot: ActivityProductSnapshot): ActivityEvent[];
+}
+
+async function defaultActivityEngines(): Promise<ActivityEngines> {
+  const [view, engine] = await Promise.all([
+    import("./timeline/activity-view"),
+    import("./timeline/activity-engine"),
+  ]);
+  return { mapActivityRow: view.mapActivityRow, deriveActivityEvents: engine.deriveActivityEvents };
+}
+
+// created_at / updated_at are needed here (and NOT in the paged reads above),
+// so the timeline uses its own explicit whitelist. No stock/channel/order/PII.
+const PRODUCT_ACTIVITY_COLUMNS =
+  "id, sku, barcode, name_ar, name_en, image_url, approval, platform_status, created_at, updated_at";
+const ACTIVITY_ID_MAX = 200;
+
+export interface ProductActivity {
+  snapshot: ActivityProductSnapshot;
+  events: ActivityEvent[];
+}
+
+export type ProductActivityResult =
+  | { status: "ok"; activity: ProductActivity }
+  | { status: "notfound" }
+  | { status: "error" };
+
+/**
+ * Load and compute the activity timeline for ONE product. A TARGETED single-row
+ * read (parameterized id equality, limit 1) through the session client — RLS
+ * only, no service role, no admin client, no write, no RPC. The pure timeline
+ * layer derives the events; NO business logic lives here. Returns a single
+ * constant error status on any read failure (never a raw DB error), "notfound"
+ * for a valid id with no row, and "ok" otherwise.
+ */
+export async function loadProductActivity(
+  client: ProductActivityReadClient,
+  productId: unknown,
+  deps?: { engines?: ActivityEngines },
+): Promise<ProductActivityResult> {
+  // Defensive id validation — non-string / empty / too long → safe not-found,
+  // no query, and the value is never reflected anywhere.
+  if (
+    typeof productId !== "string" ||
+    productId.length === 0 ||
+    productId.trim().length === 0 ||
+    productId.length > ACTIVITY_ID_MAX
+  ) {
+    return { status: "notfound" };
+  }
+
+  try {
+    const engines = deps?.engines ?? (await defaultActivityEngines());
+    let res: QueryResult;
+    try {
+      res = await client
+        .from("products")
+        .select(PRODUCT_ACTIVITY_COLUMNS)
+        .filter("id", "eq", productId)
+        .limit(1);
+    } catch {
+      return { status: "error" }; // never re-surface the raw error
+    }
+    if (res.error !== null || !Array.isArray(res.data)) return { status: "error" };
+    const raw = res.data[0];
+    if (raw === undefined || raw === null || typeof raw !== "object") return { status: "notfound" };
+
+    const snapshot = engines.mapActivityRow(raw as Record<string, unknown>);
+    if (snapshot.id === "") return { status: "notfound" };
+    const events = engines.deriveActivityEvents(snapshot);
+    return { status: "ok", activity: { snapshot, events } };
+  } catch {
+    return { status: "error" };
   }
 }

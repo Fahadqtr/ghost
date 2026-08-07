@@ -9,8 +9,10 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { loadCatalogProduct } from "@/lib/catalog-v2/master-catalog-read";
-import { loadProductOperations, type ProductOperations } from "@/lib/operations/read-model";
+import { loadProductOperations, loadProductActivity, type ProductOperations } from "@/lib/operations/read-model";
 import ProductTasksWidget from "@/components/v2/operations/ProductTasksWidget";
+import ProductActivityWidget from "@/components/v2/operations/ProductActivityWidget";
+import type { ActivityEvent } from "@/lib/operations/shared/models";
 import {
   catalogEditHref,
   catalogHref,
@@ -49,6 +51,9 @@ export default async function ProductDetailPage({
   // Operations tasks for this product (Phase UI.7.3). Best-effort and isolated:
   // a failure here NEVER breaks the product page — the widget just renders empty.
   let operations: ProductOperations | null = null;
+  // Activity timeline for this product (Phase UI.7.4). Best-effort and isolated:
+  // a failure here NEVER breaks the product page — the widget just renders empty.
+  let activityEvents: ActivityEvent[] | null = null;
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
@@ -79,6 +84,12 @@ export default async function ProductDetailPage({
           operations = await loadProductOperations(supabase as never, validId);
         } catch {
           operations = null;
+        }
+        try {
+          const activity = await loadProductActivity(supabase as never, validId);
+          activityEvents = activity.status === "ok" ? activity.activity.events : null;
+        } catch {
+          activityEvents = null;
         }
       }
     }
@@ -127,6 +138,9 @@ export default async function ProductDetailPage({
         editHref={editHref}
       />
       {operations ? <ProductTasksWidget tasks={operations.tasks} /> : null}
+      {activityEvents ? (
+        <ProductActivityWidget events={activityEvents} productId={state.product.id} />
+      ) : null}
     </div>
   );
 }

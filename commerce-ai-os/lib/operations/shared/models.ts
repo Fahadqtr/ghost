@@ -193,6 +193,80 @@ export interface NewProductBuckets {
   needsReview: string[];
 }
 
+// ── product timeline / activity (Phase UI.7.4) ───────────────────────────────
+
+/**
+ * The kinds of activity the timeline engine can DERIVE from a product snapshot.
+ * Malikas keeps no per-field audit history and this phase adds none, so events
+ * are computed from the two trusted timestamp columns (created_at, updated_at)
+ * plus the current approval / platform_status state — never fabricated:
+ * - "created"   : the product row's created_at (trusted, independently timed).
+ * - "updated"   : the product row's updated_at, only when it is a real later
+ *                 edit than created_at (trusted, independently timed).
+ * - "approved" | "rejected" | "sent_to_ai" : the CURRENT approval state. Its
+ *                 exact transition time is unknown, so it is anchored to the
+ *                 last-change time (updated_at) with atKnown=false.
+ * - "published" : the product has a non-empty platform_status (pushed somewhere).
+ *                 Anchored to updated_at with atKnown=false for the same reason.
+ */
+export type ActivityEventKind =
+  | "created"
+  | "updated"
+  | "approved"
+  | "rejected"
+  | "sent_to_ai"
+  | "published";
+
+/**
+ * One COMPUTED timeline event — never stored. The id is deterministic over
+ * (kind, productId), so recomputing yields the same ids and any surface can
+ * de-duplicate safely.
+ */
+export interface ActivityEvent {
+  id: string;
+  productId: string;
+  kind: ActivityEventKind;
+  /**
+   * The timestamp to display (ISO string) or null when unknown. For
+   * created/updated this is the real column value; for state events it is the
+   * anchor (updated_at, else created_at) that the state was true BY.
+   */
+  at: string | null;
+  /**
+   * true only for created/updated — events that carry their OWN trusted
+   * timestamp. false for state events whose exact transition time is unknown
+   * (shown as "as of" the last change), so the UI never implies a precise time.
+   */
+  atKnown: boolean;
+  /** fixed Arabic title — never raw data */
+  title: string;
+  /** fixed Arabic description — never raw data */
+  description: string;
+}
+
+/**
+ * A catalog-safe snapshot of one Malikas product for the timeline engine — the
+ * ONLY input it reads. Structural on purpose (like OperationsProduct): the
+ * caller builds it from whatever reader it already has. No stock, no platform
+ * ids, no PII. Timestamps are the raw column strings (or null when absent).
+ */
+export interface ActivityProductSnapshot {
+  id: string;
+  sku: string | null;
+  barcode: string | null;
+  nameAr: string | null;
+  nameEn: string | null;
+  imageUrl: string | null;
+  /** raw approval text: "Approved" | "Rejected" | "SentAI" | "" (house values) */
+  approval: string | null;
+  /** raw platform_status text; "" = never pushed anywhere */
+  platformStatus: string | null;
+  /** raw created_at column (ISO string) or null */
+  createdAt: string | null;
+  /** raw updated_at column (ISO string) or null */
+  updatedAt: string | null;
+}
+
 // ── health ───────────────────────────────────────────────────────────────────
 
 export interface HealthSummary {
