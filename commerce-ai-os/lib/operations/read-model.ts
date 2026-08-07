@@ -24,6 +24,7 @@ import type {
   ProductReadiness,
 } from "./shared/models";
 import type { OperationsListItem } from "./dashboard-view";
+import type { TaskViewItem } from "./tasks-view";
 
 // ── minimal read surfaces (only what this reader needs) ──────────────────────
 
@@ -64,16 +65,18 @@ export interface OperationsEngines {
     variantCount: number,
     platforms?: Partial<Record<PlatformType, PlatformPresence>>,
   ): OperationsProduct;
+  flattenTasks(items: readonly OperationsListItem[]): TaskViewItem[];
 }
 
 async function defaultEngines(): Promise<OperationsEngines> {
-  const [readiness, platforms, tasks, np, health, view] = await Promise.all([
+  const [readiness, platforms, tasks, np, health, view, tasksView] = await Promise.all([
     import("./readiness/readiness"),
     import("./platforms/platform-status"),
     import("./tasks/task-engine"),
     import("./new-products/new-product-engine"),
     import("./health/health-engine"),
     import("./dashboard-view"),
+    import("./tasks-view"),
   ]);
   return {
     computeProductReadiness: readiness.computeProductReadiness,
@@ -83,6 +86,7 @@ async function defaultEngines(): Promise<OperationsEngines> {
     computeHealthSummary: health.computeHealthSummary,
     toListItem: view.toListItem,
     mapProductRow: view.mapProductRow,
+    flattenTasks: tasksView.flattenTasks,
   };
 }
 
@@ -200,5 +204,90 @@ export async function loadOperationsDashboard(
     };
   } catch {
     return { status: "error" };
+  }
+}
+
+// ── Smart Tasks view (Phase UI.7.3) ──────────────────────────────────────────
+
+export interface TasksViewData {
+  tasks: TaskViewItem[];
+  partial: boolean;
+  shopifyAvailable: boolean;
+}
+
+export type TasksLoadResult = { status: "ok"; data: TasksViewData } | { status: "error" };
+
+/**
+ * Load the flat Smart-Tasks list. Reuses loadOperationsDashboard (single source
+ * of the engine wiring) and flattens its per-product items into TaskViewItem[]
+ * via the pure flattenTasks — no business logic here.
+ */
+export async function loadTasksView(
+  client: OperationsReadClient,
+  deps?: { engines?: OperationsEngines; shopify?: ShopifyPresenceReader },
+): Promise<TasksLoadResult> {
+  try {
+    const engines = deps?.engines ?? (await defaultEngines());
+    const dash = await loadOperationsDashboard(client, { ...deps, engines });
+    if (dash.status !== "ok") return { status: "error" };
+    return {
+      status: "ok",
+      data: {
+        tasks: engines.flattenTasks(dash.data.items),
+        partial: dash.data.partial,
+        shopifyAvailable: dash.data.shopifyAvailable,
+      },
+    };
+  } catch {
+    return { status: "error" };
+  }
+}
+
+// ── Single-product operations (Phase UI.7.3 detail widget) ───────────────────
+
+export interface ProductOperations {
+  tasks: OperationTask[];
+  readinessPercent: number;
+}
+
+const PRODUCT_ONE_COLUMNS = PRODUCT_COLUMNS;
+
+/**
+ * Compute the operations tasks + readiness for ONE product, for the product
+ * detail widget. Cheap single-product I/O via the session client. Shopify
+ * presence is intentionally NOT read here (one product page must not trigger a
+ * full Shopify catalog read); platform-publish tasks live on /v2/tasks. Returns
+ * null on any failure — the widget then renders nothing, never a raw error.
+ */
+export async function loadProductOperations(
+  client: OperationsReadClient,
+  productId: string,
+  deps?: { engines?: OperationsEngines },
+): Promise<ProductOperations | null> {
+  if (typeof productId !== "string" || productId === "") return null;
+  try {
+    const engines = deps?.engines ?? (await defaultEngines());
+    const q = client.from("products").select(PRODUCT_ONE_COLUMNS).order("id", { ascending: true });
+    const { rows } = await readAllRows(q, MAX_PRODUCTS);
+    const raw = rows.find((r) => r !== null && typeof r === "object" && (r as { id?: unknown }).id === productId);
+    if (!raw) return null;
+    const row = raw as Record<string, unknown>;
+
+    const vq = client.from("product_variants").select(VARIANT_COLUMNS).order("parent_product_id", { ascending: true });
+    const variants = await readAllRows(vq, MAX_PRODUCTS);
+    let variantCount = 0;
+    for (const v of variants.rows) {
+      if (v !== null && typeof v === "object" && (v as { parent_product_id?: unknown }).parent_product_id === productId) {
+        variantCount++;
+      }
+    }
+
+    const product = engines.mapProductRow(row, variantCount);
+    const readiness = engines.computeProductReadiness(product);
+    const statuses = engines.computePlatformStatuses(product, readiness.readyToPublish);
+    const tasks = engines.generateProductTasks(product, readiness, statuses);
+    return { tasks, readinessPercent: readiness.percent };
+  } catch {
+    return null;
   }
 }

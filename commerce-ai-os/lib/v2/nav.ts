@@ -24,8 +24,9 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   { href: "/v2/catalog", label: "كتالوج ماليكاس", icon: "catalog", section: "الكتالوج" },
   { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify", section: "الكتالوج" },
 
-  // Operations Center (Phase UI.7.2) — reads lib/operations/* engines.
-  { href: "/v2/operations", label: "مركز العمليات", icon: "operations", section: "العمليات" },
+  // Operations Center (Phase UI.7.2/7.3) — reads lib/operations/* engines.
+  { href: "/v2/operations", label: "لوحة العمليات", icon: "operations", section: "العمليات" },
+  { href: "/v2/tasks", label: "المهام", icon: "operations", section: "العمليات" },
 
   // «مكافآت الجمال» (Beauty Rewards) — the customer page calls it
   // «دليل المسابقة». These pages now live INSIDE the V2 route group, so they
