@@ -10,16 +10,53 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOwner } from "@/lib/malak/authz";
-import { loadTasksView } from "@/lib/operations/read-model";
+import { loadTasksView, loadTaskViewItem } from "@/lib/operations/read-model";
 import { loadShopifyPresence } from "@/lib/operations/shopify-presence";
+import type { TaskViewItem } from "@/lib/operations/tasks-view";
 import {
   getTickTickClient,
   projectMapFromEnv,
   appBaseUrl,
   ticktickConfigured,
 } from "@/lib/integrations/ticktick/client";
+import { projectKeyFor, resolveProjectId } from "@/lib/integrations/ticktick/mapper";
+import type { TickTickProjectMap } from "@/lib/integrations/ticktick/types";
 import { syncOperationsTasksToTickTick, previewOperationTaskSync } from "@/lib/integrations/ticktick/adapter";
 import { tasksRedirect } from "@/lib/integrations/ticktick/tasks-nav";
+
+// ── Perf helpers (module-private; a "use server" module exports only actions) ──
+
+/**
+ * Re-derive ONE task-view item by id, server-side, cheaply.
+ * Fast path: loadTaskViewItem recomputes only the task's product with NO Shopify
+ * fetch. Fallback: only when the fast path can't produce it (publish tasks need
+ * Shopify) do we pay the full loadTasksView. `{ ok: false }` means a total load
+ * failure (the caller keeps its error redirect); `item: null` means genuinely
+ * not found. Behavior is identical to the old full-load find — just faster.
+ */
+async function deriveTaskItem(
+  client: ReturnType<typeof createClient>,
+  id: string,
+): Promise<{ ok: true; item: TaskViewItem | null } | { ok: false }> {
+  const fast = await loadTaskViewItem(client as never, id);
+  if (fast) return { ok: true, item: fast };
+  const result = await loadTasksView(client as never, { shopify: { loadShopifyPresence } });
+  if (result.status !== "ok") return { ok: false };
+  return { ok: true, item: result.data.tasks.find((t) => t.task.id === id) ?? null };
+}
+
+/**
+ * Scope the TickTick scan to the target task's list ONLY. Routing still comes
+ * from env (projectMapFromEnv + the pure resolveProjectId) — never the client.
+ * The task's marker can only live in its own project, so scanning just that one
+ * project is identical to scanning all configured projects, with fewer HTTP
+ * round-trips. An unconfigured list → empty map → the adapter skips (as before).
+ */
+function scopedProjectMap(item: TaskViewItem): TickTickProjectMap {
+  const key = projectKeyFor(item.task);
+  const pid = resolveProjectId(key, projectMapFromEnv());
+  return pid ? ({ [key]: pid } as TickTickProjectMap) : ({} as TickTickProjectMap);
+}
 
 /** Manually push the current Smart Tasks to TickTick (owner only). Redirects back
  *  to /v2/tasks with a fixed status the page renders as a banner. */
@@ -76,16 +113,16 @@ export async function previewOneTickTickTask(operationTaskId: string, view?: str
   let query = tasksRedirect(view, { ticktick: "preview_error" });
   try {
     const supabase = createClient();
-    const result = await loadTasksView(supabase as never, { shopify: { loadShopifyPresence } });
-    if (result.status === "ok") {
-      // Server-side re-derivation: a forged / stale id simply isn't found.
-      const item = result.data.tasks.find((t) => t.task.id === id);
+    // Server-side re-derivation (fast path first): a forged / stale id isn't found.
+    const derived = await deriveTaskItem(supabase, id);
+    if (derived.ok) {
+      const item = derived.item;
       if (!item) {
         query = tasksRedirect(view, { ticktick: "notfound" });
       } else {
         const preview = await previewOperationTaskSync([item], {
           client: getTickTickClient(),
-          projectMap: projectMapFromEnv(),
+          projectMap: scopedProjectMap(item),
           baseUrl: appBaseUrl(),
         });
         const plan = preview.ok ? preview.items[0] : undefined;
@@ -94,6 +131,7 @@ export async function previewOneTickTickTask(operationTaskId: string, view?: str
           : tasksRedirect(view, { ticktick: "preview_error" });
       }
     }
+    // derived.ok === false → total load failure → query stays preview_error
   } catch {
     query = tasksRedirect(view, { ticktick: "preview_error" });
   }
@@ -120,15 +158,15 @@ export async function syncOneTickTickTask(operationTaskId: string, view?: string
   let query = tasksRedirect(view, { ticktick: "task_error" });
   try {
     const supabase = createClient();
-    const result = await loadTasksView(supabase as never, { shopify: { loadShopifyPresence } });
-    if (result.status === "ok") {
-      const item = result.data.tasks.find((t) => t.task.id === id);
+    const derived = await deriveTaskItem(supabase, id);
+    if (derived.ok) {
+      const item = derived.item;
       if (!item) {
         query = tasksRedirect(view, { ticktick: "notfound" });
       } else {
         const { report } = await syncOperationsTasksToTickTick([item], {
           client: getTickTickClient(),
-          projectMap: projectMapFromEnv(),
+          projectMap: scopedProjectMap(item),
           baseUrl: appBaseUrl(),
           completeMissing: false, // scope to this one task — never sweep-complete others
         });
@@ -137,6 +175,7 @@ export async function syncOneTickTickTask(operationTaskId: string, view?: string
         else query = tasksRedirect(view, { ticktick: "task_error" });
       }
     }
+    // derived.ok === false → total load failure → query stays task_error
   } catch {
     query = tasksRedirect(view, { ticktick: "task_error" });
   }
