@@ -84,8 +84,42 @@ test("single-task TickTick UI: owner-gated buttons + fixed unconfigured notice, 
   assert.ok(SMARTTASKS.includes("previewOneTickTickTask"), "wires the preview server action");
   assert.ok(SMARTTASKS.includes("syncOneTickTickTask"), "wires the single-task sync server action");
   assert.ok(!SMARTTASKS.includes('"use client"'), "SmartTasks stays a server component");
-  // the buttons pass ONLY the task id (bound server action), never task fields.
-  assert.ok(SMARTTASKS.includes(".bind(null, task.id)"), "buttons bind only the task id");
+  // the buttons pass the task id (+ the non-sensitive current view) via a bound
+  // server action — never task fields like title/description/project id.
+  assert.ok(SMARTTASKS.includes(".bind(null, task.id,"), "buttons bind the task id");
+});
+
+test("preview fix: the button targets the clicked task AND round-trips the view", () => {
+  // clicking معاينة TickTick submits a form whose action is previewOneTickTickTask
+  // bound to THIS card's task id + the current view query string.
+  assert.ok(
+    /previewOneTickTickTask\.bind\(null, task\.id, viewQS\)/.test(SMARTTASKS),
+    "preview button binds the correct task id + view",
+  );
+  assert.ok(
+    /syncOneTickTickTask\.bind\(null, task\.id, viewQS\)/.test(SMARTTASKS),
+    "revealed sync button binds the correct task id + view",
+  );
+  // the actions carry that view into the redirect via the pure tasks-nav helper,
+  // so the result lands on the same page/filter the owner previewed from.
+  assert.ok(ACTIONS.includes("tasksRedirect"), "actions preserve the view via tasksRedirect");
+  assert.ok(ACTIONS.includes("view?: string"), "single-task actions accept the bound view");
+});
+
+test("preview fix: 'فتح المنتج' is untouched — still a plain product Link (GET)", () => {
+  assert.ok(
+    /href=\{`\/v2\/catalog\/\$\{encodeURIComponent\(item\.productId\)\}`\}/.test(SMARTTASKS),
+    "open-product stays a Link to /v2/catalog/[id], not a form/action",
+  );
+});
+
+test("preview fix: the view helper is pure (no I/O, no secrets, no business logic)", () => {
+  const NAV = read("./tasks-nav.ts");
+  for (const banned of ['server-only', "fetch(", "supabase", "createClient", "process.env", "Date.now", "new Date(", "TICKTICK_ACCESS_TOKEN", "computeProductReadiness", "generateProductTasks", "task-engine"]) {
+    assert.ok(!NAV.includes(banned), `tasks-nav must not contain ${banned}`);
+  }
+  // it only reflects the whitelisted view keys — no arbitrary/open-redirect passthrough.
+  assert.ok(NAV.includes('["query", "filter", "page"]'), "only whitelisted view keys are reflected");
 });
 
 test("project browser: owner-gated page, read-only, no writes, no token leakage", () => {
