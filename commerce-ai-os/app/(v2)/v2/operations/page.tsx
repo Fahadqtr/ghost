@@ -10,6 +10,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { loadOperationsDashboard } from "@/lib/operations/read-model";
 import { loadShopifyPresence } from "@/lib/operations/shopify-presence";
+import { loadPureSoulPresence } from "@/lib/platforms/puresoul/presence";
 import { loadTickTickSyncedIds } from "@/lib/integrations/ticktick/synced-ids";
 import {
   parseOperationsControls,
@@ -44,6 +45,8 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         matchCount: number;
         partial: boolean;
         shopifyAvailable: boolean;
+        puresoulAvailable: boolean;
+        puresoulDegraded: boolean;
         ticktickAvailable: boolean;
       }
     | null = null;
@@ -52,7 +55,12 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
     const params = searchParams ? await searchParams : {};
     const controls = parseOperationsControls(params);
     const supabase = createClient();
-    const result = await loadOperationsDashboard(supabase as never, { shopify: { loadShopifyPresence } });
+    const result = await loadOperationsDashboard(supabase as never, {
+      shopify: { loadShopifyPresence },
+      // PureSoul reads platform_status via .eq(); bridge the client type (same
+      // session client passed to the dashboard, cast as elsewhere on this page).
+      puresoul: { loadPureSoulPresence: (c) => loadPureSoulPresence(c as never) },
+    });
     if (result.status === "ok") {
       // TickTick is a best-effort annotation only — it must NEVER break the
       // dashboard. loadTickTickSyncedIds already degrades internally; the extra
@@ -63,7 +71,12 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       // filter all read the same enriched items — the whole set stays here; only
       // the summary + current page are sent to the browser.
       const items: OperationsListItem[] = annotateTickTick(result.data.items, ticktick.ids);
-      const summary = buildDashboardSummary(items, result.data.health, result.data.shopifyAvailable);
+      const summary = buildDashboardSummary(
+        items,
+        result.data.health,
+        result.data.shopifyAvailable,
+        result.data.puresoulAvailable,
+      );
 
       // Reuse the pure pipeline once for the match count, once for the page slice.
       const matched = selectOperationsPage(items, { ...controls, page: 1 });
@@ -78,6 +91,8 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         matchCount: matched.total,
         partial: result.data.partial,
         shopifyAvailable: result.data.shopifyAvailable,
+        puresoulAvailable: result.data.puresoulAvailable,
+        puresoulDegraded: result.data.puresoulDegraded,
         ticktickAvailable: ticktick.available,
       };
     }
@@ -103,6 +118,8 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       controls={loaded.controls}
       partial={loaded.partial}
       shopifyAvailable={loaded.shopifyAvailable}
+      puresoulAvailable={loaded.puresoulAvailable}
+      puresoulDegraded={loaded.puresoulDegraded}
       ticktickAvailable={loaded.ticktickAvailable}
     />
   );

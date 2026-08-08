@@ -18,6 +18,7 @@ import {
   QUEUE_FILTER,
   type DashboardKpis,
   type PlatformOverview,
+  type PureSoulOverview,
   type Queue,
   type QueueItem,
   type QueueKey,
@@ -105,6 +106,33 @@ function OverviewStat({ label, value, tone }: { label: string; value: number; to
   );
 }
 
+function PureSoulOverviewCard({ ps }: { ps: PureSoulOverview }) {
+  return (
+    <div className="card space-y-2 p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-ink">PureSoul</span>
+        <span
+          className={
+            "rounded-full px-2 py-0.5 text-[10px] " +
+            (ps.available ? "bg-emerald-50 text-emerald-700" : "bg-[#f5ece1] text-muted")
+          }
+        >
+          {ps.available ? "مربوط" : "غير مربوط"}
+        </span>
+      </div>
+      {ps.available ? (
+        <div className="space-y-1">
+          <OverviewStat label="منشور" value={ps.published} tone="text-emerald-700" />
+          <OverviewStat label="نافد (مخلّصة)" value={ps.outOfStock} tone="text-amber-700" />
+          <OverviewStat label="مراجعة" value={ps.reviewRequired} tone="text-amber-700" />
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted">لا يوجد رابط بعد — لا تُحتسب كغير موجودة.</p>
+      )}
+    </div>
+  );
+}
+
 function PlatformOverviewSection({ overview }: { overview: PlatformOverview }) {
   const s = overview.shopify;
   return (
@@ -145,8 +173,11 @@ function PlatformOverviewSection({ overview }: { overview: PlatformOverview }) {
           )}
         </div>
 
+        {/* PureSoul — real overlay reader (UI.9.1); «غير مربوط» when not synced */}
+        <PureSoulOverviewCard ps={overview.puresoul} />
+
         {/* Not-connected platforms — never counted as missing */}
-        {(["puresoul", "talabat", "rafeeq"] as const).map((p) => (
+        {(["talabat", "rafeeq"] as const).map((p) => (
           <div key={p} className="card space-y-2 p-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-ink">{PLATFORM_LABELS[p]}</span>
@@ -333,6 +364,8 @@ export default function OperationsDashboard({
   controls,
   partial,
   shopifyAvailable,
+  puresoulAvailable,
+  puresoulDegraded,
   ticktickAvailable,
 }: {
   kpis: DashboardKpis;
@@ -343,6 +376,8 @@ export default function OperationsDashboard({
   controls: OperationsControls;
   partial: boolean;
   shopifyAvailable: boolean;
+  puresoulAvailable: boolean;
+  puresoulDegraded: boolean;
   ticktickAvailable: boolean;
 }) {
   const hasPrev = page.page > 1;
@@ -365,6 +400,11 @@ export default function OperationsDashboard({
           تعذر قراءة Shopify حاليًا — تظهر حالته «غير مربوط»، وبقية المركز يعمل من بيانات ماليكاس.
         </div>
       ) : null}
+      {puresoulDegraded ? (
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          تعذر قراءة PureSoul حاليًا — تظهر حالته «غير مربوط»، ولا تُحتسب المنتجات كغير موجودة.
+        </div>
+      ) : null}
       {!ticktickAvailable ? (
         <div className="card border-[#efe3d6] bg-[#faf3ec] text-sm text-muted">
           TickTick غير مربوط حاليًا — تظهر المهام كـ«غير مُزامَنة»، والمركز يعمل بشكل كامل.
@@ -384,6 +424,12 @@ export default function OperationsDashboard({
         <KpiCard label="Shopify: غير موجود" value={kpis.shopifyMissing} filter="shopify_missing" controls={controls} tone="rose" />
         <KpiCard label="Shopify: مختلف" value={kpis.shopifyDifferent} filter="shopify_different" controls={controls} tone="amber" />
         <KpiCard label="مهام مربوطة بـ TickTick" value={kpis.ticktickLinkedTasks} filter="ticktick_synced" controls={controls} tone="emerald" />
+        {puresoulAvailable ? (
+          <>
+            <KpiCard label="PureSoul: نافد" value={platformOverview.puresoul.outOfStock} filter="puresoul_out_of_stock" controls={controls} tone="amber" />
+            <KpiCard label="PureSoul: مراجعة" value={platformOverview.puresoul.reviewRequired} filter="puresoul_review" controls={controls} tone="amber" />
+          </>
+        ) : null}
       </div>
 
       {/* platform overview */}

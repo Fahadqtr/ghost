@@ -187,21 +187,38 @@ export interface ShopifyOverview {
   ready: number;
 }
 
+/** PureSoul overview (Phase UI.9.1). Only the reliably-readable states from the
+ *  overlay: published (InStock), outOfStock (مخلّصة → engine "ready") and
+ *  reviewRequired (Rejected). Missing/Different are NOT derivable read-only this
+ *  phase (no persisted confirmed-absent / field-compare) → deferred to UI.9.2.
+ *  `available:false` ⇒ the UI shows «غير مربوط». */
+export interface PureSoulOverview {
+  available: boolean;
+  published: number;
+  outOfStock: number;
+  reviewRequired: number;
+}
+
 export interface PlatformOverview {
   shopify: ShopifyOverview;
-  /** PureSoul / Talabat / Rafeeq have no reader yet → not connected (never
-   *  counted as missing). UI.9 will add the PureSoul adapter. */
-  puresoul: "not_connected";
+  puresoul: PureSoulOverview;
+  /** Talabat / Rafeeq have no reader yet → not connected (never counted as
+   *  missing). Future phases add their adapters. */
   talabat: "not_connected";
   rafeeq: "not_connected";
 }
 
-/** Summarise platform presence. Only Shopify has a trusted reader; its statuses
- *  are counted from the items. The other platforms are reported as not-connected
- *  — deliberately NOT folded into "missing". */
+function puresoulStatusOf(item: OperationsListItem): PlatformStatusValue | null {
+  return item.platforms.find((p) => p.platform === "puresoul")?.status ?? null;
+}
+
+/** Summarise platform presence. Shopify + PureSoul have trusted readers; their
+ *  statuses are counted from the items. Unknown is NEVER counted (so a not-
+ *  connected / degraded platform is never folded into "missing"). */
 export function buildPlatformOverview(
   items: readonly OperationsListItem[],
   shopifyAvailable: boolean,
+  puresoulAvailable: boolean = false,
 ): PlatformOverview {
   const shopify: ShopifyOverview = {
     available: shopifyAvailable,
@@ -210,6 +227,12 @@ export function buildPlatformOverview(
     different: 0,
     reviewRequired: 0,
     ready: 0,
+  };
+  const puresoul: PureSoulOverview = {
+    available: puresoulAvailable,
+    published: 0,
+    outOfStock: 0,
+    reviewRequired: 0,
   };
   for (const item of items) {
     switch (shopifyStatusOf(item)) {
@@ -231,8 +254,21 @@ export function buildPlatformOverview(
       default:
         break; // "unknown" / null → not counted
     }
+    switch (puresoulStatusOf(item)) {
+      case "published":
+        puresoul.published++;
+        break;
+      case "ready": // مخلّصة (present but hidden / out of stock)
+        puresoul.outOfStock++;
+        break;
+      case "review_required":
+        puresoul.reviewRequired++;
+        break;
+      default:
+        break; // "unknown" / null → not counted, never "missing"
+    }
   }
-  return { shopify, puresoul: "not_connected", talabat: "not_connected", rafeeq: "not_connected" };
+  return { shopify, puresoul, talabat: "not_connected", rafeeq: "not_connected" };
 }
 
 // ── one-shot summary ─────────────────────────────────────────────────────────
@@ -248,11 +284,12 @@ export function buildDashboardSummary(
   items: readonly OperationsListItem[],
   health: HealthSummary,
   shopifyAvailable: boolean,
+  puresoulAvailable: boolean = false,
   queueTop: number = DEFAULT_QUEUE_TOP,
 ): DashboardSummary {
   return {
     kpis: buildKpis(items, health),
     queues: buildQueues(items, queueTop),
-    platformOverview: buildPlatformOverview(items, shopifyAvailable),
+    platformOverview: buildPlatformOverview(items, shopifyAvailable, puresoulAvailable),
   };
 }

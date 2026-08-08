@@ -128,9 +128,29 @@ test("buildPlatformOverview: Shopify counted by status; other platforms not-conn
   assert.equal(ov.shopify.published, 1);
   assert.equal(ov.shopify.missing, 1);
   assert.equal(ov.shopify.different, 1);
-  assert.equal(ov.puresoul, "not_connected");
+  assert.equal(ov.puresoul.available, false, "PureSoul not passed → not connected");
   assert.equal(ov.talabat, "not_connected");
   assert.equal(ov.rafeeq, "not_connected");
+});
+
+function puresoul(status: PlatformStatusValue): PlatformStatus[] {
+  return [{ platform: "puresoul", status, label: "x" }];
+}
+
+test("buildPlatformOverview: PureSoul counts published/out-of-stock/review; unknown never missing", () => {
+  const items = [
+    mk({ id: "a", platforms: puresoul("published") }),
+    mk({ id: "b", platforms: puresoul("ready") }), // مخلّصة (out of stock)
+    mk({ id: "c", platforms: puresoul("ready") }),
+    mk({ id: "d", platforms: puresoul("review_required") }),
+    mk({ id: "e", platforms: puresoul("unknown") }),
+  ];
+  const ov = buildPlatformOverview(items, false, true);
+  assert.equal(ov.puresoul.available, true);
+  assert.equal(ov.puresoul.published, 1);
+  assert.equal(ov.puresoul.outOfStock, 2);
+  assert.equal(ov.puresoul.reviewRequired, 1);
+  // there is no "missing" field for PureSoul — unknown is simply not counted.
 });
 
 test("buildPlatformOverview: degraded Shopify → available:false, unknown rows not counted missing", () => {
@@ -196,4 +216,8 @@ test("component: no business logic, no DB/write, no client JS; renders KPIs/queu
   assert.ok(DASH_SRC.includes("المصدر الرئيسي"), "Malikas source-of-truth");
   assert.ok(DASH_SRC.includes("تعذر قراءة Shopify حاليًا"), "degraded Shopify message");
   assert.ok(DASH_SRC.includes("TickTick غير مربوط حاليًا"), "degraded TickTick message");
+  // PureSoul (UI.9.1): real overview card + degraded banner + KPI/filter
+  assert.ok(DASH_SRC.includes("PureSoulOverviewCard"), "PureSoul overview card");
+  assert.ok(DASH_SRC.includes("تعذر قراءة PureSoul حاليًا"), "degraded PureSoul message");
+  assert.ok(DASH_SRC.includes("puresoul_out_of_stock"), "PureSoul out-of-stock filter wired");
 });

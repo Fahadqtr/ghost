@@ -95,6 +95,17 @@ test("ticktick_synced filter selects items with ticktickSyncedCount > 0", () => 
   assert.deepEqual(filterOperations([synced, notSynced, none], "ticktick_synced").map((i) => i.id), ["s"]);
 });
 
+test("puresoul filters read the puresoul platform status (out-of-stock=ready, review)", () => {
+  const outOfStock = item({ id: "oos", platforms: [{ platform: "puresoul", status: "ready", label: "x" }] });
+  const review = item({ id: "rev", platforms: [{ platform: "puresoul", status: "review_required", label: "x" }] });
+  const published = item({ id: "pub", platforms: [{ platform: "puresoul", status: "published", label: "x" }] });
+  const unknown = item({ id: "unk", platforms: [{ platform: "puresoul", status: "unknown", label: "x" }] });
+  const items = [outOfStock, review, published, unknown];
+  assert.deepEqual(filterOperations(items, "puresoul_out_of_stock").map((i) => i.id), ["oos"]);
+  assert.deepEqual(filterOperations(items, "puresoul_review").map((i) => i.id), ["rev"]);
+  assert.equal(filterOperations(items, "puresoul_out_of_stock").some((i) => i.id === "unk"), false, "unknown is never out-of-stock");
+});
+
 test("shopify filters read the shopify platform status only", () => {
   const missing = item({ id: "m", platforms: [{ platform: "shopify", status: "missing", label: "غير موجود" }] });
   const different = item({ id: "d", platforms: [{ platform: "shopify", status: "different", label: "مختلف" }] });

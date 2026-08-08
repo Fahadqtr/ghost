@@ -86,7 +86,9 @@ export type OperationsFilter =
   | "has_tasks"
   | "shopify_missing"
   | "shopify_different"
-  | "ticktick_synced";
+  | "ticktick_synced"
+  | "puresoul_out_of_stock"
+  | "puresoul_review";
 
 export const OPERATIONS_FILTER_VALUES: readonly OperationsFilter[] = [
   "all",
@@ -99,6 +101,8 @@ export const OPERATIONS_FILTER_VALUES: readonly OperationsFilter[] = [
   "shopify_missing",
   "shopify_different",
   "ticktick_synced",
+  "puresoul_out_of_stock",
+  "puresoul_review",
 ];
 
 export const OPERATIONS_FILTER_LABELS: Record<OperationsFilter, string> = {
@@ -112,6 +116,8 @@ export const OPERATIONS_FILTER_LABELS: Record<OperationsFilter, string> = {
   shopify_missing: "Shopify: غير موجود",
   shopify_different: "Shopify: مختلف",
   ticktick_synced: "مُزامَن مع TickTick",
+  puresoul_out_of_stock: "PureSoul: نافد",
+  puresoul_review: "PureSoul: مراجعة",
 };
 
 export const OPERATIONS_PAGE_SIZE = 24;
@@ -147,6 +153,10 @@ function shopifyStatus(item: OperationsListItem): PlatformStatusValue | null {
   return item.platforms.find((p) => p.platform === "shopify")?.status ?? null;
 }
 
+function puresoulStatus(item: OperationsListItem): PlatformStatusValue | null {
+  return item.platforms.find((p) => p.platform === "puresoul")?.status ?? null;
+}
+
 /** Apply a single filter (pure). Unknown filter → no narrowing. */
 export function filterOperations(
   items: readonly OperationsListItem[],
@@ -171,6 +181,11 @@ export function filterOperations(
       return items.filter((i) => shopifyStatus(i) === "missing");
     case "shopify_different":
       return items.filter((i) => shopifyStatus(i) === "different");
+    case "puresoul_out_of_stock":
+      // PureSoul present but hidden (مخلّصة) → engine status "ready".
+      return items.filter((i) => puresoulStatus(i) === "ready");
+    case "puresoul_review":
+      return items.filter((i) => puresoulStatus(i) === "review_required");
     case "all":
     default:
       return [...items];
