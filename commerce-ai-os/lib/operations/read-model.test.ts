@@ -110,6 +110,49 @@ test("trusted Shopify presence flows into platform status", async () => {
   assert.equal(other.platforms.find((p) => p.platform === "shopify")?.status, "unknown", "no presence for this id → unknown");
 });
 
+test("PureSoul presence flows into platform status; flags surfaced", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    puresoul: {
+      loadPureSoulPresence: async () => ({
+        available: true,
+        degraded: false,
+        byProductId: new Map([["ready", presence({ linked: true, live: true })]]),
+      }),
+    },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.puresoulAvailable, true);
+  assert.equal(res.data.puresoulDegraded, false);
+  const ready = res.data.items.find((i) => i.id === "ready")!;
+  assert.equal(ready.platforms.find((p) => p.platform === "puresoul")?.status, "published");
+  const other = res.data.items.find((i) => i.id === "noimg")!;
+  assert.equal(other.platforms.find((p) => p.platform === "puresoul")?.status, "unknown", "no PS presence → unknown, not missing");
+});
+
+test("PureSoul degraded reader → puresoulDegraded, every puresoul status unknown (never missing)", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    puresoul: { loadPureSoulPresence: async () => ({ available: false, degraded: true, byProductId: new Map() }) },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.puresoulAvailable, false);
+  assert.equal(res.data.puresoulDegraded, true);
+  for (const it of res.data.items) {
+    assert.notEqual(it.platforms.find((p) => p.platform === "puresoul")?.status, "missing");
+  }
+});
+
+test("no PureSoul reader → puresoul stays unknown, flags false (backwards compatible)", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), { engines });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.puresoulAvailable, false);
+  assert.equal(res.data.puresoulDegraded, false);
+});
+
 test("a DB error yields the single constant error status — never a raw error", async () => {
   const errClient = {
     from: () => ({

@@ -100,6 +100,15 @@ export interface ShopifyPresenceReader {
   ): Promise<{ available: boolean; byProductId: Map<string, PlatformPresence> }>;
 }
 
+/** A PureSoul presence reader (injected in tests; the UI.9.1 overlay reader in
+ *  prod). Best-effort: `degraded` marks a read failure (→ unknown, never
+ *  missing); `available` marks a healthy read that carried PureSoul data. */
+export interface PureSoulPresenceReader {
+  loadPureSoulPresence(
+    client: OperationsReadClient,
+  ): Promise<{ available: boolean; degraded: boolean; byProductId: Map<string, PlatformPresence> }>;
+}
+
 const PRODUCT_COLUMNS =
   "id, sku, barcode, name_ar, name_en, description_ar, description_en, brand_id, main_category, price, image_url, approval, platform_status";
 const VARIANT_COLUMNS = "parent_product_id";
@@ -128,6 +137,10 @@ export interface OperationsDashboardData {
   partial: boolean;
   /** true when a trusted Shopify read succeeded; false = degraded (unknown) */
   shopifyAvailable: boolean;
+  /** true when a healthy PureSoul overlay read carried data (else «غير مربوط») */
+  puresoulAvailable: boolean;
+  /** true when the PureSoul read FAILED (show a degraded banner; never missing) */
+  puresoulDegraded: boolean;
 }
 
 export type OperationsLoadResult =
@@ -142,20 +155,25 @@ export type OperationsLoadResult =
  */
 export async function loadOperationsDashboard(
   client: OperationsReadClient,
-  deps?: { engines?: OperationsEngines; shopify?: ShopifyPresenceReader },
+  deps?: { engines?: OperationsEngines; shopify?: ShopifyPresenceReader; puresoul?: PureSoulPresenceReader },
 ): Promise<OperationsLoadResult> {
   try {
     const engines = deps?.engines ?? (await defaultEngines());
 
-    // These three reads are independent — run them concurrently. A products or
-    // variants read failure rejects (→ outer catch → constant error), exactly as
-    // before; Shopify presence stays BEST-EFFORT (its own failure degrades to
-    // unknown and never fails the dashboard).
+    // These reads are independent — run them concurrently. A products or variants
+    // read failure rejects (→ outer catch → constant error), exactly as before;
+    // Shopify AND PureSoul presence stay BEST-EFFORT (their own failure degrades
+    // to unknown and never fails the dashboard, never reports "missing").
     const emptyPresence = (): { available: boolean; byProductId: Map<string, PlatformPresence> } => ({
       available: false,
       byProductId: new Map<string, PlatformPresence>(),
     });
-    const [products, variants, shopifyRes] = await Promise.all([
+    const emptyPuresoul = (degraded: boolean) => ({
+      available: false,
+      degraded,
+      byProductId: new Map<string, PlatformPresence>(),
+    });
+    const [products, variants, shopifyRes, puresoulRes] = await Promise.all([
       readAllRows(client.from("products").select(PRODUCT_COLUMNS).order("id", { ascending: true }), MAX_PRODUCTS),
       readAllRows(
         client.from("product_variants").select(VARIANT_COLUMNS).order("parent_product_id", { ascending: true }),
@@ -164,6 +182,9 @@ export async function loadOperationsDashboard(
       deps?.shopify
         ? deps.shopify.loadShopifyPresence(client).then((r) => r, emptyPresence)
         : Promise.resolve(emptyPresence()),
+      deps?.puresoul
+        ? deps.puresoul.loadPureSoulPresence(client).then((r) => r, () => emptyPuresoul(true))
+        : Promise.resolve(emptyPuresoul(false)),
     ]);
 
     // variant counts per parent — pure aggregation, no stock/PII read.
@@ -175,6 +196,9 @@ export async function loadOperationsDashboard(
 
     const shopifyAvailable = shopifyRes.available;
     const shopifyById = shopifyRes.byProductId;
+    const puresoulAvailable = puresoulRes.available;
+    const puresoulDegraded = puresoulRes.degraded;
+    const puresoulById = puresoulRes.byProductId;
 
     const items: OperationsListItem[] = [];
     const readiness: ProductReadiness[] = [];
@@ -185,7 +209,14 @@ export async function loadOperationsDashboard(
       const row = raw as Record<string, unknown>;
       const id = typeof row.id === "string" ? row.id : "";
       if (id === "") continue;
-      const presence = shopifyAvailable && shopifyById.has(id) ? { shopify: shopifyById.get(id)! } : undefined;
+      // Merge the per-product trusted platform snapshots (each omitted when
+      // absent → the engine reports "unknown", never "missing").
+      const shPres = shopifyAvailable && shopifyById.has(id) ? shopifyById.get(id) : undefined;
+      const psPres = puresoulById.has(id) ? puresoulById.get(id) : undefined;
+      const presence =
+        shPres || psPres
+          ? { ...(shPres ? { shopify: shPres } : {}), ...(psPres ? { puresoul: psPres } : {}) }
+          : undefined;
       const product = engines.mapProductRow(row, variantCounts.get(id) ?? 0, presence);
       const r = engines.computeProductReadiness(product);
       const statuses = engines.computePlatformStatuses(product, r.readyToPublish);
@@ -205,6 +236,8 @@ export async function loadOperationsDashboard(
         health: engines.computeHealthSummary(readiness, tasks),
         partial: products.partial || variants.partial,
         shopifyAvailable,
+        puresoulAvailable,
+        puresoulDegraded,
       },
     };
   } catch {
