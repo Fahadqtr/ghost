@@ -17,6 +17,7 @@
 import type { TaskViewItem } from "@/lib/operations/tasks-view";
 import type {
   TickTickClient,
+  TickTickProjectKey,
   TickTickProjectMap,
   TickTickSyncItemResult,
   TickTickSyncReport,
@@ -30,12 +31,18 @@ import type { MappedTask } from "./mapper";
 export interface TickTickSyncHelpers {
   mapTaskToPayload: (item: TaskViewItem, opts: { projectMap: TickTickProjectMap; baseUrl?: string }) => MappedTask;
   parseMarker: (content: string | null | undefined) => string | null;
+  summarizeContent: (content: string | null | undefined, max?: number) => string;
   toSafeMessage: (err: unknown) => string;
 }
 
 async function defaultHelpers(): Promise<TickTickSyncHelpers> {
   const [m, e] = await Promise.all([import("./mapper"), import("./errors")]);
-  return { mapTaskToPayload: m.mapTaskToPayload, parseMarker: m.parseMarker, toSafeMessage: e.toSafeMessage };
+  return {
+    mapTaskToPayload: m.mapTaskToPayload,
+    parseMarker: m.parseMarker,
+    summarizeContent: m.summarizeContent,
+    toSafeMessage: e.toSafeMessage,
+  };
 }
 
 export interface SyncDeps {
@@ -44,6 +51,13 @@ export interface SyncDeps {
   baseUrl?: string;
   /** injected in tests; lazily bound to the real pure helpers in production */
   helpers?: TickTickSyncHelpers;
+  /**
+   * When false, the completion sweep (step 3) is skipped: the sync creates/updates
+   * ONLY the given items and never completes any other Malikas-owned task. Used by
+   * the safe single-task sync so pushing one task can't touch the rest. Defaults to
+   * true (the full sync completes tasks whose reason disappeared from Malikas).
+   */
+  completeMissing?: boolean;
 }
 
 export interface SyncOutcome {
@@ -148,21 +162,103 @@ export async function syncOperationsTasksToTickTick(
 
   // 3. Complete Malikas-owned TickTick tasks whose reason disappeared from
   //    Malikas (not in the desired set). Already-completed (status 2) are left
-  //    alone; foreign tasks are absent from `owned`, so never touched.
-  for (const [marker, rec] of owned) {
-    if (desired.has(marker)) continue;
-    if (rec.status === 2) continue;
-    if (!rec.projectId) continue;
-    try {
-      await deps.client.completeTask(rec.projectId, rec.id);
-      records.push({
-        operationTaskId: marker, productId: productIdFromMarker(marker), action: "completed",
-        ticktickTaskId: rec.id, projectId: rec.projectId, at: rec.completedTime ?? null,
-      });
-    } catch (e) {
-      records.push({ operationTaskId: marker, productId: productIdFromMarker(marker), action: "failed", detail: toSafeMessage(e) });
+  //    alone; foreign tasks are absent from `owned`, so never touched. Skipped
+  //    entirely for a scoped single-task sync (completeMissing === false), so
+  //    pushing one task can never complete the rest.
+  if (deps.completeMissing !== false) {
+    for (const [marker, rec] of owned) {
+      if (desired.has(marker)) continue;
+      if (rec.status === 2) continue;
+      if (!rec.projectId) continue;
+      try {
+        await deps.client.completeTask(rec.projectId, rec.id);
+        records.push({
+          operationTaskId: marker, productId: productIdFromMarker(marker), action: "completed",
+          ticktickTaskId: rec.id, projectId: rec.projectId, at: rec.completedTime ?? null,
+        });
+      } catch (e) {
+        records.push({ operationTaskId: marker, productId: productIdFromMarker(marker), action: "failed", detail: toSafeMessage(e) });
+      }
     }
   }
 
   return { report: tally(records), records };
+}
+
+// ── dry-run planner (preview only — NEVER writes) ────────────────────────────
+
+/** A verb-shaped PLAN action (present tense), distinct from the past-tense result
+ *  actions, to make clear a plan is what WOULD happen — not what has happened. */
+export type TickTickPlanAction = "create" | "update" | "skip";
+
+export interface TickTickPlanItem {
+  /** the deterministic Malikas OperationTask id (also the TickTick marker) */
+  operationTaskId: string;
+  productId: string;
+  action: TickTickPlanAction;
+  projectKey: TickTickProjectKey;
+  /** resolved TickTick list id, or undefined when the list is unconfigured */
+  projectId?: string;
+  /** the exact title that WOULD be written */
+  title: string;
+  /** a short, human-readable summary of the description body (marker removed) */
+  descriptionSummary: string;
+  /** the deterministic identity that WOULD be embedded in the task content */
+  marker: string;
+}
+
+export interface PreviewOutcome {
+  ok: boolean;
+  items: TickTickPlanItem[];
+  /** fixed Arabic message when the pre-read failed (create/update can't be decided) */
+  error?: string;
+}
+
+/**
+ * DRY RUN: build the plan for the given items WITHOUT writing anything. It reads
+ * the existing tasks (read-only) to decide create-vs-update, then reports what a
+ * real sync WOULD do. It NEVER calls createTask / updateTask / completeTask, so a
+ * preview cannot create, update or complete any TickTick task. The mapping is the
+ * SAME one the real sync uses (via the shared pure mapper), so the plan is exact.
+ */
+export async function previewOperationTaskSync(
+  items: readonly TaskViewItem[],
+  deps: SyncDeps,
+): Promise<PreviewOutcome> {
+  const { mapTaskToPayload, parseMarker, summarizeContent, toSafeMessage } =
+    deps.helpers ?? (await defaultHelpers());
+
+  // Read-only: decide create vs update by matching our marker. No write happens.
+  const scanIds = uniqueProjectIds(deps.projectMap);
+  let existing: TickTickTaskRecord[] = [];
+  if (scanIds.length > 0) {
+    try {
+      existing = await deps.client.listProjectTasks(scanIds);
+    } catch (e) {
+      return { ok: false, items: [], error: toSafeMessage(e) };
+    }
+  }
+  const owned = new Set<string>();
+  for (const rec of existing) {
+    const marker = parseMarker(rec.content);
+    if (marker) owned.add(marker);
+  }
+
+  const plans: TickTickPlanItem[] = [];
+  for (const item of items) {
+    const opId = item.task.id;
+    const mapped = mapTaskToPayload(item, { projectMap: deps.projectMap, baseUrl: deps.baseUrl });
+    const action: TickTickPlanAction = !mapped.projectId ? "skip" : owned.has(opId) ? "update" : "create";
+    plans.push({
+      operationTaskId: opId,
+      productId: item.productId,
+      action,
+      projectKey: mapped.projectKey,
+      projectId: mapped.projectId,
+      title: mapped.payload.title,
+      descriptionSummary: summarizeContent(mapped.payload.content),
+      marker: parseMarker(mapped.payload.content) ?? opId,
+    });
+  }
+  return { ok: true, items: plans };
 }

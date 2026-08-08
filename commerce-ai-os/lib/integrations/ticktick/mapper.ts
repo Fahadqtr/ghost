@@ -124,6 +124,21 @@ export function buildContent(item: TaskViewItem, baseUrl: string = DEFAULT_APP_U
   return lines.join("\n");
 }
 
+/** A short, plain-text summary of a task's content body for previews: the
+ *  deterministic marker line is stripped and the text is clamped. PURE — used by
+ *  the dry-run planner and the /v2/tasks preview panel so both show the same
+ *  human-readable summary of what WOULD be written. */
+export function summarizeContent(content: string | null | undefined, max = 200): string {
+  const text = typeof content === "string" ? content : "";
+  return text
+    .split("\n")
+    .filter((line) => !line.includes("[[malikas:"))
+    .join("\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim()
+    .slice(0, max);
+}
+
 // ── full payload ─────────────────────────────────────────────────────────────
 
 export interface MappedTask {

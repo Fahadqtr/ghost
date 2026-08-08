@@ -19,7 +19,24 @@ import {
 } from "@/lib/operations/tasks-view";
 import { PLATFORM_LABELS } from "@/lib/operations/platforms/platform-status";
 import type { TaskPriority, TaskType } from "@/lib/operations/shared/models";
-import { syncTickTickAction } from "@/app/(v2)/v2/tasks/actions";
+import { syncTickTickAction, previewOneTickTickTask, syncOneTickTickTask } from "@/app/(v2)/v2/tasks/actions";
+
+/** The dry-run plan surfaced back on the previewed card (deterministic). */
+type TickTickCardPreview = {
+  action: "create" | "update" | "skip";
+  projectKey: string;
+  title: string;
+  descriptionSummary: string;
+  marker: string;
+};
+
+type TickTickCardInfo = { configured: boolean; preview: TickTickCardPreview | null };
+
+const PLAN_VERB: Record<"create" | "update" | "skip", string> = {
+  create: "سيتم إنشاء هذه المهمة في TickTick",
+  update: "سيتم تحديث هذه المهمة في TickTick",
+  skip: "لن تُنفَّذ — القائمة غير مهيأة",
+};
 
 function tasksHref(controls: TaskControls, over: Partial<TaskControls>): string {
   const c = { ...controls, ...over };
@@ -99,9 +116,10 @@ function TaskIcon({ type }: { type: TaskType }) {
   );
 }
 
-function TaskCard({ item }: { item: TaskViewItem }) {
+function TaskCard({ item, ticktick }: { item: TaskViewItem; ticktick?: TickTickCardInfo }) {
   const { task } = item;
   const name = item.nameAr || item.nameEn || item.sku || "منتج بدون اسم";
+  const preview = ticktick?.preview ?? null;
   return (
     <div className="card space-y-3 p-3">
       <div className="flex items-start gap-3">
@@ -147,6 +165,42 @@ function TaskCard({ item }: { item: TaskViewItem }) {
       <Link href={`/v2/catalog/${encodeURIComponent(item.productId)}`} className="btn-ghost w-full text-center text-xs">
         فتح المنتج
       </Link>
+
+      {/* Owner-only safe single-task TickTick controls (server actions; no client
+          JS). Shown only when TickTick is connected AND this task's list is
+          configured — otherwise a fixed notice replaces the buttons. The buttons
+          pass ONLY the task id; the server re-derives everything else. */}
+      {ticktick ? (
+        ticktick.configured ? (
+          <div className="space-y-2 border-t border-[#f5ece1] pt-2">
+            <form action={previewOneTickTickTask.bind(null, task.id)}>
+              <button type="submit" className="btn-ghost w-full text-center text-xs">معاينة TickTick</button>
+            </form>
+            {preview ? (
+              <div className="space-y-2 rounded-lg bg-[#faf3ec] p-2 text-[11px] text-ink" role="status">
+                {preview.action === "skip" ? (
+                  <p>قائمة TickTick لهذه المهمة غير مهيأة.</p>
+                ) : (
+                  <>
+                    <p className="font-medium">{PLAN_VERB[preview.action]}</p>
+                    <p className="text-muted">القائمة: {preview.projectKey}</p>
+                    <p className="truncate">العنوان: {preview.title}</p>
+                    <p className="whitespace-pre-line text-muted">{preview.descriptionSummary}</p>
+                    <p className="text-muted" dir="ltr">{preview.marker}</p>
+                    <form action={syncOneTickTickTask.bind(null, task.id)}>
+                      <button type="submit" className="btn-primary w-full text-center text-xs">مزامنة هذه المهمة</button>
+                    </form>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p className="border-t border-[#f5ece1] pt-2 text-[11px] text-muted">
+            قائمة TickTick لهذه المهمة غير مهيأة.
+          </p>
+        )
+      ) : null}
     </div>
   );
 }
@@ -160,6 +214,8 @@ export default function SmartTasks({
   shopifyAvailable,
   ticktickConnected = false,
   canSync = false,
+  ticktickCards,
+  preview = null,
   ticktickNotice = null,
 }: {
   summary: TaskSummary;
@@ -170,6 +226,15 @@ export default function SmartTasks({
   shopifyAvailable: boolean;
   ticktickConnected?: boolean;
   canSync?: boolean;
+  ticktickCards?: Record<string, { configured: boolean }>;
+  preview?: {
+    operationTaskId: string;
+    action: "create" | "update" | "skip";
+    projectKey: string;
+    title: string;
+    descriptionSummary: string;
+    marker: string;
+  } | null;
   ticktickNotice?: { tone: "ok" | "error" | "info"; text: string } | null;
 }) {
   const hasPrev = page.page > 1;
@@ -265,7 +330,16 @@ export default function SmartTasks({
           </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {page.items.map((item) => <TaskCard key={item.task.id} item={item} />)}
+            {page.items.map((item) => {
+              const info = canSync ? ticktickCards?.[item.task.id] : undefined;
+              const ticktick: TickTickCardInfo | undefined = info
+                ? {
+                    configured: info.configured,
+                    preview: preview && preview.operationTaskId === item.task.id ? preview : null,
+                  }
+                : undefined;
+              return <TaskCard key={item.task.id} item={item} ticktick={ticktick} />;
+            })}
           </div>
 
           {page.totalPages > 1 ? (

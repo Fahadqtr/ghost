@@ -5,8 +5,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { syncOperationsTasksToTickTick, type SyncDeps } from "./adapter.ts";
-import { buildContent, mapTaskToPayload, parseMarker } from "./mapper.ts";
+import { syncOperationsTasksToTickTick, previewOperationTaskSync, type SyncDeps } from "./adapter.ts";
+import { buildContent, mapTaskToPayload, parseMarker, summarizeContent } from "./mapper.ts";
 import { TickTickError, TICKTICK_ERRORS, toSafeMessage } from "./errors.ts";
 import type { OperationTask } from "../../operations/shared/models.ts";
 import type { TaskViewItem } from "../../operations/tasks-view.ts";
@@ -15,7 +15,7 @@ import type { TickTickClient, TickTickProjectMap, TickTickTaskRecord } from "./t
 const MAP: TickTickProjectMap = { photos: "PJ_PHOTOS", review: "PJ_REVIEW", shopify: "PJ_SHOP" };
 
 // The pure helpers are injected so the adapter loads directly under node:test.
-const HELPERS: SyncDeps["helpers"] = { mapTaskToPayload, parseMarker, toSafeMessage };
+const HELPERS: SyncDeps["helpers"] = { mapTaskToPayload, parseMarker, summarizeContent, toSafeMessage };
 function deps(over: Partial<SyncDeps> & { client: SyncDeps["client"] }): SyncDeps {
   return { projectMap: MAP, helpers: HELPERS, ...over };
 }
@@ -185,6 +185,88 @@ test("a task whose list is not configured is skipped, never sent to the Inbox", 
   assert.equal(report.skipped, 1);
   assert.equal(calls.created.length, 0);
   assert.equal(report.items[0]!.action, "skipped");
+});
+
+// ── dry-run preview (never writes) ───────────────────────────────────────────
+
+test("preview NEVER calls create/update/complete (pure dry run)", async () => {
+  const existing = [owned("needs_image:p1", "PJ_PHOTOS")];
+  const { client, calls } = fakeClient(existing);
+  const res = await previewOperationTaskSync([mkItem()], deps({ client }));
+  assert.equal(res.ok, true);
+  assert.equal(calls.created.length, 0, "no create call during a preview");
+  assert.equal(calls.updated.length, 0, "no update call during a preview");
+  assert.equal(calls.completed.length, 0, "no complete call during a preview");
+  assert.equal(res.items[0]!.action, "update", "existing task → plan says update");
+});
+
+test("preview plans a create for a task with no existing TickTick task", async () => {
+  const { client, calls } = fakeClient([]);
+  const res = await previewOperationTaskSync([mkItem()], deps({ client }));
+  assert.equal(res.items[0]!.action, "create");
+  assert.equal(calls.created.length, 0);
+  assert.ok(res.items[0]!.title.length > 0, "plan carries the exact title");
+  assert.equal(res.items[0]!.marker, "needs_image:p1", "plan carries the deterministic marker");
+  assert.equal(res.items[0]!.projectKey, "photos");
+  assert.ok(!res.items[0]!.descriptionSummary.includes("[[malikas:"), "marker line stripped from the summary");
+});
+
+test("preview marks an unconfigured list as skip and reads/writes nothing", async () => {
+  const { client, calls } = fakeClient([]);
+  const res = await previewOperationTaskSync([mkItem()], deps({ client, projectMap: {} }));
+  assert.equal(res.items[0]!.action, "skip");
+  assert.equal(res.items[0]!.projectId, undefined);
+  assert.equal(calls.listed, 0, "no configured lists → no read");
+  assert.equal(calls.created.length, 0);
+});
+
+test("preview surfaces a FIXED message on a read failure — never a raw error", async () => {
+  const { client } = fakeClient([], { failList: true });
+  const res = await previewOperationTaskSync([mkItem()], deps({ client }));
+  assert.equal(res.ok, false);
+  assert.equal(res.items.length, 0);
+  assert.equal(res.error, TICKTICK_ERRORS.unknown);
+  assert.ok(!String(res.error).includes("boom"), "raw error text never leaks");
+});
+
+// ── single-task sync scoping (completeMissing:false) ─────────────────────────
+
+test("single-task sync creates ONLY the given task and completes NO other owned task", async () => {
+  // Another Malikas-owned task exists in TickTick and is NOT in the items list.
+  const other = owned("needs_image:p2", "PJ_PHOTOS");
+  const { client, calls } = fakeClient([other]);
+  const { report } = await syncOperationsTasksToTickTick([mkItem()], deps({ client, completeMissing: false }));
+  assert.equal(report.created, 1, "our one task is created");
+  assert.equal(report.completed, 0, "the OTHER owned task is NOT completed");
+  assert.equal(calls.completed.length, 0, "no completion call in a scoped single-task sync");
+});
+
+test("the full (default) sync still sweep-completes resolved tasks — opt-out is explicit", async () => {
+  const other = owned("needs_image:p2", "PJ_PHOTOS");
+  const { client, calls } = fakeClient([other]);
+  const { report } = await syncOperationsTasksToTickTick([mkItem()], deps({ client }));
+  assert.equal(report.created, 1);
+  assert.equal(report.completed, 1, "p2 (absent from Malikas) is completed by the full sync");
+  assert.equal(calls.completed.length, 1);
+});
+
+test("repeated single-task sync never duplicates (create once, then update)", async () => {
+  const existing: TickTickTaskRecord[] = [];
+  const { client, calls } = fakeClient(existing);
+  for (let i = 0; i < 5; i++) {
+    await syncOperationsTasksToTickTick([mkItem()], deps({ client, completeMissing: false }));
+  }
+  assert.equal(calls.created.length, 1, "created exactly once");
+  assert.equal(calls.updated.length, 4, "updated on every subsequent sync");
+  assert.equal(existing.length, 1, "only one TickTick task exists");
+});
+
+test("single-task sync never touches foreign (unmarked) tasks", async () => {
+  const foreign: TickTickTaskRecord = { id: "manual1", projectId: "PJ_PHOTOS", status: 0, content: "شراء حليب" };
+  const { client, calls } = fakeClient([foreign]);
+  await syncOperationsTasksToTickTick([mkItem()], deps({ client, completeMissing: false }));
+  assert.ok(!calls.updated.some((u) => (u as { id?: string }).id === "manual1"), "foreign task never updated");
+  assert.equal(calls.completed.length, 0, "foreign task never completed");
 });
 
 // ── deterministic identity ───────────────────────────────────────────────────
