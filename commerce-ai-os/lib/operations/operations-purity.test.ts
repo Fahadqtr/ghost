@@ -18,6 +18,9 @@ const ENGINE_FILES = [
   "platforms/platform-status.ts",
   "new-products/new-product-engine.ts",
   "health/health-engine.ts",
+  "timeline/timeline-engine.ts",
+  "timeline/providers/timeline-provider.ts",
+  "timeline/providers/snapshot-provider.ts",
 ] as const;
 
 const BANNED = [

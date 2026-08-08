@@ -193,6 +193,102 @@ export interface NewProductBuckets {
   needsReview: string[];
 }
 
+// ── product timeline (Phase UI.7.4) ──────────────────────────────────────────
+//
+// The Timeline is a SOURCE-AGNOSTIC contract. A TimelineEvent is the official
+// project shape every provider must return, and the TimelineEngine only
+// AGGREGATES + orders TimelineEvents handed to it by providers — it never knows
+// how any source derives its events. Today only the snapshot provider exists;
+// tomorrow TickTick / Shopify / PureSoul / Talabat / Rafeeq / Launch Manager /
+// Notifications / Excel / AI providers can be added WITHOUT changing this
+// contract, the engine, or the UI.
+
+/** Where a TimelineEvent came from. Only "snapshot" is produced today; the rest
+ *  are reserved so future providers slot in without a contract change. */
+export type TimelineSource =
+  | "snapshot"
+  | "ticktick"
+  | "shopify"
+  | "puresoul"
+  | "talabat"
+  | "rafeeq"
+  | "launch_manager"
+  | "notifications"
+  | "excel"
+  | "ai";
+
+/**
+ * The kinds of timeline event. This union is the CURRENT set (all snapshot-
+ * derived); future providers may extend it. The snapshot provider derives:
+ * - "created"   : products.created_at (trusted, independently timed).
+ * - "updated"   : products.updated_at, only when it is a genuine later edit than
+ *                 created_at (trusted, independently timed).
+ * - "approved" | "rejected" | "sent_to_ai" : the CURRENT approval state, whose
+ *                 exact transition time is unknown, anchored to updated_at with
+ *                 atKnown=false.
+ * - "published" : a non-empty platform_status, anchored the same way.
+ */
+export type TimelineEventKind =
+  | "created"
+  | "updated"
+  | "approved"
+  | "rejected"
+  | "sent_to_ai"
+  | "published";
+
+/**
+ * THE official Timeline contract. Every provider returns TimelineEvent[] with
+ * this exact schema; the engine merges and orders them. COMPUTED, never stored.
+ * The id is deterministic over (source, kind, productId) so recomputing yields
+ * the same ids and the engine can de-duplicate across providers safely.
+ */
+export interface TimelineEvent {
+  id: string;
+  /** which provider produced this event */
+  source: TimelineSource;
+  productId: string;
+  kind: TimelineEventKind;
+  /**
+   * The timestamp to display (ISO string) or null when unknown. For
+   * created/updated this is the real column value; for state events it is the
+   * anchor (updated_at, else created_at) that the state was true BY.
+   */
+  at: string | null;
+  /**
+   * true only for events that carry their OWN trusted timestamp (created/
+   * updated). false for state events whose exact transition time is unknown
+   * (shown as "as of" the last change), so the UI never implies a precise time.
+   */
+  atKnown: boolean;
+  /** fixed Arabic title — never raw data */
+  title: string;
+  /** fixed Arabic description — never raw data */
+  description: string;
+}
+
+/**
+ * A catalog-safe snapshot of one Malikas product — the input the SNAPSHOT
+ * provider reads (not the engine). Structural on purpose (like OperationsProduct):
+ * the caller builds it from whatever reader it already has. No stock, no platform
+ * ids, no PII. Timestamps are the raw column strings (or null when absent).
+ */
+export interface TimelineProductSnapshot {
+  id: string;
+  sku: string | null;
+  barcode: string | null;
+  nameAr: string | null;
+  nameEn: string | null;
+  imageUrl: string | null;
+  /** raw approval text: "Approved" | "Rejected" | "SentAI" | "" (house values) */
+  approval: string | null;
+  /** raw platform_status text; "" = never pushed anywhere */
+  platformStatus: string | null;
+  /** raw created_at column (ISO string) or null */
+  createdAt: string | null;
+  /** raw updated_at column (ISO string) or null */
+  updatedAt: string | null;
+}
+
 // ── health ───────────────────────────────────────────────────────────────────
 
 export interface HealthSummary {
