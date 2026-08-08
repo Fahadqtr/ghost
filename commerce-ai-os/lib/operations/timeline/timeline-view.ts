@@ -152,10 +152,12 @@ export function formatTimelineDate(at: string | null): string {
 
 // ── product-detail widget ────────────────────────────────────────────────────
 
-/** The product-detail «النشاط» widget: the first N events + how many remain. */
+/** The product-detail «النشاط» widget: the latest N events (the list arrives
+ *  newest-first from the engine, so the first N ARE the latest N) + how many
+ *  remain. Defaults to 10 — the widget's contract. */
 export function timelineWidgetEvents(
   events: readonly TimelineEvent[],
-  limit = 3,
+  limit = 10,
 ): { shown: TimelineEvent[]; remaining: number } {
   const shown = events.slice(0, limit);
   return { shown, remaining: Math.max(0, events.length - shown.length) };

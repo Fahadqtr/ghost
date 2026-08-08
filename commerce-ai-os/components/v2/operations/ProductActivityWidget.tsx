@@ -1,7 +1,8 @@
 // Malikas V2 — «النشاط» widget for the product detail page (Phase UI.7.4).
 // Read-only: it renders the timeline events already COMPUTED by
-// lib/operations/timeline for this one product (first 3 + a "+N" hint) plus a
-// link to the full timeline. No business logic, no data access, no edit/delete
+// lib/operations/timeline for this one product (latest 10 + a "+N" hint) plus a
+// link to the full timeline. Events arrive newest-first from the engine, so the
+// first 10 ARE the latest 10. No business logic, no data access, no edit/delete
 // — activity is computed from the product snapshot, never stored.
 
 import Link from "next/link";
@@ -30,7 +31,7 @@ export default function ProductActivityWidget({
     );
   }
 
-  const { shown, remaining } = timelineWidgetEvents(events, 3);
+  const { shown, remaining } = timelineWidgetEvents(events, 10);
 
   return (
     <div className="card space-y-2 p-4">

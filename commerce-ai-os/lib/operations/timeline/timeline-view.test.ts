@@ -158,6 +158,14 @@ test("timelineWidgetEvents shows the first N and reports the remainder", () => {
   assert.equal(few.remaining, 0, "never negative");
 });
 
+test("timelineWidgetEvents defaults to the widget's contract of 10 (latest 10)", () => {
+  const items = Array.from({ length: 15 }, (_, i) => ev({ id: `d${i}` }));
+  const { shown, remaining } = timelineWidgetEvents(items);
+  assert.equal(shown.length, 10, "default limit is 10");
+  assert.equal(remaining, 5);
+  assert.deepEqual(shown.map((e) => e.id), items.slice(0, 10).map((e) => e.id));
+});
+
 // ── end-to-end with the real engine + provider ────────────────────────────────
 
 test("view pipeline composes with the engine's aggregated output", () => {
