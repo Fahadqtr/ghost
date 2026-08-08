@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 
 import {
   buildMarker, parseMarker, priorityToTickTick, projectKeyFor, resolveProjectId,
-  productUrl, buildTitle, buildContent, mapTaskToPayload, DEFAULT_APP_URL,
+  productUrl, buildTitle, buildContent, mapTaskToPayload, summarizeContent, DEFAULT_APP_URL,
 } from "./mapper.ts";
 import type { OperationTask } from "../../operations/shared/models.ts";
 import type { TaskViewItem } from "../../operations/tasks-view.ts";
@@ -131,6 +131,17 @@ test("mapTaskToPayload leaves projectId undefined when the list is unconfigured"
   const mapped = mapTaskToPayload(mkItem(), { projectMap: {} });
   assert.equal(mapped.projectId, undefined);
   assert.ok(!("projectId" in mapped.payload), "no projectId key → adapter will skip, never Inbox");
+});
+
+// ── content summary (previews) ───────────────────────────────────────────────
+
+test("summarizeContent strips the marker line and clamps the length", () => {
+  const c = buildContent(mkItem(), "https://example.test");
+  const s = summarizeContent(c);
+  assert.ok(!s.includes("[[malikas:"), "the deterministic marker line is removed");
+  assert.ok(s.includes("SKU: MK2239"), "keeps the human-readable fields");
+  assert.ok(summarizeContent("a".repeat(500)).length <= 200, "clamped to the max");
+  assert.equal(summarizeContent(null), "", "null content → empty summary");
 });
 
 // ── the mapper carries NO business rules ─────────────────────────────────────

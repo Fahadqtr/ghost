@@ -57,3 +57,30 @@ test("the manual sync action is a server action gated by the owner", () => {
   assert.ok(ACTIONS.includes("requireOwner"), "sync must be owner-gated");
   assert.ok(!ACTIONS.includes("TICKTICK_ACCESS_TOKEN"), "action must not reference the token env directly");
 });
+
+test("single-task actions: owner-gated, server-derived, dry-run preview, scoped sync", () => {
+  // both single-task actions exist and re-derive the task server-side (never trust
+  // the client) — only the task id is passed from the browser.
+  assert.ok(ACTIONS.includes("previewOneTickTickTask"), "preview action must exist");
+  assert.ok(ACTIONS.includes("syncOneTickTickTask"), "single-task sync action must exist");
+  assert.ok(ACTIONS.includes("loadTasksView"), "actions re-derive tasks from the Operations reader");
+  // the preview uses the dry-run planner (no writes), never the writing sync.
+  assert.ok(ACTIONS.includes("previewOperationTaskSync"), "preview must use the dry-run planner");
+  // the single-task sync opts out of the completion sweep → touches only one task.
+  assert.ok(ACTIONS.includes("completeMissing: false"), "single-task sync must not sweep-complete other tasks");
+  // the actions take ONLY the id — no project id / title / description from the client.
+  assert.ok(!ACTIONS.includes("formData"), "single-task actions take only the task id, no client-supplied fields");
+  assert.ok(!ACTIONS.includes("projectId:") || ACTIONS.includes("projectMap: projectMapFromEnv()"),
+    "project routing comes from env, never the client");
+});
+
+test("single-task TickTick UI: owner-gated buttons + fixed unconfigured notice, no client JS", () => {
+  assert.ok(SMARTTASKS.includes("معاينة TickTick"), "preview button present");
+  assert.ok(SMARTTASKS.includes("مزامنة هذه المهمة"), "single-task sync button present");
+  assert.ok(SMARTTASKS.includes("قائمة TickTick لهذه المهمة غير مهيأة."), "fixed unconfigured notice present");
+  assert.ok(SMARTTASKS.includes("previewOneTickTickTask"), "wires the preview server action");
+  assert.ok(SMARTTASKS.includes("syncOneTickTickTask"), "wires the single-task sync server action");
+  assert.ok(!SMARTTASKS.includes('"use client"'), "SmartTasks stays a server component");
+  // the buttons pass ONLY the task id (bound server action), never task fields.
+  assert.ok(SMARTTASKS.includes(".bind(null, task.id)"), "buttons bind only the task id");
+});
