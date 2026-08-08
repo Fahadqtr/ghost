@@ -19,6 +19,7 @@ import {
 } from "@/lib/operations/tasks-view";
 import { PLATFORM_LABELS } from "@/lib/operations/platforms/platform-status";
 import type { TaskPriority, TaskType } from "@/lib/operations/shared/models";
+import { syncTickTickAction } from "@/app/(v2)/v2/tasks/actions";
 
 function tasksHref(controls: TaskControls, over: Partial<TaskControls>): string {
   const c = { ...controls, ...over };
@@ -157,6 +158,9 @@ export default function SmartTasks({
   controls,
   partial,
   shopifyAvailable,
+  ticktickConnected = false,
+  canSync = false,
+  ticktickNotice = null,
 }: {
   summary: TaskSummary;
   page: TaskPage;
@@ -164,18 +168,48 @@ export default function SmartTasks({
   controls: TaskControls;
   partial: boolean;
   shopifyAvailable: boolean;
+  ticktickConnected?: boolean;
+  canSync?: boolean;
+  ticktickNotice?: { tone: "ok" | "error" | "info"; text: string } | null;
 }) {
   const hasPrev = page.page > 1;
   const hasNext = page.page < page.totalPages;
 
+  const noticeToneClass =
+    ticktickNotice?.tone === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : ticktickNotice?.tone === "error" ? "border-rose-200 bg-rose-50 text-rose-700"
+    : "border-amber-200 bg-amber-50 text-amber-800";
+
   return (
     <div className="space-y-5">
-      <div className="space-y-1">
-        <h1 className="font-serif text-2xl font-semibold text-ink">المهام الذكية</h1>
-        <p className="text-sm text-muted">
-          مهام محسوبة تلقائيًا من جاهزية المنتجات وحالة المنصات — لا تُحفظ ولا تُغلق يدويًا؛ تختفي بمجرد معالجة سببها.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="font-serif text-2xl font-semibold text-ink">المهام الذكية</h1>
+          <p className="text-sm text-muted">
+            مهام محسوبة تلقائيًا من جاهزية المنتجات وحالة المنصات — لا تُحفظ ولا تُغلق يدويًا؛ تختفي بمجرد معالجة سببها.
+          </p>
+        </div>
+        {/* TickTick integration status + owner-only manual sync (no client JS). */}
+        <div className="flex shrink-0 items-center gap-2">
+          <span
+            className={
+              "rounded-full px-2 py-1 text-[11px] " +
+              (ticktickConnected ? "bg-emerald-50 text-emerald-700" : "bg-[#f5ece1] text-muted")
+            }
+          >
+            TickTick: {ticktickConnected ? "مربوط" : "غير مربوط"}
+          </span>
+          {canSync ? (
+            <form action={syncTickTickAction}>
+              <button type="submit" className="btn-ghost text-xs">مزامنة TickTick</button>
+            </form>
+          ) : null}
+        </div>
       </div>
+
+      {ticktickNotice ? (
+        <div className={"card text-sm " + noticeToneClass} role="status">{ticktickNotice.text}</div>
+      ) : null}
 
       {partial ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">

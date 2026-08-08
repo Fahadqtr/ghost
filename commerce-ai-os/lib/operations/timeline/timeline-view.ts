@@ -28,8 +28,11 @@ export const TIMELINE_FILTER_LABELS: Record<TimelineFilter, string> = {
   platform: "النشر",
 };
 
-/** Which filter bucket a kind belongs to. */
-const KIND_FILTER: Record<TimelineEventKind, Exclude<TimelineFilter, "all">> = {
+/** Which filter bucket a kind belongs to. Partial: only the snapshot-derived
+ *  kinds shown on the product timeline are mapped; other providers' kinds (e.g.
+ *  TickTick integration events) have no product-filter bucket and are ignored
+ *  by this view. */
+const KIND_FILTER: Partial<Record<TimelineEventKind, Exclude<TimelineFilter, "all">>> = {
   created: "created",
   updated: "updated",
   approved: "approval",
@@ -38,7 +41,8 @@ const KIND_FILTER: Record<TimelineEventKind, Exclude<TimelineFilter, "all">> = {
   published: "platform",
 };
 
-/** Apply one filter (order-preserving; the engine already ordered the list). */
+/** Apply one filter (order-preserving; the engine already ordered the list).
+ *  "all" keeps every event; a specific filter keeps only kinds mapped to it. */
 export function filterTimelineEvents(
   events: readonly TimelineEvent[],
   filter: TimelineFilter,
@@ -101,15 +105,18 @@ export function summarizeTimeline(events: readonly TimelineEvent[]): TimelineSum
   const s: TimelineSummary = { total: 0, created: 0, updated: 0, approval: 0, platform: 0 };
   for (const e of events) {
     s.total++;
-    s[KIND_FILTER[e.kind]]++;
+    const bucket = KIND_FILTER[e.kind];
+    if (bucket) s[bucket]++;
   }
   return s;
 }
 
 // ── labels / icons / date formatting (single-sourced + testable) ─────────────
 
-/** Fixed Arabic kind label (for a per-event chip). */
-export const TIMELINE_KIND_LABELS: Record<TimelineEventKind, string> = {
+/** Fixed Arabic kind label (for a per-event chip). Partial over the shared union
+ *  — the product timeline renders only snapshot kinds; other providers' kinds
+ *  fall back to a generic label at the call site. */
+export const TIMELINE_KIND_LABELS: Partial<Record<TimelineEventKind, string>> = {
   created: "إنشاء",
   updated: "تحديث",
   approved: "اعتماد",
@@ -118,8 +125,9 @@ export const TIMELINE_KIND_LABELS: Record<TimelineEventKind, string> = {
   published: "نشر",
 };
 
-/** Icon key per kind (the component turns it into a glyph). */
-export const TIMELINE_ICONS: Record<TimelineEventKind, string> = {
+/** Icon key per kind (the component turns it into a glyph). Partial for the same
+ *  reason as TIMELINE_KIND_LABELS. */
+export const TIMELINE_ICONS: Partial<Record<TimelineEventKind, string>> = {
   created: "created",
   updated: "updated",
   approved: "approved",

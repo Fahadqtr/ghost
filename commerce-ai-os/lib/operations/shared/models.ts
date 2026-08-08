@@ -229,12 +229,19 @@ export type TimelineSource =
  * - "published" : a non-empty platform_status, anchored the same way.
  */
 export type TimelineEventKind =
+  // snapshot-derived product-lifecycle kinds
   | "created"
   | "updated"
   | "approved"
   | "rejected"
   | "sent_to_ai"
-  | "published";
+  | "published"
+  // TickTick integration kinds (Phase UI.7.5) — emitted only by the TickTick
+  // provider from VERIFIED sync results; the engine orders them via its generic
+  // DEFAULT_RANK fallback (no engine logic change).
+  | "ticktick_synced"
+  | "ticktick_updated"
+  | "ticktick_completed";
 
 /**
  * THE official Timeline contract. Every provider returns TimelineEvent[] with

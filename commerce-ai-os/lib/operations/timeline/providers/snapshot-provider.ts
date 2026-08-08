@@ -18,8 +18,16 @@ import type { TimelineProvider } from "./timeline-provider";
 
 const SOURCE = "snapshot" as const;
 
+// The kinds THIS provider derives (a subset of TimelineEventKind). Keying the
+// copy maps to this local subtype keeps them exhaustive+safe even as the shared
+// TimelineEventKind grows with other providers' kinds.
+type SnapshotEventKind = Extract<
+  TimelineEventKind,
+  "created" | "updated" | "approved" | "rejected" | "sent_to_ai" | "published"
+>;
+
 // Fixed Arabic copy — never reflects raw data.
-const TITLES: Record<TimelineEventKind, string> = {
+const TITLES: Record<SnapshotEventKind, string> = {
   created: "أُنشئ المنتج",
   updated: "تحديث البيانات",
   approved: "تم اعتماد المنتج",
@@ -28,7 +36,7 @@ const TITLES: Record<TimelineEventKind, string> = {
   published: "منشور على منصة",
 };
 
-const DESCRIPTIONS: Record<TimelineEventKind, string> = {
+const DESCRIPTIONS: Record<SnapshotEventKind, string> = {
   created: "تمت إضافة المنتج إلى كتالوج ماليكاس.",
   updated: "جرى تعديل بيانات المنتج بعد إنشائه.",
   approved: "المنتج معتمد وجاهز ليُنشر على المنصات.",
@@ -60,7 +68,7 @@ function normalizeApproval(raw: string | null): "approved" | "rejected" | "sent_
 }
 
 function mkEvent(
-  kind: TimelineEventKind,
+  kind: SnapshotEventKind,
   productId: string,
   at: string | null,
   atKnown: boolean,

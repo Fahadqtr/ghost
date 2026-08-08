@@ -43,7 +43,7 @@ const ICON_GLYPH: Record<string, string> = {
   published: "🚀",
 };
 
-const KIND_TONE: Record<TimelineEventKind, string> = {
+const KIND_TONE: Partial<Record<TimelineEventKind, string>> = {
   created: "bg-[#f5ece1] text-ink",
   updated: "bg-amber-50 text-amber-800",
   approved: "bg-emerald-50 text-emerald-700",
@@ -53,7 +53,7 @@ const KIND_TONE: Record<TimelineEventKind, string> = {
 };
 
 function EventCard({ event }: { event: TimelineEvent }) {
-  const glyph = ICON_GLYPH[TIMELINE_ICONS[event.kind]] ?? "•";
+  const glyph = ICON_GLYPH[TIMELINE_ICONS[event.kind] ?? ""] ?? "•";
   return (
     <div className="card space-y-2 p-3">
       <div className="flex items-start gap-3">
@@ -66,8 +66,8 @@ function EventCard({ event }: { event: TimelineEvent }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <span className="min-w-0 text-sm font-semibold text-ink">{event.title}</span>
-            <span className={"shrink-0 rounded-full px-2 py-0.5 text-[11px] " + KIND_TONE[event.kind]}>
-              {TIMELINE_KIND_LABELS[event.kind]}
+            <span className={"shrink-0 rounded-full px-2 py-0.5 text-[11px] " + (KIND_TONE[event.kind] ?? "bg-[#f5ece1] text-ink")}>
+              {TIMELINE_KIND_LABELS[event.kind] ?? event.kind}
             </span>
           </div>
           <p className="mt-0.5 text-xs text-muted">{event.description}</p>
