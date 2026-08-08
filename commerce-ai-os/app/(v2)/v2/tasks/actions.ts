@@ -19,6 +19,7 @@ import {
   ticktickConfigured,
 } from "@/lib/integrations/ticktick/client";
 import { syncOperationsTasksToTickTick, previewOperationTaskSync } from "@/lib/integrations/ticktick/adapter";
+import { tasksRedirect } from "@/lib/integrations/ticktick/tasks-nav";
 
 /** Manually push the current Smart Tasks to TickTick (owner only). Redirects back
  *  to /v2/tasks with a fixed status the page renders as a banner. */
@@ -61,14 +62,18 @@ export async function syncTickTickAction(): Promise<void> {
  * the id is passed), then previews what a real sync WOULD do WITHOUT writing to
  * TickTick. Redirects back with the plan action so the card can reveal the sync
  * button; no title/description/project id ever comes from the client.
+ *
+ * `view` carries the owner's current list view (query/filter/page) so the
+ * result lands on the SAME card — without it the page reset to an unfiltered
+ * page 1 and the previewed card was usually off-screen, so nothing appeared.
  */
-export async function previewOneTickTickTask(operationTaskId: string): Promise<void> {
+export async function previewOneTickTickTask(operationTaskId: string, view?: string): Promise<void> {
   const owner = await requireOwner();
-  if (!owner.ok) redirect("/v2/tasks?ticktick=denied");
-  if (!ticktickConfigured()) redirect("/v2/tasks?ticktick=not_configured");
+  if (!owner.ok) redirect(tasksRedirect(view, { ticktick: "denied" }));
+  if (!ticktickConfigured()) redirect(tasksRedirect(view, { ticktick: "not_configured" }));
 
   const id = String(operationTaskId ?? "").trim();
-  let query = "/v2/tasks?ticktick=preview_error";
+  let query = tasksRedirect(view, { ticktick: "preview_error" });
   try {
     const supabase = createClient();
     const result = await loadTasksView(supabase as never, { shopify: { loadShopifyPresence } });
@@ -76,7 +81,7 @@ export async function previewOneTickTickTask(operationTaskId: string): Promise<v
       // Server-side re-derivation: a forged / stale id simply isn't found.
       const item = result.data.tasks.find((t) => t.task.id === id);
       if (!item) {
-        query = "/v2/tasks?ticktick=notfound";
+        query = tasksRedirect(view, { ticktick: "notfound" });
       } else {
         const preview = await previewOperationTaskSync([item], {
           client: getTickTickClient(),
@@ -84,16 +89,13 @@ export async function previewOneTickTickTask(operationTaskId: string): Promise<v
           baseUrl: appBaseUrl(),
         });
         const plan = preview.ok ? preview.items[0] : undefined;
-        if (plan) {
-          const p = new URLSearchParams({ ttplan: id, pa: plan.action });
-          query = `/v2/tasks?${p.toString()}`;
-        } else {
-          query = "/v2/tasks?ticktick=preview_error";
-        }
+        query = plan
+          ? tasksRedirect(view, { ttplan: id, pa: plan.action })
+          : tasksRedirect(view, { ticktick: "preview_error" });
       }
     }
   } catch {
-    query = "/v2/tasks?ticktick=preview_error";
+    query = tasksRedirect(view, { ticktick: "preview_error" });
   }
   redirect(query);
 }
@@ -105,21 +107,24 @@ export async function previewOneTickTickTask(operationTaskId: string): Promise<v
  * completeMissing:false, so it creates/updates only that task and never completes
  * any other Malikas-owned task. Identity is deterministic, so repeating it updates
  * (never duplicates). A TickTick failure never affects Malikas.
+ *
+ * `view` carries the owner's current list view (query/filter/page) so the status
+ * banner returns them to the same page they synced from.
  */
-export async function syncOneTickTickTask(operationTaskId: string): Promise<void> {
+export async function syncOneTickTickTask(operationTaskId: string, view?: string): Promise<void> {
   const owner = await requireOwner();
-  if (!owner.ok) redirect("/v2/tasks?ticktick=denied");
-  if (!ticktickConfigured()) redirect("/v2/tasks?ticktick=not_configured");
+  if (!owner.ok) redirect(tasksRedirect(view, { ticktick: "denied" }));
+  if (!ticktickConfigured()) redirect(tasksRedirect(view, { ticktick: "not_configured" }));
 
   const id = String(operationTaskId ?? "").trim();
-  let query = "/v2/tasks?ticktick=task_error";
+  let query = tasksRedirect(view, { ticktick: "task_error" });
   try {
     const supabase = createClient();
     const result = await loadTasksView(supabase as never, { shopify: { loadShopifyPresence } });
     if (result.status === "ok") {
       const item = result.data.tasks.find((t) => t.task.id === id);
       if (!item) {
-        query = "/v2/tasks?ticktick=notfound";
+        query = tasksRedirect(view, { ticktick: "notfound" });
       } else {
         const { report } = await syncOperationsTasksToTickTick([item], {
           client: getTickTickClient(),
@@ -127,13 +132,13 @@ export async function syncOneTickTickTask(operationTaskId: string): Promise<void
           baseUrl: appBaseUrl(),
           completeMissing: false, // scope to this one task — never sweep-complete others
         });
-        if (report.created + report.updated + report.completed >= 1) query = "/v2/tasks?ticktick=task_ok";
-        else if (report.skipped >= 1) query = "/v2/tasks?ticktick=task_unconfigured";
-        else query = "/v2/tasks?ticktick=task_error";
+        if (report.created + report.updated + report.completed >= 1) query = tasksRedirect(view, { ticktick: "task_ok" });
+        else if (report.skipped >= 1) query = tasksRedirect(view, { ticktick: "task_unconfigured" });
+        else query = tasksRedirect(view, { ticktick: "task_error" });
       }
     }
   } catch {
-    query = "/v2/tasks?ticktick=task_error";
+    query = tasksRedirect(view, { ticktick: "task_error" });
   }
   redirect(query);
 }

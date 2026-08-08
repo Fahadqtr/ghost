@@ -116,7 +116,7 @@ function TaskIcon({ type }: { type: TaskType }) {
   );
 }
 
-function TaskCard({ item, ticktick }: { item: TaskViewItem; ticktick?: TickTickCardInfo }) {
+function TaskCard({ item, ticktick, viewQS }: { item: TaskViewItem; ticktick?: TickTickCardInfo; viewQS: string }) {
   const { task } = item;
   const name = item.nameAr || item.nameEn || item.sku || "منتج بدون اسم";
   const preview = ticktick?.preview ?? null;
@@ -173,7 +173,7 @@ function TaskCard({ item, ticktick }: { item: TaskViewItem; ticktick?: TickTickC
       {ticktick ? (
         ticktick.configured ? (
           <div className="space-y-2 border-t border-[#f5ece1] pt-2">
-            <form action={previewOneTickTickTask.bind(null, task.id)}>
+            <form action={previewOneTickTickTask.bind(null, task.id, viewQS)}>
               <button type="submit" className="btn-ghost w-full text-center text-xs">معاينة TickTick</button>
             </form>
             {preview ? (
@@ -187,7 +187,7 @@ function TaskCard({ item, ticktick }: { item: TaskViewItem; ticktick?: TickTickC
                     <p className="truncate">العنوان: {preview.title}</p>
                     <p className="whitespace-pre-line text-muted">{preview.descriptionSummary}</p>
                     <p className="text-muted" dir="ltr">{preview.marker}</p>
-                    <form action={syncOneTickTickTask.bind(null, task.id)}>
+                    <form action={syncOneTickTickTask.bind(null, task.id, viewQS)}>
                       <button type="submit" className="btn-primary w-full text-center text-xs">مزامنة هذه المهمة</button>
                     </form>
                   </>
@@ -239,6 +239,11 @@ export default function SmartTasks({
 }) {
   const hasPrev = page.page > 1;
   const hasNext = page.page < page.totalPages;
+
+  // The owner's current view (filter/search/page), round-tripped through the
+  // per-task TickTick server actions so the preview/sync result returns to the
+  // SAME card — reuses the exact query string tasksHref builds.
+  const viewQS = tasksHref(controls, {}).split("?")[1] ?? "";
 
   const noticeToneClass =
     ticktickNotice?.tone === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-700"
@@ -338,7 +343,7 @@ export default function SmartTasks({
                     preview: preview && preview.operationTaskId === item.task.id ? preview : null,
                   }
                 : undefined;
-              return <TaskCard key={item.task.id} item={item} ticktick={ticktick} />;
+              return <TaskCard key={item.task.id} item={item} ticktick={ticktick} viewQS={viewQS} />;
             })}
           </div>
 
