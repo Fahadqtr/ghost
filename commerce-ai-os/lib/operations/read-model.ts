@@ -147,11 +147,24 @@ export async function loadOperationsDashboard(
   try {
     const engines = deps?.engines ?? (await defaultEngines());
 
-    const products = await readAllRows(client.from("products").select(PRODUCT_COLUMNS).order("id", { ascending: true }), MAX_PRODUCTS);
-    const variants = await readAllRows(
-      client.from("product_variants").select(VARIANT_COLUMNS).order("parent_product_id", { ascending: true }),
-      MAX_PRODUCTS,
-    );
+    // These three reads are independent — run them concurrently. A products or
+    // variants read failure rejects (→ outer catch → constant error), exactly as
+    // before; Shopify presence stays BEST-EFFORT (its own failure degrades to
+    // unknown and never fails the dashboard).
+    const emptyPresence = (): { available: boolean; byProductId: Map<string, PlatformPresence> } => ({
+      available: false,
+      byProductId: new Map<string, PlatformPresence>(),
+    });
+    const [products, variants, shopifyRes] = await Promise.all([
+      readAllRows(client.from("products").select(PRODUCT_COLUMNS).order("id", { ascending: true }), MAX_PRODUCTS),
+      readAllRows(
+        client.from("product_variants").select(VARIANT_COLUMNS).order("parent_product_id", { ascending: true }),
+        MAX_PRODUCTS,
+      ),
+      deps?.shopify
+        ? deps.shopify.loadShopifyPresence(client).then((r) => r, emptyPresence)
+        : Promise.resolve(emptyPresence()),
+    ]);
 
     // variant counts per parent — pure aggregation, no stock/PII read.
     const variantCounts = new Map<string, number>();
@@ -160,19 +173,8 @@ export async function loadOperationsDashboard(
       if (typeof parent === "string" && parent !== "") variantCounts.set(parent, (variantCounts.get(parent) ?? 0) + 1);
     }
 
-    // Shopify presence, best-effort. Any failure → unknown (degraded), never a guess.
-    let shopifyAvailable = false;
-    let shopifyById = new Map<string, PlatformPresence>();
-    if (deps?.shopify) {
-      try {
-        const res = await deps.shopify.loadShopifyPresence(client);
-        shopifyAvailable = res.available;
-        shopifyById = res.byProductId;
-      } catch {
-        shopifyAvailable = false;
-        shopifyById = new Map();
-      }
-    }
+    const shopifyAvailable = shopifyRes.available;
+    const shopifyById = shopifyRes.byProductId;
 
     const items: OperationsListItem[] = [];
     const readiness: ProductReadiness[] = [];
@@ -290,6 +292,76 @@ export async function loadProductOperations(
     const statuses = engines.computePlatformStatuses(product, readiness.readyToPublish);
     const tasks = engines.generateProductTasks(product, readiness, statuses);
     return { tasks, readinessPercent: readiness.percent };
+  } catch {
+    return null;
+  }
+}
+
+// ── Fast single-task re-derivation (perf; for the /v2/tasks TickTick actions) ─
+
+const TASK_ID_MAX = 300;
+
+/**
+ * Re-derive ONE Smart-Tasks item by its OperationTask id, cheaply.
+ *
+ * The full loadTasksView rebuilds EVERY task and (via Shopify presence) fetches
+ * the whole Shopify catalog just to find one task — the source of the 20–30s
+ * preview/sync latency. The OperationTask id encodes its productId
+ * (`<type>[:platform]:<productId>`), so this recomputes ONLY that product's
+ * tasks with TARGETED reads and NO Shopify.
+ *
+ * Behavior-preserving: needs_review / needs_image / needs_data come purely from
+ * readiness (the product row) and do NOT depend on Shopify presence — so any
+ * item returned here is byte-identical to the full-dashboard version. Only
+ * publish_platform tasks depend on Shopify; those (and unknown ids) are simply
+ * not found here → the caller falls back to the full loadTasksView. Returns null
+ * on not-found or ANY read failure (the caller then falls back).
+ */
+export async function loadTaskViewItem(
+  client: ProductTimelineReadClient,
+  operationTaskId: string,
+  deps?: { engines?: OperationsEngines },
+): Promise<TaskViewItem | null> {
+  const id = typeof operationTaskId === "string" ? operationTaskId.trim() : "";
+  if (id === "" || id.length > TASK_ID_MAX) return null;
+  const productId = id.slice(id.lastIndexOf(":") + 1);
+  if (productId === "" || productId.length > TASK_ID_MAX) return null;
+
+  try {
+    const engines = deps?.engines ?? (await defaultEngines());
+
+    // Targeted single-product read (parameterized id equality, limit 1).
+    let pRes: QueryResult;
+    try {
+      pRes = await client.from("products").select(PRODUCT_COLUMNS).filter("id", "eq", productId).limit(1);
+    } catch {
+      return null;
+    }
+    if (pRes.error !== null || !Array.isArray(pRes.data)) return null;
+    const raw = pRes.data[0];
+    if (raw === undefined || raw === null || typeof raw !== "object") return null;
+
+    // Variant count for just this product (parameterized parent equality).
+    let vRes: QueryResult;
+    try {
+      vRes = await client
+        .from("product_variants")
+        .select(VARIANT_COLUMNS)
+        .filter("parent_product_id", "eq", productId)
+        .limit(PAGE_SIZE);
+    } catch {
+      return null;
+    }
+    const variantCount = Array.isArray(vRes.data) ? vRes.data.length : 0;
+
+    // NO Shopify presence → publish_platform tasks are intentionally absent here;
+    // every OTHER task is Shopify-independent, so this matches the full path.
+    const product = engines.mapProductRow(raw as Record<string, unknown>, variantCount);
+    const readiness = engines.computeProductReadiness(product);
+    const statuses = engines.computePlatformStatuses(product, readiness.readyToPublish);
+    const tasks = engines.generateProductTasks(product, readiness, statuses);
+    const listItem = engines.toListItem(product, readiness, tasks, statuses);
+    return engines.flattenTasks([listItem]).find((it) => it.task.id === id) ?? null;
   } catch {
     return null;
   }

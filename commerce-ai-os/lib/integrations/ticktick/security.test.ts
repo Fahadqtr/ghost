@@ -66,15 +66,19 @@ test("single-task actions: owner-gated, server-derived, dry-run preview, scoped 
   // the client) — only the task id is passed from the browser.
   assert.ok(ACTIONS.includes("previewOneTickTickTask"), "preview action must exist");
   assert.ok(ACTIONS.includes("syncOneTickTickTask"), "single-task sync action must exist");
-  assert.ok(ACTIONS.includes("loadTasksView"), "actions re-derive tasks from the Operations reader");
+  // actions re-derive the task server-side: fast single-task path + full fallback.
+  assert.ok(ACTIONS.includes("loadTaskViewItem"), "actions use the fast single-task re-derivation");
+  assert.ok(ACTIONS.includes("loadTasksView"), "actions fall back to the full Operations reader");
   // the preview uses the dry-run planner (no writes), never the writing sync.
   assert.ok(ACTIONS.includes("previewOperationTaskSync"), "preview must use the dry-run planner");
   // the single-task sync opts out of the completion sweep → touches only one task.
   assert.ok(ACTIONS.includes("completeMissing: false"), "single-task sync must not sweep-complete other tasks");
   // the actions take ONLY the id — no project id / title / description from the client.
   assert.ok(!ACTIONS.includes("formData"), "single-task actions take only the task id, no client-supplied fields");
-  assert.ok(!ACTIONS.includes("projectId:") || ACTIONS.includes("projectMap: projectMapFromEnv()"),
-    "project routing comes from env, never the client");
+  assert.ok(!ACTIONS.includes("projectId:"), "no client-supplied project id");
+  // project routing still comes from env (scoped to the target task's list only).
+  assert.ok(ACTIONS.includes("projectMapFromEnv()"), "project routing comes from env, never the client");
+  assert.ok(ACTIONS.includes("scopedProjectMap"), "single-task scan is scoped to the target task's project");
 });
 
 test("single-task TickTick UI: owner-gated buttons + fixed unconfigured notice, no client JS", () => {

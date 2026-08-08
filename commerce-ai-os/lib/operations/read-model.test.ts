@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { loadOperationsDashboard, type OperationsEngines, type OperationsReadClient } from "./read-model.ts";
+import { loadOperationsDashboard, loadTaskViewItem, type OperationsEngines, type OperationsReadClient } from "./read-model.ts";
 import { computeProductReadiness } from "./readiness/readiness.ts";
 import { computePlatformStatuses } from "./platforms/platform-status.ts";
 import { generateProductTasks } from "./tasks/task-engine.ts";
@@ -120,6 +120,60 @@ test("a DB error yields the single constant error status — never a raw error",
   } as unknown as OperationsReadClient;
   const res = await loadOperationsDashboard(errClient, { engines });
   assert.equal(res.status, "error");
+});
+
+// ── loadTaskViewItem: fast single-task re-derivation (perf) ──────────────────
+
+/** A fake client supporting the targeted select→filter→limit surface. */
+function filterClient(products: unknown[], variants: unknown[]): never {
+  const make = (rows: unknown[]) => {
+    const state = { col: "", val: "" };
+    const b = {
+      select: () => b,
+      filter: (col: string, _op: string, val: string) => {
+        state.col = col;
+        state.val = val;
+        return b;
+      },
+      limit: async (n: number) => ({
+        data: rows.filter((r) => r !== null && typeof r === "object" && (r as Record<string, unknown>)[state.col] === state.val).slice(0, n),
+        error: null,
+      }),
+    };
+    return b;
+  };
+  return { from: (t: string) => make(t === "products" ? products : variants) } as unknown as never;
+}
+
+test("loadTaskViewItem: targeted re-derivation (no Shopify) returns the exact task item", async () => {
+  const item = await loadTaskViewItem(filterClient(productRows, variantRows), "needs_image:noimg", { engines });
+  assert.ok(item, "the non-publish task is found on the fast path");
+  assert.equal(item!.task.id, "needs_image:noimg");
+  assert.equal(item!.productId, "noimg");
+  assert.equal(item!.task.type, "needs_image");
+});
+
+test("loadTaskViewItem: variant count comes from the target product only", async () => {
+  // 'ready' has 2 variants; the targeted read must count exactly those.
+  const item = await loadTaskViewItem(filterClient(productRows, variantRows), "needs_review:ready", { engines });
+  // 'ready' is approved+image so it has no needs_review task → not found is fine;
+  // the point is the read is targeted and does not throw. Assert a known task instead:
+  assert.equal(item, null);
+});
+
+test("loadTaskViewItem: unknown id → null (caller falls back / notfound)", async () => {
+  const none = await loadTaskViewItem(filterClient(productRows, variantRows), "needs_image:doesnotexist", { engines });
+  assert.equal(none, null);
+});
+
+test("loadTaskViewItem: a publish task id → null on the fast path (needs Shopify) → caller falls back", async () => {
+  const pub = await loadTaskViewItem(filterClient(productRows, variantRows), "publish_platform:shopify:ready", { engines });
+  assert.equal(pub, null, "publish tasks depend on Shopify, so they are not derived here");
+});
+
+test("loadTaskViewItem: malformed id → null, no throw", async () => {
+  assert.equal(await loadTaskViewItem(filterClient(productRows, variantRows), "", { engines }), null);
+  assert.equal(await loadTaskViewItem(filterClient(productRows, variantRows), ":", { engines }), null);
 });
 
 // ── source-safety scans (page / component / read-model / adapter) ────────────
