@@ -36,6 +36,13 @@ export interface OperationsListItem {
   taskCount: number;
   tasks: OperationTask[];
   platforms: PlatformStatus[];
+  /**
+   * How many of this product's COMPUTED tasks are currently mirrored in TickTick
+   * (matched by the deterministic marker). Enriched server-side from a best-effort
+   * TickTick read (0 when TickTick is not connected / unavailable) — it never
+   * changes readiness/tasks, it only annotates. `> 0` ⇒ "synced" for the UI.
+   */
+  ticktickSyncedCount?: number;
 }
 
 /** Map a whitelisted DB row (+ its variant count and optional Shopify
@@ -75,9 +82,11 @@ export type OperationsFilter =
   | "needs_image"
   | "needs_review"
   | "ready"
+  | "high_priority"
   | "has_tasks"
   | "shopify_missing"
-  | "shopify_different";
+  | "shopify_different"
+  | "ticktick_synced";
 
 export const OPERATIONS_FILTER_VALUES: readonly OperationsFilter[] = [
   "all",
@@ -85,9 +94,11 @@ export const OPERATIONS_FILTER_VALUES: readonly OperationsFilter[] = [
   "needs_image",
   "needs_review",
   "ready",
+  "high_priority",
   "has_tasks",
   "shopify_missing",
   "shopify_different",
+  "ticktick_synced",
 ];
 
 export const OPERATIONS_FILTER_LABELS: Record<OperationsFilter, string> = {
@@ -96,9 +107,11 @@ export const OPERATIONS_FILTER_LABELS: Record<OperationsFilter, string> = {
   needs_image: "يحتاج صورة",
   needs_review: "يحتاج مراجعة",
   ready: "جاهز",
+  high_priority: "أولوية عالية",
   has_tasks: "لديه مهام",
   shopify_missing: "Shopify: غير موجود",
   shopify_different: "Shopify: مختلف",
+  ticktick_synced: "مُزامَن مع TickTick",
 };
 
 export const OPERATIONS_PAGE_SIZE = 24;
@@ -148,8 +161,12 @@ export function filterOperations(
       return items.filter((i) => i.needsReview);
     case "ready":
       return items.filter((i) => i.readinessStatus === "ready");
+    case "high_priority":
+      return items.filter((i) => i.tasks.some((t) => t.priority === "high"));
     case "has_tasks":
       return items.filter((i) => i.taskCount > 0);
+    case "ticktick_synced":
+      return items.filter((i) => (i.ticktickSyncedCount ?? 0) > 0);
     case "shopify_missing":
       return items.filter((i) => shopifyStatus(i) === "missing");
     case "shopify_different":
