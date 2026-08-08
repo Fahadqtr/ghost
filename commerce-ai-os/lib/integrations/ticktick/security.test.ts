@@ -16,6 +16,9 @@ const PROVIDER = read("./timeline-provider.ts");
 const SMARTTASKS = read("../../../components/v2/operations/SmartTasks.tsx");
 const PAGE = read("../../../app/(v2)/v2/tasks/page.tsx");
 const ACTIONS = read("../../../app/(v2)/v2/tasks/actions.ts");
+const PROJECTS = read("./projects.ts");
+const PROJECTS_PAGE = read("../../../app/(v2)/v2/settings/integrations/ticktick/page.tsx");
+const COPY_BTN = read("../../../app/(v2)/v2/settings/integrations/ticktick/CopyProjectId.tsx");
 
 test("client is server-only, times out, handles rate limits, and never logs the token", () => {
   assert.ok(CLIENT.includes('import "server-only"'), "client must be server-only");
@@ -28,15 +31,15 @@ test("client is server-only, times out, handles rate limits, and never logs the 
 });
 
 test("the pure layers do NO I/O, keep no clock, and hold no secrets", () => {
-  for (const [name, src] of [["adapter", ADAPTER], ["mapper", MAPPER], ["timeline-provider", PROVIDER]] as const) {
+  for (const [name, src] of [["adapter", ADAPTER], ["mapper", MAPPER], ["timeline-provider", PROVIDER], ["projects", PROJECTS]] as const) {
     for (const banned of ['server-only', "fetch(", "supabase", "createClient", "process.env", "Date.now", "new Date(", "Math.random", "TICKTICK_ACCESS_TOKEN"]) {
       assert.ok(!src.includes(banned), `${name} must not contain ${banned}`);
     }
   }
 });
 
-test("adapter + mapper carry no engine/business logic", () => {
-  for (const [name, src] of [["adapter", ADAPTER], ["mapper", MAPPER]] as const) {
+test("adapter + mapper + projects carry no engine/business logic", () => {
+  for (const [name, src] of [["adapter", ADAPTER], ["mapper", MAPPER], ["projects", PROJECTS]] as const) {
     for (const banned of ["computeProductReadiness", "generateProductTasks", "task-engine", "readiness/readiness"]) {
       assert.ok(!src.includes(banned), `${name} must not re-implement business logic (${banned})`);
     }
@@ -83,4 +86,37 @@ test("single-task TickTick UI: owner-gated buttons + fixed unconfigured notice, 
   assert.ok(!SMARTTASKS.includes('"use client"'), "SmartTasks stays a server component");
   // the buttons pass ONLY the task id (bound server action), never task fields.
   assert.ok(SMARTTASKS.includes(".bind(null, task.id)"), "buttons bind only the task id");
+});
+
+test("project browser: owner-gated page, read-only, no writes, no token leakage", () => {
+  // owner-only gate present, and the constant denial is rendered for non-owners.
+  assert.ok(PROJECTS_PAGE.includes("isOwner"), "page must be owner-gated");
+  assert.ok(PROJECTS_PAGE.includes("OWNER_ONLY_DENIED"), "page renders the constant owner denial");
+  // reads projects through the server-only client (never a direct token read).
+  assert.ok(PROJECTS_PAGE.includes("loadTickTickProjectBrowser"), "page uses the read-only browser loader");
+  // the fixed states are all present as fixed Arabic text.
+  assert.ok(PROJECTS_PAGE.includes("TickTick غير مربوط."), "not-connected message present");
+  assert.ok(PROJECTS_PAGE.includes("لا توجد قوائم"), "empty-list message present");
+  // NEVER any write endpoint or token/Authorization in the page or the loader path.
+  for (const [name, src] of [["projects", PROJECTS], ["projects-page", PROJECTS_PAGE]] as const) {
+    for (const banned of ["createTask", "updateTask", "completeTask", 'method: "POST"', 'method: "DELETE"', 'method: "PUT"', "TICKTICK_ACCESS_TOKEN", "Authorization", "Bearer"]) {
+      assert.ok(!src.includes(banned), `${name} must not reference ${banned}`);
+    }
+  }
+});
+
+test("project browser: pure module only reads (no createTask/updateTask/completeTask on its client dep)", () => {
+  // the pure planner depends on a single read capability — listProjects — so a
+  // write path cannot exist through it, and it never GETs a token env directly.
+  assert.ok(PROJECTS.includes("listProjects"), "planner exposes the read capability");
+  assert.ok(!PROJECTS.includes("process.env"), "pure module reads no env");
+});
+
+test("project browser: copy button is a leaf client island receiving only the public id", () => {
+  assert.ok(COPY_BTN.includes('"use client"'), "copy button is a client component");
+  assert.ok(COPY_BTN.includes("نسخ Project ID"), "copy button label present");
+  // it must not import server-only code or reference the token in any form.
+  assert.ok(!COPY_BTN.includes("integrations/ticktick/client"), "copy button must not import the TickTick client");
+  assert.ok(!COPY_BTN.includes("TICKTICK_ACCESS_TOKEN"));
+  assert.ok(!COPY_BTN.includes("Authorization"));
 });

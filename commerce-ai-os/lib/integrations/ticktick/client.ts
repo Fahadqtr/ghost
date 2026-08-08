@@ -19,6 +19,7 @@ import "server-only";
 
 import { TickTickError, classifyHttpStatus } from "./errors";
 import { DEFAULT_APP_URL } from "./mapper";
+import { loadProjectBrowser, type ProjectBrowserState } from "./projects";
 import type {
   TickTickClient,
   TickTickConnState,
@@ -170,6 +171,18 @@ export function getTickTickClient(): TickTickClient {
       );
     },
   };
+}
+
+/** Owner-only TickTick Project Browser data (read-only). Composes the pure
+ *  planner with a GET /project reader: no configured token → not_connected; a
+ *  successful read → the normalized project rows; any failure → a fixed Arabic
+ *  message. Only GET is ever issued — this never creates/updates/completes a
+ *  task — and it never returns or logs the token. */
+export function loadTickTickProjectBrowser(): Promise<ProjectBrowserState> {
+  return loadProjectBrowser({
+    configured: ticktickConfigured(),
+    listProjects: () => ttFetch(`/project`, { method: "GET" }).then((r) => r.json),
+  });
 }
 
 /** Connection status for the tasks UI — verifies the token can list projects.
