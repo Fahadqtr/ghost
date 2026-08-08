@@ -76,6 +76,25 @@ test("filters select the right rows", () => {
   assert.equal(filterOperations(items, "all").length, items.length);
 });
 
+test("high_priority filter selects items with at least one high-priority task", () => {
+  const high = item({
+    id: "hp",
+    tasks: [{ id: "needs_image:hp", productId: "hp", type: "needs_image", priority: "high", title: "t", description: "d", reason: "r" }],
+  });
+  const low = item({
+    id: "lp",
+    tasks: [{ id: "needs_data:lp", productId: "lp", type: "needs_data", priority: "low", title: "t", description: "d", reason: "r" }],
+  });
+  assert.deepEqual(filterOperations([high, low], "high_priority").map((i) => i.id), ["hp"]);
+});
+
+test("ticktick_synced filter selects items with ticktickSyncedCount > 0", () => {
+  const synced = item({ id: "s", ticktickSyncedCount: 2 });
+  const notSynced = item({ id: "n", ticktickSyncedCount: 0 });
+  const none = item({ id: "x" }); // undefined count
+  assert.deepEqual(filterOperations([synced, notSynced, none], "ticktick_synced").map((i) => i.id), ["s"]);
+});
+
 test("shopify filters read the shopify platform status only", () => {
   const missing = item({ id: "m", platforms: [{ platform: "shopify", status: "missing", label: "غير موجود" }] });
   const different = item({ id: "d", platforms: [{ platform: "shopify", status: "different", label: "مختلف" }] });

@@ -1,13 +1,16 @@
-// /v2/operations — Malikas Operations Center (Phase UI.7.2). Read-only Server
-// Component. Everything (readiness, tasks, platform status, buckets, health) is
-// computed SERVER-SIDE via lib/operations/* engines; only the current page of
-// items plus the aggregate summary crosses to the browser — never the whole
-// catalog. Data loading is isolated in try/catch: on any failure it shows one
-// constant Arabic message, never a raw error/stack/code.
+// /v2/operations — Malikas Operations Center (Phase UI.8 upgrade). Read-only
+// Server Component. Everything (readiness, tasks, platform status, health,
+// KPIs, queues, platform overview) is computed SERVER-SIDE via lib/operations/*
+// engines + the pure summary layer; only the KPIs, per-queue top items, counts
+// and the CURRENT page of products cross to the browser — never the whole
+// catalog. TickTick linkage is a best-effort read that can never break the page.
+// Data loading is isolated in try/catch: on any failure it shows one constant
+// Arabic message, never a raw error/stack/code.
 
 import { createClient } from "@/lib/supabase/server";
 import { loadOperationsDashboard } from "@/lib/operations/read-model";
 import { loadShopifyPresence } from "@/lib/operations/shopify-presence";
+import { loadTickTickSyncedIds } from "@/lib/integrations/ticktick/synced-ids";
 import {
   parseOperationsControls,
   selectOperationsPage,
@@ -15,7 +18,13 @@ import {
   type OperationsListItem,
   type OperationsPage,
 } from "@/lib/operations/dashboard-view";
-import type { HealthSummary } from "@/lib/operations/shared/models";
+import {
+  annotateTickTick,
+  buildDashboardSummary,
+  type DashboardKpis,
+  type PlatformOverview,
+  type Queue,
+} from "@/lib/operations/dashboard-summary";
 import OperationsDashboard from "@/components/v2/operations/OperationsDashboard";
 
 export const dynamic = "force-dynamic";
@@ -28,11 +37,14 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
   let loaded:
     | {
         controls: OperationsControls;
-        health: HealthSummary;
+        kpis: DashboardKpis;
+        queues: Queue[];
+        platformOverview: PlatformOverview;
         pageResult: OperationsPage;
         matchCount: number;
         partial: boolean;
         shopifyAvailable: boolean;
+        ticktickAvailable: boolean;
       }
     | null = null;
 
@@ -42,17 +54,31 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
     const supabase = createClient();
     const result = await loadOperationsDashboard(supabase as never, { shopify: { loadShopifyPresence } });
     if (result.status === "ok") {
-      const all: OperationsListItem[] = result.data.items;
-      // Reuse the pure pipeline once for the count, once for the page slice.
-      const matched = selectOperationsPage(all, { ...controls, page: 1 });
-      const pageResult = selectOperationsPage(all, controls);
+      // TickTick is a best-effort annotation only — it must NEVER break the
+      // dashboard. loadTickTickSyncedIds already degrades internally; the extra
+      // catch is belt-and-suspenders.
+      const ticktick = await loadTickTickSyncedIds().catch(() => ({ available: false, ids: new Set<string>() }));
+
+      // Annotate once (server-side) so KPIs, queues AND the ticktick_synced
+      // filter all read the same enriched items — the whole set stays here; only
+      // the summary + current page are sent to the browser.
+      const items: OperationsListItem[] = annotateTickTick(result.data.items, ticktick.ids);
+      const summary = buildDashboardSummary(items, result.data.health, result.data.shopifyAvailable);
+
+      // Reuse the pure pipeline once for the match count, once for the page slice.
+      const matched = selectOperationsPage(items, { ...controls, page: 1 });
+      const pageResult = selectOperationsPage(items, controls);
+
       loaded = {
         controls,
-        health: result.data.health,
+        kpis: summary.kpis,
+        queues: summary.queues,
+        platformOverview: summary.platformOverview,
         pageResult,
         matchCount: matched.total,
         partial: result.data.partial,
         shopifyAvailable: result.data.shopifyAvailable,
+        ticktickAvailable: ticktick.available,
       };
     }
   } catch {
@@ -69,12 +95,15 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
 
   return (
     <OperationsDashboard
-      health={loaded.health}
+      kpis={loaded.kpis}
+      queues={loaded.queues}
+      platformOverview={loaded.platformOverview}
       page={loaded.pageResult}
       matchCount={loaded.matchCount}
       controls={loaded.controls}
       partial={loaded.partial}
       shopifyAvailable={loaded.shopifyAvailable}
+      ticktickAvailable={loaded.ticktickAvailable}
     />
   );
 }
