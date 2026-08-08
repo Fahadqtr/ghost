@@ -39,9 +39,9 @@ export function __resetShopifyPresenceCache(): void {
 
 export async function loadShopifyPresence(
   client: OperationsReadClient,
-  deps?: { loadCatalog?: ShopifyCatalogLoader },
+  deps?: { loadCatalog?: ShopifyCatalogLoader; now?: () => number },
 ): Promise<PresenceResult> {
-  const now = Date.now();
+  const now = (deps?.now ?? Date.now)();
   if (cache && now - cache.at < TTL_MS) return cache.data;
   const byProductId = new Map<string, PlatformPresence>();
   try {

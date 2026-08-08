@@ -70,6 +70,24 @@ test("__resetShopifyPresenceCache clears the cache", async () => {
   assert.equal(calls, 2, "recomputed after reset");
 });
 
+test("cache expires after the 60s TTL (injected clock)", async () => {
+  __resetShopifyPresenceCache();
+  let calls = 0;
+  const loadCatalog: ShopifyCatalogLoader = async () => {
+    calls++;
+    return { status: "ok", shopifyAvailable: true, rows: [] };
+  };
+  let t = 1_000;
+  const now = () => t;
+  await loadShopifyPresence(fakeClient, { loadCatalog, now }); // miss → calls=1
+  t = 1_000 + 59_000;
+  await loadShopifyPresence(fakeClient, { loadCatalog, now }); // within TTL → hit
+  assert.equal(calls, 1, "served from cache within 60s");
+  t = 1_000 + 60_001;
+  await loadShopifyPresence(fakeClient, { loadCatalog, now }); // expired → recompute
+  assert.equal(calls, 2, "recomputed after the 60s TTL expiry");
+});
+
 test("presence roll-up preserved: matched+active=live, ambiguous=reviewRequired, matched+draft=linked-not-live", async () => {
   __resetShopifyPresenceCache();
   const rows = [
