@@ -8,6 +8,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { loadTasksView } from "@/lib/operations/read-model";
 import { loadShopifyPresence } from "@/lib/operations/shopify-presence";
+import { ticktickConfigured } from "@/lib/integrations/ticktick/client";
+import { isOwner } from "@/lib/malak/authz";
 import {
   parseTaskControls,
   selectTaskPage,
@@ -27,9 +29,34 @@ const LOAD_ERROR = "تعذر تحميل المهام.";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
+/** Fixed Arabic banner for the manual-sync result (from the redirect param).
+ *  Never reflects a raw error — only fixed text + integer counts. */
+function ticktickNotice(
+  params: Record<string, string | string[] | undefined>,
+): { tone: "ok" | "error" | "info"; text: string } | null {
+  const one = (v: string | string[] | undefined): string => (Array.isArray(v) ? (v[0] ?? "") : (v ?? ""));
+  const t = one(params.ticktick);
+  if (t === "") return null;
+  if (t === "denied") return { tone: "error", text: "مزامنة TickTick متاحة للمالك فقط." };
+  if (t === "not_configured") return { tone: "info", text: "TickTick غير مربوط بعد — لم تُنفَّذ المزامنة." };
+  if (t === "ok") {
+    const num = (v: string | string[] | undefined) => Math.max(0, Number.parseInt(one(v), 10) || 0);
+    return {
+      tone: "ok",
+      text: `تمت مزامنة TickTick — أُنشئت ${num(params.c)}، حُدّثت ${num(params.u)}، أُغلقت ${num(params.d)}، تُخطّيت ${num(params.s)}، فشلت ${num(params.f)}.`,
+    };
+  }
+  return { tone: "error", text: "تعذّرت مزامنة TickTick." };
+}
+
 export default async function TasksPage({ searchParams }: { searchParams?: SearchParams }) {
   let loaded:
-    | { controls: TaskControls; summary: TaskSummary; page: TaskPage; matchCount: number; partial: boolean; shopifyAvailable: boolean }
+    | {
+        controls: TaskControls; summary: TaskSummary; page: TaskPage; matchCount: number;
+        partial: boolean; shopifyAvailable: boolean;
+        ticktickConnected: boolean; canSync: boolean;
+        notice: { tone: "ok" | "error" | "info"; text: string } | null;
+      }
     | null = null;
 
   try {
@@ -41,6 +68,10 @@ export default async function TasksPage({ searchParams }: { searchParams?: Searc
       const all = result.data.tasks;
       // summary over the WHOLE task set; matchCount over the active filter+search.
       const matched = searchTaskViews(filterTaskViews(sortTaskViews(all), controls.filter), controls.query);
+      // TickTick is a best-effort surface: its config/owner checks NEVER block the
+      // page. `canSync` only gates showing the owner-only manual sync button.
+      const ticktickConnected = ticktickConfigured();
+      const canSync = ticktickConnected && (await isOwner());
       loaded = {
         controls,
         summary: summarizeTasks(all),
@@ -48,6 +79,9 @@ export default async function TasksPage({ searchParams }: { searchParams?: Searc
         matchCount: matched.length,
         partial: result.data.partial,
         shopifyAvailable: result.data.shopifyAvailable,
+        ticktickConnected,
+        canSync,
+        notice: ticktickNotice(params),
       };
     }
   } catch {
@@ -70,6 +104,9 @@ export default async function TasksPage({ searchParams }: { searchParams?: Searc
       controls={loaded.controls}
       partial={loaded.partial}
       shopifyAvailable={loaded.shopifyAvailable}
+      ticktickConnected={loaded.ticktickConnected}
+      canSync={loaded.canSync}
+      ticktickNotice={loaded.notice}
     />
   );
 }

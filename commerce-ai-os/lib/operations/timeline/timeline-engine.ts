@@ -11,9 +11,11 @@ import type { TimelineEvent, TimelineEventKind } from "../shared/models";
 import type { TimelineProvider } from "./providers/timeline-provider";
 
 /** Order among events that share the same anchor time (lower = shown first,
- *  i.e. newest/topmost). "created" always sinks to the bottom on a tie. An
- *  unknown future kind falls back to a middle rank rather than throwing. */
-const KIND_RANK: Record<TimelineEventKind, number> = {
+ *  i.e. newest/topmost). "created" always sinks to the bottom on a tie. The map
+ *  is Partial: a kind with no explicit entry (e.g. a new provider's kind) falls
+ *  back to DEFAULT_RANK via rankOf — so adding contract kinds needs NO engine
+ *  logic change. */
+const KIND_RANK: Partial<Record<TimelineEventKind, number>> = {
   updated: 0,
   approved: 1,
   rejected: 1,
@@ -24,7 +26,7 @@ const KIND_RANK: Record<TimelineEventKind, number> = {
 const DEFAULT_RANK = 2;
 
 function rankOf(kind: TimelineEventKind): number {
-  return Object.hasOwn(KIND_RANK, kind) ? KIND_RANK[kind] : DEFAULT_RANK;
+  return KIND_RANK[kind] ?? DEFAULT_RANK;
 }
 
 /** Sort key for a time string: finite epoch, or -Infinity when unknown (an

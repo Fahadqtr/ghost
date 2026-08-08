@@ -131,7 +131,8 @@ test("SmartTasks component: no business logic, no data access, no manual-complet
     "computeProductReadiness", "generateProductTasks", "generateTasks", "computeHealthSummary",
     "@/lib/supabase", "createClient", "createAdminClient",
     ".insert(", ".update(", ".delete(", ".rpc(",
-    "ticktick", "TickTick",
+    // NOTE: the TickTick status badge + owner-only sync form ARE allowed here
+    // (Phase UI.7.5) — the ban below covers only MANUAL task completion/editing.
     'type="checkbox"', "إنجاز", "إكمال", "حذف",
   ]) {
     assert.ok(!SMART_SRC.includes(banned), `SmartTasks must not contain ${banned}`);
