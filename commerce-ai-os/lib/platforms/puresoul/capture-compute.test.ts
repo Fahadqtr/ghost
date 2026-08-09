@@ -7,12 +7,16 @@ import assert from "node:assert/strict";
 import {
   computePureSoulVerdicts,
   verdictsToSnapshotInputs,
+  pickVerdictForProduct,
   classifyPureSoulSnapshot,
   isSnapshotStale,
   PURESOUL_SNAPSHOT_STALE_MS,
   type PsCatalogRow,
 } from "./capture-compute.ts";
 import { createSnapshot } from "../core/snapshot.ts";
+import { captureSnapshots, type CaptureStore } from "../core/capture.ts";
+import { snapshotKey } from "../core/snapshot.ts";
+import type { PlatformSnapshot } from "../core/types.ts";
 
 const cat = (over: Partial<PsCatalogRow>): PsCatalogRow => ({ id: "p", name_en: "Rose Serum", price: 10, sku: "SKU", ...over });
 
@@ -96,6 +100,81 @@ test("verdictsToSnapshotInputs: missing records nothing PS-specific; capturedAt 
   assert.equal(mi.availability, null);
   assert.equal(mi.capturedAt, "2026-01-01T00:00:00.000Z");
   assert.deepEqual((mi.metadata as any).ps, { verdict: "missing", priceDiff: false, malikaPrice: 10 });
+});
+
+// ---- scoped single-product capture (owner-only test path) ----
+test("pickVerdictForProduct: finds the target; null for missing/blank id", () => {
+  const verdicts = computePureSoulVerdicts(
+    [{ global_id: "spi1", name_en: "Rose Serum", price: "10", branchStatus: "active" }],
+    [cat({ id: "p1", pure_seoul_id: "spi1" }), cat({ id: "p2", name_en: "Other Thing" })],
+  );
+  assert.equal(pickVerdictForProduct(verdicts, "p1")?.productId, "p1");
+  assert.equal(pickVerdictForProduct(verdicts, "nope"), null);
+  assert.equal(pickVerdictForProduct(verdicts, "   "), null);
+});
+
+function fakeStore() {
+  const saved: PlatformSnapshot[] = [];
+  const store: CaptureStore = {
+    async listLatestByPlatform(platform) {
+      const latest = new Map<string, PlatformSnapshot>();
+      for (const s of saved) if (s.platform === platform) latest.set(snapshotKey(s), s);
+      return [...latest.values()];
+    },
+    async saveSnapshots(list) {
+      saved.push(...list);
+    },
+  };
+  return { store, saved };
+}
+
+const scopedCatalog: PsCatalogRow[] = [
+  cat({ id: "p1", pure_seoul_id: "spi1", name_en: "Rose Serum", price: 10 }),
+  cat({ id: "p2", pure_seoul_id: "spi2", name_en: "Gold Cream", price: 20 }),
+  cat({ id: "p3", name_en: "Unlisted Widget", price: 30 }),
+];
+const scopedFor = (price: string) =>
+  verdictsToSnapshotInputs(
+    [
+      pickVerdictForProduct(
+        computePureSoulVerdicts([{ global_id: "spi1", name_en: "Rose Serum", price, branchStatus: "active" }], scopedCatalog),
+        "p1",
+      )!,
+    ],
+    "2026-01-01T00:00:00.000Z",
+  );
+
+test("scoped capture writes exactly 1 snapshot on empty store; other products untouched", async () => {
+  const { store, saved } = fakeStore();
+  const r = await captureSnapshots(store, scopedFor("10"));
+  assert.equal(r.created, 1);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].productId, "p1");
+  assert.equal(saved.some((s) => s.productId === "p2" || s.productId === "p3"), false, "only the target product is written");
+});
+
+test("repeated identical scoped capture writes 0 new rows (idempotent)", async () => {
+  const { store, saved } = fakeStore();
+  await captureSnapshots(store, scopedFor("10"));
+  const r2 = await captureSnapshots(
+    store,
+    verdictsToSnapshotInputs(
+      [pickVerdictForProduct(computePureSoulVerdicts([{ global_id: "spi1", name_en: "Rose Serum", price: "10", branchStatus: "active" }], scopedCatalog), "p1")!],
+      "2026-09-09T00:00:00.000Z",
+    ),
+  );
+  assert.equal(r2.unchanged, 1);
+  assert.equal(r2.created + r2.changed, 0);
+  assert.equal(saved.length, 1);
+});
+
+test("changed scoped capture writes exactly 1 new row", async () => {
+  const { store, saved } = fakeStore();
+  await captureSnapshots(store, scopedFor("10"));
+  const r2 = await captureSnapshots(store, scopedFor("99")); // price differs → priceDiff verdict
+  assert.equal(r2.changed, 1);
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].productId, "p1");
 });
 
 // ---- classifier ----

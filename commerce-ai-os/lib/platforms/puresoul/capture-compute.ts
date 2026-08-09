@@ -201,6 +201,15 @@ export function computePureSoulVerdicts(uploadRows: PsUploadRow[], catalog: PsCa
   return [...verdictByProduct.values()];
 }
 
+/** Pick the single verdict for one product id, or null if it isn't in the set
+ *  (used by the owner-only scoped test capture — server re-validates the id
+ *  against the freshly-computed verdicts, so an invalid id captures nothing). */
+export function pickVerdictForProduct(verdicts: readonly PsVerdict[], productId: string): PsVerdict | null {
+  const id = String(productId ?? "").trim();
+  if (id === "") return null;
+  return verdicts.find((v) => v.productId === id) ?? null;
+}
+
 /** Map verdicts to snapshot inputs. `capturedAt` is supplied by the caller (no
  *  clock here). A snapshot records ONLY what the verdict knows with confidence. */
 export function verdictsToSnapshotInputs(verdicts: readonly PsVerdict[], capturedAt: string): SnapshotInput[] {

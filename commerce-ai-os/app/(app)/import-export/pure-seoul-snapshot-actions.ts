@@ -10,11 +10,13 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/malak/authz";
 import { SupabaseSnapshotStore } from "@/lib/platforms/core/supabase-store";
 import { captureSnapshots } from "@/lib/platforms/core/capture";
 import {
   computePureSoulVerdicts,
   verdictsToSnapshotInputs,
+  pickVerdictForProduct,
   type PsCatalogRow,
   type PsUploadRow,
 } from "@/lib/platforms/puresoul/capture-compute";
@@ -33,15 +35,36 @@ export interface CapturePsResult {
 const CATALOG_COLUMNS = "id, snoonu_id, pure_seoul_id, sku, barcode, name_en, price";
 const CATALOG_COLUMNS_NO_PSID = "id, snoonu_id, sku, barcode, name_en, price";
 
-export async function capturePureSeoulSnapshots(rows: PsUploadRow[]): Promise<CapturePsResult> {
+/**
+ * Persist PureSoul snapshots from an upload.
+ *
+ * Default (no opts): WHOLE-CATALOG capture — a snapshot per product (unchanged
+ * behavior). `opts.onlyProductId`: OWNER-ONLY scoped capture for a controlled
+ * production test — it reuses the exact same verdict logic over the whole
+ * catalog but PERSISTS only the target product's snapshot (every other product
+ * is left untouched). The browser supplies only the product id; all snapshot
+ * field values are derived server-side, and the id is re-validated against the
+ * freshly-computed catalog verdicts.
+ */
+export async function capturePureSeoulSnapshots(
+  rows: PsUploadRow[],
+  opts?: { onlyProductId?: string },
+): Promise<CapturePsResult> {
   const base: CapturePsResult = { ok: false, total: 0, created: 0, changed: 0, unchanged: 0, events: 0 };
   if (!rows?.length) return { ...base, error: "ما في صفوف في الملف." };
 
+  const scopedId = String(opts?.onlyProductId ?? "").trim();
   const sb = createClient();
-  const {
-    data: { user },
-  } = await sb.auth.getUser();
-  if (!user) return { ...base, error: "غير مسجّل الدخول." };
+  if (scopedId !== "") {
+    // Scoped test capture is OWNER-ONLY (verified from the server session).
+    const owner = await requireOwner();
+    if (!owner.ok) return { ...base, error: owner.error };
+  } else {
+    const {
+      data: { user },
+    } = await sb.auth.getUser();
+    if (!user) return { ...base, error: "غير مسجّل الدخول." };
+  }
 
   try {
     // Read the catalog (paged, READ-ONLY). Tolerate a catalog without the
@@ -62,8 +85,16 @@ export async function capturePureSeoulSnapshots(rows: PsUploadRow[]): Promise<Ca
     }
 
     const verdicts = computePureSoulVerdicts(rows, catalog);
+    // Scoped mode: keep ONLY the target product's verdict (re-validated against
+    // the server-computed catalog); everything else is neither built nor saved.
+    let selected = verdicts;
+    if (scopedId !== "") {
+      const one = pickVerdictForProduct(verdicts, scopedId);
+      if (!one) return { ...base, error: "المنتج غير موجود في الكتالوج." };
+      selected = [one];
+    }
     const capturedAt = new Date().toISOString();
-    const inputs = verdictsToSnapshotInputs(verdicts, capturedAt);
+    const inputs = verdictsToSnapshotInputs(selected, capturedAt);
 
     const store = new SupabaseSnapshotStore(sb as never);
     const result = await captureSnapshots(store, inputs);

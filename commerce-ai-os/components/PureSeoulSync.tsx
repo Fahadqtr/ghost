@@ -73,6 +73,27 @@ export default function PureSeoulSync() {
       setCapturing(false);
     }
   };
+  // Owner-only SCOPED test capture: persists exactly ONE product's snapshot
+  // (server re-validates the id + enforces owner). Sends only the product id;
+  // all snapshot fields are derived server-side from the parsed export.
+  const [scopeId, setScopeId] = useState("");
+  const [scoping, setScoping] = useState(false);
+  const [scopeMsg, setScopeMsg] = useState<string | null>(null);
+  const captureOne = async () => {
+    const id = scopeId.trim();
+    if (!id || !psRows.length) return;
+    if (!confirm(`اختبار: احفظ لقطة لمنتج واحد فقط؟\nproduct id: ${id}`)) return;
+    setScoping(true); setScopeMsg(null);
+    try {
+      const r = await capturePureSeoulSnapshots(psRows, { onlyProductId: id });
+      if (r.error) { setScopeMsg(null); alert(r.error); return; }
+      setScopeMsg(`✓ اختبار — منتج ${r.total} · جديد ${r.created} · تغيّر ${r.changed} · بدون تغيير ${r.unchanged}.`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "تعذّر الحفظ.");
+    } finally {
+      setScoping(false);
+    }
+  };
   // "Apply availability to the system" (auto-fill OutOfStock/InStock on PS).
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState<string | null>(null);
@@ -231,6 +252,17 @@ export default function PureSeoulSync() {
                 وإعادة الرفع نفسه ما تكرّر شيء. تظهر في <code>/v2/operations</code>.
               </p>
               {captureMsg ? <p className="mt-1 text-xs font-medium text-emerald-700">{captureMsg}</p> : null}
+              {/* Owner-only scoped TEST: persist exactly one product's snapshot. */}
+              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-sky-200/60 pt-2">
+                <span className="text-[11px] text-muted">اختبار (مالك فقط): لقطة منتج واحد —</span>
+                <input value={scopeId} onChange={(e) => setScopeId(e.target.value)} placeholder="product id"
+                  className="w-56 rounded border border-sky-200 px-2 py-1 text-xs" />
+                <button onClick={captureOne} disabled={scoping || !scopeId.trim() || psRows.length === 0}
+                  className="rounded bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800 hover:bg-sky-200 disabled:opacity-50">
+                  {scoping ? "…يحفظ" : "احفظ منتجًا واحدًا"}
+                </button>
+                {scopeMsg ? <span className="text-[11px] font-medium text-emerald-700">{scopeMsg}</span> : null}
+              </div>
             </div>
             <button onClick={captureSnapshot} disabled={capturing || psRows.length === 0}
               className="shrink-0 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">

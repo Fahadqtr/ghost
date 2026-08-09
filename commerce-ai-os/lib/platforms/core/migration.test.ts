@@ -87,3 +87,15 @@ test("capture action: session client, READ+INSERT only, no service role, no raw 
   // fixed Arabic errors, never a raw DB message
   assert.ok(ACTION.includes("تعذّرت قراءة الكتالوج") || ACTION.includes("تعذّر حفظ لقطات PureSoul"));
 });
+
+test("scoped capture path is owner-only, id-revalidated, and opt-in (whole-catalog unchanged)", () => {
+  // owner gate for scoped mode
+  assert.ok(ACTION.includes("requireOwner"), "scoped mode must be owner-gated");
+  // opt-in via optional opts.onlyProductId — default (no opts) stays whole-catalog
+  assert.ok(/opts\?:\s*\{\s*onlyProductId\?:/.test(ACTION), "onlyProductId is optional (opt-in)");
+  // server re-validates the id against freshly-computed verdicts
+  assert.ok(ACTION.includes("pickVerdictForProduct"), "id re-validated server-side");
+  assert.ok(ACTION.includes("المنتج غير موجود في الكتالوج"), "invalid id rejected with fixed message");
+  // browser supplies only the id — snapshot fields are derived server-side
+  assert.ok(!/onlyTitle|onlyPrice|onlyStatus/.test(ACTION), "no browser-supplied snapshot fields");
+});
