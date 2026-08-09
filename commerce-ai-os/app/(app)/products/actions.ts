@@ -28,7 +28,7 @@ import {
 // lib/products/product-save.ts in Phase UI.4 so the V2 product editor shares
 // this exact write path. The types are re-exported so existing importers
 // (ProductForm, the edit page, quick views) keep working unchanged.
-export type { ProductInput, VariantInput };
+export type { ProductInput, VariantInput } from "@/lib/products/product-save";
 
 function toVariantRows(parentId: string, variants: VariantInput[]) {
   return variants
