@@ -16,6 +16,7 @@ import type { CaptureStore } from "./capture.ts";
 const TABLE = "platform_snapshots";
 const INSERT_CHUNK = 200;
 const LATEST_SCAN_CAP = 50_000; // upper bound on rows scanned for latest-per-product
+const PRODUCT_HISTORY_CAP = 500; // upper bound on one product's history read (UI.9.4)
 
 interface QueryResult {
   data: unknown[] | null;
@@ -140,6 +141,25 @@ export class SupabaseSnapshotStore implements SnapshotStore, CaptureStore {
     let rows = (Array.isArray(data) ? data : []).map((r) => fromRow(r as Record<string, unknown>));
     if (query?.key !== undefined) rows = rows.filter((s) => snapshotKey(s) === query.key);
     return rows;
+  }
+
+  /**
+   * All snapshots for ONE product, newest-first, BOUNDED (Phase UI.9.4). A
+   * targeted read for the product-page platform history: `product_id` equality,
+   * optional `platform` scope, capped `limit`. READ-only, session client (RLS).
+   * The cap protects the request even if a product accrues a long history.
+   */
+  async listByProduct(
+    productId: string,
+    opts?: { platform?: string; limit?: number },
+  ): Promise<PlatformSnapshot[]> {
+    const lim = Math.min(Math.max(1, Math.trunc(opts?.limit ?? PRODUCT_HISTORY_CAP)), PRODUCT_HISTORY_CAP);
+    let q = this.client.from(TABLE).select(COLUMNS).eq("product_id", productId);
+    if (opts?.platform !== undefined && opts.platform !== "") q = q.eq("platform", opts.platform);
+    q = q.order("captured_at", { ascending: false }).limit(lim);
+    const { data, error } = await q;
+    if (error) throw new Error("snapshot_read_failed");
+    return (Array.isArray(data) ? data : []).map((r) => fromRow(r as Record<string, unknown>));
   }
 
   /**

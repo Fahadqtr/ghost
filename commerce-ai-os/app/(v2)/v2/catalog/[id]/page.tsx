@@ -12,6 +12,8 @@ import { loadCatalogProduct } from "@/lib/catalog-v2/master-catalog-read";
 import { loadProductOperations, loadProductTimeline, type ProductOperations } from "@/lib/operations/read-model";
 import ProductTasksWidget from "@/components/v2/operations/ProductTasksWidget";
 import ProductActivityWidget from "@/components/v2/operations/ProductActivityWidget";
+import PlatformHistory from "@/components/v2/catalog/PlatformHistory";
+import { loadProductPlatformHistory, type ProductPlatformHistory } from "@/lib/operations/platform-history-read";
 import type { TimelineEvent } from "@/lib/operations/shared/models";
 import {
   catalogEditHref,
@@ -54,6 +56,10 @@ export default async function ProductDetailPage({
   // Activity timeline for this product (Phase UI.7.4). Best-effort and isolated:
   // a failure here NEVER breaks the product page — the widget just renders empty.
   let activityEvents: TimelineEvent[] | null = null;
+  // Platform snapshot history for this product (Phase UI.9.4). Best-effort and
+  // isolated: a failure here NEVER breaks the product page — the section is
+  // simply omitted. Derived from platform_snapshots (read-only), never stored.
+  let platformHistory: ProductPlatformHistory | null = null;
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
@@ -90,6 +96,11 @@ export default async function ProductDetailPage({
           activityEvents = timeline.status === "ok" ? timeline.timeline.events : null;
         } catch {
           activityEvents = null;
+        }
+        try {
+          platformHistory = await loadProductPlatformHistory(supabase as never, validId);
+        } catch {
+          platformHistory = null;
         }
       }
     }
@@ -140,6 +151,13 @@ export default async function ProductDetailPage({
       {operations ? <ProductTasksWidget tasks={operations.tasks} /> : null}
       {activityEvents ? (
         <ProductActivityWidget events={activityEvents} productId={state.product.id} />
+      ) : null}
+      {platformHistory && platformHistory.status === "ok" &&
+      (platformHistory.entries.length > 0 || platformHistory.comparisons.length > 0) ? (
+        <PlatformHistory
+          entries={platformHistory.entries}
+          comparisons={platformHistory.comparisons}
+        />
       ) : null}
     </div>
   );

@@ -241,7 +241,12 @@ export type TimelineEventKind =
   // DEFAULT_RANK fallback (no engine logic change).
   | "ticktick_synced"
   | "ticktick_updated"
-  | "ticktick_completed";
+  | "ticktick_completed"
+  // Platform snapshot-history kinds (Phase UI.9.4) — emitted by the platform
+  // provider from persisted platform_snapshots diffs; the engine orders them via
+  // its generic DEFAULT_RANK fallback (no engine logic change).
+  | "platform_created"
+  | "platform_changed";
 
 /**
  * THE official Timeline contract. Every provider returns TimelineEvent[] with
