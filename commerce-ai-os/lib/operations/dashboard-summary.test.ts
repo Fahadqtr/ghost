@@ -131,6 +131,19 @@ test("buildPlatformOverview: Shopify counted by status; other platforms not-conn
   assert.equal(ov.puresoul.available, false, "PureSoul not passed → not connected");
   assert.equal(ov.talabat, "not_connected");
   assert.equal(ov.rafeeq, "not_connected");
+  // No Shopify snapshot meta passed → freshness defaults (reader-only status).
+  assert.equal(ov.shopify.lastCapturedAt, null);
+  assert.equal(ov.shopify.stale, false);
+});
+
+test("buildPlatformOverview: Shopify snapshot freshness surfaced (UI.9.5)", () => {
+  const items = [mk({ platforms: shopify("published") })];
+  const ov = buildPlatformOverview(items, true, undefined, {
+    lastCapturedAt: "2026-08-09T00:00:00.000Z",
+    stale: true,
+  });
+  assert.equal(ov.shopify.lastCapturedAt, "2026-08-09T00:00:00.000Z");
+  assert.equal(ov.shopify.stale, true);
 });
 
 test("buildPlatformOverview: PureSoul counts from snapshot state (missing/price_diff/etc.)", () => {

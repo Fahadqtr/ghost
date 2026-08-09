@@ -110,6 +110,65 @@ test("trusted Shopify presence flows into platform status", async () => {
   assert.equal(other.platforms.find((p) => p.platform === "shopify")?.status, "unknown", "no presence for this id → unknown");
 });
 
+test("Shopify SNAPSHOT presence takes precedence over the live reader; freshness surfaced", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    // Live reader says published; the persisted snapshot says review_required → snapshot wins.
+    shopify: {
+      loadShopifyPresence: async () => ({ available: true, byProductId: new Map([["ready", presence({ linked: true, live: true })]]) }),
+    },
+    shopifySnapshot: {
+      loadShopifySnapshotView: async () => ({
+        available: true,
+        degraded: false,
+        byProductId: new Map([["ready", presence({ reviewRequired: true })]]),
+        lastCapturedAt: "2026-08-09T00:00:00.000Z",
+        stale: false,
+      }),
+    },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.shopifyAvailable, true);
+  assert.equal(res.data.shopifySnapshotAvailable, true);
+  assert.equal(res.data.shopifyLastCapturedAt, "2026-08-09T00:00:00.000Z");
+  assert.equal(res.data.shopifyStale, false);
+  const ready = res.data.items.find((i) => i.id === "ready")!;
+  assert.equal(ready.platforms.find((p) => p.platform === "shopify")?.status, "review_required");
+});
+
+test("Shopify fallback: no snapshot for a product → live reader presence is used", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    shopify: {
+      loadShopifyPresence: async () => ({ available: true, byProductId: new Map([["ready", presence({ linked: true, live: true })]]) }),
+    },
+    // Snapshot read healthy but empty (nothing captured yet) → fall back to reader.
+    shopifySnapshot: {
+      loadShopifySnapshotView: async () => ({ available: false, degraded: false, byProductId: new Map(), lastCapturedAt: null, stale: false }),
+    },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  const ready = res.data.items.find((i) => i.id === "ready")!;
+  assert.equal(ready.platforms.find((p) => p.platform === "shopify")?.status, "published");
+});
+
+test("Shopify snapshot read failure → reader still used, never missing", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    shopify: {
+      loadShopifyPresence: async () => ({ available: true, byProductId: new Map([["ready", presence({ linked: true, live: true })]]) }),
+    },
+    shopifySnapshot: { loadShopifySnapshotView: async () => { throw new Error("snap down"); } },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.shopifySnapshotAvailable, false);
+  const ready = res.data.items.find((i) => i.id === "ready")!;
+  assert.equal(ready.platforms.find((p) => p.platform === "shopify")?.status, "published");
+});
+
 test("PureSoul presence flows into platform status; flags surfaced", async () => {
   const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
     engines,

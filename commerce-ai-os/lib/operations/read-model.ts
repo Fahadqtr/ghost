@@ -101,6 +101,21 @@ export interface ShopifyPresenceReader {
   ): Promise<{ available: boolean; byProductId: Map<string, PlatformPresence> }>;
 }
 
+/** A Shopify SNAPSHOT reader (Phase UI.9.5): the persisted, per-product
+ *  PlatformPresence reconstructed from platform_snapshots + freshness.
+ *  Best-effort: `degraded` marks a read failure (→ reader fallback / unknown,
+ *  never missing). Takes precedence over the live UI.3 presence when a product
+ *  has a snapshot; falls back to the live reader otherwise. */
+export interface ShopifySnapshotReader {
+  loadShopifySnapshotView(client: OperationsReadClient): Promise<{
+    available: boolean;
+    degraded: boolean;
+    byProductId: Map<string, PlatformPresence>;
+    lastCapturedAt: string | null;
+    stale: boolean;
+  }>;
+}
+
 /** A PureSoul presence reader (injected in tests; the UI.9.1 overlay reader in
  *  prod). Best-effort: `degraded` marks a read failure (→ unknown, never
  *  missing); `available` marks a healthy read that carried PureSoul data. */
@@ -162,6 +177,12 @@ export interface OperationsDashboardData {
   partial: boolean;
   /** true when a trusted Shopify read succeeded; false = degraded (unknown) */
   shopifyAvailable: boolean;
+  /** newest Shopify snapshot capture time, or null (never captured) */
+  shopifyLastCapturedAt: string | null;
+  /** true when the newest Shopify snapshot is older than the stale window (24h) */
+  shopifyStale: boolean;
+  /** true when a persisted Shopify snapshot read carried data */
+  shopifySnapshotAvailable: boolean;
   /** true when a healthy PureSoul read (snapshot OR overlay) carried data */
   puresoulAvailable: boolean;
   /** true when a PureSoul read FAILED (show a degraded banner; never missing) */
@@ -187,6 +208,7 @@ export async function loadOperationsDashboard(
   deps?: {
     engines?: OperationsEngines;
     shopify?: ShopifyPresenceReader;
+    shopifySnapshot?: ShopifySnapshotReader;
     puresoul?: PureSoulPresenceReader;
     puresoulSnapshot?: PureSoulSnapshotReader;
   },
@@ -214,7 +236,14 @@ export async function loadOperationsDashboard(
       lastCapturedAt: null as string | null,
       stale: false,
     });
-    const [products, variants, shopifyRes, puresoulRes, puresoulSnapRes] = await Promise.all([
+    const emptyShopifySnapshot = (degraded: boolean) => ({
+      available: false,
+      degraded,
+      byProductId: new Map<string, PlatformPresence>(),
+      lastCapturedAt: null as string | null,
+      stale: false,
+    });
+    const [products, variants, shopifyRes, shopifySnapRes, puresoulRes, puresoulSnapRes] = await Promise.all([
       readAllRows(client.from("products").select(PRODUCT_COLUMNS).order("id", { ascending: true }), MAX_PRODUCTS),
       readAllRows(
         client.from("product_variants").select(VARIANT_COLUMNS).order("parent_product_id", { ascending: true }),
@@ -223,6 +252,9 @@ export async function loadOperationsDashboard(
       deps?.shopify
         ? deps.shopify.loadShopifyPresence(client).then((r) => r, emptyPresence)
         : Promise.resolve(emptyPresence()),
+      deps?.shopifySnapshot
+        ? deps.shopifySnapshot.loadShopifySnapshotView(client).then((r) => r, () => emptyShopifySnapshot(true))
+        : Promise.resolve(emptyShopifySnapshot(false)),
       deps?.puresoul
         ? deps.puresoul.loadPureSoulPresence(client).then((r) => r, () => emptyPuresoul(true))
         : Promise.resolve(emptyPuresoul(false)),
@@ -238,8 +270,15 @@ export async function loadOperationsDashboard(
       if (typeof parent === "string" && parent !== "") variantCounts.set(parent, (variantCounts.get(parent) ?? 0) + 1);
     }
 
-    const shopifyAvailable = shopifyRes.available;
+    // Shopify presence: a persisted snapshot (UI.9.5) takes precedence per
+    // product; the live UI.3 reader is the fallback. "Available" for the engine
+    // means EITHER source carried trusted data. Freshness comes from the snapshot.
+    const shopifySnapById = shopifySnapRes.byProductId;
+    const shopifyAvailable = shopifyRes.available || shopifySnapRes.available;
     const shopifyById = shopifyRes.byProductId;
+    const shopifyLastCapturedAt = shopifySnapRes.lastCapturedAt;
+    const shopifyStale = shopifySnapRes.stale;
+    const shopifySnapshotAvailable = shopifySnapRes.available;
     const puresoulById = puresoulRes.byProductId;
     const puresoulSnapById = puresoulSnapRes.byProductId;
     // Snapshot OR overlay having data ⇒ connected; either read failing ⇒ degraded.
@@ -259,7 +298,12 @@ export async function loadOperationsDashboard(
       if (id === "") continue;
       // Merge the per-product trusted platform snapshots (each omitted when
       // absent → the engine reports "unknown", never "missing").
-      const shPres = shopifyAvailable && shopifyById.has(id) ? shopifyById.get(id) : undefined;
+      // Snapshot presence wins when present; else the live reader; else unknown.
+      const shPres = shopifySnapById.has(id)
+        ? shopifySnapById.get(id)
+        : shopifyRes.available && shopifyById.has(id)
+          ? shopifyById.get(id)
+          : undefined;
       const psPres = puresoulById.has(id) ? puresoulById.get(id) : undefined;
       const presence =
         shPres || psPres
@@ -290,6 +334,9 @@ export async function loadOperationsDashboard(
         health: engines.computeHealthSummary(readiness, tasks),
         partial: products.partial || variants.partial,
         shopifyAvailable,
+        shopifyLastCapturedAt,
+        shopifyStale,
+        shopifySnapshotAvailable,
         puresoulAvailable,
         puresoulDegraded,
         puresoulLastCapturedAt,
