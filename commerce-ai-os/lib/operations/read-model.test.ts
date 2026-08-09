@@ -153,6 +153,75 @@ test("no PureSoul reader → puresoul stays unknown, flags false (backwards comp
   assert.equal(res.data.puresoulDegraded, false);
 });
 
+test("PureSoul SNAPSHOT state flows into item.puresoulState; freshness surfaced", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    puresoulSnapshot: {
+      loadPureSoulSnapshotView: async () => ({
+        available: true,
+        degraded: false,
+        byProductId: new Map([
+          ["ready", "missing" as const],
+          ["noimg", "price_different" as const],
+        ]),
+        lastCapturedAt: "2026-08-08T00:00:00.000Z",
+        stale: true,
+      }),
+    },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.puresoulAvailable, true);
+  assert.equal(res.data.puresoulLastCapturedAt, "2026-08-08T00:00:00.000Z");
+  assert.equal(res.data.puresoulStale, true);
+  assert.equal(res.data.items.find((i) => i.id === "ready")!.puresoulState, "missing");
+  assert.equal(res.data.items.find((i) => i.id === "noimg")!.puresoulState, "price_different");
+  assert.equal(res.data.items.find((i) => i.id === "newp")!.puresoulState, undefined, "no snapshot → undefined (Unknown), never missing");
+});
+
+test("snapshot takes precedence over the live overlay for the same product", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    // overlay says published (live), snapshot says missing → snapshot wins
+    puresoul: {
+      loadPureSoulPresence: async () => ({ available: true, degraded: false, byProductId: new Map([["ready", presence({ linked: true, live: true })]]) }),
+    },
+    puresoulSnapshot: {
+      loadPureSoulSnapshotView: async () => ({ available: true, degraded: false, byProductId: new Map([["ready", "missing" as const]]), lastCapturedAt: "2026-08-08T00:00:00.000Z", stale: false }),
+    },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.items.find((i) => i.id === "ready")!.puresoulState, "missing");
+});
+
+test("overlay fallback: no snapshot for a product → overlay-derived state (never missing)", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    puresoul: {
+      loadPureSoulPresence: async () => ({ available: true, degraded: false, byProductId: new Map([["ready", presence({ linked: true, live: true })]]) }),
+    },
+    puresoulSnapshot: {
+      loadPureSoulSnapshotView: async () => ({ available: false, degraded: false, byProductId: new Map(), lastCapturedAt: null, stale: false }),
+    },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.items.find((i) => i.id === "ready")!.puresoulState, "published");
+  assert.equal(res.data.puresoulAvailable, true, "overlay data alone still counts as connected");
+});
+
+test("snapshot read failure → puresoulDegraded, states undefined (never missing)", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    puresoulSnapshot: { loadPureSoulSnapshotView: async () => ({ available: false, degraded: true, byProductId: new Map(), lastCapturedAt: null, stale: true }) },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.puresoulDegraded, true);
+  for (const it of res.data.items) assert.notEqual(it.puresoulState, "missing");
+});
+
 test("a DB error yields the single constant error status — never a raw error", async () => {
   const errClient = {
     from: () => ({

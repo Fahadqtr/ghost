@@ -133,24 +133,31 @@ test("buildPlatformOverview: Shopify counted by status; other platforms not-conn
   assert.equal(ov.rafeeq, "not_connected");
 });
 
-function puresoul(status: PlatformStatusValue): PlatformStatus[] {
-  return [{ platform: "puresoul", status, label: "x" }];
-}
-
-test("buildPlatformOverview: PureSoul counts published/out-of-stock/review; unknown never missing", () => {
+test("buildPlatformOverview: PureSoul counts from snapshot state (missing/price_diff/etc.)", () => {
   const items = [
-    mk({ id: "a", platforms: puresoul("published") }),
-    mk({ id: "b", platforms: puresoul("ready") }), // مخلّصة (out of stock)
-    mk({ id: "c", platforms: puresoul("ready") }),
-    mk({ id: "d", platforms: puresoul("review_required") }),
-    mk({ id: "e", platforms: puresoul("unknown") }),
+    mk({ id: "a", puresoulState: "published" }),
+    mk({ id: "b", puresoulState: "missing" }),
+    mk({ id: "c", puresoulState: "price_different" }),
+    mk({ id: "d", puresoulState: "out_of_stock" }),
+    mk({ id: "e", puresoulState: "review" }),
+    mk({ id: "f", puresoulState: "unknown" }),
+    mk({ id: "g" }), // no state → counted as unknown, NEVER missing
   ];
-  const ov = buildPlatformOverview(items, false, true);
+  const ov = buildPlatformOverview(items, false, {
+    available: true,
+    lastCapturedAt: "2026-08-01T00:00:00.000Z",
+    stale: false,
+  });
   assert.equal(ov.puresoul.available, true);
   assert.equal(ov.puresoul.published, 1);
-  assert.equal(ov.puresoul.outOfStock, 2);
+  assert.equal(ov.puresoul.missing, 1);
+  assert.equal(ov.puresoul.priceDifferent, 1);
+  assert.equal(ov.puresoul.different, 1, "different == price_different this phase");
+  assert.equal(ov.puresoul.outOfStock, 1);
   assert.equal(ov.puresoul.reviewRequired, 1);
-  // there is no "missing" field for PureSoul — unknown is simply not counted.
+  assert.equal(ov.puresoul.unknown, 2, "explicit unknown + missing-state both counted unknown, never missing");
+  assert.equal(ov.puresoul.lastCapturedAt, "2026-08-01T00:00:00.000Z");
+  assert.equal(ov.puresoul.stale, false);
 });
 
 test("buildPlatformOverview: degraded Shopify → available:false, unknown rows not counted missing", () => {

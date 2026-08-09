@@ -187,16 +187,30 @@ export interface ShopifyOverview {
   ready: number;
 }
 
-/** PureSoul overview (Phase UI.9.1). Only the reliably-readable states from the
- *  overlay: published (InStock), outOfStock (مخلّصة → engine "ready") and
- *  reviewRequired (Rejected). Missing/Different are NOT derivable read-only this
- *  phase (no persisted confirmed-absent / field-compare) → deferred to UI.9.2.
- *  `available:false` ⇒ the UI shows «غير مربوط». */
+/** PureSoul overview (Phase UI.9.3) — counted from the snapshot-derived
+ *  `item.puresoulState` (classified in lib, never in the UI). `different` equals
+ *  `priceDifferent` this phase (price is the only field comparePureSeoul
+ *  compares; name-diff is not reliably available). `unknown` is surfaced but is
+ *  NEVER treated as missing. Freshness comes from the latest capture. */
 export interface PureSoulOverview {
   available: boolean;
   published: number;
-  outOfStock: number;
+  missing: number;
+  different: number;
+  priceDifferent: number;
   reviewRequired: number;
+  outOfStock: number;
+  unknown: number;
+  lastCapturedAt: string | null;
+  stale: boolean;
+}
+
+/** Freshness/availability of the PureSoul snapshot read, passed through to the
+ *  overview (computed by the server-side snapshot reader). */
+export interface PureSoulMeta {
+  available: boolean;
+  lastCapturedAt: string | null;
+  stale: boolean;
 }
 
 export interface PlatformOverview {
@@ -208,17 +222,14 @@ export interface PlatformOverview {
   rafeeq: "not_connected";
 }
 
-function puresoulStatusOf(item: OperationsListItem): PlatformStatusValue | null {
-  return item.platforms.find((p) => p.platform === "puresoul")?.status ?? null;
-}
+const EMPTY_PURESOUL_META: PureSoulMeta = { available: false, lastCapturedAt: null, stale: false };
 
 /** Summarise platform presence. Shopify + PureSoul have trusted readers; their
- *  statuses are counted from the items. Unknown is NEVER counted (so a not-
- *  connected / degraded platform is never folded into "missing"). */
+ *  statuses are counted from the items. Unknown is NEVER folded into "missing". */
 export function buildPlatformOverview(
   items: readonly OperationsListItem[],
   shopifyAvailable: boolean,
-  puresoulAvailable: boolean = false,
+  puresoulMeta: PureSoulMeta = EMPTY_PURESOUL_META,
 ): PlatformOverview {
   const shopify: ShopifyOverview = {
     available: shopifyAvailable,
@@ -229,10 +240,16 @@ export function buildPlatformOverview(
     ready: 0,
   };
   const puresoul: PureSoulOverview = {
-    available: puresoulAvailable,
+    available: puresoulMeta.available,
     published: 0,
-    outOfStock: 0,
+    missing: 0,
+    different: 0,
+    priceDifferent: 0,
     reviewRequired: 0,
+    outOfStock: 0,
+    unknown: 0,
+    lastCapturedAt: puresoulMeta.lastCapturedAt,
+    stale: puresoulMeta.stale,
   };
   for (const item of items) {
     switch (shopifyStatusOf(item)) {
@@ -254,18 +271,26 @@ export function buildPlatformOverview(
       default:
         break; // "unknown" / null → not counted
     }
-    switch (puresoulStatusOf(item)) {
+    switch (item.puresoulState) {
       case "published":
         puresoul.published++;
         break;
-      case "ready": // مخلّصة (present but hidden / out of stock)
-        puresoul.outOfStock++;
+      case "missing":
+        puresoul.missing++;
         break;
-      case "review_required":
+      case "price_different":
+        puresoul.priceDifferent++;
+        puresoul.different++; // price is the only compared field this phase
+        break;
+      case "review":
         puresoul.reviewRequired++;
         break;
+      case "out_of_stock":
+        puresoul.outOfStock++;
+        break;
       default:
-        break; // "unknown" / null → not counted, never "missing"
+        puresoul.unknown++; // "unknown" / undefined — surfaced, never "missing"
+        break;
     }
   }
   return { shopify, puresoul, talabat: "not_connected", rafeeq: "not_connected" };
@@ -284,12 +309,12 @@ export function buildDashboardSummary(
   items: readonly OperationsListItem[],
   health: HealthSummary,
   shopifyAvailable: boolean,
-  puresoulAvailable: boolean = false,
+  puresoulMeta: PureSoulMeta = EMPTY_PURESOUL_META,
   queueTop: number = DEFAULT_QUEUE_TOP,
 ): DashboardSummary {
   return {
     kpis: buildKpis(items, health),
     queues: buildQueues(items, queueTop),
-    platformOverview: buildPlatformOverview(items, shopifyAvailable, puresoulAvailable),
+    platformOverview: buildPlatformOverview(items, shopifyAvailable, puresoulMeta),
   };
 }
