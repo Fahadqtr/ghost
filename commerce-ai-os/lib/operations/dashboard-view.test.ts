@@ -95,15 +95,23 @@ test("ticktick_synced filter selects items with ticktickSyncedCount > 0", () => 
   assert.deepEqual(filterOperations([synced, notSynced, none], "ticktick_synced").map((i) => i.id), ["s"]);
 });
 
-test("puresoul filters read the puresoul platform status (out-of-stock=ready, review)", () => {
-  const outOfStock = item({ id: "oos", platforms: [{ platform: "puresoul", status: "ready", label: "x" }] });
-  const review = item({ id: "rev", platforms: [{ platform: "puresoul", status: "review_required", label: "x" }] });
-  const published = item({ id: "pub", platforms: [{ platform: "puresoul", status: "published", label: "x" }] });
-  const unknown = item({ id: "unk", platforms: [{ platform: "puresoul", status: "unknown", label: "x" }] });
-  const items = [outOfStock, review, published, unknown];
+test("puresoul filters read the snapshot-derived puresoulState (missing/price_diff/etc.)", () => {
+  const items = [
+    item({ id: "oos", puresoulState: "out_of_stock" }),
+    item({ id: "rev", puresoulState: "review" }),
+    item({ id: "pub", puresoulState: "published" }),
+    item({ id: "mis", puresoulState: "missing" }),
+    item({ id: "pd", puresoulState: "price_different" }),
+    item({ id: "unk", puresoulState: "unknown" }),
+    item({ id: "none" }), // no state → matches nothing
+  ];
   assert.deepEqual(filterOperations(items, "puresoul_out_of_stock").map((i) => i.id), ["oos"]);
   assert.deepEqual(filterOperations(items, "puresoul_review").map((i) => i.id), ["rev"]);
-  assert.equal(filterOperations(items, "puresoul_out_of_stock").some((i) => i.id === "unk"), false, "unknown is never out-of-stock");
+  assert.deepEqual(filterOperations(items, "puresoul_missing").map((i) => i.id), ["mis"]);
+  assert.deepEqual(filterOperations(items, "puresoul_price_diff").map((i) => i.id), ["pd"]);
+  // "different" == price_different this phase
+  assert.deepEqual(filterOperations(items, "puresoul_different").map((i) => i.id), ["pd"]);
+  assert.equal(filterOperations(items, "puresoul_missing").some((i) => i.id === "unk" || i.id === "none"), false, "unknown/absent is never missing");
 });
 
 test("shopify filters read the shopify platform status only", () => {

@@ -17,6 +17,7 @@ import type {
   PlatformType,
   ProductReadiness,
 } from "./shared/models";
+import type { PureSoulState } from "@/lib/platforms/puresoul/capture-compute";
 
 /** One product row as the dashboard renders it — catalog-safe, no PII. */
 export interface OperationsListItem {
@@ -43,6 +44,13 @@ export interface OperationsListItem {
    * changes readiness/tasks, it only annotates. `> 0` ⇒ "synced" for the UI.
    */
   ticktickSyncedCount?: number;
+  /**
+   * PureSoul state derived from the latest persisted snapshot (Phase UI.9.3),
+   * falling back to the live overlay, else undefined (→ Unknown). Enriched
+   * server-side; it annotates only (never changes readiness/tasks). Missing /
+   * price_different come ONLY from a trusted snapshot — never from absence.
+   */
+  puresoulState?: PureSoulState;
 }
 
 /** Map a whitelisted DB row (+ its variant count and optional Shopify
@@ -88,7 +96,10 @@ export type OperationsFilter =
   | "shopify_different"
   | "ticktick_synced"
   | "puresoul_out_of_stock"
-  | "puresoul_review";
+  | "puresoul_review"
+  | "puresoul_missing"
+  | "puresoul_different"
+  | "puresoul_price_diff";
 
 export const OPERATIONS_FILTER_VALUES: readonly OperationsFilter[] = [
   "all",
@@ -103,6 +114,9 @@ export const OPERATIONS_FILTER_VALUES: readonly OperationsFilter[] = [
   "ticktick_synced",
   "puresoul_out_of_stock",
   "puresoul_review",
+  "puresoul_missing",
+  "puresoul_different",
+  "puresoul_price_diff",
 ];
 
 export const OPERATIONS_FILTER_LABELS: Record<OperationsFilter, string> = {
@@ -118,6 +132,9 @@ export const OPERATIONS_FILTER_LABELS: Record<OperationsFilter, string> = {
   ticktick_synced: "مُزامَن مع TickTick",
   puresoul_out_of_stock: "PureSoul: نافد",
   puresoul_review: "PureSoul: مراجعة",
+  puresoul_missing: "PureSoul: غير موجود",
+  puresoul_different: "PureSoul: مختلف",
+  puresoul_price_diff: "PureSoul: فرق سعر",
 };
 
 export const OPERATIONS_PAGE_SIZE = 24;
@@ -153,8 +170,11 @@ function shopifyStatus(item: OperationsListItem): PlatformStatusValue | null {
   return item.platforms.find((p) => p.platform === "shopify")?.status ?? null;
 }
 
-function puresoulStatus(item: OperationsListItem): PlatformStatusValue | null {
-  return item.platforms.find((p) => p.platform === "puresoul")?.status ?? null;
+// PureSoul filters read the snapshot-derived state (Phase UI.9.3) — a single
+// source of truth. "different" == price_different this phase (price is the only
+// field comparePureSeoul compares; name-diff is not reliably available).
+function isPureSoulState(item: OperationsListItem, state: PureSoulState): boolean {
+  return item.puresoulState === state;
 }
 
 /** Apply a single filter (pure). Unknown filter → no narrowing. */
@@ -182,10 +202,14 @@ export function filterOperations(
     case "shopify_different":
       return items.filter((i) => shopifyStatus(i) === "different");
     case "puresoul_out_of_stock":
-      // PureSoul present but hidden (مخلّصة) → engine status "ready".
-      return items.filter((i) => puresoulStatus(i) === "ready");
+      return items.filter((i) => isPureSoulState(i, "out_of_stock"));
     case "puresoul_review":
-      return items.filter((i) => puresoulStatus(i) === "review_required");
+      return items.filter((i) => isPureSoulState(i, "review"));
+    case "puresoul_missing":
+      return items.filter((i) => isPureSoulState(i, "missing"));
+    case "puresoul_different": // price is the only compared field this phase
+    case "puresoul_price_diff":
+      return items.filter((i) => isPureSoulState(i, "price_different"));
     case "all":
     default:
       return [...items];

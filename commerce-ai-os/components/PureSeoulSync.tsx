@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { comparePureSeoul, applyPureSeoulAvailability, setPureSeoulIds, addPureSeoulNewProducts, type PSCompare, type PSItem } from "@/app/(app)/import-export/pure-seoul-actions";
+import { capturePureSeoulSnapshots } from "@/app/(app)/import-export/pure-seoul-snapshot-actions";
 
 type PSRowLite = { id: string; global_id: string; name_en: string; name_ar: string; description_en: string; description_ar: string; price: string; approval: string; branchStatus: string; stock: string };
 
@@ -52,6 +53,45 @@ export default function PureSeoulSync() {
       alert(e instanceof Error ? e.message : "تعذّرت الإضافة.");
     } finally {
       setAdding(false);
+    }
+  };
+  // Capture a durable PureSoul snapshot per product (Phase UI.9.3). Read-only on
+  // products; append-only insert into platform_snapshots. Idempotent — re-running
+  // the same upload writes nothing. Feeds the /v2/operations PureSoul view.
+  const [capturing, setCapturing] = useState(false);
+  const [captureMsg, setCaptureMsg] = useState<string | null>(null);
+  const captureSnapshot = async () => {
+    if (!psRows.length) return;
+    setCapturing(true); setCaptureMsg(null);
+    try {
+      const r = await capturePureSeoulSnapshots(psRows);
+      if (r.error) { setCaptureMsg(null); alert(r.error); return; }
+      setCaptureMsg(`✓ تم حفظ اللقطة — منتجات ${r.total} · جديد ${r.created} · تغيّر ${r.changed} · بدون تغيير ${r.unchanged}. تظهر الحالة في مركز العمليات.`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "تعذّر حفظ اللقطة.");
+    } finally {
+      setCapturing(false);
+    }
+  };
+  // Owner-only SCOPED test capture: persists exactly ONE product's snapshot
+  // (server re-validates the id + enforces owner). Sends only the product id;
+  // all snapshot fields are derived server-side from the parsed export.
+  const [scopeId, setScopeId] = useState("");
+  const [scoping, setScoping] = useState(false);
+  const [scopeMsg, setScopeMsg] = useState<string | null>(null);
+  const captureOne = async () => {
+    const id = scopeId.trim();
+    if (!id || !psRows.length) return;
+    if (!confirm(`اختبار: احفظ لقطة لمنتج واحد فقط؟\nproduct id: ${id}`)) return;
+    setScoping(true); setScopeMsg(null);
+    try {
+      const r = await capturePureSeoulSnapshots(psRows, { onlyProductId: id });
+      if (r.error) { setScopeMsg(null); alert(r.error); return; }
+      setScopeMsg(`✓ اختبار — منتج ${r.total} · جديد ${r.created} · تغيّر ${r.changed} · بدون تغيير ${r.unchanged}.`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "تعذّر الحفظ.");
+    } finally {
+      setScoping(false);
     }
   };
   // "Apply availability to the system" (auto-fill OutOfStock/InStock on PS).
@@ -200,6 +240,33 @@ export default function PureSeoulSync() {
             <button onClick={addExclusives} disabled={adding || psRows.length === 0}
               className="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
               {adding ? "…يضيف" : `أضف الحصرية (${c.extraOnPS})`}
+            </button>
+          </div>
+
+          {/* Capture a durable snapshot of this compare into platform_snapshots. */}
+          <div className="card flex flex-col gap-2 border-sky-200 bg-sky-50/60 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">📸 احفظ لقطة PureSoul (مركز العمليات)</h3>
+              <p className="text-xs text-muted">
+                يخزّن حالة كل منتج (منشور / غير موجود / فرق سعر / نافد / مراجعة) بشكل دائم وآمن — قراءة فقط للكتالوج،
+                وإعادة الرفع نفسه ما تكرّر شيء. تظهر في <code>/v2/operations</code>.
+              </p>
+              {captureMsg ? <p className="mt-1 text-xs font-medium text-emerald-700">{captureMsg}</p> : null}
+              {/* Owner-only scoped TEST: persist exactly one product's snapshot. */}
+              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-sky-200/60 pt-2">
+                <span className="text-[11px] text-muted">اختبار (مالك فقط): لقطة منتج واحد —</span>
+                <input value={scopeId} onChange={(e) => setScopeId(e.target.value)} placeholder="product id"
+                  className="w-56 rounded border border-sky-200 px-2 py-1 text-xs" />
+                <button onClick={captureOne} disabled={scoping || !scopeId.trim() || psRows.length === 0}
+                  className="rounded bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800 hover:bg-sky-200 disabled:opacity-50">
+                  {scoping ? "…يحفظ" : "احفظ منتجًا واحدًا"}
+                </button>
+                {scopeMsg ? <span className="text-[11px] font-medium text-emerald-700">{scopeMsg}</span> : null}
+              </div>
+            </div>
+            <button onClick={captureSnapshot} disabled={capturing || psRows.length === 0}
+              className="shrink-0 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">
+              {capturing ? "…يحفظ" : `احفظ اللقطة (${c.psRows})`}
             </button>
           </div>
 

@@ -26,6 +26,7 @@ import type {
   TimelineProductSnapshot,
 } from "./shared/models";
 import type { OperationsListItem } from "./dashboard-view";
+import type { PureSoulState } from "@/lib/platforms/puresoul/capture-compute";
 import type { TaskViewItem } from "./tasks-view";
 import type { TimelineProvider } from "./timeline/providers/timeline-provider";
 
@@ -109,6 +110,30 @@ export interface PureSoulPresenceReader {
   ): Promise<{ available: boolean; degraded: boolean; byProductId: Map<string, PlatformPresence> }>;
 }
 
+/** A PureSoul SNAPSHOT reader (Phase UI.9.3): the persisted, classified state
+ *  per product from platform_snapshots + freshness. Best-effort: `degraded`
+ *  marks a read failure (→ unknown, never missing). Takes precedence over the
+ *  live overlay when a product has a snapshot. */
+export interface PureSoulSnapshotReader {
+  loadPureSoulSnapshotView(client: OperationsReadClient): Promise<{
+    available: boolean;
+    degraded: boolean;
+    byProductId: Map<string, PureSoulState>;
+    lastCapturedAt: string | null;
+    stale: boolean;
+  }>;
+}
+
+/** Overlay presence (UI.9.1) → PureSoul dashboard state, used only as a fallback
+ *  when a product has no persisted snapshot. The overlay can never yield
+ *  missing / price_different — those come ONLY from a snapshot. */
+function overlayToPureSoulState(p: PlatformPresence): PureSoulState | undefined {
+  if (p.reviewRequired) return "review";
+  if (p.live) return "published";
+  if (p.linked) return "out_of_stock";
+  return undefined;
+}
+
 const PRODUCT_COLUMNS =
   "id, sku, barcode, name_ar, name_en, description_ar, description_en, brand_id, main_category, price, image_url, approval, platform_status";
 const VARIANT_COLUMNS = "parent_product_id";
@@ -137,10 +162,14 @@ export interface OperationsDashboardData {
   partial: boolean;
   /** true when a trusted Shopify read succeeded; false = degraded (unknown) */
   shopifyAvailable: boolean;
-  /** true when a healthy PureSoul overlay read carried data (else «غير مربوط») */
+  /** true when a healthy PureSoul read (snapshot OR overlay) carried data */
   puresoulAvailable: boolean;
-  /** true when the PureSoul read FAILED (show a degraded banner; never missing) */
+  /** true when a PureSoul read FAILED (show a degraded banner; never missing) */
   puresoulDegraded: boolean;
+  /** newest PureSoul snapshot capture time, or null (never captured) */
+  puresoulLastCapturedAt: string | null;
+  /** true when the newest PureSoul snapshot is older than the stale window (24h) */
+  puresoulStale: boolean;
 }
 
 export type OperationsLoadResult =
@@ -155,7 +184,12 @@ export type OperationsLoadResult =
  */
 export async function loadOperationsDashboard(
   client: OperationsReadClient,
-  deps?: { engines?: OperationsEngines; shopify?: ShopifyPresenceReader; puresoul?: PureSoulPresenceReader },
+  deps?: {
+    engines?: OperationsEngines;
+    shopify?: ShopifyPresenceReader;
+    puresoul?: PureSoulPresenceReader;
+    puresoulSnapshot?: PureSoulSnapshotReader;
+  },
 ): Promise<OperationsLoadResult> {
   try {
     const engines = deps?.engines ?? (await defaultEngines());
@@ -173,7 +207,14 @@ export async function loadOperationsDashboard(
       degraded,
       byProductId: new Map<string, PlatformPresence>(),
     });
-    const [products, variants, shopifyRes, puresoulRes] = await Promise.all([
+    const emptyPuresoulSnapshot = (degraded: boolean) => ({
+      available: false,
+      degraded,
+      byProductId: new Map<string, PureSoulState>(),
+      lastCapturedAt: null as string | null,
+      stale: false,
+    });
+    const [products, variants, shopifyRes, puresoulRes, puresoulSnapRes] = await Promise.all([
       readAllRows(client.from("products").select(PRODUCT_COLUMNS).order("id", { ascending: true }), MAX_PRODUCTS),
       readAllRows(
         client.from("product_variants").select(VARIANT_COLUMNS).order("parent_product_id", { ascending: true }),
@@ -185,6 +226,9 @@ export async function loadOperationsDashboard(
       deps?.puresoul
         ? deps.puresoul.loadPureSoulPresence(client).then((r) => r, () => emptyPuresoul(true))
         : Promise.resolve(emptyPuresoul(false)),
+      deps?.puresoulSnapshot
+        ? deps.puresoulSnapshot.loadPureSoulSnapshotView(client).then((r) => r, () => emptyPuresoulSnapshot(true))
+        : Promise.resolve(emptyPuresoulSnapshot(false)),
     ]);
 
     // variant counts per parent — pure aggregation, no stock/PII read.
@@ -196,9 +240,13 @@ export async function loadOperationsDashboard(
 
     const shopifyAvailable = shopifyRes.available;
     const shopifyById = shopifyRes.byProductId;
-    const puresoulAvailable = puresoulRes.available;
-    const puresoulDegraded = puresoulRes.degraded;
     const puresoulById = puresoulRes.byProductId;
+    const puresoulSnapById = puresoulSnapRes.byProductId;
+    // Snapshot OR overlay having data ⇒ connected; either read failing ⇒ degraded.
+    const puresoulAvailable = puresoulSnapRes.available || puresoulRes.available;
+    const puresoulDegraded = puresoulSnapRes.degraded || puresoulRes.degraded;
+    const puresoulLastCapturedAt = puresoulSnapRes.lastCapturedAt;
+    const puresoulStale = puresoulSnapRes.stale;
 
     const items: OperationsListItem[] = [];
     const readiness: ProductReadiness[] = [];
@@ -223,7 +271,13 @@ export async function loadOperationsDashboard(
       const t = engines.generateProductTasks(product, r, statuses);
       readiness.push(r);
       tasks.push(...t);
-      items.push(engines.toListItem(product, r, t, statuses));
+      const listItem = engines.toListItem(product, r, t, statuses);
+      // PureSoul state: persisted snapshot wins; else fall back to the live
+      // overlay; else undefined (→ Unknown). Missing/price_different can only
+      // come from a snapshot, never from the overlay or from absence.
+      const puresoulState = puresoulSnapById.get(id) ?? (psPres ? overlayToPureSoulState(psPres) : undefined);
+      if (puresoulState) listItem.puresoulState = puresoulState;
+      items.push(listItem);
     }
 
     return {
@@ -238,6 +292,8 @@ export async function loadOperationsDashboard(
         shopifyAvailable,
         puresoulAvailable,
         puresoulDegraded,
+        puresoulLastCapturedAt,
+        puresoulStale,
       },
     };
   } catch {

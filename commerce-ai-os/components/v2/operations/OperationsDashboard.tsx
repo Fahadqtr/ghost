@@ -123,11 +123,19 @@ function PureSoulOverviewCard({ ps }: { ps: PureSoulOverview }) {
       {ps.available ? (
         <div className="space-y-1">
           <OverviewStat label="منشور" value={ps.published} tone="text-emerald-700" />
+          <OverviewStat label="غير موجود" value={ps.missing} tone="text-rose-700" />
+          <OverviewStat label="فرق سعر" value={ps.priceDifferent} tone="text-amber-700" />
+          <OverviewStat label="مختلف" value={ps.different} tone="text-amber-700" />
           <OverviewStat label="نافد (مخلّصة)" value={ps.outOfStock} tone="text-amber-700" />
           <OverviewStat label="مراجعة" value={ps.reviewRequired} tone="text-amber-700" />
+          <OverviewStat label="غير معروف" value={ps.unknown} tone="text-muted" />
+          <p className="pt-1 text-[10px] text-muted">
+            آخر لقطة: {ps.lastCapturedAt ? new Date(ps.lastCapturedAt).toLocaleString("ar") : "—"}
+            {ps.stale ? " · ⚠️ قديمة (أكثر من ٢٤ ساعة)" : ""}
+          </p>
         </div>
       ) : (
-        <p className="text-[11px] text-muted">لا يوجد رابط بعد — لا تُحتسب كغير موجودة.</p>
+        <p className="text-[11px] text-muted">لا توجد لقطة بعد — لا تُحتسب كغير موجودة.</p>
       )}
     </div>
   );
@@ -366,6 +374,8 @@ export default function OperationsDashboard({
   shopifyAvailable,
   puresoulAvailable,
   puresoulDegraded,
+  puresoulLastCapturedAt,
+  puresoulStale,
   ticktickAvailable,
 }: {
   kpis: DashboardKpis;
@@ -378,6 +388,8 @@ export default function OperationsDashboard({
   shopifyAvailable: boolean;
   puresoulAvailable: boolean;
   puresoulDegraded: boolean;
+  puresoulLastCapturedAt: string | null;
+  puresoulStale: boolean;
   ticktickAvailable: boolean;
 }) {
   const hasPrev = page.page > 1;
@@ -405,6 +417,11 @@ export default function OperationsDashboard({
           تعذر قراءة PureSoul حاليًا — تظهر حالته «غير مربوط»، ولا تُحتسب المنتجات كغير موجودة.
         </div>
       ) : null}
+      {puresoulAvailable && puresoulStale ? (
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          لقطة PureSoul قديمة{puresoulLastCapturedAt ? ` (آخر تحديث ${new Date(puresoulLastCapturedAt).toLocaleDateString("ar")})` : ""} — ارفع تصدير PureSoul جديد لتحديث الحالة.
+        </div>
+      ) : null}
       {!ticktickAvailable ? (
         <div className="card border-[#efe3d6] bg-[#faf3ec] text-sm text-muted">
           TickTick غير مربوط حاليًا — تظهر المهام كـ«غير مُزامَنة»، والمركز يعمل بشكل كامل.
@@ -426,6 +443,8 @@ export default function OperationsDashboard({
         <KpiCard label="مهام مربوطة بـ TickTick" value={kpis.ticktickLinkedTasks} filter="ticktick_synced" controls={controls} tone="emerald" />
         {puresoulAvailable ? (
           <>
+            <KpiCard label="PureSoul: غير موجود" value={platformOverview.puresoul.missing} filter="puresoul_missing" controls={controls} tone="rose" />
+            <KpiCard label="PureSoul: فرق سعر" value={platformOverview.puresoul.priceDifferent} filter="puresoul_price_diff" controls={controls} tone="amber" />
             <KpiCard label="PureSoul: نافد" value={platformOverview.puresoul.outOfStock} filter="puresoul_out_of_stock" controls={controls} tone="amber" />
             <KpiCard label="PureSoul: مراجعة" value={platformOverview.puresoul.reviewRequired} filter="puresoul_review" controls={controls} tone="amber" />
           </>

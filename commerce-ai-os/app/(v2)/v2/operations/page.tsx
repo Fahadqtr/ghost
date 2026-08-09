@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 import { loadOperationsDashboard } from "@/lib/operations/read-model";
 import { loadShopifyPresence } from "@/lib/operations/shopify-presence";
 import { loadPureSoulPresence } from "@/lib/platforms/puresoul/presence";
+import { loadPureSoulSnapshotView } from "@/lib/platforms/puresoul/snapshot-presence";
 import { loadTickTickSyncedIds } from "@/lib/integrations/ticktick/synced-ids";
 import {
   parseOperationsControls,
@@ -47,6 +48,8 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         shopifyAvailable: boolean;
         puresoulAvailable: boolean;
         puresoulDegraded: boolean;
+        puresoulLastCapturedAt: string | null;
+        puresoulStale: boolean;
         ticktickAvailable: boolean;
       }
     | null = null;
@@ -60,6 +63,8 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       // PureSoul reads platform_status via .eq(); bridge the client type (same
       // session client passed to the dashboard, cast as elsewhere on this page).
       puresoul: { loadPureSoulPresence: (c) => loadPureSoulPresence(c as never) },
+      // Persisted snapshots (UI.9.3) take precedence; same session client.
+      puresoulSnapshot: { loadPureSoulSnapshotView: (c) => loadPureSoulSnapshotView(c as never) },
     });
     if (result.status === "ok") {
       // TickTick is a best-effort annotation only — it must NEVER break the
@@ -71,12 +76,11 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       // filter all read the same enriched items — the whole set stays here; only
       // the summary + current page are sent to the browser.
       const items: OperationsListItem[] = annotateTickTick(result.data.items, ticktick.ids);
-      const summary = buildDashboardSummary(
-        items,
-        result.data.health,
-        result.data.shopifyAvailable,
-        result.data.puresoulAvailable,
-      );
+      const summary = buildDashboardSummary(items, result.data.health, result.data.shopifyAvailable, {
+        available: result.data.puresoulAvailable,
+        lastCapturedAt: result.data.puresoulLastCapturedAt,
+        stale: result.data.puresoulStale,
+      });
 
       // Reuse the pure pipeline once for the match count, once for the page slice.
       const matched = selectOperationsPage(items, { ...controls, page: 1 });
@@ -93,6 +97,8 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         shopifyAvailable: result.data.shopifyAvailable,
         puresoulAvailable: result.data.puresoulAvailable,
         puresoulDegraded: result.data.puresoulDegraded,
+        puresoulLastCapturedAt: result.data.puresoulLastCapturedAt,
+        puresoulStale: result.data.puresoulStale,
         ticktickAvailable: ticktick.available,
       };
     }
@@ -120,6 +126,8 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       shopifyAvailable={loaded.shopifyAvailable}
       puresoulAvailable={loaded.puresoulAvailable}
       puresoulDegraded={loaded.puresoulDegraded}
+      puresoulLastCapturedAt={loaded.puresoulLastCapturedAt}
+      puresoulStale={loaded.puresoulStale}
       ticktickAvailable={loaded.ticktickAvailable}
     />
   );
