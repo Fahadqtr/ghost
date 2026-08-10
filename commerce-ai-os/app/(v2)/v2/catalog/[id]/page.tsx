@@ -14,6 +14,9 @@ import ProductTasksWidget from "@/components/v2/operations/ProductTasksWidget";
 import ProductActivityWidget from "@/components/v2/operations/ProductActivityWidget";
 import PlatformHistory from "@/components/v2/catalog/PlatformHistory";
 import { loadProductPlatformHistory, type ProductPlatformHistory } from "@/lib/operations/platform-history-read";
+import PlatformMatrix from "@/components/v2/catalog/PlatformMatrix";
+import { loadProductPlatformMatrix } from "@/lib/operations/platform-matrix-read";
+import type { PlatformMatrixItem } from "@/lib/operations/platform-matrix";
 import type { TimelineEvent } from "@/lib/operations/shared/models";
 import {
   catalogEditHref,
@@ -60,6 +63,9 @@ export default async function ProductDetailPage({
   // isolated: a failure here NEVER breaks the product page — the section is
   // simply omitted. Derived from platform_snapshots (read-only), never stored.
   let platformHistory: ProductPlatformHistory | null = null;
+  // Unified per-platform matrix (CI.1). Best-effort + isolated: derived read-only
+  // from platform_snapshots; a failure never breaks the page (section omitted).
+  let platformMatrix: PlatformMatrixItem | null = null;
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
@@ -101,6 +107,14 @@ export default async function ProductDetailPage({
           platformHistory = await loadProductPlatformHistory(supabase as never, validId);
         } catch {
           platformHistory = null;
+        }
+        try {
+          platformMatrix = await loadProductPlatformMatrix(supabase as never, validId, {
+            sku: result.product.sku ?? null,
+            barcode: result.product.barcode ?? null,
+          });
+        } catch {
+          platformMatrix = null;
         }
       }
     }
@@ -148,6 +162,7 @@ export default async function ProductDetailPage({
         backHref={backHref}
         editHref={editHref}
       />
+      {platformMatrix ? <PlatformMatrix matrix={platformMatrix} /> : null}
       {operations ? <ProductTasksWidget tasks={operations.tasks} /> : null}
       {activityEvents ? (
         <ProductActivityWidget events={activityEvents} productId={state.product.id} />
