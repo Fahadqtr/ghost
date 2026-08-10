@@ -169,6 +169,47 @@ test("Shopify snapshot read failure → reader still used, never missing", async
   assert.equal(ready.platforms.find((p) => p.platform === "shopify")?.status, "published");
 });
 
+test("Talabat snapshot state flows into item.talabatState; freshness surfaced", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    talabatSnapshot: {
+      loadTalabatSnapshotView: async () => ({
+        available: true,
+        degraded: false,
+        byProductId: new Map([["ready", "present" as const], ["noimg", "linked" as const]]),
+        lastCapturedAt: "2026-08-09T00:00:00.000Z",
+        stale: false,
+      }),
+    },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.talabatAvailable, true);
+  assert.equal(res.data.talabatLastCapturedAt, "2026-08-09T00:00:00.000Z");
+  assert.equal(res.data.talabatStale, false);
+  assert.equal(res.data.items.find((i) => i.id === "ready")!.talabatState, "present");
+  assert.equal(res.data.items.find((i) => i.id === "noimg")!.talabatState, "linked");
+});
+
+test("no Talabat reader → talabatState undefined (Unknown), never missing", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), { engines });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.talabatAvailable, false);
+  for (const it of res.data.items) assert.equal(it.talabatState, undefined);
+});
+
+test("Talabat snapshot read failure → talabatDegraded, states undefined (never missing)", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    talabatSnapshot: { loadTalabatSnapshotView: async () => { throw new Error("talabat down"); } },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.talabatDegraded, true);
+  for (const it of res.data.items) assert.equal(it.talabatState, undefined);
+});
+
 test("PureSoul presence flows into platform status; flags surfaced", async () => {
   const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
     engines,

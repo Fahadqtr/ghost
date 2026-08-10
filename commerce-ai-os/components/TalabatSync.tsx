@@ -6,6 +6,7 @@ import {
   computeTalabatDiff, buildTalabatPackage, verifyCatalogEntries, listTalabatQueue, markTalabatSent,
   type TalabatDiff, type VerifySummary, type TalabatQueueItem,
 } from "@/app/(app)/import-export/talabat-actions";
+import { captureTalabatSnapshotsAction } from "@/app/(app)/import-export/talabat-snapshot-actions";
 import ProductThumb from "@/components/ProductThumb";
 
 // Talabat catalog gap-closer: upload Talabat's own export, see which of OUR
@@ -113,6 +114,11 @@ export default function TalabatSync() {
         if (!d.ok) { setError(d.error ?? "فشل التحليل."); return; }
         setDiff(d);
         setRawRows(raw);
+        // Best-effort platform snapshot capture (Phase UI.9.6): persist the
+        // trusted present/missing verdict for the operations timeline/dashboard.
+        // Owner-only + idempotent server-side; a failure NEVER affects the diff
+        // shown above (fire-and-forget, swallowed).
+        void captureTalabatSnapshotsAction(raw).catch(() => {});
       } catch (err) {
         setError(err instanceof Error ? err.message : "تعذّر قراءة الملف.");
       }

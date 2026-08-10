@@ -18,6 +18,7 @@ import type {
   ProductReadiness,
 } from "./shared/models";
 import type { PureSoulState } from "@/lib/platforms/puresoul/capture-compute";
+import type { TalabatState } from "@/lib/platforms/talabat/capture-compute";
 
 /** One product row as the dashboard renders it — catalog-safe, no PII. */
 export interface OperationsListItem {
@@ -51,6 +52,14 @@ export interface OperationsListItem {
    * price_different come ONLY from a trusted snapshot — never from absence.
    */
   puresoulState?: PureSoulState;
+  /**
+   * Talabat state (Phase UI.9.6): present/missing/review from the latest trusted
+   * UPLOAD snapshot; else `linked` (ready) from a confirmed channel mapping; else
+   * undefined (→ Unknown). Enriched server-side; annotates only. Missing comes
+   * ONLY from a trusted upload verdict — never from absence, staleness, or a
+   * mapping alone (a mapping is never "present"/"published").
+   */
+  talabatState?: TalabatState;
 }
 
 /** Map a whitelisted DB row (+ its variant count and optional Shopify
