@@ -19,6 +19,7 @@ import {
   type DashboardKpis,
   type PlatformOverview,
   type PureSoulOverview,
+  type TalabatOverview,
   type Queue,
   type QueueItem,
   type QueueKey,
@@ -141,6 +142,39 @@ function PureSoulOverviewCard({ ps }: { ps: PureSoulOverview }) {
   );
 }
 
+function TalabatOverviewCard({ tb }: { tb: TalabatOverview }) {
+  return (
+    <div className="card space-y-2 p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-ink">Talabat</span>
+        <span
+          className={
+            "rounded-full px-2 py-0.5 text-[10px] " +
+            (tb.available ? "bg-emerald-50 text-emerald-700" : "bg-[#f5ece1] text-muted")
+          }
+        >
+          {tb.available ? "مربوط" : "غير مربوط"}
+        </span>
+      </div>
+      {tb.available ? (
+        <div className="space-y-1">
+          <OverviewStat label="موجود" value={tb.present} tone="text-emerald-700" />
+          <OverviewStat label="غير موجود" value={tb.missing} tone="text-rose-700" />
+          <OverviewStat label="مراجعة" value={tb.review} tone="text-amber-700" />
+          <OverviewStat label="مربوط/جاهز" value={tb.linked} tone="text-sky-700" />
+          <OverviewStat label="غير معروف" value={tb.unknown} tone="text-muted" />
+          <p className="pt-1 text-[10px] text-muted">
+            آخر لقطة: {tb.lastCapturedAt ? new Date(tb.lastCapturedAt).toLocaleString("ar") : "—"}
+            {tb.lastCapturedAt && tb.stale ? " · ⚠️ قديمة (أكثر من ٧ أيام)" : ""}
+          </p>
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted">لا توجد لقطة/رابط بعد — لا تُحتسب كغير موجودة.</p>
+      )}
+    </div>
+  );
+}
+
 function PlatformOverviewSection({ overview }: { overview: PlatformOverview }) {
   const s = overview.shopify;
   return (
@@ -189,8 +223,11 @@ function PlatformOverviewSection({ overview }: { overview: PlatformOverview }) {
         {/* PureSoul — real overlay reader (UI.9.1); «غير مربوط» when not synced */}
         <PureSoulOverviewCard ps={overview.puresoul} />
 
+        {/* Talabat — upload-derived snapshot + mapping-linked baseline (UI.9.6) */}
+        <TalabatOverviewCard tb={overview.talabat} />
+
         {/* Not-connected platforms — never counted as missing */}
-        {(["talabat", "rafeeq"] as const).map((p) => (
+        {(["rafeeq"] as const).map((p) => (
           <div key={p} className="card space-y-2 p-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-ink">{PLATFORM_LABELS[p]}</span>
@@ -384,6 +421,10 @@ export default function OperationsDashboard({
   puresoulDegraded,
   puresoulLastCapturedAt,
   puresoulStale,
+  talabatAvailable,
+  talabatDegraded,
+  talabatLastCapturedAt,
+  talabatStale,
   ticktickAvailable,
 }: {
   kpis: DashboardKpis;
@@ -401,6 +442,10 @@ export default function OperationsDashboard({
   puresoulDegraded: boolean;
   puresoulLastCapturedAt: string | null;
   puresoulStale: boolean;
+  talabatAvailable: boolean;
+  talabatDegraded: boolean;
+  talabatLastCapturedAt: string | null;
+  talabatStale: boolean;
   ticktickAvailable: boolean;
 }) {
   const hasPrev = page.page > 1;
@@ -436,6 +481,16 @@ export default function OperationsDashboard({
       {puresoulAvailable && puresoulStale ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           لقطة PureSoul قديمة{puresoulLastCapturedAt ? ` (آخر تحديث ${new Date(puresoulLastCapturedAt).toLocaleDateString("ar")})` : ""} — ارفع تصدير PureSoul جديد لتحديث الحالة.
+        </div>
+      ) : null}
+      {talabatDegraded ? (
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          تعذر قراءة لقطات Talabat حاليًا — تظهر حالته «غير مربوط»، ولا تُحتسب المنتجات كغير موجودة.
+        </div>
+      ) : null}
+      {talabatAvailable && talabatStale ? (
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          لقطة Talabat قديمة{talabatLastCapturedAt ? ` (آخر تحديث ${new Date(talabatLastCapturedAt).toLocaleDateString("ar")})` : ""} — ارفع تصدير Talabat جديد لتحديث الحالة.
         </div>
       ) : null}
       {!ticktickAvailable ? (

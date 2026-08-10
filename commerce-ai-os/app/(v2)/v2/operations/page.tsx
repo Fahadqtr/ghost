@@ -14,6 +14,7 @@ import { loadShopifySnapshotView } from "@/lib/platforms/shopify/snapshot-presen
 import { captureShopifySnapshots } from "@/lib/platforms/shopify/snapshot-capture";
 import { loadPureSoulPresence } from "@/lib/platforms/puresoul/presence";
 import { loadPureSoulSnapshotView } from "@/lib/platforms/puresoul/snapshot-presence";
+import { loadTalabatSnapshotView } from "@/lib/platforms/talabat/snapshot-presence";
 import { loadTickTickSyncedIds } from "@/lib/integrations/ticktick/synced-ids";
 import {
   parseOperationsControls,
@@ -55,6 +56,10 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         puresoulDegraded: boolean;
         puresoulLastCapturedAt: string | null;
         puresoulStale: boolean;
+        talabatAvailable: boolean;
+        talabatDegraded: boolean;
+        talabatLastCapturedAt: string | null;
+        talabatStale: boolean;
         ticktickAvailable: boolean;
       }
     | null = null;
@@ -73,6 +78,9 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       puresoul: { loadPureSoulPresence: (c) => loadPureSoulPresence(c as never) },
       // Persisted snapshots (UI.9.3) take precedence; same session client.
       puresoulSnapshot: { loadPureSoulSnapshotView: (c) => loadPureSoulSnapshotView(c as never) },
+      // Talabat snapshots (UI.9.6): upload-derived state + mapping-linked
+      // baseline. Read-only; same session client. No auto-capture (no API).
+      talabatSnapshot: { loadTalabatSnapshotView: (c) => loadTalabatSnapshotView(c as never) },
     });
     if (result.status === "ok") {
       // TickTick is a best-effort annotation only — it must NEVER break the
@@ -95,6 +103,11 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         },
         undefined,
         { lastCapturedAt: result.data.shopifyLastCapturedAt, stale: result.data.shopifyStale },
+        {
+          available: result.data.talabatAvailable,
+          lastCapturedAt: result.data.talabatLastCapturedAt,
+          stale: result.data.talabatStale,
+        },
       );
 
       // Best-effort auto-capture (UI.9.5): when there is no fresh Shopify
@@ -128,6 +141,10 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         puresoulDegraded: result.data.puresoulDegraded,
         puresoulLastCapturedAt: result.data.puresoulLastCapturedAt,
         puresoulStale: result.data.puresoulStale,
+        talabatAvailable: result.data.talabatAvailable,
+        talabatDegraded: result.data.talabatDegraded,
+        talabatLastCapturedAt: result.data.talabatLastCapturedAt,
+        talabatStale: result.data.talabatStale,
         ticktickAvailable: ticktick.available,
       };
     }
@@ -160,6 +177,10 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       puresoulDegraded={loaded.puresoulDegraded}
       puresoulLastCapturedAt={loaded.puresoulLastCapturedAt}
       puresoulStale={loaded.puresoulStale}
+      talabatAvailable={loaded.talabatAvailable}
+      talabatDegraded={loaded.talabatDegraded}
+      talabatLastCapturedAt={loaded.talabatLastCapturedAt}
+      talabatStale={loaded.talabatStale}
       ticktickAvailable={loaded.ticktickAvailable}
     />
   );

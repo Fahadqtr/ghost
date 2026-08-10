@@ -27,6 +27,7 @@ import type {
 } from "./shared/models";
 import type { OperationsListItem } from "./dashboard-view";
 import type { PureSoulState } from "@/lib/platforms/puresoul/capture-compute";
+import type { TalabatState } from "@/lib/platforms/talabat/capture-compute";
 import type { TaskViewItem } from "./tasks-view";
 import type { TimelineProvider } from "./timeline/providers/timeline-provider";
 
@@ -116,6 +117,20 @@ export interface ShopifySnapshotReader {
   }>;
 }
 
+/** A Talabat SNAPSHOT reader (Phase UI.9.6): per-product TalabatState from the
+ *  latest upload snapshot (present/missing/review) merged with a mapping-derived
+ *  `linked` baseline, plus freshness. Best-effort: `degraded` marks a snapshot
+ *  read failure (→ unknown, never missing). */
+export interface TalabatSnapshotReader {
+  loadTalabatSnapshotView(client: OperationsReadClient): Promise<{
+    available: boolean;
+    degraded: boolean;
+    byProductId: Map<string, TalabatState>;
+    lastCapturedAt: string | null;
+    stale: boolean;
+  }>;
+}
+
 /** A PureSoul presence reader (injected in tests; the UI.9.1 overlay reader in
  *  prod). Best-effort: `degraded` marks a read failure (→ unknown, never
  *  missing); `available` marks a healthy read that carried PureSoul data. */
@@ -191,6 +206,14 @@ export interface OperationsDashboardData {
   puresoulLastCapturedAt: string | null;
   /** true when the newest PureSoul snapshot is older than the stale window (24h) */
   puresoulStale: boolean;
+  /** true when a Talabat read (snapshot OR mapping baseline) carried data */
+  talabatAvailable: boolean;
+  /** true when the Talabat snapshot read FAILED (never missing) */
+  talabatDegraded: boolean;
+  /** newest Talabat snapshot capture time, or null (never captured) */
+  talabatLastCapturedAt: string | null;
+  /** true when the newest Talabat snapshot is older than the stale window (7d) */
+  talabatStale: boolean;
 }
 
 export type OperationsLoadResult =
@@ -211,6 +234,7 @@ export async function loadOperationsDashboard(
     shopifySnapshot?: ShopifySnapshotReader;
     puresoul?: PureSoulPresenceReader;
     puresoulSnapshot?: PureSoulSnapshotReader;
+    talabatSnapshot?: TalabatSnapshotReader;
   },
 ): Promise<OperationsLoadResult> {
   try {
@@ -243,7 +267,14 @@ export async function loadOperationsDashboard(
       lastCapturedAt: null as string | null,
       stale: false,
     });
-    const [products, variants, shopifyRes, shopifySnapRes, puresoulRes, puresoulSnapRes] = await Promise.all([
+    const emptyTalabatSnapshot = (degraded: boolean) => ({
+      available: false,
+      degraded,
+      byProductId: new Map<string, TalabatState>(),
+      lastCapturedAt: null as string | null,
+      stale: false,
+    });
+    const [products, variants, shopifyRes, shopifySnapRes, puresoulRes, puresoulSnapRes, talabatSnapRes] = await Promise.all([
       readAllRows(client.from("products").select(PRODUCT_COLUMNS).order("id", { ascending: true }), MAX_PRODUCTS),
       readAllRows(
         client.from("product_variants").select(VARIANT_COLUMNS).order("parent_product_id", { ascending: true }),
@@ -261,6 +292,9 @@ export async function loadOperationsDashboard(
       deps?.puresoulSnapshot
         ? deps.puresoulSnapshot.loadPureSoulSnapshotView(client).then((r) => r, () => emptyPuresoulSnapshot(true))
         : Promise.resolve(emptyPuresoulSnapshot(false)),
+      deps?.talabatSnapshot
+        ? deps.talabatSnapshot.loadTalabatSnapshotView(client).then((r) => r, () => emptyTalabatSnapshot(true))
+        : Promise.resolve(emptyTalabatSnapshot(false)),
     ]);
 
     // variant counts per parent — pure aggregation, no stock/PII read.
@@ -286,6 +320,14 @@ export async function loadOperationsDashboard(
     const puresoulDegraded = puresoulSnapRes.degraded || puresoulRes.degraded;
     const puresoulLastCapturedAt = puresoulSnapRes.lastCapturedAt;
     const puresoulStale = puresoulSnapRes.stale;
+    // Talabat (UI.9.6): upload-derived state per product (present/missing/review),
+    // else `linked` baseline from a confirmed mapping. Read-side only — it never
+    // flows into computePlatformStatuses (Talabat has no live presence).
+    const talabatSnapById = talabatSnapRes.byProductId;
+    const talabatAvailable = talabatSnapRes.available;
+    const talabatDegraded = talabatSnapRes.degraded;
+    const talabatLastCapturedAt = talabatSnapRes.lastCapturedAt;
+    const talabatStale = talabatSnapRes.stale;
 
     const items: OperationsListItem[] = [];
     const readiness: ProductReadiness[] = [];
@@ -321,6 +363,10 @@ export async function loadOperationsDashboard(
       // come from a snapshot, never from the overlay or from absence.
       const puresoulState = puresoulSnapById.get(id) ?? (psPres ? overlayToPureSoulState(psPres) : undefined);
       if (puresoulState) listItem.puresoulState = puresoulState;
+      // Talabat state: snapshot verdict / mapping baseline (already merged in the
+      // reader). Absent → undefined (→ Unknown). Never derived from absence.
+      const talabatState = talabatSnapById.get(id);
+      if (talabatState) listItem.talabatState = talabatState;
       items.push(listItem);
     }
 
@@ -341,6 +387,10 @@ export async function loadOperationsDashboard(
         puresoulDegraded,
         puresoulLastCapturedAt,
         puresoulStale,
+        talabatAvailable,
+        talabatDegraded,
+        talabatLastCapturedAt,
+        talabatStale,
       },
     };
   } catch {
