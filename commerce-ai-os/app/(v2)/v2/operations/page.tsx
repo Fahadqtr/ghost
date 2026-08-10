@@ -10,6 +10,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { loadOperationsDashboard } from "@/lib/operations/read-model";
 import { loadShopifyPresence } from "@/lib/operations/shopify-presence";
+import { loadShopifySnapshotView } from "@/lib/platforms/shopify/snapshot-presence";
+import { captureShopifySnapshots } from "@/lib/platforms/shopify/snapshot-capture";
 import { loadPureSoulPresence } from "@/lib/platforms/puresoul/presence";
 import { loadPureSoulSnapshotView } from "@/lib/platforms/puresoul/snapshot-presence";
 import { loadTickTickSyncedIds } from "@/lib/integrations/ticktick/synced-ids";
@@ -46,6 +48,9 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         matchCount: number;
         partial: boolean;
         shopifyAvailable: boolean;
+        shopifyLastCapturedAt: string | null;
+        shopifyStale: boolean;
+        shopifySnapshotAvailable: boolean;
         puresoulAvailable: boolean;
         puresoulDegraded: boolean;
         puresoulLastCapturedAt: string | null;
@@ -60,6 +65,9 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
     const supabase = createClient();
     const result = await loadOperationsDashboard(supabase as never, {
       shopify: { loadShopifyPresence },
+      // Persisted Shopify snapshots (UI.9.5) take precedence per product; the
+      // live UI.3 reader above is the fallback. Same session client.
+      shopifySnapshot: { loadShopifySnapshotView: (c) => loadShopifySnapshotView(c as never) },
       // PureSoul reads platform_status via .eq(); bridge the client type (same
       // session client passed to the dashboard, cast as elsewhere on this page).
       puresoul: { loadPureSoulPresence: (c) => loadPureSoulPresence(c as never) },
@@ -76,11 +84,29 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       // filter all read the same enriched items — the whole set stays here; only
       // the summary + current page are sent to the browser.
       const items: OperationsListItem[] = annotateTickTick(result.data.items, ticktick.ids);
-      const summary = buildDashboardSummary(items, result.data.health, result.data.shopifyAvailable, {
-        available: result.data.puresoulAvailable,
-        lastCapturedAt: result.data.puresoulLastCapturedAt,
-        stale: result.data.puresoulStale,
-      });
+      const summary = buildDashboardSummary(
+        items,
+        result.data.health,
+        result.data.shopifyAvailable,
+        {
+          available: result.data.puresoulAvailable,
+          lastCapturedAt: result.data.puresoulLastCapturedAt,
+          stale: result.data.puresoulStale,
+        },
+        undefined,
+        { lastCapturedAt: result.data.shopifyLastCapturedAt, stale: result.data.shopifyStale },
+      );
+
+      // Best-effort auto-capture (UI.9.5): when there is no fresh Shopify
+      // snapshot, refresh it from the trusted read model. Fire-and-forget — it is
+      // NEVER awaited (adds no dashboard latency), it is gated on staleness (no
+      // uncontrolled writes: at most one refresh per stale window), it reuses the
+      // existing read model (no new Shopify client/cron/webhook), and any failure
+      // is swallowed so it can never break the page. Idempotent by payload-hash,
+      // so if the fire-and-forget is torn down early the next view simply retries.
+      if (!result.data.shopifySnapshotAvailable || result.data.shopifyStale) {
+        void captureShopifySnapshots(supabase as never, new Date().toISOString()).catch(() => {});
+      }
 
       // Reuse the pure pipeline once for the match count, once for the page slice.
       const matched = selectOperationsPage(items, { ...controls, page: 1 });
@@ -95,6 +121,9 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         matchCount: matched.total,
         partial: result.data.partial,
         shopifyAvailable: result.data.shopifyAvailable,
+        shopifyLastCapturedAt: result.data.shopifyLastCapturedAt,
+        shopifyStale: result.data.shopifyStale,
+        shopifySnapshotAvailable: result.data.shopifySnapshotAvailable,
         puresoulAvailable: result.data.puresoulAvailable,
         puresoulDegraded: result.data.puresoulDegraded,
         puresoulLastCapturedAt: result.data.puresoulLastCapturedAt,
@@ -124,6 +153,9 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       controls={loaded.controls}
       partial={loaded.partial}
       shopifyAvailable={loaded.shopifyAvailable}
+      shopifyLastCapturedAt={loaded.shopifyLastCapturedAt}
+      shopifyStale={loaded.shopifyStale}
+      shopifySnapshotAvailable={loaded.shopifySnapshotAvailable}
       puresoulAvailable={loaded.puresoulAvailable}
       puresoulDegraded={loaded.puresoulDegraded}
       puresoulLastCapturedAt={loaded.puresoulLastCapturedAt}

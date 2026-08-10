@@ -185,6 +185,11 @@ export interface ShopifyOverview {
   different: number;
   reviewRequired: number;
   ready: number;
+  /** newest Shopify snapshot capture time, or null (UI.9.5); null when the
+   *  status comes from the live reader with no persisted snapshot yet */
+  lastCapturedAt: string | null;
+  /** true when the newest Shopify snapshot is older than the stale window (24h) */
+  stale: boolean;
 }
 
 /** PureSoul overview (Phase UI.9.3) — counted from the snapshot-derived
@@ -224,12 +229,23 @@ export interface PlatformOverview {
 
 const EMPTY_PURESOUL_META: PureSoulMeta = { available: false, lastCapturedAt: null, stale: false };
 
+/** Freshness of the Shopify snapshot read (Phase UI.9.5), passed through to the
+ *  overview. `lastCapturedAt` is null when Shopify status comes from the live
+ *  reader with no persisted snapshot yet. */
+export interface ShopifyMeta {
+  lastCapturedAt: string | null;
+  stale: boolean;
+}
+
+const EMPTY_SHOPIFY_META: ShopifyMeta = { lastCapturedAt: null, stale: false };
+
 /** Summarise platform presence. Shopify + PureSoul have trusted readers; their
  *  statuses are counted from the items. Unknown is NEVER folded into "missing". */
 export function buildPlatformOverview(
   items: readonly OperationsListItem[],
   shopifyAvailable: boolean,
   puresoulMeta: PureSoulMeta = EMPTY_PURESOUL_META,
+  shopifyMeta: ShopifyMeta = EMPTY_SHOPIFY_META,
 ): PlatformOverview {
   const shopify: ShopifyOverview = {
     available: shopifyAvailable,
@@ -238,6 +254,8 @@ export function buildPlatformOverview(
     different: 0,
     reviewRequired: 0,
     ready: 0,
+    lastCapturedAt: shopifyMeta.lastCapturedAt,
+    stale: shopifyMeta.stale,
   };
   const puresoul: PureSoulOverview = {
     available: puresoulMeta.available,
@@ -311,10 +329,11 @@ export function buildDashboardSummary(
   shopifyAvailable: boolean,
   puresoulMeta: PureSoulMeta = EMPTY_PURESOUL_META,
   queueTop: number = DEFAULT_QUEUE_TOP,
+  shopifyMeta: ShopifyMeta = EMPTY_SHOPIFY_META,
 ): DashboardSummary {
   return {
     kpis: buildKpis(items, health),
     queues: buildQueues(items, queueTop),
-    platformOverview: buildPlatformOverview(items, shopifyAvailable, puresoulMeta),
+    platformOverview: buildPlatformOverview(items, shopifyAvailable, puresoulMeta, shopifyMeta),
   };
 }

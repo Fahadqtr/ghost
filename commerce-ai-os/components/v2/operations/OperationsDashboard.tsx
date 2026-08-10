@@ -175,6 +175,11 @@ function PlatformOverviewSection({ overview }: { overview: PlatformOverview }) {
               <OverviewStat label="غير موجود" value={s.missing} tone="text-rose-700" />
               <OverviewStat label="مختلف" value={s.different} tone="text-amber-700" />
               <OverviewStat label="يحتاج مراجعة" value={s.reviewRequired} tone="text-amber-700" />
+              <OverviewStat label="جاهز للنشر" value={s.ready} tone="text-sky-700" />
+              <p className="pt-1 text-[10px] text-muted">
+                آخر لقطة: {s.lastCapturedAt ? new Date(s.lastCapturedAt).toLocaleString("ar") : "—"}
+                {s.lastCapturedAt && s.stale ? " · ⚠️ قديمة (أكثر من ٢٤ ساعة)" : ""}
+              </p>
             </div>
           ) : (
             <p className="text-[11px] text-muted">تعذر قراءة Shopify حاليًا — لا تُحتسب المنتجات كغير موجودة.</p>
@@ -372,6 +377,9 @@ export default function OperationsDashboard({
   controls,
   partial,
   shopifyAvailable,
+  shopifyLastCapturedAt,
+  shopifyStale,
+  shopifySnapshotAvailable,
   puresoulAvailable,
   puresoulDegraded,
   puresoulLastCapturedAt,
@@ -386,6 +394,9 @@ export default function OperationsDashboard({
   controls: OperationsControls;
   partial: boolean;
   shopifyAvailable: boolean;
+  shopifyLastCapturedAt: string | null;
+  shopifyStale: boolean;
+  shopifySnapshotAvailable: boolean;
   puresoulAvailable: boolean;
   puresoulDegraded: boolean;
   puresoulLastCapturedAt: string | null;
@@ -410,6 +421,11 @@ export default function OperationsDashboard({
       {!shopifyAvailable ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           تعذر قراءة Shopify حاليًا — تظهر حالته «غير مربوط»، وبقية المركز يعمل من بيانات ماليكاس.
+        </div>
+      ) : null}
+      {shopifyAvailable && shopifySnapshotAvailable && shopifyStale ? (
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          لقطة Shopify قديمة{shopifyLastCapturedAt ? ` (آخر تحديث ${new Date(shopifyLastCapturedAt).toLocaleDateString("ar")})` : ""} — يجري تحديثها تلقائيًا عند فتح المركز.
         </div>
       ) : null}
       {puresoulDegraded ? (
