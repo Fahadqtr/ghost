@@ -15,6 +15,8 @@ import { captureShopifySnapshots } from "@/lib/platforms/shopify/snapshot-captur
 import { loadPureSoulPresence } from "@/lib/platforms/puresoul/presence";
 import { loadPureSoulSnapshotView } from "@/lib/platforms/puresoul/snapshot-presence";
 import { loadTalabatSnapshotView } from "@/lib/platforms/talabat/snapshot-presence";
+import { loadRafeeqSnapshotView } from "@/lib/platforms/rafeeq/snapshot-presence";
+import { captureRafeeqSnapshots } from "@/lib/platforms/rafeeq/snapshot-capture";
 import { loadTickTickSyncedIds } from "@/lib/integrations/ticktick/synced-ids";
 import {
   parseOperationsControls,
@@ -60,6 +62,10 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         talabatDegraded: boolean;
         talabatLastCapturedAt: string | null;
         talabatStale: boolean;
+        rafeeqAvailable: boolean;
+        rafeeqDegraded: boolean;
+        rafeeqLastCapturedAt: string | null;
+        rafeeqStale: boolean;
         ticktickAvailable: boolean;
       }
     | null = null;
@@ -81,6 +87,9 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       // Talabat snapshots (UI.9.6): upload-derived state + mapping-linked
       // baseline. Read-only; same session client. No auto-capture (no API).
       talabatSnapshot: { loadTalabatSnapshotView: (c) => loadTalabatSnapshotView(c as never) },
+      // Rafeeq snapshots (UI.9.7): channel_products/rafeeq_product_id overlays.
+      // Read-only; same session client.
+      rafeeqSnapshot: { loadRafeeqSnapshotView: (c) => loadRafeeqSnapshotView(c as never) },
     });
     if (result.status === "ok") {
       // TickTick is a best-effort annotation only — it must NEVER break the
@@ -108,7 +117,21 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
           lastCapturedAt: result.data.talabatLastCapturedAt,
           stale: result.data.talabatStale,
         },
+        {
+          available: result.data.rafeeqAvailable,
+          lastCapturedAt: result.data.rafeeqLastCapturedAt,
+          stale: result.data.rafeeqStale,
+        },
       );
+
+      // Best-effort auto-capture (UI.9.7): when there is no fresh Rafeeq snapshot,
+      // refresh it from the DB overlays. Fire-and-forget — never awaited (no
+      // dashboard latency), gated on staleness (bounded writes), reads only the DB
+      // (no API/cron/webhook), and any failure is swallowed so it can never break
+      // the page. Idempotent by payload-hash, so an early teardown just retries.
+      if (!result.data.rafeeqAvailable || result.data.rafeeqStale) {
+        void captureRafeeqSnapshots(supabase as never, new Date().toISOString()).catch(() => {});
+      }
 
       // Best-effort auto-capture (UI.9.5): when there is no fresh Shopify
       // snapshot, refresh it from the trusted read model. Fire-and-forget — it is
@@ -145,6 +168,10 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         talabatDegraded: result.data.talabatDegraded,
         talabatLastCapturedAt: result.data.talabatLastCapturedAt,
         talabatStale: result.data.talabatStale,
+        rafeeqAvailable: result.data.rafeeqAvailable,
+        rafeeqDegraded: result.data.rafeeqDegraded,
+        rafeeqLastCapturedAt: result.data.rafeeqLastCapturedAt,
+        rafeeqStale: result.data.rafeeqStale,
         ticktickAvailable: ticktick.available,
       };
     }
@@ -181,6 +208,10 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       talabatDegraded={loaded.talabatDegraded}
       talabatLastCapturedAt={loaded.talabatLastCapturedAt}
       talabatStale={loaded.talabatStale}
+      rafeeqAvailable={loaded.rafeeqAvailable}
+      rafeeqDegraded={loaded.rafeeqDegraded}
+      rafeeqLastCapturedAt={loaded.rafeeqLastCapturedAt}
+      rafeeqStale={loaded.rafeeqStale}
       ticktickAvailable={loaded.ticktickAvailable}
     />
   );

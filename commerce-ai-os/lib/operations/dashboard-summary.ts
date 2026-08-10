@@ -234,13 +234,26 @@ export interface TalabatOverview {
   stale: boolean;
 }
 
+/** Rafeeq overview (Phase UI.9.7) — counted from `item.rafeeqState`.
+ *  `present`/`missing`/`linked` come from the snapshot verdict (channel_status) or
+ *  a channel_products baseline; `linked` (ready) is never present/published.
+ *  `unknown` is surfaced but NEVER treated as missing. Freshness comes from the
+ *  latest snapshot capture. */
+export interface RafeeqOverview {
+  available: boolean;
+  present: number;
+  missing: number;
+  linked: number;
+  unknown: number;
+  lastCapturedAt: string | null;
+  stale: boolean;
+}
+
 export interface PlatformOverview {
   shopify: ShopifyOverview;
   puresoul: PureSoulOverview;
   talabat: TalabatOverview;
-  /** Rafeeq has no reader yet → not connected (never counted as missing).
-   *  A future phase adds its adapter. */
-  rafeeq: "not_connected";
+  rafeeq: RafeeqOverview;
 }
 
 const EMPTY_PURESOUL_META: PureSoulMeta = { available: false, lastCapturedAt: null, stale: false };
@@ -264,6 +277,15 @@ export interface TalabatMeta {
 
 const EMPTY_TALABAT_META: TalabatMeta = { available: false, lastCapturedAt: null, stale: false };
 
+/** Freshness/availability of the Rafeeq snapshot read (Phase UI.9.7). */
+export interface RafeeqMeta {
+  available: boolean;
+  lastCapturedAt: string | null;
+  stale: boolean;
+}
+
+const EMPTY_RAFEEQ_META: RafeeqMeta = { available: false, lastCapturedAt: null, stale: false };
+
 /** Summarise platform presence. Shopify + PureSoul have trusted readers; their
  *  statuses are counted from the items. Unknown is NEVER folded into "missing". */
 export function buildPlatformOverview(
@@ -272,6 +294,7 @@ export function buildPlatformOverview(
   puresoulMeta: PureSoulMeta = EMPTY_PURESOUL_META,
   shopifyMeta: ShopifyMeta = EMPTY_SHOPIFY_META,
   talabatMeta: TalabatMeta = EMPTY_TALABAT_META,
+  rafeeqMeta: RafeeqMeta = EMPTY_RAFEEQ_META,
 ): PlatformOverview {
   const shopify: ShopifyOverview = {
     available: shopifyAvailable,
@@ -304,6 +327,15 @@ export function buildPlatformOverview(
     unknown: 0,
     lastCapturedAt: talabatMeta.lastCapturedAt,
     stale: talabatMeta.stale,
+  };
+  const rafeeq: RafeeqOverview = {
+    available: rafeeqMeta.available,
+    present: 0,
+    missing: 0,
+    linked: 0,
+    unknown: 0,
+    lastCapturedAt: rafeeqMeta.lastCapturedAt,
+    stale: rafeeqMeta.stale,
   };
   for (const item of items) {
     switch (shopifyStatusOf(item)) {
@@ -363,8 +395,22 @@ export function buildPlatformOverview(
         talabat.unknown++; // "unknown" / undefined — surfaced, never "missing"
         break;
     }
+    switch (item.rafeeqState) {
+      case "present":
+        rafeeq.present++;
+        break;
+      case "missing":
+        rafeeq.missing++;
+        break;
+      case "linked":
+        rafeeq.linked++; // Draft / id-only — ready, never "published"
+        break;
+      default:
+        rafeeq.unknown++; // "unknown" / undefined — surfaced, never "missing"
+        break;
+    }
   }
-  return { shopify, puresoul, talabat, rafeeq: "not_connected" };
+  return { shopify, puresoul, talabat, rafeeq };
 }
 
 // ── one-shot summary ─────────────────────────────────────────────────────────
@@ -384,10 +430,11 @@ export function buildDashboardSummary(
   queueTop: number = DEFAULT_QUEUE_TOP,
   shopifyMeta: ShopifyMeta = EMPTY_SHOPIFY_META,
   talabatMeta: TalabatMeta = EMPTY_TALABAT_META,
+  rafeeqMeta: RafeeqMeta = EMPTY_RAFEEQ_META,
 ): DashboardSummary {
   return {
     kpis: buildKpis(items, health),
     queues: buildQueues(items, queueTop),
-    platformOverview: buildPlatformOverview(items, shopifyAvailable, puresoulMeta, shopifyMeta, talabatMeta),
+    platformOverview: buildPlatformOverview(items, shopifyAvailable, puresoulMeta, shopifyMeta, talabatMeta, rafeeqMeta),
   };
 }

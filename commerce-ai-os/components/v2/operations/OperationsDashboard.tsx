@@ -20,6 +20,7 @@ import {
   type PlatformOverview,
   type PureSoulOverview,
   type TalabatOverview,
+  type RafeeqOverview,
   type Queue,
   type QueueItem,
   type QueueKey,
@@ -175,6 +176,38 @@ function TalabatOverviewCard({ tb }: { tb: TalabatOverview }) {
   );
 }
 
+function RafeeqOverviewCard({ rf }: { rf: RafeeqOverview }) {
+  return (
+    <div className="card space-y-2 p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-ink">Rafeeq</span>
+        <span
+          className={
+            "rounded-full px-2 py-0.5 text-[10px] " +
+            (rf.available ? "bg-emerald-50 text-emerald-700" : "bg-[#f5ece1] text-muted")
+          }
+        >
+          {rf.available ? "مربوط" : "غير مربوط"}
+        </span>
+      </div>
+      {rf.available ? (
+        <div className="space-y-1">
+          <OverviewStat label="موجود" value={rf.present} tone="text-emerald-700" />
+          <OverviewStat label="غير موجود" value={rf.missing} tone="text-rose-700" />
+          <OverviewStat label="مربوط/جاهز" value={rf.linked} tone="text-sky-700" />
+          <OverviewStat label="غير معروف" value={rf.unknown} tone="text-muted" />
+          <p className="pt-1 text-[10px] text-muted">
+            آخر لقطة: {rf.lastCapturedAt ? new Date(rf.lastCapturedAt).toLocaleString("ar") : "—"}
+            {rf.lastCapturedAt && rf.stale ? " · ⚠️ قديمة (أكثر من ٧ أيام)" : ""}
+          </p>
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted">لا توجد لقطة/رابط بعد — لا تُحتسب كغير موجودة.</p>
+      )}
+    </div>
+  );
+}
+
 function PlatformOverviewSection({ overview }: { overview: PlatformOverview }) {
   const s = overview.shopify;
   return (
@@ -226,16 +259,8 @@ function PlatformOverviewSection({ overview }: { overview: PlatformOverview }) {
         {/* Talabat — upload-derived snapshot + mapping-linked baseline (UI.9.6) */}
         <TalabatOverviewCard tb={overview.talabat} />
 
-        {/* Not-connected platforms — never counted as missing */}
-        {(["rafeeq"] as const).map((p) => (
-          <div key={p} className="card space-y-2 p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-ink">{PLATFORM_LABELS[p]}</span>
-              <span className="rounded-full bg-[#f5ece1] px-2 py-0.5 text-[10px] text-muted">غير مربوط</span>
-            </div>
-            <p className="text-[11px] text-muted">لا يوجد رابط بعد — لا تُحتسب كغير موجودة.</p>
-          </div>
-        ))}
+        {/* Rafeeq — channel_products / rafeeq_product_id overlays (UI.9.7) */}
+        <RafeeqOverviewCard rf={overview.rafeeq} />
       </div>
     </section>
   );
@@ -425,6 +450,10 @@ export default function OperationsDashboard({
   talabatDegraded,
   talabatLastCapturedAt,
   talabatStale,
+  rafeeqAvailable,
+  rafeeqDegraded,
+  rafeeqLastCapturedAt,
+  rafeeqStale,
   ticktickAvailable,
 }: {
   kpis: DashboardKpis;
@@ -446,6 +475,10 @@ export default function OperationsDashboard({
   talabatDegraded: boolean;
   talabatLastCapturedAt: string | null;
   talabatStale: boolean;
+  rafeeqAvailable: boolean;
+  rafeeqDegraded: boolean;
+  rafeeqLastCapturedAt: string | null;
+  rafeeqStale: boolean;
   ticktickAvailable: boolean;
 }) {
   const hasPrev = page.page > 1;
@@ -491,6 +524,16 @@ export default function OperationsDashboard({
       {talabatAvailable && talabatStale ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           لقطة Talabat قديمة{talabatLastCapturedAt ? ` (آخر تحديث ${new Date(talabatLastCapturedAt).toLocaleDateString("ar")})` : ""} — ارفع تصدير Talabat جديد لتحديث الحالة.
+        </div>
+      ) : null}
+      {rafeeqDegraded ? (
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          تعذر قراءة لقطات Rafeeq حاليًا — تظهر حالته «غير مربوط»، ولا تُحتسب المنتجات كغير موجودة.
+        </div>
+      ) : null}
+      {rafeeqAvailable && rafeeqStale ? (
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          لقطة Rafeeq قديمة{rafeeqLastCapturedAt ? ` (آخر تحديث ${new Date(rafeeqLastCapturedAt).toLocaleDateString("ar")})` : ""} — يجري تحديثها تلقائيًا عند فتح المركز.
         </div>
       ) : null}
       {!ticktickAvailable ? (
