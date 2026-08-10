@@ -56,7 +56,8 @@ test("the catalog section is unchanged", () => {
 
 test("links are grouped by section, in declaration order", () => {
   const sections = groupNavLinks();
-  assert.deepEqual(sections.map((s) => s.title), ["الكتالوج", "العمليات", "العملاء"]);
+  // UX.1 added «الإعدادات» and «أدوات إضافية ↗» after «العملاء».
+  assert.deepEqual(sections.map((s) => s.title), ["الكتالوج", "العمليات", "العملاء", "الإعدادات", "أدوات إضافية ↗"]);
   assert.deepEqual(sections[1]!.links.map((l) => l.href), ["/v2/operations", "/v2/tasks"]);
   assert.deepEqual(sections[2]!.links.map((l) => l.href), LOYALTY_HREFS);
   const flat = sections.flatMap((s) => s.links.map((l) => l.href));
