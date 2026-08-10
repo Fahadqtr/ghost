@@ -27,6 +27,18 @@ import {
 } from "@/lib/operations/dashboard-summary";
 import { PLATFORM_LABELS } from "@/lib/operations/platforms/platform-status";
 import type { PlatformStatus, PlatformStatusValue } from "@/lib/operations/shared/models";
+import {
+  QUEUE_VALUES,
+  QUEUE_LABELS,
+  ISSUE_REASON_LABELS,
+  ISSUE_SEVERITY_LABELS,
+  type QueueControl,
+  type QueueCounts,
+  type QueueKey as IssueQueueKey,
+  type IssuePage,
+  type IssueSeverity,
+} from "@/lib/operations/operations-queue";
+import { MATRIX_STATE_LABELS } from "@/lib/operations/platform-matrix";
 
 function opsHref(controls: OperationsControls, over: Partial<OperationsControls>): string {
   const c = { ...controls, ...over };
@@ -36,6 +48,18 @@ function opsHref(controls: OperationsControls, over: Partial<OperationsControls>
   if (c.page > 1) p.set("page", String(c.page));
   const qs = p.toString();
   return qs ? `/v2/operations?${qs}` : "/v2/operations";
+}
+
+/** Queue link: preserves the product-list controls, sets queue + qpage. */
+function queueHref(controls: OperationsControls, queue: IssueQueueKey, qpage: number): string {
+  const p = new URLSearchParams();
+  if (controls.query) p.set("query", controls.query);
+  if (controls.filter !== "all") p.set("filter", controls.filter);
+  if (controls.page > 1) p.set("page", String(controls.page));
+  if (queue !== "all") p.set("queue", queue);
+  if (qpage > 1) p.set("qpage", String(qpage));
+  const qs = p.toString();
+  return (qs ? `/v2/operations?${qs}` : "/v2/operations") + "#unified-queue";
 }
 
 // ── KPI cards ─────────────────────────────────────────────────────────────────
@@ -428,6 +452,99 @@ function ProductCard({ item, ticktickAvailable }: { item: OperationsListItem; ti
   );
 }
 
+// ── unified operations queue (CI.2) ─────────────────────────────────────────
+
+const SEVERITY_TONE: Record<IssueSeverity, string> = {
+  high: "bg-rose-50 text-rose-700",
+  medium: "bg-amber-50 text-amber-700",
+  low: "bg-sky-50 text-sky-700",
+};
+
+function UnifiedQueueSection({
+  controls,
+  queueControl,
+  issuePage,
+  queueCounts,
+  queueCapped,
+}: {
+  controls: OperationsControls;
+  queueControl: QueueControl;
+  issuePage: IssuePage;
+  queueCounts: QueueCounts;
+  queueCapped: boolean;
+}) {
+  const countFor = (key: IssueQueueKey): number =>
+    key === "all" ? queueCounts.total : queueCounts[key];
+  return (
+    <section id="unified-queue" className="space-y-3" dir="rtl">
+      <h2 className="text-sm font-semibold text-ink">قائمة المشاكل الموحدة</h2>
+      {/* queue tabs — GET links, no client JS */}
+      <div className="flex flex-wrap gap-2">
+        {QUEUE_VALUES.map((key) => {
+          const active = key === queueControl.queue;
+          return (
+            <Link
+              key={key}
+              href={queueHref(controls, key, 1)}
+              className={
+                "rounded-full px-3 py-1 text-xs " +
+                (active ? "bg-ink text-white" : "bg-[#f5ece1] text-muted")
+              }
+            >
+              {QUEUE_LABELS[key]} <span className="opacity-70">({countFor(key)})</span>
+            </Link>
+          );
+        })}
+      </div>
+
+      {queueCapped ? (
+        <div className="card border-amber-200 bg-amber-50 text-[11px] text-amber-800">
+          العدد كبير — تُعرض أهم النتائج فقط ضمن الحد الآمن.
+        </div>
+      ) : null}
+
+      {issuePage.items.length === 0 ? (
+        <div className="card text-center text-sm text-muted">لا توجد مشاكل في هذه القائمة 🎉</div>
+      ) : (
+        <div className="space-y-2">
+          {issuePage.items.map((issue) => (
+            <div key={`${issue.productId}:${issue.platform}`} className="card flex flex-wrap items-center gap-2 p-3 text-xs">
+              <span className={"rounded-full px-2 py-0.5 text-[10px] " + SEVERITY_TONE[issue.severity]}>
+                {ISSUE_SEVERITY_LABELS[issue.severity]}
+              </span>
+              <span className="font-semibold text-ink">{issue.label}</span>
+              <span className="text-muted">·</span>
+              <span className="text-ink">{MATRIX_STATE_LABELS[issue.state]}</span>
+              <span className="text-muted">·</span>
+              <span className="text-muted">{ISSUE_REASON_LABELS[issue.reason]}</span>
+              <span className="text-muted">·</span>
+              <span className="font-mono text-[11px] text-muted">{issue.sku ?? "—"}</span>
+              <Link
+                href={`/v2/catalog/${encodeURIComponent(issue.productId)}`}
+                className="btn-ghost ms-auto text-[11px]"
+              >
+                فتح المنتج
+              </Link>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {issuePage.totalPages > 1 ? (
+        <div className="flex items-center justify-between pt-1 text-xs">
+          {issuePage.page > 1 ? (
+            <Link href={queueHref(controls, queueControl.queue, issuePage.page - 1)} className="btn-ghost" rel="prev">السابق</Link>
+          ) : <span />}
+          <span className="text-muted">صفحة {issuePage.page} من {issuePage.totalPages}</span>
+          {issuePage.page < issuePage.totalPages ? (
+            <Link href={queueHref(controls, queueControl.queue, issuePage.page + 1)} className="btn-ghost" rel="next">التالي</Link>
+          ) : <span />}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 // ── page ────────────────────────────────────────────────────────────────────
 
 export default function OperationsDashboard({
@@ -455,6 +572,10 @@ export default function OperationsDashboard({
   rafeeqLastCapturedAt,
   rafeeqStale,
   ticktickAvailable,
+  queueControl,
+  issuePage,
+  queueCounts,
+  queueCapped,
 }: {
   kpis: DashboardKpis;
   queues: Queue[];
@@ -480,6 +601,10 @@ export default function OperationsDashboard({
   rafeeqLastCapturedAt: string | null;
   rafeeqStale: boolean;
   ticktickAvailable: boolean;
+  queueControl: QueueControl;
+  issuePage: IssuePage;
+  queueCounts: QueueCounts;
+  queueCapped: boolean;
 }) {
   const hasPrev = page.page > 1;
   const hasNext = page.page < page.totalPages;
@@ -567,6 +692,15 @@ export default function OperationsDashboard({
 
       {/* platform overview */}
       <PlatformOverviewSection overview={platformOverview} />
+
+      {/* unified cross-platform issue queue (CI.2) */}
+      <UnifiedQueueSection
+        controls={controls}
+        queueControl={queueControl}
+        issuePage={issuePage}
+        queueCounts={queueCounts}
+        queueCapped={queueCapped}
+      />
 
       {/* queues */}
       <section className="space-y-3">

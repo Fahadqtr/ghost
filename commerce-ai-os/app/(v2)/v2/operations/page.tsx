@@ -32,6 +32,15 @@ import {
   type PlatformOverview,
   type Queue,
 } from "@/lib/operations/dashboard-summary";
+import {
+  buildOperationsQueues,
+  selectQueue,
+  paginateIssues,
+  parseQueueControl,
+  type QueueControl,
+  type QueueCounts,
+  type IssuePage,
+} from "@/lib/operations/operations-queue";
 import OperationsDashboard from "@/components/v2/operations/OperationsDashboard";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +76,10 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         rafeeqLastCapturedAt: string | null;
         rafeeqStale: boolean;
         ticktickAvailable: boolean;
+        queueControl: QueueControl;
+        issuePage: IssuePage;
+        queueCounts: QueueCounts;
+        queueCapped: boolean;
       }
     | null = null;
 
@@ -148,6 +161,13 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       const matched = selectOperationsPage(items, { ...controls, page: 1 });
       const pageResult = selectOperationsPage(items, controls);
 
+      // Unified operations queue (CI.2): pure aggregation over the SAME items via
+      // buildPlatformMatrixItem — zero new reads. Only the current queue page +
+      // counts cross to the browser.
+      const queueControl = parseQueueControl(params);
+      const queues = buildOperationsQueues(items);
+      const issuePage = paginateIssues(selectQueue(queues, queueControl.queue), queueControl.page);
+
       loaded = {
         controls,
         kpis: summary.kpis,
@@ -173,6 +193,10 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         rafeeqLastCapturedAt: result.data.rafeeqLastCapturedAt,
         rafeeqStale: result.data.rafeeqStale,
         ticktickAvailable: ticktick.available,
+        queueControl,
+        issuePage,
+        queueCounts: queues.counts,
+        queueCapped: queues.capped,
       };
     }
   } catch {
@@ -213,6 +237,10 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       rafeeqLastCapturedAt={loaded.rafeeqLastCapturedAt}
       rafeeqStale={loaded.rafeeqStale}
       ticktickAvailable={loaded.ticktickAvailable}
+      queueControl={loaded.queueControl}
+      issuePage={loaded.issuePage}
+      queueCounts={loaded.queueCounts}
+      queueCapped={loaded.queueCapped}
     />
   );
 }
