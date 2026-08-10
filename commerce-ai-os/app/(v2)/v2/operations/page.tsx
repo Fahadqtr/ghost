@@ -41,6 +41,7 @@ import {
   type QueueCounts,
   type IssuePage,
 } from "@/lib/operations/operations-queue";
+import { buildPlatformHealth, type PlatformHealth } from "@/lib/operations/platform-health";
 import OperationsDashboard from "@/components/v2/operations/OperationsDashboard";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +57,7 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         kpis: DashboardKpis;
         queues: Queue[];
         platformOverview: PlatformOverview;
+        platformHealth: PlatformHealth[];
         pageResult: OperationsPage;
         matchCount: number;
         partial: boolean;
@@ -168,11 +170,26 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       const queues = buildOperationsQueues(items);
       const issuePage = paginateIssues(selectQueue(queues, queueControl.queue), queueControl.page);
 
+      // Platform-level freshness + health (CI.4): pure, from the SAME already-loaded
+      // overview + availability/degraded flags + total count — zero new reads. `now`
+      // is injected (no hidden clock in the pure builder).
+      const platformHealth = buildPlatformHealth(
+        summary.platformOverview,
+        summary.kpis.totalProducts,
+        {
+          puresoul: result.data.puresoulDegraded,
+          talabat: result.data.talabatDegraded,
+          rafeeq: result.data.rafeeqDegraded,
+        },
+        new Date().getTime(),
+      );
+
       loaded = {
         controls,
         kpis: summary.kpis,
         queues: summary.queues,
         platformOverview: summary.platformOverview,
+        platformHealth,
         pageResult,
         matchCount: matched.total,
         partial: result.data.partial,
@@ -216,6 +233,7 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       kpis={loaded.kpis}
       queues={loaded.queues}
       platformOverview={loaded.platformOverview}
+      platformHealth={loaded.platformHealth}
       page={loaded.pageResult}
       matchCount={loaded.matchCount}
       controls={loaded.controls}

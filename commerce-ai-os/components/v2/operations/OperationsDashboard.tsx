@@ -39,6 +39,8 @@ import {
   type IssueSeverity,
 } from "@/lib/operations/operations-queue";
 import { MATRIX_STATE_LABELS } from "@/lib/operations/platform-matrix";
+import type { PlatformHealth } from "@/lib/operations/platform-health";
+import PlatformHealthSection from "@/components/v2/operations/PlatformHealth";
 
 function opsHref(controls: OperationsControls, over: Partial<OperationsControls>): string {
   const c = { ...controls, ...over };
@@ -551,6 +553,7 @@ export default function OperationsDashboard({
   kpis,
   queues,
   platformOverview,
+  platformHealth,
   page,
   matchCount,
   controls,
@@ -580,6 +583,7 @@ export default function OperationsDashboard({
   kpis: DashboardKpis;
   queues: Queue[];
   platformOverview: PlatformOverview;
+  platformHealth: PlatformHealth[];
   page: OperationsPage;
   matchCount: number;
   controls: OperationsControls;
@@ -689,6 +693,9 @@ export default function OperationsDashboard({
           </>
         ) : null}
       </div>
+
+      {/* platform freshness + health (CI.4) — above the overview grid */}
+      <PlatformHealthSection health={platformHealth} />
 
       {/* platform overview */}
       <PlatformOverviewSection overview={platformOverview} />
