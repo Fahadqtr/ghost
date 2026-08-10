@@ -17,6 +17,7 @@ import { loadProductPlatformHistory, type ProductPlatformHistory } from "@/lib/o
 import PlatformMatrix from "@/components/v2/catalog/PlatformMatrix";
 import { loadProductPlatformMatrix } from "@/lib/operations/platform-matrix-read";
 import type { PlatformMatrixItem } from "@/lib/operations/platform-matrix";
+import { buildCrossPlatformDiff } from "@/lib/operations/cross-platform-diff";
 import type { TimelineEvent } from "@/lib/operations/shared/models";
 import {
   catalogEditHref,
@@ -162,7 +163,21 @@ export default async function ProductDetailPage({
         backHref={backHref}
         editHref={editHref}
       />
-      {platformMatrix ? <PlatformMatrix matrix={platformMatrix} /> : null}
+      {platformMatrix ? (
+        <PlatformMatrix
+          matrix={platformMatrix}
+          diffs={buildCrossPlatformDiff(
+            {
+              productId: state.product.id,
+              price: state.product.price,
+              discountPrice: state.product.discountPrice,
+              nameAr: state.product.nameAr,
+              nameEn: state.product.nameEn,
+            },
+            platformMatrix.cells,
+          )}
+        />
+      ) : null}
       {operations ? <ProductTasksWidget tasks={operations.tasks} /> : null}
       {activityEvents ? (
         <ProductActivityWidget events={activityEvents} productId={state.product.id} />
