@@ -65,6 +65,8 @@ export interface PlatformMatrixCell {
   price: number | null;
   /** trusted platform availability, or null → "—" (only PureSoul today) */
   availability: string | null;
+  /** trusted platform title, or null when untrusted/derived (only PureSoul today) */
+  title: string | null;
   /** newest snapshot capture time for this platform, or null */
   capturedAt: string | null;
   /** true when the newest snapshot is older than that platform's stale window */
@@ -88,11 +90,14 @@ export interface PlatformMatrixItem {
 const ATTENTION_STATES: ReadonlySet<MatrixState> = new Set<MatrixState>(["missing", "different", "review"]);
 
 /** Per-platform TRUSTED-FIELD allowlist. Anything not listed renders as "—". */
-const TRUSTED_FIELDS: Record<PlatformType, { externalId: boolean; price: boolean; availability: boolean }> = {
-  puresoul: { externalId: true, price: true, availability: true },
-  shopify: { externalId: true, price: false, availability: false },
-  talabat: { externalId: false, price: false, availability: false },
-  rafeeq: { externalId: true, price: false, availability: false },
+const TRUSTED_FIELDS: Record<PlatformType, { externalId: boolean; price: boolean; availability: boolean; title: boolean }> = {
+  // `title` is trusted only where the snapshot records a REAL platform title
+  // (PureSoul psName). Shopify's snapshot title is derived from Malika's name, so
+  // it is NOT a trustworthy platform value → not comparable.
+  puresoul: { externalId: true, price: true, availability: true, title: true },
+  shopify: { externalId: true, price: false, availability: false, title: false },
+  talabat: { externalId: false, price: false, availability: false, title: false },
+  rafeeq: { externalId: true, price: false, availability: false, title: false },
 };
 
 const S = (v: unknown): string | null => {
@@ -193,6 +198,7 @@ function stateOnlyCell(platform: PlatformType, state: MatrixState, source: Matri
     status: null,
     price: null,
     availability: null,
+    title: null,
     capturedAt: null,
     stale: false,
     flags,
@@ -272,6 +278,7 @@ function richCell(platform: PlatformType, snapshot: PlatformSnapshot | undefined
     status: S(snapshot.status),
     price: trust.price ? numOrNull(snapshot.price) : null,
     availability: trust.availability ? S(snapshot.availability) : null,
+    title: trust.title ? S(snapshot.title) : null,
     capturedAt: S(snapshot.capturedAt),
     stale: STALE[platform](S(snapshot.capturedAt), now),
     flags,
