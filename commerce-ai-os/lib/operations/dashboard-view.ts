@@ -19,6 +19,7 @@ import type {
 } from "./shared/models";
 import type { PureSoulState } from "@/lib/platforms/puresoul/capture-compute";
 import type { TalabatState } from "@/lib/platforms/talabat/capture-compute";
+import type { RafeeqState } from "@/lib/platforms/rafeeq/capture-compute";
 
 /** One product row as the dashboard renders it — catalog-safe, no PII. */
 export interface OperationsListItem {
@@ -60,6 +61,13 @@ export interface OperationsListItem {
    * mapping alone (a mapping is never "present"/"published").
    */
   talabatState?: TalabatState;
+  /**
+   * Rafeeq state (Phase UI.9.7): present/missing/linked from the latest snapshot
+   * verdict (channel_status), else a channel_products baseline, else undefined
+   * (→ Unknown). Enriched server-side; annotates only. Missing comes ONLY from a
+   * confident "Not Listed" verdict — never from absence, staleness, or an id alone.
+   */
+  rafeeqState?: RafeeqState;
 }
 
 /** Map a whitelisted DB row (+ its variant count and optional Shopify

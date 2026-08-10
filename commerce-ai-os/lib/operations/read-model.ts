@@ -28,6 +28,7 @@ import type {
 import type { OperationsListItem } from "./dashboard-view";
 import type { PureSoulState } from "@/lib/platforms/puresoul/capture-compute";
 import type { TalabatState } from "@/lib/platforms/talabat/capture-compute";
+import type { RafeeqState } from "@/lib/platforms/rafeeq/capture-compute";
 import type { TaskViewItem } from "./tasks-view";
 import type { TimelineProvider } from "./timeline/providers/timeline-provider";
 
@@ -131,6 +132,20 @@ export interface TalabatSnapshotReader {
   }>;
 }
 
+/** A Rafeeq SNAPSHOT reader (Phase UI.9.7): per-product RafeeqState from the
+ *  latest snapshot verdict merged with a channel_products baseline, plus
+ *  freshness. Best-effort: `degraded` marks a snapshot read failure (→ unknown,
+ *  never missing). */
+export interface RafeeqSnapshotReader {
+  loadRafeeqSnapshotView(client: OperationsReadClient): Promise<{
+    available: boolean;
+    degraded: boolean;
+    byProductId: Map<string, RafeeqState>;
+    lastCapturedAt: string | null;
+    stale: boolean;
+  }>;
+}
+
 /** A PureSoul presence reader (injected in tests; the UI.9.1 overlay reader in
  *  prod). Best-effort: `degraded` marks a read failure (→ unknown, never
  *  missing); `available` marks a healthy read that carried PureSoul data. */
@@ -214,6 +229,14 @@ export interface OperationsDashboardData {
   talabatLastCapturedAt: string | null;
   /** true when the newest Talabat snapshot is older than the stale window (7d) */
   talabatStale: boolean;
+  /** true when a Rafeeq read (snapshot OR channel_products baseline) carried data */
+  rafeeqAvailable: boolean;
+  /** true when the Rafeeq snapshot read FAILED (never missing) */
+  rafeeqDegraded: boolean;
+  /** newest Rafeeq snapshot capture time, or null (never captured) */
+  rafeeqLastCapturedAt: string | null;
+  /** true when the newest Rafeeq snapshot is older than the stale window (7d) */
+  rafeeqStale: boolean;
 }
 
 export type OperationsLoadResult =
@@ -235,6 +258,7 @@ export async function loadOperationsDashboard(
     puresoul?: PureSoulPresenceReader;
     puresoulSnapshot?: PureSoulSnapshotReader;
     talabatSnapshot?: TalabatSnapshotReader;
+    rafeeqSnapshot?: RafeeqSnapshotReader;
   },
 ): Promise<OperationsLoadResult> {
   try {
@@ -274,7 +298,14 @@ export async function loadOperationsDashboard(
       lastCapturedAt: null as string | null,
       stale: false,
     });
-    const [products, variants, shopifyRes, shopifySnapRes, puresoulRes, puresoulSnapRes, talabatSnapRes] = await Promise.all([
+    const emptyRafeeqSnapshot = (degraded: boolean) => ({
+      available: false,
+      degraded,
+      byProductId: new Map<string, RafeeqState>(),
+      lastCapturedAt: null as string | null,
+      stale: false,
+    });
+    const [products, variants, shopifyRes, shopifySnapRes, puresoulRes, puresoulSnapRes, talabatSnapRes, rafeeqSnapRes] = await Promise.all([
       readAllRows(client.from("products").select(PRODUCT_COLUMNS).order("id", { ascending: true }), MAX_PRODUCTS),
       readAllRows(
         client.from("product_variants").select(VARIANT_COLUMNS).order("parent_product_id", { ascending: true }),
@@ -295,6 +326,9 @@ export async function loadOperationsDashboard(
       deps?.talabatSnapshot
         ? deps.talabatSnapshot.loadTalabatSnapshotView(client).then((r) => r, () => emptyTalabatSnapshot(true))
         : Promise.resolve(emptyTalabatSnapshot(false)),
+      deps?.rafeeqSnapshot
+        ? deps.rafeeqSnapshot.loadRafeeqSnapshotView(client).then((r) => r, () => emptyRafeeqSnapshot(true))
+        : Promise.resolve(emptyRafeeqSnapshot(false)),
     ]);
 
     // variant counts per parent — pure aggregation, no stock/PII read.
@@ -328,6 +362,14 @@ export async function loadOperationsDashboard(
     const talabatDegraded = talabatSnapRes.degraded;
     const talabatLastCapturedAt = talabatSnapRes.lastCapturedAt;
     const talabatStale = talabatSnapRes.stale;
+    // Rafeeq (UI.9.7): snapshot verdict per product + channel_products baseline
+    // (already merged in the reader). Read-side only; never flows into
+    // computePlatformStatuses (Rafeeq has no live presence).
+    const rafeeqSnapById = rafeeqSnapRes.byProductId;
+    const rafeeqAvailable = rafeeqSnapRes.available;
+    const rafeeqDegraded = rafeeqSnapRes.degraded;
+    const rafeeqLastCapturedAt = rafeeqSnapRes.lastCapturedAt;
+    const rafeeqStale = rafeeqSnapRes.stale;
 
     const items: OperationsListItem[] = [];
     const readiness: ProductReadiness[] = [];
@@ -367,6 +409,10 @@ export async function loadOperationsDashboard(
       // reader). Absent → undefined (→ Unknown). Never derived from absence.
       const talabatState = talabatSnapById.get(id);
       if (talabatState) listItem.talabatState = talabatState;
+      // Rafeeq state: snapshot verdict / channel_products baseline (already merged
+      // in the reader). Absent → undefined (→ Unknown). Never derived from absence.
+      const rafeeqState = rafeeqSnapById.get(id);
+      if (rafeeqState) listItem.rafeeqState = rafeeqState;
       items.push(listItem);
     }
 
@@ -391,6 +437,10 @@ export async function loadOperationsDashboard(
         talabatDegraded,
         talabatLastCapturedAt,
         talabatStale,
+        rafeeqAvailable,
+        rafeeqDegraded,
+        rafeeqLastCapturedAt,
+        rafeeqStale,
       },
     };
   } catch {

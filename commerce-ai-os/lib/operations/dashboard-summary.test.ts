@@ -130,7 +130,7 @@ test("buildPlatformOverview: Shopify counted by status; other platforms not-conn
   assert.equal(ov.shopify.different, 1);
   assert.equal(ov.puresoul.available, false, "PureSoul not passed → not connected");
   assert.equal(ov.talabat.available, false, "Talabat not passed → not connected");
-  assert.equal(ov.rafeeq, "not_connected");
+  assert.equal(ov.rafeeq.available, false, "Rafeeq not passed → not connected");
   // No Shopify snapshot meta passed → freshness defaults (reader-only status).
   assert.equal(ov.shopify.lastCapturedAt, null);
   assert.equal(ov.shopify.stale, false);
@@ -158,6 +158,28 @@ test("buildPlatformOverview: Talabat counted from talabatState; unknown never mi
   assert.equal(ov.talabat.unknown, 2, "explicit unknown + no-state, never missing");
   assert.equal(ov.talabat.lastCapturedAt, "2026-08-10T00:00:00.000Z");
   assert.equal(ov.talabat.stale, true);
+});
+
+test("buildPlatformOverview: Rafeeq counted from rafeeqState; unknown never missing (UI.9.7)", () => {
+  const items = [
+    mk({ id: "a", rafeeqState: "present" }),
+    mk({ id: "b", rafeeqState: "missing" }),
+    mk({ id: "c", rafeeqState: "linked" }),
+    mk({ id: "d", rafeeqState: "unknown" }),
+    mk({ id: "e" }), // no state → counted as unknown, NEVER missing
+  ];
+  const ov = buildPlatformOverview(items, true, undefined, undefined, undefined, {
+    available: true,
+    lastCapturedAt: "2026-08-10T00:00:00.000Z",
+    stale: false,
+  });
+  assert.equal(ov.rafeeq.available, true);
+  assert.equal(ov.rafeeq.present, 1);
+  assert.equal(ov.rafeeq.missing, 1, "missing comes only from a Not Listed verdict");
+  assert.equal(ov.rafeeq.linked, 1, "linked (ready) — never present/published");
+  assert.equal(ov.rafeeq.unknown, 2, "explicit unknown + no-state, never missing");
+  assert.equal(ov.rafeeq.lastCapturedAt, "2026-08-10T00:00:00.000Z");
+  assert.equal(ov.rafeeq.stale, false);
 });
 
 test("buildPlatformOverview: Shopify snapshot freshness surfaced (UI.9.5)", () => {

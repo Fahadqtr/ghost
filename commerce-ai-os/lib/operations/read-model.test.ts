@@ -210,6 +210,47 @@ test("Talabat snapshot read failure → talabatDegraded, states undefined (never
   for (const it of res.data.items) assert.equal(it.talabatState, undefined);
 });
 
+test("Rafeeq snapshot state flows into item.rafeeqState; freshness surfaced", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    rafeeqSnapshot: {
+      loadRafeeqSnapshotView: async () => ({
+        available: true,
+        degraded: false,
+        byProductId: new Map([["ready", "present" as const], ["noimg", "linked" as const]]),
+        lastCapturedAt: "2026-08-09T00:00:00.000Z",
+        stale: false,
+      }),
+    },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.rafeeqAvailable, true);
+  assert.equal(res.data.rafeeqLastCapturedAt, "2026-08-09T00:00:00.000Z");
+  assert.equal(res.data.rafeeqStale, false);
+  assert.equal(res.data.items.find((i) => i.id === "ready")!.rafeeqState, "present");
+  assert.equal(res.data.items.find((i) => i.id === "noimg")!.rafeeqState, "linked");
+});
+
+test("no Rafeeq reader → rafeeqState undefined (Unknown), never missing", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), { engines });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.rafeeqAvailable, false);
+  for (const it of res.data.items) assert.equal(it.rafeeqState, undefined);
+});
+
+test("Rafeeq snapshot read failure → rafeeqDegraded, states undefined (never missing)", async () => {
+  const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
+    engines,
+    rafeeqSnapshot: { loadRafeeqSnapshotView: async () => { throw new Error("rafeeq down"); } },
+  });
+  assert.equal(res.status, "ok");
+  if (res.status !== "ok") return;
+  assert.equal(res.data.rafeeqDegraded, true);
+  for (const it of res.data.items) assert.equal(it.rafeeqState, undefined);
+});
+
 test("PureSoul presence flows into platform status; flags surfaced", async () => {
   const res = await loadOperationsDashboard(fakeClient(productRows, variantRows), {
     engines,
