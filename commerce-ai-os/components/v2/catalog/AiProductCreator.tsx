@@ -47,7 +47,6 @@ import type { EditBrand } from "@/lib/products/product-edit-read";
 import { matchBrandId } from "@/lib/products/brand-match";
 import { PRODUCT_GENERATION_FIELDS, toProductGenerationProposal } from "@/lib/products/product-generation";
 import { PROPOSAL_SCALAR_MAP } from "@/lib/products/product-generation-form";
-import AiFillMissing from "@/components/v2/catalog/AiFillMissing";
 
 const ALLOWED_FILE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -254,20 +253,6 @@ export default function AiProductCreator({
     setRowsFromExtract(x, prepared.sku, prepared.variantBarcodes);
     setDuplicates(prepared.duplicates);
     setPartialScan(prepared.partial);
-  }
-
-  // Apply an AI "fill missing" patch from the shared AiFillMissing panel (UX.4D-3).
-  // The pure adapter already decided WHICH content scalars change (fill-missing
-  // default / explicit overwrite); here we only merge those keys. Identity/commerce
-  // keys can never be in the patch (the proposal contract excludes them).
-  function applyAiPatch(patch: Record<string, string>) {
-    setScalars((s) => {
-      const next: FormScalars = { ...s };
-      for (const key of Object.keys(patch)) {
-        if (key in next) next[key as keyof FormScalars] = patch[key];
-      }
-      return next;
-    });
   }
 
   /** Re-scan identity (SKU pool, barcodes, duplicates) for the CURRENT form. */
@@ -610,19 +595,6 @@ export default function AiProductCreator({
               hasImage: image !== null,
               variantCount: rows.length,
             })}
-          />
-
-          {/* AI fill missing (UX.4D-3) — the SAME shared panel as Edit. Fills any
-              remaining content gaps via the proposal layer (fill-missing default).
-              Text-only here: the picked image is in-memory (already used by the
-              vision analysis), so no URL is passed. Never saves; applies via
-              applyAiPatch, so completeness updates and identity/variants/create
-              stay untouched. */}
-          <AiFillMissing
-            currentScalars={scalars as unknown as Record<string, string>}
-            imageUrl={null}
-            brands={brands}
-            onApply={applyAiPatch}
           />
 
           {/* Review fields */}

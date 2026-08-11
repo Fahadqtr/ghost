@@ -76,16 +76,23 @@ const CREATE = src("../../components/v2/catalog/AiProductCreator.tsx");
 const EDIT = src("../../components/v2/catalog/ProductEditForm.tsx");
 const CREATE_ACTIONS = src("../../app/(v2)/v2/catalog/new/actions.ts");
 
-test("create form: shares the proposal layer, adapter, matcher, and AiFillMissing", () => {
+test("create form: shares the proposal layer, adapter, and brand matcher (pure layer only)", () => {
   assert.ok(CREATE.includes("toProductGenerationProposal"), "maps VisionExtract via the shared mapper");
   assert.ok(CREATE.includes("PROPOSAL_SCALAR_MAP"), "uses the shared field map");
   assert.ok(CREATE.includes('from "@/lib/products/brand-match"'), "uses the shared brand matcher");
-  assert.ok(CREATE.includes("<AiFillMissing"), "renders the shared AI-fill panel");
-  assert.ok(CREATE.includes("applyAiPatch"), "applies via the shared patch merge");
   // The duplicated inline mapping is gone (no hardcoded VisionExtract→scalar list).
   assert.equal(CREATE.includes("brand_id: matchBrandId(brands, x.brand)"), false, "old inline mapping removed");
   // No local re-declaration of the matcher.
   assert.equal(/function matchBrandId\s*\(/.test(CREATE), false, "no duplicated matchBrandId");
+});
+
+test("create form: AiFillMissing is NOT mounted here (Option A — pure-layer share only)", () => {
+  // UX.4D-3 unifies the pure mapping only. The AiFillMissing panel stays Edit-only
+  // until a base64-capable / injectable proposal path lands (deferred to UX.4E),
+  // so Create keeps its single vision-analyze flow and wizard UX unchanged.
+  assert.equal(CREATE.includes("AiFillMissing"), false, "no AiFillMissing import/mount in Create");
+  assert.equal(CREATE.includes("applyAiPatch"), false, "no secondary AI-fill apply handler in Create");
+  assert.equal(CREATE.includes("generateProductFillProposal"), false, "no secondary AI-fill action wired into Create");
 });
 
 test("create form: analyze / identity / variants / save paths unchanged", () => {
