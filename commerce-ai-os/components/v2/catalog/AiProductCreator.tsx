@@ -27,6 +27,8 @@ import {
 } from "@/app/(v2)/v2/catalog/new/actions";
 import SimilarProducts from "@/components/v2/catalog/SimilarProducts";
 import { prepareImage, type PreparedImage } from "@/lib/imagePrep";
+import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
+import { computeProductCompleteness } from "@/lib/products/product-completeness";
 import { renumberVariantSkus, isValidMkSku, normalizeMkSku } from "@/lib/products/sku-generate";
 import { CREATE_MESSAGES, validateAiProductInput } from "@/lib/products/create-validation";
 import type { VisionExtract } from "@/lib/products/ai-extract";
@@ -494,6 +496,24 @@ export default function AiProductCreator({
               {checking ? "جارٍ الفحص…" : "إعادة فحص التكرار والأرقام"}
             </button>
           </section>
+
+          {/* Product completeness (UX.4A) — read-only; derived from the readiness
+              engine via the shared wrapper. Never mutates the form. */}
+          <ProductCompleteness
+            result={computeProductCompleteness({
+              nameAr: scalars.name_ar,
+              nameEn: scalars.name_en,
+              sku: scalars.sku,
+              barcode: scalars.barcode,
+              price: scalars.price,
+              category: scalars.main_category,
+              brandId: scalars.brand_id,
+              descriptionAr: scalars.description_ar,
+              descriptionEn: scalars.description_en,
+              hasImage: image !== null,
+              variantCount: rows.length,
+            })}
+          />
 
           {/* Review fields */}
           <section className="card space-y-3">
