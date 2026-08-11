@@ -34,10 +34,12 @@ test("media actions: thin server wrappers that REUSE the existing image cores", 
   assert.ok(ACTIONS.includes("parseProductId"), "product id validated");
 });
 
-test("media actions: no NEW storage/DB sync logic and no raw error pass-through", () => {
-  // The action must not re-implement upload/sync — it delegates to the cores.
-  for (const bad of [".storage", ".upload(", ".getPublicUrl(", ".insert(", ".update(", ".rpc("]) {
-    assert.equal(ACTIONS.includes(bad), false, `action must not contain ${bad} (delegates to cores)`);
+test("media actions: no storage re-implementation, no RPC, no raw error pass-through", () => {
+  // Upload/remove delegate to the cores; the action never re-implements Storage
+  // handling or a direct gallery INSERT, and never calls an RPC. (set-primary /
+  // reorder DO use .update on product_images/products — that is expected in 4C-3.)
+  for (const bad of [".storage", ".upload(", ".getPublicUrl(", ".insert(", ".rpc("]) {
+    assert.equal(ACTIONS.includes(bad), false, `action must not contain ${bad}`);
   }
   // Raw core errors are mapped to fixed Arabic messages, never surfaced.
   assert.ok(ACTIONS.includes("MEDIA_MESSAGES"), "fixed Arabic messages");
@@ -71,12 +73,6 @@ test("editor: NO direct client Storage/Supabase access, NO service role", () => 
     ".storage", ".upload(", "@/lib/supabase", "@supabase/",
     "createClient", "createAdminClient", "SERVICE_ROLE",
   ]) {
-    assert.equal(EDITOR.includes(bad), false, `editor must not contain ${bad}`);
-  }
-});
-
-test("editor: no reorder and no manual set-primary for extra images (out of scope)", () => {
-  for (const bad of ["reorder", "sort_order", "setPrimary", "set_primary", "is_primary"]) {
     assert.equal(EDITOR.includes(bad), false, `editor must not contain ${bad}`);
   }
 });

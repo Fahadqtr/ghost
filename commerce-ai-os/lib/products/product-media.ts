@@ -86,10 +86,15 @@ function normalizeRows(rows: readonly unknown[]): NormalizedRow[] {
   return out;
 }
 
-/** Deterministic gallery order: sort_order ascending, original order as the
- *  stable tie-break. */
+/** Deterministic gallery order: sort_order ascending, then id (a value the DB
+ *  guarantees and that is stable across reads — so the order does not depend on
+ *  the arbitrary row order of an un-ordered query), then original index as the
+ *  final tie-break for rows without an id. */
 function byOrder(a: NormalizedRow, b: NormalizedRow): number {
   if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+  const ai = a.id ?? "";
+  const bi = b.id ?? "";
+  if (ai !== bi) return ai < bi ? -1 : 1;
   return a.index - b.index;
 }
 
@@ -142,4 +147,34 @@ export function toProductMediaState(
   const rest = ordered.filter((_, i) => i !== pos);
   const images = [toItem(primaryRow, true), ...rest.map((r) => toItem(r, false))];
   return { primary: images[0], images };
+}
+
+/**
+ * Pure reorder planner (UX.4C-3). Computes new `sort_order` values for the
+ * EXTRA images (never the primary) after moving one extra up/down by one slot.
+ *
+ * - Only extras with a real id participate — the primary is pinned first (by
+ *   image_url) and is never moved, so a plan NEVER changes which image is primary.
+ * - "up" moves the target one slot earlier, "down" one slot later.
+ * - A no-op (target not an extra, already at the edge, or unknown id) returns [].
+ * - The returned list renumbers extras 0..n-1 in their NEW order, so a single
+ *   write pass makes the gallery order deterministic (no ties).
+ */
+export function planReorder(
+  state: ProductMediaState,
+  imageId: string,
+  direction: "up" | "down",
+): { id: string; sortOrder: number }[] {
+  const extras: { id: string; item: ProductMediaItem }[] = [];
+  for (const item of state.images) {
+    if (!item.isPrimary && typeof item.id === "string") extras.push({ id: item.id, item });
+  }
+  const idx = extras.findIndex((e) => e.id === imageId);
+  if (idx < 0) return [];
+  const swapWith = direction === "up" ? idx - 1 : idx + 1;
+  if (swapWith < 0 || swapWith >= extras.length) return [];
+
+  const next = [...extras];
+  [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+  return next.map((e, i) => ({ id: e.id, sortOrder: i }));
 }
