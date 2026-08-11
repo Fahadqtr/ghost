@@ -18,6 +18,9 @@ import {
   type CatalogControls,
 } from "@/lib/catalog-v2/master-catalog-view";
 import ProductEditForm from "@/components/v2/catalog/ProductEditForm";
+import ProductMedia from "@/components/v2/catalog/ProductMedia";
+import { loadProductMedia } from "@/lib/products/product-media-read";
+import { EMPTY_PRODUCT_MEDIA, type ProductMediaState } from "@/lib/products/product-media";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +39,7 @@ export default async function ProductEditPage({
   // href. On any failure the cancel link falls back to the clean detail page.
   let cancelHref = "/v2/catalog";
   let state:
-    | { kind: "ok"; id: string; initial: ProductEditInitial; brands: EditBrand[]; controls: CatalogControls }
+    | { kind: "ok"; id: string; initial: ProductEditInitial; brands: EditBrand[]; controls: CatalogControls; media: ProductMediaState }
     | { kind: "notfound" }
     | { kind: "error" } = { kind: "error" };
 
@@ -57,7 +60,16 @@ export default async function ProductEditPage({
       } else if (result.status === "notfound") {
         state = { kind: "notfound" };
       } else {
-        state = { kind: "ok", id: validId, initial: result.initial, brands: result.brands, controls };
+        // Read-only media (UX.4C-1). Best-effort + isolated: a failure just
+        // renders the empty-media block; the editor is never blocked.
+        let media: ProductMediaState = EMPTY_PRODUCT_MEDIA;
+        try {
+          const mediaRead = await loadProductMedia(supabase, validId);
+          media = mediaRead.status === "ok" ? mediaRead.state : EMPTY_PRODUCT_MEDIA;
+        } catch {
+          media = EMPTY_PRODUCT_MEDIA;
+        }
+        state = { kind: "ok", id: validId, initial: result.initial, brands: result.brands, controls, media };
       }
     }
   } catch {
@@ -87,14 +99,20 @@ export default async function ProductEditPage({
   }
 
   return (
-    <ProductEditForm
-      productId={state.id}
-      initial={state.initial}
-      brands={state.brands}
-      categories={[...CATEGORIES]}
-      stockStatuses={[...STOCK_STATUSES]}
-      controls={state.controls}
-      cancelHref={cancelHref}
-    />
+    <div className="space-y-4">
+      {/* Read-only product media (UX.4C-1) above the form. This PR does not add
+          any upload/edit controls — the primary photo still changes only via the
+          existing create/legacy flows. */}
+      <ProductMedia state={state.media} />
+      <ProductEditForm
+        productId={state.id}
+        initial={state.initial}
+        brands={state.brands}
+        categories={[...CATEGORIES]}
+        stockStatuses={[...STOCK_STATUSES]}
+        controls={state.controls}
+        cancelHref={cancelHref}
+      />
+    </div>
   );
 }

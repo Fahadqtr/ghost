@@ -28,6 +28,9 @@ import {
   type MasterCatalogProduct,
 } from "@/lib/catalog-v2/master-catalog-view";
 import ProductDetail from "@/components/v2/catalog/ProductDetail";
+import ProductMedia from "@/components/v2/catalog/ProductMedia";
+import { loadProductMedia } from "@/lib/products/product-media-read";
+import { EMPTY_PRODUCT_MEDIA, type ProductMediaState } from "@/lib/products/product-media";
 import InPageNav from "@/components/v2/InPageNav";
 
 export const dynamic = "force-dynamic";
@@ -68,6 +71,10 @@ export default async function ProductDetailPage({
   // Unified per-platform matrix (CI.1). Best-effort + isolated: derived read-only
   // from platform_snapshots; a failure never breaks the page (section omitted).
   let platformMatrix: PlatformMatrixItem | null = null;
+  // Unified product media (UX.4C-1). Best-effort + isolated read: products.image_url
+  // (+ product_images gallery) projected through the shared reducer. A failure
+  // simply omits the media block — the rest of the page is unaffected.
+  let media: ProductMediaState = EMPTY_PRODUCT_MEDIA;
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
@@ -117,6 +124,12 @@ export default async function ProductDetailPage({
           });
         } catch {
           platformMatrix = null;
+        }
+        try {
+          const mediaRead = await loadProductMedia(supabase as never, validId);
+          media = mediaRead.status === "ok" ? mediaRead.state : EMPTY_PRODUCT_MEDIA;
+        } catch {
+          media = EMPTY_PRODUCT_MEDIA;
         }
       }
     }
@@ -172,7 +185,8 @@ export default async function ProductDetailPage({
         ]}
       />
 
-      <section id="details" className="scroll-mt-28">
+      <section id="details" className="scroll-mt-28 space-y-4">
+        <ProductMedia state={media} />
         <ProductDetail
           product={state.product}
           variants={state.variants}
