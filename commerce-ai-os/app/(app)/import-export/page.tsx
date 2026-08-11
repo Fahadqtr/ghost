@@ -1,115 +1,130 @@
+// /import-export — Import/Export HUB (UX.3A). A light landing page: link cards
+// ONLY. All heavy tools (Excel import, image tools, exports, category export) were
+// moved OFF this page into their own sub-routes so the hub loads no product data
+// and ships no XLSX/image client bundle. Nothing was deleted and no URL changed —
+// the tool pages and their logic are untouched; this page only stops rendering them
+// inline. Server component; auth is the (app) layout login gate.
+
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
 import { getT } from "@/lib/i18n-server";
-import ImageHealth from "@/components/ImageHealth";
-import ExcelImport from "@/components/ExcelImport";
-import ImageUpload from "@/components/ImageUpload";
-import CatalogImageBySku from "@/components/CatalogImageBySku";
-import ExportButtons from "@/components/ExportButtons";
-import TalabatExport, { type CatCount } from "@/components/TalabatExport";
 
 export const dynamic = "force-dynamic";
 
+function HubCard({ href, icon, title, desc }: { href: string; icon: string; title: string; desc: string }) {
+  return (
+    <Link href={href} className="card flex items-center justify-between hover:bg-slate-50">
+      <div>
+        <h3 className="text-sm font-semibold text-ink">
+          {icon} {title}
+        </h3>
+        <p className="text-xs text-muted">{desc}</p>
+      </div>
+      <span className="text-brand">→</span>
+    </Link>
+  );
+}
+
 export default async function ImportExportPage() {
-  const supabase = createClient();
   const { locale } = await getT();
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
-
-  // Product list for the image-attach dropdown only; exports pull live data
-  // server-side via /api/export/[channel].
-  const { data: productList } = await supabase
-    .from("products")
-    .select("id, name_en")
-    .order("name_en")
-    .limit(1000);
-
-  // How many products have a downloadable image (drives the batch buttons).
-  const { count: imageCount } = await supabase
-    .from("products")
-    .select("*", { count: "exact", head: true })
-    .not("image_filename", "is", null);
-
-  // Category counts for the Talabat category picker.
-  const catRows: { main_category: string | null }[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data } = await supabase.from("products").select("main_category").range(from, from + 999);
-    if (!data || data.length === 0) break;
-    catRows.push(...data);
-    if (data.length < 1000) break;
-  }
-  const tally = new Map<string, number>();
-  for (const r of catRows) {
-    const c = (r.main_category ?? "").trim();
-    if (c) tally.set(c, (tally.get(c) ?? 0) + 1);
-  }
-  const categories: CatCount[] = [...tally.entries()]
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
-
-  // Count of products added via Snoonu Sync (notes marker) — for the
-  // "export new products only" button.
-  const { count: newCount } = await supabase
-    .from("products")
-    .select("*", { count: "exact", head: true })
-    .like("notes", "Imported from Snoonu sync%");
 
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted">
         {L(
-          "استيراد وتصدير لكل منصة. التصدير يسحب قاعدة البيانات الحية؛ لا يتم استدعاء أي واجهة برمجة حقيقية لأي سوق.",
-          "Import and per-channel export. Exports pull the live database; no real marketplace API is called."
+          "استيراد وتصدير لكل منصة. اختر الأداة من البطاقات أدناه — كل أداة تفتح في صفحتها الخاصة.",
+          "Import and per-channel export. Pick a tool from the cards below — each opens on its own page."
         )}
       </p>
-      <Link href="/import-export/availability" className="card flex items-center justify-between border-brand/30 bg-brand/5 hover:bg-brand/10">
-        <div>
-          <h3 className="text-sm font-semibold text-ink">🔁 {L("مطابقة التوفّر بين المنصّات", "Match availability across platforms")}</h3>
-          <p className="text-xs text-muted">{L("ارفع قوائم مليكاس · Pure Seoul · Talabat · Rafeeq → وحّد النافد على الكل وادفعه لـ Shopify.", "Upload Malika · Pure Seoul · Talabat · Rafeeq lists → unify out-of-stock across all and push to Shopify.")}</p>
-        </div>
-        <span className="text-brand">→</span>
-      </Link>
-      <Link href="/import-export/shopify-sync" className="card flex items-center justify-between hover:bg-slate-50">
-        <div>
-          <h3 className="text-sm font-semibold text-ink">🛍️ Shopify Sync</h3>
-          <p className="text-xs text-muted">{L("مقارنة حية مع متجر شوبي فاي عبر Admin API — فروقات الأسعار والأسماء وتحديث بضغطة.", "Live reconcile against the Shopify store via the Admin API — price/title drift, one-tap price push.")}</p>
-        </div>
-        <span className="text-brand">→</span>
-      </Link>
-      <Link href="/import-export/talabat-sync" className="card flex items-center justify-between hover:bg-slate-50">
-        <div>
-          <h3 className="text-sm font-semibold text-ink">🍊 Talabat Sync</h3>
-          <p className="text-xs text-muted">{L("ارفع تصدير طلبات → شوف الناقص عندهم ونزّل إكسل + صور جاهزين للإرسال (المنتجات بخيارات تنقسم لصفوف مستقلة).", "Upload the Talabat export → see what they're missing, download an Excel + images package to email them (option products split into standalone rows).")}</p>
-        </div>
-        <span className="text-brand">→</span>
-      </Link>
-      <Link href="/import-export/talabat-orders" className="card flex items-center justify-between hover:bg-slate-50">
-        <div>
-          <h3 className="text-sm font-semibold text-ink">🧾 {L("طلبات Talabat", "Talabat orders")}</h3>
-          <p className="text-xs text-muted">{L("استقبل طلبات Talabat مباشرة عبر Webhook — سجّل الرابط في بوابة التاجر وشوف الطلبات الواردة.", "Receive Talabat orders live via webhook — register the URL in the Vendor Portal and see incoming orders.")}</p>
-        </div>
-        <span className="text-brand">→</span>
-      </Link>
-      <Link href="/import-export/snoonu-sync" className="card flex items-center justify-between hover:bg-slate-50">
-        <div>
-          <h3 className="text-sm font-semibold text-ink">🔄 Snoonu Sync</h3>
-          <p className="text-xs text-muted">{L("ارفع تصدير سنونو وطابقه عبر snoonu_id (راجع الفروق قبل التطبيق).", "Upload a Snoonu export and reconcile by snoonu_id (diff before apply).")}</p>
-        </div>
-        <span className="text-brand">→</span>
-      </Link>
-      <Link href="/import-export/pure-seoul" className="card flex items-center justify-between hover:bg-slate-50">
-        <div>
-          <h3 className="text-sm font-semibold text-ink">🏬 {L("Pure Seoul — مطابقة مليكاس", "Pure Seoul — match Malika")}</h3>
-          <p className="text-xs text-muted">{L("ارفع تصدير Pure Seoul → شوف الناقص/الزائد/فروق الأسعار مقابل مليكاس.", "Upload the Pure Seoul export → see what's missing/extra and price differences vs Malika.")}</p>
-        </div>
-        <span className="text-brand">→</span>
-      </Link>
-      <ImageHealth />
-      <ExcelImport locale={locale} />
-      <ImageUpload products={(productList ?? []) as { id: string; name_en: string | null }[]} locale={locale} />
-      <CatalogImageBySku locale={locale} />
-      <TalabatExport categories={categories} newCount={newCount ?? 0} locale={locale} />
-      <ExportButtons imageCount={imageCount ?? 0} locale={locale} />
+
+      {/* الاستيراد — point at the new V2 catalog importer */}
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">{L("الاستيراد", "Import")}</h2>
+        <Link
+          href="/v2/catalog/import"
+          className="card flex items-center justify-between border-brand/30 bg-brand/5 hover:bg-brand/10"
+        >
+          <div>
+            <h3 className="text-sm font-semibold text-ink">⬆️ {L("استخدام مستورد الكتالوج الجديد", "Use the new catalog importer")}</h3>
+            <p className="text-xs text-muted">
+              {L(
+                "استيراد Excel الحديث مع معاينة وخطوات تطبيق منفصلة — يفتح في واجهة V2.",
+                "The modern Excel importer with preview and separate apply steps — opens in the V2 interface."
+              )}
+            </p>
+          </div>
+          <span className="shrink-0 text-brand" title={L("يفتح في واجهة V2", "Opens in the V2 interface")}>↗</span>
+        </Link>
+      </section>
+
+      {/* المنصات والمزامنة — existing sub-routes, unchanged */}
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">{L("المنصات والمزامنة", "Platforms & sync")}</h2>
+        <HubCard
+          href="/import-export/availability"
+          icon="🔁"
+          title={L("مطابقة التوفّر بين المنصّات", "Match availability across platforms")}
+          desc={L("وحّد النافد على كل المنصّات وادفعه لـ Shopify.", "Unify out-of-stock across platforms and push to Shopify.")}
+        />
+        <HubCard
+          href="/import-export/shopify-sync"
+          icon="🛍️"
+          title="Shopify Sync"
+          desc={L("مقارنة حية مع متجر شوبي فاي وتحديث الأسعار بضغطة.", "Live reconcile against the Shopify store and one-tap price push.")}
+        />
+        <HubCard
+          href="/import-export/talabat-sync"
+          icon="🍊"
+          title="Talabat Sync"
+          desc={L("شوف الناقص عند Talabat ونزّل إكسل + صور جاهزين للإرسال.", "See what Talabat is missing and download a ready Excel + images package.")}
+        />
+        <HubCard
+          href="/import-export/pure-seoul"
+          icon="🏬"
+          title={L("Pure Seoul — مطابقة مليكاس", "Pure Seoul — match Malika")}
+          desc={L("شوف الناقص/الزائد وفروق الأسعار مقابل مليكاس.", "See missing/extra items and price differences vs Malika.")}
+        />
+        <HubCard
+          href="/import-export/snoonu-sync"
+          icon="🔄"
+          title="Snoonu Sync"
+          desc={L("ارفع تصدير سنونو وطابقه عبر snoonu_id.", "Upload a Snoonu export and reconcile by snoonu_id.")}
+        />
+      </section>
+
+      {/* الصور والجودة — moved to its own workspace */}
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">{L("الصور والجودة", "Images & quality")}</h2>
+        <HubCard
+          href="/import-export/images"
+          icon="🖼️"
+          title={L("الصور والجودة", "Images & quality")}
+          desc={L("فحص جودة الصور، رفع الصور، وربط صورة بالـ SKU.", "Image-quality check, image upload, and attach an image by SKU.")}
+        />
+      </section>
+
+      {/* التصدير — moved to its own workspace */}
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">{L("التصدير", "Export")}</h2>
+        <HubCard
+          href="/import-export/export"
+          icon="⬇️"
+          title={L("التصدير", "Exports")}
+          desc={L("تصدير Rafeeq/Shopify/Snoonu/Talabat، أقسام Talabat، وحزم صور المنتجات.", "Export Rafeeq/Shopify/Snoonu/Talabat, Talabat categories, and product-image packages.")}
+        />
+      </section>
+
+      {/* الطلبات — stays where it is for now */}
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">{L("الطلبات", "Orders")}</h2>
+        <HubCard
+          href="/import-export/talabat-orders"
+          icon="🧾"
+          title={L("طلبات Talabat", "Talabat orders")}
+          desc={L("استقبل طلبات Talabat عبر Webhook وشوف الطلبات الواردة.", "Receive Talabat orders via webhook and view incoming orders.")}
+        />
+      </section>
     </div>
   );
 }
