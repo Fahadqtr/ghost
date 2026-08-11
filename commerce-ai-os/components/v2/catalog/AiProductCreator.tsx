@@ -45,6 +45,9 @@ import type { VisionExtract } from "@/lib/products/ai-extract";
 import type { ProductInput, VariantInput } from "@/lib/products/product-save";
 import type { EditBrand } from "@/lib/products/product-edit-read";
 import { matchBrandId } from "@/lib/products/brand-match";
+import { PRODUCT_GENERATION_FIELDS, toProductGenerationProposal } from "@/lib/products/product-generation";
+import { PROPOSAL_SCALAR_MAP } from "@/lib/products/product-generation-form";
+import AiFillMissing from "@/components/v2/catalog/AiFillMissing";
 
 const ALLOWED_FILE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -230,25 +233,41 @@ export default function AiProductCreator({
   }
 
   function applyPrepared(x: VisionExtract, prepared: PreparedIdentity) {
-    setScalars((s) => ({
-      ...s,
-      sku: prepared.sku,
-      barcode: prepared.productBarcode,
-      name_en: x.name_en,
-      name_ar: x.name_ar,
-      brand_id: matchBrandId(brands, x.brand),
-      main_category: x.main_category,
-      product_type: x.product_type,
-      color: x.shade,
-      size: x.size,
-      description_en: x.description_en,
-      description_ar: x.description_ar,
-      keywords_en: x.keywords_en,
-      keywords_ar: x.keywords_ar,
-    }));
+    // Content fields now flow through the SHARED proposal layer (same contract as
+    // Edit): VisionExtract → proposal (shade→color, brand as a raw string), then
+    // map each content field onto its form scalar and resolve the brand via the
+    // shared matcher. This seeds the review form exactly as before (every content
+    // field set from the analysis; identity SKU/barcode + variants unchanged) —
+    // only the duplicated field-by-field mapping is gone.
+    const proposal = toProductGenerationProposal(x, (x.visible_text ?? "").trim() ? "image+text" : "image");
+    setScalars((s) => {
+      const next: FormScalars = { ...s, sku: prepared.sku, barcode: prepared.productBarcode };
+      for (const f of PRODUCT_GENERATION_FIELDS) {
+        if (f === "brand") {
+          next.brand_id = matchBrandId(brands, proposal.brand ?? "");
+          continue;
+        }
+        next[PROPOSAL_SCALAR_MAP[f] as keyof FormScalars] = proposal[f] ?? "";
+      }
+      return next;
+    });
     setRowsFromExtract(x, prepared.sku, prepared.variantBarcodes);
     setDuplicates(prepared.duplicates);
     setPartialScan(prepared.partial);
+  }
+
+  // Apply an AI "fill missing" patch from the shared AiFillMissing panel (UX.4D-3).
+  // The pure adapter already decided WHICH content scalars change (fill-missing
+  // default / explicit overwrite); here we only merge those keys. Identity/commerce
+  // keys can never be in the patch (the proposal contract excludes them).
+  function applyAiPatch(patch: Record<string, string>) {
+    setScalars((s) => {
+      const next: FormScalars = { ...s };
+      for (const key of Object.keys(patch)) {
+        if (key in next) next[key as keyof FormScalars] = patch[key];
+      }
+      return next;
+    });
   }
 
   /** Re-scan identity (SKU pool, barcodes, duplicates) for the CURRENT form. */
@@ -591,6 +610,19 @@ export default function AiProductCreator({
               hasImage: image !== null,
               variantCount: rows.length,
             })}
+          />
+
+          {/* AI fill missing (UX.4D-3) — the SAME shared panel as Edit. Fills any
+              remaining content gaps via the proposal layer (fill-missing default).
+              Text-only here: the picked image is in-memory (already used by the
+              vision analysis), so no URL is passed. Never saves; applies via
+              applyAiPatch, so completeness updates and identity/variants/create
+              stay untouched. */}
+          <AiFillMissing
+            currentScalars={scalars as unknown as Record<string, string>}
+            imageUrl={null}
+            brands={brands}
+            onApply={applyAiPatch}
           />
 
           {/* Review fields */}
