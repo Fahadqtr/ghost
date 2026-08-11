@@ -28,6 +28,8 @@ import {
   type VariantRowState,
 } from "@/lib/products/edit-form-state";
 import { validateProductEditInput } from "@/lib/products/edit-validation";
+import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
+import { computeProductCompleteness } from "@/lib/products/product-completeness";
 import type { ProductInput } from "@/lib/products/product-save";
 import type { EditBrand, ProductEditInitial } from "@/lib/products/product-edit-read";
 import type { CatalogControls } from "@/lib/catalog-v2/master-catalog-view";
@@ -191,6 +193,24 @@ export default function ProductEditForm({
           {error}
         </div>
       ) : null}
+
+      {/* Product completeness (UX.4A) — read-only; derived from the readiness
+          engine via the shared wrapper. Never mutates the form. */}
+      <ProductCompleteness
+        result={computeProductCompleteness({
+          nameAr: scalars.name_ar,
+          nameEn: scalars.name_en,
+          sku: scalars.sku,
+          barcode: scalars.barcode,
+          price: scalars.price,
+          category: scalars.main_category,
+          brandId: scalars.brand_id,
+          descriptionAr: scalars.description_ar,
+          descriptionEn: scalars.description_en,
+          hasImage: (scalars.image_url ?? "").trim() !== "",
+          variantCount: activeCount,
+        })}
+      />
 
       {/* Basic info */}
       <section className="card space-y-3">
