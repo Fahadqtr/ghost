@@ -25,7 +25,8 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify", section: "الكتالوج" },
 
   // Operations Center (Phase UI.7.2/7.3) — reads lib/operations/* engines.
-  { href: "/v2/operations", label: "لوحة العمليات", icon: "operations", section: "العمليات" },
+  // Label matches the page's own H1 «مركز العمليات» (UX.1 discoverability).
+  { href: "/v2/operations", label: "مركز العمليات", icon: "operations", section: "العمليات" },
   { href: "/v2/tasks", label: "المهام", icon: "operations", section: "العمليات" },
 
   // «مكافآت الجمال» (Beauty Rewards) — the customer page calls it
@@ -40,6 +41,16 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // the middleware PUBLIC_PATHS) and is reached from the printed QR, so moving
   // it behind the V2 auth gate would break it for customers.
   { href: "/rewards", label: "صفحة العميل", icon: "rewards", section: "العملاء", external: true },
+
+  // Settings (UX.1) — the TickTick integration browser is a real V2 page that
+  // had no menu entry; surface it so it is discoverable. In-shell (not external).
+  { href: "/v2/settings/integrations/ticktick", label: "تكاملات TickTick", icon: "operations", section: "الإعدادات" },
+
+  // Extra tools (UX.1) — still-used pages that live in the PREVIOUS interface and
+  // are NOT in the legacy-redirect list. Linked (not reimplemented) and marked
+  // `external` so the shell change is not a surprise; the ↗ badge is rendered by
+  // the sidebar exactly like «صفحة العميل». Only Import/Export this PR.
+  { href: "/import-export", label: "الاستيراد والتصدير", icon: "catalog", section: "أدوات إضافية ↗", external: true },
 ];
 
 export interface V2NavSection {
