@@ -41,6 +41,7 @@ import {
 import { MATRIX_STATE_LABELS } from "@/lib/operations/platform-matrix";
 import type { PlatformHealth } from "@/lib/operations/platform-health";
 import PlatformHealthSection from "@/components/v2/operations/PlatformHealth";
+import InPageNav from "@/components/v2/InPageNav";
 
 function opsHref(controls: OperationsControls, over: Partial<OperationsControls>): string {
   const c = { ...controls, ...over };
@@ -478,7 +479,7 @@ function UnifiedQueueSection({
   const countFor = (key: IssueQueueKey): number =>
     key === "all" ? queueCounts.total : queueCounts[key];
   return (
-    <section id="unified-queue" className="space-y-3" dir="rtl">
+    <section id="unified-queue" className="scroll-mt-28 space-y-3" dir="rtl">
       <h2 className="text-sm font-semibold text-ink">قائمة المشاكل الموحدة</h2>
       {/* queue tabs — GET links, no client JS */}
       <div className="flex flex-wrap gap-2">
@@ -620,6 +621,19 @@ export default function OperationsDashboard({
         <p className="text-sm text-muted">جاهزية المنتجات والمهام وحالة المنصات — محسوبة من ماليكاس، المصدر الرئيسي.</p>
       </div>
 
+      {/* In-page section nav (UX.2) — anchors only, no client JS. Reuses the
+          existing #unified-queue anchor. */}
+      <InPageNav
+        items={[
+          { href: "#kpis", label: "المؤشرات" },
+          { href: "#platform-health", label: "صحة المنصات" },
+          { href: "#platform-overview", label: "نظرة عامة" },
+          { href: "#unified-queue", label: "المشاكل الموحدة" },
+          { href: "#work-queues", label: "قوائم العمل" },
+          { href: "#products", label: "المنتجات" },
+        ]}
+      />
+
       {partial ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           النتائج جزئية — تم تحميل جزء من الكتالوج فقط ضمن الحد الآمن للقراءة.
@@ -672,7 +686,7 @@ export default function OperationsDashboard({
       ) : null}
 
       {/* KPI cards — clickable filters */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div id="kpis" className="scroll-mt-28 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiCard label="إجمالي المنتجات" value={kpis.totalProducts} filter="all" controls={controls} />
         <KpiCard label="منتجات جديدة" value={kpis.newProducts} filter="new" controls={controls} tone="brand" />
         <KpiCard label="يحتاج صورة" value={kpis.needsImage} filter="needs_image" controls={controls} tone="amber" />
@@ -695,10 +709,14 @@ export default function OperationsDashboard({
       </div>
 
       {/* platform freshness + health (CI.4) — above the overview grid */}
-      <PlatformHealthSection health={platformHealth} />
+      <div id="platform-health" className="scroll-mt-28">
+        <PlatformHealthSection health={platformHealth} />
+      </div>
 
       {/* platform overview */}
-      <PlatformOverviewSection overview={platformOverview} />
+      <div id="platform-overview" className="scroll-mt-28">
+        <PlatformOverviewSection overview={platformOverview} />
+      </div>
 
       {/* unified cross-platform issue queue (CI.2) */}
       <UnifiedQueueSection
@@ -710,7 +728,7 @@ export default function OperationsDashboard({
       />
 
       {/* queues */}
-      <section className="space-y-3">
+      <section id="work-queues" className="scroll-mt-28 space-y-3">
         <h2 className="text-sm font-semibold text-ink">قوائم العمل</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {queues.map((q) => <QueueCard key={q.key} queue={q} controls={controls} />)}
@@ -718,7 +736,7 @@ export default function OperationsDashboard({
       </section>
 
       {/* search + filter (GET form; no client JS) */}
-      <form method="get" className="card grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
+      <form id="products" method="get" className="card scroll-mt-28 grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
         <label className="flex flex-col gap-1 sm:col-span-2">
           <span className="label">بحث (SKU أو باركود أو اسم)</span>
           <input type="search" name="query" defaultValue={controls.query} maxLength={80} className="input" placeholder="SKU أو باركود أو الاسم" />
