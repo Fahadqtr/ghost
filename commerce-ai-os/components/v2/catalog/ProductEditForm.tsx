@@ -31,6 +31,7 @@ import { validateProductEditInput } from "@/lib/products/edit-validation";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
 import ProductMediaEditor from "@/components/v2/catalog/ProductMediaEditor";
+import AiFillMissing from "@/components/v2/catalog/AiFillMissing";
 import type { ProductMediaState } from "@/lib/products/product-media";
 import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
 import { loadCatalogIdentity, type CatalogIdentity } from "@/app/(v2)/v2/catalog/identity-actions";
@@ -128,6 +129,22 @@ export default function ProductEditForm({
       image_url: next.primary?.url ?? "",
       image_filename: next.primary?.filename ?? "",
     }));
+  }
+
+  // Apply an AI "fill missing" patch (UX.4D-2). The proposal layer + form adapter
+  // already decided WHICH scalar keys change (fill-missing default / explicit
+  // overwrite); here we only merge those keys into form state. Identity/commerce
+  // fields can never be in the patch (the proposal contract excludes them), and
+  // only existing scalar keys are written. Completeness updates from scalars; the
+  // user still saves with the normal button.
+  function applyAiPatch(patch: Record<string, string>) {
+    setScalars((s) => {
+      const next: Record<ScalarKey, string> = { ...s };
+      for (const key of Object.keys(patch)) {
+        if (key in next) next[key as ScalarKey] = patch[key];
+      }
+      return next;
+    });
   }
 
   function setRowField(key: string, field: keyof VariantFields, value: string) {
@@ -347,6 +364,17 @@ export default function ProductEditForm({
           hasImage: (scalars.image_url ?? "").trim() !== "",
           variantCount: activeCount,
         })}
+      />
+
+      {/* AI fill missing (UX.4D-2) — propose-only. Uses the primary image from the
+          media state + current content fields; applies via the shared proposal
+          layer (fill-missing default). Never saves; completeness updates from the
+          patched scalars. */}
+      <AiFillMissing
+        currentScalars={scalars as Record<string, string>}
+        imageUrl={media.primary?.url ?? null}
+        brands={brands}
+        onApply={applyAiPatch}
       />
 
       {/* Basic info */}

@@ -44,6 +44,7 @@ import { CREATE_MESSAGES, validateAiProductInput } from "@/lib/products/create-v
 import type { VisionExtract } from "@/lib/products/ai-extract";
 import type { ProductInput, VariantInput } from "@/lib/products/product-save";
 import type { EditBrand } from "@/lib/products/product-edit-read";
+import { matchBrandId } from "@/lib/products/brand-match";
 
 const ALLOWED_FILE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -95,13 +96,6 @@ const EMPTY_SCALARS: FormScalars = {
   discount_price: "", cost: "", stock_quantity: "", stock_status: "",
   description_en: "", description_ar: "", keywords_en: "", keywords_ar: "", notes: "",
 };
-
-function matchBrandId(brands: EditBrand[], brandName: string): string {
-  const want = brandName.trim().toLowerCase();
-  if (!want) return "";
-  const hit = brands.find((b) => b.name.trim().toLowerCase() === want);
-  return hit ? hit.id : "";
-}
 
 export default function AiProductCreator({
   brands,
