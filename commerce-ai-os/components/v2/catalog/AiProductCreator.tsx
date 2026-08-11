@@ -29,6 +29,16 @@ import SimilarProducts from "@/components/v2/catalog/SimilarProducts";
 import { prepareImage, type PreparedImage } from "@/lib/imagePrep";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
+import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
+import { loadCatalogIdentity, type CatalogIdentity } from "@/app/(v2)/v2/catalog/identity-actions";
+import {
+  copyProductPriceToEmpty,
+  fillMissingVariantBarcodes,
+  fillMissingVariantSkus,
+  generateAllMissingIdentity,
+  nextMainBarcode,
+  nextMainSku,
+} from "@/lib/products/identity-fill";
 import { renumberVariantSkus, isValidMkSku, normalizeMkSku } from "@/lib/products/sku-generate";
 import { CREATE_MESSAGES, validateAiProductInput } from "@/lib/products/create-validation";
 import type { VisionExtract } from "@/lib/products/ai-extract";
@@ -328,6 +338,80 @@ export default function AiProductCreator({
     }
   }
 
+  // ── identity generators (UX.4B) — proposal only, form state only ────────────
+  const [identity, setIdentity] = useState<CatalogIdentity | null>(null);
+  const [identityBusy, setIdentityBusy] = useState(false);
+
+  async function ensureIdentity(): Promise<CatalogIdentity | null> {
+    if (identity) return identity;
+    setIdentityBusy(true);
+    try {
+      const res = await loadCatalogIdentity();
+      if ("error" in res) {
+        setError("تعذّر فحص الكتالوج للتوليد. حاول مرة أخرى.");
+        return null;
+      }
+      setIdentity(res.data);
+      return res.data;
+    } finally {
+      setIdentityBusy(false);
+    }
+  }
+
+  async function genMainSku() {
+    const id = await ensureIdentity();
+    if (!id) return;
+    if (scalars.sku.trim() !== "" && !window.confirm("سيتم استبدال SKU الحالي. متابعة؟")) return;
+    onMainSkuChange(nextMainSku(id.skus)); // keeps variant SKUs renumbered to the new prefix
+  }
+
+  async function genMainBarcode() {
+    const id = await ensureIdentity();
+    if (!id) return;
+    if (scalars.barcode.trim() !== "" && !window.confirm("سيتم استبدال الباركود الحالي. متابعة؟")) return;
+    setScalars((s) => ({ ...s, barcode: nextMainBarcode(new Set(id.barcodes), Math.random) }));
+  }
+
+  function genMissingVariantSku() {
+    setRows((rs) => {
+      const skus = fillMissingVariantSkus(scalars.sku, rs.map((r) => ({ sku: r.sku })));
+      return rs.map((r, i) => ({ ...r, sku: skus[i] }));
+    });
+  }
+
+  async function genMissingVariantBarcode() {
+    const id = await ensureIdentity();
+    if (!id) return;
+    setRows((rs) => {
+      const bcs = fillMissingVariantBarcodes(rs.map((r) => ({ barcode: r.barcode })), new Set(id.barcodes), Math.random, [scalars.barcode]);
+      return rs.map((r, i) => ({ ...r, barcode: bcs[i] }));
+    });
+  }
+
+  async function genAllMissing() {
+    const id = await ensureIdentity();
+    if (!id) return;
+    setRows((rs) => {
+      const out = generateAllMissingIdentity(scalars.sku, rs.map((r) => ({ sku: r.sku, barcode: r.barcode })), new Set(id.barcodes), Math.random, [scalars.barcode]);
+      return rs.map((r, i) => ({ ...r, sku: out.skus[i], barcode: out.barcodes[i] }));
+    });
+  }
+
+  function copyVariantSkuPrefix() {
+    if (rows.some((r) => r.sku.trim() !== "") && !window.confirm("سيتم إعادة ترقيم كل SKU للخيارات وفق SKU المنتج. متابعة؟")) return;
+    setRows((rs) => {
+      const skus = renumberVariantSkus(scalars.sku, rs.length);
+      return rs.map((r, i) => ({ ...r, sku: skus[i] }));
+    });
+  }
+
+  function copyVariantPrice() {
+    setRows((rs) => {
+      const prices = copyProductPriceToEmpty(scalars.price, rs.map((r) => ({ price: r.price })));
+      return rs.map((r, i) => ({ ...r, price: prices[i] }));
+    });
+  }
+
   // ── save ───────────────────────────────────────────────────────────────────
 
   function buildInput(): ProductInput {
@@ -578,15 +662,35 @@ export default function AiProductCreator({
               {scalarInput("stock_quantity", "الكمية", { ltr: true, numeric: true })}
               <label className="flex flex-col gap-1">
                 <span className="label">SKU</span>
-                <input
-                  id="create-sku"
-                  dir="ltr"
-                  className="input"
-                  value={scalars.sku}
-                  onChange={(e) => onMainSkuChange(e.target.value)}
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    id="create-sku"
+                    dir="ltr"
+                    className="input flex-1"
+                    value={scalars.sku}
+                    onChange={(e) => onMainSkuChange(e.target.value)}
+                  />
+                  <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={busy || identityBusy} onClick={() => void genMainSku()}>
+                    توليد
+                  </button>
+                </div>
               </label>
-              {scalarInput("barcode", "الباركود (EAN-13)", { ltr: true, numeric: true })}
+              <label className="flex flex-col gap-1">
+                <span className="label">الباركود (EAN-13)</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="create-barcode"
+                    dir="ltr"
+                    inputMode="numeric"
+                    className="input flex-1"
+                    value={scalars.barcode}
+                    onChange={(e) => setScalars((s) => ({ ...s, barcode: e.target.value }))}
+                  />
+                  <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={busy || identityBusy} onClick={() => void genMainBarcode()}>
+                    توليد
+                  </button>
+                </div>
+              </label>
               {scalarInput("description_ar", "الوصف (عربي)", { textarea: true })}
               {scalarInput("description_en", "الوصف (إنجليزي)", { ltr: true, textarea: true })}
               {scalarInput("keywords_ar", "كلمات مفتاحية (عربي)")}
@@ -602,6 +706,19 @@ export default function AiProductCreator({
                 + إضافة خيار
               </button>
             </div>
+
+            {/* Variant identity tools (UX.4B) — proposal only, form state only. */}
+            {rows.length > 0 ? (
+              <VariantIdentityToolbar
+                disabled={busy}
+                busy={identityBusy}
+                onGenerateMissingSku={genMissingVariantSku}
+                onGenerateMissingBarcode={() => void genMissingVariantBarcode()}
+                onGenerateAll={() => void genAllMissing()}
+                onCopyPrefix={copyVariantSkuPrefix}
+                onCopyPrice={copyVariantPrice}
+              />
+            ) : null}
             {rows.length === 0 ? (
               <p className="text-sm text-muted">منتج بدون خيارات — يمكنك إضافة خيارات (ألوان/درجات/أحجام) قبل الحفظ.</p>
             ) : (
