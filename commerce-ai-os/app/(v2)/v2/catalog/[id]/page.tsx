@@ -28,6 +28,7 @@ import {
   type MasterCatalogProduct,
 } from "@/lib/catalog-v2/master-catalog-view";
 import ProductDetail from "@/components/v2/catalog/ProductDetail";
+import InPageNav from "@/components/v2/InPageNav";
 
 export const dynamic = "force-dynamic";
 
@@ -157,37 +158,63 @@ export default async function ProductDetailPage({
           تم إنشاء المنتج — وهو غير معتمد ولن يُرسل لأي منصة حتى تعتمده.
         </div>
       ) : null}
-      <ProductDetail
-        product={state.product}
-        variants={state.variants}
-        backHref={backHref}
-        editHref={editHref}
+      {/* In-page section nav (UX.2) — anchors only, no client JS. Links to
+          sections that may be conditionally rendered; a missing target simply
+          does not scroll (safe). Cross-Platform Diff stays inside «المنصات»;
+          the full Timeline stays a drilldown from «النشاط». */}
+      <InPageNav
+        items={[
+          { href: "#details", label: "تفاصيل" },
+          { href: "#platforms", label: "المنصات" },
+          { href: "#tasks", label: "المهام" },
+          { href: "#activity", label: "النشاط" },
+          { href: "#history", label: "السجل" },
+        ]}
       />
-      {platformMatrix ? (
-        <PlatformMatrix
-          matrix={platformMatrix}
-          diffs={buildCrossPlatformDiff(
-            {
-              productId: state.product.id,
-              price: state.product.price,
-              discountPrice: state.product.discountPrice,
-              nameAr: state.product.nameAr,
-              nameEn: state.product.nameEn,
-            },
-            platformMatrix.cells,
-          )}
+
+      <section id="details" className="scroll-mt-28">
+        <ProductDetail
+          product={state.product}
+          variants={state.variants}
+          backHref={backHref}
+          editHref={editHref}
         />
+      </section>
+      {platformMatrix ? (
+        <section id="platforms" className="scroll-mt-28">
+          <PlatformMatrix
+            matrix={platformMatrix}
+            diffs={buildCrossPlatformDiff(
+              {
+                productId: state.product.id,
+                price: state.product.price,
+                discountPrice: state.product.discountPrice,
+                nameAr: state.product.nameAr,
+                nameEn: state.product.nameEn,
+              },
+              platformMatrix.cells,
+            )}
+          />
+        </section>
       ) : null}
-      {operations ? <ProductTasksWidget tasks={operations.tasks} /> : null}
+      {operations ? (
+        <section id="tasks" className="scroll-mt-28">
+          <ProductTasksWidget tasks={operations.tasks} />
+        </section>
+      ) : null}
       {activityEvents ? (
-        <ProductActivityWidget events={activityEvents} productId={state.product.id} />
+        <section id="activity" className="scroll-mt-28">
+          <ProductActivityWidget events={activityEvents} productId={state.product.id} />
+        </section>
       ) : null}
       {platformHistory && platformHistory.status === "ok" &&
       (platformHistory.entries.length > 0 || platformHistory.comparisons.length > 0) ? (
-        <PlatformHistory
-          entries={platformHistory.entries}
-          comparisons={platformHistory.comparisons}
-        />
+        <section id="history" className="scroll-mt-28">
+          <PlatformHistory
+            entries={platformHistory.entries}
+            comparisons={platformHistory.comparisons}
+          />
+        </section>
       ) : null}
     </div>
   );
