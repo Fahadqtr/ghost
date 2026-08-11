@@ -1,16 +1,26 @@
-// Malikas V2 — Product media viewer (UX.4C-1). READ-ONLY.
+// Malikas V2 — Product media viewer (UX.4C-1, +controls slot UX.4C-2).
 //
 // A shared, presentational component that renders a product's photos from a
 // pre-computed ProductMediaState. It holds NO state and does NO data access —
-// the page reads the media (server-side, session-scoped) and passes the state
-// in. This PR ships the read-only view only: NO upload / delete / replace /
-// set-primary / reorder controls. Because it is pure JSX over props (no client
-// directive, no data access, no async), it renders in BOTH the server detail
-// page and the client edit form. RTL, mobile-first.
+// the caller reads the media and passes the state in. It renders the DISPLAY
+// only (primary + badge + extras + empty state); any write controls are supplied
+// by the caller through the optional `children` footer slot (the V2 edit form
+// passes upload/replace/delete controls there). The detail page passes no
+// children and gets the pure read-only view. Because it is JSX over props (no
+// client directive, no data access, no async), it renders in BOTH the server
+// detail page and the client edit form. RTL, mobile-first.
 
+import type { ReactNode } from "react";
 import type { ProductMediaState } from "@/lib/products/product-media";
 
-export default function ProductMedia({ state }: { state: ProductMediaState }) {
+export default function ProductMedia({
+  state,
+  children,
+}: {
+  state: ProductMediaState;
+  /** Optional controls footer (edit mode). Read-only callers omit it. */
+  children?: ReactNode;
+}) {
   const { primary, images } = state;
   const extras = images.slice(1); // images[0] is always the primary when present
 
@@ -62,6 +72,8 @@ export default function ProductMedia({ state }: { state: ProductMediaState }) {
           لا توجد صور لهذا المنتج
         </p>
       )}
+
+      {children ? <div className="border-t border-[#efe3d6] pt-3">{children}</div> : null}
     </section>
   );
 }

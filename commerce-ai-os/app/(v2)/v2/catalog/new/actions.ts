@@ -304,6 +304,23 @@ export async function createAiProduct(
     return { error: CREATE_MESSAGES.create_failed };
   }
 
+  // Close the V2 create ↔ product_images gap (UX.4C-2): record the same primary
+  // photo in the gallery so V2-created products match the edit/legacy flows.
+  // This runs ONLY after the product+variants+image_url are committed, so it can
+  // never orphan a gallery row. It is best-effort and NON-fatal: products.image_url
+  // is the authoritative primary (the media reducer synthesizes a primary from it
+  // when no gallery row exists), so a failure here leaves a fully-valid product —
+  // it is logged (filename only, never the URL or the raw error) and the create
+  // still succeeds. Session client (RLS), same as the product/variant writes.
+  try {
+    const { error: galleryErr } = await supabase
+      .from("product_images")
+      .insert({ product_id: core.productId, url: imageUrl, filename, is_primary: true, sort_order: 0 });
+    if (galleryErr) console.error("[ai-product-creator] gallery row insert failed:", filename);
+  } catch {
+    console.error("[ai-product-creator] gallery row insert failed:", filename);
+  }
+
   revalidatePath("/v2/catalog");
   redirect(`/v2/catalog/${core.productId}?created=1`);
 }

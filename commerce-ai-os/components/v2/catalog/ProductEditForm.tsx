@@ -30,6 +30,8 @@ import {
 import { validateProductEditInput } from "@/lib/products/edit-validation";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
+import ProductMediaEditor from "@/components/v2/catalog/ProductMediaEditor";
+import type { ProductMediaState } from "@/lib/products/product-media";
 import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
 import { loadCatalogIdentity, type CatalogIdentity } from "@/app/(v2)/v2/catalog/identity-actions";
 import {
@@ -67,6 +69,7 @@ function scalarsOf(initial: ProductEditInitial): Record<ScalarKey, string> {
 export default function ProductEditForm({
   productId,
   initial,
+  initialMedia,
   brands,
   categories,
   stockStatuses,
@@ -75,6 +78,7 @@ export default function ProductEditForm({
 }: {
   productId: string;
   initial: ProductEditInitial;
+  initialMedia: ProductMediaState;
   brands: EditBrand[];
   categories: string[];
   stockStatuses: string[];
@@ -86,6 +90,7 @@ export default function ProductEditForm({
 
   const [scalars, setScalars] = useState<Record<ScalarKey, string>>(initialScalars);
   const [rows, setRows] = useState<VariantRowState[]>(initialRows);
+  const [media, setMedia] = useState<ProductMediaState>(initialMedia);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const newRowCounter = useRef(0);
@@ -109,6 +114,20 @@ export default function ProductEditForm({
 
   function setScalar(key: ScalarKey, value: string) {
     setScalars((s) => ({ ...s, [key]: value }));
+  }
+
+  // Media writes are persisted server-side by the media actions (they already
+  // synced products.image_url/image_filename). Here we mirror the new primary
+  // into the form scalars so (a) the completeness widget updates immediately and
+  // (b) a later Save re-writes the SAME image_url/filename instead of reverting
+  // it. The media itself is never part of the variant/scalar validation.
+  function applyMedia(next: ProductMediaState) {
+    setMedia(next);
+    setScalars((s) => ({
+      ...s,
+      image_url: next.primary?.url ?? "",
+      image_filename: next.primary?.filename ?? "",
+    }));
   }
 
   function setRowField(key: string, field: keyof VariantFields, value: string) {
@@ -305,6 +324,12 @@ export default function ProductEditForm({
           {error}
         </div>
       ) : null}
+
+      {/* Product media (UX.4C-2) — upload / replace / delete the primary photo.
+          Writes go through the server actions and return a fresh media state;
+          applyMedia mirrors the new primary into the form scalars so completeness
+          updates at once and Save persists the same image_url/filename. */}
+      <ProductMediaEditor productId={productId} state={media} onChange={applyMedia} />
 
       {/* Product completeness (UX.4A) — read-only; derived from the readiness
           engine via the shared wrapper. Never mutates the form. */}
