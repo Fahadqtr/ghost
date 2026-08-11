@@ -30,6 +30,17 @@ import {
 import { validateProductEditInput } from "@/lib/products/edit-validation";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
+import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
+import { loadCatalogIdentity, type CatalogIdentity } from "@/app/(v2)/v2/catalog/identity-actions";
+import {
+  copyProductPriceToEmpty,
+  fillMissingVariantBarcodes,
+  fillMissingVariantSkus,
+  generateAllMissingIdentity,
+  nextMainBarcode,
+  nextMainSku,
+} from "@/lib/products/identity-fill";
+import { renumberVariantSkus } from "@/lib/products/sku-generate";
 import type { ProductInput } from "@/lib/products/product-save";
 import type { EditBrand, ProductEditInitial } from "@/lib/products/product-edit-read";
 import type { CatalogControls } from "@/lib/catalog-v2/master-catalog-view";
@@ -165,6 +176,107 @@ export default function ProductEditForm({
 
   const activeCount = rows.filter((r) => !r.removed).length;
 
+  // ── identity generators (UX.4B) — proposal only, form state only ────────────
+  const [identity, setIdentity] = useState<CatalogIdentity | null>(null);
+  const [identityBusy, setIdentityBusy] = useState(false);
+
+  /** Fetch the catalog identity snapshot once (read-only) for collision-safe
+   *  generation. Cached in state; a failure surfaces a fixed Arabic message. */
+  async function ensureIdentity(): Promise<CatalogIdentity | null> {
+    if (identity) return identity;
+    setIdentityBusy(true);
+    try {
+      const res = await loadCatalogIdentity();
+      if ("error" in res) {
+        setError("تعذّر فحص الكتالوج للتوليد. حاول مرة أخرى.");
+        return null;
+      }
+      setIdentity(res.data);
+      return res.data;
+    } finally {
+      setIdentityBusy(false);
+    }
+  }
+
+  async function genMainSku() {
+    const id = await ensureIdentity();
+    if (!id) return;
+    if (scalars.sku.trim() !== "" && !window.confirm("سيتم استبدال SKU الحالي. متابعة؟")) return;
+    setScalar("sku", nextMainSku(id.skus));
+  }
+
+  async function genMainBarcode() {
+    const id = await ensureIdentity();
+    if (!id) return;
+    if (scalars.barcode.trim() !== "" && !window.confirm("سيتم استبدال الباركود الحالي. متابعة؟")) return;
+    setScalar("barcode", nextMainBarcode(new Set(id.barcodes), Math.random));
+  }
+
+  // Variant tools operate on ACTIVE (non-removed) rows, in order. Each writes new
+  // values into form state only — never a DB. "Missing" ops never touch a filled
+  // field; "نسخ بادئة SKU" renumbers every variant and asks first when any exists.
+  function genMissingVariantSku() {
+    setRows((rs) => {
+      const active = rs.filter((r) => !r.removed);
+      const skus = fillMissingVariantSkus(scalars.sku, active.map((r) => ({ sku: r.fields.sku })));
+      let k = -1;
+      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, sku: skus[k] } })));
+    });
+  }
+
+  async function genMissingVariantBarcode() {
+    const id = await ensureIdentity();
+    if (!id) return;
+    setRows((rs) => {
+      const active = rs.filter((r) => !r.removed);
+      const bcs = fillMissingVariantBarcodes(
+        active.map((r) => ({ barcode: r.fields.barcode })),
+        new Set(id.barcodes),
+        Math.random,
+        [scalars.barcode],
+      );
+      let k = -1;
+      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, barcode: bcs[k] } })));
+    });
+  }
+
+  async function genAllMissing() {
+    const id = await ensureIdentity();
+    if (!id) return;
+    setRows((rs) => {
+      const active = rs.filter((r) => !r.removed);
+      const out = generateAllMissingIdentity(
+        scalars.sku,
+        active.map((r) => ({ sku: r.fields.sku, barcode: r.fields.barcode })),
+        new Set(id.barcodes),
+        Math.random,
+        [scalars.barcode],
+      );
+      let k = -1;
+      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, sku: out.skus[k], barcode: out.barcodes[k] } })));
+    });
+  }
+
+  function copyVariantSkuPrefix() {
+    const anyNonEmpty = rows.some((r) => !r.removed && r.fields.sku.trim() !== "");
+    if (anyNonEmpty && !window.confirm("سيتم إعادة ترقيم كل SKU للخيارات وفق SKU المنتج. متابعة؟")) return;
+    setRows((rs) => {
+      const count = rs.filter((r) => !r.removed).length;
+      const skus = renumberVariantSkus(scalars.sku, count);
+      let k = -1;
+      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, sku: skus[k] } })));
+    });
+  }
+
+  function copyVariantPrice() {
+    setRows((rs) => {
+      const active = rs.filter((r) => !r.removed);
+      const prices = copyProductPriceToEmpty(scalars.price, active.map((r) => ({ price: r.fields.price })));
+      let k = -1;
+      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, price: prices[k] } })));
+    });
+  }
+
   // Validation reports field ids by PAYLOAD index (removed rows are omitted
   // from the payload), so the DOM ids must use the same numbering.
   const payloadIndexByKey = new Map<string, number>();
@@ -237,23 +349,33 @@ export default function ProductEditForm({
           </label>
           <label className="flex flex-col gap-1">
             <span className="label">SKU</span>
-            <input
-              id="edit-sku"
-              dir="ltr"
-              className="input"
-              value={scalars.sku}
-              onChange={(e) => setScalar("sku", e.target.value)}
-            />
+            <div className="flex items-center gap-2">
+              <input
+                id="edit-sku"
+                dir="ltr"
+                className="input flex-1"
+                value={scalars.sku}
+                onChange={(e) => setScalar("sku", e.target.value)}
+              />
+              <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={identityBusy} onClick={() => void genMainSku()}>
+                توليد
+              </button>
+            </div>
           </label>
           <label className="flex flex-col gap-1">
             <span className="label">الباركود</span>
-            <input
-              id="edit-barcode"
-              dir="ltr"
-              className="input"
-              value={scalars.barcode}
-              onChange={(e) => setScalar("barcode", e.target.value)}
-            />
+            <div className="flex items-center gap-2">
+              <input
+                id="edit-barcode"
+                dir="ltr"
+                className="input flex-1"
+                value={scalars.barcode}
+                onChange={(e) => setScalar("barcode", e.target.value)}
+              />
+              <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={identityBusy} onClick={() => void genMainBarcode()}>
+                توليد
+              </button>
+            </div>
           </label>
           <label className="flex flex-col gap-1">
             <span className="label">العلامة التجارية</span>
@@ -465,6 +587,18 @@ export default function ProductEditForm({
             + إضافة خيار
           </button>
         </div>
+
+        {/* Variant identity tools (UX.4B) — proposal only, form state only. */}
+        {activeCount > 0 ? (
+          <VariantIdentityToolbar
+            busy={identityBusy}
+            onGenerateMissingSku={genMissingVariantSku}
+            onGenerateMissingBarcode={() => void genMissingVariantBarcode()}
+            onGenerateAll={() => void genAllMissing()}
+            onCopyPrefix={copyVariantSkuPrefix}
+            onCopyPrice={copyVariantPrice}
+          />
+        ) : null}
 
         {rows.length === 0 ? (
           <p className="text-sm text-muted">لا توجد خيارات لهذا المنتج — يمكنك إضافة خيار جديد.</p>
