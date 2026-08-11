@@ -227,11 +227,12 @@ test("the detail page renders ProductMedia from the shared reader", () => {
   assert.ok(PAGE.includes("<ProductMedia"), "renders it");
 });
 
-test("the edit page renders read-only ProductMedia above the form", () => {
+test("the edit page loads media and hands it to the form's media editor (UX.4C-2)", () => {
   const PAGE = src("../../app/(v2)/v2/catalog/[id]/edit/page.tsx");
-  assert.ok(PAGE.includes("import ProductMedia"), "imports the component");
   assert.ok(PAGE.includes("loadProductMedia"), "uses the shared reader");
-  assert.ok(PAGE.includes("<ProductMedia"), "renders it");
+  assert.ok(PAGE.includes("initialMedia="), "passes the media state to the form");
+  const FORM = src("../../components/v2/catalog/ProductEditForm.tsx");
+  assert.ok(FORM.includes("ProductMediaEditor"), "the form renders the media editor");
 });
 
 test("no schema change: the new modules add no CREATE/ALTER TABLE or migration", () => {

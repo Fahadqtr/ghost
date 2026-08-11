@@ -18,7 +18,6 @@ import {
   type CatalogControls,
 } from "@/lib/catalog-v2/master-catalog-view";
 import ProductEditForm from "@/components/v2/catalog/ProductEditForm";
-import ProductMedia from "@/components/v2/catalog/ProductMedia";
 import { loadProductMedia } from "@/lib/products/product-media-read";
 import { EMPTY_PRODUCT_MEDIA, type ProductMediaState } from "@/lib/products/product-media";
 
@@ -60,8 +59,8 @@ export default async function ProductEditPage({
       } else if (result.status === "notfound") {
         state = { kind: "notfound" };
       } else {
-        // Read-only media (UX.4C-1). Best-effort + isolated: a failure just
-        // renders the empty-media block; the editor is never blocked.
+        // Product media (UX.4C-1 read → UX.4C-2 write). Best-effort + isolated:
+        // a failure just seeds the empty-media block; the editor is never blocked.
         let media: ProductMediaState = EMPTY_PRODUCT_MEDIA;
         try {
           const mediaRead = await loadProductMedia(supabase, validId);
@@ -99,20 +98,15 @@ export default async function ProductEditPage({
   }
 
   return (
-    <div className="space-y-4">
-      {/* Read-only product media (UX.4C-1) above the form. This PR does not add
-          any upload/edit controls — the primary photo still changes only via the
-          existing create/legacy flows. */}
-      <ProductMedia state={state.media} />
-      <ProductEditForm
-        productId={state.id}
-        initial={state.initial}
-        brands={state.brands}
-        categories={[...CATEGORIES]}
-        stockStatuses={[...STOCK_STATUSES]}
-        controls={state.controls}
-        cancelHref={cancelHref}
-      />
-    </div>
+    <ProductEditForm
+      productId={state.id}
+      initial={state.initial}
+      initialMedia={state.media}
+      brands={state.brands}
+      categories={[...CATEGORIES]}
+      stockStatuses={[...STOCK_STATUSES]}
+      controls={state.controls}
+      cancelHref={cancelHref}
+    />
   );
 }
