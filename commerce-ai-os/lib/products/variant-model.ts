@@ -18,6 +18,12 @@
 
 import { renumberVariantSkus } from "./sku-generate.ts";
 import {
+  copyProductPriceToEmpty,
+  fillMissingVariantBarcodes,
+  fillMissingVariantSkus,
+  generateAllMissingIdentity,
+} from "./identity-fill.ts";
+import {
   EMPTY_VARIANT_FIELDS,
   type VariantFields,
   type VariantRowState,
@@ -178,4 +184,87 @@ export function renumberVariantRowSkus(
       ? row
       : { ...row, fields: { ...row.fields, sku } };
   });
+}
+
+// ── "generate/fill missing" row transforms ───────────────────────────────────
+// These fill only the ACTIVE rows (removed rows pass through untouched), in
+// order, delegating every value decision to identity-fill (which itself composes
+// sku-generate + barcode-ean13). They exist so the create/edit editors and the
+// shared identity hook share ONE implementation instead of three inline copies.
+
+/** Fill empty variant SKUs of the active rows with `mk<main>-<n>` (positional). */
+export function applyMissingVariantSkus(
+  mainSku: string,
+  rows: readonly VariantRowModel[],
+): VariantRowModel[] {
+  const skus = fillMissingVariantSkus(
+    mainSku,
+    activeVariantRows(rows).map((r) => ({ sku: r.fields.sku })),
+  );
+  let k = -1;
+  return rows.map((row) =>
+    row.removed ? row : (++k, { ...row, fields: { ...row.fields, sku: skus[k] } }),
+  );
+}
+
+/** Fill empty variant barcodes of the active rows with fresh unique EAN-13s. */
+export function applyMissingVariantBarcodes(
+  rows: readonly VariantRowModel[],
+  existing: ReadonlySet<string>,
+  random: () => number,
+  extraTaken: readonly string[] = [],
+): VariantRowModel[] {
+  const barcodes = fillMissingVariantBarcodes(
+    activeVariantRows(rows).map((r) => ({ barcode: r.fields.barcode })),
+    existing,
+    random,
+    extraTaken,
+  );
+  let k = -1;
+  return rows.map((row) =>
+    row.removed
+      ? row
+      : (++k, { ...row, fields: { ...row.fields, barcode: barcodes[k] } }),
+  );
+}
+
+/** Fill both empty SKUs and empty barcodes across the active rows at once. */
+export function applyAllMissingVariantIdentity(
+  mainSku: string,
+  rows: readonly VariantRowModel[],
+  existing: ReadonlySet<string>,
+  random: () => number,
+  extraTaken: readonly string[] = [],
+): VariantRowModel[] {
+  const out = generateAllMissingIdentity(
+    mainSku,
+    activeVariantRows(rows).map((r) => ({ sku: r.fields.sku, barcode: r.fields.barcode })),
+    existing,
+    random,
+    extraTaken,
+  );
+  let k = -1;
+  return rows.map((row) =>
+    row.removed
+      ? row
+      : (++k, {
+          ...row,
+          fields: { ...row.fields, sku: out.skus[k], barcode: out.barcodes[k] },
+        }),
+  );
+}
+
+/** Copy the product price into the active rows that have no price yet. */
+export function applyProductPriceToEmptyVariants(
+  productPrice: string,
+  rows: readonly VariantRowModel[],
+): VariantRowModel[] {
+  const prices = copyProductPriceToEmpty(
+    productPrice,
+    activeVariantRows(rows).map((r) => ({ price: r.fields.price })),
+  );
+  let k = -1;
+  return rows.map((row) =>
+    row.removed ? row : (++k, { ...row, fields: { ...row.fields, price: prices[k] } }),
+  );
 }

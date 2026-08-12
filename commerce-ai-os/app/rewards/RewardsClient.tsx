@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { Heart } from "./Heart";
 import BrandLogo from "@/components/BrandLogo";
-import { rewardsSteps, rewardsTerms } from "@/lib/loyalty/guide";
+import { rewardsSteps } from "@/lib/loyalty/guide";
 
 type PrizeOption = { id: string; name: string; imageUrl: string };
 
@@ -186,11 +186,10 @@ export default function RewardsClient() {
  *  under the card on both the register and the card views. */
 function Guide({ required }: { required: number }) {
   const steps = rewardsSteps(required);
-  const terms = rewardsTerms(required);
   return (
     <details className="group mt-4 overflow-hidden rounded-2xl border border-[#e8cdb5] bg-white/90 text-right shadow-sm">
       <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-bold text-[#d17c93]">
-        <span>📖 دليل المسابقة — الطريقة والشروط</span>
+        <span>📖 دليل المكافآت — الطريقة</span>
         <span className="text-[#c9a24b] transition group-open:rotate-180">▾</span>
       </summary>
       <div className="space-y-4 px-4 pb-4">
@@ -204,17 +203,6 @@ function Guide({ required }: { required: number }) {
               </li>
             ))}
           </ol>
-        </div>
-        <div>
-          <p className="mb-1.5 text-xs font-bold tracking-wide text-[#c9a24b]">الشروط والأحكام</p>
-          <ul className="space-y-1.5">
-            {terms.map((t, i) => (
-              <li key={i} className="flex gap-2 text-sm leading-relaxed text-[#6b5b4b]">
-                <span className="mt-1 text-[#e59aad]">•</span>
-                <span>{t}</span>
-              </li>
-            ))}
-          </ul>
         </div>
       </div>
     </details>

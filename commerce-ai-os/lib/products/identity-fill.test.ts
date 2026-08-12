@@ -126,14 +126,21 @@ test("the identity action is READ-ONLY (reuses loadIdentitySnapshot; no writes/R
   }
 });
 
-test("create + edit share the SAME helpers + toolbar + identity action", () => {
+test("create + edit share the SAME identity path via the shared hook (UX.4E-2)", () => {
   const CREATE = readFileSync(new URL("../../components/v2/catalog/AiProductCreator.tsx", import.meta.url), "utf8");
   const EDIT = readFileSync(new URL("../../components/v2/catalog/ProductEditForm.tsx", import.meta.url), "utf8");
+  const HOOK = readFileSync(new URL("../../components/v2/catalog/useVariantIdentity.ts", import.meta.url), "utf8");
+
+  // Both editors now share ONE orchestration path: the useVariantIdentity hook +
+  // the same toolbar. The generator logic no longer lives in the components.
   for (const src of [CREATE, EDIT]) {
-    assert.ok(src.includes('from "@/lib/products/identity-fill"'), "imports the shared helpers");
+    assert.ok(src.includes("useVariantIdentity({"), "uses the shared identity hook");
     assert.ok(src.includes("VariantIdentityToolbar"), "renders the shared toolbar");
-    assert.ok(src.includes("loadCatalogIdentity"), "uses the shared read action");
-    // overwriting a filled identity asks first; fill-missing does not.
-    assert.ok(src.includes("window.confirm"), "confirms before overwrite");
   }
+
+  // The hook is the single place that reaches the shared helpers, the read
+  // action, and the overwrite confirmation (fill-missing never confirms).
+  assert.ok(HOOK.includes('from "@/lib/products/identity-fill"'), "hook imports the shared helpers");
+  assert.ok(HOOK.includes("loadCatalogIdentity"), "hook uses the shared read action");
+  assert.ok(HOOK.includes("window.confirm"), "hook confirms before overwrite");
 });
