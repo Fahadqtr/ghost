@@ -30,6 +30,7 @@ import { prepareImage, type PreparedImage } from "@/lib/imagePrep";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
 import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
+import VariantBulkTools from "@/components/v2/catalog/VariantBulkTools";
 import { useVariantIdentity } from "@/components/v2/catalog/useVariantIdentity";
 import {
   addVariantRow,
@@ -39,6 +40,13 @@ import {
   type VariantFieldKey,
   type VariantRowModel,
 } from "@/lib/products/variant-model";
+import {
+  addRows as bulkAddRows,
+  fillMissingPrice as bulkFillMissingPrice,
+  setSelectedStock as bulkSetSelectedStock,
+  markSelectedRemoved as bulkMarkSelectedRemoved,
+  removeEmptyRows as bulkRemoveEmptyRows,
+} from "@/lib/products/variant-bulk";
 import { buildVariantInputs } from "@/lib/products/edit-form-state";
 import { renumberVariantSkus, isValidMkSku, normalizeMkSku } from "@/lib/products/sku-generate";
 import { CREATE_MESSAGES, validateAiProductInput } from "@/lib/products/create-validation";
@@ -106,6 +114,8 @@ export default function AiProductCreator({
   const [extract, setExtract] = useState<VisionExtract | null>(null);
   const [scalars, setScalars] = useState<FormScalars>(EMPTY_SCALARS);
   const [rows, setRows] = useState<VariantRowModel[]>([]);
+  // Bulk-tools row selection (UX.4E-5): stable row keys, never array index.
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [duplicates, setDuplicates] = useState<DuplicateCards | null>(null);
   const [partialScan, setPartialScan] = useState(false);
   // The image changed after an analysis: the AI-derived panels (confidence,
@@ -317,6 +327,50 @@ export default function AiProductCreator({
 
   function setRowField(key: string, field: VariantFieldKey, value: string) {
     setRows((rs) => updateVariantField(rs, key, field, value));
+  }
+
+  // ── bulk tools (UX.4E-5) ─────────────────────────────────────────────────
+  // Every action applies a shared PURE transform from lib/products/variant-bulk
+  // to the row state (proposal only — nothing persists until Save). Create rows
+  // are all new, so a renumber over the whole list preserves the wizard's
+  // existing behavior. The count guard lives in VariantBulkTools.
+  function toggleSelected(key: string) {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function bulkAdd(count: number) {
+    const base = rowCounter.current;
+    rowCounter.current += count;
+    const next = bulkAddRows(rows, count, (i) => `row-${base + i + 1}`);
+    setRows(renumber(next, scalars.sku));
+    void refreshIdentity(next.length);
+  }
+
+  function bulkFillPrice() {
+    setRows((rs) => bulkFillMissingPrice(rs, scalars.price));
+  }
+
+  function bulkSetStock(quantity: string) {
+    setRows((rs) => bulkSetSelectedStock(rs, selectedKeys, quantity));
+  }
+
+  function bulkDelete() {
+    const next = bulkMarkSelectedRemoved(rows, selectedKeys);
+    setRows(renumber(next, scalars.sku)); // create rows only drop → renumber the rest
+    setSelectedKeys(new Set());
+    void refreshIdentity(next.length);
+  }
+
+  function bulkRemoveEmpty() {
+    const next = bulkRemoveEmptyRows(rows);
+    setRows(renumber(next, scalars.sku));
+    setSelectedKeys((prev) => new Set([...prev].filter((k) => next.some((r) => r.key === k))));
+    void refreshIdentity(next.length);
   }
 
   function onMainSkuChange(value: string) {
@@ -640,6 +694,24 @@ export default function AiProductCreator({
                 onCopyPrice={variantIdentity.copyVariantPrice}
               />
             ) : null}
+            {/* Bulk tools (UX.4E-5) — proposal only; shared pure transforms. */}
+            {rows.length > 0 ? (
+              <VariantBulkTools
+                selectedCount={selectedKeys.size}
+                canRestore={false}
+                onAddRows={bulkAdd}
+                onFillMissingPrice={bulkFillPrice}
+                onSetSelectedStock={bulkSetStock}
+                onGenerateMissingSku={variantIdentity.generateMissingVariantSku}
+                onGenerateMissingBarcode={() => void variantIdentity.generateMissingVariantBarcode()}
+                onGenerateMissingIdentity={() => void variantIdentity.generateAllMissing()}
+                onDeleteSelected={bulkDelete}
+                onRestoreSelected={() => {}}
+                onRemoveEmptyRows={bulkRemoveEmpty}
+                disabled={busy}
+                busy={variantIdentity.identityBusy}
+              />
+            ) : null}
             {rows.length === 0 ? (
               <p className="text-sm text-muted">منتج بدون خيارات — يمكنك إضافة خيارات (ألوان/درجات/أحجام) قبل الحفظ.</p>
             ) : (
@@ -647,9 +719,16 @@ export default function AiProductCreator({
                 {rows.map((row, i) => (
                   <div key={row.key} className="rounded-xl border border-[#efe3d6] bg-white p-3">
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-muted" dir="ltr">
-                        {row.fields.sku}
-                      </span>
+                      <label className="flex items-center gap-2 text-xs font-medium text-muted">
+                        <input
+                          type="checkbox"
+                          aria-label="تحديد الصف"
+                          checked={selectedKeys.has(row.key)}
+                          onChange={() => toggleSelected(row.key)}
+                          disabled={busy}
+                        />
+                        <span dir="ltr">{row.fields.sku}</span>
+                      </label>
                       <button type="button" onClick={() => removeRow(row.key)} disabled={busy} className="btn-ghost text-xs text-rose-600">
                         حذف الخيار
                       </button>

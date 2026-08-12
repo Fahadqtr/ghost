@@ -34,7 +34,16 @@ import {
   restoreVariantRow,
   updateVariantField,
 } from "@/lib/products/variant-model";
+import {
+  addRows as bulkAddRows,
+  fillMissingPrice as bulkFillMissingPrice,
+  setSelectedStock as bulkSetSelectedStock,
+  markSelectedRemoved as bulkMarkSelectedRemoved,
+  restoreSelected as bulkRestoreSelected,
+  removeEmptyRows as bulkRemoveEmptyRows,
+} from "@/lib/products/variant-bulk";
 import { useVariantIdentity } from "@/components/v2/catalog/useVariantIdentity";
+import VariantBulkTools from "@/components/v2/catalog/VariantBulkTools";
 import { validateProductEditInput } from "@/lib/products/edit-validation";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
@@ -89,6 +98,9 @@ export default function ProductEditForm({
 
   const [scalars, setScalars] = useState<Record<ScalarKey, string>>(initialScalars);
   const [rows, setRows] = useState<VariantRowState[]>(initialRows);
+  // Bulk-tools row selection (UX.4E-5): stable row keys (DB id or local new-key),
+  // never array index.
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [media, setMedia] = useState<ProductMediaState>(initialMedia);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -164,6 +176,47 @@ export default function ProductEditForm({
 
   function restoreRow(key: string) {
     setRows((rs) => restoreVariantRow(rs, key));
+  }
+
+  // ── bulk tools (UX.4E-5) ─────────────────────────────────────────────────
+  // Each action applies a shared PURE transform from lib/products/variant-bulk
+  // (proposal only — nothing persists until Save). Edit never renumbers SKUs, so
+  // added rows are appended as-is and persisted identities are never touched.
+  function toggleSelected(key: string) {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function bulkAdd(count: number) {
+    const base = newRowCounter.current;
+    newRowCounter.current += count;
+    setRows((rs) => bulkAddRows(rs, count, (i) => `new-${base + i + 1}`));
+  }
+
+  function bulkFillPrice() {
+    setRows((rs) => bulkFillMissingPrice(rs, scalars.price));
+  }
+
+  function bulkSetStock(quantity: string) {
+    setRows((rs) => bulkSetSelectedStock(rs, selectedKeys, quantity));
+  }
+
+  function bulkDelete() {
+    setRows((rs) => bulkMarkSelectedRemoved(rs, selectedKeys));
+    setSelectedKeys(new Set());
+  }
+
+  function bulkRestore() {
+    setRows((rs) => bulkRestoreSelected(rs, selectedKeys));
+  }
+
+  function bulkRemoveEmpty() {
+    setRows((rs) => bulkRemoveEmptyRows(rs));
+    setSelectedKeys((prev) => new Set([...prev].filter((k) => rows.some((r) => r.key === k))));
   }
 
   function focusField(fieldId: string) {
@@ -563,6 +616,23 @@ export default function ProductEditForm({
             onCopyPrice={variantIdentity.copyVariantPrice}
           />
         ) : null}
+        {/* Bulk tools (UX.4E-5) — proposal only; shared pure transforms. */}
+        {rows.length > 0 ? (
+          <VariantBulkTools
+            selectedCount={selectedKeys.size}
+            canRestore={rows.some((r) => r.removed)}
+            onAddRows={bulkAdd}
+            onFillMissingPrice={bulkFillPrice}
+            onSetSelectedStock={bulkSetStock}
+            onGenerateMissingSku={variantIdentity.generateMissingVariantSku}
+            onGenerateMissingBarcode={() => void variantIdentity.generateMissingVariantBarcode()}
+            onGenerateMissingIdentity={() => void variantIdentity.generateAllMissing()}
+            onDeleteSelected={bulkDelete}
+            onRestoreSelected={bulkRestore}
+            onRemoveEmptyRows={bulkRemoveEmpty}
+            busy={variantIdentity.identityBusy}
+          />
+        ) : null}
 
         {rows.length === 0 ? (
           <p className="text-sm text-muted">لا توجد خيارات لهذا المنتج — يمكنك إضافة خيار جديد.</p>
@@ -577,9 +647,15 @@ export default function ProductEditForm({
                 }
               >
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-muted">
-                    {row.id === null ? "خيار جديد" : `خيار ${index + 1}`}
-                  </span>
+                  <label className="flex items-center gap-2 text-xs font-medium text-muted">
+                    <input
+                      type="checkbox"
+                      aria-label="تحديد الصف"
+                      checked={selectedKeys.has(row.key)}
+                      onChange={() => toggleSelected(row.key)}
+                    />
+                    <span>{row.id === null ? "خيار جديد" : `خيار ${index + 1}`}</span>
+                  </label>
                   {row.removed ? (
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-amber-700">سيُحذف عند الحفظ</span>
