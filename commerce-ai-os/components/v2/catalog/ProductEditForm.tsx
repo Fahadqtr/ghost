@@ -46,6 +46,7 @@ import { mergeVariantSuggestions, type VariantSuggestion } from "@/lib/products/
 import { useVariantIdentity } from "@/components/v2/catalog/useVariantIdentity";
 import VariantBulkTools from "@/components/v2/catalog/VariantBulkTools";
 import VariantAISuggestions from "@/components/v2/catalog/VariantAISuggestions";
+import VariantCompleteness from "@/components/v2/catalog/VariantCompleteness";
 import { validateProductEditInput } from "@/lib/products/edit-validation";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
@@ -656,6 +657,8 @@ export default function ProductEditForm({
             busy={variantIdentity.identityBusy}
           />
         ) : null}
+        {/* Variant completeness (UX.4E-7) — read-only readiness view. */}
+        {rows.length > 0 ? <VariantCompleteness rows={rows} mainSku={scalars.sku} /> : null}
 
         {rows.length === 0 ? (
           <p className="text-sm text-muted">لا توجد خيارات لهذا المنتج — يمكنك إضافة خيار جديد.</p>
