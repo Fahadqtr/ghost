@@ -55,7 +55,8 @@ export interface EditableVariant extends VariantInput {
   id: string;
 }
 
-export interface ProductEditInitial extends Omit<ProductInput, "variants"> {
+export interface ProductEditInitial
+  extends Omit<ProductInput, "variants" | "original_sku" | "original_barcode"> {
   variants: EditableVariant[];
 }
 

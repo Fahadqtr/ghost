@@ -28,6 +28,14 @@ export interface VariantInput {
   size: string;
   price: string;
   stock_quantity: string;
+  /**
+   * Validation-only (UX.4E-3 grandfathering): the persisted SKU/barcode this
+   * existing variant loaded with. Set by withPersistedIdentity for the V2 edit
+   * payload so the shared validator can grandfather an UNCHANGED legacy identity.
+   * NEVER persisted — toVariantPayload/the RPC ignore these fields.
+   */
+  original_sku?: string;
+  original_barcode?: string;
 }
 
 export interface ProductInput {
@@ -57,6 +65,14 @@ export interface ProductInput {
   keywords_ar: string;
   notes: string;
   variants: VariantInput[];
+  /**
+   * Validation-only (UX.4E-3 grandfathering): the persisted main SKU/barcode
+   * this product loaded with. Set by withPersistedIdentity for the V2 edit
+   * payload so the shared validator can grandfather an UNCHANGED legacy main
+   * identity. NEVER persisted — toProductRow ignores these fields.
+   */
+  original_sku?: string;
+  original_barcode?: string;
 }
 
 // --- pure helpers ----------------------------------------------------------

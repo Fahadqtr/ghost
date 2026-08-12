@@ -23,6 +23,7 @@ import {
   buildVariantInputs,
   hasUnsavedChanges,
   toVariantRows,
+  withPersistedIdentity,
   type VariantFields,
   type VariantRowState,
 } from "@/lib/products/edit-form-state";
@@ -174,7 +175,13 @@ export default function ProductEditForm({
     e.preventDefault();
     if (pending) return;
 
-    const payload: ProductInput = { ...scalars, variants: buildVariantInputs(rows) };
+    // Carry the persisted (loaded) identity so the validator can grandfather an
+    // UNCHANGED legacy SKU/barcode (UX.4E-3). These fields are validation-only;
+    // the save core/RPC ignore them, so nothing extra is written.
+    const payload: ProductInput = withPersistedIdentity(
+      { ...scalars, variants: buildVariantInputs(rows) },
+      { sku: initialScalars.sku, barcode: initialScalars.barcode, rows: initialRows },
+    );
     const validation = validateProductEditInput(payload);
     if (!validation.ok) {
       setError(validation.message);

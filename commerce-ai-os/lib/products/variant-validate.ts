@@ -113,6 +113,26 @@ export function isEmptyVariantRow(v: Pick<VariantInput, "variant_name" | "varian
   );
 }
 
+// ───────────────────── grandfathering (Edit only) ──────────────────────────
+//
+// A persisted (existing) row whose identity is UNCHANGED keeps its legacy value
+// even if it predates the strict V2 format. "Unchanged" compares the current
+// value against the original persisted one: SKUs case-insensitively (the house
+// SKU rule is case-insensitive), barcodes exactly. A missing original (a new
+// row, or Create) is never "unchanged", so it always gets strict validation.
+
+/** True when `current` equals the persisted `original` SKU (grandfatherable). */
+export function isSkuUnchanged(current: string, original: string | undefined | null): boolean {
+  if (typeof original !== "string") return false;
+  return (current ?? "").trim().toLowerCase() === original.trim().toLowerCase();
+}
+
+/** True when `current` equals the persisted `original` barcode (grandfatherable). */
+export function isBarcodeUnchanged(current: string, original: string | undefined | null): boolean {
+  if (typeof original !== "string") return false;
+  return (current ?? "").trim() === original.trim();
+}
+
 // ────────────────────────── variant count limit ────────────────────────────
 
 /**
@@ -167,9 +187,18 @@ export interface ProductValidateOptions {
   checkVariantBarcode: boolean;
   checkFormDuplicates: boolean;
   checkVariantRowIdDup: boolean;
+  /**
+   * Grandfather UNCHANGED persisted identities (UX.4E-3). When on, an existing
+   * row (main product always; a variant only when it carries a persisted `id`)
+   * skips the strict SKU/barcode format check IF the value is unchanged from
+   * `original_sku` / `original_barcode`. Duplicate detection still runs. Off for
+   * Create — a new product has no persisted identity to grandfather.
+   */
+  grandfatherPersisted: boolean;
 }
 
-/** Every check on — the Create profile (also Edit's, minus the two flags). */
+/** Every check on — the Create profile (also Edit's, minus the flags). No
+ *  grandfathering: a created product has no persisted identity. */
 export const CREATE_PROFILE: ProductValidateOptions = {
   requireCategory: true,
   checkMainSku: true,
@@ -178,10 +207,12 @@ export const CREATE_PROFILE: ProductValidateOptions = {
   checkVariantBarcode: true,
   checkFormDuplicates: true,
   checkVariantRowIdDup: false,
+  grandfatherPersisted: false,
 };
 
 /** Edit profile: parity with Create on SKU/barcode/EAN/dups, minus category,
- *  plus the existing DB row-id duplicate guard. */
+ *  plus the existing DB row-id duplicate guard, plus grandfathering of
+ *  UNCHANGED legacy identities. */
 export const EDIT_PROFILE: ProductValidateOptions = {
   requireCategory: false,
   checkMainSku: true,
@@ -190,6 +221,7 @@ export const EDIT_PROFILE: ProductValidateOptions = {
   checkVariantBarcode: true,
   checkFormDuplicates: true,
   checkVariantRowIdDup: true,
+  grandfatherPersisted: true,
 };
 
 /**
@@ -210,11 +242,13 @@ export function validateProductFields(
   }
 
   const mainSku = (input.sku ?? "").trim();
-  if (opts.checkMainSku && !isValidMkSku(mainSku)) {
+  const mainSkuGrandfathered = opts.grandfatherPersisted && isSkuUnchanged(mainSku, input.original_sku);
+  if (opts.checkMainSku && !mainSkuGrandfathered && !isValidMkSku(mainSku)) {
     return { ok: false, rule: "invalid_sku", field: "sku" };
   }
   const mainBarcode = (input.barcode ?? "").trim();
-  if (opts.checkMainBarcode && !isValidEan13(mainBarcode)) {
+  const mainBarcodeGrandfathered = opts.grandfatherPersisted && isBarcodeUnchanged(mainBarcode, input.original_barcode);
+  if (opts.checkMainBarcode && !mainBarcodeGrandfathered && !isValidEan13(mainBarcode)) {
     return { ok: false, rule: "invalid_barcode", field: "barcode" };
   }
 
@@ -233,18 +267,21 @@ export function validateProductFields(
   for (let i = 0; i < variants.length; i++) {
     const v = variants[i];
 
-    if (opts.checkVariantRowIdDup) {
-      const id = typeof v.id === "string" ? v.id.trim() : "";
-      if (id.length > 0) {
-        if (seenIds.has(id)) {
-          return { ok: false, rule: "duplicate_variant_row", field: "variants" };
-        }
-        seenIds.add(id);
+    const hasPersistedId = typeof v.id === "string" && v.id.trim().length > 0;
+    if (opts.checkVariantRowIdDup && hasPersistedId) {
+      const id = (v.id as string).trim();
+      if (seenIds.has(id)) {
+        return { ok: false, rule: "duplicate_variant_row", field: "variants" };
       }
+      seenIds.add(id);
     }
 
+    // Grandfathering applies only to an EXISTING row (persisted id) whose value
+    // is unchanged; a changed value or a new row (no id) gets strict checks.
     const vSku = (v.sku ?? "").trim().toLowerCase();
-    if (opts.checkVariantSku && !isValidVariantMkSku(vSku, mainSku)) {
+    const vSkuGrandfathered =
+      opts.grandfatherPersisted && hasPersistedId && isSkuUnchanged(v.sku, v.original_sku);
+    if (opts.checkVariantSku && !vSkuGrandfathered && !isValidVariantMkSku(vSku, mainSku)) {
       return { ok: false, rule: "invalid_variant_sku", field: `variant-${i}-sku` };
     }
     if (opts.checkFormDuplicates) {
@@ -255,7 +292,9 @@ export function validateProductFields(
     }
 
     const vBarcode = (v.barcode ?? "").trim();
-    if (opts.checkVariantBarcode && !isValidEan13(vBarcode)) {
+    const vBarcodeGrandfathered =
+      opts.grandfatherPersisted && hasPersistedId && isBarcodeUnchanged(v.barcode, v.original_barcode);
+    if (opts.checkVariantBarcode && !vBarcodeGrandfathered && !isValidEan13(vBarcode)) {
       return { ok: false, rule: "invalid_barcode", field: `variant-${i}-barcode` };
     }
     if (opts.checkFormDuplicates) {

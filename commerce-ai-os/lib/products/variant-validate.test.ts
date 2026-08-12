@@ -249,6 +249,95 @@ test("regression: public Create/Edit validators agree on rule + field suffix", (
   }
 });
 
+// ── UX.4E-3 grandfathering: unchanged legacy identities pass in Edit ─────────
+// A persisted (id-bearing) row keeps its legacy SKU/barcode when UNCHANGED; a
+// changed value or a new row gets strict V2 validation. Create never grandfathers.
+
+// An existing variant with a legacy identity + the persisted originals it loaded with.
+function legacyVariant(over: Partial<VariantInput> = {}): VariantInput {
+  return {
+    ...variant({ id: "v1", sku: "LEG-ACY", barcode: "12345" }),
+    original_sku: "LEG-ACY",
+    original_barcode: "12345",
+    ...over,
+  };
+}
+
+test("grandfather: unchanged legacy variant SKU + edit price PASSES (Edit)", () => {
+  const p = input({ variants: [legacyVariant({ price: "50" })] });
+  assert.ok(validateProductFields(p, EDIT_PROFILE).ok);
+});
+
+test("grandfather: unchanged legacy variant barcode + edit name PASSES (Edit)", () => {
+  const p = input({
+    name_ar: "اسم جديد",
+    variants: [legacyVariant({ variant_name: "لون جديد" })],
+  });
+  assert.ok(validateProductFields(p, EDIT_PROFILE).ok);
+});
+
+test("grandfather: unchanged legacy identity is grandfathered but STILL joins duplicate detection", () => {
+  // Two grandfathered rows sharing a barcode: the collision is still caught.
+  const dupBarcode = input({
+    variants: [legacyVariant({ id: "v1" }), legacyVariant({ id: "v2", sku: "OTHER-9", original_sku: "OTHER-9" })],
+  });
+  assert.deepEqual(validateProductFields(dupBarcode, EDIT_PROFILE),
+    { ok: false, rule: "duplicate_in_form", field: "variant-1-barcode" });
+  // Two grandfathered rows sharing a SKU: also caught.
+  const dupSku = input({
+    variants: [legacyVariant({ id: "v1" }), legacyVariant({ id: "v2", barcode: "67890", original_barcode: "67890" })],
+  });
+  assert.deepEqual(validateProductFields(dupSku, EDIT_PROFILE),
+    { ok: false, rule: "duplicate_in_form", field: "variant-1-sku" });
+});
+
+test("grandfather: CHANGED legacy variant SKU → strict V2 rule (invalid new SKU FAILS)", () => {
+  const p = input({ variants: [legacyVariant({ sku: "still-bad" })] }); // sku changed, not mk-n
+  assert.deepEqual(validateProductFields(p, EDIT_PROFILE),
+    { ok: false, rule: "invalid_variant_sku", field: "variant-0-sku" });
+});
+
+test("grandfather: CHANGED legacy variant barcode → strict EAN (invalid new barcode FAILS)", () => {
+  const p = input({ variants: [legacyVariant({ sku: "mk9-1", barcode: "999" })] }); // barcode changed
+  assert.deepEqual(validateProductFields(p, EDIT_PROFILE),
+    { ok: false, rule: "invalid_barcode", field: "variant-0-barcode" });
+});
+
+test("grandfather: CHANGED identity to valid V2 values PASSES", () => {
+  const p = input({ variants: [legacyVariant({ sku: "mk9-1", barcode: GOOD_BARCODE_2 })] });
+  assert.ok(validateProductFields(p, EDIT_PROFILE).ok);
+});
+
+test("grandfather: NEW variant (no id) always gets strict V2 validation", () => {
+  assert.deepEqual(validateProductFields(input({ variants: [variant({ sku: "xyz" })] }), EDIT_PROFILE),
+    { ok: false, rule: "invalid_variant_sku", field: "variant-0-sku" });
+  assert.deepEqual(validateProductFields(input({ variants: [variant({ sku: "mk9-1", barcode: "111" })] }), EDIT_PROFILE),
+    { ok: false, rule: "invalid_barcode", field: "variant-0-barcode" });
+});
+
+test("grandfather: unchanged legacy MAIN identity is grandfathered in Edit", () => {
+  const p = input({ sku: "OLD-MAIN", barcode: "42", original_sku: "OLD-MAIN", original_barcode: "42", price: "9" });
+  assert.ok(validateProductFields(p, EDIT_PROFILE).ok);
+  // Changing the legacy main SKU to a still-invalid value fails strictly.
+  const changed = input({ sku: "OLD-MAIN-X", barcode: "42", original_sku: "OLD-MAIN", original_barcode: "42" });
+  assert.deepEqual(validateProductFields(changed, EDIT_PROFILE), { ok: false, rule: "invalid_sku", field: "sku" });
+});
+
+test("grandfather: Create NEVER grandfathers — legacy identity + originals still fails", () => {
+  const p = input({ variants: [legacyVariant()] });
+  assert.deepEqual(validateProductFields(p, CREATE_PROFILE),
+    { ok: false, rule: "invalid_variant_sku", field: "variant-0-sku" });
+  // The public creator validator is likewise unaffected by original_* fields.
+  const c = validateAiProductInput(p);
+  assert.ok(!c.ok);
+});
+
+test("grandfather: the public Edit validator grandfathers via payload originals", () => {
+  assert.ok(validateProductEditInput(input({ variants: [legacyVariant({ price: "5" })] })).ok);
+  const changed = validateProductEditInput(input({ variants: [legacyVariant({ barcode: "999" })] }));
+  assert.ok(!changed.ok && changed.field === "edit-variant-0-barcode");
+});
+
 // ── source guards: the duplicated validation logic must not come back ────────
 
 function read(rel: string): string {
