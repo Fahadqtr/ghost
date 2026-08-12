@@ -1,5 +1,5 @@
 // Tests for the V2 product-editor validation + fixed-message mapping
-// (Phase UI.4). PURE — no database, no network.
+// (Phase UI.4; validation parity adopted in UX.4E-3). PURE — no DB, no network.
 // Run: node --conditions=react-server --experimental-strip-types --test lib/products/edit-validation.test.ts
 
 import test from "node:test";
@@ -8,12 +8,18 @@ import assert from "node:assert/strict";
 import { EDIT_MESSAGES, editFailureMessage, validateProductEditInput } from "./edit-validation.ts";
 import { VARIANT_SYNC_MESSAGES, type ProductInput, type VariantInput } from "./product-save.ts";
 
+// Real EAN-13s (verified check digit) — since UX.4E-3 the editor enforces the
+// same SKU/barcode/EAN rules the creator does, so fixtures must be valid.
+const GOOD_BARCODE = "4006381333931";
+const GOOD_BARCODE_2 = "4006381333948";
+const GOOD_BARCODE_3 = "9312345678907";
+
 function variant(over: Partial<VariantInput> = {}): VariantInput {
   return {
     variant_name: "وردي",
     variant_name_en: "Pink",
-    sku: "V-1",
-    barcode: "",
+    sku: "mk9-1",
+    barcode: GOOD_BARCODE_2,
     color: "",
     size: "",
     price: "",
@@ -24,8 +30,8 @@ function variant(over: Partial<VariantInput> = {}): VariantInput {
 
 function input(over: Partial<ProductInput> = {}): ProductInput {
   return {
-    sku: "P-1",
-    barcode: "",
+    sku: "mk9",
+    barcode: GOOD_BARCODE,
     name_en: "Serum",
     name_ar: "سيروم",
     brand_id: "",
@@ -55,6 +61,11 @@ function input(over: Partial<ProductInput> = {}): ProductInput {
 }
 
 // ── validateProductEditInput ─────────────────────────────────────────────────
+
+test("validation: valid input passes, with and without variants", () => {
+  assert.ok(validateProductEditInput(input()).ok);
+  assert.ok(validateProductEditInput(input({ variants: [variant()] })).ok);
+});
 
 test("validation: a name in either language is enough; both blank fails with a focusable field", () => {
   assert.ok(validateProductEditInput(input({ name_ar: "سيروم", name_en: "" })).ok);
@@ -88,7 +99,7 @@ test("validation: negative numbers are rejected; blanks and decimals are fine", 
 
 test("validation: variant number fields are checked by PAYLOAD index", () => {
   const res = validateProductEditInput(
-    input({ variants: [variant(), variant({ price: "12,5" })] }),
+    input({ variants: [variant(), variant({ sku: "mk9-2", barcode: GOOD_BARCODE_3, price: "12,5" })] }),
   );
   assert.ok(!res.ok);
   if (!res.ok) {
@@ -99,7 +110,7 @@ test("validation: variant number fields are checked by PAYLOAD index", () => {
 
 test("validation: a duplicated variant id in the payload is rejected with the fixed message", () => {
   const res = validateProductEditInput(
-    input({ variants: [variant({ id: "va" }), variant({ id: "va", sku: "V-2" })] }),
+    input({ variants: [variant({ id: "va" }), variant({ id: "va", sku: "mk9-2", barcode: GOOD_BARCODE_3 })] }),
   );
   assert.ok(!res.ok);
   if (!res.ok) {
@@ -110,7 +121,55 @@ test("validation: a duplicated variant id in the payload is rejected with the fi
 });
 
 test("validation: multiple id-less new rows are NOT treated as duplicates", () => {
-  assert.ok(validateProductEditInput(input({ variants: [variant(), variant({ sku: "V-2" })] })).ok);
+  assert.ok(
+    validateProductEditInput(input({ variants: [variant(), variant({ sku: "mk9-2", barcode: GOOD_BARCODE_3 })] })).ok,
+  );
+});
+
+// ── UX.4E-3 parity: the SKU / barcode / EAN / in-form-duplicate rules ─────────
+
+test("parity: main SKU must be mk<number> and main barcode must be a real EAN-13", () => {
+  const badSku = validateProductEditInput(input({ sku: "P-1" }));
+  assert.ok(!badSku.ok);
+  if (!badSku.ok) {
+    assert.equal(badSku.message, EDIT_MESSAGES.invalid_sku);
+    assert.equal(badSku.field, "edit-sku");
+  }
+  const badBarcode = validateProductEditInput(input({ barcode: "4006381333930" }));
+  assert.ok(!badBarcode.ok);
+  if (!badBarcode.ok) {
+    assert.equal(badBarcode.message, EDIT_MESSAGES.invalid_barcode);
+    assert.equal(badBarcode.field, "edit-barcode");
+  }
+});
+
+test("parity: variant SKU must be <main>-n and variant barcode must be EAN-13", () => {
+  for (const bad of ["mk9", "mk9-0", "mk8-1", "mk9-A", "V-1"]) {
+    const r = validateProductEditInput(input({ variants: [variant({ sku: bad })] }));
+    assert.ok(!r.ok && r.message === EDIT_MESSAGES.invalid_variant_sku, bad);
+    if (!r.ok) assert.equal(r.field, "edit-variant-0-sku");
+  }
+  const shortBarcode = validateProductEditInput(input({ variants: [variant({ barcode: "123" })] }));
+  assert.ok(!shortBarcode.ok);
+  if (!shortBarcode.ok) {
+    assert.equal(shortBarcode.message, EDIT_MESSAGES.invalid_barcode);
+    assert.equal(shortBarcode.field, "edit-variant-0-barcode");
+  }
+});
+
+test("parity: in-form duplicate SKU/barcode (incl. reuse of the product's own) is rejected", () => {
+  const dupSku = validateProductEditInput(
+    input({ variants: [variant(), variant({ barcode: GOOD_BARCODE_3 })] }),
+  );
+  assert.ok(!dupSku.ok);
+  if (!dupSku.ok) {
+    assert.equal(dupSku.message, EDIT_MESSAGES.duplicate_in_form);
+    assert.equal(dupSku.field, "edit-variant-1-sku");
+  }
+  const productBarcodeReused = validateProductEditInput(
+    input({ variants: [variant({ barcode: GOOD_BARCODE })] }),
+  );
+  assert.ok(!productBarcodeReused.ok && productBarcodeReused.message === EDIT_MESSAGES.duplicate_in_form);
 });
 
 // ── editFailureMessage: fixed Arabic only, raw text never passes through ─────

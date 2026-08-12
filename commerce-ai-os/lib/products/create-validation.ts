@@ -1,11 +1,18 @@
 // Pure validation + fixed Arabic messages for the AI product creator
-// (Phase UI.5). Mirrors lib/products/edit-validation.ts: no imports beyond
-// types, runs identically in the browser (focus-first-error) and in the
-// server action (the authority). Every user-facing string is a fixed
-// constant — no field value, database text, SQLSTATE, storage path, AI text,
-// uuid or internal name is ever interpolated.
+// (Phase UI.5). The RULES now live in the shared ./variant-validate layer
+// (UX.4E-3) so Create, Edit, and Import cannot drift; this module keeps only
+// the create-specific concern: the fixed Arabic message vocabulary and the
+// `create-` field-id prefix. Every user-facing string is a fixed constant — no
+// field value, database text, SQLSTATE, storage path, AI text, uuid or internal
+// name is ever interpolated. Runs identically in the browser (focus-first-error)
+// and in the server action (the authority).
 
 import type { ProductInput } from "./product-save";
+import {
+  CREATE_PROFILE,
+  validateProductFields,
+  type ValidationRule,
+} from "./variant-validate.ts";
 
 export const CREATE_MESSAGES = {
   not_signed_in: "غير مسجّل الدخول.",
@@ -41,93 +48,28 @@ export type CreateValidationResult =
   | { ok: true }
   | { ok: false; message: string; field: string };
 
-function isBlank(v: string): boolean {
-  return (v ?? "").trim() === "";
-}
-function badNumber(v: string): boolean {
-  const t = (v ?? "").trim();
-  if (t === "") return false;
-  return !Number.isFinite(Number(t));
-}
-function negativeNumber(v: string): boolean {
-  const t = (v ?? "").trim();
-  if (t === "") return false;
-  const n = Number(t);
-  return Number.isFinite(n) && n < 0;
-}
-
-const MK_RE = /^mk\d+$/i;
-
-// EAN-13 with a verified check digit. The math is inlined (6 lines) rather
-// than imported from ./barcode-ean13 because this module is loaded at runtime
-// by node:test AND by the client wizard — a relative runtime import would
-// break node's extensionless resolution (same isolation rule as
-// edit-form-state's local str/num helpers).
-function isEan13(value: string): boolean {
-  const s = (value ?? "").trim();
-  if (!/^\d{13}$/.test(s)) return false;
-  let sum = 0;
-  for (let i = 0; i < 12; i++) sum += (i % 2 === 0 ? 1 : 3) * Number(s[i]);
-  return (10 - (sum % 10)) % 10 === Number(s[12]);
-}
-
-const PRODUCT_NUMBER_FIELDS = ["price", "discount_price", "cost", "stock_quantity"] as const;
-const VARIANT_NUMBER_FIELDS = ["price", "stock_quantity"] as const;
+/** Shared rule → the fixed Arabic message the creator shows for it. */
+const RULE_MESSAGE: Record<ValidationRule, string> = {
+  name_required: CREATE_MESSAGES.name_required,
+  category_required: CREATE_MESSAGES.category_required,
+  invalid_sku: CREATE_MESSAGES.invalid_sku,
+  invalid_barcode: CREATE_MESSAGES.invalid_barcode,
+  invalid_variant_sku: CREATE_MESSAGES.invalid_variant_sku,
+  duplicate_in_form: CREATE_MESSAGES.duplicate_in_form,
+  duplicate_variant_row: CREATE_MESSAGES.duplicate_in_form, // never emitted (create profile off)
+  invalid_number: CREATE_MESSAGES.invalid_number,
+  negative_number: CREATE_MESSAGES.negative_number,
+};
 
 /**
  * Validate the create payload before any write. The server action re-checks
  * uniqueness against the live catalog and createProductCore is all-or-nothing;
  * this layer catches the shape problems with a precise fixed message and a
- * focusable field id (ids use the `create-` prefix).
+ * focusable field id (ids use the `create-` prefix). Delegates every rule to
+ * the shared ./variant-validate engine (Create profile).
  */
 export function validateAiProductInput(input: ProductInput): CreateValidationResult {
-  if (isBlank(input.name_ar) && isBlank(input.name_en)) {
-    return { ok: false, message: CREATE_MESSAGES.name_required, field: "create-name_ar" };
-  }
-  if (isBlank(input.main_category)) {
-    return { ok: false, message: CREATE_MESSAGES.category_required, field: "create-main_category" };
-  }
-  const sku = (input.sku ?? "").trim();
-  if (!MK_RE.test(sku)) {
-    return { ok: false, message: CREATE_MESSAGES.invalid_sku, field: "create-sku" };
-  }
-  const barcode = (input.barcode ?? "").trim();
-  if (!isEan13(barcode)) {
-    return { ok: false, message: CREATE_MESSAGES.invalid_barcode, field: "create-barcode" };
-  }
-  for (const f of PRODUCT_NUMBER_FIELDS) {
-    if (badNumber(input[f])) return { ok: false, message: CREATE_MESSAGES.invalid_number, field: `create-${f}` };
-    if (negativeNumber(input[f])) return { ok: false, message: CREATE_MESSAGES.negative_number, field: `create-${f}` };
-  }
-
-  const mainNorm = sku.toLowerCase();
-  const seenSkus = new Set<string>([mainNorm]);
-  const seenBarcodes = new Set<string>([barcode]);
-  const variants = Array.isArray(input.variants) ? input.variants : [];
-  const variantSkuRe = new RegExp(`^${mainNorm.replace(/[.*+?^${}()|[\]\\]/g, "")}-[1-9]\\d*$`);
-
-  for (let i = 0; i < variants.length; i++) {
-    const v = variants[i];
-    const vSku = (v.sku ?? "").trim().toLowerCase();
-    if (!variantSkuRe.test(vSku)) {
-      return { ok: false, message: CREATE_MESSAGES.invalid_variant_sku, field: `create-variant-${i}-sku` };
-    }
-    if (seenSkus.has(vSku)) {
-      return { ok: false, message: CREATE_MESSAGES.duplicate_in_form, field: `create-variant-${i}-sku` };
-    }
-    seenSkus.add(vSku);
-    const vBarcode = (v.barcode ?? "").trim();
-    if (!isEan13(vBarcode)) {
-      return { ok: false, message: CREATE_MESSAGES.invalid_barcode, field: `create-variant-${i}-barcode` };
-    }
-    if (seenBarcodes.has(vBarcode)) {
-      return { ok: false, message: CREATE_MESSAGES.duplicate_in_form, field: `create-variant-${i}-barcode` };
-    }
-    seenBarcodes.add(vBarcode);
-    for (const f of VARIANT_NUMBER_FIELDS) {
-      if (badNumber(v[f])) return { ok: false, message: CREATE_MESSAGES.invalid_number, field: `create-variant-${i}-${f}` };
-      if (negativeNumber(v[f])) return { ok: false, message: CREATE_MESSAGES.negative_number, field: `create-variant-${i}-${f}` };
-    }
-  }
-  return { ok: true };
+  const result = validateProductFields(input, CREATE_PROFILE);
+  if (result.ok) return { ok: true };
+  return { ok: false, message: RULE_MESSAGE[result.rule], field: `create-${result.field}` };
 }

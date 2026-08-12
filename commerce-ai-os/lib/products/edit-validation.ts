@@ -1,10 +1,20 @@
 // Pure validation + fixed Arabic messages for the V2 product editor
-// (Phase UI.4). No imports, no I/O — runs identically in the browser (pre-
-// submit, for focusing the first bad field) and in the server action (the
-// authority). Every user-facing string here is a fixed constant: no field
-// value, database text, SQLSTATE, uuid or internal name is ever interpolated.
+// (Phase UI.4). The RULES now live in the shared ./variant-validate layer
+// (UX.4E-3); this module keeps the edit-specific concern: the fixed Arabic
+// message vocabulary, the `edit-` field-id prefix, and the failure-mapping
+// helper. As of UX.4E-3 Edit enforces the SAME SKU / barcode / EAN-13 /
+// within-form-duplicate rules Create already enforced (validation parity) —
+// the only intended behavior change — on top of the existing DB row-id guard.
+// Every user-facing string here is a fixed constant: no field value, database
+// text, SQLSTATE, uuid or internal name is ever interpolated. Runs identically
+// in the browser (pre-submit focus) and in the server action (the authority).
 
 import type { ProductInput } from "./product-save";
+import {
+  EDIT_PROFILE,
+  validateProductFields,
+  type ValidationRule,
+} from "./variant-validate.ts";
 
 export const EDIT_MESSAGES = {
   not_signed_in: "غير مسجّل الدخول.",
@@ -12,6 +22,11 @@ export const EDIT_MESSAGES = {
   name_required: "أدخل اسم المنتج بالعربية أو الإنجليزية.",
   invalid_number: "قيمة رقمية غير صالحة — تحقق من السعر والتكلفة والكمية.",
   negative_number: "القيم الرقمية لا يمكن أن تكون سالبة.",
+  // Parity rules adopted in UX.4E-3 — same fixed text as the creator uses.
+  invalid_sku: "صيغة SKU غير صحيحة — الشكل المطلوب مثل: mk123.",
+  invalid_variant_sku: "صيغة SKU الخيار غير صحيحة — الشكل المطلوب مثل: mk123-1.",
+  invalid_barcode: "الباركود غير صالح — يجب أن يكون EAN-13 صحيحًا.",
+  duplicate_in_form: "يوجد SKU أو باركود مكرر داخل النموذج نفسه.",
   duplicate_variant_row: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
   duplicate_identity: "منتج آخر يستخدم نفس SKU أو الباركود — استخدم قيمة مختلفة.",
   product_update_failed: "تعذّر حفظ المنتج — حاول مجددًا.",
@@ -30,71 +45,31 @@ export type EditValidationResult =
       field: string;
     };
 
-/** Blank is allowed (means NULL); anything else must be a finite number. */
-function badNumber(v: string): boolean {
-  const t = (v ?? "").trim();
-  if (t === "") return false;
-  const n = Number(t);
-  return !Number.isFinite(n);
-}
-
-/** Blank is allowed; anything else must be a finite number >= 0. */
-function negativeNumber(v: string): boolean {
-  const t = (v ?? "").trim();
-  if (t === "") return false;
-  const n = Number(t);
-  return Number.isFinite(n) && n < 0;
-}
-
-function isBlank(v: string): boolean {
-  return (v ?? "").trim() === "";
-}
-
-const PRODUCT_NUMBER_FIELDS = ["price", "discount_price", "cost", "stock_quantity"] as const;
-const VARIANT_NUMBER_FIELDS = ["price", "stock_quantity"] as const;
+/** Shared rule → the fixed Arabic message the editor shows for it. */
+const RULE_MESSAGE: Record<ValidationRule, string> = {
+  name_required: EDIT_MESSAGES.name_required,
+  category_required: EDIT_MESSAGES.invalid_input, // never emitted (edit profile off)
+  invalid_sku: EDIT_MESSAGES.invalid_sku,
+  invalid_barcode: EDIT_MESSAGES.invalid_barcode,
+  invalid_variant_sku: EDIT_MESSAGES.invalid_variant_sku,
+  duplicate_in_form: EDIT_MESSAGES.duplicate_in_form,
+  duplicate_variant_row: EDIT_MESSAGES.duplicate_variant_row,
+  invalid_number: EDIT_MESSAGES.invalid_number,
+  negative_number: EDIT_MESSAGES.negative_number,
+};
 
 /**
  * Validate the edit payload before any write. The save core re-validates ids
  * against the authoritative set and the RPC re-validates everything again —
  * this layer exists so the common mistakes fail instantly with a precise,
- * fixed message and a focusable field id.
+ * fixed message and a focusable field id. Delegates every rule to the shared
+ * ./variant-validate engine (Edit profile: Create-parity on SKU/barcode/EAN +
+ * within-form duplicates, plus the existing DB row-id guard).
  */
 export function validateProductEditInput(input: ProductInput): EditValidationResult {
-  if (isBlank(input.name_ar) && isBlank(input.name_en)) {
-    return { ok: false, message: EDIT_MESSAGES.name_required, field: "edit-name_ar" };
-  }
-
-  for (const f of PRODUCT_NUMBER_FIELDS) {
-    if (badNumber(input[f])) {
-      return { ok: false, message: EDIT_MESSAGES.invalid_number, field: `edit-${f}` };
-    }
-    if (negativeNumber(input[f])) {
-      return { ok: false, message: EDIT_MESSAGES.negative_number, field: `edit-${f}` };
-    }
-  }
-
-  const seenIds = new Set<string>();
-  const variants = Array.isArray(input.variants) ? input.variants : [];
-  for (let i = 0; i < variants.length; i++) {
-    const v = variants[i];
-    const id = typeof v.id === "string" ? v.id.trim() : "";
-    if (id.length > 0) {
-      if (seenIds.has(id)) {
-        return { ok: false, message: EDIT_MESSAGES.duplicate_variant_row, field: "edit-variants" };
-      }
-      seenIds.add(id);
-    }
-    for (const f of VARIANT_NUMBER_FIELDS) {
-      if (badNumber(v[f])) {
-        return { ok: false, message: EDIT_MESSAGES.invalid_number, field: `edit-variant-${i}-${f}` };
-      }
-      if (negativeNumber(v[f])) {
-        return { ok: false, message: EDIT_MESSAGES.negative_number, field: `edit-variant-${i}-${f}` };
-      }
-    }
-  }
-
-  return { ok: true };
+  const result = validateProductFields(input, EDIT_PROFILE);
+  if (result.ok) return { ok: true };
+  return { ok: false, message: RULE_MESSAGE[result.rule], field: `edit-${result.field}` };
 }
 
 /**
