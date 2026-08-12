@@ -21,12 +21,19 @@ import Link from "next/link";
 import { saveProductEdit } from "@/app/(v2)/v2/catalog/[id]/edit/actions";
 import {
   buildVariantInputs,
-  EMPTY_VARIANT_FIELDS,
   hasUnsavedChanges,
   toVariantRows,
   type VariantFields,
   type VariantRowState,
 } from "@/lib/products/edit-form-state";
+import {
+  activeVariantCount,
+  addVariantRow,
+  removeVariantRow,
+  restoreVariantRow,
+  updateVariantField,
+} from "@/lib/products/variant-model";
+import { useVariantIdentity } from "@/components/v2/catalog/useVariantIdentity";
 import { validateProductEditInput } from "@/lib/products/edit-validation";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
@@ -34,16 +41,6 @@ import ProductMediaEditor from "@/components/v2/catalog/ProductMediaEditor";
 import AiFillMissing from "@/components/v2/catalog/AiFillMissing";
 import type { ProductMediaState } from "@/lib/products/product-media";
 import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
-import { loadCatalogIdentity, type CatalogIdentity } from "@/app/(v2)/v2/catalog/identity-actions";
-import {
-  copyProductPriceToEmpty,
-  fillMissingVariantBarcodes,
-  fillMissingVariantSkus,
-  generateAllMissingIdentity,
-  nextMainBarcode,
-  nextMainSku,
-} from "@/lib/products/identity-fill";
-import { renumberVariantSkus } from "@/lib/products/sku-generate";
 import type { ProductInput } from "@/lib/products/product-save";
 import type { EditBrand, ProductEditInitial } from "@/lib/products/product-edit-read";
 import type { CatalogControls } from "@/lib/catalog-v2/master-catalog-view";
@@ -147,33 +144,25 @@ export default function ProductEditForm({
     });
   }
 
+  // Row mutations go through the shared pure variant model (UX.4E-2): identical
+  // behavior to the previous inline logic — a new row is dropped outright, an
+  // existing row is kept visible and marked removed (undo-able before save).
   function setRowField(key: string, field: keyof VariantFields, value: string) {
-    setRows((rs) =>
-      rs.map((r) => (r.key === key ? { ...r, fields: { ...r.fields, [field]: value } } : r)),
-    );
+    setRows((rs) => updateVariantField(rs, key, field, value));
   }
 
   function addRow() {
     newRowCounter.current += 1;
-    setRows((rs) => [
-      ...rs,
-      { key: `new-${newRowCounter.current}`, id: null, removed: false, fields: { ...EMPTY_VARIANT_FIELDS } },
-    ]);
+    const key = `new-${newRowCounter.current}`;
+    setRows((rs) => addVariantRow(rs, key));
   }
 
   function removeRow(key: string) {
-    setRows((rs) =>
-      rs.flatMap((r) => {
-        if (r.key !== key) return [r];
-        // New row: drop it outright. Existing row: keep it visible, marked
-        // removed, so the user can undo before saving.
-        return r.id === null ? [] : [{ ...r, removed: true }];
-      }),
-    );
+    setRows((rs) => removeVariantRow(rs, key));
   }
 
   function restoreRow(key: string) {
-    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, removed: false } : r)));
+    setRows((rs) => restoreVariantRow(rs, key));
   }
 
   function focusField(fieldId: string) {
@@ -210,108 +199,23 @@ export default function ProductEditForm({
     });
   }
 
-  const activeCount = rows.filter((r) => !r.removed).length;
+  const activeCount = activeVariantCount(rows);
 
-  // ── identity generators (UX.4B) — proposal only, form state only ────────────
-  const [identity, setIdentity] = useState<CatalogIdentity | null>(null);
-  const [identityBusy, setIdentityBusy] = useState(false);
-
-  /** Fetch the catalog identity snapshot once (read-only) for collision-safe
-   *  generation. Cached in state; a failure surfaces a fixed Arabic message. */
-  async function ensureIdentity(): Promise<CatalogIdentity | null> {
-    if (identity) return identity;
-    setIdentityBusy(true);
-    try {
-      const res = await loadCatalogIdentity();
-      if ("error" in res) {
-        setError("تعذّر فحص الكتالوج للتوليد. حاول مرة أخرى.");
-        return null;
-      }
-      setIdentity(res.data);
-      return res.data;
-    } finally {
-      setIdentityBusy(false);
-    }
-  }
-
-  async function genMainSku() {
-    const id = await ensureIdentity();
-    if (!id) return;
-    if (scalars.sku.trim() !== "" && !window.confirm("سيتم استبدال SKU الحالي. متابعة؟")) return;
-    setScalar("sku", nextMainSku(id.skus));
-  }
-
-  async function genMainBarcode() {
-    const id = await ensureIdentity();
-    if (!id) return;
-    if (scalars.barcode.trim() !== "" && !window.confirm("سيتم استبدال الباركود الحالي. متابعة؟")) return;
-    setScalar("barcode", nextMainBarcode(new Set(id.barcodes), Math.random));
-  }
-
-  // Variant tools operate on ACTIVE (non-removed) rows, in order. Each writes new
-  // values into form state only — never a DB. "Missing" ops never touch a filled
-  // field; "نسخ بادئة SKU" renumbers every variant and asks first when any exists.
-  function genMissingVariantSku() {
-    setRows((rs) => {
-      const active = rs.filter((r) => !r.removed);
-      const skus = fillMissingVariantSkus(scalars.sku, active.map((r) => ({ sku: r.fields.sku })));
-      let k = -1;
-      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, sku: skus[k] } })));
-    });
-  }
-
-  async function genMissingVariantBarcode() {
-    const id = await ensureIdentity();
-    if (!id) return;
-    setRows((rs) => {
-      const active = rs.filter((r) => !r.removed);
-      const bcs = fillMissingVariantBarcodes(
-        active.map((r) => ({ barcode: r.fields.barcode })),
-        new Set(id.barcodes),
-        Math.random,
-        [scalars.barcode],
-      );
-      let k = -1;
-      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, barcode: bcs[k] } })));
-    });
-  }
-
-  async function genAllMissing() {
-    const id = await ensureIdentity();
-    if (!id) return;
-    setRows((rs) => {
-      const active = rs.filter((r) => !r.removed);
-      const out = generateAllMissingIdentity(
-        scalars.sku,
-        active.map((r) => ({ sku: r.fields.sku, barcode: r.fields.barcode })),
-        new Set(id.barcodes),
-        Math.random,
-        [scalars.barcode],
-      );
-      let k = -1;
-      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, sku: out.skus[k], barcode: out.barcodes[k] } })));
-    });
-  }
-
-  function copyVariantSkuPrefix() {
-    const anyNonEmpty = rows.some((r) => !r.removed && r.fields.sku.trim() !== "");
-    if (anyNonEmpty && !window.confirm("سيتم إعادة ترقيم كل SKU للخيارات وفق SKU المنتج. متابعة؟")) return;
-    setRows((rs) => {
-      const count = rs.filter((r) => !r.removed).length;
-      const skus = renumberVariantSkus(scalars.sku, count);
-      let k = -1;
-      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, sku: skus[k] } })));
-    });
-  }
-
-  function copyVariantPrice() {
-    setRows((rs) => {
-      const active = rs.filter((r) => !r.removed);
-      const prices = copyProductPriceToEmpty(scalars.price, active.map((r) => ({ price: r.fields.price })));
-      let k = -1;
-      return rs.map((r) => (r.removed ? r : (++k, { ...r, fields: { ...r.fields, price: prices[k] } })));
-    });
-  }
+  // ── identity generators (UX.4B → shared hook in UX.4E-2) ────────────────────
+  // Orchestration + the seven generate/copy actions now live in the shared
+  // useVariantIdentity hook. The edit form writes a generated MAIN SKU as a plain
+  // scalar (it deliberately does NOT renumber variant SKUs — that is the create
+  // wizard's behavior, injected there via onMainSkuChange).
+  const variantIdentity = useVariantIdentity({
+    mainSku: scalars.sku,
+    mainBarcode: scalars.barcode,
+    productPrice: scalars.price,
+    rows,
+    setMainSku: (value) => setScalar("sku", value),
+    setMainBarcode: (value) => setScalar("barcode", value),
+    setRows,
+    onError: setError,
+  });
 
   // Validation reports field ids by PAYLOAD index (removed rows are omitted
   // from the payload), so the DOM ids must use the same numbering.
@@ -410,7 +314,7 @@ export default function ProductEditForm({
                 value={scalars.sku}
                 onChange={(e) => setScalar("sku", e.target.value)}
               />
-              <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={identityBusy} onClick={() => void genMainSku()}>
+              <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={variantIdentity.identityBusy} onClick={() => void variantIdentity.generateMainSku()}>
                 توليد
               </button>
             </div>
@@ -425,7 +329,7 @@ export default function ProductEditForm({
                 value={scalars.barcode}
                 onChange={(e) => setScalar("barcode", e.target.value)}
               />
-              <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={identityBusy} onClick={() => void genMainBarcode()}>
+              <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={variantIdentity.identityBusy} onClick={() => void variantIdentity.generateMainBarcode()}>
                 توليد
               </button>
             </div>
@@ -644,12 +548,12 @@ export default function ProductEditForm({
         {/* Variant identity tools (UX.4B) — proposal only, form state only. */}
         {activeCount > 0 ? (
           <VariantIdentityToolbar
-            busy={identityBusy}
-            onGenerateMissingSku={genMissingVariantSku}
-            onGenerateMissingBarcode={() => void genMissingVariantBarcode()}
-            onGenerateAll={() => void genAllMissing()}
-            onCopyPrefix={copyVariantSkuPrefix}
-            onCopyPrice={copyVariantPrice}
+            busy={variantIdentity.identityBusy}
+            onGenerateMissingSku={variantIdentity.generateMissingVariantSku}
+            onGenerateMissingBarcode={() => void variantIdentity.generateMissingVariantBarcode()}
+            onGenerateAll={() => void variantIdentity.generateAllMissing()}
+            onCopyPrefix={variantIdentity.copyVariantSkuPrefix}
+            onCopyPrice={variantIdentity.copyVariantPrice}
           />
         ) : null}
 

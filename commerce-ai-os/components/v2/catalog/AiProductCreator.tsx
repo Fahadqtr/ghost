@@ -30,19 +30,20 @@ import { prepareImage, type PreparedImage } from "@/lib/imagePrep";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
 import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
-import { loadCatalogIdentity, type CatalogIdentity } from "@/app/(v2)/v2/catalog/identity-actions";
+import { useVariantIdentity } from "@/components/v2/catalog/useVariantIdentity";
 import {
-  copyProductPriceToEmpty,
-  fillMissingVariantBarcodes,
-  fillMissingVariantSkus,
-  generateAllMissingIdentity,
-  nextMainBarcode,
-  nextMainSku,
-} from "@/lib/products/identity-fill";
+  addVariantRow,
+  removeVariantRow,
+  renumberVariantRowSkus,
+  updateVariantField,
+  type VariantFieldKey,
+  type VariantRowModel,
+} from "@/lib/products/variant-model";
+import { buildVariantInputs } from "@/lib/products/edit-form-state";
 import { renumberVariantSkus, isValidMkSku, normalizeMkSku } from "@/lib/products/sku-generate";
 import { CREATE_MESSAGES, validateAiProductInput } from "@/lib/products/create-validation";
 import type { VisionExtract } from "@/lib/products/ai-extract";
-import type { ProductInput, VariantInput } from "@/lib/products/product-save";
+import type { ProductInput } from "@/lib/products/product-save";
 import type { EditBrand } from "@/lib/products/product-edit-read";
 import { matchBrandId } from "@/lib/products/brand-match";
 import { PRODUCT_GENERATION_FIELDS, toProductGenerationProposal } from "@/lib/products/product-generation";
@@ -57,17 +58,8 @@ const CONFIDENCE_LABELS: Record<VisionExtract["confidence"], string> = {
   low: "ثقة منخفضة",
 };
 
-interface VariantRow {
-  key: string;
-  variant_name: string;
-  variant_name_en: string;
-  color: string;
-  size: string;
-  price: string;
-  stock_quantity: string;
-  sku: string;
-  barcode: string;
-}
+// Variant rows use the shared VariantRowModel (UX.4E-2). The create wizard only
+// ever produces NEW rows, so every row carries id: null and removed: false.
 
 interface FormScalars {
   sku: string;
@@ -113,7 +105,7 @@ export default function AiProductCreator({
   const [note, setNote] = useState("");
   const [extract, setExtract] = useState<VisionExtract | null>(null);
   const [scalars, setScalars] = useState<FormScalars>(EMPTY_SCALARS);
-  const [rows, setRows] = useState<VariantRow[]>([]);
+  const [rows, setRows] = useState<VariantRowModel[]>([]);
   const [duplicates, setDuplicates] = useState<DuplicateCards | null>(null);
   const [partialScan, setPartialScan] = useState(false);
   // The image changed after an analysis: the AI-derived panels (confidence,
@@ -182,14 +174,18 @@ export default function AiProductCreator({
         rowCounter.current += 1;
         return {
           key: `row-${rowCounter.current}`,
-          variant_name: v.variant_name,
-          variant_name_en: v.variant_name_en,
-          color: v.color,
-          size: v.size,
-          price: "",
-          stock_quantity: "",
-          sku: skus[i],
-          barcode: barcodes[i] ?? "",
+          id: null,
+          removed: false,
+          fields: {
+            variant_name: v.variant_name,
+            variant_name_en: v.variant_name_en,
+            sku: skus[i],
+            barcode: barcodes[i] ?? "",
+            color: v.color,
+            size: v.size,
+            price: "",
+            stock_quantity: "",
+          },
         };
       }),
     );
@@ -286,8 +282,7 @@ export default function AiProductCreator({
       setRows((rs) =>
         rs.slice(0, nextRowCount).map((r, i) => ({
           ...r,
-          sku: skus[i],
-          barcode: d.variantBarcodes[i] ?? r.barcode,
+          fields: { ...r.fields, sku: skus[i], barcode: d.variantBarcodes[i] ?? r.fields.barcode },
         })),
       );
       setDuplicates(d.duplicates);
@@ -299,34 +294,29 @@ export default function AiProductCreator({
 
   // ── variant rows ───────────────────────────────────────────────────────────
 
-  function renumber(rowsIn: VariantRow[], mainSku: string): VariantRow[] {
-    const skus = renumberVariantSkus(mainSku, rowsIn.length);
-    return rowsIn.map((r, i) => ({ ...r, sku: skus[i] }));
+  // Row mutations go through the shared pure variant model (UX.4E-2). Every
+  // create-wizard row is new (id: null), so a renumber over the whole list is
+  // identical to the previous "renumber all rows" behavior.
+  function renumber(rowsIn: VariantRowModel[], mainSku: string): VariantRowModel[] {
+    return renumberVariantRowSkus(mainSku, rowsIn);
   }
 
   function addRow() {
     rowCounter.current += 1;
-    const next = [
-      ...rows,
-      {
-        key: `row-${rowCounter.current}`,
-        variant_name: "", variant_name_en: "", color: "", size: "",
-        price: "", stock_quantity: "", sku: "", barcode: "",
-      },
-    ];
+    const next = addVariantRow(rows, `row-${rowCounter.current}`);
     setRows(renumber(next, scalars.sku));
     // A new row needs a fresh uniqueness-checked barcode from the server.
     void refreshIdentity(next.length);
   }
 
   function removeRow(key: string) {
-    const next = rows.filter((r) => r.key !== key);
+    const next = removeVariantRow(rows, key);
     setRows(renumber(next, scalars.sku));
     void refreshIdentity(next.length);
   }
 
-  function setRowField(key: string, field: keyof VariantRow, value: string) {
-    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, [field]: value } : r)));
+  function setRowField(key: string, field: VariantFieldKey, value: string) {
+    setRows((rs) => updateVariantField(rs, key, field, value));
   }
 
   function onMainSkuChange(value: string) {
@@ -336,93 +326,26 @@ export default function AiProductCreator({
     }
   }
 
-  // ── identity generators (UX.4B) — proposal only, form state only ────────────
-  const [identity, setIdentity] = useState<CatalogIdentity | null>(null);
-  const [identityBusy, setIdentityBusy] = useState(false);
-
-  async function ensureIdentity(): Promise<CatalogIdentity | null> {
-    if (identity) return identity;
-    setIdentityBusy(true);
-    try {
-      const res = await loadCatalogIdentity();
-      if ("error" in res) {
-        setError("تعذّر فحص الكتالوج للتوليد. حاول مرة أخرى.");
-        return null;
-      }
-      setIdentity(res.data);
-      return res.data;
-    } finally {
-      setIdentityBusy(false);
-    }
-  }
-
-  async function genMainSku() {
-    const id = await ensureIdentity();
-    if (!id) return;
-    if (scalars.sku.trim() !== "" && !window.confirm("سيتم استبدال SKU الحالي. متابعة؟")) return;
-    onMainSkuChange(nextMainSku(id.skus)); // keeps variant SKUs renumbered to the new prefix
-  }
-
-  async function genMainBarcode() {
-    const id = await ensureIdentity();
-    if (!id) return;
-    if (scalars.barcode.trim() !== "" && !window.confirm("سيتم استبدال الباركود الحالي. متابعة؟")) return;
-    setScalars((s) => ({ ...s, barcode: nextMainBarcode(new Set(id.barcodes), Math.random) }));
-  }
-
-  function genMissingVariantSku() {
-    setRows((rs) => {
-      const skus = fillMissingVariantSkus(scalars.sku, rs.map((r) => ({ sku: r.sku })));
-      return rs.map((r, i) => ({ ...r, sku: skus[i] }));
-    });
-  }
-
-  async function genMissingVariantBarcode() {
-    const id = await ensureIdentity();
-    if (!id) return;
-    setRows((rs) => {
-      const bcs = fillMissingVariantBarcodes(rs.map((r) => ({ barcode: r.barcode })), new Set(id.barcodes), Math.random, [scalars.barcode]);
-      return rs.map((r, i) => ({ ...r, barcode: bcs[i] }));
-    });
-  }
-
-  async function genAllMissing() {
-    const id = await ensureIdentity();
-    if (!id) return;
-    setRows((rs) => {
-      const out = generateAllMissingIdentity(scalars.sku, rs.map((r) => ({ sku: r.sku, barcode: r.barcode })), new Set(id.barcodes), Math.random, [scalars.barcode]);
-      return rs.map((r, i) => ({ ...r, sku: out.skus[i], barcode: out.barcodes[i] }));
-    });
-  }
-
-  function copyVariantSkuPrefix() {
-    if (rows.some((r) => r.sku.trim() !== "") && !window.confirm("سيتم إعادة ترقيم كل SKU للخيارات وفق SKU المنتج. متابعة؟")) return;
-    setRows((rs) => {
-      const skus = renumberVariantSkus(scalars.sku, rs.length);
-      return rs.map((r, i) => ({ ...r, sku: skus[i] }));
-    });
-  }
-
-  function copyVariantPrice() {
-    setRows((rs) => {
-      const prices = copyProductPriceToEmpty(scalars.price, rs.map((r) => ({ price: r.price })));
-      return rs.map((r, i) => ({ ...r, price: prices[i] }));
-    });
-  }
+  // ── identity generators (UX.4B → shared hook in UX.4E-2) ────────────────────
+  // Orchestration + the seven generate/copy actions live in the shared hook. The
+  // create wizard injects onMainSkuChange as setMainSku, so a generated MAIN SKU
+  // renumbers the variant SKUs to the new prefix (its long-standing behavior).
+  const variantIdentity = useVariantIdentity({
+    mainSku: scalars.sku,
+    mainBarcode: scalars.barcode,
+    productPrice: scalars.price,
+    rows,
+    setMainSku: onMainSkuChange,
+    setMainBarcode: (value) => setScalars((s) => ({ ...s, barcode: value })),
+    setRows,
+    onError: setError,
+  });
 
   // ── save ───────────────────────────────────────────────────────────────────
 
   function buildInput(): ProductInput {
-    const variants: VariantInput[] = rows.map((r) => ({
-      variant_name: r.variant_name,
-      variant_name_en: r.variant_name_en,
-      sku: r.sku,
-      barcode: r.barcode,
-      color: r.color,
-      size: r.size,
-      price: r.price,
-      stock_quantity: r.stock_quantity,
-    }));
+    // Create rows are all new (id: null, never removed), so buildVariantInputs
+    // emits the same id-less VariantInput[] the inline mapping did.
     return {
       ...scalars,
       sku: normalizeMkSku(scalars.sku),
@@ -431,7 +354,7 @@ export default function AiProductCreator({
       platform_status: "",
       image_filename: "",
       image_url: "",
-      variants,
+      variants: buildVariantInputs(rows),
     };
   }
 
@@ -668,7 +591,7 @@ export default function AiProductCreator({
                     value={scalars.sku}
                     onChange={(e) => onMainSkuChange(e.target.value)}
                   />
-                  <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={busy || identityBusy} onClick={() => void genMainSku()}>
+                  <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={busy || variantIdentity.identityBusy} onClick={() => void variantIdentity.generateMainSku()}>
                     توليد
                   </button>
                 </div>
@@ -684,7 +607,7 @@ export default function AiProductCreator({
                     value={scalars.barcode}
                     onChange={(e) => setScalars((s) => ({ ...s, barcode: e.target.value }))}
                   />
-                  <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={busy || identityBusy} onClick={() => void genMainBarcode()}>
+                  <button type="button" className="btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50" disabled={busy || variantIdentity.identityBusy} onClick={() => void variantIdentity.generateMainBarcode()}>
                     توليد
                   </button>
                 </div>
@@ -709,12 +632,12 @@ export default function AiProductCreator({
             {rows.length > 0 ? (
               <VariantIdentityToolbar
                 disabled={busy}
-                busy={identityBusy}
-                onGenerateMissingSku={genMissingVariantSku}
-                onGenerateMissingBarcode={() => void genMissingVariantBarcode()}
-                onGenerateAll={() => void genAllMissing()}
-                onCopyPrefix={copyVariantSkuPrefix}
-                onCopyPrice={copyVariantPrice}
+                busy={variantIdentity.identityBusy}
+                onGenerateMissingSku={variantIdentity.generateMissingVariantSku}
+                onGenerateMissingBarcode={() => void variantIdentity.generateMissingVariantBarcode()}
+                onGenerateAll={() => void variantIdentity.generateAllMissing()}
+                onCopyPrefix={variantIdentity.copyVariantSkuPrefix}
+                onCopyPrice={variantIdentity.copyVariantPrice}
               />
             ) : null}
             {rows.length === 0 ? (
@@ -725,7 +648,7 @@ export default function AiProductCreator({
                   <div key={row.key} className="rounded-xl border border-[#efe3d6] bg-white p-3">
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-medium text-muted" dir="ltr">
-                        {row.sku}
+                        {row.fields.sku}
                       </span>
                       <button type="button" onClick={() => removeRow(row.key)} disabled={busy} className="btn-ghost text-xs text-rose-600">
                         حذف الخيار
@@ -749,14 +672,14 @@ export default function AiProductCreator({
                             id={`create-variant-${i}-${field}`}
                             dir={ltr ? "ltr" : undefined}
                             className="input"
-                            value={row[field]}
+                            value={row.fields[field]}
                             onChange={(e) => setRowField(row.key, field, e.target.value)}
                           />
                         </label>
                       ))}
                       <label className="flex flex-col gap-1">
                         <span className="label">SKU الخيار (تلقائي)</span>
-                        <input id={`create-variant-${i}-sku`} dir="ltr" className="input" value={row.sku} readOnly />
+                        <input id={`create-variant-${i}-sku`} dir="ltr" className="input" value={row.fields.sku} readOnly />
                       </label>
                     </div>
                   </div>
