@@ -31,6 +31,7 @@ import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
 import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
 import VariantBulkTools from "@/components/v2/catalog/VariantBulkTools";
+import VariantCompleteness from "@/components/v2/catalog/VariantCompleteness";
 import { useVariantIdentity } from "@/components/v2/catalog/useVariantIdentity";
 import {
   addVariantRow,
@@ -712,6 +713,8 @@ export default function AiProductCreator({
                 busy={variantIdentity.identityBusy}
               />
             ) : null}
+            {/* Variant completeness (UX.4E-7) — read-only readiness view. */}
+            {rows.length > 0 ? <VariantCompleteness rows={rows} mainSku={scalars.sku} /> : null}
             {rows.length === 0 ? (
               <p className="text-sm text-muted">منتج بدون خيارات — يمكنك إضافة خيارات (ألوان/درجات/أحجام) قبل الحفظ.</p>
             ) : (
