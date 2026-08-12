@@ -42,8 +42,10 @@ import {
   restoreSelected as bulkRestoreSelected,
   removeEmptyRows as bulkRemoveEmptyRows,
 } from "@/lib/products/variant-bulk";
+import { mergeVariantSuggestions, type VariantSuggestion } from "@/lib/products/variant-ai";
 import { useVariantIdentity } from "@/components/v2/catalog/useVariantIdentity";
 import VariantBulkTools from "@/components/v2/catalog/VariantBulkTools";
+import VariantAISuggestions from "@/components/v2/catalog/VariantAISuggestions";
 import { validateProductEditInput } from "@/lib/products/edit-validation";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
@@ -217,6 +219,21 @@ export default function ProductEditForm({
   function bulkRemoveEmpty() {
     setRows((rs) => bulkRemoveEmptyRows(rs));
     setSelectedKeys((prev) => new Set([...prev].filter((k) => rows.some((r) => r.key === k))));
+  }
+
+  // AI variant suggestions (UX.4E-6): append the user-selected suggestions as
+  // NEW local rows (id null, blank SKU/barcode). Proposal only — nothing
+  // persists until Save; identity is filled by the existing Variant Identity
+  // tools, validation stays with the shared validator.
+  function addAiSuggestions(suggestions: VariantSuggestion[]) {
+    const base = newRowCounter.current;
+    newRowCounter.current += suggestions.length;
+    setRows((rs) =>
+      mergeVariantSuggestions(rs, suggestions, {
+        mode: "append-new",
+        keyFactory: (i) => `ai-${base + i + 1}`,
+      }),
+    );
   }
 
   function focusField(fieldId: string) {
@@ -616,6 +633,12 @@ export default function ProductEditForm({
             onCopyPrice={variantIdentity.copyVariantPrice}
           />
         ) : null}
+        {/* AI variant suggestions (UX.4E-6) — proposal only; reuses the existing
+            propose-only vision action + the pure variant-ai merge layer. */}
+        <VariantAISuggestions
+          primaryImageUrl={media.primary?.url ?? null}
+          onAddSuggestions={addAiSuggestions}
+        />
         {/* Bulk tools (UX.4E-5) — proposal only; shared pure transforms. */}
         {rows.length > 0 ? (
           <VariantBulkTools
