@@ -11,8 +11,10 @@ import {
   EMPTY_VARIANT_FIELDS,
   hasUnsavedChanges,
   toVariantRows,
+  withPersistedIdentity,
   type VariantRowState,
 } from "./edit-form-state.ts";
+import type { ProductInput } from "./product-save.ts";
 
 const FIELDS = {
   variant_name: "وردي",
@@ -74,6 +76,37 @@ test("payload: editing every field of an existing row still keeps the same id (n
   const out = buildVariantInputs([edited]);
   assert.equal(out[0].id, "va");
   assert.equal(out[0].sku, "TOTALLY-NEW");
+});
+
+// ── withPersistedIdentity: carry the loaded identity for grandfathering ──────
+
+function productInput(variants: ProductInput["variants"]): ProductInput {
+  return {
+    sku: "mk9", barcode: "4006381333931", name_en: "S", name_ar: "س", brand_id: "",
+    main_category: "", sub_category: "", product_type: "", color: "", size: "",
+    price: "", discount_price: "", cost: "", stock_quantity: "", stock_status: "",
+    platform_status: "", approval: "", rejection_reason: "", image_filename: "",
+    image_url: "", description_en: "", description_ar: "", keywords_en: "",
+    keywords_ar: "", notes: "", variants,
+  };
+}
+
+test("withPersistedIdentity: stamps main + per-variant originals from the initial rows (by id)", () => {
+  const initialRows = [existingRow("va")]; // fields.sku "V-1", fields.barcode "111"
+  const payload = productInput([{ id: "va", ...FIELDS, sku: "V-1-EDITED" }]);
+  const out = withPersistedIdentity(payload, { sku: "mk9", barcode: "4006381333931", rows: initialRows });
+  assert.equal(out.original_sku, "mk9");
+  assert.equal(out.original_barcode, "4006381333931");
+  assert.equal(out.variants[0].original_sku, "V-1"); // persisted, not the edited value
+  assert.equal(out.variants[0].original_barcode, "111");
+  assert.equal(out.variants[0].sku, "V-1-EDITED"); // current value untouched
+});
+
+test("withPersistedIdentity: a new variant (no matching id) gets NO originals", () => {
+  const payload = productInput([{ ...EMPTY_VARIANT_FIELDS, sku: "mk9-1" }]);
+  const out = withPersistedIdentity(payload, { sku: "mk9", barcode: "b", rows: [existingRow("va")] });
+  assert.ok(!("original_sku" in out.variants[0]), "new variant carries no original_sku");
+  assert.ok(!("original_barcode" in out.variants[0]), "new variant carries no original_barcode");
 });
 
 // ── hasUnsavedChanges ────────────────────────────────────────────────────────

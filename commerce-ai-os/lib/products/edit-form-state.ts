@@ -3,7 +3,7 @@
 // client component uses the exact same functions, so what the tests prove is
 // what the browser sends.
 
-import type { VariantInput } from "./product-save";
+import type { ProductInput, VariantInput } from "./product-save";
 
 /** Editable variant field values, always strings (form representation). */
 export interface VariantFields {
@@ -95,6 +95,37 @@ export function buildVariantInputs(rows: readonly VariantRowState[]): VariantInp
     }
   }
   return out;
+}
+
+/**
+ * Stamp the PERSISTED (loaded) identity onto an edit payload so the shared
+ * validator can grandfather UNCHANGED legacy SKUs/barcodes (UX.4E-3). Pure:
+ * - the main product's original sku/barcode come from the loaded scalars;
+ * - each existing variant's original sku/barcode come from the initial row with
+ *   the same database id (new rows carry no id, so they get no originals and
+ *   stay strictly validated).
+ * These fields are validation-only; toProductRow / toVariantPayload ignore them
+ * so nothing extra is ever written. Keeps identity-comparison logic out of the
+ * UI, which just calls this before validating + saving.
+ */
+export function withPersistedIdentity(
+  payload: ProductInput,
+  persisted: { sku: string; barcode: string; rows: readonly VariantRowState[] },
+): ProductInput {
+  const byId = new Map<string, VariantFields>();
+  for (const row of persisted.rows) {
+    if (typeof row.id === "string" && row.id.length > 0) byId.set(row.id, row.fields);
+  }
+  return {
+    ...payload,
+    original_sku: persisted.sku,
+    original_barcode: persisted.barcode,
+    variants: payload.variants.map((v) => {
+      const original = typeof v.id === "string" && v.id.length > 0 ? byId.get(v.id) : undefined;
+      if (!original) return v;
+      return { ...v, original_sku: original.sku, original_barcode: original.barcode };
+    }),
+  };
 }
 
 /** True when any scalar or any variant row differs from the initial state. */
