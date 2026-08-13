@@ -131,12 +131,17 @@ test("create + edit share the SAME identity path via the shared hook (UX.4E-2)",
   const EDIT = readFileSync(new URL("../../components/v2/catalog/ProductEditForm.tsx", import.meta.url), "utf8");
   const HOOK = readFileSync(new URL("../../components/v2/catalog/useVariantIdentity.ts", import.meta.url), "utf8");
 
-  // Both editors now share ONE orchestration path: the useVariantIdentity hook +
-  // the same toolbar. The generator logic no longer lives in the components.
+  // Both editors now share ONE orchestration path: the useVariantIdentity hook,
+  // whose controller is injected into the unified VariantStudio (UX.4E-4), which
+  // renders the shared toolbar. The generator logic never lived in the components,
+  // and the toolbar composition now lives once inside the studio.
+  const STUDIO = readFileSync(new URL("../../components/v2/catalog/VariantStudio.tsx", import.meta.url), "utf8");
   for (const src of [CREATE, EDIT]) {
     assert.ok(src.includes("useVariantIdentity({"), "uses the shared identity hook");
-    assert.ok(src.includes("VariantIdentityToolbar"), "renders the shared toolbar");
+    assert.ok(src.includes("<VariantStudio"), "mounts the unified variant studio");
+    assert.ok(src.includes("identity={variantIdentity}"), "injects the identity controller into the studio");
   }
+  assert.ok(STUDIO.includes("VariantIdentityToolbar"), "studio renders the shared toolbar");
 
   // The hook is the single place that reaches the shared helpers, the read
   // action, and the overwrite confirmation (fill-missing never confirms).

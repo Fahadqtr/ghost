@@ -44,33 +44,19 @@ import {
 } from "@/lib/products/variant-bulk";
 import { mergeVariantSuggestions, type VariantSuggestion } from "@/lib/products/variant-ai";
 import { useVariantIdentity } from "@/components/v2/catalog/useVariantIdentity";
-import VariantBulkTools from "@/components/v2/catalog/VariantBulkTools";
-import VariantAISuggestions from "@/components/v2/catalog/VariantAISuggestions";
-import VariantCompleteness from "@/components/v2/catalog/VariantCompleteness";
+import VariantStudio from "@/components/v2/catalog/VariantStudio";
 import { validateProductEditInput } from "@/lib/products/edit-validation";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
 import ProductMediaEditor from "@/components/v2/catalog/ProductMediaEditor";
 import AiFillMissing from "@/components/v2/catalog/AiFillMissing";
 import type { ProductMediaState } from "@/lib/products/product-media";
-import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
 import type { ProductInput } from "@/lib/products/product-save";
 import type { EditBrand, ProductEditInitial } from "@/lib/products/product-edit-read";
 import type { CatalogControls } from "@/lib/catalog-v2/master-catalog-view";
 
 /** Scalar (non-variant) keys of the form, all string-valued. */
 type ScalarKey = Exclude<keyof ProductEditInitial, "variants">;
-
-const VARIANT_FIELD_DEFS: { key: keyof VariantFields; label: string; dir?: "ltr" }[] = [
-  { key: "variant_name", label: "اسم الخيار (عربي)" },
-  { key: "variant_name_en", label: "اسم الخيار (إنجليزي)", dir: "ltr" },
-  { key: "sku", label: "SKU", dir: "ltr" },
-  { key: "barcode", label: "الباركود", dir: "ltr" },
-  { key: "color", label: "اللون" },
-  { key: "size", label: "الحجم" },
-  { key: "price", label: "السعر (ر.ق)", dir: "ltr" },
-  { key: "stock_quantity", label: "الكمية", dir: "ltr" },
-];
 
 function scalarsOf(initial: ProductEditInitial): Record<ScalarKey, string> {
   const { variants: _variants, ...rest } = initial;
@@ -294,14 +280,6 @@ export default function ProductEditForm({
     setRows,
     onError: setError,
   });
-
-  // Validation reports field ids by PAYLOAD index (removed rows are omitted
-  // from the payload), so the DOM ids must use the same numbering.
-  const payloadIndexByKey = new Map<string, number>();
-  {
-    let pi = 0;
-    for (const r of rows) if (!r.removed) payloadIndexByKey.set(r.key, pi++);
-  }
 
   return (
     <form onSubmit={onSubmit} noValidate className="space-y-4">
@@ -614,113 +592,35 @@ export default function ProductEditForm({
         </div>
       </section>
 
-      {/* Variants */}
-      <section id="edit-variants" tabIndex={-1} className="card space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-ink">الخيارات ({activeCount})</h2>
-          <button type="button" onClick={addRow} className="btn-ghost">
-            + إضافة خيار
-          </button>
-        </div>
-
-        {/* Variant identity tools (UX.4B) — proposal only, form state only. */}
-        {activeCount > 0 ? (
-          <VariantIdentityToolbar
-            busy={variantIdentity.identityBusy}
-            onGenerateMissingSku={variantIdentity.generateMissingVariantSku}
-            onGenerateMissingBarcode={() => void variantIdentity.generateMissingVariantBarcode()}
-            onGenerateAll={() => void variantIdentity.generateAllMissing()}
-            onCopyPrefix={variantIdentity.copyVariantSkuPrefix}
-            onCopyPrice={variantIdentity.copyVariantPrice}
-          />
-        ) : null}
-        {/* AI variant suggestions (UX.4E-6) — proposal only; reuses the existing
-            propose-only vision action + the pure variant-ai merge layer. */}
-        <VariantAISuggestions
-          primaryImageUrl={media.primary?.url ?? null}
-          onAddSuggestions={addAiSuggestions}
-        />
-        {/* Bulk tools (UX.4E-5) — proposal only; shared pure transforms. */}
-        {rows.length > 0 ? (
-          <VariantBulkTools
-            selectedCount={selectedKeys.size}
-            canRestore={rows.some((r) => r.removed)}
-            onAddRows={bulkAdd}
-            onFillMissingPrice={bulkFillPrice}
-            onSetSelectedStock={bulkSetStock}
-            onGenerateMissingSku={variantIdentity.generateMissingVariantSku}
-            onGenerateMissingBarcode={() => void variantIdentity.generateMissingVariantBarcode()}
-            onGenerateMissingIdentity={() => void variantIdentity.generateAllMissing()}
-            onDeleteSelected={bulkDelete}
-            onRestoreSelected={bulkRestore}
-            onRemoveEmptyRows={bulkRemoveEmpty}
-            busy={variantIdentity.identityBusy}
-          />
-        ) : null}
-        {/* Variant completeness (UX.4E-7) — read-only readiness view. */}
-        {rows.length > 0 ? <VariantCompleteness rows={rows} mainSku={scalars.sku} /> : null}
-
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted">لا توجد خيارات لهذا المنتج — يمكنك إضافة خيار جديد.</p>
-        ) : (
-          <div className="space-y-3">
-            {rows.map((row, index) => (
-              <div
-                key={row.key}
-                className={
-                  "rounded-xl border p-3 " +
-                  (row.removed ? "border-amber-200 bg-amber-50" : "border-[#efe3d6] bg-white")
-                }
-              >
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <label className="flex items-center gap-2 text-xs font-medium text-muted">
-                    <input
-                      type="checkbox"
-                      aria-label="تحديد الصف"
-                      checked={selectedKeys.has(row.key)}
-                      onChange={() => toggleSelected(row.key)}
-                    />
-                    <span>{row.id === null ? "خيار جديد" : `خيار ${index + 1}`}</span>
-                  </label>
-                  {row.removed ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-amber-700">سيُحذف عند الحفظ</span>
-                      <button type="button" onClick={() => restoreRow(row.key)} className="btn-ghost text-xs">
-                        تراجع
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => removeRow(row.key)}
-                      className="btn-ghost text-xs text-rose-600"
-                    >
-                      حذف الخيار
-                    </button>
-                  )}
-                </div>
-                {row.removed ? null : (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    {VARIANT_FIELD_DEFS.map((f) => (
-                      <label key={f.key} className="flex flex-col gap-1">
-                        <span className="label">{f.label}</span>
-                        <input
-                          id={`edit-variant-${payloadIndexByKey.get(row.key) ?? index}-${f.key}`}
-                          dir={f.dir}
-                          inputMode={f.key === "price" || f.key === "stock_quantity" ? "decimal" : undefined}
-                          className="input"
-                          value={row.fields[f.key]}
-                          onChange={(e) => setRowField(row.key, f.key, e.target.value)}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      {/* Variants — unified Variant Studio (UX.4E-4). The edit form keeps its own
+          orchestration (persisted ids, soft-delete/restore, AI-suggestion append,
+          never renumbering a persisted SKU) and injects it as callbacks; the studio
+          only composes the shared UI. AI variant suggestions are Edit-only, enabled
+          via allowAiSuggestions. */}
+      <VariantStudio
+        mode="edit"
+        rows={rows}
+        mainSku={scalars.sku}
+        selectedKeys={selectedKeys}
+        onToggleSelect={toggleSelected}
+        onAddRow={addRow}
+        onRemoveRow={removeRow}
+        onRestoreRow={restoreRow}
+        onFieldChange={setRowField}
+        identity={variantIdentity}
+        bulk={{
+          onAddRows: bulkAdd,
+          onFillMissingPrice: bulkFillPrice,
+          onSetSelectedStock: bulkSetStock,
+          onDeleteSelected: bulkDelete,
+          onRestoreSelected: bulkRestore,
+          onRemoveEmptyRows: bulkRemoveEmpty,
+          canRestore: rows.some((r) => r.removed),
+        }}
+        allowAiSuggestions
+        primaryImageUrl={media.primary?.url ?? null}
+        onAddAiSuggestions={addAiSuggestions}
+      />
 
       {/* Footer actions (mirror of the header, for long forms on mobile) */}
       <div className="flex items-center gap-2">

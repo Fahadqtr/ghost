@@ -187,10 +187,21 @@ test("guard: VariantAISuggestions reuses the existing AI action + pure layer, ad
 });
 
 test("guard: Edit wires the AI layer; Create is left on its OWN path (unchanged)", () => {
+  // Post-consolidation (UX.4E-4): AI suggestions are an Edit-only CAPABILITY of the
+  // unified VariantStudio. Edit enables it (allowAiSuggestions + onAddAiSuggestions)
+  // and still uses the pure merge layer; the studio renders the component only when
+  // the capability is enabled, so Create never mounts it.
   const edit = read("../../components/v2/catalog/ProductEditForm.tsx");
-  assert.ok(edit.includes("VariantAISuggestions"), "Edit renders the AI suggestions component");
+  assert.ok(edit.includes("allowAiSuggestions"), "Edit enables the AI suggestions capability");
+  assert.ok(edit.includes("onAddAiSuggestions"), "Edit wires the AI suggestions handler");
   assert.ok(edit.includes('from "@/lib/products/variant-ai"'), "Edit uses the pure merge layer");
+
+  const studio = read("../../components/v2/catalog/VariantStudio.tsx");
+  assert.ok(studio.includes("VariantAISuggestions"), "studio composes the AI suggestions component");
+  assert.ok(studio.includes("allowAiSuggestions && onAddAiSuggestions"), "studio gates AI behind the capability");
+
   const create = read("../../components/v2/catalog/AiProductCreator.tsx");
   assert.equal(create.includes("variant-ai"), false, "Create does not import the new AI suggestion layer");
+  assert.equal(create.includes("allowAiSuggestions"), false, "Create does not enable the AI capability");
   assert.ok(create.includes("renumberVariantSkus"), "Create keeps its own extract→rows mapping");
 });
