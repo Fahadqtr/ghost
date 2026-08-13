@@ -26,16 +26,38 @@ function isExcludedFromLegacyBlock(pathname: string): boolean {
   );
 }
 
+// ── Precise product-editing targets (UX.4E-9A) ──────────────────────────────
+//
+// The V2 Create/Edit flow is the ONLY active product-editing runtime. Unlike
+// the generic funnel below — which sends a legacy entry point to the V2 HOME —
+// these preserve intent: an old create/edit URL lands on the V2 page that
+// replaces it, not on the catalog home. Deliberately scoped to create/edit
+// only; every other /products path keeps the existing funnel-to-home behavior.
+// The id segment is charset-checked (uuid-safe, no separators/encoding); an id
+// that fails the check falls through to the generic funnel, exactly as before.
+const PRODUCT_ID_SEGMENT_RE = /^[A-Za-z0-9-]+$/;
+
+function productEditingRedirect(pathname: string): string | null {
+  if (pathname === "/products/new") return `${V2_HOME}/new`;
+  const m = /^\/products\/([^/]+)\/edit$/.exec(pathname);
+  if (m && PRODUCT_ID_SEGMENT_RE.test(m[1])) return `${V2_HOME}/${m[1]}/edit`;
+  return null;
+}
+
 /**
- * Resolve where a request to the legacy interface should be sent. Returns the V2
- * home for the root and the legacy admin entry points, or null when the path
- * must be left untouched (V2 routes, auth, APIs, webhooks, other public pages).
- * Never returns a target that would loop (V2 paths are always excluded).
+ * Resolve where a request to the legacy interface should be sent. Product
+ * create/edit URLs map to their precise V2 replacements (UX.4E-9A); the root
+ * and the other legacy admin entry points return the V2 home; null means the
+ * path must be left untouched (V2 routes, auth, APIs, webhooks, other public
+ * pages). Never returns a target that would loop (V2 paths are always
+ * excluded).
  */
 export function legacyRedirectPath(pathname: unknown): string | null {
   if (typeof pathname !== "string" || pathname.length === 0) return null;
   if (isExcludedFromLegacyBlock(pathname)) return null;
   if (pathname === "/") return V2_HOME;
+  const productTarget = productEditingRedirect(pathname);
+  if (productTarget) return productTarget;
   for (const p of LEGACY_PREFIXES) {
     if (pathname === p || pathname.startsWith(p + "/")) return V2_HOME;
   }

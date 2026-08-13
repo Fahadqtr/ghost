@@ -93,7 +93,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <ProductCopyAll text={copyText} />
-          <Link href={`/products/${product.id}/edit`} className="btn-primary w-full sm:w-auto">Edit</Link>
+          <Link href={`/v2/catalog/${product.id}/edit`} className="btn-primary w-full sm:w-auto">Edit</Link>
         </div>
       </div>
 
