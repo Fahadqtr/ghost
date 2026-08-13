@@ -3,14 +3,23 @@
 // fingerprints, and new-record classification/grouping.
 //
 // Pure + node:test-loadable: its only runtime import is the shared, pure
-// variant grammar (variant-validate → sku-generate + barcode-ean13), the SINGLE
-// source of truth for the SKU/barcode shapes (UX.4E-8A). Import deliberately
-// reuses the LOOSE rules (loose 6–14-digit barcode, mk-SKU shapes) so existing
-// catalog data keeps validating exactly as before — never strict EAN-13. The
-// only other import is the type-only IdentityRow. Per-concern sections follow.
+// variant-validate layer (→ sku-generate + barcode-ean13), the SINGLE source of
+// truth for the field SHAPES — the SKU/barcode grammar (UX.4E-8A) and the loose
+// barcode + numeric validation primitives (UX.4E-8B: isLooseBarcode,
+// isBadNumber, isNegativeNumber). Import deliberately uses the LOOSE profile so
+// existing catalog data keeps validating exactly as before — never strict
+// EAN-13. Everything else here (cell coercion, header mapping, aliases,
+// fingerprints, matching, classification, planning) is an import concern and
+// stays local. The only other import is the type-only IdentityRow.
 
 import type { IdentityRow } from "../duplicate-detect";
-import { MAIN_SKU_RE, VARIANT_SKU_RE, LOOSE_BARCODE_RE } from "../variant-validate.ts";
+import {
+  MAIN_SKU_RE,
+  VARIANT_SKU_RE,
+  isLooseBarcode,
+  isBadNumber,
+  isNegativeNumber,
+} from "../variant-validate.ts";
 
 // ═══════════ fields ═══════════
 
@@ -381,10 +390,10 @@ export function toCellText(v: unknown): string {
   return "";
 }
 
-// SKU/barcode grammar is the shared canonical one from variant-validate
-// (UX.4E-8A), imported at the top of this file. Re-exported here to preserve
-// core's existing public surface; LOOSE_BARCODE_RE is used by the row
-// normalizer below. Import stays intentionally LOOSE — never strict EAN-13.
+// SKU grammar is the shared canonical one from variant-validate (UX.4E-8A),
+// imported at the top of this file. Re-exported here to preserve core's existing
+// public surface. The row normalizer below validates barcode/numeric shapes via
+// the shared loose helpers (UX.4E-8B). Import stays LOOSE — never strict EAN-13.
 export { MAIN_SKU_RE, VARIANT_SKU_RE };
 
 export type RowKind = "product" | "variant" | "unknown";
@@ -470,7 +479,7 @@ export function normalizeCatalogExcelRow(
   const barcodeRaw = cellText("barcode");
   if (barcodeRaw !== "") {
     const b = barcodeRaw.replace(/\s+/g, "");
-    if (LOOSE_BARCODE_RE.test(b)) barcode = b;
+    if (isLooseBarcode(b)) barcode = b;
     else errors.push(ROW_MESSAGES.invalid_barcode);
   }
 
@@ -494,16 +503,19 @@ export function normalizeCatalogExcelRow(
     }
 
     if (def.kind === "price") {
-      const n = Number(raw);
-      if (!Number.isFinite(n)) {
+      // Numeric shape via the shared rules (UX.4E-8B); the cell reaching here is
+      // never blank (empty/CLEAR handled above), so isBadNumber == "not finite"
+      // and isNegativeNumber == "finite and < 0" — identical to the prior inline
+      // checks. String(Number(...)) numeric coercion stays an import concern.
+      if (isBadNumber(raw)) {
         errors.push(fieldName === "price" ? ROW_MESSAGES.invalid_price : ROW_MESSAGES.invalid_discount);
         continue;
       }
-      if (n < 0) {
+      if (isNegativeNumber(raw)) {
         errors.push(ROW_MESSAGES.negative_price);
         continue;
       }
-      values.push({ field: fieldName, value: String(n), clear: false });
+      values.push({ field: fieldName, value: String(Number(raw)), clear: false });
       continue;
     }
 

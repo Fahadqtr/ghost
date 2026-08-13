@@ -54,12 +54,14 @@ export function isNameMissing(nameAr: string, nameEn: string): boolean {
 
 // ─────────────────────── import-shape rules (loose) ─────────────────────────
 //
-// Kept BYTE-IDENTICAL to the regexes in excel-import/core.ts (a drift guard in
-// variant-validate.test.ts proves they never diverge). Import normalizes cell
-// text to lowercase before testing the SKU shapes and strips whitespace before
-// the barcode shape, exactly as core.ts does; the strict Create/Edit rules
-// (isValidMkSku / isValidVariantMkSku / isValidEan13) are the ones re-exported
-// above and are deliberately distinct.
+// The SINGLE source of truth for the Excel import's field SHAPES (UX.4E-8A/8B):
+// excel-import/core.ts imports these directly (grammar) and consumes the loose
+// helpers + numeric rules below (validation), rather than copying any of them.
+// Import normalizes cell text to lowercase before testing the SKU shapes and
+// strips whitespace before the barcode shape. The strict Create/Edit rules
+// (isValidMkSku / isValidVariantMkSku / isValidEan13) are re-exported above and
+// are deliberately DISTINCT — import stays loose so existing catalog data keeps
+// validating.
 
 /** Main SKU shape as Import matches it: mk<digits> on normalized text. */
 export const MAIN_SKU_RE = /^mk[0-9]+$/;
@@ -67,6 +69,31 @@ export const MAIN_SKU_RE = /^mk[0-9]+$/;
 export const VARIANT_SKU_RE = /^mk[0-9]+-[1-9][0-9]*$/;
 /** Import's deliberately loose barcode shape: 6–14 digits, no check digit. */
 export const LOOSE_BARCODE_RE = /^\d{6,14}$/;
+
+/**
+ * Loose barcode shape check (import). 6–14 digits, NO check digit — the import
+ * path uses THIS, never the strict isValidEan13, so pre-existing catalog
+ * barcodes keep validating. Caller strips whitespace first, as core.ts does.
+ */
+export function isLooseBarcode(value: string): boolean {
+  return LOOSE_BARCODE_RE.test(value);
+}
+
+/**
+ * The field-SHAPE profile the Excel import validates against (UX.4E-8B). It is
+ * deliberately LOOSE and editor-strict-free: the mk-SKU shapes on normalized
+ * text, the 6–14-digit barcode (NEVER strict EAN-13), and the shared numeric
+ * rules (isBadNumber / isNegativeNumber). One declarative, testable home for
+ * "import is loose" — the import core consumes the primitives it names, not the
+ * editor's strict rules. Pure data; no behavior of its own.
+ */
+export const IMPORT_VALIDATION_PROFILE = {
+  looseBarcode: true,
+  strictEan13: false,
+  mainSkuShape: MAIN_SKU_RE,
+  variantSkuShape: VARIANT_SKU_RE,
+  barcodeShape: LOOSE_BARCODE_RE,
+} as const;
 
 // ───────────────────────── duplicate detection ─────────────────────────────
 
