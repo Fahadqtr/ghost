@@ -369,13 +369,24 @@ test("guard: neither validator re-inlines the EAN math, mk regex, or duplicate s
   }
 });
 
-test("drift guard: Import's core.ts uses the SAME regex literals the shared layer exports", () => {
+test("UX.4E-8A source guard: Import's core.ts imports the shared grammar, no local copies", () => {
   const core = read("./excel-import/core.ts");
-  // The shared source strings, as they appear literally in core.ts today.
+  // The canonical source strings still live here, in variant-validate.
   assert.equal(MAIN_SKU_RE.source, "^mk[0-9]+$");
   assert.equal(VARIANT_SKU_RE.source, "^mk[0-9]+-[1-9][0-9]*$");
   assert.equal(LOOSE_BARCODE_RE.source, "^\\d{6,14}$");
-  assert.ok(core.includes("/^mk[0-9]+$/"), "core.ts main-sku regex matches the shared MAIN_SKU_RE");
-  assert.ok(core.includes("/^mk[0-9]+-[1-9][0-9]*$/"), "core.ts variant-sku regex matches the shared VARIANT_SKU_RE");
-  assert.ok(core.includes("/^\\d{6,14}$/"), "core.ts barcode regex matches the shared LOOSE_BARCODE_RE");
+  // core.ts now IMPORTS them from variant-validate…
+  assert.ok(
+    /import\s*\{[^}]*\bMAIN_SKU_RE\b[^}]*\}\s*from\s*"\.\.\/variant-validate\.ts"/.test(core),
+    "core.ts imports the shared grammar from variant-validate",
+  );
+  assert.ok(core.includes("VARIANT_SKU_RE") && core.includes("LOOSE_BARCODE_RE"),
+    "core.ts references the shared VARIANT_SKU_RE + LOOSE_BARCODE_RE");
+  // …and declares NO local copies (neither const nor inline regex literal).
+  assert.equal(/const\s+MAIN_SKU_RE\s*=/.test(core), false, "no local MAIN_SKU_RE declaration");
+  assert.equal(/const\s+VARIANT_SKU_RE\s*=/.test(core), false, "no local VARIANT_SKU_RE declaration");
+  assert.equal(/const\s+LOOSE_BARCODE_RE\s*=/.test(core), false, "no local LOOSE_BARCODE_RE declaration");
+  assert.equal(core.includes("/^mk[0-9]+$/"), false, "no inline main-sku regex literal");
+  assert.equal(core.includes("/^mk[0-9]+-[1-9][0-9]*$/"), false, "no inline variant-sku regex literal");
+  assert.equal(core.includes("/^\\d{6,14}$/"), false, "no inline loose-barcode regex literal");
 });
