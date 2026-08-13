@@ -380,8 +380,8 @@ test("UX.4E-8A source guard: Import's core.ts imports the shared grammar, no loc
     /import\s*\{[^}]*\bMAIN_SKU_RE\b[^}]*\}\s*from\s*"\.\.\/variant-validate\.ts"/.test(core),
     "core.ts imports the shared grammar from variant-validate",
   );
-  assert.ok(core.includes("VARIANT_SKU_RE") && core.includes("LOOSE_BARCODE_RE"),
-    "core.ts references the shared VARIANT_SKU_RE + LOOSE_BARCODE_RE");
+  assert.ok(core.includes("VARIANT_SKU_RE") && core.includes("isLooseBarcode"),
+    "core.ts references the shared VARIANT_SKU_RE + loose-barcode helper");
   // …and declares NO local copies (neither const nor inline regex literal).
   assert.equal(/const\s+MAIN_SKU_RE\s*=/.test(core), false, "no local MAIN_SKU_RE declaration");
   assert.equal(/const\s+VARIANT_SKU_RE\s*=/.test(core), false, "no local VARIANT_SKU_RE declaration");
