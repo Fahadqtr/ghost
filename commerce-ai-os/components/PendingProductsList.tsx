@@ -76,7 +76,7 @@ export default function PendingProductsList({ items, locale = "ar" }: { items: P
               ) : null}
             </div>
             <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row">
-              <a href={`/products/${p.id}/edit`} target="_blank" rel="noreferrer" className="btn-ghost px-2.5 py-1.5 text-center text-xs">✏️</a>
+              <a href={`/v2/catalog/${p.id}/edit`} target="_blank" rel="noreferrer" className="btn-ghost px-2.5 py-1.5 text-center text-xs">✏️</a>
               <button disabled={busyId === p.id} onClick={() => reject(p)}
                 className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 disabled:opacity-50">
                 ✗ {L("ارفض", "Reject")}

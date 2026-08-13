@@ -107,7 +107,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted">{L("أدِر كتالوج منتجاتك (نسخة من ملف الـ 28 عمود الرئيسي).", "Manage your product catalog (mirror of the 28-column master sheet).")}</p>
-        <Link href="/products/new" className="btn-primary w-full sm:w-auto">{L("+ منتج جديد", "+ New product")}</Link>
+        <Link href="/v2/catalog/new" className="btn-primary w-full sm:w-auto">{L("+ منتج جديد", "+ New product")}</Link>
       </div>
 
       {errMsg ? (

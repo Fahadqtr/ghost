@@ -133,7 +133,7 @@ export default function CatalogEnrich({ locale = "ar" }: { locale?: Locale }) {
                     {r ? outcomeChips(r).map((c, i) => <span key={i} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${c.cls}`}>{c.t}</span>) : null}
                   </div>
                 </div>
-                <a href={`/products/${t.id}/edit`} target="_blank" rel="noreferrer" className="btn-ghost shrink-0 px-2 py-1 text-xs">✏️</a>
+                <a href={`/v2/catalog/${t.id}/edit`} target="_blank" rel="noreferrer" className="btn-ghost shrink-0 px-2 py-1 text-xs">✏️</a>
               </div>
             );
           })}

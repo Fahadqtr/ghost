@@ -1,15 +1,21 @@
-import { notFound } from "next/navigation";
-import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
-import ProductForm from "@/components/ProductForm";
-import ProductImages, { type ProductImageRow } from "@/components/ProductImages";
-import type { Brand } from "@/lib/types";
-import type { ProductInput, VariantInput } from "@/app/(app)/products/actions";
+// Legacy edit URL — runtime-migrated to the V2 Product Editor (UX.4E-9A).
+//
+// The V2 flow (app/(v2)/v2/catalog/[id]/edit → ProductEditForm → VariantStudio)
+// is the ONLY active edit path now. This page stays so old bookmarks and links
+// keep working: it 308-redirects to the V2 editor for the same product id. The
+// legacy editor (components/ProductForm.tsx) and the legacy update action stay
+// in the repo but are no longer reachable from any route — deletion is UX.4E-9C.
+//
+// Legacy-only conveniences that lived on THIS page and are documented (not
+// silently dropped) by the migration:
+//  • in-form delete → still available at runtime via /catalog/health;
+//  • AI photo edit → still available via the /staff tab (same engine);
+//  • scanner Enter-flow (Enter jumps to the next barcode field) — V2 does not
+//    implement it; flagged for a product decision before UX.4E-9C.
+
+import { permanentRedirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
-
-// Convert nullable DB values into the string-based form shape.
-const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 
 export default async function EditProductPage({
   params,
@@ -17,71 +23,5 @@ export default async function EditProductPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const supabase = createClient();
-
-  const [{ data: product }, { data: variants }, { data: brands }, { data: imageRows }] =
-    await Promise.all([
-      supabase.from("products").select("*").eq("id", id).single(),
-      supabase.from("product_variants").select("*").eq("parent_product_id", id),
-      supabase.from("brands").select("id, name").order("name"),
-      supabase.from("product_images").select("url, is_primary").eq("product_id", id).order("is_primary", { ascending: false }).order("sort_order", { ascending: true }),
-    ]);
-
-  if (!product) notFound();
-
-  const initial: Partial<ProductInput> = {
-    sku: s(product.sku),
-    barcode: s(product.barcode),
-    name_en: s(product.name_en),
-    name_ar: s(product.name_ar),
-    brand_id: s(product.brand_id),
-    main_category: s(product.main_category),
-    sub_category: s(product.sub_category),
-    product_type: s(product.product_type),
-    color: s(product.color),
-    size: s(product.size),
-    price: s(product.price),
-    discount_price: s(product.discount_price),
-    cost: s(product.cost),
-    stock_quantity: s(product.stock_quantity),
-    stock_status: s(product.stock_status),
-    platform_status: s(product.platform_status),
-    approval: s(product.approval),
-    rejection_reason: s(product.rejection_reason),
-    image_filename: s(product.image_filename),
-    image_url: s(product.image_url),
-    description_en: s(product.description_en),
-    description_ar: s(product.description_ar),
-    keywords_en: s(product.keywords_en),
-    keywords_ar: s(product.keywords_ar),
-    notes: s(product.notes),
-    variants: (variants ?? []).map(
-      (v: any): VariantInput => ({
-        id: v.id,
-        variant_name: s(v.variant_name),
-        variant_name_en: s(v.variant_name_en),
-        sku: s(v.sku),
-        barcode: s(v.barcode),
-        color: s(v.color),
-        size: s(v.size),
-        price: s(v.price),
-        stock_quantity: s(v.stock_quantity),
-      })
-    ),
-  };
-
-  return (
-    <div className="mx-auto max-w-4xl space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-ink">Edit · {product.name_en ?? "product"}</h2>
-        <Link href={`/products/${product.id}`} className="text-sm text-brand hover:underline">← Back to detail</Link>
-      </div>
-      <ProductImages
-        productId={product.id}
-        imageUrl={product.image_url ?? null}
-        images={(imageRows ?? []) as ProductImageRow[]}
-      />
-      <ProductForm brands={(brands ?? []) as Brand[]} productId={product.id} initial={initial} />
-    </div>
-  );
+  permanentRedirect(`/v2/catalog/${encodeURIComponent(id)}/edit`);
 }
