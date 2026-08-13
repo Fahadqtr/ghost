@@ -2,11 +2,15 @@
 // detection/mapping, row normalization, matching, update planning +
 // fingerprints, and new-record classification/grouping.
 //
-// ONE self-contained module by design: node:test loads it directly, so it has
-// NO runtime imports (the only import is the type-only IdentityRow). The
-// original per-concern sections are kept in order below.
+// Pure + node:test-loadable: its only runtime import is the shared, pure
+// variant grammar (variant-validate → sku-generate + barcode-ean13), the SINGLE
+// source of truth for the SKU/barcode shapes (UX.4E-8A). Import deliberately
+// reuses the LOOSE rules (loose 6–14-digit barcode, mk-SKU shapes) so existing
+// catalog data keeps validating exactly as before — never strict EAN-13. The
+// only other import is the type-only IdentityRow. Per-concern sections follow.
 
 import type { IdentityRow } from "../duplicate-detect";
+import { MAIN_SKU_RE, VARIANT_SKU_RE, LOOSE_BARCODE_RE } from "../variant-validate.ts";
 
 // ═══════════ fields ═══════════
 
@@ -377,8 +381,11 @@ export function toCellText(v: unknown): string {
   return "";
 }
 
-export const MAIN_SKU_RE = /^mk[0-9]+$/;
-export const VARIANT_SKU_RE = /^mk[0-9]+-[1-9][0-9]*$/;
+// SKU/barcode grammar is the shared canonical one from variant-validate
+// (UX.4E-8A), imported at the top of this file. Re-exported here to preserve
+// core's existing public surface; LOOSE_BARCODE_RE is used by the row
+// normalizer below. Import stays intentionally LOOSE — never strict EAN-13.
+export { MAIN_SKU_RE, VARIANT_SKU_RE };
 
 export type RowKind = "product" | "variant" | "unknown";
 
@@ -463,7 +470,7 @@ export function normalizeCatalogExcelRow(
   const barcodeRaw = cellText("barcode");
   if (barcodeRaw !== "") {
     const b = barcodeRaw.replace(/\s+/g, "");
-    if (/^\d{6,14}$/.test(b)) barcode = b;
+    if (LOOSE_BARCODE_RE.test(b)) barcode = b;
     else errors.push(ROW_MESSAGES.invalid_barcode);
   }
 
