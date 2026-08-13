@@ -29,9 +29,7 @@ import SimilarProducts from "@/components/v2/catalog/SimilarProducts";
 import { prepareImage, type PreparedImage } from "@/lib/imagePrep";
 import ProductCompleteness from "@/components/v2/catalog/ProductCompleteness";
 import { computeProductCompleteness } from "@/lib/products/product-completeness";
-import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
-import VariantBulkTools from "@/components/v2/catalog/VariantBulkTools";
-import VariantCompleteness from "@/components/v2/catalog/VariantCompleteness";
+import VariantStudio from "@/components/v2/catalog/VariantStudio";
 import { useVariantIdentity } from "@/components/v2/catalog/useVariantIdentity";
 import {
   addVariantRow,
@@ -334,7 +332,7 @@ export default function AiProductCreator({
   // Every action applies a shared PURE transform from lib/products/variant-bulk
   // to the row state (proposal only — nothing persists until Save). Create rows
   // are all new, so a renumber over the whole list preserves the wizard's
-  // existing behavior. The count guard lives in VariantBulkTools.
+  // existing behavior. The add-batch count guard lives in the bulk tools panel.
   function toggleSelected(key: string) {
     setSelectedKeys((prev) => {
       const next = new Set(prev);
@@ -674,101 +672,32 @@ export default function AiProductCreator({
             </div>
           </section>
 
-          {/* Variants */}
-          <section id="create-variants" tabIndex={-1} className="card space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-ink">٣ · الخيارات ({rows.length})</h2>
-              <button type="button" onClick={addRow} disabled={busy} className="btn-ghost">
-                + إضافة خيار
-              </button>
-            </div>
-
-            {/* Variant identity tools (UX.4B) — proposal only, form state only. */}
-            {rows.length > 0 ? (
-              <VariantIdentityToolbar
-                disabled={busy}
-                busy={variantIdentity.identityBusy}
-                onGenerateMissingSku={variantIdentity.generateMissingVariantSku}
-                onGenerateMissingBarcode={() => void variantIdentity.generateMissingVariantBarcode()}
-                onGenerateAll={() => void variantIdentity.generateAllMissing()}
-                onCopyPrefix={variantIdentity.copyVariantSkuPrefix}
-                onCopyPrice={variantIdentity.copyVariantPrice}
-              />
-            ) : null}
-            {/* Bulk tools (UX.4E-5) — proposal only; shared pure transforms. */}
-            {rows.length > 0 ? (
-              <VariantBulkTools
-                selectedCount={selectedKeys.size}
-                canRestore={false}
-                onAddRows={bulkAdd}
-                onFillMissingPrice={bulkFillPrice}
-                onSetSelectedStock={bulkSetStock}
-                onGenerateMissingSku={variantIdentity.generateMissingVariantSku}
-                onGenerateMissingBarcode={() => void variantIdentity.generateMissingVariantBarcode()}
-                onGenerateMissingIdentity={() => void variantIdentity.generateAllMissing()}
-                onDeleteSelected={bulkDelete}
-                onRestoreSelected={() => {}}
-                onRemoveEmptyRows={bulkRemoveEmpty}
-                disabled={busy}
-                busy={variantIdentity.identityBusy}
-              />
-            ) : null}
-            {/* Variant completeness (UX.4E-7) — read-only readiness view. */}
-            {rows.length > 0 ? <VariantCompleteness rows={rows} mainSku={scalars.sku} /> : null}
-            {rows.length === 0 ? (
-              <p className="text-sm text-muted">منتج بدون خيارات — يمكنك إضافة خيارات (ألوان/درجات/أحجام) قبل الحفظ.</p>
-            ) : (
-              <div className="space-y-3">
-                {rows.map((row, i) => (
-                  <div key={row.key} className="rounded-xl border border-[#efe3d6] bg-white p-3">
-                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                      <label className="flex items-center gap-2 text-xs font-medium text-muted">
-                        <input
-                          type="checkbox"
-                          aria-label="تحديد الصف"
-                          checked={selectedKeys.has(row.key)}
-                          onChange={() => toggleSelected(row.key)}
-                          disabled={busy}
-                        />
-                        <span dir="ltr">{row.fields.sku}</span>
-                      </label>
-                      <button type="button" onClick={() => removeRow(row.key)} disabled={busy} className="btn-ghost text-xs text-rose-600">
-                        حذف الخيار
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      {(
-                        [
-                          ["variant_name", "اسم الخيار (عربي)", false],
-                          ["variant_name_en", "اسم الخيار (إنجليزي)", true],
-                          ["color", "اللون", false],
-                          ["size", "الحجم", false],
-                          ["price", "السعر (ر.ق)", true],
-                          ["stock_quantity", "الكمية", true],
-                          ["barcode", "الباركود (EAN-13)", true],
-                        ] as const
-                      ).map(([field, label, ltr]) => (
-                        <label key={field} className="flex flex-col gap-1">
-                          <span className="label">{label}</span>
-                          <input
-                            id={`create-variant-${i}-${field}`}
-                            dir={ltr ? "ltr" : undefined}
-                            className="input"
-                            value={row.fields[field]}
-                            onChange={(e) => setRowField(row.key, field, e.target.value)}
-                          />
-                        </label>
-                      ))}
-                      <label className="flex flex-col gap-1">
-                        <span className="label">SKU الخيار (تلقائي)</span>
-                        <input id={`create-variant-${i}-sku`} dir="ltr" className="input" value={row.fields.sku} readOnly />
-                      </label>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
+          {/* Variants — unified Variant Studio (UX.4E-4). The create wizard keeps
+              its own orchestration (renumber new SKUs to the main prefix, re-scan
+              server identity for fresh barcodes after add/remove/bulk) and injects
+              it as callbacks; the studio only composes the shared UI. AI variant
+              suggestions stay Edit-only, so that capability is not enabled here. */}
+          <VariantStudio
+            mode="create"
+            rows={rows}
+            mainSku={scalars.sku}
+            selectedKeys={selectedKeys}
+            onToggleSelect={toggleSelected}
+            onAddRow={addRow}
+            onRemoveRow={removeRow}
+            onFieldChange={setRowField}
+            identity={variantIdentity}
+            bulk={{
+              onAddRows: bulkAdd,
+              onFillMissingPrice: bulkFillPrice,
+              onSetSelectedStock: bulkSetStock,
+              onDeleteSelected: bulkDelete,
+              onRestoreSelected: () => {},
+              onRemoveEmptyRows: bulkRemoveEmpty,
+              canRestore: false,
+            }}
+            disabled={busy}
+          />
 
           {/* Save */}
           <div className="flex flex-wrap items-center gap-2">

@@ -165,13 +165,18 @@ test("guard: completeness does NOT reimplement SKU/barcode/number rules", () => 
 });
 
 test("guard: Create AND Edit both use the shared completeness component + helper", () => {
+  // Post-consolidation (UX.4E-4): the completeness readout is composed once inside
+  // the unified VariantStudio, which both editors mount and pass the main SKU to.
   for (const rel of [
     "../../components/v2/catalog/AiProductCreator.tsx",
     "../../components/v2/catalog/ProductEditForm.tsx",
   ]) {
     const code = read(rel);
-    assert.ok(code.includes("VariantCompleteness"), `${rel} renders the shared component`);
+    assert.ok(code.includes("<VariantStudio"), `${rel} mounts the unified variant studio`);
+    assert.ok(code.includes("mainSku={scalars.sku}"), `${rel} passes the main SKU for completeness`);
   }
+  const studio = read("../../components/v2/catalog/VariantStudio.tsx");
+  assert.ok(studio.includes("VariantCompleteness"), "studio renders the shared completeness component");
   const comp = read("../../components/v2/catalog/VariantCompleteness.tsx");
   assert.ok(comp.includes("summarizeVariantCompleteness"), "component uses the shared summary helper");
 });

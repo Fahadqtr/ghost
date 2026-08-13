@@ -193,14 +193,20 @@ test("no mutation: every op returns a new array and leaves the input untouched",
 // ── source guards: shared reuse, purity, no duplicated logic ─────────────────
 
 test("guard: Create and Edit both drive the SAME shared bulk layer + component", () => {
+  // Post-consolidation (UX.4E-4): both editors still import the pure bulk layer for
+  // their own row-state handlers, but the bulk-tools COMPONENT is composed once,
+  // inside the unified VariantStudio, and driven by the injected `bulk` handlers.
   for (const rel of [
     "../../components/v2/catalog/AiProductCreator.tsx",
     "../../components/v2/catalog/ProductEditForm.tsx",
   ]) {
     const code = read(rel);
     assert.ok(code.includes('from "@/lib/products/variant-bulk"'), `${rel} imports the pure bulk layer`);
-    assert.ok(code.includes("VariantBulkTools"), `${rel} renders the shared bulk tools`);
+    assert.ok(code.includes("<VariantStudio"), `${rel} mounts the unified variant studio`);
+    assert.ok(code.includes("bulk={{"), `${rel} injects the bulk handlers into the studio`);
   }
+  const studio = read("../../components/v2/catalog/VariantStudio.tsx");
+  assert.ok(studio.includes("VariantBulkTools"), "studio renders the shared bulk tools");
 });
 
 test("guard: variant-bulk is pure — no React/Supabase/server/browser imports", () => {

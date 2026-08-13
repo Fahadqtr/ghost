@@ -143,7 +143,10 @@ test("form: client component wired to the tested state helpers and validation", 
   assert.ok(FORM_SRC.includes("disabled={pending}"), "double-submit guard");
   assert.ok(FORM_SRC.includes("beforeunload"), "unsaved-changes guard");
   assert.ok(FORM_SRC.includes('role="alert"'), "accessible error banner");
-  assert.ok(FORM_SRC.includes("تراجع"), "undo before save for removed variants");
+  // Undo-before-save for removed variants: the form injects the restore handler
+  // into the unified VariantStudio (UX.4E-4); the "تراجع" control itself lives in
+  // the shared VariantRow the studio renders.
+  assert.ok(FORM_SRC.includes("onRestoreRow={restoreRow}"), "form wires undo before save for removed variants");
 });
 
 test("form: no client-side uuids, no direct Supabase access, no window.alert", () => {
