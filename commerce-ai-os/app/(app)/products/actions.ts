@@ -4,8 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
-import { logStockTransition } from "@/lib/tasks/stock-tasks";
+import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { queueForTalabat } from "@/lib/talabat/queue";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
@@ -13,146 +12,20 @@ import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
 import { buildDraftPrompt, parseProductDraft } from "@/lib/products/draft-compute";
 import { deleteShelfStockForProduct } from "@/lib/products/shelf-cleanup";
-import {
-  friendlyWriteError,
-  num,
-  str,
-  toProductRow,
-  updateProductCore,
-  type ProductInput,
-  type VariantInput,
-} from "@/lib/products/product-save";
 
-// The form input shapes and the whole update-save core (row projection,
-// inventory sync, id-preserving variant sync) moved to
-// lib/products/product-save.ts in Phase UI.4 so the V2 product editor shares
-// this exact write path. The types are re-exported so existing importers
-// (ProductForm, the edit page, quick views) keep working unchanged.
+// The product create/edit save cores (row projection, inventory sync, the
+// id-preserving variant sync) live in lib/products/product-save.ts and are used
+// by the V2 editor's own server actions. The legacy createProduct/updateProduct
+// actions that once called them here were retired in UX.4E-9C once the legacy
+// form (components/ProductForm.tsx) was removed. The input-shape types stay
+// re-exported for the approval/delete workflows and any external callers.
 export type { ProductInput, VariantInput } from "@/lib/products/product-save";
-
-function toVariantRows(parentId: string, variants: VariantInput[]) {
-  return variants
-    .filter((v) => str(v.variant_name) || str(v.variant_name_en) || str(v.sku))
-    .map((v) => ({
-      parent_product_id: parentId,
-      variant_name: str(v.variant_name),
-      variant_name_en: str(v.variant_name_en),
-      sku: str(v.sku),
-      barcode: str(v.barcode),
-      color: str(v.color),
-      size: str(v.size),
-      price: num(v.price),
-      stock_quantity: num(v.stock_quantity),
-    }));
-}
 
 // Fixed message for a full-product delete aborted because its shelf rows
 // could not be cleared. Leaks no table name, uuid, or database text.
 const SHELF_CLEANUP_FAILED = "تعذّر حذف بيانات رفوف خيارات المنتج. لم يتم حذف المنتج.";
 
 // --- actions --------------------------------------------------------------
-
-export async function createProduct(input: ProductInput) {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
-  const supabase = createClient();
-
-  let productRow;
-  try {
-    productRow = await toProductRow(input);
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Invalid product data." };
-  }
-
-  const { data: product, error } = await supabase
-    .from("products")
-    .insert(productRow)
-    .select("id")
-    .single();
-
-  if (error || !product) {
-    return { error: friendlyWriteError(error, "Could not create product.") };
-  }
-
-  // Seed an inventory row so the product appears on the Inventory page.
-  const invErr = (
-    await supabase.from("inventory").insert({
-      product_id: product.id,
-      stock_quantity: productRow.stock_quantity ?? 0,
-      low_stock_threshold: 5,
-      sold_quantity: 0,
-    })
-  ).error;
-  if (invErr) {
-    return {
-      error: `Product created, but its inventory row failed: ${invErr.message}`,
-    };
-  }
-
-  // Insert variants (parent-child) if any.
-  const variantRows = toVariantRows(product.id, input.variants);
-  if (variantRows.length > 0) {
-    const vErr = (await supabase.from("product_variants").insert(variantRows)).error;
-    if (vErr) {
-      return { error: friendlyWriteError(vErr, "Product created, but its variants failed to save.") };
-    }
-  }
-
-  await logCatalogTask({ action: "create", productId: product.id, snapshot: productRow as Record<string, unknown> });
-
-  revalidatePath("/products");
-  revalidatePath("/inventory");
-  redirect("/products");
-}
-
-export async function updateProduct(id: string, input: ProductInput) {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
-  const supabase = createClient();
-
-  // The whole save path (row projection, product update, inventory sync, and
-  // the id-preserving variant sync through the atomic RPC) lives in
-  // lib/products/product-save.ts and is shared with the V2 product editor.
-  // The session client is used deliberately (no admin client) so existing RLS
-  // still governs the write. Failure messages are the same strings this action
-  // returned before the extraction.
-  const core = await updateProductCore(supabase, id, input);
-  if (!core.ok) return { error: core.message };
-
-  const { before: beforeRow, row: productRow } = core;
-
-  // Stock crossed zero in this edit? Open the manual-platforms task.
-  try {
-    await logStockTransition(createAdminClient(), {
-      productId: id,
-      before: core.stockBefore,
-      after: core.stockAfter,
-    });
-  } catch { /* best-effort */ }
-
-  const changes = computeFieldChanges(
-    (beforeRow ?? {}) as Record<string, unknown>,
-    productRow as Record<string, unknown>,
-    ["name_en", "name_ar", "sku", "barcode", "price", "discount_price", "description_en", "description_ar", "main_category", "sub_category", "image_url"],
-  );
-  // Approving through the full form gets the same "add it to the platforms"
-  // task as the quick-approve buttons.
-  const becameApproved =
-    String((beforeRow as { approval?: string | null } | null)?.approval ?? "") !== "Approved" &&
-    productRow.approval === "Approved";
-  if (becameApproved) {
-    await logCatalogTask({
-      action: "create", productId: id, snapshot: productRow as Record<string, unknown>,
-      note: "✅ المنتج انعتمد — أضِفه في المنصات اليدوية بكل بياناته، وبعد الإضافة علّم المهمة «تم».",
-    });
-    try { await queueForTalabat(createAdminClient(), id); } catch { /* best-effort */ }
-  } else if (changes.length) {
-    await logCatalogTask({ action: "update", productId: id, snapshot: productRow as Record<string, unknown>, changes });
-  }
-
-  revalidatePath("/products");
-  revalidatePath(`/products/${id}`);
-  revalidatePath("/inventory");
-  redirect("/products");
-}
 
 // Quick approve/reject from the list or dashboard (no full form). Empty -> null.
 // Optional reason (written to rejection_reason) records WHY.
@@ -352,23 +225,6 @@ export async function extractRejectedFromImages(
   } catch (e) {
     return { error: e instanceof Error ? e.message : "فشل قراءة الصورة.", names: [] };
   }
-}
-
-/** Next SKU in the catalog's mk#### scheme (max existing mk-number + 1). */
-export async function nextProductSku(): Promise<{ sku: string; error?: string }> {
-  if (!(await isSignedIn())) return { sku: "", error: "Not signed in." };
-  const supabase = createClient();
-  let maxMk = 0;
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase.from("products").select("sku").range(from, from + 999);
-    if (error) return { sku: "", error: error.message };
-    for (const p of data ?? []) {
-      const m = /^mk(\d+)$/i.exec(String((p as any).sku ?? "").trim());
-      if (m) maxMk = Math.max(maxMk, parseInt(m[1], 10));
-    }
-    if ((data ?? []).length < 1000) break;
-  }
-  return { sku: `mk${maxMk + 1}` };
 }
 
 const ALLOWED_IMG = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);

@@ -40,6 +40,8 @@ export default function VariantRow({
   onRemove,
   onRestore,
   onFieldChange,
+  registerFieldRef,
+  onFieldKeyDown,
   disabled = false,
 }: {
   row: VariantRowModel;
@@ -58,6 +60,12 @@ export default function VariantRow({
   /** Provided only where a soft-removed row can be restored (Edit). */
   onRestore?: () => void;
   onFieldChange: (field: VariantFieldKey, value: string) => void;
+  /** Generic per-field DOM-ref registrar (the studio uses it to reach the barcode
+   *  input for scanner focus). No field-specific logic lives here. */
+  registerFieldRef?: (field: VariantFieldKey, el: HTMLInputElement | null) => void;
+  /** Generic per-field keydown passthrough. The studio decides what (if anything)
+   *  a key means — the row just forwards the event with its field key. */
+  onFieldKeyDown?: (field: VariantFieldKey, e: React.KeyboardEvent<HTMLInputElement>) => void;
   disabled?: boolean;
 }) {
   const removed = row.removed;
@@ -104,12 +112,14 @@ export default function VariantRow({
               <span className="label">{f.label}</span>
               <input
                 id={`${fieldIdPrefix}-${fieldIndex}-${f.key}`}
+                ref={registerFieldRef ? (el) => registerFieldRef(f.key, el) : undefined}
                 dir={f.dir}
                 inputMode={f.inputMode}
                 className="input"
                 value={row.fields[f.key]}
                 readOnly={f.readOnly}
                 onChange={f.readOnly ? undefined : (e) => onFieldChange(f.key, e.target.value)}
+                onKeyDown={onFieldKeyDown ? (e) => onFieldKeyDown(f.key, e) : undefined}
               />
             </label>
           ))}
