@@ -75,12 +75,17 @@ test("exports workspace renders the export components unchanged", () => {
 
 // ── Nothing deleted / no broken routes ──────────────────────────────────────
 
-test("legacy Excel Import component is NOT deleted (only removed from the hub)", () => {
-  assert.ok(existsSync(new URL("../../../components/ExcelImport.tsx", import.meta.url)), "ExcelImport.tsx still exists");
+test("legacy Excel Import component IS deleted (retired in UX.4E-9B)", () => {
+  assert.equal(
+    existsSync(new URL("../../../components/ExcelImport.tsx", import.meta.url)),
+    false,
+    "ExcelImport.tsx must stay deleted — /v2/catalog/import is the only importer"
+  );
 });
 
-test("every heavy component file still exists", () => {
+test("every still-live heavy component file exists", () => {
   for (const c of HEAVY) {
+    if (c === "ExcelImport") continue; // retired in UX.4E-9B
     assert.ok(existsSync(new URL(`../../../components/${c}.tsx`, import.meta.url)), `${c}.tsx still exists`);
   }
 });
