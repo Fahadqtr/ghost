@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
-  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak, staffSetAvailability, staffSetAvailabilityInv, staffInventoryMode, staffSetManyAvailability, staffSetVariantAvailability,
+  staffLogin, staffLogout, staffLookup, recordStaffMovement, staffToday, staffAllProducts, staffAskMalak, staffSetAvailability, staffSetAvailabilityInv, staffInventoryMode, staffSetManyAvailability,
   staffGenerateProductDraft, staffAddProduct, staffEditProductImage, staffEditMovement, staffDeleteMovement,
   staffMyTasks, staffSetTaskStatus, staffTaskComments, staffAddTaskComment, staffItemForProduct, staffOpenStockTask, staffDraftFromImageUrl,
   staffMoveVariant, staffVariantOosTask, staffForwardTask,
@@ -422,16 +422,9 @@ function ProductsTab({ locale }: { locale: Locale }) {
     flash(true, `${p.name ?? p.sku ?? ""} → ${inStock ? L("متوفر", "In stock") : L("نفذ", "Out of stock")}`);
   });
 
-  // Simple-mode: flip ONE option In / Out.
-  const setVarAvail = (p: StaffProduct, v: StaffVariant, inStock: boolean) => start(async () => {
-    if (!v.id) return;
-    const r = await staffSetVariantAvailability(v.id, inStock);
-    if ("error" in r) { flash(false, r.error); return; }
-    setAll((list) => list.map((x) => x.id === p.id
-      ? { ...x, variants: (x.variants ?? []).map((vv) => vv.id === v.id ? { ...vv, stock: r.stock } : vv) }
-      : x));
-    flash(true, `${v.name ?? ""} → ${inStock ? L("متوفر", "In stock") : L("نفذ", "Out of stock")}`);
-  });
+  // INV.2C — per-option availability is deferred to INV.2E (needs
+  // product_variants.stock_status). No variant availability toggle in the staff
+  // portal for now; the option row shows its current state read-only.
 
   // Simple-mode: mark every filtered product In / Out at once (ids passed from
   // the render scope where `filtered` is defined).
@@ -640,16 +633,8 @@ function ProductsTab({ locale }: { locale: Locale }) {
                       <span className="min-w-0 flex-1 truncate text-slate-700">{v.name || L(`خيار ${i + 1}`, `Option ${i + 1}`)}</span>
                       {v.barcode ? <span className="font-mono text-[11px] text-slate-500">{v.barcode}</span> : null}
                       {simpleMode ? (
-                        canMove ? (
-                          <span className="flex items-center gap-1 rounded-full bg-slate-100 p-0.5">
-                            <button disabled={busy} onClick={() => setVarAvail(p, v, true)}
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold disabled:opacity-50 ${v.stock != null && v.stock > 0 ? "bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-200" : "text-slate-400"}`}>{L("متوفر", "In")}</button>
-                            <button disabled={busy} onClick={() => setVarAvail(p, v, false)}
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold disabled:opacity-50 ${v.stock != null && v.stock <= 0 ? "bg-white text-red-600 shadow-sm ring-1 ring-red-200" : "text-slate-400"}`}>{L("نفذ", "Out")}</button>
-                          </span>
-                        ) : (
-                          <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-emerald-600"}`}>{v.stock != null && v.stock <= 0 ? L("نفذ", "Out") : L("متوفر", "In")}</span>
-                        )
+                        // INV.2C — per-option availability toggle deferred to INV.2E; read-only.
+                        <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-emerald-600"}`}>{v.stock != null && v.stock <= 0 ? L("نفذ", "Out") : L("متوفر", "In")}</span>
                       ) : (
                         <>
                           <span className={`font-bold ${v.stock != null && v.stock <= 0 ? "text-red-600" : "text-slate-600"}`}>{stockNum(v.stock)}</span>
