@@ -84,13 +84,66 @@ export async function adjustVariant(admin: any, variantId: string, delta: number
   return interpret(op, error, data, ["before", "after", "parentStock"]);
 }
 
-/** Set one variant to an absolute non-negative integer; parent rolls up (RPC). */
+/**
+ * Set one variant to an absolute non-negative integer; parent rolls up (RPC).
+ *
+ * The INV.3C RPC returns the parent AFTER (parentStock) only. Because the RPC
+ * locks all siblings and rolls up atomically, the parent BEFORE is exactly
+ * parentStock − (after − before); we derive it here so a caller (the INV.4B
+ * variant stocktake writer) has an authoritative parentBefore/parentStock pair
+ * for a zero-crossing transition WITHOUT re-reading the (double-counting)
+ * totalStock. This is additive — the RPC is unchanged. `parentBefore` is only
+ * added when before/after/parentStock are all present and well-formed.
+ */
 export async function setVariantAbsolute(admin: any, variantId: string, quantity: number): Promise<EngineResult> {
   const op = "setVariantAbsolute";
   if (!variantId) return { ok: false, op, reason: "missing_variant" };
   if (!Number.isInteger(quantity) || quantity < 0) return { ok: false, op, reason: "invalid_quantity" };
   const { data, error } = await admin.rpc("inv_set_variant_absolute", { p_variant_id: variantId, p_quantity: quantity });
-  return interpret(op, error, data, ["before", "after", "parentStock"]);
+  const res = interpret(op, error, data, ["before", "after", "parentStock"]);
+  if (res.ok) {
+    const before = Number(res.data.before);
+    const after = Number(res.data.after);
+    const parentStock = Number(res.data.parentStock);
+    if (Number.isFinite(before) && Number.isFinite(after) && Number.isFinite(parentStock)) {
+      res.data.parentBefore = parentStock - (after - before);
+    }
+  }
+  return res;
+}
+
+/**
+ * Apply a ± delta to ONE variant's stock with the parent rollup AND an optional
+ * sold_quantity increment, ALL atomically (RPC inv_adjust_variant_movement). The
+ * sole path for the INV.4B variant movement writers (recordVariantMovement,
+ * staffMoveVariant).
+ *
+ * `soldDelta` MUST be either 0 (no sold change) or, for a sale-out, exactly the
+ * quantity going out (delta < 0 and soldDelta = -delta); the RPC enforces this
+ * fail-closed. Fail-closed like every wrapper: transport error / status:error /
+ * malformed / a missing required derived field is a FAILURE — never a fallback to
+ * a direct JS write. Required success fields: variantId, productId, before, after,
+ * parentBefore, parentStock, soldBefore, soldAfter.
+ */
+export async function adjustVariantMovement(
+  admin: any,
+  args: { variantId: string; delta: number; soldDelta: number },
+): Promise<EngineResult> {
+  const op = "adjustVariantMovement";
+  const { variantId, delta, soldDelta } = args;
+  if (!variantId) return { ok: false, op, reason: "missing_variant" };
+  if (!Number.isInteger(delta) || delta === 0) return { ok: false, op, reason: "invalid_delta" };
+  if (!Number.isInteger(soldDelta) || soldDelta < 0) return { ok: false, op, reason: "invalid_sold_delta" };
+  // Guard the sold contract in the wrapper too (the RPC is authoritative).
+  if (soldDelta > 0 && !(delta < 0 && soldDelta === -delta)) {
+    return { ok: false, op, reason: "sold_delta_mismatch" };
+  }
+  const { data, error } = await admin.rpc("inv_adjust_variant_movement", {
+    p_variant_id: variantId, p_delta: delta, p_sold_delta: soldDelta,
+  });
+  return interpret(op, error, data, [
+    "variantId", "productId", "before", "after", "parentBefore", "parentStock", "soldBefore", "soldAfter",
+  ]);
 }
 
 /**

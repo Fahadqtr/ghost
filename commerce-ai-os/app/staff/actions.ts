@@ -17,7 +17,9 @@ import { buildDraftPrompt, parseProductDraft, EMPTY_DRAFT, type ProductDraft } f
 import { editProductImageCore } from "@/lib/products/imageEdit";
 import { storePrimaryProductImage } from "@/lib/products/imageStore";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
-import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
+import { openStockTask, totalStock, openVariantStockTask } from "@/lib/tasks/stock-tasks";
+import { adjustVariantMovement, type EngineResult } from "@/lib/inventory/engine";
+import { logAuthoritativeVariantTransition } from "@/lib/inventory/transition";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode } from "@/lib/settings";
 import { setProductAvailabilityState, writeProductAvailability, setVariantAvailabilityState } from "@/lib/availability/engine";
@@ -505,6 +507,9 @@ export async function staffMoveVariant(
   if (!variantId || qty < 1) return { error: "اختر خيارًا وكمية أكبر من صفر." };
   if (dir !== "in" && dir !== "out") return { error: "نوع حركة غير صالح." };
 
+  // Read-only metadata (name / barcode / parent) for the audit — NEVER used to
+  // compute the mutation. The stock_quantity here only powers a friendly
+  // pre-flight message; the authoritative before/after come from the Engine.
   const { data: v } = await admin
     .from("product_variants")
     .select("id, parent_product_id, variant_name, barcode, stock_quantity")
@@ -512,25 +517,37 @@ export async function staffMoveVariant(
     .maybeSingle();
   if (!v) return { error: "الخيار غير موجود." };
 
-  const before = Number(v.stock_quantity) || 0;
-  if (dir === "out" && qty > before) return { error: `الكمية أكبر من مخزون الخيار (${before}).` };
-  const after = dir === "in" ? before + qty : before - qty;
+  const known = Number(v.stock_quantity) || 0;
+  if (dir === "out" && qty > known) return { error: `الكمية أكبر من مخزون الخيار (${known}).` };
 
-  const { error } = await admin.from("product_variants").update({ stock_quantity: after }).eq("id", v.id);
-  if (error) return { error: error.message };
+  // Variant stock + parent rollup → Inventory Engine (atomic). Staff moves carry
+  // NO sale semantics, so soldDelta is always 0 (sold_quantity is untouched).
+  // Unlike the legacy path, the parent inventory rollup is now applied atomically
+  // and correctly by the RPC (a deliberate correctness fix).
+  const delta = dir === "in" ? qty : -qty;
+  const res = await adjustVariantMovement(admin, { variantId: String(v.id), delta, soldDelta: 0 });
+  if (!res.ok) return { error: staffVariantMoveMessage(res) };
 
+  const before = Number(res.data.before);
+  const after = Number(res.data.after);
+  const parentBefore = Number(res.data.parentBefore);
+  const parentAfter = Number(res.data.parentStock);
+  const productId = (res.data.productId as string | null) ?? v.parent_product_id ?? null;
+
+  // Audit semantics preserved EXACTLY (variant_stock_in / variant_stock_out so the
+  // reversible approvals queue ignores it); old/new from the Engine result.
   const { error: logErr } = await insertAuditRow(admin, {
     agent: `staff:${who.name}`,
     action: dir === "in" ? "variant_stock_in" : "variant_stock_out",
     action_type: dir === "in" ? "variant_stock_in" : "variant_stock_out",
     sku: v.barcode ?? v.variant_name ?? null,
-    product_id: v.parent_product_id ?? null,
+    product_id: productId,
     field: "variant_stock",
     old_value: String(before),
     new_value: String(after),
     status: "done",
     details: {
-      productId: v.parent_product_id ?? null,
+      productId,
       variantId: String(v.id),
       variantName: v.variant_name ?? null,
       quantity: qty,
@@ -541,15 +558,41 @@ export async function staffMoveVariant(
   });
   if (logErr) console.error("[staffMoveVariant] audit insert failed:", logErr.message);
 
-  await logVariantStockTransition(admin, {
-    productId: v.parent_product_id,
+  // Authoritative zero-crossing transition (best-effort) — engine parentBefore/
+  // parentStock, not the double-counting totalStock helper.
+  await logAuthoritativeVariantTransition(admin, {
+    productId,
     variantId: String(v.id),
     variantName: String(v.variant_name ?? "خيار"),
-    before, after,
+    variantBefore: before,
+    variantAfter: after,
+    parentBefore,
+    parentAfter,
     actor: `staff:${who.name}`,
   });
 
   return { ok: true as const, after };
+}
+
+// INV.4B — map a variant Engine failure to a staff-facing Arabic message.
+function staffVariantMoveMessage(r: Extract<EngineResult, { ok: false }>): string {
+  switch (r.reason) {
+    case "variant_has_shelf_rows":
+      return "هذا الخيار مُدار من الرفوف — عدّل كميته من جرد الرفوف.";
+    case "parent_has_shelf_rows":
+      return "المنتج موزّع على رفوف — استخدم جرد الرفوف.";
+    case "insufficient_stock":
+      return "الكمية أكبر من مخزون الخيار المتاح.";
+    case "missing_variant":
+      return "الخيار غير موجود.";
+    case "invalid_delta":
+    case "invalid_quantity":
+      return "كمية غير صالحة.";
+    case "inventory_inconsistent":
+      return "حالة المخزون غير متسقة — راجع المنتج.";
+    default:
+      return "تعذّر تحديث مخزون الخيار.";
+  }
 }
 
 // Manual «اوت ستوك» for ONE option that is already at zero (supervisor button).

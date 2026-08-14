@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  adjustVariant, setVariantAbsolute, setAbsolute, placeOnShelf, reconcile,
+  adjustVariant, setVariantAbsolute, adjustVariantMovement, setAbsolute, placeOnShelf, reconcile,
   adjust, sell, receive, moveShelf, removeShelf, reverseMovement,
   InventoryEngineNotImplementedError, NOT_IMPLEMENTED_OPS,
 } from "./engine.ts";
@@ -38,6 +38,83 @@ test("setVariantAbsolute calls inv_set_variant_absolute with mapped params", asy
   const r = await setVariantAbsolute(c, "v1", 6);
   assert.equal(r.ok, true);
   assert.deepEqual(c.calls, [{ name: "inv_set_variant_absolute", params: { p_variant_id: "v1", p_quantity: 6 } }]);
+});
+
+test("setVariantAbsolute derives parentBefore = parentStock − (after − before)", async () => {
+  // parent AFTER 6, this variant went 2 → 5 (+3) ⇒ parent BEFORE = 6 − 3 = 3.
+  const c = rpcClient(applied({ before: 2, after: 5, parentStock: 6 }));
+  const r = await setVariantAbsolute(c, "v1", 5);
+  assert.equal(r.ok, true);
+  if (r.ok) assert.equal(r.data.parentBefore, 3);
+  // a decrease: variant 9 → 4 (−5), parent AFTER 10 ⇒ parent BEFORE = 15.
+  const d = rpcClient(applied({ before: 9, after: 4, parentStock: 10 }));
+  const r2 = await setVariantAbsolute(d, "v1", 4);
+  if (r2.ok) assert.equal(r2.data.parentBefore, 15);
+});
+
+// ── adjustVariantMovement (INV.4B) — atomic variant stock + rollup + sold ──────
+
+const movementApplied = (extra: Record<string, unknown>) => applied({
+  variantId: "v1", productId: "p1", before: 5, after: 3,
+  parentBefore: 12, parentStock: 10, soldBefore: 0, soldAfter: 0, ...extra,
+});
+
+test("adjustVariantMovement calls inv_adjust_variant_movement with mapped params (IN)", async () => {
+  const c = rpcClient(movementApplied({ before: 5, after: 8, parentBefore: 10, parentStock: 13 }));
+  const r = await adjustVariantMovement(c, { variantId: "v1", delta: 3, soldDelta: 0 });
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_adjust_variant_movement", params: { p_variant_id: "v1", p_delta: 3, p_sold_delta: 0 } }]);
+  if (r.ok) { assert.equal(r.data.after, 8); assert.equal(r.data.parentBefore, 10); assert.equal(r.data.parentStock, 13); }
+});
+
+test("adjustVariantMovement (OUT valid) maps a negative delta", async () => {
+  const c = rpcClient(movementApplied({}));
+  const r = await adjustVariantMovement(c, { variantId: "v1", delta: -2, soldDelta: 0 });
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls[0].params, { p_variant_id: "v1", p_delta: -2, p_sold_delta: 0 });
+});
+
+test("adjustVariantMovement (sale OUT) forwards the sold delta", async () => {
+  const c = rpcClient(movementApplied({ soldBefore: 4, soldAfter: 6 }));
+  const r = await adjustVariantMovement(c, { variantId: "v1", delta: -2, soldDelta: 2 });
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls[0].params, { p_variant_id: "v1", p_delta: -2, p_sold_delta: 2 });
+  if (r.ok) { assert.equal(r.data.soldBefore, 4); assert.equal(r.data.soldAfter, 6); }
+});
+
+test("adjustVariantMovement arg validation rejects before any RPC call (no fallback)", async () => {
+  const bad: Array<{ variantId: string; delta: number; soldDelta: number }> = [
+    { variantId: "", delta: -1, soldDelta: 0 },     // missing variant
+    { variantId: "v", delta: 0, soldDelta: 0 },      // zero delta
+    { variantId: "v", delta: 1.5, soldDelta: 0 },    // non-integer delta
+    { variantId: "v", delta: -1, soldDelta: -1 },    // negative sold
+    { variantId: "v", delta: -1, soldDelta: 0.5 },   // non-integer sold
+    { variantId: "v", delta: 2, soldDelta: 2 },      // sold on a stock-IN → mismatch
+    { variantId: "v", delta: -2, soldDelta: 1 },     // sold ≠ |delta| out → mismatch
+  ];
+  for (const args of bad) {
+    const c = rpcClient(movementApplied({}));
+    const r = await adjustVariantMovement(c, args);
+    assert.equal(r.ok, false, `rejected ${JSON.stringify(args)}`);
+    assert.equal(c.calls.length, 0, `no RPC call for ${JSON.stringify(args)}`);
+  }
+});
+
+test("adjustVariantMovement is fail-closed on every non-applied outcome", async () => {
+  // transport error
+  const te = await adjustVariantMovement(rpcClient({ data: null, error: { message: "boom" } }), { variantId: "v1", delta: 1, soldDelta: 0 });
+  assert.equal(te.ok, false); if (!te.ok) assert.equal(te.reason, "rpc_transport_error");
+  // status:error surfaced verbatim
+  const se = await adjustVariantMovement(rpcClient({ data: { status: "error", reason: "insufficient_stock" }, error: null }), { variantId: "v1", delta: -9, soldDelta: 0 });
+  assert.equal(se.ok, false); if (!se.ok) assert.equal(se.reason, "insufficient_stock");
+  // malformed
+  for (const data of [null, [1], "applied", 7]) {
+    const r = await adjustVariantMovement(rpcClient({ data, error: null }), { variantId: "v1", delta: 1, soldDelta: 0 });
+    assert.equal(r.ok, false);
+  }
+  // applied but missing a required derived field (soldAfter) → fail-closed
+  const miss = await adjustVariantMovement(rpcClient(applied({ variantId: "v1", productId: "p1", before: 5, after: 3, parentBefore: 12, parentStock: 10, soldBefore: 0 })), { variantId: "v1", delta: -2, soldDelta: 0 });
+  assert.equal(miss.ok, false); if (!miss.ok) assert.equal(miss.reason, "missing_result_field");
 });
 
 test("setAbsolute (INV.4A) calls inv_set_absolute_product with mapped params", async () => {
