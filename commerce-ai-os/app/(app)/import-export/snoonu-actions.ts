@@ -10,7 +10,7 @@ import {
 import { clean } from "@/lib/malak/talabat-export.mjs";
 
 import { buildCodeIndex, fillCodes, type FillItem, type FillResult, type CatalogCodeRow } from "@/lib/snoonu-fill";
-import { inventorySeed } from "@/lib/products/inventory-seed";
+import { createProductsBatchCore } from "@/lib/products/product-create-batch";
 import { nextMkSku } from "@/lib/products/sku-generate";
 
 export type { SnoonuExportRow, SnoonuDiff } from "@/lib/snoonu-diff";
@@ -345,26 +345,18 @@ export async function addSnoonuNewProducts(
 
     if (toInsert.length === 0) return { ok: true, added: 0, skipped, failed: 0 };
 
-    // Insert in chunks; collect ids to seed inventory.
-    const chunk = (a: any[], n: number) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
-    let added = 0, failed = 0;
-    const newIds: string[] = [];
-    for (const part of chunk(toInsert, 200)) {
-      const { data, error } = await admin.from("products").insert(part).select("id");
-      if (error) { failed += part.length; continue; }
-      added += data?.length ?? 0;
-      for (const p of data ?? []) newIds.push(p.id);
-    }
-
-    // Seed inventory rows so they show on the Inventory page (stock 0 to start).
-    if (newIds.length) {
-      const invRows = newIds.map((product_id) => ({ product_id, ...inventorySeed(0) }));
-      for (const part of chunk(invRows, 200)) await admin.from("inventory").insert(part);
+    // Product + inventory writes go through the shared batch core (P7): per-chunk
+    // (200) insert + inventory seed with per-chunk compensating rollback — a chunk
+    // whose inventory seed fails is deleted rather than left orphaned. Identity,
+    // mapping, dedup, skipped, and the response shape are unchanged.
+    const res = await createProductsBatchCore(admin, toInsert, { seedQuantity: 0 });
+    if (res.cleanup === "failed") {
+      console.error("[snoonu-sync] batch inventory rollback incomplete — review the catalog for orphaned products.");
     }
 
     revalidatePath("/products");
     revalidatePath("/import-export/snoonu-sync");
-    return { ok: true, added, skipped, failed };
+    return { ok: true, added: res.added, skipped, failed: res.failed };
   } catch (e) {
     return { ...base, error: e instanceof Error ? e.message : "Unexpected error while adding products." };
   }

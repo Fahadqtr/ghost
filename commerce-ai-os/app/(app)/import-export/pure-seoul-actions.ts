@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computePureSeoulIdMap, type CatalogNameRow } from "@/lib/pure-seoul-map-compute";
-import { inventorySeed } from "@/lib/products/inventory-seed";
+import { createProductsBatchCore } from "@/lib/products/product-create-batch";
 import { nextMkSku } from "@/lib/products/sku-generate";
 
 // Pure Seoul is an INDEPENDENT platform selling the same products as Malika. Its
@@ -484,22 +484,16 @@ export async function addPureSeoulNewProducts(rows: PSRow[]): Promise<AddPsResul
 
   if (toInsert.length === 0) return { ok: true, added: 0, skipped, failed: 0 };
 
-  let added = 0, failed = 0;
-  const newIds: string[] = [];
-  for (let i = 0; i < toInsert.length; i += 200) {
-    const part = toInsert.slice(i, i + 200);
-    const { data, error } = await admin.from("products").insert(part).select("id");
-    if (error) { failed += part.length; continue; }
-    added += data?.length ?? 0;
-    for (const p of data ?? []) newIds.push(p.id);
-  }
-  // Seed inventory rows (stock 0) so they show on the Inventory page.
-  for (let i = 0; i < newIds.length; i += 200) {
-    const part = newIds.slice(i, i + 200).map((product_id) => ({ product_id, ...inventorySeed(0) }));
-    await admin.from("inventory").insert(part);
+  // Product + inventory writes go through the shared batch core (P8): per-chunk
+  // (200) insert + inventory seed with per-chunk compensating rollback — a chunk
+  // whose inventory seed fails is deleted rather than left orphaned. Identity,
+  // mapping, exact + fuzzy dedup, skipped, and the response shape are unchanged.
+  const res = await createProductsBatchCore(admin, toInsert, { seedQuantity: 0 });
+  if (res.cleanup === "failed") {
+    console.error("[pure-seoul] batch inventory rollback incomplete — review the catalog for orphaned products.");
   }
 
   revalidatePath("/products");
   revalidatePath("/import-export/pure-seoul");
-  return { ok: failed === 0, added, skipped, failed };
+  return { ok: res.failed === 0, added: res.added, skipped, failed: res.failed };
 }

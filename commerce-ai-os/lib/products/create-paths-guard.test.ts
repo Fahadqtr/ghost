@@ -73,6 +73,18 @@ interface PathEntry {
 // registry entry fails the enumeration test below.
 const REGISTRY: PathEntry[] = [
   {
+    file: "lib/products/product-create-batch.ts",
+    label: "createProductsBatchCore (Snoonu + Pure Seoul)",
+    classification: "canonical",
+    client: "agnostic", // caller injects the admin client (importers have no RLS session)
+    seed: "inventorySeed",
+    variants: "none",
+    rollback: true,
+    direct: true,
+    note: "The shared BATCH spine. Client-agnostic; chunk-200 insert + inventory seed with " +
+      "per-chunk compensating rollback + cleanup reporting. No SKU/barcode/dedup/mapping.",
+  },
+  {
     file: "lib/products/product-create.ts",
     label: "createProductCore (V2 Create + V2 Import + Malak)",
     classification: "canonical",
@@ -122,24 +134,26 @@ const REGISTRY: PathEntry[] = [
   {
     file: "app/(app)/import-export/snoonu-actions.ts",
     label: "Snoonu import",
-    classification: "adapter-candidate",
+    classification: "converged",
     client: "admin",
-    seed: "inventorySeed", // P1-adopted (was byte-identical)
+    seed: "via-core", // P7: product+inventory via createProductsBatchCore (batch core seeds)
     variants: "none",
-    rollback: false,
-    direct: true,
-    note: "Admin client, BATCH-200. mk#### SKU via nextMkSku + 29-prefix EAN-13; stamps snoonu_id; app dedup.",
+    rollback: true, // gained from the batch core in P7 (per-chunk compensation)
+    direct: false, // delegates to createProductsBatchCore — no direct products.insert
+    note: "P7-migrated: createProductsBatchCore (admin client, chunk-200, per-chunk rollback). SKU " +
+      "(nextMkSku) + 29-prefix barcode + snoonu_id dedup + skipped + ok:true stay in the wrapper.",
   },
   {
     file: "app/(app)/import-export/pure-seoul-actions.ts",
     label: "Pure Seoul import",
-    classification: "adapter-candidate",
+    classification: "converged",
     client: "admin",
-    seed: "inventorySeed", // P1-adopted (was byte-identical)
+    seed: "via-core", // P8: product+inventory via createProductsBatchCore (batch core seeds)
     variants: "none",
-    rollback: false,
-    direct: true,
-    note: "Admin client, BATCH-200. mk#### SKU via nextMkSku + own barcode; stamps pure_seoul_id; fuzzy dedup.",
+    rollback: true, // gained from the batch core in P8 (per-chunk compensation)
+    direct: false, // delegates to createProductsBatchCore — no direct products.insert
+    note: "P8-migrated: createProductsBatchCore (admin client, chunk-200, per-chunk rollback). SKU " +
+      "(nextMkSku) + 29-prefix barcode + pure_seoul_id/exact/fuzzy dedup + skipped + ok:failed===0 stay in the wrapper.",
   },
   {
     file: "app/(app)/products/archive/actions.ts",
@@ -204,14 +218,17 @@ test("createProductCore has the compensating rollback + inventorySeed", () => {
 
 // ── 3. Migration state: converged paths route through the core; the rest don't ─
 
-test("converged paths call createProductCore; adapter-candidate/exempt paths do not", () => {
+// A converged path routes through the single-product core OR the batch core.
+const CALLS_A_CORE = /createProduct(?:s?BatchCore|Core)\(/;
+
+test("converged paths call a create core; adapter-candidate/exempt paths do not", () => {
   for (const e of REGISTRY) {
     if (e.classification === "canonical") continue;
-    const callsCore = /createProductCore\(/.test(read(e.file));
+    const callsCore = CALLS_A_CORE.test(read(e.file));
     if (e.classification === "converged") {
-      assert.ok(callsCore, `${e.label} (converged) must route through createProductCore`);
+      assert.ok(callsCore, `${e.label} (converged) must route through a create core`);
     } else {
-      assert.equal(callsCore, false, `${e.label} must not call createProductCore (migration pending / exempt)`);
+      assert.equal(callsCore, false, `${e.label} must not call a create core (migration pending / exempt)`);
     }
   }
 });
@@ -256,8 +273,7 @@ test("archive restore is registered EXEMPT and preserves original identity (not 
 
 // ── 6. Exactly one canonical path definition ──────────────────────────────────
 
-test("there is exactly one canonical create core", () => {
-  const canon = REGISTRY.filter((e) => e.classification === "canonical");
-  assert.equal(canon.length, 1, "one canonical core");
-  assert.equal(canon[0].file, "lib/products/product-create.ts");
+test("the canonical cores are exactly the single-product + batch spines", () => {
+  const canon = REGISTRY.filter((e) => e.classification === "canonical").map((e) => e.file).sort();
+  assert.deepEqual(canon, ["lib/products/product-create-batch.ts", "lib/products/product-create.ts"]);
 });
