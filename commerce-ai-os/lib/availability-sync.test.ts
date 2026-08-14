@@ -5,62 +5,47 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  computeStockStatus,
+  projectAvailability,
   planStatusUpserts,
   statusKey,
-  type InventoryRow,
-  type VariantRow,
+  type ProductAvailabilityRow,
   type ProductStatus,
 } from "./availability-sync.ts";
 
-// ---- computeStockStatus ----------------------------------------------------
+// ---- projectAvailability (explicit stock_status → overlay) ------------------
 
-test("out when inventory total is 0 and no variants", () => {
-  const inv: InventoryRow[] = [{ product_id: "p1", stock_quantity: 0 }];
-  const s = computeStockStatus(inv, []);
-  assert.deepEqual(s, [{ product_id: "p1", availability: "OutOfStock" }]);
+test("In Stock projects to InStock", () => {
+  const rows: ProductAvailabilityRow[] = [{ id: "p1", stock_status: "In Stock" }];
+  assert.deepEqual(projectAvailability(rows), [{ product_id: "p1", availability: "InStock" }]);
 });
 
-test("in stock when inventory total > 0", () => {
-  const inv: InventoryRow[] = [{ product_id: "p1", stock_quantity: 5 }];
-  assert.equal(computeStockStatus(inv, [])[0].availability, "InStock");
+test("Out of Stock projects to OutOfStock", () => {
+  const rows: ProductAvailabilityRow[] = [{ id: "p1", stock_status: "Out of Stock" }];
+  assert.deepEqual(projectAvailability(rows), [{ product_id: "p1", availability: "OutOfStock" }]);
 });
 
-test("variant stock keeps a zero-inventory parent in stock (max, not just inventory)", () => {
-  const inv: InventoryRow[] = [{ product_id: "p1", stock_quantity: 0 }];
-  const variants: VariantRow[] = [
-    { parent_product_id: "p1", stock_quantity: 0 },
-    { parent_product_id: "p1", stock_quantity: 3 }, // one option still has stock
+test("unknown / null / legacy values project to OutOfStock (never a quantity guess)", () => {
+  for (const v of ["Low Stock", "", "  ", null, "instock", "whatever"]) {
+    const rows: ProductAvailabilityRow[] = [{ id: "p1", stock_status: v as string | null }];
+    assert.equal(projectAvailability(rows)[0].availability, "OutOfStock", `${JSON.stringify(v)} → OutOfStock`);
+  }
+});
+
+test("rows without an id are ignored; duplicate ids collapse to the first", () => {
+  const rows: ProductAvailabilityRow[] = [
+    { id: null, stock_status: "In Stock" },
+    { id: "p1", stock_status: "In Stock" },
+    { id: "p1", stock_status: "Out of Stock" }, // duplicate — first wins
   ];
-  assert.equal(computeStockStatus(inv, variants)[0].availability, "InStock");
+  assert.deepEqual(projectAvailability(rows), [{ product_id: "p1", availability: "InStock" }]);
 });
 
-test("out only when BOTH inventory and every variant are 0", () => {
-  const inv: InventoryRow[] = [{ product_id: "p1", stock_quantity: 0 }];
-  const variants: VariantRow[] = [
-    { parent_product_id: "p1", stock_quantity: 0 },
-    { parent_product_id: "p1", stock_quantity: 0 },
+test("projection is deterministic (same input → equal output)", () => {
+  const rows: ProductAvailabilityRow[] = [
+    { id: "p1", stock_status: "In Stock" },
+    { id: "p2", stock_status: "Out of Stock" },
   ];
-  assert.equal(computeStockStatus(inv, variants)[0].availability, "OutOfStock");
-});
-
-test("multiple inventory rows for one product roll up by max", () => {
-  const inv: InventoryRow[] = [
-    { product_id: "p1", stock_quantity: 0 },
-    { product_id: "p1", stock_quantity: 7 },
-  ];
-  const s = computeStockStatus(inv, []);
-  assert.equal(s.length, 1);
-  assert.equal(s[0].availability, "InStock");
-});
-
-test("null stock is treated as 0; rows without a product_id are ignored", () => {
-  const inv: InventoryRow[] = [
-    { product_id: "p1", stock_quantity: null },
-    { product_id: null, stock_quantity: 99 },
-  ];
-  const s = computeStockStatus(inv, []);
-  assert.deepEqual(s, [{ product_id: "p1", availability: "OutOfStock" }]);
+  assert.deepEqual(projectAvailability(rows), projectAvailability(rows));
 });
 
 // ---- planStatusUpserts -----------------------------------------------------

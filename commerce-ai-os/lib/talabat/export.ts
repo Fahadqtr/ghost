@@ -4,9 +4,12 @@
 // Talabat does not support product options, so every Malika variant ships as a
 // standalone Talabat product. Malika's Master Catalogue stays the source of
 // truth: this module never mutates products/variants and never invents a SKU or
-// barcode. It is self-contained (no sibling imports) so node:test can import it
-// directly. The durable mapping key is the variant SKU — never product_variants.id,
-// never array order, never an index.
+// barcode. Its only sibling import is the pure availability read-model
+// (lib/availability/read), so INV.2D availability is honored via the shared
+// helper rather than re-derived from quantity. The durable mapping key is the
+// variant SKU — never product_variants.id, never array order, never an index.
+
+import { isAvailable } from "../availability/read.ts";
 
 export type MappingStatus = "active" | "needs_review" | "archived";
 
@@ -29,6 +32,8 @@ export interface ExportProductInput {
   approved?: boolean;
   /** Confirmed archived/deactivated (default false). */
   archived?: boolean;
+  /** Explicit product availability (products.stock_status), INV.2D. */
+  stock_status?: string | null;
 }
 
 export interface ExportVariantInput {
@@ -223,6 +228,10 @@ export function buildTalabatExport(
     const descEn = clean(p.description_en);
     const descAr = clean(p.description_ar);
     const vs = variantsByParent.get(p.id) ?? [];
+    // INV.2D — availability is the EXPLICIT product state, never quantity. All of
+    // a product's rows (standalone or per-variant) reflect this product-level
+    // availability; per-variant availability is deferred to INV.2E.
+    const availability: "InStock" | "OutOfStock" = isAvailable(p.stock_status) ? "InStock" : "OutOfStock";
 
     if (vs.length === 0) {
       // No-variant product → one standalone row.
@@ -238,7 +247,7 @@ export function buildTalabatExport(
         mapping: {
           masterProductId: p.id, masterVariantSku: null, exportedSku: sku, exportedBarcode: barcode,
           mappingStatus: "active",
-          exportSnapshot: { nameEn: nameEnParent, nameAr: clean(p.name_ar), price: priceStr(price), barcode, imageFilename: image, availability: "InStock" },
+          exportSnapshot: { nameEn: nameEnParent, nameAr: clean(p.name_ar), price: priceStr(price), barcode, imageFilename: image, availability },
         },
       });
       continue;
@@ -259,10 +268,10 @@ export function buildTalabatExport(
       // every variant row is flagged for review until it gets a real image.
       warnings.push({ kind: "no_variant_image", masterProductId: p.id, masterVariantSku: sku, exportedSku: sku, message: "variant inherits the parent image (no per-variant image)" });
 
-      const stockNum = v.stock_quantity == null ? null : Number(v.stock_quantity);
-      const outOfStock = stockNum != null && Number.isFinite(stockNum) && stockNum <= 0;
-      if (outOfStock) {
-        warnings.push({ kind: "out_of_stock", masterProductId: p.id, masterVariantSku: sku, exportedSku: sku, message: "variant is out of stock (still listed; availability reflects OutOfStock)" });
+      // INV.2D — availability is the product-level explicit state (above), NOT
+      // derived from variant quantity. Every variant row inherits it.
+      if (availability === "OutOfStock") {
+        warnings.push({ kind: "out_of_stock", masterProductId: p.id, masterVariantSku: sku, exportedSku: sku, message: "product is out of stock (still listed; availability reflects OutOfStock)" });
       }
 
       const price = priceForVariant(p, v);
@@ -276,7 +285,7 @@ export function buildTalabatExport(
           // mirrors lib/talabat/mapping.ts classifyMappingStatus (needs_review is
           // reserved for incomplete/invalid mappings, which are blocked above).
           mappingStatus: "active",
-          exportSnapshot: { nameEn, nameAr, price: priceStr(price), barcode, imageFilename: image, availability: outOfStock ? "OutOfStock" : "InStock" },
+          exportSnapshot: { nameEn, nameAr, price: priceStr(price), barcode, imageFilename: image, availability },
         },
       });
     }

@@ -1,38 +1,30 @@
 // Scheduled availability sync — pure, DB-free core.
 //
-// The manual reconcile (lib/availability-reconcile.ts) needs uploaded platform
-// sheets, so it can only run when a human exports each dashboard. This module is
-// the automatable half: it propagates the ONE signal we always hold in our own
-// DB — the master inventory — to every overlay platform's availability, so the
-// whole system reflects real stock without a manual "apply" each time.
-//
-// Truth model: ONE company, ONE inventory. The master inventory is the source of
-// truth; the scheduled sync makes every overlay platform match it. Effective
-// stock per product = max(inventory total, summed variant stock) — identical to
-// the out-of-stock page, so the cron and that screen never disagree. A product
-// is OutOfStock when effective stock is 0, InStock otherwise.
+// INV.2D: availability is an EXPLICIT product state (products.stock_status),
+// managed by staff via the Availability Engine (lib/availability). This module
+// PROJECTS that authoritative state onto every overlay platform's
+// `platform_status.availability`. It never derives availability from quantity
+// (inventory / variant stock) and never treats platform_status.availability as a
+// source of truth — the projection is deterministic and reproducible straight
+// from products.stock_status.
 //
 // (Upload-driven, platform-specific signals — a platform selling out while the
-// master still shows stock — remain the job of the manual reconcile, which
-// surfaces them as conflicts. The scheduled sync assumes master stock is truth.)
+// master still shows In Stock — remain the job of the manual reconcile, which
+// surfaces them as conflicts.)
 //
 // No next/headers and no Supabase here, so it is unit-testable directly.
 
+import { isAvailable } from "./availability/read.ts";
+
 export type Availability = "InStock" | "OutOfStock";
 
-/** One row of the master `inventory` table (subset). */
-export interface InventoryRow {
-  product_id: string | null;
-  stock_quantity: number | null;
+/** One row of the master `products` table (subset) — the availability source. */
+export interface ProductAvailabilityRow {
+  id: string | null;
+  stock_status: string | null;
 }
 
-/** One row of `product_variants` (subset) — options roll up to their parent. */
-export interface VariantRow {
-  parent_product_id: string | null;
-  stock_quantity: number | null;
-}
-
-/** Desired availability for a single product, derived from master stock. */
+/** Desired availability for a single product, from its explicit stock_status. */
 export interface ProductStatus {
   product_id: string;
   availability: Availability;
@@ -53,34 +45,19 @@ export interface SyncCounts {
 }
 
 /**
- * Derive each product's availability from master stock.
- *
- * Effective stock = max(inventory total, summed variant stock): a product with
- * options is out only when BOTH its own inventory total AND every option are 0,
- * so a product that still has stock on either side is never marked out.
- * Multiple inventory rows for one product roll up by max (stock anywhere counts).
+ * Project each product's EXPLICIT availability (products.stock_status) to the
+ * overlay availability value: `In Stock` → InStock; everything else (Out of
+ * Stock, unknown, null) → OutOfStock, via the shared read-model (isAvailable).
+ * Never derived from quantity; deterministic and reproducible from stock_status.
+ * Duplicate product ids collapse to the first row seen.
  */
-export function computeStockStatus(
-  inventory: InventoryRow[],
-  variants: VariantRow[],
-): ProductStatus[] {
-  const variantSum = new Map<string, number>();
-  for (const v of variants) {
-    if (!v.parent_product_id) continue;
-    variantSum.set(v.parent_product_id, (variantSum.get(v.parent_product_id) ?? 0) + (v.stock_quantity ?? 0));
-  }
-
-  const invMax = new Map<string, number>();
-  for (const r of inventory) {
-    if (!r.product_id) continue;
-    const q = r.stock_quantity ?? 0;
-    invMax.set(r.product_id, Math.max(invMax.get(r.product_id) ?? 0, q));
-  }
-
+export function projectAvailability(products: ProductAvailabilityRow[]): ProductStatus[] {
   const out: ProductStatus[] = [];
-  for (const [product_id, inv] of invMax) {
-    const effective = Math.max(inv, variantSum.get(product_id) ?? 0);
-    out.push({ product_id, availability: effective > 0 ? "InStock" : "OutOfStock" });
+  const seen = new Set<string>();
+  for (const p of products) {
+    if (!p.id || seen.has(p.id)) continue;
+    seen.add(p.id);
+    out.push({ product_id: p.id, availability: isAvailable(p.stock_status) ? "InStock" : "OutOfStock" });
   }
   return out;
 }

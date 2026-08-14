@@ -1,7 +1,7 @@
-// Scheduled availability sync (Vercel Cron). Propagates the master inventory
-// truth — effective stock per product = max(inventory total, summed variant
-// stock) — onto every overlay platform's `platform_status.availability`, so the
-// whole system reflects real stock without a manual upload + apply each day.
+// Scheduled availability sync (Vercel Cron). Projects the EXPLICIT product
+// availability (products.stock_status) — never derived from quantity — onto
+// every overlay platform's `platform_status.availability`, so the whole system
+// reflects staff-managed availability without a manual upload + apply each day.
 //
 // Auth: Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when CRON_SECRET
 // is set in the environment; we require an exact match, so the endpoint can also
@@ -14,11 +14,10 @@ import { shopifyConfigured } from "@/lib/shopify/admin";
 import { runShopifyInventorySync } from "@/lib/shopify/inventory-sync";
 import { PLATFORMS } from "@/lib/constants";
 import {
-  computeStockStatus,
+  projectAvailability,
   planStatusUpserts,
   statusKey,
-  type InventoryRow,
-  type VariantRow,
+  type ProductAvailabilityRow,
 } from "@/lib/availability-sync";
 
 export const runtime = "nodejs";
@@ -53,10 +52,8 @@ export async function GET(req: Request) {
   catch (e: any) { return Response.json({ ok: false, error: e?.message ?? "service role unavailable" }, { status: 500 }); }
 
   try {
-    const [inventory, variants, statusRows] = await Promise.all([
-      pageAll<InventoryRow>((from, to) => sb.from("inventory").select("product_id, stock_quantity").range(from, to)),
-      pageAll<VariantRow>((from, to) => sb.from("product_variants").select("parent_product_id, stock_quantity").range(from, to))
-        .catch(() => [] as VariantRow[]), // product_variants may not exist in every project
+    const [products, statusRows] = await Promise.all([
+      pageAll<ProductAvailabilityRow>((from, to) => sb.from("products").select("id, stock_status").range(from, to)),
       pageAll<{ product_id: string; platform: string; availability: string | null }>(
         (from, to) => sb.from("platform_status").select("product_id, platform, availability").range(from, to),
       ),
@@ -68,7 +65,9 @@ export async function GET(req: Request) {
       if (r.availability) current.set(statusKey(r.product_id, r.platform), r.availability);
     }
 
-    const statuses = computeStockStatus(inventory, variants);
+    // Project the EXPLICIT product availability (products.stock_status) — never
+    // quantity — onto the overlay. Deterministic and reproducible.
+    const statuses = projectAvailability(products);
     const { upserts, counts } = planStatusUpserts(statuses, OVERLAY, current, new Date().toISOString());
 
     let written = 0;

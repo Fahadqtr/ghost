@@ -34,6 +34,7 @@ function prod(over: Partial<ExportProductInput> = {}): ExportProductInput {
     description_en: "desc en", description_ar: "وصف",
     image_filename: "mk100.jpg", image_url: null,
     approved: true, // explicit Talabat approval; override to test exclusion
+    stock_status: "In Stock", // INV.2D explicit availability; override to test OOS
     ...over,
   };
 }
@@ -301,14 +302,22 @@ test("R4: gate messages never leak ids/barcodes/DB errors", () => {
   }
 });
 
-// ---- Review fix 3: OutOfStock stays active -----------------------------------
+// ---- INV.2D: availability from explicit product stock_status ----------------
 
-test("R3: an out-of-stock variant stays active with OutOfStock in the snapshot", () => {
-  const r = buildTalabatExport([prod()], [variant({ stock_quantity: 0 })]);
+test("INV.2D: an Out-of-Stock PRODUCT stays active with OutOfStock in the snapshot (variant qty ignored)", () => {
+  // Variant carries stock 5, but the product is explicitly Out of Stock — the
+  // export honors the product-level availability, not the variant quantity.
+  const r = buildTalabatExport([prod({ stock_status: "Out of Stock" })], [variant({ stock_quantity: 5 })]);
   assert.equal(r.rows.length, 1);
   assert.equal(r.mappings[0].mappingStatus, "active");
   assert.equal(r.mappings[0].exportSnapshot.availability, "OutOfStock");
   assert.ok(r.warnings.some((w) => w.kind === "out_of_stock"));
+});
+
+test("INV.2D: an In-Stock product exports InStock even when a variant quantity is 0", () => {
+  const r = buildTalabatExport([prod({ stock_status: "In Stock" })], [variant({ stock_quantity: 0 })]);
+  assert.equal(r.mappings[0].exportSnapshot.availability, "InStock");
+  assert.equal(r.warnings.some((w) => w.kind === "out_of_stock"), false);
 });
 
 // ---- Review: route wiring (source scan) --------------------------------------

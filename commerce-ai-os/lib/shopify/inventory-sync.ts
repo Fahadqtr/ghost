@@ -5,6 +5,7 @@ import { planOrderDeductions, type CatalogRowLite } from "./order-deduct-compute
 import { classifyShopifyOrderChannel } from "./orders-compute";
 import { claimAndDeduct, syncCanPush, type ClaimDeductPorts, type ClaimDeductPlanners, type BlockedReason } from "./order-ledger";
 import { logStockTransition } from "@/lib/tasks/stock-tasks";
+import { shopifyOosZeroPushList } from "@/lib/availability/channel-policy";
 
 // Stock → Shopify sync core, shared by the manual button on /import-export/
 // shopify-sync and the nightly availability cron. Our `inventory` table (plus
@@ -145,26 +146,21 @@ export async function runShopifyInventorySync(sb: any): Promise<InventorySyncRes
   if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", ...EMPTY };
 
   try {
-    // Our stock per product = inventory rows + variant rows (variants optional).
-    const [prods, invRows0, varRows] = await Promise.all([
-      pageAll<{ id: string; sku: string | null; name_en: string | null }>(
-        (from, to) => sb.from("products").select("id, sku, name_en").range(from, to)),
-      pageAll<{ product_id: string; stock_quantity: number | null }>(
-        (from, to) => sb.from("inventory").select("product_id, stock_quantity").range(from, to)),
-      pageAll<{ parent_product_id: string; stock_quantity: number | null }>(
-        (from, to) => sb.from("product_variants").select("parent_product_id, stock_quantity").range(from, to))
-        .catch(() => [] as { parent_product_id: string; stock_quantity: number | null }[]),
-    ]);
+    // Product catalog + EXPLICIT availability (products.stock_status). The order
+    // step needs the full catalog to match store orders; the push list is derived
+    // from availability only (below).
+    const prods = await pageAll<{ id: string; sku: string | null; name_en: string | null; stock_status: string | null }>(
+      (from, to) => sb.from("products").select("id, sku, name_en, stock_status").range(from, to));
 
-    // Store sales first: subtract new Shopify orders from our inventory, then
-    // push the (now-correct) truth back to the store below.
+    // Store sales first: subtract new Shopify orders from our inventory via the
+    // transactional deduction RPC (preserved — this is real sales, not
+    // availability). This is the only inventory write on this path.
     const orderStep = await deductRecentOrders(sb, prods);
 
     // FAIL CLOSED: if the order step did not fully settle (RPC error, missing
     // migration, null/unknown response, an unmatched order line, or truncated
-    // Shopify data) we must NOT push stock to Shopify — a partial view would
-    // re-raise sold-out stock. Skip the location fetch and the push entirely.
-    // Counts stay truthful for whatever the RPC already committed.
+    // Shopify data) we must NOT push to Shopify — a partial view would re-raise
+    // sold-out stock. Skip the location fetch and the push entirely.
     if (!syncCanPush(orderStep)) {
       return {
         ok: false,
@@ -176,15 +172,11 @@ export async function runShopifyInventorySync(sb: any): Promise<InventorySyncRes
       };
     }
 
-    const invRows = orderStep.deducted
-      ? await pageAll<{ product_id: string; stock_quantity: number | null }>(
-          (from, to) => sb.from("inventory").select("product_id, stock_quantity").range(from, to))
-      : invRows0;
-
-    const stock = new Map<string, number>();
-    for (const r of invRows) stock.set(r.product_id, (stock.get(r.product_id) ?? 0) + (Number(r.stock_quantity) || 0));
-    for (const r of varRows) stock.set(r.parent_product_id, (stock.get(r.parent_product_id) ?? 0) + (Number(r.stock_quantity) || 0));
-    const ours = prods.map((p) => ({ id: p.id, sku: p.sku, name_en: p.name_en, stock: stock.get(p.id) ?? 0 }));
+    // INV.2D — availability-based, NON-DESTRUCTIVE push (shared pure helper). Only
+    // OutOfStock products are pushed (to external quantity 0); In-Stock products
+    // are NEVER overwritten with a local quantity this phase (physical counts are
+    // not yet trusted), and no local quantity is ever written to represent it.
+    const ours = shopifyOosZeroPushList(prods);
 
     const remote = await fetchAllShopifyProducts();
     if (remote.error) return { ok: false, error: remote.error, ...EMPTY };
