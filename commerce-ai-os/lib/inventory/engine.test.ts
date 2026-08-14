@@ -1,0 +1,123 @@
+// INV.3D — Inventory Engine facade tests. DB-free (injected fake clients).
+// Run: node --conditions=react-server --experimental-strip-types --test lib/inventory/engine.test.ts
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import {
+  adjustVariant, setVariantAbsolute, placeOnShelf, reconcile,
+  adjust, sell, setAbsolute, receive, moveShelf, removeShelf, reverseMovement,
+  InventoryEngineNotImplementedError, NOT_IMPLEMENTED_OPS,
+} from "./engine.ts";
+
+// A fake whose rpc returns a configured {data,error}. Its `from` THROWS — so any
+// direct-table fallback would blow up the test instead of silently succeeding.
+function rpcClient(result: { data?: unknown; error?: unknown }) {
+  const calls: { name: string; params: unknown }[] = [];
+  return {
+    calls,
+    rpc(name: string, params: unknown) { calls.push({ name, params }); return Promise.resolve(result); },
+    from() { throw new Error("DIRECT_WRITE_FORBIDDEN: engine must call an RPC, never a table write"); },
+  };
+}
+const applied = (extra: Record<string, unknown>) => ({ data: { status: "applied", ...extra }, error: null });
+
+// ── supported wrappers call the right RPC with the right params ────────────────
+
+test("adjustVariant calls inv_adjust_variant with mapped params", async () => {
+  const c = rpcClient(applied({ before: 4, after: 7, parentStock: 12 }));
+  const r = await adjustVariant(c, "v1", 3);
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_adjust_variant", params: { p_variant_id: "v1", p_delta: 3 } }]);
+  if (r.ok) assert.equal(r.data.after, 7);
+});
+
+test("setVariantAbsolute calls inv_set_variant_absolute with mapped params", async () => {
+  const c = rpcClient(applied({ before: 2, after: 6, parentStock: 6 }));
+  const r = await setVariantAbsolute(c, "v1", 6);
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_set_variant_absolute", params: { p_variant_id: "v1", p_quantity: 6 } }]);
+});
+
+test("placeOnShelf (product) calls inv_place_shelf and requires stock/shelfSum", async () => {
+  const c = rpcClient(applied({ scope: "product", stock: 30, shelfSum: 30 }));
+  const r = await placeOnShelf(c, { scope: "product", targetId: "inv1", location: "A1", quantity: 30 });
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_place_shelf", params: { p_scope: "product", p_target_id: "inv1", p_location: "A1", p_quantity: 30 } }]);
+});
+
+test("placeOnShelf (variant) requires variantStock/parentStock", async () => {
+  const ok = await placeOnShelf(rpcClient(applied({ scope: "variant", variantStock: 10, parentStock: 10 })), { scope: "variant", targetId: "v1", location: "A1", quantity: 10 });
+  assert.equal(ok.ok, true);
+  // applied but missing the derived fields → fail-closed
+  const bad = await placeOnShelf(rpcClient(applied({ scope: "variant" })), { scope: "variant", targetId: "v1", location: "A1", quantity: 10 });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.reason, "missing_result_field");
+});
+
+// ── fail-closed on every non-applied outcome; NEVER a direct-write fallback ────
+
+test("transport error → failure (no fallback)", async () => {
+  const r = await adjustVariant(rpcClient({ data: null, error: { message: "boom" } }), "v1", 1);
+  assert.equal(r.ok, false);
+  if (!r.ok) { assert.equal(r.reason, "rpc_transport_error"); assert.equal(r.raw, "boom"); }
+});
+
+test("status:error → failure carrying the classified reason", async () => {
+  const r = await adjustVariant(rpcClient({ data: { status: "error", reason: "insufficient_stock" }, error: null }), "v1", -9);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.reason, "insufficient_stock");
+});
+
+test("malformed result → failure (null, array, non-object)", async () => {
+  for (const data of [null, undefined, [1, 2], "applied", 7]) {
+    const r = await adjustVariant(rpcClient({ data, error: null }), "v1", 1);
+    assert.equal(r.ok, false, `malformed ${JSON.stringify(data)}`);
+    if (!r.ok) assert.equal(r.reason, "malformed_result");
+  }
+});
+
+test("applied but missing before/after → failure", async () => {
+  const r = await adjustVariant(rpcClient(applied({ after: 7, parentStock: 12 })), "v1", 3); // no `before`
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.reason, "missing_result_field");
+});
+
+test("arg validation rejects before any RPC call", async () => {
+  const c1 = rpcClient(applied({})); assert.equal((await adjustVariant(c1, "", 1)).ok, false); assert.equal(c1.calls.length, 0);
+  const c2 = rpcClient(applied({})); assert.equal((await adjustVariant(c2, "v", 1.5)).ok, false); assert.equal(c2.calls.length, 0);
+  const c3 = rpcClient(applied({})); assert.equal((await setVariantAbsolute(c3, "v", -1)).ok, false); assert.equal(c3.calls.length, 0);
+  const c4 = rpcClient(applied({})); assert.equal((await placeOnShelf(c4, { scope: "bogus" as any, targetId: "x", location: "A1", quantity: 1 })).ok, false); assert.equal(c4.calls.length, 0);
+});
+
+// ── reconcile delegates to the reconcile layer (read-only) ─────────────────────
+
+test("reconcile delegates to the reconcile read layer", async () => {
+  const readClient = { from() { return { select() { return { eq() { return Promise.resolve({ data: [], error: null }); }, in() { return Promise.resolve({ data: [], error: null }); } }; } }; } };
+  const r = await reconcile(readClient, "p1");
+  assert.equal(r.productId, "p1");
+  assert.equal(r.status, "clean");
+  assert.equal(r.kind, "simple");
+});
+
+// ── unimplemented ops throw; they can NEVER perform a mutation ─────────────────
+
+test("future ops throw InventoryEngineNotImplementedError (no fake impl)", () => {
+  for (const fn of [adjust, sell, setAbsolute, receive, moveShelf, removeShelf, reverseMovement]) {
+    assert.throws(() => (fn as () => never)(), InventoryEngineNotImplementedError);
+  }
+  assert.deepEqual([...NOT_IMPLEMENTED_OPS].sort(),
+    ["adjust", "moveShelf", "receive", "removeShelf", "reverseMovement", "sell", "setAbsolute"]);
+});
+
+// ── availability boundary + no legacy mirror write (engine source scan) ────────
+
+test("engine.ts never writes availability, the products mirror, or a numeric table directly", () => {
+  const src = readFileSync(fileURLToPath(new URL("./engine.ts", import.meta.url)), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1"); // strip comments
+  assert.equal(/stock_status/.test(src), false, "no stock_status write/read (availability boundary)");
+  assert.equal(/from\(["']products["']\)/.test(src), false, "no products table access (no stale mirror)");
+  assert.equal(/\.from\(["'](inventory|product_variants|shelf_stock|variant_shelf_stock)["']\)\s*\.(update|insert|upsert|delete)/.test(src), false, "no direct numeric table write — RPCs only");
+  assert.equal(/@\/lib\/availability|availability\//.test(src), false, "imports no availability module");
+});
