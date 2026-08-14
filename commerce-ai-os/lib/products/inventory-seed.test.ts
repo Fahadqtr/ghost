@@ -77,10 +77,12 @@ const ADOPTED: [string, string][] = [
   // is proven end-to-end in malak-create-core.test.ts (happy path → {0,5,0}).
   ["app/(app)/import-export/snoonu-actions.ts", "Snoonu import"],
   ["app/(app)/import-export/pure-seoul-actions.ts", "Pure Seoul import"],
-  // P3 adopters — their seeds were byte-equivalent to the DB defaults (verified in
+  // P3 adopter — seed was byte-equivalent to the DB defaults (verified in
   // production: low_stock_threshold default 5, sold_quantity default 0, no triggers).
   ["app/staff/actions.ts", "Staff add product"],
-  ["app/(app)/import-export/shopify-actions.ts", "Shopify import"],
+  // Shopify import (P3) now delegates product+inventory to createProductCore (P6)
+  // via {seedQuantity}, so it no longer spreads inventorySeed directly — the core
+  // does. Its seed shape is proven in shopify-create-core.test.ts.
 ];
 
 for (const [rel, name] of ADOPTED) {

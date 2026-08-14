@@ -138,6 +138,51 @@ test("a failed compensation is REPORTED, never silent", async () => {
   if (!res.ok) assert.equal(res.cleanup, "failed");
 });
 
+// ── opts.seedQuantity (P6) ────────────────────────────────────────────────────
+
+test("default caller (no opts): inventory seeds from row.stock_quantity", async () => {
+  const { client, calls } = makeClient();
+  await createProductCore(client, ROW, []); // ROW.stock_quantity === 7
+  const inv = calls.find((c) => c.table === "inventory")!.values as Record<string, unknown>;
+  assert.equal(inv.stock_quantity, 7);
+});
+
+test("row without stock_quantity and no opts seeds 0", async () => {
+  const { client, calls } = makeClient();
+  await createProductCore(client, { sku: "mk9", name_ar: "x" }, []);
+  const inv = calls.find((c) => c.table === "inventory")!.values as Record<string, unknown>;
+  assert.equal(inv.stock_quantity, 0);
+});
+
+test("opts.seedQuantity overrides ONLY the inventory seed — product row untouched, not mutated", async () => {
+  const { client, calls } = makeClient();
+  const row = { sku: "mk9", name_ar: "سيروم", stock_quantity: 7 };
+  const before = JSON.stringify(row);
+  await createProductCore(client, row, [], { seedQuantity: 42 });
+
+  // inventory seed uses the override…
+  const inv = calls.find((c) => c.table === "inventory")!.values as Record<string, unknown>;
+  assert.equal(inv.stock_quantity, 42);
+  assert.equal(inv.low_stock_threshold, 5);
+  assert.equal(inv.sold_quantity, 0);
+
+  // …the PRODUCT row inserted is exactly what was passed (row.stock_quantity kept as 7),
+  // and the caller's row object was not mutated.
+  const prod = calls.find((c) => c.kind === "insert-select")!.values as Record<string, unknown>;
+  assert.equal(prod.stock_quantity, 7, "product row keeps its own stock_quantity");
+  assert.equal(JSON.stringify(row), before, "row object not mutated");
+});
+
+test("Shopify shape: row has NO stock_quantity, seedQuantity carries the store qty", async () => {
+  const { client, calls } = makeClient();
+  const shopifyRow = { sku: "SH-1", name_en: "Serum", approval: "Approved" }; // no stock_quantity
+  await createProductCore(client, shopifyRow, [], { seedQuantity: 9 });
+  const prod = calls.find((c) => c.kind === "insert-select")!.values as Record<string, unknown>;
+  assert.ok(!("stock_quantity" in prod), "no stock_quantity injected into the product row");
+  const inv = calls.find((c) => c.table === "inventory")!.values as Record<string, unknown>;
+  assert.equal(inv.stock_quantity, 9, "inventory seeded from seedQuantity");
+});
+
 test("projectVariantInsertRows: meaningful rows only, blanks -> null, numbers real", () => {
   const rows = projectVariantInsertRows([
     { variant_name: "وردي", variant_name_en: "", sku: "mk9-1", barcode: " ", color: "", size: "", price: "10", stock_quantity: "" },
