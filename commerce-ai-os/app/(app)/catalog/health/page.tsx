@@ -15,6 +15,7 @@ import { setVariantBarcodes, upsertVariants } from '@/app/(app)/inventory/action
 import { uploadProductImage } from '@/app/(app)/products/image-actions'
 import { deleteProductById } from './actions'
 import { effectivePrice, priceRangeLabel, type EffectivePrice, type PricedVariant } from '@/lib/products/price-compute'
+import { generateEan13 } from '@/lib/products/barcode-ean13'
 
 // ---------- الأنواع ----------
 type Product = {
@@ -125,15 +126,6 @@ const QUICK_FIELD: Partial<Record<IssueKey, 'image_url' | 'price'>> = {
 }
 
 const emptyToNull = (v: unknown) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim())
-
-function genEan13(): string {
-  let d = ''
-  for (let i = 0; i < 12; i++) d += Math.floor(Math.random() * 10)
-  let sum = 0
-  for (let i = 0; i < 12; i++) sum += (i % 2 === 0 ? 1 : 3) * Number(d[i])
-  const check = (10 - (sum % 10)) % 10
-  return d + check
-}
 
 // ---------- المكوّن ----------
 export default function CatalogHealthPage() {
@@ -367,7 +359,7 @@ export default function CatalogHealthPage() {
 
   const genVariantBarcodes = () => {
     setForm((f) => {
-      const base = emptyToNull(f.barcode) ? String(f.barcode).trim() : genEan13()
+      const base = emptyToNull(f.barcode) ? String(f.barcode).trim() : generateEan13(Math.random)
       setVariantForm((vf) => vf.map((v, i) => ({ ...v, barcode: `${base}-${i + 1}` })))
       return { ...f, barcode: base }
     })
@@ -494,11 +486,11 @@ export default function CatalogHealthPage() {
           const vs = variants.filter((v) => v.parent_product_id === id)
           if (vs.length > 0) {
             const has = p.barcode && p.barcode.trim() !== ''
-            const base = has ? (p.barcode as string).trim() : genEan13()
+            const base = has ? (p.barcode as string).trim() : generateEan13(Math.random)
             if (!has) prodPatch.set(id, base)
             vs.forEach((v, i) => { if (!(v.barcode && String(v.barcode).trim() !== '')) varPatch.push({ id: v.id, barcode: `${base}-${i + 1}` }) })
           } else if (!(p.barcode && p.barcode.trim() !== '')) {
-            prodPatch.set(id, genEan13())
+            prodPatch.set(id, generateEan13(Math.random))
           }
         }
         for (const [id, bc] of prodPatch) {
@@ -793,7 +785,7 @@ export default function CatalogHealthPage() {
                     <Label id="f-bc">الباركود</Label>
                     <div className="mt-1 flex gap-2">
                       <input id="f-bc" className={`${cls('barcode')} mt-0 flex-1`} value={(form.barcode as string) ?? ''} onChange={(e) => set('barcode', e.target.value)} dir="ltr" />
-                      <button type="button" className="btn-ghost whitespace-nowrap px-3 text-xs" onClick={() => set('barcode', genEan13())}>توليد EAN-13</button>
+                      <button type="button" className="btn-ghost whitespace-nowrap px-3 text-xs" onClick={() => set('barcode', generateEan13(Math.random))}>توليد EAN-13</button>
                     </div>
                     {hasVariants && (
                       <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3">

@@ -8,9 +8,6 @@ import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { queueForTalabat } from "@/lib/talabat/queue";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
-import { assertSafeImageUrl } from "@/lib/net/safeImage";
-import { CATEGORIES } from "@/lib/constants";
-import { buildDraftPrompt, parseProductDraft } from "@/lib/products/draft-compute";
 import { deleteShelfStockForProduct } from "@/lib/products/shelf-cleanup";
 
 // The product create/edit save cores (row projection, inventory sync, the
@@ -224,69 +221,6 @@ export async function extractRejectedFromImages(
     return { names: [...new Set(names.map((n) => n.trim()))] };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "فشل قراءة الصورة.", names: [] };
-  }
-}
-
-const ALLOWED_IMG = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-
-/** Vision: look at a product image and draft title + description + keywords +
- *  category (EN/AR) in the SAME house style as the staff photo-first flow
- *  (shared prompt/parser in lib/products/draft-compute). The form decides
- *  what to apply. */
-export async function describeProductFromImage(
-  imageUrl: string,
-  instructions?: string,
-): Promise<{
-  error?: string;
-  data?: { name_en: string; name_ar: string; description_en: string; description_ar: string; keywords_en: string; keywords_ar: string; main_category: string; variants?: { variant_name: string; variant_name_en: string; color: string; size: string }[] };
-}> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return { error: "ميزة الذكاء غير مفعّلة (ANTHROPIC_API_KEY)." };
-  const rawUrl = (imageUrl ?? "").trim();
-  if (!rawUrl) return { error: "أضف صورة (Image URL) أولاً." };
-  // SSRF guard: only fetch public https URLs, never internal/metadata hosts.
-  let url: string;
-  try {
-    url = assertSafeImageUrl(rawUrl);
-  } catch (e: any) {
-    return { error: e?.message || "رابط الصورة غير مسموح به." };
-  }
-
-  let media_type = "image/jpeg";
-  let b64 = "";
-  try {
-    const r = await fetch(url);
-    if (!r.ok) return { error: `تعذّر جلب الصورة (${r.status}).` };
-    const ct = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-    media_type = ALLOWED_IMG.has(ct) ? ct : "image/jpeg";
-    b64 = Buffer.from(await r.arrayBuffer()).toString("base64");
-  } catch {
-    return { error: "تعذّر جلب الصورة من الرابط." };
-  }
-  if (!b64) return { error: "الصورة فارغة." };
-
-  try {
-    const client = new Anthropic({ apiKey });
-    const resp = await client.messages.create({
-      model: process.env.STAFF_MALAK_MODEL || "claude-sonnet-5",
-      max_tokens: 1200,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type, data: b64 } } as any,
-            { type: "text", text: buildDraftPrompt(CATEGORIES, instructions) },
-          ],
-        },
-      ],
-    });
-    const text = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-    const draft = parseProductDraft(text, CATEGORIES);
-    if (!draft) return { error: "ما قدرت أحلّل الصورة." };
-    return { data: draft };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "فشل تحليل الصورة." };
   }
 }
 
