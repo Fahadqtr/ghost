@@ -48,7 +48,7 @@ export async function GET(
     const products = (await fetchAll((from, to) =>
       supabase
         .from("products")
-        .select("id, sku, snoonu_id, rafeeq_product_id, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, image_filename, notes, description_en, description_ar, keywords_en, keywords_ar")
+        .select("id, sku, snoonu_id, rafeeq_product_id, barcode, name_en, name_ar, main_category, sub_category, product_type, price, discount_price, image_url, image_filename, notes, description_en, description_ar, keywords_en, keywords_ar, stock_status")
         .order("sku", { ascending: true })
         .range(from, to)
     )) as ExportProduct[];
@@ -136,6 +136,7 @@ export async function GET(
         image_filename: p.image_filename, image_url: p.image_url,
         channel_price: talabatPrice[p.id] ?? null,          // exact Talabat channel only
         approved: isApprovedForTalabat(approvalByProduct[p.id]), // explicit approval only
+        stock_status: p.stock_status ?? null,                // INV.2D explicit availability
       }));
       const variantInputs: ExportVariantInput[] = variants.map((v) => ({
         parent_product_id: v.parent_product_id, sku: v.sku, barcode: v.barcode,

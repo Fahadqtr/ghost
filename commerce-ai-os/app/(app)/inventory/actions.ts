@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { fetchAll } from "@/lib/supabase/paginate";
 import { applyMovement } from "@/lib/inventory/movements";
 import { requireUser } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
@@ -11,7 +10,7 @@ import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/se
 import { pushInventoryStockToShopify } from "@/lib/shopify/admin";
 import { summarizeStockSync, type ShopifyStockSyncStatus } from "@/lib/shopify/stock-push";
 import { setProductAvailabilityState, writeProductAvailability } from "@/lib/availability/engine";
-import { availabilityFromInStock } from "@/lib/availability/read";
+import { availabilityFromInStock, isAvailable } from "@/lib/availability/read";
 import Anthropic from "@anthropic-ai/sdk";
 
 function toNum(v: string | number | null | undefined): number | null {
@@ -1327,18 +1326,20 @@ export async function markOutOfStockByNames(text: string, apply = false): Promis
     return { applied: false, matched: idList.length, products: matchedList, unmatched };
   }
 
-  const now = new Date().toISOString();
+  // INV.2D — availability only: mark the matched products Out of Stock via the
+  // Availability Engine (products.stock_status). NO local quantity writes
+  // (inventory/variant stock is never zeroed). Delisting the channels stays an
+  // explicit, separate propagation policy — availability and listing are distinct.
+  await writeProductAvailability(admin, idList, "Out of Stock");
   for (let i = 0; i < idList.length; i += 200) {
     const chunk = idList.slice(i, i + 200);
-    await admin.from("inventory").update({ stock_quantity: 0, updated_at: now }).in("product_id", chunk);
-    await admin.from("product_variants").update({ stock_quantity: 0 }).in("parent_product_id", chunk);
-    await admin.from("products").update({ stock_status: "Out of Stock" }).in("id", chunk);
     await admin.from("channel_products").update({ channel_status: "Not Listed" }).in("product_id", chunk);
   }
 
   // Best-effort external sync: push 0 stock to Shopify for every matched SKU.
-  // The local DB writes above stand on their own — a Shopify hiccup never rolls
-  // them back; the returned status lets the UI say whether the store synced too.
+  // The local availability/listing writes above stand on their own — a Shopify
+  // hiccup never rolls them back; the returned status lets the UI say whether the
+  // store synced too.
   let shopify: (ShopifyStockSyncStatus & { message?: string }) | undefined;
   if (skus.size > 0) {
     shopify = await pushStockToShopify([...skus].map((sku) => ({ sku, quantity: 0 })));
@@ -1370,27 +1371,15 @@ export async function matchChannelsToMalika(apply = false): Promise<{
   const admin = writableClient();
   const PAGE = 1000;
 
-  // Sum variant stock per parent — a product is "out" only when every option is out.
-  const variantSum = new Map<string, number>();
-  {
-    const probe = await admin.from("product_variants").select("id").limit(1);
-    if (!probe.error) {
-      for (const v of await fetchAll(admin, "product_variants", "parent_product_id, stock_quantity") as any[]) {
-        if (!v.parent_product_id) continue;
-        variantSum.set(v.parent_product_id, (variantSum.get(v.parent_product_id) ?? 0) + (v.stock_quantity ?? 0));
-      }
-    }
-  }
-
-  // Out-of-stock product ids: max(inventory total, summed variant stock) <= 0.
+  // INV.2D — a product is out-of-stock per its EXPLICIT availability
+  // (products.stock_status), never derived from quantity.
   const oos = new Set<string>();
   for (let from = 0; ; from += PAGE) {
-    const { data, error } = await admin.from("inventory").select("product_id, stock_quantity").range(from, from + PAGE - 1);
+    const { data, error } = await admin.from("products").select("id, stock_status").range(from, from + PAGE - 1);
     if (error) return { error: error.message, applied: false, products: [], channelRows: 0 };
     for (const r of (data ?? []) as any[]) {
-      if (!r.product_id) continue;
-      const effective = Math.max(r.stock_quantity ?? 0, variantSum.get(r.product_id) ?? 0);
-      if (effective <= 0) oos.add(r.product_id);
+      if (!r.id) continue;
+      if (!isAvailable(r.stock_status)) oos.add(r.id);
     }
     if (!data || data.length < PAGE) break;
   }
