@@ -90,12 +90,15 @@ test("V2 Create + Import still use createProductCore with the session client", (
   assert.ok(/createProductCore\(supabase,/.test(read("app/(v2)/v2/catalog/new/actions.ts")), "V2 create injects the session client");
 });
 
-test("Archive restore stays exempt; Staff stays direct — neither uses any create core", () => {
-  for (const rel of ["app/(app)/products/archive/actions.ts", "app/staff/actions.ts"]) {
-    const src = read(rel);
-    assert.equal(/createProductCore\(/.test(src), false, `${rel} does not use the single core`);
-    assert.equal(/createProductsBatchCore/.test(src), false, `${rel} does not use the batch core`);
-  }
+test("Archive restore stays exempt (no create core); Staff spine converged onto the SINGLE core (not batch)", () => {
+  const arch = read("app/(app)/products/archive/actions.ts");
+  assert.equal(/createProductCore\(/.test(arch), false, "archive does not use the single core");
+  assert.equal(/createProductsBatchCore/.test(arch), false, "archive does not use the batch core");
+  // Staff (this phase) routes its product+inventory spine through the single core,
+  // and must NOT touch the batch core (its variants stay a wrapper loop).
+  const staff = read("app/staff/actions.ts");
+  assert.ok(/createProductCore\(/.test(staff), "Staff spine uses the single core");
+  assert.equal(/createProductsBatchCore/.test(staff), false, "Staff does not use the batch core");
 });
 
 // ── The batch core is used ONLY by Snoonu + Pure Seoul ────────────────────────

@@ -110,13 +110,15 @@ const REGISTRY: PathEntry[] = [
   {
     file: "app/staff/actions.ts",
     label: "Staff add product",
-    classification: "adapter-candidate",
+    classification: "converged",
     client: "admin",
-    seed: "inventorySeed", // P3-adopted (was inline-partial; low_stock_threshold came from DB default 5)
+    seed: "via-core", // Staff: product+inventory via createProductCore { seedQuantity: stock }
     variants: "per-row-loop",
-    rollback: false,
-    direct: true,
-    note: "Admin client. Own SKU (nextStaffSku→nextMkSku) + 200-prefix barcodes; per-variant tolerance; gallery.",
+    rollback: true, // product+inventory spine gains compensating rollback from the core
+    direct: false, // spine delegates to createProductCore — no direct products.insert
+    note: "Spine converged: createProductCore(admin, row, [], {seedQuantity: stock}). VARIANT WRITES " +
+      "INTENTIONALLY REMAIN WRAPPER-MANAGED for per-variant tolerance (own 200-prefix barcode per " +
+      "variant; one failed option never fails the product). Gallery/staff_tasks/comments stay in the wrapper.",
   },
   {
     file: "app/(app)/import-export/shopify-actions.ts",
