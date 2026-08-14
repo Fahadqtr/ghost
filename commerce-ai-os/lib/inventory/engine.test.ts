@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  adjustVariant, setVariantAbsolute, placeOnShelf, reconcile,
-  adjust, sell, setAbsolute, receive, moveShelf, removeShelf, reverseMovement,
+  adjustVariant, setVariantAbsolute, setAbsolute, placeOnShelf, reconcile,
+  adjust, sell, receive, moveShelf, removeShelf, reverseMovement,
   InventoryEngineNotImplementedError, NOT_IMPLEMENTED_OPS,
 } from "./engine.ts";
 
@@ -38,6 +38,30 @@ test("setVariantAbsolute calls inv_set_variant_absolute with mapped params", asy
   const r = await setVariantAbsolute(c, "v1", 6);
   assert.equal(r.ok, true);
   assert.deepEqual(c.calls, [{ name: "inv_set_variant_absolute", params: { p_variant_id: "v1", p_quantity: 6 } }]);
+});
+
+test("setAbsolute (INV.4A) calls inv_set_absolute_product with mapped params", async () => {
+  const c = rpcClient(applied({ inventoryId: "inv1", productId: "p1", before: 3, after: 8 }));
+  const r = await setAbsolute(c, "inv1", 8);
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_set_absolute_product", params: { p_inventory_id: "inv1", p_quantity: 8 } }]);
+  if (r.ok) { assert.equal(r.data.before, 3); assert.equal(r.data.after, 8); assert.equal(r.data.productId, "p1"); }
+});
+
+test("setAbsolute is fail-closed: rejects bad args, requires before/after/productId, surfaces status:error", async () => {
+  // arg validation — no RPC call
+  const c1 = rpcClient(applied({})); assert.equal((await setAbsolute(c1, "", 1)).ok, false); assert.equal(c1.calls.length, 0);
+  const c2 = rpcClient(applied({})); assert.equal((await setAbsolute(c2, "inv1", -1)).ok, false); assert.equal(c2.calls.length, 0);
+  const c3 = rpcClient(applied({})); assert.equal((await setAbsolute(c3, "inv1", 1.5)).ok, false); assert.equal(c3.calls.length, 0);
+  // applied but missing productId → fail-closed
+  const miss = await setAbsolute(rpcClient(applied({ before: 1, after: 2 })), "inv1", 2);
+  assert.equal(miss.ok, false); if (!miss.ok) assert.equal(miss.reason, "missing_result_field");
+  // RPC rejects a variant product → surfaced verbatim, no fallback (from() would throw)
+  const rej = await setAbsolute(rpcClient({ data: { status: "error", reason: "product_has_variants" }, error: null }), "inv1", 2);
+  assert.equal(rej.ok, false); if (!rej.ok) assert.equal(rej.reason, "product_has_variants");
+  // transport error → failure
+  const te = await setAbsolute(rpcClient({ data: null, error: { message: "x" } }), "inv1", 2);
+  assert.equal(te.ok, false); if (!te.ok) assert.equal(te.reason, "rpc_transport_error");
 });
 
 test("placeOnShelf (product) calls inv_place_shelf and requires stock/shelfSum", async () => {
@@ -103,12 +127,13 @@ test("reconcile delegates to the reconcile read layer", async () => {
 
 // ── unimplemented ops throw; they can NEVER perform a mutation ─────────────────
 
-test("future ops throw InventoryEngineNotImplementedError (no fake impl)", () => {
-  for (const fn of [adjust, sell, setAbsolute, receive, moveShelf, removeShelf, reverseMovement]) {
+test("future ops throw InventoryEngineNotImplementedError (setAbsolute is no longer among them)", () => {
+  for (const fn of [adjust, sell, receive, moveShelf, removeShelf, reverseMovement]) {
     assert.throws(() => (fn as () => never)(), InventoryEngineNotImplementedError);
   }
   assert.deepEqual([...NOT_IMPLEMENTED_OPS].sort(),
-    ["adjust", "moveShelf", "receive", "removeShelf", "reverseMovement", "sell", "setAbsolute"]);
+    ["adjust", "moveShelf", "receive", "removeShelf", "reverseMovement", "sell"]);
+  assert.equal([...NOT_IMPLEMENTED_OPS].includes("setAbsolute" as never), false, "setAbsolute removed from NOT_IMPLEMENTED_OPS");
 });
 
 // ── availability boundary + no legacy mirror write (engine source scan) ────────
