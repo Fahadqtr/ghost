@@ -8,6 +8,7 @@ import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { consumeOnce } from "@/lib/malak/ratelimit";
 import { insertAuditRow } from "@/lib/audit";
+import { inventorySeed } from "@/lib/products/inventory-seed";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -137,7 +138,7 @@ async function commitAddProduct(sb: Sb, a: MalakAction): Promise<CommitOutcome |
   if (error || !ins) return { error: error?.message ?? "تعذّر إنشاء المنتج." };
 
   // Seed an inventory row so it shows on the Inventory page.
-  await sb.from("inventory").insert({ product_id: ins.id, stock_quantity: 0, low_stock_threshold: 5, sold_quantity: 0 });
+  await sb.from("inventory").insert({ product_id: ins.id, ...inventorySeed(0) });
 
   return { message: `تمت إضافة المنتج "${pr.name_en}" (SKU ${sku}) بحالة Draft.`, productId: ins.id, field: "add_product", newValue: sku };
 }

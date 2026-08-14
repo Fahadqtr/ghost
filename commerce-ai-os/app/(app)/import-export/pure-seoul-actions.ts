@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computePureSeoulIdMap, type CatalogNameRow } from "@/lib/pure-seoul-map-compute";
+import { inventorySeed } from "@/lib/products/inventory-seed";
 
 // Pure Seoul is an INDEPENDENT platform selling the same products as Malika. Its
 // approval/rejection lives in the shared `platform_status` overlay (platform =
@@ -487,7 +488,7 @@ export async function addPureSeoulNewProducts(rows: PSRow[]): Promise<AddPsResul
   }
   // Seed inventory rows (stock 0) so they show on the Inventory page.
   for (let i = 0; i < newIds.length; i += 200) {
-    const part = newIds.slice(i, i + 200).map((product_id) => ({ product_id, stock_quantity: 0, low_stock_threshold: 5, sold_quantity: 0 }));
+    const part = newIds.slice(i, i + 200).map((product_id) => ({ product_id, ...inventorySeed(0) }));
     await admin.from("inventory").insert(part);
   }
 
