@@ -49,16 +49,22 @@ function runtimeFiles(dirs: readonly string[]): string[] {
  *  puts between `.from(...)` and `.insert(`. */
 const PRODUCTS_INSERT = /\.from\(\s*["']products["']\s*\)\s*\.insert\b/;
 
-type Classification = "canonical" | "adapter-candidate" | "exempt";
+// canonical  = the shared core itself
+// converged  = a caller that has been migrated to route through the core (no direct insert)
+// adapter-candidate = still writes products directly, migration pending
+// exempt     = restore semantics, must never use the core
+type Classification = "canonical" | "converged" | "adapter-candidate" | "exempt";
 
 interface PathEntry {
   file: string;
   label: string;
   classification: Classification;
   client: "agnostic" | "session" | "admin";
-  seed: "inventorySeed" | "inline-partial" | "snapshot" | "none";
+  seed: "inventorySeed" | "inline-partial" | "snapshot" | "via-core" | "none";
   variants: "batch-stamped" | "per-row-loop" | "verbatim" | "none";
   rollback: boolean;
+  /** true = this file physically inserts a products row; false = it delegates to the core. */
+  direct: boolean;
   note: string;
 }
 
@@ -68,23 +74,26 @@ interface PathEntry {
 const REGISTRY: PathEntry[] = [
   {
     file: "lib/products/product-create.ts",
-    label: "createProductCore (V2 Create + V2 Import)",
+    label: "createProductCore (V2 Create + V2 Import + Malak)",
     classification: "canonical",
-    client: "agnostic", // caller injects a session client
+    client: "agnostic", // caller injects the client (V2: session; Malak: admin)
     seed: "inventorySeed",
     variants: "batch-stamped",
     rollback: true,
-    note: "The shared spine. Session client by contract; compensating rollback + 23505 detection.",
+    direct: true,
+    note: "The shared spine. Client-agnostic; compensating rollback + 23505 detection.",
   },
   {
     file: "app/api/malak/commit/route.ts",
     label: "Malak AI commit",
-    classification: "adapter-candidate",
+    classification: "converged",
     client: "admin",
-    seed: "inventorySeed", // P1-adopted (was byte-identical)
+    seed: "via-core", // P5: product+inventory now go through createProductCore (no direct seed)
     variants: "none",
-    rollback: false,
-    note: "Admin client + signed token. No barcode, no rollback (inventory insert unchecked).",
+    rollback: true, // gained from the core in P5
+    direct: false, // delegates to createProductCore — no direct products.insert
+    note: "P5-migrated: product+inventory via createProductCore (admin client injected); compensating " +
+      "rollback fixes the former orphan bug. SKU re-check + ms-suffix and 'no barcode' stay in the wrapper.",
   },
   {
     file: "app/staff/actions.ts",
@@ -94,7 +103,8 @@ const REGISTRY: PathEntry[] = [
     seed: "inventorySeed", // P3-adopted (was inline-partial; low_stock_threshold came from DB default 5)
     variants: "per-row-loop",
     rollback: false,
-    note: "Admin client. Own SKU (nextStaffSku) + 200-prefix barcodes; per-variant tolerance; gallery.",
+    direct: true,
+    note: "Admin client. Own SKU (nextStaffSku→nextMkSku) + 200-prefix barcodes; per-variant tolerance; gallery.",
   },
   {
     file: "app/(app)/import-export/shopify-actions.ts",
@@ -104,6 +114,7 @@ const REGISTRY: PathEntry[] = [
     seed: "inventorySeed", // P3-adopted (was {product_id, stock_quantity}; threshold+sold came from DB defaults 5/0)
     variants: "none",
     rollback: false,
+    direct: true,
     note: "Admin client, per-row loop. Uses Shopify's SKU; app-side sku/title dedup; inventory swallowed.",
   },
   {
@@ -114,7 +125,8 @@ const REGISTRY: PathEntry[] = [
     seed: "inventorySeed", // P1-adopted (was byte-identical)
     variants: "none",
     rollback: false,
-    note: "Admin client, BATCH-200. Own mk#### SKU + 29-prefix EAN-13; stamps snoonu_id; app dedup.",
+    direct: true,
+    note: "Admin client, BATCH-200. mk#### SKU via nextMkSku + 29-prefix EAN-13; stamps snoonu_id; app dedup.",
   },
   {
     file: "app/(app)/import-export/pure-seoul-actions.ts",
@@ -124,7 +136,8 @@ const REGISTRY: PathEntry[] = [
     seed: "inventorySeed", // P1-adopted (was byte-identical)
     variants: "none",
     rollback: false,
-    note: "Admin client, BATCH-200. Own SKU/barcode; stamps pure_seoul_id; fuzzy-name dedup.",
+    direct: true,
+    note: "Admin client, BATCH-200. mk#### SKU via nextMkSku + own barcode; stamps pure_seoul_id; fuzzy dedup.",
   },
   {
     file: "app/(app)/products/archive/actions.ts",
@@ -134,6 +147,7 @@ const REGISTRY: PathEntry[] = [
     seed: "snapshot", // re-inserts the archived inventory rows verbatim
     variants: "verbatim",
     rollback: false,
+    direct: true,
     note: "EXEMPT — restore semantics, not create. Resurrects the ORIGINAL id/sku/barcode/inventory/" +
       "variants/channel_products from a product_archive snapshot. Minting a fresh product (new id, " +
       "zero seed, re-stamped parents) would destroy restore fidelity, so it must NOT use createProductCore.",
@@ -144,28 +158,38 @@ const REGISTRY: PathEntry[] = [
 
 test("every runtime products.insert site is a classified create path (no new ad-hoc path)", () => {
   const found = runtimeFiles(["app", "lib"]).filter((rel) => PRODUCTS_INSERT.test(read(rel)));
-  const registered = REGISTRY.map((e) => e.file);
+  // Only the DIRECT-insert entries physically carry a products.insert; converged
+  // paths (e.g. Malak, P5) delegate to the core and must NOT appear here.
+  const registeredDirect = REGISTRY.filter((e) => e.direct).map((e) => e.file);
   assert.deepEqual(
     [...found].sort(),
-    [...registered].sort(),
-    "products.insert sites must exactly match the classified registry — a new/removed path needs a registry update",
+    [...registeredDirect].sort(),
+    "products.insert sites must exactly match the direct entries — a new/removed path needs a registry update",
   );
 });
 
-test("every registry file still actually inserts a products row", () => {
+test("registry direct/delegated flags match reality", () => {
   for (const e of REGISTRY) {
-    assert.ok(PRODUCTS_INSERT.test(read(e.file)), `${e.file} (${e.label}) must still insert products`);
+    const inserts = PRODUCTS_INSERT.test(read(e.file));
+    if (e.direct) assert.ok(inserts, `${e.label} must directly insert products`);
+    else assert.equal(inserts, false, `${e.label} delegates to the core — no direct products.insert`);
   }
 });
 
 // ── 2. Canonical paths route through createProductCore ────────────────────────
 
-test("V2 Create and V2 Import both go through createProductCore", () => {
+test("V2 Create and V2 Import go through createProductCore with the SESSION client (RLS preserved)", () => {
   for (const rel of ["app/(v2)/v2/catalog/new/actions.ts", "app/(v2)/v2/catalog/import/actions.ts"]) {
     const src = read(rel);
     assert.ok(/from\s+["']@\/lib\/products\/product-create["']/.test(src), `${rel} imports the core`);
     assert.ok(/createProductCore\(/.test(src), `${rel} calls createProductCore`);
     assert.equal(PRODUCTS_INSERT.test(src), false, `${rel} does not insert products directly`);
+    // RLS guarantee: V2 injects the SESSION client into the core. (The file may
+    // still use the admin client elsewhere — e.g. Storage uploads — but the
+    // product WRITE goes through the session `supabase` handle.)
+    assert.ok(/from\s+["']@\/lib\/supabase\/server["']/.test(src), `${rel} imports the session client`);
+    assert.ok(/const supabase = createClient\(\)/.test(src), `${rel} builds a session client`);
+    assert.ok(/createProductCore\(supabase,/.test(src), `${rel} injects the session client into the core`);
   }
 });
 
@@ -176,22 +200,28 @@ test("createProductCore has the compensating rollback + inventorySeed", () => {
   assert.ok(/23505/.test(src), "core detects duplicate identity via 23505");
 });
 
-// ── 3. Non-canonical minting paths are NOT yet migrated (baseline lock) ────────
-// P1 changed only the inventory-seed literal at the byte-identical sites; no path
-// was pointed at createProductCore. This pins that until an explicit later PR.
+// ── 3. Migration state: converged paths route through the core; the rest don't ─
 
-test("no non-canonical create path calls createProductCore yet", () => {
+test("converged paths call createProductCore; adapter-candidate/exempt paths do not", () => {
   for (const e of REGISTRY) {
     if (e.classification === "canonical") continue;
-    assert.equal(
-      /createProductCore\(/.test(read(e.file)),
-      false,
-      `${e.label} must not call createProductCore in P1/P2 (migration is P3+)`,
-    );
+    const callsCore = /createProductCore\(/.test(read(e.file));
+    if (e.classification === "converged") {
+      assert.ok(callsCore, `${e.label} (converged) must route through createProductCore`);
+    } else {
+      assert.equal(callsCore, false, `${e.label} must not call createProductCore (migration pending / exempt)`);
+    }
   }
 });
 
-test("adapter-candidate paths use the admin client (a real convergence blocker)", () => {
+test("Malak (converged) injects the admin client into the core, not a session client", () => {
+  const src = read("app/api/malak/commit/route.ts");
+  assert.ok(/createAdminClient/.test(src), "Malak still constructs the admin client");
+  assert.ok(/createProductCore\(sb,/.test(src), "Malak injects its admin client (sb) into the core");
+  assert.equal(/from\s+["']@\/lib\/supabase\/server["']/.test(src), false, "Malak does not use the session server client");
+});
+
+test("adapter-candidate paths still use the admin client (a real convergence blocker)", () => {
   for (const e of REGISTRY) {
     if (e.classification !== "adapter-candidate") continue;
     assert.ok(/createAdminClient/.test(read(e.file)), `${e.label} uses the admin client`);

@@ -8,7 +8,7 @@ import { matchChannelsToMalika } from "@/app/(app)/inventory/actions";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { consumeOnce } from "@/lib/malak/ratelimit";
 import { insertAuditRow } from "@/lib/audit";
-import { inventorySeed } from "@/lib/products/inventory-seed";
+import { createProductCore } from "@/lib/products/product-create";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -134,13 +134,27 @@ async function commitAddProduct(sb: Sb, a: MalakAction): Promise<CommitOutcome |
     stock_status: "Out of Stock",
     notes: "أُضيف عبر ملاك (Malak) — الصورة تُرفع لاحقًا من صفحة التعديل.",
   };
-  const { data: ins, error } = await sb.from("products").insert(row).select("id").single();
-  if (error || !ins) return { error: error?.message ?? "تعذّر إنشاء المنتج." };
+  // Product + inventory now go through the shared create core (P5): it inserts
+  // the product, seeds the inventory row, and — the reason for this migration —
+  // COMPENSATES (deletes the product) if the inventory seed fails, so a failed
+  // seed can no longer leave an orphan product behind. Malak has no RLS session,
+  // so it injects its admin client (the core is client-agnostic). No variants.
+  const core = await createProductCore(sb, row, []);
+  if (!core.ok) {
+    // Never surface a raw DB message; map the structured result to fixed Arabic.
+    if (core.cleanup === "failed") {
+      return { error: "تعذّر إنشاء المنتج وتعذّر التراجع الكامل — راجع الكتالوج قبل إعادة المحاولة." };
+    }
+    if (core.duplicateIdentity) {
+      return { error: "رقم SKU لم يعد متاحًا — أعد المحاولة." };
+    }
+    if (core.stage === "inventory_insert") {
+      return { error: "تعذّر إنشاء المنتج — تم التراجع عن العملية بالكامل." };
+    }
+    return { error: "تعذّر إنشاء المنتج." };
+  }
 
-  // Seed an inventory row so it shows on the Inventory page.
-  await sb.from("inventory").insert({ product_id: ins.id, ...inventorySeed(0) });
-
-  return { message: `تمت إضافة المنتج "${pr.name_en}" (SKU ${sku}) بحالة Draft.`, productId: ins.id, field: "add_product", newValue: sku };
+  return { message: `تمت إضافة المنتج "${pr.name_en}" (SKU ${sku}) بحالة Draft.`, productId: core.productId, field: "add_product", newValue: sku };
 }
 
 async function commitSetImage(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
