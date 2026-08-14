@@ -270,16 +270,14 @@ test("a successful cleanup still runs before the variants are deleted", () => {
 
 // Phase UI.4 moved the save core (syncProductVariants + updateProductCore)
 // from the action file into lib/products/product-save.ts so the V2 editor
-// shares it. The invariants are unchanged — these scans now check the core
-// where it lives, plus that updateProduct actually routes through it.
+// shares it. UX.4E-9C then deleted the legacy updateProduct action entirely, so
+// the live edit path is the V2 edit action — these scans now check the core
+// where it lives, plus that the V2 edit action actually routes through it.
 const SAVE_CORE_SRC = readFileSync(new URL("./product-save.ts", import.meta.url), "utf8");
+const EDIT_ACTIONS_SRC = readFileSync(new URL("../../app/(v2)/v2/catalog/[id]/edit/actions.ts", import.meta.url), "utf8");
 
-test("updateProduct no longer blanket-deletes the variant set", () => {
-  const src = strip(ACTIONS_SRC);
-  const updateStart = src.indexOf("export async function updateProduct");
-  const updateEnd = src.indexOf("export async function setProductApproval");
-  assert.ok(updateStart > 0 && updateEnd > updateStart, "located updateProduct");
-  const body = src.slice(updateStart, updateEnd);
+test("the edit path no longer blanket-deletes the variant set", () => {
+  const body = strip(EDIT_ACTIONS_SRC);
 
   assert.ok(
     !/from\("product_variants"\)\s*\.delete\(\)/.test(body),

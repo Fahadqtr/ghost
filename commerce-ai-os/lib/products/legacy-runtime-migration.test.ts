@@ -3,8 +3,10 @@
 // runtime path for product editing: the legacy URLs redirect to their precise V2
 // replacements, ProductForm has no active runtime importers, the legacy
 // create/edit actions are no longer called by runtime code, inbound links point
-// at V2, and the save cores are untouched. Legacy files stay in the repo (their
-// deletion is UX.4E-9C) — these guards only prove they are runtime-dead.
+// at V2, and the save cores are untouched. The legacy files these guards proved
+// runtime-dead were subsequently DELETED in UX.4E-9C (see
+// legacy-editor-deletion.test.ts) — the guards below keep proving the runtime
+// wiring stays on V2 regardless.
 // PURE — no DB, no network, no React.
 //
 // Run: node --conditions=react-server --experimental-strip-types --test lib/products/legacy-runtime-migration.test.ts
@@ -146,12 +148,4 @@ test("auth surface unchanged: /products and /v2 stay protected", () => {
   assert.equal(/PUBLIC_PATHS\s*=\s*\[[^\]]*["']\/products["']/s.test(mw), false, "/products not made public");
   assert.equal(/PUBLIC_PATHS\s*=\s*\[[^\]]*["']\/v2["']/s.test(mw), false, "/v2 not made public");
   assert.ok(mw.includes("!user && !isPublic"), "unauthenticated gate preserved");
-});
-
-// ── 8. Legacy files remain in place (deletion belongs to UX.4E-9C) ───────────
-
-test("legacy files still exist — this phase only stops using them", () => {
-  for (const rel of ["components/ProductForm.tsx", "app/(app)/products/actions.ts"]) {
-    assert.ok(read(rel).length > 0, `${rel} still present`);
-  }
 });

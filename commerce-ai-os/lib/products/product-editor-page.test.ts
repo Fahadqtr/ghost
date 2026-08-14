@@ -177,12 +177,26 @@ test("detail component: renders the edit button only when an href is provided", 
   assert.ok(DETAIL_COMPONENT_SRC.includes("editHref"), "prop-driven");
 });
 
-// ── legacy action stays on the shared core ───────────────────────────────────
+// ── the one write path lives in the V2 edit action + shared core ─────────────
+// The legacy updateProduct action was deleted in UX.4E-9C; the id-preserving,
+// no-blanket-delete write path now belongs entirely to the V2 edit action and
+// the shared updateProductCore. Prove the live action stays on that core, and
+// that the legacy create/edit actions are truly gone from the actions file.
 
-test("legacy updateProduct: wired to the same shared core (one write path, no drift)", () => {
-  assert.ok(LEGACY_ACTIONS_SRC.includes("updateProductCore"), "legacy uses the shared core");
+test("V2 edit action: wired to the shared core (one write path, no drift)", () => {
+  assert.ok(EDIT_ACTIONS_SRC.includes("updateProductCore"), "V2 edit uses the shared core");
   assert.ok(
-    !LEGACY_ACTIONS_SRC.includes('.from("product_variants")\n    .delete()'),
-    "no blanket variant delete anywhere in the legacy action",
+    !EDIT_ACTIONS_SRC.includes('.from("product_variants")\n    .delete()'),
+    "no blanket variant delete in the V2 edit action",
   );
+});
+
+test("legacy create/edit actions no longer exist in the actions file", () => {
+  for (const sym of ["createProduct", "updateProduct", "nextProductSku"]) {
+    assert.equal(
+      new RegExp(`export\\s+async\\s+function\\s+${sym}\\b`).test(LEGACY_ACTIONS_SRC),
+      false,
+      `${sym} removed`,
+    );
+  }
 });

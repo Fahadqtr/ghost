@@ -22,6 +22,7 @@
 // suggestions are a capability gated by `allowAiSuggestions` — Edit-only for now;
 // consolidation must not mount them in Create as a side effect.
 
+import { useRef } from "react";
 import VariantIdentityToolbar from "@/components/v2/catalog/VariantIdentityToolbar";
 import VariantBulkTools from "@/components/v2/catalog/VariantBulkTools";
 import VariantAISuggestions from "@/components/v2/catalog/VariantAISuggestions";
@@ -30,6 +31,7 @@ import VariantRow, { type VariantRowFieldDef } from "@/components/v2/catalog/Var
 import type { VariantIdentityController } from "@/components/v2/catalog/useVariantIdentity";
 import { activeVariantCount, type VariantFieldKey, type VariantRowModel } from "@/lib/products/variant-model";
 import type { VariantSuggestion } from "@/lib/products/variant-ai";
+import { nextActiveBarcodeKey } from "@/lib/products/variant-scanner";
 
 // Per-mode presentational field sets. These are the two parents' pre-existing
 // field lists, moved here verbatim so neither parent still declares one:
@@ -130,6 +132,33 @@ export default function VariantStudio({
 
   const activeCount = activeVariantCount(rows);
 
+  // Scanner parity (UX.4E-9C) — ported from the retired legacy editor. A handheld
+  // barcode scanner emits Enter after each code; instead of that Enter submitting
+  // the form we advance focus to the NEXT active variant barcode field so codes
+  // scan straight down the list. Refs are keyed by the STABLE row key (never the
+  // array index), and only the barcode input registers one. The ordering decision
+  // lives in the pure `nextActiveBarcodeKey` helper (skips soft-removed rows,
+  // never creates a row, returns null at the last field).
+  const barcodeRefs = useRef(new Map<string, HTMLInputElement>());
+  const registerBarcodeRef = (key: string) => (field: VariantFieldKey, el: HTMLInputElement | null) => {
+    if (field !== "barcode") return;
+    if (el) barcodeRefs.current.set(key, el);
+    else barcodeRefs.current.delete(key);
+  };
+  const handleBarcodeKeyDown =
+    (key: string) => (field: VariantFieldKey, e: React.KeyboardEvent<HTMLInputElement>) => {
+      // Scanner flow applies ONLY to the barcode field on Enter. Every other field,
+      // and every other key (Tab included), keeps its native behavior untouched.
+      if (field !== "barcode" || e.key !== "Enter") return;
+      e.preventDefault(); // don't let the scanner's Enter submit the form
+      const nextKey = nextActiveBarcodeKey(rows, key);
+      if (nextKey === null) return; // last active field — keep focus safe, no wrap, no new row
+      const el = barcodeRefs.current.get(nextKey);
+      if (!el) return; // next field unmounted/missing — never throw
+      el.focus();
+      el.select();
+    };
+
   // Field ids number by PAYLOAD index (position among non-removed rows) so the DOM
   // ids match what the shared validator reports for focus-on-error. For Create,
   // where no row is ever soft-removed, this is just the array index — identical to
@@ -220,6 +249,8 @@ export default function VariantStudio({
                 onRemove={() => onRemoveRow(row.key)}
                 onRestore={onRestoreRow ? () => onRestoreRow(row.key) : undefined}
                 onFieldChange={(field, value) => onFieldChange(row.key, field, value)}
+                registerFieldRef={registerBarcodeRef(row.key)}
+                onFieldKeyDown={handleBarcodeKeyDown(row.key)}
                 disabled={disabled}
               />
             );
