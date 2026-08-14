@@ -72,14 +72,13 @@ test("inventory-seed.ts has no @/ framework, DB, or React imports", () => {
 
 const ADOPTED: [string, string][] = [
   ["lib/products/product-create.ts", "createProductCore"],
-  // Direct adopters that still spread inventorySeed themselves. The migrated
-  // create paths seed via a core and are proven elsewhere:
+  // Every runtime create path now seeds inventory THROUGH a core (single or batch),
+  // not by spreading inventorySeed directly — each proven in its own suite:
   //  • Malak (P5) → createProductCore — malak-create-core.test.ts
   //  • Shopify (P6) → createProductCore {seedQuantity} — shopify-create-core.test.ts
   //  • Snoonu (P7) + Pure Seoul (P8) → createProductsBatchCore — product-create-batch.test.ts
-  // P3 adopter — seed was byte-equivalent to the DB defaults (verified in
-  // production: low_stock_threshold default 5, sold_quantity default 0, no triggers).
-  ["app/staff/actions.ts", "Staff add product"],
+  //  • Staff (this phase) → createProductCore {seedQuantity: stock} — staff-create-core.test.ts
+  // (The batch core spreads inventorySeed too; it's a canonical core, covered by its own suite.)
 ];
 
 for (const [rel, name] of ADOPTED) {

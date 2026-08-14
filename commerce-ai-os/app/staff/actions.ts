@@ -21,7 +21,7 @@ import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransit
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode } from "@/lib/settings";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
-import { inventorySeed } from "@/lib/products/inventory-seed";
+import { createProductCore } from "@/lib/products/product-create";
 import { nextMkSku } from "@/lib/products/sku-generate";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
@@ -925,14 +925,19 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
     notes: `staff-new:${who.name}`, // marks origin for the approval queue
   };
 
-  const ins = await admin.from("products").insert(row).select("id").single();
-  if (ins.error) {
-    if ((ins.error as any).code === "23505") return { error: "تعارض في الكود/الباركود — حاول مرة ثانية." };
-    return { error: ins.error.message };
+  // Product + inventory spine goes through the shared create core: it inserts the
+  // product, seeds inventory from the staff-entered stock (kept OUT of the product
+  // row via seedQuantity), and COMPENSATES (deletes the product) if the seed fails,
+  // so a failed inventory seed can no longer leave an orphan. Variants are
+  // deliberately NOT passed (variants=[]): the per-variant loop below stays
+  // tolerant — one failed option never fails the product.
+  const core = await createProductCore(admin, row, [], { seedQuantity: stock });
+  if (!core.ok) {
+    // Never surface a raw DB error.
+    if (core.duplicateIdentity) return { error: "تعارض في الكود/الباركود — حاول مرة ثانية." };
+    return { error: "تعذّر إنشاء المنتج — حاول مرة ثانية." };
   }
-  const id = String(ins.data.id);
-  // Inventory row so it's stock-trackable immediately.
-  await admin.from("inventory").insert({ product_id: id, ...inventorySeed(stock) });
+  const id = core.productId;
 
   // Extra photos from the supervisor's task → the product's image gallery
   // (main image primary, the rest ordered behind it). Own-bucket URLs only.
