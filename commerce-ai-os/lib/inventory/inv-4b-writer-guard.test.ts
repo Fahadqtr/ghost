@@ -103,9 +103,9 @@ test("staffMoveVariant: engine movement (soldDelta 0), audit + transition preser
   assert.equal(/logVariantStockTransition\(/.test(body), false, "no longer uses the legacy variant transition");
 });
 
-// ── the shelf writers in the same files stay direct (INV.4C, still visible) ────
+// ── the shelf writers migrated in INV.4C (pinned by inv-4c-writer-guard) ───────
 
-test("shelf writers remain direct (untouched by INV.4B)", () => {
+test("shelf writers no longer write shelf tables directly (migrated in INV.4C)", () => {
   const shelfSave = fnBody(INV_ACTIONS, "saveShelfStock");
-  assert.ok(/\.from\(\s*["']shelf_stock["']\s*\)/.test(shelfSave), "saveShelfStock still writes shelf_stock (INV.4C)");
+  assert.equal(/\.from\(\s*["']shelf_stock["']\s*\)\s*\.(insert|update|upsert|delete)/.test(shelfSave), false, "saveShelfStock routes through the engine (INV.4C)");
 });

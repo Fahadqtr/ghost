@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { planAuthoritativeVariantTransition } from "./variant-transition-plan.ts";
+import { planAuthoritativeVariantTransition, planStockTransition } from "./variant-transition-plan.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -60,6 +60,18 @@ test("the <= 0 threshold matches the legacy path (negative treated as out)", () 
   assert.deepEqual(p, { level: "product", action: "restock" });
 });
 
+// ── planStockTransition (product-level, INV.4C) ───────────────────────────────
+
+test("planStockTransition: >0 → 0 = oos, 0 → >0 = restock, else null", () => {
+  assert.equal(planStockTransition({ before: 5, after: 0 }), "oos");
+  assert.equal(planStockTransition({ before: 0, after: 5 }), "restock");
+  assert.equal(planStockTransition({ before: 5, after: 3 }), null); // no crossing
+  assert.equal(planStockTransition({ before: 0, after: 0 }), null);
+  assert.equal(planStockTransition({ before: 3, after: 3 }), null); // no delta
+  // negative treated as out (matches legacy <= 0 threshold)
+  assert.equal(planStockTransition({ before: -2, after: 4 }), "restock");
+});
+
 // ── source guard: the DB-firing surface never uses totalStock ──────────────────
 
 function code(src: string): string {
@@ -82,6 +94,16 @@ test("logAuthoritativeVariantTransition fires tasks but never re-reads totalStoc
   assert.equal(/totalStock/.test(body), false, "never calls totalStock (INV.3B double-count avoided)");
   // best-effort: the whole body is wrapped in a try/catch so a task failure never
   // propagates back to undo the stock mutation.
+  assert.ok(/try\s*\{/.test(body) && /catch\s*\(/.test(body), "best-effort try/catch");
+});
+
+test("logAuthoritativeStockTransition fires the product task but never uses totalStock", () => {
+  const TRANSITION = readFileSync(join(ROOT, "lib/inventory/transition.ts"), "utf8");
+  const body = fnBody(TRANSITION, "logAuthoritativeStockTransition");
+  assert.ok(body.length > 0, "located logAuthoritativeStockTransition");
+  assert.ok(/planStockTransition\(/.test(body), "delegates to the pure planner");
+  assert.ok(/openStockTask\(/.test(body), "opens the product-level task");
+  assert.equal(/totalStock/.test(body), false, "never calls totalStock");
   assert.ok(/try\s*\{/.test(body) && /catch\s*\(/.test(body), "best-effort try/catch");
 });
 

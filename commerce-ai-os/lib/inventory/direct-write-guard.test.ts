@@ -42,19 +42,29 @@ function runtimeFiles(dirs: readonly string[]): string[] {
   return out;
 }
 
-// A file directly writes numeric inventory state if it matches ANY of these.
+// A file directly writes NUMERIC inventory state if it matches ANY of these.
 // `\s*` tolerates the newline some call sites put between `.from(...)` and the op.
-const INV_WRITE = /\.from\(\s*["']inventory["']\s*\)\s*\.(update|insert|upsert|delete)/;
+//
+// INV.4C refinement (Phase 18): an inventory UPDATE is a protected numeric-stock
+// write when it touches stock_quantity / sold_quantity / location. A threshold-only
+// update (low_stock_threshold) is NOT numeric-stock state, so an inline literal that
+// sets only that is NOT protected. But an UPDATE with a VARIABLE payload is opaque
+// (can't prove it isn't stock/sold/location) → treated as protected, conservatively.
+const INV_UPDATE_VAR = /\.from\(\s*["']inventory["']\s*\)\s*\.update\(\s*[A-Za-z_$]/;
+const INV_UPDATE_STOCK = /\.from\(\s*["']inventory["']\s*\)\s*\.update\(\s*\{[^}]*(stock_quantity|sold_quantity|location)/;
+// inventory row create/remove (create-seed / archive / product deletion).
+const INV_ROW_WRITE = /\.from\(\s*["']inventory["']\s*\)\s*\.(insert|upsert|delete)/;
 const SHELF_WRITE = /\.from\(\s*["'](shelf_stock|variant_shelf_stock)["']\s*\)\s*\.(update|insert|upsert|delete)/;
 // product_variants ONLY when the update payload sets stock_quantity (numeric).
 // `stock_status` (availability) writes are deliberately excluded.
 const PV_STOCK_WRITE = /\.from\(\s*["']product_variants["']\s*\)\s*\.update\(\s*\{[^}]*stock_quantity/;
 
 function isDirectNumericWriter(src: string): boolean {
-  return INV_WRITE.test(src) || SHELF_WRITE.test(src) || PV_STOCK_WRITE.test(src);
+  return INV_UPDATE_VAR.test(src) || INV_UPDATE_STOCK.test(src) || INV_ROW_WRITE.test(src)
+    || SHELF_WRITE.test(src) || PV_STOCK_WRITE.test(src);
 }
 
-type Classification = "engine" | "approved-rpc" | "legacy-direct" | "exempt";
+type Classification = "engine" | "approved-rpc" | "legacy-direct" | "exempt" | "converged";
 
 interface Entry {
   file: string;
@@ -70,19 +80,6 @@ interface Entry {
 // engine        = the Inventory Engine facade (calls RPCs, never a table write).
 const REGISTRY: Entry[] = [
   // ── legacy-direct: daily numeric writers, migrate one-by-one in INV.4A+ ──────
-  {
-    file: "app/(app)/inventory/actions.ts",
-    classification: "legacy-direct",
-    direct: true,
-    note: "INV.4A migrated the product-grain writers → engine.setAbsolute (updateInventory, bulkUpdateInventory, " +
-      "importInventoryBySku, applyStocktake). INV.4B migrated the variant writers → engine.adjustVariantMovement / " +
-      "setVariantAbsolute + authoritative transition (recordVariantMovement, applyVariantStocktake) — no direct " +
-      "product_variants.stock_quantity / parent rollup / sold_quantity write. STILL legacy-direct because the SAME " +
-      "FILE retains the shelf writers — setLocation / applyShelfCounts / saveShelfStock / saveVariantShelfStock / " +
-      "moveShelfStock / removeFromShelf / bulkAssignShelf / bulkAssignVariantShelf (shelf_stock / variant_shelf_stock " +
-      "→ INV.4C). The migrated functions are pinned no-direct-write by inv-4a-writer-guard.test.ts (4A) and " +
-      "inv-4b-writer-guard.test.ts (4B).",
-  },
   {
     file: "app/staff/actions.ts",
     classification: "legacy-direct",
@@ -156,13 +153,26 @@ const REGISTRY: Entry[] = [
       "deletion (variant_shelf_stock has no FK, so it must be cleared explicitly). Deletion cleanup, not a " +
       "live-product quantity mutation. Surfaced fresh at INV.3D (extracted product-delete helper).",
   },
+  // ── converged: fully migrated — no direct numeric-stock write remains ────────
+  {
+    file: "app/(app)/inventory/actions.ts",
+    classification: "converged",
+    direct: false,
+    note: "FULLY MIGRATED to the Inventory Engine across INV.4A/4B/4C: product-grain (setAbsolute), variant " +
+      "movement + stocktake (adjustVariantMovement / setVariantAbsolute), and ALL shelf writers — setLocation, " +
+      "applyShelfCounts, saveShelfStock, saveVariantShelfStock, removeFromShelf, moveShelfStock, bulkAssignShelf, " +
+      "bulkAssignVariantShelf, and the applyStocktake location side-path (placeOnShelf / replaceShelfDistribution / " +
+      "assignFullShelf / moveShelf). deleteSlot / deleteShelf are fail-closed topology-only deletions (reject when a " +
+      "slot is occupied; no placement auto-delete). The ONLY remaining inventory.update is low_stock_threshold " +
+      "(not numeric-stock state). Pinned no-direct-write by inv-4a/4b/4c-writer-guard.test.ts.",
+  },
   // ── engine: the facade — calls RPCs, never a direct table write ──────────────
   {
     file: "lib/inventory/engine.ts",
     classification: "engine",
     direct: false,
-    note: "Inventory Engine facade. Mutates ONLY through the INV.3C atomic RPCs (.rpc), never a direct table " +
-      "write, and never availability. Not wired to any runtime writer yet (INV.4A+).",
+    note: "Inventory Engine facade. Mutates ONLY through the INV.3C/4A/4B/4C atomic RPCs (.rpc), never a direct " +
+      "table write, and never availability.",
   },
 ];
 
@@ -194,12 +204,11 @@ test("registry direct flags match the source", () => {
 // ── 3. classifications are valid, and legacy writers are visible (not hidden) ──
 
 test("classifications are from the allowed set and no legacy writer is disguised as exempt", () => {
-  const allowed = new Set<Classification>(["engine", "approved-rpc", "legacy-direct", "exempt"]);
+  const allowed = new Set<Classification>(["engine", "approved-rpc", "legacy-direct", "exempt", "converged"]);
   for (const e of REGISTRY) assert.ok(allowed.has(e.classification), `${e.file}: valid classification`);
-  // The known daily numeric writers MUST be visible as legacy-direct so INV.4A+
-  // can reduce them — they can never be quietly reclassified exempt.
+  // These writers still hold un-migrated numeric-stock mutations and MUST stay
+  // visible as legacy-direct (never quietly reclassified exempt/converged).
   for (const f of [
-    "app/(app)/inventory/actions.ts",
     "app/staff/actions.ts",
     "app/api/malak/commit/route.ts",
     "lib/inventory/movements.ts",
@@ -207,8 +216,31 @@ test("classifications are from the allowed set and no legacy writer is disguised
   ]) {
     assert.equal(REGISTRY.find((e) => e.file === f)?.classification, "legacy-direct", `${f} stays legacy-direct`);
   }
-  // At least one legacy-direct writer still exists (nothing migrated yet in 3D).
-  assert.ok(REGISTRY.some((e) => e.classification === "legacy-direct"), "legacy writers present");
+  // INV.4C: the inventory actions file is fully migrated → converged (not exempt).
+  assert.equal(REGISTRY.find((e) => e.file === "app/(app)/inventory/actions.ts")?.classification, "converged",
+    "inventory/actions.ts is converged after INV.4C");
+  assert.ok(REGISTRY.some((e) => e.classification === "legacy-direct"), "legacy writers still present (INV.4D+)");
+});
+
+// ── 3b. matcher precision: threshold-only update is NOT a numeric-stock write, but
+//        a stock/sold/location update (inline or via a variable payload) IS ──────
+
+test("threshold-only inventory update is not a protected numeric-stock write", () => {
+  assert.equal(isDirectNumericWriter(`admin.from("inventory").update({ low_stock_threshold: 5, updated_at: x })`), false);
+  // stock / sold / location inline literals ARE protected
+  assert.equal(isDirectNumericWriter(`admin.from("inventory").update({ stock_quantity: 3 })`), true);
+  assert.equal(isDirectNumericWriter(`admin.from("inventory").update({ sold_quantity: 3 })`), true);
+  assert.equal(isDirectNumericWriter(`admin.from("inventory").update({ location: "A1" })`), true);
+  // a variable payload is opaque → conservatively protected
+  assert.equal(isDirectNumericWriter(`admin.from("inventory").update(patch).eq("id", x)`), true);
+  // insert / delete of an inventory row is always protected (create/archive/delete)
+  assert.equal(isDirectNumericWriter(`admin.from("inventory").insert({ product_id: p })`), true);
+  assert.equal(isDirectNumericWriter(`admin.from("inventory").delete().eq("id", x)`), true);
+});
+
+test("inventory/actions.ts no longer performs any direct numeric-stock write", () => {
+  assert.equal(isDirectNumericWriter(read("app/(app)/inventory/actions.ts")), false,
+    "all stock_quantity / sold_quantity / location / shelf writes go through the engine after INV.4C");
 });
 
 // ── 4. engine boundary: facade writes no numeric table directly, no availability

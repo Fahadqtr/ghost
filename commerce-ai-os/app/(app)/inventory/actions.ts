@@ -6,8 +6,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { applyMovement } from "@/lib/inventory/movements";
 // INV.4A — product-grain stock writes go through the Inventory Engine (atomic
 // RPC), never a direct inventory.stock_quantity write.
-import { setAbsolute, setVariantAbsolute, adjustVariantMovement, type EngineResult } from "@/lib/inventory/engine";
-import { logStockTransition, logAuthoritativeVariantTransition } from "@/lib/inventory/transition";
+import {
+  setAbsolute, setVariantAbsolute, adjustVariantMovement,
+  placeOnShelf, removeShelf, replaceShelfDistribution, assignFullShelf, moveShelf,
+  type EngineResult, type ShelfRow,
+} from "@/lib/inventory/engine";
+import {
+  logStockTransition, logAuthoritativeVariantTransition, logAuthoritativeStockTransition,
+} from "@/lib/inventory/transition";
 import { requireUser } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
@@ -115,6 +121,49 @@ function variantStockEngineMessage(r: Extract<EngineResult, { ok: false }>): str
     default:
       return "تعذّر تحديث مخزون الخيار.";
   }
+}
+
+// INV.4C — map a shelf Inventory Engine failure to a clear operator message.
+function shelfEngineMessage(r: Extract<EngineResult, { ok: false }>): string {
+  switch (r.reason) {
+    case "product_has_variants":
+      return "هذا المنتج له خيارات (variants) — تُدار رفوف كل خيار على حدة.";
+    case "parent_has_shelf_rows":
+      return "حالة رفوف غير متوقعة على المنتج الأب — راجع المنتج.";
+    case "missing_inventory":
+      return "صف المخزون غير موجود.";
+    case "missing_variant":
+      return "الخيار غير موجود.";
+    case "placement_not_found":
+      return "لا يوجد مخزون في هذا الرف لنقله.";
+    case "invalid_location":
+      return "رمز الرف غير صالح.";
+    case "same_location":
+      return "الرف المصدر والهدف متطابقان.";
+    case "invalid_quantity":
+    case "invalid_rows":
+      return "كمية أو توزيع رفوف غير صالح.";
+    case "overflow":
+      return "الكمية كبيرة جدًا.";
+    case "inventory_inconsistent":
+      return "حالة المخزون غير متسقة — راجع المنتج.";
+    default:
+      return "تعذّر تحديث الرفوف.";
+  }
+}
+
+// Build a normalized, positive-only shelf distribution for the RPC. The RPC is the
+// final validator/merger; this keeps the existing user-facing normalization (upper,
+// merge duplicates, drop empty/zero). An empty result means "explicit UNTRACK".
+function normalizeShelfRows(rows: { location: string; quantity: number }[]): ShelfRow[] {
+  const merged = new Map<string, number>();
+  for (const r of rows ?? []) {
+    const code = (r.location ?? "").trim().toUpperCase();
+    const q = Math.max(0, Math.floor(Number(r.quantity) || 0));
+    if (!code || q <= 0) continue;
+    merged.set(code, (merged.get(code) ?? 0) + q);
+  }
+  return Array.from(merged.entries()).map(([location, quantity]) => ({ location, quantity }));
 }
 
 // INV.4A — after a successful engine.setAbsolute: best-effort audit + zero-crossing
@@ -240,7 +289,6 @@ export async function applyStocktake(counts: StocktakeCount[]) {
   const unauth = await requireUser();
   if (unauth) return { ok: 0, failed: counts.length, errors: [unauth.error] };
   const admin = writableClient();
-  const now = new Date().toISOString();
   let ok = 0;
   const errors: string[] = [];
 
@@ -288,14 +336,17 @@ export async function applyStocktake(counts: StocktakeCount[]) {
       await logStockTransition(admin, { productId, before, after });
     }
 
-    // Location is a SEPARATE, non-quantity path — INV.4A does NOT migrate shelf /
-    // location semantics. Update it independently and surface a PARTIAL failure
-    // (the stock write already succeeded and is not rolled back).
+    // Location is a SEPARATE path — INV.4C routes it through the shelf Engine
+    // instead of a direct inventory.location write. The stock write already
+    // succeeded (setAbsolute only accepts a non-shelf, non-variant product), so a
+    // location failure is a PARTIAL failure and never rolls the stock back.
     const newLoc = c.location != null ? c.location.trim().toUpperCase() : null;
     if (newLoc != null) {
-      const { error: locErr } = await admin.from("inventory").update({ location: newLoc, updated_at: now }).eq("id", c.inventoryId);
-      if (locErr) {
-        errors.push(`${c.sku ?? c.inventoryId}: تم تحديث الكمية لكن فشل حفظ الموقع (${locErr.message})`);
+      // Place the whole (just-set) stock at the slot atomically (quantity read
+      // under lock). No direct inventory.location / shelf write.
+      const asg = await assignFullShelf(admin, { scope: "product", targetId: c.inventoryId, location: newLoc, quantity: null });
+      if (!asg.ok) {
+        errors.push(`${c.sku ?? c.inventoryId}: تم تحديث الكمية لكن فشل حفظ الموقع (${shelfEngineMessage(asg)})`);
         continue;
       }
     }
@@ -396,34 +447,25 @@ export async function setLocation(inventoryId: string, location: string) {
   if (unauth) return unauth;
   if (!inventoryId) return { error: "Missing inventory row." };
   const admin = writableClient();
-  const value = location.trim().toUpperCase() || null;
-  const { data: prev } = await admin.from("inventory").select("location, stock_quantity, products(sku)").eq("id", inventoryId).single();
-  const { error } = await admin
-    .from("inventory")
-    .update({ location: value, updated_at: new Date().toISOString() })
-    .eq("id", inventoryId);
-  if (error) return { error: error.message };
+  const value = location.trim().toUpperCase() || null; // null → explicit UNTRACK
 
-  // Keep shelf_stock in sync. The shelves page reads slot counts AND "Shelf
-  // contents" from shelf_stock (when that table exists), so assigning a slot via
-  // the inventory Location field MUST place a shelf_stock row — otherwise the
-  // product is invisible on the shelf even though inventory.location is set.
-  const hasShelfStock = !(await admin.from("shelf_stock").select("inventory_id").limit(1)).error;
-  if (hasShelfStock) {
-    await admin.from("shelf_stock").delete().eq("inventory_id", inventoryId);
-    if (value) {
-      const qty = Math.max(0, Math.floor(Number((prev as any)?.stock_quantity) || 0));
-      await admin.from("shelf_stock").insert({ inventory_id: inventoryId, location: value, quantity: qty, updated_at: new Date().toISOString() });
-    }
-  }
+  // Read-only metadata for the audit (old location + sku). NOT used to compute the
+  // mutation — the RPC reads the authoritative stock under its own lock.
+  const { data: prev } = await admin.from("inventory").select("location, products(sku)").eq("id", inventoryId).single();
+
+  // Valid slot → place the whole current stock at that slot (atomic; stock read
+  // under lock inside the RPC). Empty → explicit UNTRACK (clear shelf rows,
+  // location=null, PRESERVE stock). No direct inventory.location / shelf write.
+  const res = await assignFullShelf(admin, { scope: "product", targetId: inventoryId, location: value, quantity: null });
+  if (!res.ok) return { error: shelfEngineMessage(res) };
 
   await logAudit(admin, {
     action: "shelf_move",
     sku: (prev as any)?.products?.sku ?? null,
     field: "location",
     oldVal: (prev as any)?.location ?? null,
-    newVal: value,
-    details: { inventoryId },
+    newVal: (res.data.primaryLocation as string | null) ?? null,
+    details: { inventoryId, untracked: res.data.untracked === true },
   });
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
@@ -446,30 +488,22 @@ export async function applyShelfCounts(
   const admin = writableClient();
   const slot = (location ?? "").trim().toUpperCase();
   if (!slot) return { ok: 0, failed: counts.length, errors: ["No shelf selected."] };
-  const now = new Date().toISOString();
   let ok = 0;
   const errors: string[] = [];
-  const touched = new Set<string>();
   for (const c of counts) {
     if (!c.inventoryId) { errors.push("missing row"); continue; }
     const qty = Math.max(0, Math.floor(Number(c.counted) || 0));
-    if (qty <= 0) {
-      const del = await admin.from("shelf_stock").delete().eq("inventory_id", c.inventoryId).eq("location", slot);
-      if (del.error) { errors.push(del.error.message); continue; }
-    } else {
-      const up = await admin
-        .from("shelf_stock")
-        .upsert({ inventory_id: c.inventoryId, location: slot, quantity: qty, updated_at: now }, { onConflict: "inventory_id,location" });
-      if (up.error) { errors.push(up.error.message); continue; }
+    // Each count is an atomic single-slot placement (type A distribution edit):
+    // the RPC sets/removes the slot and re-derives stock = Σ shelves + primary.
+    // No direct shelf_stock upsert/delete, no manual master re-total.
+    const res = await placeOnShelf(admin, { scope: "product", targetId: c.inventoryId, location: slot, quantity: qty });
+    if (!res.ok) { errors.push(shelfEngineMessage(res)); continue; }
+    const before = Number(res.data.stockBefore);
+    const after = Number(res.data.stock);
+    if (before !== after) {
+      await logAuthoritativeStockTransition(admin, { productId: (res.data.productId as string | null) ?? null, before, after });
     }
-    touched.add(c.inventoryId);
     ok++;
-  }
-  // Re-total each touched product: stock_quantity = sum of all its shelves.
-  for (const id of touched) {
-    const { data } = await admin.from("shelf_stock").select("quantity").eq("inventory_id", id);
-    const sum = ((data ?? []) as any[]).reduce((s, r) => s + (r.quantity ?? 0), 0);
-    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("id", id);
   }
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
@@ -490,42 +524,28 @@ export async function saveVariantShelfStock(
   if (unauth) return unauth;
   if (!variantId) return { error: "Missing variant." };
   const admin = writableClient();
-  const now = new Date().toISOString();
 
-  const merged = new Map<string, number>();
-  for (const r of rows) {
-    const code = (r.location ?? "").trim().toUpperCase();
-    const q = Math.max(0, Math.floor(Number(r.quantity) || 0));
-    if (!code || q <= 0) continue;
-    merged.set(code, (merged.get(code) ?? 0) + q);
-  }
-  const clean = Array.from(merged.entries()).map(([location, quantity]) => ({
-    variant_id: variantId,
-    location,
-    quantity,
-    updated_at: now,
-  }));
+  // Replace the whole variant distribution atomically (variant stock = Σ rows,
+  // parent = Σ variants). Empty rows = explicit UNTRACK (drop overlay, preserve
+  // variant stock). No direct variant_shelf_stock / product_variants / inventory
+  // write, no sibling sum. The RPC owns the rollup.
+  const clean = normalizeShelfRows(rows);
+  const res = await replaceShelfDistribution(admin, { scope: "variant", targetId: variantId, rows: clean });
+  if (!res.ok) return { error: variantStockEngineMessage(res) };
 
-  const del = await admin.from("variant_shelf_stock").delete().eq("variant_id", variantId);
-  if (del.error) return { error: del.error.message };
-  if (clean.length) {
-    const ins = await admin.from("variant_shelf_stock").insert(clean);
-    if (ins.error) return { error: ins.error.message };
-  }
-
-  // Variant stock = sum of its placements (only when there's at least one).
-  const totalQty = clean.reduce((s, r) => s + r.quantity, 0);
-  if (clean.length) {
-    await admin.from("product_variants").update({ stock_quantity: totalQty }).eq("id", variantId);
-  }
-
-  // Parent product inventory total = sum of all its variants' stock.
-  const { data: v } = await admin.from("product_variants").select("parent_product_id").eq("id", variantId).single();
-  const parentId = (v as any)?.parent_product_id;
-  if (parentId) {
-    const { data: sibs } = await admin.from("product_variants").select("stock_quantity").eq("parent_product_id", parentId);
-    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
-    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("product_id", parentId);
+  // Authoritative variant zero-crossing transition (best-effort) on a real change.
+  const before = Number(res.data.variantBefore);
+  const after = Number(res.data.variantStock);
+  if (before !== after) {
+    await logAuthoritativeVariantTransition(admin, {
+      productId: (res.data.parentProductId as string | null) ?? null,
+      variantId,
+      variantName: "خيار",
+      variantBefore: before,
+      variantAfter: after,
+      parentBefore: Number(res.data.parentBefore),
+      parentAfter: Number(res.data.parentStock),
+    });
   }
 
   revalidatePath("/inventory");
@@ -549,37 +569,12 @@ export async function saveShelfStock(
   if (!inventoryId) return { error: "Missing inventory row." };
   const admin = writableClient();
 
-  // Normalize: uppercase codes, merge duplicates, keep positive quantities.
-  const merged = new Map<string, number>();
-  for (const r of rows) {
-    const code = (r.location ?? "").trim().toUpperCase();
-    const q = Math.max(0, Math.floor(Number(r.quantity) || 0));
-    if (!code || q <= 0) continue;
-    merged.set(code, (merged.get(code) ?? 0) + q);
-  }
-  const clean = Array.from(merged.entries()).map(([location, quantity]) => ({
-    inventory_id: inventoryId,
-    location,
-    quantity,
-    updated_at: new Date().toISOString(),
-  }));
-
-  // Replace the product's placements wholesale.
-  const del = await admin.from("shelf_stock").delete().eq("inventory_id", inventoryId);
-  if (del.error) return { error: del.error.message };
-  if (clean.length) {
-    const ins = await admin.from("shelf_stock").insert(clean);
-    if (ins.error) return { error: ins.error.message };
-  }
-
-  // Primary location = the slot holding the most units (or null); total stock =
-  // sum of all placements (only when there's at least one, so clearing all
-  // placements doesn't silently zero the stock).
-  const primary = clean.slice().sort((a, b) => b.quantity - a.quantity)[0]?.location ?? null;
-  const totalQty = clean.reduce((s, r) => s + r.quantity, 0);
-  const patch: Record<string, unknown> = { location: primary, updated_at: new Date().toISOString() };
-  if (clean.length) patch.stock_quantity = totalQty;
-  await admin.from("inventory").update(patch).eq("id", inventoryId);
+  // Replace the product's placements wholesale (atomic): stock = Σ rows, location =
+  // primary. An empty distribution = explicit UNTRACK (drop overlay, location=null,
+  // PRESERVE stock). No direct shelf_stock / inventory write in JS — the RPC owns it.
+  const clean = normalizeShelfRows(rows);
+  const res = await replaceShelfDistribution(admin, { scope: "product", targetId: inventoryId, rows: clean });
+  if (!res.ok) return { error: shelfEngineMessage(res) };
 
   await logAudit(admin, {
     action: "shelf_assign",
@@ -587,8 +582,16 @@ export async function saveShelfStock(
     field: "location",
     oldVal: null,
     newVal: clean.map((c) => `${c.location}×${c.quantity}`).join(", ") || null,
-    details: { inventoryId, placements: clean.map((c) => ({ location: c.location, quantity: c.quantity })) },
+    details: { inventoryId, placements: clean, primaryLocation: (res.data.primaryLocation as string | null) ?? null, untracked: res.data.untracked === true },
   });
+
+  // Authoritative product zero-crossing transition (best-effort) on a real change.
+  const before = Number(res.data.stockBefore);
+  const after = Number(res.data.stock);
+  if (before !== after) {
+    await logAuthoritativeStockTransition(admin, { productId: (res.data.productId as string | null) ?? null, before, after });
+  }
+
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
   revalidatePath("/inventory/shelves/labels");
@@ -650,45 +653,34 @@ export async function upsertVariants(
   return { ok: true };
 }
 
-/** Recompute inventory.location (primary slot) + total stock from shelf_stock. */
-async function resyncInventoryFromShelfStock(
-  admin: ReturnType<typeof writableClient>,
-  inventoryId: string
-) {
-  const { data } = await admin
-    .from("shelf_stock")
-    .select("location, quantity")
-    .eq("inventory_id", inventoryId);
-  const rows = (data ?? []) as { location: string; quantity: number }[];
-  const primary = rows.slice().sort((a, b) => b.quantity - a.quantity)[0]?.location ?? null;
-  const total = rows.reduce((s, r) => s + (r.quantity ?? 0), 0);
-  const patch: Record<string, unknown> = { location: primary, updated_at: new Date().toISOString() };
-  // Don't silently zero stock when the last placement is removed — only adjust
-  // the total while there's still at least one placement to sum.
-  if (rows.length) patch.stock_quantity = total;
-  await admin.from("inventory").update(patch).eq("id", inventoryId);
-}
-
-/** Remove a product from a single shelf slot (deletes that shelf_stock row). */
-export async function removeFromShelf(inventoryId: string, location: string) {
+/** Remove a product from a single shelf slot (type A distribution edit). */
+export async function removeFromShelf(inventoryId: string, location: string): Promise<{ error: string } | { ok: true }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const slot = (location ?? "").trim().toUpperCase();
   if (!inventoryId || !slot) return { error: "Missing inventory row or slot." };
   const admin = writableClient();
 
-  const del = await admin.from("shelf_stock").delete().eq("inventory_id", inventoryId).eq("location", slot);
-  if (del.error) return { error: del.error.message };
+  // Drop the slot and re-derive stock from Σ remaining shelves (atomic). No direct
+  // shelf delete, no JS resync. This is a distribution edit: removing the last
+  // placement re-derives stock to 0 (use setLocation("") to UNTRACK + preserve).
+  const res = await removeShelf(admin, { scope: "product", targetId: inventoryId, location: slot });
+  if (!res.ok) return { error: shelfEngineMessage(res) };
 
-  await resyncInventoryFromShelfStock(admin, inventoryId);
   await logAudit(admin, {
     action: "shelf_remove",
     sku: await skuForInventory(admin, inventoryId),
     field: "location",
     oldVal: slot,
-    newVal: null,
+    newVal: (res.data.primaryLocation as string | null) ?? null,
     details: { inventoryId },
   });
+
+  const before = Number(res.data.stockBefore);
+  const after = Number(res.data.stock);
+  if (before !== after) {
+    await logAuthoritativeStockTransition(admin, { productId: (res.data.productId as string | null) ?? null, before, after });
+  }
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
   revalidatePath("/inventory/shelves/labels");
@@ -697,8 +689,8 @@ export async function removeFromShelf(inventoryId: string, location: string) {
 }
 
 /** Move a product's placement from one slot to another (merges if the target
- *  already holds units of the same product). */
-export async function moveShelfStock(inventoryId: string, fromLocation: string, toLocation: string) {
+ *  already holds units of the same product). Total stock is invariant. */
+export async function moveShelfStock(inventoryId: string, fromLocation: string, toLocation: string): Promise<{ error: string } | { ok: true }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const from = (fromLocation ?? "").trim().toUpperCase();
@@ -707,40 +699,20 @@ export async function moveShelfStock(inventoryId: string, fromLocation: string, 
   if (from === to) return { ok: true };
   const admin = writableClient();
 
-  const { data: src } = await admin
-    .from("shelf_stock")
-    .select("quantity")
-    .eq("inventory_id", inventoryId)
-    .eq("location", from)
-    .maybeSingle();
-  if (!src) return { error: "Placement not found." };
-  const { data: dst } = await admin
-    .from("shelf_stock")
-    .select("quantity")
-    .eq("inventory_id", inventoryId)
-    .eq("location", to)
-    .maybeSingle();
+  // Atomic move (merge if `to` exists); the RPC keeps total stock invariant and
+  // recomputes the primary. No JS read + delete/upsert sequence.
+  const res = await moveShelf(admin, { scope: "product", targetId: inventoryId, fromLocation: from, toLocation: to });
+  if (!res.ok) return { error: shelfEngineMessage(res) };
 
-  const now = new Date().toISOString();
-  const del = await admin.from("shelf_stock").delete().eq("inventory_id", inventoryId).eq("location", from);
-  if (del.error) return { error: del.error.message };
-  const up = await admin
-    .from("shelf_stock")
-    .upsert(
-      { inventory_id: inventoryId, location: to, quantity: (dst?.quantity ?? 0) + (src.quantity ?? 0), updated_at: now },
-      { onConflict: "inventory_id,location" }
-    );
-  if (up.error) return { error: up.error.message };
-
-  await resyncInventoryFromShelfStock(admin, inventoryId);
   await logAudit(admin, {
     action: "shelf_move",
     sku: await skuForInventory(admin, inventoryId),
     field: "location",
     oldVal: from,
     newVal: to,
-    details: { inventoryId, quantity: src.quantity ?? 0 },
+    details: { inventoryId, quantity: Number(res.data.quantity) || 0 },
   });
+  // Total stock does not change on a move → no zero-crossing transition.
   revalidatePath("/inventory");
   revalidatePath("/inventory/shelves");
   revalidatePath("/inventory/shelves/labels");
@@ -763,47 +735,38 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string, 
   // total stock is updated to match) — lets "set qty + assign shelf" be one step.
   const forced = setQty == null ? null : Math.max(0, Math.floor(setQty));
   const admin = writableClient();
-  const now = new Date().toISOString();
-  const hasShelfStock = !(await admin.from("shelf_stock").select("id").limit(1)).error;
 
   let done = 0;
   const errors: string[] = [];
   for (const id of ids) {
+    // Read-only metadata (sku + old location) for the audit only.
     const { data: inv } = await admin
       .from("inventory")
-      .select("id, stock_quantity, location, products(sku)")
+      .select("location, products(sku)")
       .eq("id", id)
       .single();
-    if (!inv) continue;
-    const before = (inv as any).location ?? null;
-    const qty = forced ?? ((inv as any).stock_quantity ?? 0);
-    // 0 units → nothing to place; keep `location` consistent with the (empty)
-    // shelf map instead of pointing at a slot that holds no shelf_stock row.
-    const newLoc = qty > 0 ? slot : null;
+    const before = (inv as any)?.location ?? null;
 
-    if (hasShelfStock) {
-      const del = await admin.from("shelf_stock").delete().eq("inventory_id", id);
-      if (del.error) { errors.push(del.error.message); continue; }
-      if (qty > 0) {
-        const ins = await admin
-          .from("shelf_stock")
-          .insert({ inventory_id: id, location: slot, quantity: qty, updated_at: now });
-        if (ins.error) { errors.push(ins.error.message); continue; }
-      }
-    }
-    const patch: Record<string, unknown> = { location: newLoc, updated_at: now };
-    if (forced != null) patch.stock_quantity = forced;
-    const up = await admin.from("inventory").update(patch).eq("id", id);
-    if (up.error) { errors.push(up.error.message); continue; }
+    // Put the full stock (forced null → current stock read under lock) at the slot,
+    // atomically (stock + shelf + primary). No JS current-stock read for the
+    // mutation, no direct shelf/inventory writes.
+    const res = await assignFullShelf(admin, { scope: "product", targetId: id, location: slot, quantity: forced });
+    if (!res.ok) { errors.push(shelfEngineMessage(res)); continue; }
 
     await logAudit(admin, {
       action: "shelf_assign",
-      sku: (inv as any).products?.sku ?? null,
+      sku: (inv as any)?.products?.sku ?? null,
       field: "location",
       oldVal: before,
-      newVal: newLoc,
-      details: { inventoryId: id, quantity: qty },
+      newVal: (res.data.primaryLocation as string | null) ?? null,
+      details: { inventoryId: id, quantity: Number(res.data.stock) || 0 },
     });
+    // A forced quantity can cross zero → authoritative transition (best-effort).
+    if (forced != null) {
+      const b = Number(res.data.stockBefore);
+      const a = Number(res.data.stock);
+      if (b !== a) await logAuthoritativeStockTransition(admin, { productId: (res.data.productId as string | null) ?? null, before: b, after: a });
+    }
     done++;
   }
 
@@ -829,50 +792,48 @@ export async function bulkAssignVariantShelf(variantIds: string[], location: str
   // When provided, force each option's placed quantity (and its stock) to this.
   const forced = setQty == null ? null : Math.max(0, Math.floor(setQty));
   const admin = writableClient();
-  const now = new Date().toISOString();
-  const parents = new Set<string>();
 
   let done = 0;
   const errors: string[] = [];
   for (const id of ids) {
+    // Read-only metadata (sku + name) for the audit only.
     const { data: v } = await admin
       .from("product_variants")
-      .select("id, stock_quantity, parent_product_id, variant_name, sku")
+      .select("variant_name, sku")
       .eq("id", id)
       .single();
-    if (!v) continue;
-    // Track the parent up front so a mid-loop failure still re-syncs its total.
-    if ((v as any).parent_product_id) parents.add((v as any).parent_product_id);
-    const qty = forced ?? ((v as any).stock_quantity ?? 0);
-    const del = await admin.from("variant_shelf_stock").delete().eq("variant_id", id);
-    if (del.error) { errors.push(del.error.message); continue; }
-    if (qty > 0) {
-      const ins = await admin
-        .from("variant_shelf_stock")
-        .insert({ variant_id: id, location: slot, quantity: qty, updated_at: now });
-      if (ins.error) { errors.push(ins.error.message); continue; }
-    }
-    if (forced != null) {
-      const uv = await admin.from("product_variants").update({ stock_quantity: forced }).eq("id", id);
-      if (uv.error) { errors.push(uv.error.message); continue; }
-    }
+
+    // Put the full variant stock (forced null → current under lock) at the slot;
+    // variant stock + variant shelf + parent rollup are atomic inside the RPC.
+    // No direct variant_shelf_stock / product_variants write, no parent re-total loop.
+    const res = await assignFullShelf(admin, { scope: "variant", targetId: id, location: slot, quantity: forced });
+    if (!res.ok) { errors.push(variantStockEngineMessage(res)); continue; }
+
     await logAudit(admin, {
       action: "shelf_assign",
-      sku: (v as any).sku ?? null,
+      sku: (v as any)?.sku ?? null,
       field: "location",
       oldVal: null,
-      newVal: slot,
-      details: { variantId: id, variantName: (v as any).variant_name ?? null, quantity: qty },
+      newVal: (res.data.location as string | null) ?? null,
+      details: { variantId: id, variantName: (v as any)?.variant_name ?? null, quantity: Number(res.data.variantStock) || 0 },
     });
+    // A forced quantity can cross zero → authoritative variant transition.
+    if (forced != null) {
+      const b = Number(res.data.variantBefore);
+      const a = Number(res.data.variantStock);
+      if (b !== a) {
+        await logAuthoritativeVariantTransition(admin, {
+          productId: (res.data.parentProductId as string | null) ?? null,
+          variantId: id,
+          variantName: String((v as any)?.variant_name ?? "خيار"),
+          variantBefore: b,
+          variantAfter: a,
+          parentBefore: Number(res.data.parentBefore),
+          parentAfter: Number(res.data.parentStock),
+        });
+      }
+    }
     done++;
-  }
-
-  // Re-sync each affected parent product's inventory total = sum of variant stock.
-  // Runs regardless of per-item failures so the parent total never drifts.
-  for (const parentId of parents) {
-    const { data: sibs } = await admin.from("product_variants").select("stock_quantity").eq("parent_product_id", parentId);
-    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
-    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("product_id", parentId);
   }
 
   revalidatePath("/inventory");
@@ -923,17 +884,29 @@ export async function addSlot(code: string) {
   return { ok: true };
 }
 
-/** Delete one slot. Any products placed there are unplaced (shelf_stock rows
- *  removed + their location pointer cleared) so no stock is stranded at a slot
- *  that no longer exists. Their total stock is kept. */
+/**
+ * Delete one EMPTY slot (topology only). INV.4C is fail-closed: if any product OR
+ * variant placement still lives at this slot, the deletion is REFUSED — we never
+ * auto-delete placements (the old behavior stranded stock as drift). Move/remove
+ * the products first. No quantity mutation happens here.
+ */
 export async function deleteSlot(code: string) {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const admin = writableClient();
   const slot = code.trim().toUpperCase();
-  // Unplace products at this slot (best-effort; ignores missing shelf_stock table).
-  await admin.from("shelf_stock").delete().eq("location", slot);
-  await admin.from("inventory").update({ location: null }).eq("location", slot);
+  if (!slot) return { error: "رمز الرف غير صالح." };
+
+  // Fail-closed occupancy check on BOTH shelf overlays.
+  const ps = await admin.from("shelf_stock").select("inventory_id").eq("location", slot).limit(1);
+  if (!ps.error && (ps.data ?? []).length > 0) {
+    return { error: "لا يمكن حذف الرف — فيه منتجات. انقل/أزل المنتجات من هذا الرف أولًا." };
+  }
+  const vs = await admin.from("variant_shelf_stock").select("variant_id").eq("location", slot).limit(1);
+  if (!vs.error && (vs.data ?? []).length > 0) {
+    return { error: "لا يمكن حذف الرف — فيه خيارات منتجات. انقل/أزل الخيارات من هذا الرف أولًا." };
+  }
+
   const { error } = await admin.from("shelf_slots").delete().eq("code", code);
   if (error) return { error: error.message };
   revalidatePath("/inventory");
@@ -942,19 +915,31 @@ export async function deleteSlot(code: string) {
   return { ok: true };
 }
 
-/** Delete a whole shelf (all its slots) + unplace any products on it. */
+/**
+ * Delete a whole shelf (all its slots) — topology only, fail-closed. If ANY of its
+ * slots holds a product OR variant placement, the WHOLE operation is refused (no
+ * partial delete, no auto-unplacement). Clear the shelf first.
+ */
 export async function deleteShelf(shelf: string) {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const admin = writableClient();
   const sh = shelf.trim().toUpperCase();
-  // Resolve this shelf's slot codes, then unplace products at any of them.
+  if (!sh) return { error: "رمز الرف غير صالح." };
+
   const { data: slots } = await admin.from("shelf_slots").select("code").eq("shelf", sh);
   const codes = ((slots ?? []) as any[]).map((s) => String(s.code).toUpperCase());
   if (codes.length) {
-    await admin.from("shelf_stock").delete().in("location", codes);
-    await admin.from("inventory").update({ location: null }).in("location", codes);
+    const ps = await admin.from("shelf_stock").select("inventory_id").in("location", codes).limit(1);
+    if (!ps.error && (ps.data ?? []).length > 0) {
+      return { error: "لا يمكن حذف الرف — فيه منتجات. انقل/أزل المنتجات من رفوف هذا الرف أولًا." };
+    }
+    const vs = await admin.from("variant_shelf_stock").select("variant_id").in("location", codes).limit(1);
+    if (!vs.error && (vs.data ?? []).length > 0) {
+      return { error: "لا يمكن حذف الرف — فيه خيارات منتجات. انقل/أزل الخيارات أولًا." };
+    }
   }
+
   const { error } = await admin.from("shelf_slots").delete().eq("shelf", sh);
   if (error) return { error: error.message };
   revalidatePath("/inventory");
