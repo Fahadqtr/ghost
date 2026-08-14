@@ -74,9 +74,13 @@ const REGISTRY: Entry[] = [
     file: "app/(app)/inventory/actions.ts",
     classification: "legacy-direct",
     direct: true,
-    note: "Manual edit, bulk edit, CSV import, product & variant stocktake, shelf count/place/move/remove, " +
-      "bulk shelf assign, and variant movement — all legacy JS read-modify-write over inventory / " +
-      "product_variants.stock_quantity / shelf_stock / variant_shelf_stock.",
+    note: "MIGRATED in INV.4A → engine.setAbsolute (no direct stock_quantity write): manual edit " +
+      "(updateInventory), bulk edit (bulkUpdateInventory), CSV import (importInventoryBySku), and product " +
+      "stocktake (applyStocktake). STILL legacy-direct because the SAME FILE retains un-migrated writers: " +
+      "applyVariantStocktake, recordVariantMovement (product_variants.stock_quantity → INV.4B) and all shelf " +
+      "writers — setLocation / applyShelfCounts / saveShelfStock / saveVariantShelfStock / moveShelfStock / " +
+      "removeFromShelf / bulkAssignShelf / bulkAssignVariantShelf (shelf_stock / variant_shelf_stock → INV.4C). " +
+      "The four migrated functions are pinned no-direct-stock-write by inv-4a-writer-guard.test.ts.",
   },
   {
     file: "app/staff/actions.ts",

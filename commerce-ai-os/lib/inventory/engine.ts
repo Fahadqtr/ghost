@@ -93,6 +93,20 @@ export async function setVariantAbsolute(admin: any, variantId: string, quantity
   return interpret(op, error, data, ["before", "after", "parentStock"]);
 }
 
+/**
+ * Set a SIMPLE product's inventory row to an absolute non-negative integer (RPC
+ * inv_set_absolute_product). Fail-closed: a product WITH variants or WITH shelf
+ * rows is rejected by the RPC (product_has_variants / product_has_shelf_rows) —
+ * those grains are owned by INV.4B / INV.4C. Never a direct-write fallback.
+ */
+export async function setAbsolute(admin: any, inventoryId: string, quantity: number): Promise<EngineResult> {
+  const op = "setAbsolute";
+  if (!inventoryId) return { ok: false, op, reason: "missing_inventory" };
+  if (!Number.isInteger(quantity) || quantity < 0) return { ok: false, op, reason: "invalid_quantity" };
+  const { data, error } = await admin.rpc("inv_set_absolute_product", { p_inventory_id: inventoryId, p_quantity: quantity });
+  return interpret(op, error, data, ["before", "after", "productId"]);
+}
+
 export type ShelfScope = "product" | "variant";
 
 /** Authoritative shelf placement/count; recomputes derived totals (RPC). */
@@ -128,12 +142,12 @@ export async function reconcile(admin: any, productId: string): Promise<Reconcil
 export const NOT_IMPLEMENTED_OPS = [
   "adjust",            // product-grain delta (needs an atomic product RPC)
   "sell",              // stock − + sold + shelf spread (channel symmetry, INV.5)
-  "setAbsolute",       // product-grain absolute set
   "receive",           // product-grain purchase-in
   "moveShelf",         // slot → slot transfer
   "removeShelf",       // drop a slot
   "reverseMovement",   // invert a ledger movement
 ] as const;
+// setAbsolute is implemented (INV.4A) — see the wrapper above.
 
 export type NotImplementedOp = (typeof NOT_IMPLEMENTED_OPS)[number];
 
@@ -153,7 +167,6 @@ function notImplemented(op: NotImplementedOp): never {
 // Throwing stubs — present in the contract, impossible to call as a mutation.
 export const adjust = (..._args: unknown[]): never => notImplemented("adjust");
 export const sell = (..._args: unknown[]): never => notImplemented("sell");
-export const setAbsolute = (..._args: unknown[]): never => notImplemented("setAbsolute");
 export const receive = (..._args: unknown[]): never => notImplemented("receive");
 export const moveShelf = (..._args: unknown[]): never => notImplemented("moveShelf");
 export const removeShelf = (..._args: unknown[]): never => notImplemented("removeShelf");

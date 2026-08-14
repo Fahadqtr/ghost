@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { applyMovement } from "@/lib/inventory/movements";
+// INV.4A — product-grain stock writes go through the Inventory Engine (atomic
+// RPC), never a direct inventory.stock_quantity write.
+import { setAbsolute, type EngineResult } from "@/lib/inventory/engine";
+import { logStockTransition } from "@/lib/inventory/transition";
 import { requireUser } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
@@ -63,6 +67,56 @@ async function skuForInventory(admin: any, inventoryId: string): Promise<string 
   return (data as any)?.products?.sku ?? null;
 }
 
+// INV.4A — map an Inventory Engine failure to a clear operator message. The
+// product-grain RPC deliberately rejects variant / shelf-tracked products
+// (those grains move in INV.4B / INV.4C), so those reasons get a helpful hint.
+function stockEngineMessage(r: Extract<EngineResult, { ok: false }>): string {
+  switch (r.reason) {
+    case "product_has_variants":
+      return "هذا المنتج له خيارات (variants) — تُعدَّل كمية كل خيار على حدة، لا الإجمالي.";
+    case "product_has_shelf_rows":
+      return "هذا المنتج موزّع على رفوف — استخدم جرد الرفوف لتعديل الكمية.";
+    case "invalid_quantity":
+      return "كمية غير صالحة (لازم رقم صحيح ≥ 0).";
+    case "missing_inventory":
+      return "صف المخزون غير موجود.";
+    case "inventory_inconsistent":
+      return "حالة المخزون غير متسقة — راجع المنتج.";
+    default:
+      return "تعذّر تحديث المخزون.";
+  }
+}
+
+// INV.4A — after a successful engine.setAbsolute: best-effort audit + zero-crossing
+// transition. Both are best-effort and never undo the stock write (which already
+// succeeded atomically in the RPC). Uses the engine's real before/after/productId.
+async function afterStockSet(
+  admin: any,
+  res: Extract<EngineResult, { ok: true }>,
+  ctx: { action: string; actor?: string; sku?: string | null; details?: Record<string, unknown> },
+): Promise<void> {
+  const before = Number(res.data.before);
+  const after = Number(res.data.after);
+  const productId = (res.data.productId as string | null) ?? null;
+  try {
+    await insertAuditRow(admin, {
+      agent: ctx.actor ?? "inventory",
+      action: ctx.action,
+      action_type: ctx.action,
+      sku: ctx.sku ?? null,
+      product_id: productId,
+      field: "stock_quantity",
+      old_value: String(before),
+      new_value: String(after),
+      status: "done",
+      details: { productId, before, after, ...(ctx.details ?? {}) },
+    });
+  } catch (e) {
+    console.error("[inv4a audit]", e instanceof Error ? e.message : e);
+  }
+  await logStockTransition(admin, { productId, before, after, actor: ctx.actor });
+}
+
 /** Single-row inline save (kept for backward compatibility). */
 export async function updateInventory(
   id: string,
@@ -70,17 +124,33 @@ export async function updateInventory(
 ) {
   const unauth = await requireUser();
   if (unauth) return unauth;
-  const supabase = createClient();
-  const { error } = await supabase
-    .from("inventory")
-    .update({
-      stock_quantity: toNum(values.stock_quantity),
-      low_stock_threshold: toNum(values.low_stock_threshold),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
+  if (!id) return { error: "Missing inventory row." };
+  const admin = writableClient();
 
-  if (error) return { error: error.message };
+  // Stock quantity (when provided) goes through the Inventory Engine — never a
+  // direct inventory.stock_quantity write. Blank/null/negative/fractional is a
+  // hard error, never a silent write.
+  const rawStock = values.stock_quantity;
+  if (rawStock !== undefined && String(rawStock).trim() !== "") {
+    const stock = toNum(rawStock);
+    if (stock === null || !Number.isInteger(stock) || stock < 0) {
+      return { error: "كمية مخزون غير صالحة (لازم رقم صحيح ≥ 0)." };
+    }
+    const res = await setAbsolute(admin, id, stock);
+    if (!res.ok) return { error: stockEngineMessage(res) };
+    await afterStockSet(admin, res, { action: "stock_set", sku: await skuForInventory(admin, id), details: { via: "manual" } });
+  }
+
+  // low_stock_threshold is NOT a quantity mutation — update it independently
+  // (only when provided) without ever touching stock_quantity.
+  if (values.low_stock_threshold !== undefined && String(values.low_stock_threshold).trim() !== "") {
+    const { error } = await admin
+      .from("inventory")
+      .update({ low_stock_threshold: toNum(values.low_stock_threshold), updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) return { error: error.message };
+  }
+
   revalidatePath("/inventory");
   revalidatePath("/dashboard");
   return { ok: true };
@@ -96,18 +166,27 @@ export type BulkUpdate = {
 export async function bulkUpdateInventory(updates: BulkUpdate[]) {
   const unauth = await requireUser();
   if (unauth) return { ok: 0, failed: updates.length, errors: [unauth.error] };
-  const supabase = createClient();
+  const admin = writableClient();
   const now = new Date().toISOString();
   let ok = 0;
   const errors: string[] = [];
 
   for (const u of updates) {
-    const patch: Record<string, unknown> = { updated_at: now };
-    if (u.stock_quantity !== undefined) patch.stock_quantity = toNum(u.stock_quantity);
-    if (u.low_stock_threshold !== undefined) patch.low_stock_threshold = toNum(u.low_stock_threshold);
-    const { error } = await supabase.from("inventory").update(patch).eq("id", u.id);
-    if (error) errors.push(`${u.id}: ${error.message}`);
-    else ok++;
+    if (!u.id) { errors.push("missing row id"); continue; }
+    // Stock quantity (when provided) → Inventory Engine, per row, atomically.
+    if (u.stock_quantity !== undefined && String(u.stock_quantity).trim() !== "") {
+      const stock = toNum(u.stock_quantity);
+      if (stock === null || !Number.isInteger(stock) || stock < 0) { errors.push(`${u.id}: كمية غير صالحة`); continue; }
+      const res = await setAbsolute(admin, u.id, stock);
+      if (!res.ok) { errors.push(`${u.id}: ${stockEngineMessage(res)}`); continue; }
+      await afterStockSet(admin, res, { action: "stock_set", sku: await skuForInventory(admin, u.id), details: { via: "bulk" } });
+    }
+    // Threshold-only path (never touches stock_quantity).
+    if (u.low_stock_threshold !== undefined && String(u.low_stock_threshold).trim() !== "") {
+      const { error } = await admin.from("inventory").update({ low_stock_threshold: toNum(u.low_stock_threshold), updated_at: now }).eq("id", u.id);
+      if (error) { errors.push(`${u.id}: ${error.message}`); continue; }
+    }
+    ok++;
   }
 
   revalidatePath("/inventory");
@@ -144,44 +223,53 @@ export async function applyStocktake(counts: StocktakeCount[]) {
       continue;
     }
     const counted = Math.max(0, Math.floor(rawCounted));
-    const { data: inv, error: readErr } = await admin
-      .from("inventory")
-      .select("id, stock_quantity, product_id, location")
-      .eq("id", c.inventoryId)
-      .single();
-    if (readErr || !inv) {
-      errors.push(`${c.sku ?? c.inventoryId}: not found`);
+
+    // Stock quantity → Inventory Engine (atomic; rejects variant / shelf-tracked
+    // products fail-closed — those grains move in INV.4B / INV.4C).
+    const res = await setAbsolute(admin, c.inventoryId, counted);
+    if (!res.ok) {
+      errors.push(`${c.sku ?? c.inventoryId}: ${stockEngineMessage(res)}`);
       continue;
     }
-    const before = inv.stock_quantity ?? 0;
+    const before = Number(res.data.before);
+    const after = Number(res.data.after);
+    const productId = (res.data.productId as string | null) ?? null;
+
+    // SINGLE stocktake audit (variance) using the engine's real before/after —
+    // recorded only on an actual change (mirrors the prior no-op-skip behavior).
+    if (after !== before) {
+      try {
+        await insertAuditRow(admin, {
+          agent: "stocktake",
+          action: "stocktake",
+          action_type: "stocktake",
+          sku: c.sku ?? null,
+          product_id: productId,
+          field: "stock_quantity",
+          old_value: String(before),
+          new_value: String(after),
+          status: "done",
+          details: { productId, counted: after, previous: before, variance: after - before },
+        });
+      } catch (e) {
+        console.error("[stocktake audit]", e instanceof Error ? e.message : e);
+      }
+      // Zero-crossing transition (best-effort).
+      await logStockTransition(admin, { productId, before, after });
+    }
+
+    // Location is a SEPARATE, non-quantity path — INV.4A does NOT migrate shelf /
+    // location semantics. Update it independently and surface a PARTIAL failure
+    // (the stock write already succeeded and is not rolled back).
     const newLoc = c.location != null ? c.location.trim().toUpperCase() : null;
-    const locChanged = newLoc != null && newLoc !== (inv.location ?? null);
-    if (before === counted && !locChanged) {
-      ok++; // no change needed, still a success
-      continue;
-    }
-    const patch: Record<string, unknown> = { stock_quantity: counted, updated_at: now };
-    if (locChanged) patch.location = newLoc;
-    const { error: upErr } = await admin.from("inventory").update(patch).eq("id", inv.id);
-    if (upErr) {
-      errors.push(`${c.sku ?? c.inventoryId}: ${upErr.message}`);
-      continue;
+    if (newLoc != null) {
+      const { error: locErr } = await admin.from("inventory").update({ location: newLoc, updated_at: now }).eq("id", c.inventoryId);
+      if (locErr) {
+        errors.push(`${c.sku ?? c.inventoryId}: تم تحديث الكمية لكن فشل حفظ الموقع (${locErr.message})`);
+        continue;
+      }
     }
     ok++;
-    // Best-effort ledger entry recording the variance (insertAuditRow degrades
-    // to the legacy details-only shape on an unmigrated malak_audit).
-    await insertAuditRow(admin, {
-      agent: "stocktake",
-      action: "stocktake",
-      action_type: "stocktake",
-      sku: c.sku ?? null,
-      product_id: inv.product_id ?? null,
-      field: "stock_quantity",
-      old_value: String(before),
-      new_value: String(counted),
-      status: "done",
-      details: { productId: inv.product_id ?? null, counted, previous: before, variance: counted - before },
-    });
   }
 
   revalidatePath("/inventory");
@@ -850,7 +938,7 @@ export type CsvRow = { sku: string; stock_quantity?: string | number; low_stock_
 export async function importInventoryBySku(rows: CsvRow[]) {
   const unauth = await requireUser();
   if (unauth) return { updated: 0, notFound: 0, failed: 0, missing: [] as string[], error: unauth.error };
-  const supabase = createClient();
+  const admin = writableClient();
   const clean = rows
     .map((r) => ({ ...r, sku: String(r.sku ?? "").trim() }))
     .filter((r) => r.sku);
@@ -862,7 +950,7 @@ export async function importInventoryBySku(rows: CsvRow[]) {
   const skuToInv = new Map<string, string>();
   for (let i = 0; i < skus.length; i += 300) {
     const chunk = skus.slice(i, i + 300);
-    const { data } = await supabase
+    const { data } = await admin
       .from("inventory")
       .select("id, products!inner(sku)")
       .in("products.sku", chunk);
@@ -883,13 +971,28 @@ export async function importInventoryBySku(rows: CsvRow[]) {
       missing.push(r.sku);
       continue;
     }
-    const patch: Record<string, unknown> = { updated_at: now };
-    if (r.stock_quantity !== undefined && r.stock_quantity !== "") patch.stock_quantity = toNum(r.stock_quantity);
-    if (r.low_stock_threshold !== undefined && r.low_stock_threshold !== "")
-      patch.low_stock_threshold = toNum(r.low_stock_threshold);
-    const { error } = await supabase.from("inventory").update(patch).eq("id", id);
-    if (error) failed++;
-    else updated++;
+    const wantsStock = r.stock_quantity !== undefined && String(r.stock_quantity).trim() !== "";
+    if (wantsStock) {
+      const stock = toNum(r.stock_quantity);
+      if (stock === null || !Number.isInteger(stock) || stock < 0) { failed++; continue; }
+      // Stock quantity → Inventory Engine. A variant / shelf-tracked product is
+      // rejected fail-closed and counts as FAILED (never a manual parent write).
+      const res = await setAbsolute(admin, id, stock);
+      if (!res.ok) { failed++; continue; }
+      await afterStockSet(admin, res, { action: "stock_set", sku: r.sku, details: { via: "csv_import" } });
+      // Optional threshold alongside a stock row (non-quantity path).
+      if (r.low_stock_threshold !== undefined && String(r.low_stock_threshold).trim() !== "") {
+        await admin.from("inventory").update({ low_stock_threshold: toNum(r.low_stock_threshold), updated_at: now }).eq("id", id);
+      }
+      updated++;
+    } else if (r.low_stock_threshold !== undefined && String(r.low_stock_threshold).trim() !== "") {
+      // Threshold-only CSV row (never touches stock_quantity).
+      const { error } = await admin.from("inventory").update({ low_stock_threshold: toNum(r.low_stock_threshold), updated_at: now }).eq("id", id);
+      if (error) failed++;
+      else updated++;
+    } else {
+      updated++; // nothing to change for this row
+    }
   }
 
   revalidatePath("/inventory");
