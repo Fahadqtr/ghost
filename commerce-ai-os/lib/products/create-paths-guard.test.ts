@@ -109,13 +109,15 @@ const REGISTRY: PathEntry[] = [
   {
     file: "app/(app)/import-export/shopify-actions.ts",
     label: "Shopify import",
-    classification: "adapter-candidate",
+    classification: "converged",
     client: "admin",
-    seed: "inventorySeed", // P3-adopted (was {product_id, stock_quantity}; threshold+sold came from DB defaults 5/0)
+    seed: "via-core", // P6: product+inventory via createProductCore (seedQuantity = store qty)
     variants: "none",
-    rollback: false,
-    direct: true,
-    note: "Admin client, per-row loop. Uses Shopify's SKU; app-side sku/title dedup; inventory swallowed.",
+    rollback: true, // gained from the core in P6
+    direct: false, // delegates to createProductCore — no direct products.insert
+    note: "P6-migrated: per-row createProductCore(sb, row, [], {seedQuantity}) — product row unchanged " +
+      "(no stock_quantity injected); compensating rollback fixes the former orphan bug; failures → failed[]. " +
+      "Admin client; app-side sku/title dedup + skipped/failed reporting stay in the wrapper.",
   },
   {
     file: "app/(app)/import-export/snoonu-actions.ts",

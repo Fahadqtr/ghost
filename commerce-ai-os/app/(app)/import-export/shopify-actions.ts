@@ -9,7 +9,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { runShopifyInventorySync, type InventorySyncResult } from "@/lib/shopify/inventory-sync";
 import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { diffShopify, targetShopifyPrice, indexShopify, normTitle, htmlFromPlain, mapShopifyToCatalogRow, type ShopifyDiff, type OurProductRow } from "@/lib/shopify-diff";
-import { inventorySeed } from "@/lib/products/inventory-seed";
+import { createProductCore } from "@/lib/products/product-create";
 
 export type { ShopifyDiff } from "@/lib/shopify-diff";
 
@@ -261,15 +261,23 @@ export async function importShopifyProducts(shopifyIds: string[]): Promise<BulkM
       const skuKey = String(row.sku ?? "").trim().toLowerCase();
       if ((skuKey && existingSkus.has(skuKey)) || existingNames.has(normTitle(row.name_en))) { skipped++; continue; }
 
-      const { data: ins, error: insErr } = await sb.from("products").insert(row).select("id").single();
-      if (insErr || !ins?.id) { failed.push({ name: row.name_en, error: insErr?.message ?? "insert failed" }); continue; }
+      // Product + inventory now go through the shared create core (P6). The
+      // store's current quantity seeds inventory via `seedQuantity` WITHOUT being
+      // added to the product row — mapShopifyToCatalogRow's output is inserted
+      // unchanged. The core COMPENSATES (deletes the product) if the inventory
+      // seed fails, so a failed seed can no longer leave an orphan product.
+      const qty = Math.max(0, Number(p.variants[0]?.inventoryQuantity ?? 0) || 0);
+      const core = await createProductCore(sb, row as unknown as Record<string, unknown>, [], { seedQuantity: qty });
+      if (!core.ok) {
+        // Fixed/safe text — never a raw DB error. Only advance the counters +
+        // dedup sets on a fully-committed row, so a rolled-back product is not
+        // counted as created and doesn't poison the in-loop dedup guard.
+        failed.push({ name: row.name_en, error: "تعذّر إنشاء المنتج في الكتالوج." });
+        continue;
+      }
       created++;
       existingNames.add(normTitle(row.name_en));
       if (skuKey) existingSkus.add(skuKey);
-
-      // Seed the stock from the store's current quantity (best-effort).
-      const qty = Math.max(0, Number(p.variants[0]?.inventoryQuantity ?? 0) || 0);
-      try { await sb.from("inventory").insert({ product_id: ins.id, ...inventorySeed(qty) }); } catch { /* optional */ }
     }
     if (created > 0) {
       await logCatalogTask({ action: "bulk", note: `انستورد ${created} منتج من شوبي فاي للكتالوج — راجعها وحدّث المنصات اليدوية بالجديد منها.` });

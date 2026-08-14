@@ -47,6 +47,13 @@ export interface ProductCreateClient {
   };
 }
 
+/** Optional knobs for a create. `seedQuantity` sets the inventory seed's
+ *  stock_quantity independently of the product row (default: row.stock_quantity
+ *  ?? 0), so a caller can seed inventory without adding stock_quantity to `row`. */
+export interface CreateProductCoreOptions {
+  seedQuantity?: number;
+}
+
 export type CreateProductCoreResult =
   | { ok: true; productId: string }
   | {
@@ -66,6 +73,7 @@ export async function createProductCore(
   client: ProductCreateClient,
   row: Record<string, unknown>,
   variantRows: readonly CreateVariantRow[],
+  opts?: CreateProductCoreOptions,
 ): Promise<CreateProductCoreResult> {
   const { data: product, error: productErr } = await client
     .from("products")
@@ -101,10 +109,16 @@ export async function createProductCore(
     return okAll ? "done" : "failed";
   };
 
+  // The inventory seed quantity defaults to the product row's own stock_quantity
+  // (V2 create/import, Malak) but callers may override it WITHOUT touching the
+  // product row — e.g. Shopify import seeds from the store's variant quantity
+  // while its product row deliberately carries no stock_quantity. `row` is never
+  // mutated; only the inventory seed reads this value.
+  const seedQty = opts?.seedQuantity ?? ((row.stock_quantity as number | null) ?? 0);
   const invErr = (
     await client.from("inventory").insert({
       product_id: productId,
-      ...inventorySeed((row.stock_quantity as number | null) ?? 0),
+      ...inventorySeed(seedQty),
     })
   ).error;
   if (invErr) {
