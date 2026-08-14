@@ -22,6 +22,7 @@ import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode } from "@/lib/settings";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
 import { inventorySeed } from "@/lib/products/inventory-seed";
+import { nextMkSku } from "@/lib/products/sku-generate";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
 function pinOk(pin: string): boolean {
@@ -639,18 +640,17 @@ const PRODUCT_BUCKET = "product-images";
 const IMG_EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
 
 // Next mk<N> SKU using the service-role client (staff aren't Supabase users).
+// Numbering is delegated to the canonical nextMkSku; this only supplies the same
+// input it always scanned — the product SKUs — so the sequence is unchanged.
 async function nextStaffSku(admin: any): Promise<string> {
-  let maxMk = 0;
+  const skus: string[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await admin.from("products").select("sku").range(from, from + 999);
     if (error) break;
-    for (const p of data ?? []) {
-      const m = /^mk(\d+)$/i.exec(String((p as any).sku ?? "").trim());
-      if (m) maxMk = Math.max(maxMk, parseInt(m[1], 10));
-    }
+    for (const p of data ?? []) skus.push(String((p as any).sku ?? ""));
     if ((data ?? []).length < 1000) break;
   }
-  return `mk${maxMk + 1}`;
+  return nextMkSku(skus);
 }
 
 // A unique 13-digit internal barcode (200-prefixed = in-store range), checked

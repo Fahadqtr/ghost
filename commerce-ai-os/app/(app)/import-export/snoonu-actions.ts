@@ -11,6 +11,7 @@ import { clean } from "@/lib/malak/talabat-export.mjs";
 
 import { buildCodeIndex, fillCodes, type FillItem, type FillResult, type CatalogCodeRow } from "@/lib/snoonu-fill";
 import { inventorySeed } from "@/lib/products/inventory-seed";
+import { nextMkSku } from "@/lib/products/sku-generate";
 
 export type { SnoonuExportRow, SnoonuDiff } from "@/lib/snoonu-diff";
 export type { FillItem, FillResult } from "@/lib/snoonu-fill";
@@ -280,23 +281,29 @@ export async function addSnoonuNewProducts(
     // Existing snoonu_ids (avoid duplicates) + max mk#### number + barcodes
     // (so generated SKUs/barcodes never clash with the catalog).
     const existing = new Set<string>();
-    let maxMk = 0;
+    const skus: string[] = [];
     const usedBarcodes = new Set<string>();
     for (let from = 0; ; from += 1000) {
       const { data, error } = await admin.from("products").select("snoonu_id, sku, barcode").range(from, from + 999);
       if (error) return { ...base, error: `Read products failed: ${error.message}` };
       for (const p of data ?? []) {
         if (p.snoonu_id) existing.add(String(p.snoonu_id).trim());
-        const m = /^mk(\d+)$/i.exec(String(p.sku ?? "").trim());
-        if (m) maxMk = Math.max(maxMk, parseInt(m[1], 10));
+        skus.push(String(p.sku ?? ""));
         const bc = String(p.barcode ?? "").trim();
         if (bc) usedBarcodes.add(bc);
       }
       if ((data ?? []).length < 1000) break;
     }
 
-    // Next SKU in the catalog's mk#### scheme.
-    const nextSku = () => `mk${++maxMk}`;
+    // Next SKU in the catalog's mk#### scheme — numbering delegated to the
+    // canonical nextMkSku; the generated set carries the running batch so the
+    // sequence (mk<max+1>, mk<max+2>, …) is exactly as before.
+    const generatedSkus = new Set<string>();
+    const nextSku = () => {
+      const sku = nextMkSku(skus, generatedSkus);
+      generatedSkus.add(sku);
+      return sku;
+    };
     // Unique 13-digit EAN-13 (internal "29" prefix + counter + check digit),
     // guaranteed not to collide with any existing or in-batch barcode.
     const ean13Check = (d12: string) => {

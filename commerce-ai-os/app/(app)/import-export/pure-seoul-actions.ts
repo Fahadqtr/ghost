@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computePureSeoulIdMap, type CatalogNameRow } from "@/lib/pure-seoul-map-compute";
 import { inventorySeed } from "@/lib/products/inventory-seed";
+import { nextMkSku } from "@/lib/products/sku-generate";
 
 // Pure Seoul is an INDEPENDENT platform selling the same products as Malika. Its
 // approval/rejection lives in the shared `platform_status` overlay (platform =
@@ -421,17 +422,23 @@ export async function addPureSeoulNewProducts(rows: PSRow[]): Promise<AddPsResul
   const existingPsId = new Set<string>();
   const byName = new Map<string, boolean>();
   const catTok = cat.map((c) => ({ t: tokset(c.name_en) })).filter((x) => x.t.size);
-  let maxMk = 0;
+  const skus: string[] = [];
   const usedBarcodes = new Set<string>();
   for (const p of cat) {
     if (S(p.pure_seoul_id)) existingPsId.add(S(p.pure_seoul_id));
     for (const n of [norm(p.name_en), norm(p.name_ar)]) if (n) byName.set(n, true);
-    const m = /^mk(\d+)$/i.exec(S(p.sku));
-    if (m) maxMk = Math.max(maxMk, parseInt(m[1], 10));
+    skus.push(S(p.sku));
     const bc = S(p.barcode); if (bc) usedBarcodes.add(bc);
   }
 
-  const nextSku = () => `mk${++maxMk}`;
+  // mk#### numbering delegated to the canonical nextMkSku; the generated set
+  // carries the running batch so the sequence is exactly as before.
+  const generatedSkus = new Set<string>();
+  const nextSku = () => {
+    const sku = nextMkSku(skus, generatedSkus);
+    generatedSkus.add(sku);
+    return sku;
+  };
   const ean13Check = (d12: string) => {
     let sum = 0; for (let i = 0; i < 12; i++) sum += (+d12[i]) * (i % 2 === 0 ? 1 : 3);
     return String((10 - (sum % 10)) % 10);
