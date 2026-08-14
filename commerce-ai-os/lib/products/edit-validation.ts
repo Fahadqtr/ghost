@@ -31,6 +31,9 @@ export const EDIT_MESSAGES = {
   duplicate_identity: "منتج آخر يستخدم نفس SKU أو الباركود — استخدم قيمة مختلفة.",
   product_update_failed: "تعذّر حفظ المنتج — حاول مجددًا.",
   inventory_sync_failed: "تم حفظ المنتج لكن تعذّر تحديث كمية المخزون — حاول مجددًا.",
+  inventory_missing: "تم حفظ المنتج لكن لا يوجد صف مخزون له — تعذّر تحديث الكمية.",
+  stock_managed_by_shelves: "مخزون هذا المنتج يُدار من الرفوف؛ عدّل الكمية من إدارة الرفوف.",
+  stock_managed_by_variants: "مخزون هذا المنتج يُحسب من الخيارات؛ عدّل كمية كل خيار.",
   load_failed: "تعذر تحميل بيانات المنتج للتعديل.",
   not_found: "لا يوجد منتج بهذا المعرّف.",
   saved: "تم حفظ التغييرات.",
@@ -83,6 +86,7 @@ export function editFailureMessage(failure: {
   stage: "invalid_input" | "product_update" | "inventory_sync" | "variant_sync";
   message: string;
   duplicateIdentity?: boolean;
+  reason?: string;
 }): string {
   switch (failure.stage) {
     case "invalid_input":
@@ -92,7 +96,17 @@ export function editFailureMessage(failure: {
         ? EDIT_MESSAGES.duplicate_identity
         : EDIT_MESSAGES.product_update_failed;
     case "inventory_sync":
-      return EDIT_MESSAGES.inventory_sync_failed;
+      // INV.4D: a precise, safe message for the known Inventory Engine reasons.
+      switch (failure.reason) {
+        case "inventory_missing":
+          return EDIT_MESSAGES.inventory_missing;
+        case "product_has_shelf_rows":
+          return EDIT_MESSAGES.stock_managed_by_shelves;
+        case "product_has_variants":
+          return EDIT_MESSAGES.stock_managed_by_variants;
+        default:
+          return EDIT_MESSAGES.inventory_sync_failed;
+      }
     case "variant_sync":
       return failure.message;
     default:

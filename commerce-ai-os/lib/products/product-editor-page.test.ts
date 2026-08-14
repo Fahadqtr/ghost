@@ -126,10 +126,17 @@ test("save action: thin shell over the shared core with auth, validation, fixed 
   assert.ok(EDIT_ACTIONS_SRC.includes("saved=1"), "success signal for the detail banner");
 });
 
-test("save action: session client only — no admin client, no direct rpc, no raw error pass-through", () => {
-  for (const banned of ["createAdminClient", "service_role", "SUPABASE_SERVICE_ROLE", ".rpc(", "error.message", "console.log"]) {
+test("save action: metadata on the SESSION client; admin only backs the Inventory Engine adapter (INV.4D)", () => {
+  // The action itself makes no direct RPC, never surfaces a raw DB message, never logs.
+  for (const banned of ["service_role", "SUPABASE_SERVICE_ROLE", ".rpc(", "error.message", "console.log"]) {
     assert.ok(!EDIT_ACTIONS_SRC.includes(banned), `save action must not contain ${banned}`);
   }
+  // Product metadata + the SECURITY INVOKER variant sync run on the SESSION client
+  // through the shared core (RLS applies) — the session client is the first arg.
+  assert.ok(/updateProductCore\(\s*supabase,/.test(EDIT_ACTIONS_SRC), "core receives the session client");
+  // The admin/service-role client exists ONLY to build the narrow numeric-stock
+  // Inventory Engine adapter — never as the product-metadata client.
+  assert.ok(EDIT_ACTIONS_SRC.includes("createInventoryAdapter(admin)"), "admin flows only into the inventory adapter");
 });
 
 // ── form source scan ─────────────────────────────────────────────────────────

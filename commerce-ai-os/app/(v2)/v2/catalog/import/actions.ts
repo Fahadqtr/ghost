@@ -1016,9 +1016,9 @@ export async function applyCatalogCreates(
             stock_quantity: "",
           },
         ];
-        const syncError = await syncProductVariants(supabase, parentId, full);
-        if (syncError) {
-          results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: syncError, changedFields: [] });
+        const sync = await syncProductVariants(supabase, parentId, full);
+        if (!sync.ok) {
+          results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: sync.message, changedFields: [] });
           continue;
         }
         usedSkus.add(r.sku);

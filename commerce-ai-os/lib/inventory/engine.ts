@@ -163,6 +163,46 @@ export async function setAbsolute(admin: any, inventoryId: string, quantity: num
 export type ShelfScope = "product" | "variant";
 export type ShelfRow = { location: string; quantity: number };
 
+/**
+ * INV.4D — atomic editor variant sync (RPC sync_product_variants). Unlike the
+ * other Engine ops this RPC is SECURITY INVOKER, so it takes the SESSION client
+ * (RLS applies) — NOT the service-role admin client. It performs the variant
+ * update/insert/delete AND the atomic parent inventory rollup (inventory.stock =
+ * Σ variants) in one transaction. Fail-closed: transport error, malformed body,
+ * ok!==true (the RPC's fixed error code is surfaced verbatim as `reason`), or a
+ * missing parent total is a FAILURE — never a fallback. `variants` is the
+ * already-projected payload (see toVariantPayload in product-save.ts).
+ */
+export async function syncEditorVariants(
+  sessionClient: any,
+  productId: string,
+  variants: unknown[],
+): Promise<EngineResult> {
+  const op = "syncEditorVariants";
+  if (!productId) return { ok: false, op, reason: "missing_target" };
+  if (!Array.isArray(variants)) return { ok: false, op, reason: "invalid_rows" };
+  const { data, error } = await sessionClient.rpc("sync_product_variants", {
+    p_product_id: productId, p_variants: variants,
+  });
+  if (error) {
+    const msg = (error as { message?: unknown })?.message;
+    return { ok: false, op, reason: "rpc_transport_error", raw: typeof msg === "string" ? msg : error };
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return { ok: false, op, reason: "malformed_result", raw: data };
+  }
+  const res = data as Record<string, unknown>;
+  if (res.ok !== true) {
+    return { ok: false, op, reason: typeof res.error === "string" ? res.error : "variant_sync_failed", raw: res };
+  }
+  for (const k of ["hasVariants", "parentBefore", "variantChanges"]) {
+    if (!(k in res) || res[k] === null || res[k] === undefined) {
+      return { ok: false, op, reason: "missing_result_field", raw: res };
+    }
+  }
+  return { ok: true, op, data: res };
+}
+
 // Required non-null result fields per scope. primaryLocation / location are
 // deliberately EXCLUDED — they are legitimately null (no placement / untrack), and
 // interpret() treats null as a missing field.

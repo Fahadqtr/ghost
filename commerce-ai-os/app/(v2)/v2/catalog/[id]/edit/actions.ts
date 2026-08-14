@@ -14,8 +14,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { updateProductCore, type ProductInput } from "@/lib/products/product-save";
+import { createInventoryAdapter, applyEditorInventoryEffects } from "@/lib/products/inventory-editor-adapter";
 import { EDIT_MESSAGES, editFailureMessage, validateProductEditInput } from "@/lib/products/edit-validation";
 import {
   catalogDetailHref,
@@ -36,9 +38,23 @@ export async function saveProductEdit(
   const validation = validateProductEditInput(input);
   if (!validation.ok) return { error: validation.message };
 
+  // Product metadata + the SECURITY INVOKER variant RPC run on the SESSION client
+  // (RLS applies). Numeric inventory quantities go ONLY through the service-role
+  // Inventory Engine, injected as a narrow adapter built AFTER the auth gate — the
+  // admin client is never used for the product metadata write and never leaves here.
   const supabase = createClient();
-  const core = await updateProductCore(supabase, validId, input);
+  const admin = createAdminClient();
+  const core = await updateProductCore(supabase, validId, input, {
+    inventory: createInventoryAdapter(admin),
+  });
   if (!core.ok) return { error: editFailureMessage(core) };
+
+  // Best-effort authoritative transition + audit (never undoes the save).
+  await applyEditorInventoryEffects(admin, {
+    productId: validId,
+    sku: (core.row.sku as string | null) ?? null,
+    core,
+  });
 
   // Rebuild the return target from VALIDATED controls only — the raw object
   // from the client is parsed through the same whitelist as the catalog pages,

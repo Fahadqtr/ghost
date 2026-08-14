@@ -110,6 +110,10 @@ export const VARIANT_SYNC_MESSAGES: Record<string, string> = {
   duplicate_variant_id: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
   variant_has_shelf_stock: "لا يمكن حذف خيار لا تزال عليه كمية في الرفوف — أفرغ الكمية أولًا ثم احذفه.",
   variant_has_channel_mapping: "لا يمكن حذف خيار مرتبط بمنصة بيع — عالِج ارتباط المنصة أولًا ثم احذفه.",
+  // INV.4D additions:
+  variant_invalid_quantity: "كمية خيار غير صالحة — يجب أن تكون رقمًا صحيحًا غير سالب.",
+  variant_stock_managed_by_shelves: "مخزون هذا الخيار يُدار من الرفوف؛ عدّل الكمية من إدارة الرفوف بدل هذه الصفحة.",
+  variant_parent_shelf_conflict: "حالة رفوف غير متسقة على المنتج الأب — عالِج رفوف المنتج قبل تعديل الخيارات.",
   variant_sync_failed: "تعذّر حفظ الخيارات — حدّث الصفحة وحاول مجددًا.",
 };
 
@@ -159,6 +163,43 @@ export interface ProductSaveDeps {
   /** The pure diff planner (default: planVariantDiff from ./variant-diff). */
   planVariantDiff?: PlanVariantDiffFn;
 }
+
+// INV.4D — injected numeric-stock port. The editor NEVER writes inventory
+// quantities directly; a simple product's stock change goes through this adapter,
+// which the V2 action backs with the service-role Inventory Engine (setAbsolute).
+// Injected (not a top-level engine import) so product-save stays unit-testable.
+export type InventorySetAbsoluteResult =
+  | { ok: true; before: number; after: number; productId: string | null }
+  | { ok: false; reason: string };
+
+export interface InventoryAdapter {
+  setAbsolute(inventoryId: string, quantity: number): Promise<InventorySetAbsoluteResult>;
+}
+
+export interface UpdateProductCoreOptions extends ProductSaveDeps {
+  /** Service-role-backed numeric-stock port (Inventory Engine setAbsolute). */
+  inventory: InventoryAdapter;
+}
+
+/** One variant's before/after as reported by the atomic sync RPC (for audit). */
+export interface VariantChange {
+  variantId: string;
+  variantName: string | null;
+  kind: "updated" | "inserted" | "deleted";
+  before: number;
+  after: number;
+}
+
+export type SyncVariantsResult =
+  | {
+      ok: true;
+      hasVariants: boolean;
+      parentBefore: number;
+      /** Σ variants when the product has variants; null when it has none. */
+      parentStock: number | null;
+      variantChanges: VariantChange[];
+    }
+  | { ok: false; message: string };
 
 async function resolveCleaners(deps?: ProductSaveDeps) {
   if (deps?.cleanText && deps?.cleanDescriptionText) {
@@ -280,12 +321,12 @@ export async function syncProductVariants(
   productId: string,
   variants: VariantInput[],
   deps?: ProductSaveDeps,
-): Promise<string | null> {
+): Promise<SyncVariantsResult> {
   const { data: existing, error: readErr } = await client
     .from("product_variants")
     .select("id")
     .filter("parent_product_id", "eq", productId);
-  if (readErr) return variantSyncMessage("variant_sync_failed");
+  if (readErr) return { ok: false, message: variantSyncMessage("variant_sync_failed") };
 
   const existingIds = (existing ?? [])
     .map((r) => (r as { id?: unknown }).id)
@@ -294,19 +335,28 @@ export async function syncProductVariants(
   // Fail fast, before touching anything.
   const planVariantDiff = await resolvePlanner(deps);
   const plan = planVariantDiff(existingIds, variants);
-  if (!plan.ok) return variantSyncMessage(plan.error);
+  if (!plan.ok) return { ok: false, message: variantSyncMessage(plan.error) };
 
   const { data, error } = await client.rpc("sync_product_variants", {
     p_product_id: productId,
     p_variants: toVariantPayload(variants),
   });
-  if (error) return variantSyncMessage("variant_sync_failed");
+  if (error) return { ok: false, message: variantSyncMessage("variant_sync_failed") };
 
-  const result = data as { ok?: unknown; error?: unknown } | null;
+  const result = data as {
+    ok?: unknown; error?: unknown;
+    hasVariants?: unknown; parentBefore?: unknown; parentStock?: unknown; variantChanges?: unknown;
+  } | null;
   if (result === null || typeof result !== "object" || result.ok !== true) {
-    return variantSyncMessage(result?.error);
+    return { ok: false, message: variantSyncMessage(result?.error) };
   }
-  return null;
+  return {
+    ok: true,
+    hasVariants: result.hasVariants === true,
+    parentBefore: Number(result.parentBefore) || 0,
+    parentStock: result.parentStock == null ? null : Number(result.parentStock),
+    variantChanges: Array.isArray(result.variantChanges) ? (result.variantChanges as VariantChange[]) : [],
+  };
 }
 
 // --- update core ---------------------------------------------------------------
@@ -324,31 +374,64 @@ export type UpdateProductCoreResult =
       ok: true;
       before: Record<string, unknown> | null;
       row: Record<string, unknown>;
+      /** Final grain after the variant sync. */
+      hasVariants: boolean;
+      /** Authoritative parent/product stock before → after this save. */
       stockBefore: number;
       stockAfter: number;
+      /** Whether a numeric stock mutation actually happened (drives transition/audit). */
+      stockChanged: boolean;
+      /** Per-variant before/after from the atomic sync (for variant audit). */
+      variantChanges: VariantChange[];
     }
   | {
       ok: false;
       stage: "invalid_input" | "product_update" | "inventory_sync" | "variant_sync";
       message: string;
       duplicateIdentity?: boolean;
+      /** INV.4D: the Engine/inventory reason code, for a precise V2 message. */
+      reason?: string;
     };
 
 const BEFORE_COLUMNS =
   "name_en, name_ar, sku, barcode, price, discount_price, description_en, description_ar, main_category, sub_category, image_url, approval";
 
+/** Fixed English fallbacks (V2 maps the stage/reason to Arabic; legacy would show these). */
+export const INVENTORY_MISSING_MESSAGE =
+  "Product saved, but its inventory row is missing — stock was not changed.";
+
 /**
- * The shared save path for editing an existing product: validate + project the
- * form input, update the product row, keep the inventory pool in sync, then
- * sync the variants atomically WITHOUT churning their ids. Session-scoped
- * client only — callers must never hand this an admin client.
+ * The shared save path for editing an existing product (INV.4D authoritative order):
+ *
+ *   1. validate + project the form input
+ *   2. update the product METADATA only (never stock_quantity in this write)
+ *   3. verify EXACTLY the existing inventory row (read-only) — FAIL CLOSED if it
+ *      is missing (no lazy seed from the editor; fresh seeds live in create cores)
+ *   4. sync variants atomically (the RPC rolls the parent inventory up to Σ
+ *      variants inside its own transaction for a variant product)
+ *   5. determine the final grain from the sync result:
+ *        · variant  → parent stock is the RPC's Σ-variants rollup (NEVER the
+ *          top-level form field)
+ *        · simple   → the top-level field is the requested stock; call the
+ *          Inventory Engine setAbsolute ONLY when it actually changed (so a
+ *          metadata-only save never trips the shelf-tracked guard)
+ *   6. write the TEMPORARY products.stock_quantity mirror = authoritative final
+ *      stock (compatibility only, retired in INV.4E — never read as authority)
+ *
+ * Session-scoped client for product metadata + the SECURITY INVOKER variant RPC
+ * (RLS applies). Numeric inventory quantities go ONLY through the injected
+ * `inventory` adapter (service-role Inventory Engine) — this core never writes an
+ * inventory quantity or seeds an inventory row directly.
  */
 export async function updateProductCore(
   client: ProductSaveClient,
   id: string,
   input: ProductInput,
-  deps?: ProductSaveDeps,
+  opts: UpdateProductCoreOptions,
 ): Promise<UpdateProductCoreResult> {
+  const deps = opts;
+  const inventory = opts.inventory;
+
   let row: Record<string, unknown>;
   try {
     row = await toProductRow(input, deps);
@@ -359,15 +442,20 @@ export async function updateProductCore(
       message: e instanceof Error ? e.message : "Invalid product data.",
     };
   }
+  const requestedStock = row.stock_quantity as number | null;
 
-  // Snapshot BEFORE the write so the legacy auto-task can show old -> new.
+  // Snapshot BEFORE the write so the caller's auto-task can show old -> new.
   const { data: before } = await client
     .from("products")
     .select(BEFORE_COLUMNS)
     .filter("id", "eq", id)
     .maybeSingle();
 
-  const { error } = await client.from("products").update(row).filter("id", "eq", id);
+  // METADATA ONLY — stock_quantity is deliberately excluded here. The mirror is
+  // written later (step 6) from the authoritative final stock. stock_status stays
+  // an explicit, user-owned field (Availability), never derived from quantity.
+  const { stock_quantity: _stockOmit, ...metadataPatch } = row;
+  const { error } = await client.from("products").update(metadataPatch).filter("id", "eq", id);
   if (error) {
     return {
       ok: false,
@@ -377,49 +465,64 @@ export async function updateProductCore(
     };
   }
 
-  // Keep the inventory pool in sync. The Inventory & Dashboard pages read stock
-  // from the `inventory` table (not `products`), so an edit that doesn't write
-  // `inventory` would leave the displayed stock stale. Update the existing row
-  // if there is one, otherwise seed a new one (older products may predate it).
+  // Inventory row must already exist — FAIL CLOSED, no lazy seed from the editor.
   const { data: invRow } = await client
     .from("inventory")
     .select("id, stock_quantity")
     .filter("product_id", "eq", id)
     .maybeSingle();
-  const stockAfter = (row.stock_quantity as number | null) ?? 0;
-  const invErr = invRow
-    ? (
-        await client
-          .from("inventory")
-          .update({ stock_quantity: stockAfter })
-          .filter("product_id", "eq", id)
-      ).error
-    : (
-        await client.from("inventory").insert({
-          product_id: id,
-          stock_quantity: stockAfter,
-          low_stock_threshold: 5,
-          sold_quantity: 0,
-        })
-      ).error;
-  if (invErr) {
-    return {
-      ok: false,
-      stage: "inventory_sync",
-      message: `Product saved, but stock sync failed: ${invErr.message}`,
-    };
+  if (!invRow || typeof (invRow as { id?: unknown }).id !== "string") {
+    return { ok: false, stage: "inventory_sync", message: INVENTORY_MISSING_MESSAGE, reason: "inventory_missing" };
+  }
+  const invId = (invRow as { id: string }).id;
+  const invStockBefore = Number((invRow as { stock_quantity?: unknown }).stock_quantity) || 0;
+
+  // Variants sync atomically; for a variant product the RPC also rolls the parent
+  // inventory up to Σ variants inside the same transaction.
+  const sync = await syncProductVariants(client, id, input.variants, deps);
+  if (!sync.ok) {
+    return { ok: false, stage: "variant_sync", message: sync.message };
   }
 
-  const variantSyncError = await syncProductVariants(client, id, input.variants, deps);
-  if (variantSyncError) {
-    return { ok: false, stage: "variant_sync", message: variantSyncError };
+  let stockBefore: number;
+  let stockAfter: number;
+  let stockChanged: boolean;
+
+  if (sync.hasVariants) {
+    // Parent pool is authoritative from the atomic rollup — NEVER the form field.
+    stockBefore = sync.parentBefore;
+    stockAfter = sync.parentStock ?? sync.parentBefore;
+    stockChanged = stockBefore !== stockAfter;
+  } else if (requestedStock != null && requestedStock !== invStockBefore) {
+    // Simple product with a real stock change → Inventory Engine (atomic).
+    const res = await inventory.setAbsolute(invId, requestedStock);
+    if (!res.ok) {
+      return { ok: false, stage: "inventory_sync", message: INVENTORY_MISSING_MESSAGE, reason: res.reason };
+    }
+    stockBefore = res.before;
+    stockAfter = res.after;
+    stockChanged = true;
+  } else {
+    // Metadata-only (unchanged stock): no Engine call — never trips the
+    // shelf-tracked guard just because shelf rows exist.
+    stockBefore = invStockBefore;
+    stockAfter = invStockBefore;
+    stockChanged = false;
   }
+
+  // TEMPORARY products.stock_quantity mirror = authoritative final stock. Best
+  // effort: the authoritative inventory is already correct; the mirror is retired
+  // in INV.4E and is never read as authority.
+  await client.from("products").update({ stock_quantity: stockAfter }).filter("id", "eq", id);
 
   return {
     ok: true,
     before: before ?? null,
     row,
-    stockBefore: Number(invRow?.stock_quantity) || 0,
+    hasVariants: sync.hasVariants,
+    stockBefore,
     stockAfter,
+    stockChanged,
+    variantChanges: sync.variantChanges,
   };
 }
