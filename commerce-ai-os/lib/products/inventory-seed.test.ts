@@ -72,17 +72,14 @@ test("inventory-seed.ts has no @/ framework, DB, or React imports", () => {
 
 const ADOPTED: [string, string][] = [
   ["lib/products/product-create.ts", "createProductCore"],
-  // Malak commit (P1) now delegates product+inventory to createProductCore (P5),
-  // so it no longer spreads inventorySeed directly — the core does. Its seed shape
-  // is proven end-to-end in malak-create-core.test.ts (happy path → {0,5,0}).
-  ["app/(app)/import-export/snoonu-actions.ts", "Snoonu import"],
-  ["app/(app)/import-export/pure-seoul-actions.ts", "Pure Seoul import"],
+  // Direct adopters that still spread inventorySeed themselves. The migrated
+  // create paths seed via a core and are proven elsewhere:
+  //  • Malak (P5) → createProductCore — malak-create-core.test.ts
+  //  • Shopify (P6) → createProductCore {seedQuantity} — shopify-create-core.test.ts
+  //  • Snoonu (P7) + Pure Seoul (P8) → createProductsBatchCore — product-create-batch.test.ts
   // P3 adopter — seed was byte-equivalent to the DB defaults (verified in
   // production: low_stock_threshold default 5, sold_quantity default 0, no triggers).
   ["app/staff/actions.ts", "Staff add product"],
-  // Shopify import (P3) now delegates product+inventory to createProductCore (P6)
-  // via {seedQuantity}, so it no longer spreads inventorySeed directly — the core
-  // does. Its seed shape is proven in shopify-create-core.test.ts.
 ];
 
 for (const [rel, name] of ADOPTED) {
