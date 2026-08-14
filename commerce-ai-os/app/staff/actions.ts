@@ -20,7 +20,7 @@ import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
 import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode } from "@/lib/settings";
-import { setProductAvailabilityState, writeProductAvailability } from "@/lib/availability/engine";
+import { setProductAvailabilityState, writeProductAvailability, setVariantAvailabilityState } from "@/lib/availability/engine";
 import { availabilityFromInStock } from "@/lib/availability/read";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
 import { createProductCore } from "@/lib/products/product-create";
@@ -312,7 +312,7 @@ export async function staffDeleteMovement(id: number) {
 }
 
 /* ── Products browse (read-only; gated by "products", prices by "prices") ── */
-export type StaffVariant = { id: string | null; name: string | null; barcode: string | null; stock: number | null };
+export type StaffVariant = { id: string | null; name: string | null; barcode: string | null; stock: number | null; stock_status: string | null };
 export type StaffProduct = {
   id: string;
   sku: string | null;
@@ -400,7 +400,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
   const varsByParent = new Map<string, StaffVariant[]>();
   try {
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await admin.from("product_variants").select("id, parent_product_id, variant_name, barcode, stock_quantity").range(from, from + 999);
+      const { data, error } = await admin.from("product_variants").select("id, parent_product_id, variant_name, barcode, stock_quantity, stock_status").range(from, from + 999);
       if (error) break;
       for (const v of (data ?? []) as any[]) {
         if (!v.parent_product_id) continue;
@@ -408,7 +408,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
         const shelf = shelfByVariant.get(String(v.id));
         const stock = own != null ? Number(own) : (shelf != null ? shelf : null);
         const arr = varsByParent.get(v.parent_product_id) ?? [];
-        arr.push({ id: v.id ? String(v.id) : null, name: v.variant_name ?? null, barcode: v.barcode ?? null, stock });
+        arr.push({ id: v.id ? String(v.id) : null, name: v.variant_name ?? null, barcode: v.barcode ?? null, stock, stock_status: v.stock_status ?? null });
         varsByParent.set(v.parent_product_id, arr);
       }
       if (!data || data.length < 1000) break;
@@ -1636,11 +1636,21 @@ export async function staffSetManyAvailability(productIds: string[], inStock: bo
 }
 
 /**
- * INV.2C — DEFERRED (same rule as the manager path). Per-variant explicit
- * availability needs product_variants.stock_status (INV.2E). Non-destructive
- * no-op — the old product_variants.stock_quantity write has been REMOVED so
- * availability can never destroy a variant count.
+ * INV.2E — Simple-mode availability toggle for ONE option from the staff portal.
+ * Writes the explicit product_variants.stock_status through the Availability
+ * Engine; NEVER mutates variant quantity. `stock` in the response is the current
+ * (unchanged) quantity, kept only for response shape.
  */
-export async function staffSetVariantAvailability(_variantId: string, _inStock: boolean): Promise<{ ok: true; stock: number } | { error: string }> {
-  return { error: "توفّر الخيارات لكل خيار يبدأ في INV.2E." };
+export async function staffSetVariantAvailability(variantId: string, inStock: boolean): Promise<{ ok: true; stock: number } | { error: string }> {
+  const who = await currentStaff();
+  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
+  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية تحديث المخزون." };
+  const admin = adminClient();
+  if (!admin) return { error: NO_DB };
+  const { data: v } = await admin.from("product_variants").select("stock_quantity").eq("id", String(variantId)).maybeSingle();
+  if (!v) return { error: "الخيار غير موجود." };
+  const res = await setVariantAvailabilityState(admin, String(variantId), inStock);
+  if (!res.ok) return { error: res.error };
+  // Response shape preserved: report the current (unchanged) variant quantity.
+  return { ok: true as const, stock: Number((v as any).stock_quantity) || 0 };
 }

@@ -216,6 +216,10 @@ export default function SimpleAvailabilityList({ rows, locale = "ar" }: { rows: 
             {zoom.variants.length > 0 ? (
               <div className="mt-2 space-y-1.5">
                 <p className="text-xs font-semibold text-muted">🎚️ {L("الخيارات", "Options")}</p>
+                {/* INV.2E diagnostic only — never auto-changes the product toggle. */}
+                {zoom.variants.every((v) => !vstate[v.id]) ? (
+                  <p className="rounded-lg bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800">⚠️ {L("كل الخيارات نافدة", "All options are out of stock")}</p>
+                ) : null}
                 {zoom.variants.map((v) => (
                   <div key={v.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 p-2">
                     <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{v.name || "—"}</span>

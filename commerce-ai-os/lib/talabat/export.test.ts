@@ -320,6 +320,32 @@ test("INV.2D: an In-Stock product exports InStock even when a variant quantity i
   assert.equal(r.warnings.some((w) => w.kind === "out_of_stock"), false);
 });
 
+// ---- INV.2E: explicit per-variant availability -------------------------------
+
+test("INV.2E: an explicit Out-of-Stock VARIANT exports OutOfStock even under an In-Stock product", () => {
+  const r = buildTalabatExport(
+    [prod({ stock_status: "In Stock" })],
+    [variant({ sku: "mk100-1", barcode: "111", stock_status: "Out of Stock", stock_quantity: 99 })],
+  );
+  assert.equal(r.mappings[0].exportSnapshot.availability, "OutOfStock");
+  assert.ok(r.warnings.some((w) => w.kind === "out_of_stock"));
+});
+
+test("INV.2E: an explicit In-Stock VARIANT exports InStock even under an Out-of-Stock product", () => {
+  const r = buildTalabatExport(
+    [prod({ stock_status: "Out of Stock" })],
+    [variant({ sku: "mk100-1", barcode: "111", stock_status: "In Stock", stock_quantity: 0 })],
+  );
+  assert.equal(r.mappings[0].exportSnapshot.availability, "InStock");
+});
+
+test("INV.2E: a variant with UNSET availability inherits the product-level availability", () => {
+  const inStock = buildTalabatExport([prod({ stock_status: "In Stock" })], [variant({ sku: "mk100-1", barcode: "111", stock_status: null })]);
+  assert.equal(inStock.mappings[0].exportSnapshot.availability, "InStock");
+  const outStock = buildTalabatExport([prod({ stock_status: "Out of Stock" })], [variant({ sku: "mk100-2", barcode: "222", stock_status: null })]);
+  assert.equal(outStock.mappings[0].exportSnapshot.availability, "OutOfStock");
+});
+
 // ---- Review: route wiring (source scan) --------------------------------------
 
 test("R: the route uses explicit approval + exact channel + fail-closed gate", () => {

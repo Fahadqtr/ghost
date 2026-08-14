@@ -1,8 +1,9 @@
-// Availability read-model (INV.2C). Availability is an EXPLICIT, product-level
-// state stored in products.stock_status. It is NOT derived from any quantity —
-// never from inventory.stock_quantity, product_variants.stock_quantity, their
-// sum, or max(parent, variants). Quantity lives in a separate layer owned by the
-// future Inventory Engine.
+// Availability read-model (INV.2C + INV.2E). Availability is an EXPLICIT state
+// stored in products.stock_status (product-level) and product_variants.stock_status
+// (variant-level, INV.2E). The same normalize/isAvailable helpers serve both. It
+// is NOT derived from any quantity — never from inventory.stock_quantity,
+// product_variants.stock_quantity, their sum, or max(parent, variants). Quantity
+// lives in a separate layer owned by the future Inventory Engine.
 //
 // Allowed operational states for this phase: "In Stock" | "Out of Stock".
 // Legacy / unknown values ("Low Stock", "", null, anything else) are NEVER
@@ -39,6 +40,18 @@ export function normalizeAvailability(raw: unknown): AvailabilityState | null {
  */
 export function isAvailable(raw: unknown): boolean {
   return normalizeAvailability(raw) === "In Stock";
+}
+
+/**
+ * INV.2E diagnostic (surface, never mutate): true when a product HAS variants and
+ * NONE of them is available. Callers use this to show an "all options out" hint;
+ * it never triggers an automatic parent-availability write. An empty list is
+ * false (no variants → nothing to diagnose). Explicit read only — never inferred
+ * from quantity.
+ */
+export function allVariantsOut(variantStatuses: unknown[]): boolean {
+  if (!variantStatuses || variantStatuses.length === 0) return false;
+  return variantStatuses.every((s) => !isAvailable(s));
 }
 
 /** Localized label for a raw availability value. */

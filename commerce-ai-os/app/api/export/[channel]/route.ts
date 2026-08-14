@@ -111,7 +111,7 @@ export async function GET(
 
       const variants = (await fetchAll((from, to) =>
         supabase.from("product_variants")
-          .select("parent_product_id, variant_name, variant_name_en, sku, barcode, price, stock_quantity")
+          .select("parent_product_id, variant_name, variant_name_en, sku, barcode, price, stock_quantity, stock_status")
           .range(from, to)
       )) as any[];
 
@@ -142,6 +142,7 @@ export async function GET(
         parent_product_id: v.parent_product_id, sku: v.sku, barcode: v.barcode,
         variant_name: v.variant_name, variant_name_en: v.variant_name_en,
         price: v.price, stock_quantity: v.stock_quantity,
+        stock_status: v.stock_status ?? null, // INV.2E explicit variant availability
       }));
 
       const result = buildTalabatExport(productInputs, variantInputs);

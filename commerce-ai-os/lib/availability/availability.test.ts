@@ -9,8 +9,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { isAvailable, normalizeAvailability, availabilityFromInStock, availabilityLabel } from "./read.ts";
-import { setProductAvailabilityState, writeProductAvailability } from "./engine.ts";
+import { isAvailable, normalizeAvailability, availabilityFromInStock, availabilityLabel, allVariantsOut } from "./read.ts";
+import { setProductAvailabilityState, writeProductAvailability, setVariantAvailabilityState, writeVariantAvailability } from "./engine.ts";
 
 // ── read-model ────────────────────────────────────────────────────────────────
 
@@ -116,4 +116,48 @@ test("writeProductAvailability: empty id list is a no-op success", async () => {
   const res = await writeProductAvailability(client, [], "Out of Stock");
   assert.deepEqual(res, { ok: true, count: 0 });
   assert.equal(writes.length, 0);
+});
+
+// ── INV.2E: variant engine writes ONLY product_variants.stock_status ──────────
+
+test("variant engine writes product_variants.stock_status; nothing else", async () => {
+  const { client, writes } = fakeClient();
+  const inN = await setVariantAvailabilityState(client, "v1", true);
+  const outN = await setVariantAvailabilityState(client, "v2", false);
+  assert.deepEqual(inN, { ok: true, count: 1 });
+  assert.deepEqual(outN, { ok: true, count: 1 });
+  assert.ok(writes.length >= 2);
+  for (const w of writes) {
+    assert.equal(w.table, "product_variants", "only the product_variants table is written");
+    assert.deepEqual(Object.keys(w.values), ["stock_status"], "only stock_status is set");
+  }
+  assert.equal(writes.find((w) => w.ids.includes("v1"))?.values.stock_status, "In Stock");
+  assert.equal(writes.find((w) => w.ids.includes("v2"))?.values.stock_status, "Out of Stock");
+});
+
+test("QUANTITY PROTECTION: variant availability writes never carry a quantity field", async () => {
+  const { client, writes } = fakeClient();
+  for (const inStock of [false, true, false]) await setVariantAvailabilityState(client, "v1", inStock);
+  for (const w of writes) {
+    assert.equal(w.table, "product_variants");
+    for (const k of ["stock_quantity", "sold_quantity"]) assert.equal(k in w.values, false, `${k} never written`);
+  }
+});
+
+test("writeVariantAvailability rejects unknown state, dedupes ids, counts", async () => {
+  const { client, writes } = fakeClient();
+  const bad = await writeVariantAvailability(client, ["v1"], "Low Stock" as unknown as "In Stock");
+  assert.equal(bad.ok, false);
+  const ok = await writeVariantAvailability(client, ["v1", "v1", "v2", ""], "Out of Stock");
+  assert.deepEqual(ok, { ok: true, count: 2 });
+  assert.ok(writes.every((w) => w.table === "product_variants"));
+});
+
+// ── INV.2E: allVariantsOut diagnostic (surface only, explicit) ────────────────
+
+test("allVariantsOut: true only when there are variants and none is available", () => {
+  assert.equal(allVariantsOut([]), false, "no variants → nothing to diagnose");
+  assert.equal(allVariantsOut(["Out of Stock", "Out of Stock"]), true);
+  assert.equal(allVariantsOut(["Out of Stock", "In Stock"]), false, "one in stock → not all out");
+  assert.equal(allVariantsOut([null, "Low Stock", ""]), true, "unknown/unset count as not-available");
 });
