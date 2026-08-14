@@ -36,6 +36,11 @@ const REASONS_OUT = [
   { v: "تحويل", en: "Transfer" },
 ];
 
+// INV.2F — explicit product availability (products.stock_status); never quantity.
+function prodAvail(p: StaffProduct): boolean {
+  return isAvailable(p.stock_status);
+}
+
 function fmtTime(s: string | null, locale: Locale) {
   if (!s) return "";
   const d = new Date(s);
@@ -277,8 +282,8 @@ function StockTab({ initialToday, locale }: { initialToday: StaffLogRow[]; local
               <p className="truncate text-sm font-bold text-ink">{(en ? picked.name : picked.name_ar) || picked.name || picked.sku || "—"}</p>
               <p className="text-xs text-muted">{picked.sku ?? "—"}</p>
             </div>
-            <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${picked.stock > 0 ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
-              {picked.stock > 0 ? L("متوفر", "In") : L("نفذ", "Out")}
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${isAvailable(picked.stock_status) ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+              {isAvailable(picked.stock_status) ? L("متوفر", "In") : L("نفذ", "Out")}
             </span>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -317,7 +322,7 @@ function StockTab({ initialToday, locale }: { initialToday: StaffLogRow[]; local
               <Thumb src={it.image} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-ink">{it.name ?? it.sku}</span>
-                <span className="block text-xs text-muted">{it.sku}{simpleMode ? ` · ${it.stock > 0 ? L("متوفر", "In") : L("نفذ", "Out")}` : ` · ${L("مخزون", "stock")} ${it.stock}`}</span>
+                <span className="block text-xs text-muted">{it.sku}{simpleMode ? ` · ${isAvailable(it.stock_status) ? L("متوفر", "In") : L("نفذ", "Out")}` : ` · ${L("مخزون", "stock")} ${it.stock}`}</span>
               </span>
             </button>
           ))}
@@ -419,7 +424,9 @@ function ProductsTab({ locale }: { locale: Locale }) {
   const setAvail = (p: StaffProduct, inStock: boolean) => start(async () => {
     const r = await staffSetAvailability(p.id, inStock);
     if ("error" in r) { flash(false, r.error); return; }
-    setAll((list) => list.map((x) => (x.id === p.id ? { ...x, stock: r.stock } : x)));
+    // INV.2F — availability is explicit; quantity is untouched. Optimistically
+    // update stock_status (what the pill reads), not the quantity.
+    setAll((list) => list.map((x) => (x.id === p.id ? { ...x, stock_status: inStock ? "In Stock" : "Out of Stock" } : x)));
     flash(true, `${p.name ?? p.sku ?? ""} → ${inStock ? L("متوفر", "In stock") : L("نفذ", "Out of stock")}`);
   });
 
@@ -443,7 +450,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
     start(async () => {
       const r = await staffSetManyAvailability(ids, inStock);
       if ("error" in r) { flash(false, r.error); return; }
-      setAll((list) => list.map((x) => ids.includes(x.id) ? { ...x, stock: inStock ? 1 : 0 } : x));
+      setAll((list) => list.map((x) => ids.includes(x.id) ? { ...x, stock_status: inStock ? "In Stock" : "Out of Stock" } : x));
       flash(true, L(`تم — ${r.count} منتج «${word}».`, `Done — ${r.count} products "${word}".`));
     });
   };
@@ -456,7 +463,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
       productId: p.id, variantId: v.id,
       item: {
         inventoryId: "", sku: v.barcode, name: `${p.name ?? p.sku ?? ""} — ${v.name ?? L("خيار", "option")}`,
-        name_ar: null, barcode: v.barcode, image: p.image, stock: v.stock ?? 0,
+        name_ar: null, barcode: v.barcode, image: p.image, stock: v.stock ?? 0, stock_status: v.stock_status ?? null,
       },
     });
   };
@@ -513,7 +520,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
         || (p.variants ?? []).some((v) => (v.barcode ?? "").toLowerCase().includes(q) || (v.name ?? "").toLowerCase().includes(q));
       const matchCat = !cat || p.category === cat;
       const n = Number(p.stock);
-      const matchStk = !stk || (stk === "out" ? !(n > 0) : stk === "low" ? (n > 0 && n < 10) : stk === "in" ? (simpleMode ? n > 0 : n >= 10) : true);
+      const matchStk = !stk || (stk === "out" ? (simpleMode ? !prodAvail(p) : !(n > 0)) : stk === "low" ? (n > 0 && n < 10) : stk === "in" ? (simpleMode ? prodAvail(p) : n >= 10) : true);
       const matchVar = !onlyVar || (p.variants?.length ?? 0) > 0;
       return matchQ && matchCat && matchStk && matchVar;
     });
@@ -533,6 +540,14 @@ function ProductsTab({ locale }: { locale: Locale }) {
   };
   // In simple mode the numeric count is hidden — the badge alone says In/Out.
   const stockNum = (n: number | null) => (simpleMode ? null : (n != null ? n : "—"));
+
+  // INV.2F — product availability in simple mode is the EXPLICIT stock_status
+  // (module-level `prodAvail`), never derived from quantity.
+  const availBadge = (inStock: boolean) => (
+    <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-bold ${inStock ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+      {inStock ? L("متوفّر", "In") : L("نافد", "Out")}
+    </span>
+  );
 
   return (
     <div className="space-y-3">
@@ -590,7 +605,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-0.5 text-end">
                   <span className="flex items-center gap-1">
-                    {stockBadge(p.stock)}
+                    {simpleMode ? availBadge(prodAvail(p)) : stockBadge(p.stock)}
                     <span className={`text-sm font-bold ${p.stock != null && p.stock <= 0 ? "text-red-600" : "text-ink"}`}>{stockNum(p.stock)}</span>
                   </span>
                   {showPrices && p.price != null ? <span className="text-xs text-emerald-700">{p.price} {L("ر.ق", "QAR")}</span> : null}
@@ -599,11 +614,11 @@ function ProductsTab({ locale }: { locale: Locale }) {
                       canMove ? (
                         <span className="flex items-center gap-1 rounded-full bg-slate-100 p-0.5">
                           <button disabled={busy} onClick={() => setAvail(p, true)}
-                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold disabled:opacity-50 ${p.stock != null && p.stock > 0 ? "bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-200" : "text-slate-400"}`}>
+                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold disabled:opacity-50 ${prodAvail(p) ? "bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-200" : "text-slate-400"}`}>
                             {L("متوفر", "In")}
                           </button>
                           <button disabled={busy} onClick={() => setAvail(p, false)}
-                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold disabled:opacity-50 ${p.stock != null && p.stock <= 0 ? "bg-white text-red-600 shadow-sm ring-1 ring-red-200" : "text-slate-400"}`}>
+                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold disabled:opacity-50 ${!prodAvail(p) ? "bg-white text-red-600 shadow-sm ring-1 ring-red-200" : "text-slate-400"}`}>
                             {L("نفذ", "Out")}
                           </button>
                         </span>
@@ -697,7 +712,7 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 {detail.category ? <span>· {detail.category}</span> : null}
               </div>
               <div className="flex items-center gap-2">
-                {stockBadge(detail.stock)}
+                {simpleMode ? availBadge(prodAvail(detail)) : stockBadge(detail.stock)}
                 <span className={`text-lg font-bold ${detail.stock != null && detail.stock <= 0 ? "text-red-600" : "text-ink"}`}>{stockNum(detail.stock)} {simpleMode ? null : <span className="text-xs font-normal text-muted">{L("مخزون", "stock")}</span>}</span>
                 {showPrices && detail.price != null ? <span className="ms-auto text-base font-bold text-emerald-700">{detail.price} {L("ر.ق", "QAR")}</span> : null}
               </div>
@@ -705,11 +720,11 @@ function ProductsTab({ locale }: { locale: Locale }) {
                 canMove ? (
                   <div className="grid grid-cols-2 gap-2">
                     <button disabled={busy} onClick={() => setAvail(detail, true)}
-                      className={`rounded-lg py-2 text-sm font-bold disabled:opacity-50 ${detail.stock != null && detail.stock > 0 ? "bg-emerald-600 text-white" : "border border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                      className={`rounded-lg py-2 text-sm font-bold disabled:opacity-50 ${prodAvail(detail) ? "bg-emerald-600 text-white" : "border border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
                       ✅ {L("متوفر", "In stock")}
                     </button>
                     <button disabled={busy} onClick={() => setAvail(detail, false)}
-                      className={`rounded-lg py-2 text-sm font-bold disabled:opacity-50 ${detail.stock != null && detail.stock <= 0 ? "bg-red-600 text-white" : "border border-red-200 bg-red-50 text-red-600"}`}>
+                      className={`rounded-lg py-2 text-sm font-bold disabled:opacity-50 ${!prodAvail(detail) ? "bg-red-600 text-white" : "border border-red-200 bg-red-50 text-red-600"}`}>
                       🚫 {L("نفذ", "Out of stock")}
                     </button>
                   </div>

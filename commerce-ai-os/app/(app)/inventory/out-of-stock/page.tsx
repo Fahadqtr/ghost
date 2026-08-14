@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import OutOfStockSection, { type OosItem } from "@/components/OutOfStockSection";
+import { isAvailable } from "@/lib/availability/read";
 
 export const dynamic = "force-dynamic";
 
@@ -13,32 +14,15 @@ export default async function OutOfStockPage() {
   let errMsg: string | null = null;
 
   try {
-    // Variant stock summed per parent — a product with options is "out" only
-    // when ALL its options are out, so we compare the summed total.
-    const variantSum = new Map<string, number>();
-    {
-      const probe = await supabase.from("product_variants").select("id").limit(1);
-      if (!probe.error) {
-        for (let from = 0; ; from += PAGE) {
-          const { data, error } = await supabase
-            .from("product_variants")
-            .select("parent_product_id, stock_quantity")
-            .range(from, from + PAGE - 1);
-          if (error) break;
-          for (const v of (data ?? []) as any[]) {
-            if (!v.parent_product_id) continue;
-            variantSum.set(v.parent_product_id, (variantSum.get(v.parent_product_id) ?? 0) + (v.stock_quantity ?? 0));
-          }
-          if (!data || data.length < PAGE) break;
-        }
-      }
-    }
-
+    // INV.2F — "out of stock" is the EXPLICIT product availability
+    // (products.stock_status), never derived from quantity. A product is listed
+    // when it is not available (Out of Stock, or unset — treated conservatively
+    // as not-available; never inferred from stock_quantity or variant sums).
     const rows: any[] = [];
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await supabase
-        .from("inventory")
-        .select("product_id, stock_quantity, updated_at, products(name_en, name_ar, sku, image_url, main_category, barcode)")
+        .from("products")
+        .select("id, stock_status, name_en, name_ar, sku, image_url, main_category, barcode, updated_at")
         .range(from, from + PAGE - 1);
       if (error) throw new Error(error.message);
       rows.push(...(data ?? []));
@@ -70,23 +54,17 @@ export default async function OutOfStockPage() {
     }
 
     for (const r of rows as any[]) {
-      const invStock = r.stock_quantity ?? 0;
-      const vSum = (r.product_id && variantSum.get(r.product_id)) ?? 0;
-      // Out of stock only when BOTH the inventory total AND the summed option
-      // stock are 0 — so a product that still has stock on either side is never
-      // shown here by mistake.
-      const effective = Math.max(invStock, vSum);
-      if (effective > 0) continue; // only genuinely out-of-stock
+      if (isAvailable(r.stock_status)) continue; // only NOT-available products
       items.push({
-        id: r.product_id,
-        name_en: r.products?.name_en ?? null,
-        name_ar: r.products?.name_ar ?? null,
-        sku: r.products?.sku ?? null,
-        barcode: r.products?.barcode ?? null,
-        image_url: r.products?.image_url ?? null,
-        category: r.products?.main_category ?? null,
-        stock: effective,
-        activeChannels: (r.product_id && activeByProduct.get(r.product_id)) || [],
+        id: r.id,
+        name_en: r.name_en ?? null,
+        name_ar: r.name_ar ?? null,
+        sku: r.sku ?? null,
+        barcode: r.barcode ?? null,
+        image_url: r.image_url ?? null,
+        category: r.main_category ?? null,
+        stock: 0, // availability-based surface — no quantity shown here
+        activeChannels: (r.id && activeByProduct.get(r.id)) || [],
         updated_at: r.updated_at ?? null,
       });
     }

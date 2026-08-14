@@ -7,8 +7,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * Inventory mode for the whole system:
- *  - "quantities" — track exact stock numbers (default, current behaviour).
- *  - "simple"     — just In-stock / Out-of-stock per product, no numbers.
+ *  - "simple"     — explicit In-stock / Out-of-stock per product & variant, no
+ *                   numbers. THE DEFAULT (INV.2F): the Availability Engine is the
+ *                   primary operational path.
+ *  - "quantities" — track exact stock numbers. Opt-in only; the quantity tooling
+ *                   (stocktake / shelves / movements / reports / labels) stays for
+ *                   future Inventory Engine work.
+ *
+ * The default is "simple": the mode is "quantities" ONLY when the app_settings
+ * row is explicitly set to it. Unset / missing table / error all resolve to
+ * "simple" (no data migration needed to flip the default).
  */
 export type InventoryMode = "quantities" | "simple";
 
@@ -24,17 +32,18 @@ function adminOrNull(): any | null {
 
 export async function getInventoryMode(): Promise<InventoryMode> {
   const admin = adminOrNull();
-  if (!admin) return "quantities";
+  if (!admin) return "simple";
   try {
     const { data, error } = await admin
       .from("app_settings")
       .select("value")
       .eq("key", INVENTORY_MODE_KEY)
       .maybeSingle();
-    if (error) return "quantities";
-    return (data as any)?.value?.mode === "simple" ? "simple" : "quantities";
+    if (error) return "simple";
+    // Explicit "quantities" opt-in only; anything else (incl. unset) → simple.
+    return (data as any)?.value?.mode === "quantities" ? "quantities" : "simple";
   } catch {
-    return "quantities";
+    return "simple";
   }
 }
 
