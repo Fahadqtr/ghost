@@ -75,6 +75,10 @@ const ADOPTED: [string, string][] = [
   ["app/api/malak/commit/route.ts", "Malak commit"],
   ["app/(app)/import-export/snoonu-actions.ts", "Snoonu import"],
   ["app/(app)/import-export/pure-seoul-actions.ts", "Pure Seoul import"],
+  // P3 adopters — their seeds were byte-equivalent to the DB defaults (verified in
+  // production: low_stock_threshold default 5, sold_quantity default 0, no triggers).
+  ["app/staff/actions.ts", "Staff add product"],
+  ["app/(app)/import-export/shopify-actions.ts", "Shopify import"],
 ];
 
 for (const [rel, name] of ADOPTED) {
@@ -86,22 +90,20 @@ for (const [rel, name] of ADOPTED) {
   });
 }
 
-// ── intentionally NOT changed (their seeds legitimately differ — P3 territory) ─
+// ── P3 before/after persisted-shape equivalence ───────────────────────────────
+// Production defaults verified read-only: inventory.low_stock_threshold DEFAULT 5,
+// inventory.sold_quantity DEFAULT 0, both nullable, NO triggers. So the columns a
+// path omitted resolved to those same values on write. Writing them explicitly via
+// inventorySeed persists an identical row — these assertions pin that equivalence.
 
-test("Staff seed is intentionally untouched (still omits low_stock_threshold)", () => {
-  const src = read("app/staff/actions.ts");
-  assert.equal(/inventorySeed\(/.test(src), false, "Staff does not use inventorySeed yet");
-  assert.ok(
-    /insert\(\{\s*product_id:\s*id,\s*stock_quantity:\s*stock,\s*sold_quantity:\s*0\s*\}\)/.test(src),
-    "Staff seed shape unchanged (no low_stock_threshold)",
-  );
+test("Staff seed: before (omit threshold, default→5) equals after (explicit inventorySeed)", () => {
+  const beforePersisted = { product_id: "P", stock_quantity: 7, sold_quantity: 0, low_stock_threshold: 5 /* DB default */ };
+  const afterWritten = { product_id: "P", ...inventorySeed(7) };
+  assert.deepEqual(afterWritten, beforePersisted);
 });
 
-test("Shopify import seed is intentionally untouched (only product_id + stock_quantity)", () => {
-  const src = read("app/(app)/import-export/shopify-actions.ts");
-  assert.equal(/inventorySeed\(/.test(src), false, "Shopify does not use inventorySeed yet");
-  assert.ok(
-    /insert\(\{\s*product_id:\s*ins\.id,\s*stock_quantity:\s*qty\s*\}\)/.test(src),
-    "Shopify seed shape unchanged (no threshold / sold_quantity)",
-  );
+test("Shopify seed: before (omit threshold+sold, defaults→5/0) equals after (explicit inventorySeed)", () => {
+  const beforePersisted = { product_id: "P", stock_quantity: 42, low_stock_threshold: 5 /* default */, sold_quantity: 0 /* default */ };
+  const afterWritten = { product_id: "P", ...inventorySeed(42) };
+  assert.deepEqual(afterWritten, beforePersisted);
 });

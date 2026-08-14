@@ -21,6 +21,7 @@ import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransit
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode } from "@/lib/settings";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
+import { inventorySeed } from "@/lib/products/inventory-seed";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
 function pinOk(pin: string): boolean {
@@ -931,7 +932,7 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
   }
   const id = String(ins.data.id);
   // Inventory row so it's stock-trackable immediately.
-  await admin.from("inventory").insert({ product_id: id, stock_quantity: stock, sold_quantity: 0 });
+  await admin.from("inventory").insert({ product_id: id, ...inventorySeed(stock) });
 
   // Extra photos from the supervisor's task → the product's image gallery
   // (main image primary, the rest ordered behind it). Own-bucket URLs only.

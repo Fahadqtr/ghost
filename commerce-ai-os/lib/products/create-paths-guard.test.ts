@@ -91,7 +91,7 @@ const REGISTRY: PathEntry[] = [
     label: "Staff add product",
     classification: "adapter-candidate",
     client: "admin",
-    seed: "inline-partial", // omits low_stock_threshold — untouched until P3
+    seed: "inventorySeed", // P3-adopted (was inline-partial; low_stock_threshold came from DB default 5)
     variants: "per-row-loop",
     rollback: false,
     note: "Admin client. Own SKU (nextStaffSku) + 200-prefix barcodes; per-variant tolerance; gallery.",
@@ -101,7 +101,7 @@ const REGISTRY: PathEntry[] = [
     label: "Shopify import",
     classification: "adapter-candidate",
     client: "admin",
-    seed: "inline-partial", // {product_id, stock_quantity} only — untouched until P3
+    seed: "inventorySeed", // P3-adopted (was {product_id, stock_quantity}; threshold+sold came from DB defaults 5/0)
     variants: "none",
     rollback: false,
     note: "Admin client, per-row loop. Uses Shopify's SKU; app-side sku/title dedup; inventory swallowed.",
