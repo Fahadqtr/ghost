@@ -9,9 +9,14 @@
 // silently survive: a failed compensation is reported as `cleanup: "failed"`
 // so the caller can surface it instead of pretending the rollback happened.
 //
-// Session-scoped client ONLY (RLS applies). No admin client, no RPC, and no
-// framework/runtime imports — node:test loads this module directly. The only
-// import is the pure, dependency-free inventory-seed sibling.
+// CLIENT-AGNOSTIC: the core never constructs a Supabase client — it operates on
+// the injected ProductCreateClient. Authorization/RLS semantics are a property of
+// whatever client the CALLER injects, not of this module: the V2 create/import
+// flows inject the session client (so RLS applies), while server-only callers
+// with no RLS session (e.g. Malak, which runs after its own writer allow-list +
+// signed-token checks) inject the admin client. No RPC, and no framework/runtime
+// imports — node:test loads this module directly; the only import is the pure,
+// dependency-free inventory-seed sibling.
 
 import { inventorySeed } from "./inventory-seed.ts";
 
