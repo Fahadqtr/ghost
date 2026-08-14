@@ -9,6 +9,10 @@
 // floored). Any shortfall, malformed quantity, negative/duplicate stock, or
 // variant/shelf inconsistency ⇒ the WHOLE order is manual_review (no partial).
 
+// INV.3A: shared fail-closed rollup + strict biggest-first shelf spread.
+import { sumVariantStock, spreadAcrossShelves } from "../inventory/compute.ts";
+export { sumVariantStock, spreadAcrossShelves };
+
 export interface TargetInput {
   masterProductId: string;
   masterVariantSku: string | null;   // null = no-variant product
@@ -70,41 +74,6 @@ const keyOf = (pid: string, vsku: string | null): string => `${pid}||${vsku ?? "
  * not "zero"). The caller turns null into inventory_inconsistent. Overflow past
  * the safe-integer range also returns null.
  */
-export function sumVariantStock(variantStocks: Array<{ stock_quantity: number | null | undefined }>): number | null {
-  let sum = 0;
-  for (const v of variantStocks ?? []) {
-    const n = v?.stock_quantity;
-    if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return null; // null/undefined included
-    sum += n;
-    if (!Number.isSafeInteger(sum)) return null;
-  }
-  return sum;
-}
-
-/**
- * Spread a deduction across shelves, biggest-first, never below zero. FAIL-CLOSED:
- * a malformed quantity or any malformed shelf quantity (negative, fractional,
- * NaN, Infinity, numeric string, non-number) returns null rather than coercing to
- * 0. The caller turns null into inventory_inconsistent.
- */
-export function spreadAcrossShelves(shelves: ShelfRow[], qty: number): ShelfDeduction[] | null {
-  if (typeof qty !== "number" || !Number.isInteger(qty) || qty < 0) return null;
-  const rows = shelves ?? [];
-  for (const r of rows) {
-    if (typeof r.quantity !== "number" || !Number.isInteger(r.quantity) || r.quantity < 0) return null;
-  }
-  const out: ShelfDeduction[] = [];
-  let remaining = qty;
-  for (const r of [...rows].sort((a, b) => b.quantity - a.quantity)) {
-    if (remaining <= 0) break;
-    if (r.quantity === 0) continue;
-    const take = Math.min(r.quantity, remaining);
-    out.push({ location: r.location, deduct: take });
-    remaining -= take;
-  }
-  return out;
-}
-
 const review = (reason: TalabatDeductionReason, detail: Record<string, unknown>): TalabatDeductionPlan =>
   ({ status: "manual_review", reason, resolution: { reason, ...detail } });
 

@@ -11,38 +11,10 @@
 // but edit/delete adjust sold_quantity only for the exact stored "sale" —
 // the reason was normalized when the movement was recorded.
 
-/** Floor of the absolute numeric quantity; 0 when unusable (NaN/0/empty). */
-export function normalizeQty(quantity: unknown): number {
-  const q = Math.floor(Math.abs(Number(quantity)));
-  return Number.isFinite(q) ? q : 0;
-}
-
-export interface ApplyPlan {
-  after: number;            // new stock_quantity
-  soldAfter: number | null; // new sold_quantity, or null = don't touch it
-}
-
-/**
- * Apply an IN/OUT of `qty` to a stock level. Refuses to take stock below zero.
- * A sale OUT (case-insensitive reason) also advances the cumulative
- * sold_quantity.
- */
-export function planApply(args: {
-  type: "in" | "out";
-  qty: number;
-  before: number;
-  sold: number;
-  reason?: string | null;
-}): { error: string } | ApplyPlan {
-  const { type, qty, before, sold } = args;
-  const delta = type === "in" ? qty : -qty;
-  const after = before + delta;
-  if (after < 0) {
-    return { error: `الكمية غير كافية: المتوفّر ${before}، وحاولت إخراج ${qty}.` };
-  }
-  const isSale = type === "out" && (args.reason ?? "").toLowerCase() === "sale";
-  return { after, soldAfter: isSale ? sold + qty : null };
-}
+// INV.3A: canonical movement-normalization/apply math now lives in compute.ts.
+// Re-exporting preserves the existing public API and runtime behavior.
+export { normalizeQty, planApply } from "./compute.ts";
+export type { ApplyPlan } from "./compute.ts";
 
 export interface EditPlan {
   stockAfter: number;        // clamped at 0
