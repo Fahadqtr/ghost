@@ -161,8 +161,23 @@ export async function setAbsolute(admin: any, inventoryId: string, quantity: num
 }
 
 export type ShelfScope = "product" | "variant";
+export type ShelfRow = { location: string; quantity: number };
 
-/** Authoritative shelf placement/count; recomputes derived totals (RPC). */
+// Required non-null result fields per scope. primaryLocation / location are
+// deliberately EXCLUDED — they are legitimately null (no placement / untrack), and
+// interpret() treats null as a missing field.
+const SHELF_REQUIRED = {
+  product: ["stockBefore", "stock", "shelfSum"] as const,
+  variant: ["variantBefore", "variantStock", "parentBefore", "parentStock"] as const,
+};
+
+/**
+ * Authoritative single-slot shelf placement/count (RPC inv_place_shelf). This is a
+ * DISTRIBUTION EDIT (type A): setting a slot to 0 removes it and re-derives stock
+ * from Σ shelves (removing the last placement re-derives stock to 0 — that is a
+ * count, not an untrack; use replaceShelfDistribution([]) / assignFullShelf("") to
+ * UNTRACK while preserving stock). Product also syncs inventory.location = primary.
+ */
 export async function placeOnShelf(
   admin: any,
   args: { scope: ShelfScope; targetId: string; location: string; quantity: number },
@@ -176,7 +191,89 @@ export async function placeOnShelf(
   const { data, error } = await admin.rpc("inv_place_shelf", {
     p_scope: scope, p_target_id: targetId, p_location: location, p_quantity: quantity,
   });
-  const required = scope === "product" ? ["stock", "shelfSum"] : ["variantStock", "parentStock"];
+  return interpret(op, error, data, SHELF_REQUIRED[scope]);
+}
+
+/**
+ * Remove ONE slot placement (type A edit) — a thin alias over placeOnShelf(quantity:0)
+ * with the identical contract: re-derives stock from Σ remaining shelves.
+ */
+export async function removeShelf(
+  admin: any,
+  args: { scope: ShelfScope; targetId: string; location: string },
+): Promise<EngineResult> {
+  return placeOnShelf(admin, { ...args, quantity: 0 });
+}
+
+/**
+ * Replace the WHOLE shelf distribution atomically (RPC inv_replace_shelf_distribution).
+ * Non-empty rows → stock = Σ rows, location = primary. An EMPTY rows array is an
+ * explicit UNTRACK: drop the overlay, location=null, PRESERVE the current stock.
+ * Fail-closed. Duplicate locations are merged (summed) by the RPC.
+ */
+export async function replaceShelfDistribution(
+  admin: any,
+  args: { scope: ShelfScope; targetId: string; rows: ShelfRow[] },
+): Promise<EngineResult> {
+  const op = "replaceShelfDistribution";
+  const { scope, targetId, rows } = args;
+  if (scope !== "product" && scope !== "variant") return { ok: false, op, reason: "invalid_scope" };
+  if (!targetId) return { ok: false, op, reason: "missing_target" };
+  if (!Array.isArray(rows)) return { ok: false, op, reason: "invalid_rows" };
+  const { data, error } = await admin.rpc("inv_replace_shelf_distribution", {
+    p_scope: scope, p_target_id: targetId, p_rows: rows,
+  });
+  return interpret(op, error, data, SHELF_REQUIRED[scope]);
+}
+
+/**
+ * Place the whole current stock (quantity omitted) or a forced quantity into ONE
+ * slot, atomically (RPC inv_assign_full_shelf). An empty/blank location is an
+ * explicit UNTRACK (clear overlay, location=null, preserve stock unless a quantity
+ * is forced). quantity 0 → no shelf row + location null, stock forced to 0.
+ */
+export async function assignFullShelf(
+  admin: any,
+  args: { scope: ShelfScope; targetId: string; location: string | null; quantity?: number | null },
+): Promise<EngineResult> {
+  const op = "assignFullShelf";
+  const { scope, targetId, location } = args;
+  const quantity = args.quantity ?? null;
+  if (scope !== "product" && scope !== "variant") return { ok: false, op, reason: "invalid_scope" };
+  if (!targetId) return { ok: false, op, reason: "missing_target" };
+  if (quantity !== null && (!Number.isInteger(quantity) || quantity < 0)) {
+    return { ok: false, op, reason: "invalid_quantity" };
+  }
+  const { data, error } = await admin.rpc("inv_assign_full_shelf", {
+    p_scope: scope, p_target_id: targetId, p_location: location ?? "", p_quantity: quantity,
+  });
+  // assign_full_shelf returns no shelfSum (single-slot), so require the stock pair.
+  const required = scope === "product"
+    ? ["stockBefore", "stock"] as const
+    : ["variantBefore", "variantStock", "parentBefore", "parentStock"] as const;
+  return interpret(op, error, data, required);
+}
+
+/**
+ * Move a whole placement from one slot to another, merging into `to` if it exists
+ * (RPC inv_move_shelf). Total stock (product) / variant + parent (variant) is
+ * invariant; primary recomputed. Fail-closed if the source placement is absent.
+ */
+export async function moveShelf(
+  admin: any,
+  args: { scope: ShelfScope; targetId: string; fromLocation: string; toLocation: string },
+): Promise<EngineResult> {
+  const op = "moveShelf";
+  const { scope, targetId, fromLocation, toLocation } = args;
+  if (scope !== "product" && scope !== "variant") return { ok: false, op, reason: "invalid_scope" };
+  if (!targetId) return { ok: false, op, reason: "missing_target" };
+  if (!fromLocation || !fromLocation.trim() || !toLocation || !toLocation.trim()) {
+    return { ok: false, op, reason: "invalid_location" };
+  }
+  const { data, error } = await admin.rpc("inv_move_shelf", {
+    p_scope: scope, p_target_id: targetId, p_from_location: fromLocation, p_to_location: toLocation,
+  });
+  const required = scope === "product" ? ["quantity", "stock"] as const : ["quantity", "variantStock", "parentStock"] as const;
   return interpret(op, error, data, required);
 }
 
@@ -196,11 +293,11 @@ export const NOT_IMPLEMENTED_OPS = [
   "adjust",            // product-grain delta (needs an atomic product RPC)
   "sell",              // stock − + sold + shelf spread (channel symmetry, INV.5)
   "receive",           // product-grain purchase-in
-  "moveShelf",         // slot → slot transfer
-  "removeShelf",       // drop a slot
   "reverseMovement",   // invert a ledger movement
 ] as const;
-// setAbsolute is implemented (INV.4A) — see the wrapper above.
+// setAbsolute is implemented (INV.4A); adjustVariantMovement (INV.4B);
+// placeOnShelf / removeShelf / replaceShelfDistribution / assignFullShelf /
+// moveShelf are implemented (INV.4C) — see the wrappers above.
 
 export type NotImplementedOp = (typeof NOT_IMPLEMENTED_OPS)[number];
 
@@ -221,6 +318,4 @@ function notImplemented(op: NotImplementedOp): never {
 export const adjust = (..._args: unknown[]): never => notImplemented("adjust");
 export const sell = (..._args: unknown[]): never => notImplemented("sell");
 export const receive = (..._args: unknown[]): never => notImplemented("receive");
-export const moveShelf = (..._args: unknown[]): never => notImplemented("moveShelf");
-export const removeShelf = (..._args: unknown[]): never => notImplemented("removeShelf");
 export const reverseMovement = (..._args: unknown[]): never => notImplemented("reverseMovement");

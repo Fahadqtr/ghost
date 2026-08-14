@@ -6,8 +6,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  adjustVariant, setVariantAbsolute, adjustVariantMovement, setAbsolute, placeOnShelf, reconcile,
-  adjust, sell, receive, moveShelf, removeShelf, reverseMovement,
+  adjustVariant, setVariantAbsolute, adjustVariantMovement, setAbsolute,
+  placeOnShelf, removeShelf, replaceShelfDistribution, assignFullShelf, moveShelf, reconcile,
+  adjust, sell, receive, reverseMovement,
   InventoryEngineNotImplementedError, NOT_IMPLEMENTED_OPS,
 } from "./engine.ts";
 
@@ -141,20 +142,83 @@ test("setAbsolute is fail-closed: rejects bad args, requires before/after/produc
   assert.equal(te.ok, false); if (!te.ok) assert.equal(te.reason, "rpc_transport_error");
 });
 
-test("placeOnShelf (product) calls inv_place_shelf and requires stock/shelfSum", async () => {
-  const c = rpcClient(applied({ scope: "product", stock: 30, shelfSum: 30 }));
+test("placeOnShelf (product) calls inv_place_shelf and requires stockBefore/stock/shelfSum", async () => {
+  const c = rpcClient(applied({ scope: "product", stockBefore: 20, stock: 30, shelfSum: 30, primaryLocation: "A1" }));
   const r = await placeOnShelf(c, { scope: "product", targetId: "inv1", location: "A1", quantity: 30 });
   assert.equal(r.ok, true);
   assert.deepEqual(c.calls, [{ name: "inv_place_shelf", params: { p_scope: "product", p_target_id: "inv1", p_location: "A1", p_quantity: 30 } }]);
-});
-
-test("placeOnShelf (variant) requires variantStock/parentStock", async () => {
-  const ok = await placeOnShelf(rpcClient(applied({ scope: "variant", variantStock: 10, parentStock: 10 })), { scope: "variant", targetId: "v1", location: "A1", quantity: 10 });
-  assert.equal(ok.ok, true);
-  // applied but missing the derived fields → fail-closed
-  const bad = await placeOnShelf(rpcClient(applied({ scope: "variant" })), { scope: "variant", targetId: "v1", location: "A1", quantity: 10 });
+  if (r.ok) { assert.equal(r.data.stockBefore, 20); assert.equal(r.data.stock, 30); }
+  // applied but missing stockBefore → fail-closed
+  const bad = await placeOnShelf(rpcClient(applied({ scope: "product", stock: 30, shelfSum: 30 })), { scope: "product", targetId: "inv1", location: "A1", quantity: 30 });
   assert.equal(bad.ok, false);
   if (!bad.ok) assert.equal(bad.reason, "missing_result_field");
+});
+
+test("placeOnShelf (variant) requires variantBefore/variantStock/parentBefore/parentStock", async () => {
+  const ok = await placeOnShelf(rpcClient(applied({ scope: "variant", variantBefore: 4, variantStock: 10, parentBefore: 4, parentStock: 10 })), { scope: "variant", targetId: "v1", location: "A1", quantity: 10 });
+  assert.equal(ok.ok, true);
+  // applied but missing the derived fields → fail-closed
+  const bad = await placeOnShelf(rpcClient(applied({ scope: "variant", variantStock: 10 })), { scope: "variant", targetId: "v1", location: "A1", quantity: 10 });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.reason, "missing_result_field");
+});
+
+// ── INV.4C shelf wrappers ─────────────────────────────────────────────────────
+
+test("removeShelf is placeOnShelf(quantity:0)", async () => {
+  const c = rpcClient(applied({ scope: "product", stockBefore: 5, stock: 0, shelfSum: 0, primaryLocation: null }));
+  const r = await removeShelf(c, { scope: "product", targetId: "inv1", location: "A1" });
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_place_shelf", params: { p_scope: "product", p_target_id: "inv1", p_location: "A1", p_quantity: 0 } }]);
+});
+
+test("replaceShelfDistribution (product) maps rows and requires stock fields", async () => {
+  const c = rpcClient(applied({ scope: "product", productId: "p1", stockBefore: 0, stock: 8, shelfSum: 8, primaryLocation: "A1", untracked: false }));
+  const rows = [{ location: "A1", quantity: 5 }, { location: "B2", quantity: 3 }];
+  const r = await replaceShelfDistribution(c, { scope: "product", targetId: "inv1", rows });
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_replace_shelf_distribution", params: { p_scope: "product", p_target_id: "inv1", p_rows: rows } }]);
+  // non-array rows rejected before any RPC call
+  const c2 = rpcClient(applied({}));
+  assert.equal((await replaceShelfDistribution(c2, { scope: "product", targetId: "inv1", rows: null as any })).ok, false);
+  assert.equal(c2.calls.length, 0);
+});
+
+test("replaceShelfDistribution (variant) requires variant/parent fields", async () => {
+  const r = await replaceShelfDistribution(rpcClient(applied({ scope: "variant", variantBefore: 0, variantStock: 6, parentBefore: 0, parentStock: 6 })), { scope: "variant", targetId: "v1", rows: [] });
+  assert.equal(r.ok, true);
+});
+
+test("assignFullShelf maps location + quantity (null when omitted)", async () => {
+  const c = rpcClient(applied({ scope: "product", stockBefore: 7, stock: 7, primaryLocation: "A1", location: "A1" }));
+  const r = await assignFullShelf(c, { scope: "product", targetId: "inv1", location: "A1" });
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_assign_full_shelf", params: { p_scope: "product", p_target_id: "inv1", p_location: "A1", p_quantity: null } }]);
+  // untrack: empty/blank location → sent as "" ; forced quantity forwarded
+  const c2 = rpcClient(applied({ scope: "product", stockBefore: 7, stock: 7, primaryLocation: null }));
+  await assignFullShelf(c2, { scope: "product", targetId: "inv1", location: null });
+  assert.equal(c2.calls[0].params.p_location, "");
+  const c3 = rpcClient(applied({ scope: "product", stockBefore: 7, stock: 4, primaryLocation: "A1" }));
+  await assignFullShelf(c3, { scope: "product", targetId: "inv1", location: "A1", quantity: 4 });
+  assert.equal(c3.calls[0].params.p_quantity, 4);
+  // negative forced quantity rejected before the RPC
+  const c4 = rpcClient(applied({}));
+  assert.equal((await assignFullShelf(c4, { scope: "product", targetId: "inv1", location: "A1", quantity: -1 })).ok, false);
+  assert.equal(c4.calls.length, 0);
+});
+
+test("moveShelf maps from/to and requires quantity + stock fields", async () => {
+  const c = rpcClient(applied({ scope: "product", quantity: 3, stock: 12, primaryLocation: "B2" }));
+  const r = await moveShelf(c, { scope: "product", targetId: "inv1", fromLocation: "A1", toLocation: "B2" });
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_move_shelf", params: { p_scope: "product", p_target_id: "inv1", p_from_location: "A1", p_to_location: "B2" } }]);
+  // missing to-location rejected before the RPC
+  const c2 = rpcClient(applied({}));
+  assert.equal((await moveShelf(c2, { scope: "product", targetId: "inv1", fromLocation: "A1", toLocation: "" })).ok, false);
+  assert.equal(c2.calls.length, 0);
+  // status:error surfaced (e.g. placement_not_found)
+  const rej = await moveShelf(rpcClient({ data: { status: "error", reason: "placement_not_found" }, error: null }), { scope: "product", targetId: "inv1", fromLocation: "A1", toLocation: "B2" });
+  assert.equal(rej.ok, false); if (!rej.ok) assert.equal(rej.reason, "placement_not_found");
 });
 
 // ── fail-closed on every non-applied outcome; NEVER a direct-write fallback ────
@@ -204,13 +268,15 @@ test("reconcile delegates to the reconcile read layer", async () => {
 
 // ── unimplemented ops throw; they can NEVER perform a mutation ─────────────────
 
-test("future ops throw InventoryEngineNotImplementedError (setAbsolute is no longer among them)", () => {
-  for (const fn of [adjust, sell, receive, moveShelf, removeShelf, reverseMovement]) {
+test("future ops throw; shelf ops (moveShelf/removeShelf) are implemented in INV.4C", () => {
+  for (const fn of [adjust, sell, receive, reverseMovement]) {
     assert.throws(() => (fn as () => never)(), InventoryEngineNotImplementedError);
   }
   assert.deepEqual([...NOT_IMPLEMENTED_OPS].sort(),
-    ["adjust", "moveShelf", "receive", "removeShelf", "reverseMovement", "sell"]);
-  assert.equal([...NOT_IMPLEMENTED_OPS].includes("setAbsolute" as never), false, "setAbsolute removed from NOT_IMPLEMENTED_OPS");
+    ["adjust", "receive", "reverseMovement", "sell"]);
+  for (const op of ["setAbsolute", "moveShelf", "removeShelf", "placeOnShelf", "assignFullShelf", "replaceShelfDistribution"]) {
+    assert.equal([...NOT_IMPLEMENTED_OPS].includes(op as never), false, `${op} is implemented, not a stub`);
+  }
 });
 
 // ── availability boundary + no legacy mirror write (engine source scan) ────────

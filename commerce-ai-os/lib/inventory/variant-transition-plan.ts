@@ -29,6 +29,20 @@ const n = (v: unknown): number => Number(v) || 0;
 const out = (q: number): boolean => q <= 0;
 const crossed = (before: number, after: number): boolean => out(before) !== out(after);
 
+// INV.4C — PURE product-level zero-crossing decision from an authoritative
+// before/after (produced atomically by a shelf Engine RPC). Same <= 0 "out"
+// threshold as the legacy logStockTransition, so behavior is preserved; the only
+// difference is the (correct) authoritative input instead of a totalStock re-read.
+export function planStockTransition(opts: {
+  before: number;
+  after: number;
+}): StockTransitionAction | null {
+  const before = n(opts.before);
+  const after = n(opts.after);
+  if (!crossed(before, after)) return null;
+  return out(after) ? "oos" : "restock";
+}
+
 export function planAuthoritativeVariantTransition(opts: {
   variantBefore: number;
   variantAfter: number;

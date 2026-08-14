@@ -19,9 +19,9 @@ import "server-only";
 // left exactly as-is here and flagged for a later engine phase to reconcile.
 
 import { openStockTask, openVariantStockTask } from "@/lib/tasks/stock-tasks";
-import { planAuthoritativeVariantTransition } from "./variant-transition-plan.ts";
+import { planAuthoritativeVariantTransition, planStockTransition } from "./variant-transition-plan.ts";
 export type { VariantTransitionPlan } from "./variant-transition-plan.ts";
-export { planAuthoritativeVariantTransition } from "./variant-transition-plan.ts";
+export { planAuthoritativeVariantTransition, planStockTransition } from "./variant-transition-plan.ts";
 
 export {
   logStockTransition,
@@ -80,5 +80,28 @@ export async function logAuthoritativeVariantTransition(admin: any, opts: {
     );
   } catch (e) {
     console.error("[authoritative-variant-transition]", e instanceof Error ? e.message : e);
+  }
+}
+
+// INV.4C — AUTHORITATIVE product zero-crossing transition. Same as the legacy
+// logStockTransition but takes the authoritative before/after straight from the
+// shelf Engine RPC instead of re-reading totalStock (INV.3B double-count). Opens
+// the product-level oos/restock task only on a real zero crossing. Best-effort: a
+// task failure never undoes the stock mutation. Never writes availability. The
+// legacy logStockTransition + totalStock are left UNCHANGED for their callers.
+export async function logAuthoritativeStockTransition(admin: any, opts: {
+  productId: string | null | undefined;
+  before: number;
+  after: number;
+  actor?: string;
+}): Promise<void> {
+  try {
+    const productId = opts.productId ? String(opts.productId) : "";
+    if (!productId) return;
+    const action = planStockTransition({ before: opts.before, after: opts.after });
+    if (!action) return;
+    await openStockTask(admin, productId, action, opts.actor);
+  } catch (e) {
+    console.error("[authoritative-stock-transition]", e instanceof Error ? e.message : e);
   }
 }
