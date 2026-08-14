@@ -9,8 +9,11 @@
 // silently survive: a failed compensation is reported as `cleanup: "failed"`
 // so the caller can surface it instead of pretending the rollback happened.
 //
-// Session-scoped client ONLY (RLS applies). No admin client, no RPC, no
-// top-level runtime imports — node:test loads this module directly.
+// Session-scoped client ONLY (RLS applies). No admin client, no RPC, and no
+// framework/runtime imports — node:test loads this module directly. The only
+// import is the pure, dependency-free inventory-seed sibling.
+
+import { inventorySeed } from "./inventory-seed.ts";
 
 export interface CreateVariantRow {
   parent_product_id?: string; // set by the core after the product insert
@@ -96,9 +99,7 @@ export async function createProductCore(
   const invErr = (
     await client.from("inventory").insert({
       product_id: productId,
-      stock_quantity: (row.stock_quantity as number | null) ?? 0,
-      low_stock_threshold: 5,
-      sold_quantity: 0,
+      ...inventorySeed((row.stock_quantity as number | null) ?? 0),
     })
   ).error;
   if (invErr) {

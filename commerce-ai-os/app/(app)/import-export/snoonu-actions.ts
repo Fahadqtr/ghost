@@ -10,6 +10,7 @@ import {
 import { clean } from "@/lib/malak/talabat-export.mjs";
 
 import { buildCodeIndex, fillCodes, type FillItem, type FillResult, type CatalogCodeRow } from "@/lib/snoonu-fill";
+import { inventorySeed } from "@/lib/products/inventory-seed";
 
 export type { SnoonuExportRow, SnoonuDiff } from "@/lib/snoonu-diff";
 export type { FillItem, FillResult } from "@/lib/snoonu-fill";
@@ -350,7 +351,7 @@ export async function addSnoonuNewProducts(
 
     // Seed inventory rows so they show on the Inventory page (stock 0 to start).
     if (newIds.length) {
-      const invRows = newIds.map((product_id) => ({ product_id, stock_quantity: 0, low_stock_threshold: 5, sold_quantity: 0 }));
+      const invRows = newIds.map((product_id) => ({ product_id, ...inventorySeed(0) }));
       for (const part of chunk(invRows, 200)) await admin.from("inventory").insert(part);
     }
 
