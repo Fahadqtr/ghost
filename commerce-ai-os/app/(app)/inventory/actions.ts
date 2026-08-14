@@ -9,7 +9,7 @@ import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
 import { pushInventoryStockToShopify } from "@/lib/shopify/admin";
 import { summarizeStockSync, type ShopifyStockSyncStatus } from "@/lib/shopify/stock-push";
-import { setProductAvailabilityState, writeProductAvailability } from "@/lib/availability/engine";
+import { setProductAvailabilityState, writeProductAvailability, setVariantAvailabilityState } from "@/lib/availability/engine";
 import { availabilityFromInStock, isAvailable } from "@/lib/availability/read";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -1507,15 +1507,22 @@ export async function setManyAvailability(
 }
 
 /**
- * INV.2C — DEFERRED. Per-variant explicit availability needs a dedicated
- * product_variants.stock_status column, added in INV.2E. Until then this is a
- * non-destructive no-op: the old behaviour (writing product_variants.stock_quantity)
- * has been REMOVED so availability can never destroy a variant count. Variant
- * availability is managed at the product level for this phase.
+ * INV.2E — Simple-mode availability toggle for ONE option (variant). Writes the
+ * explicit product_variants.stock_status through the Availability Engine; NEVER
+ * mutates variant quantity, and never touches the parent product. Keyed by
+ * variant id.
  */
 export async function setVariantAvailability(
-  _variantId: string,
-  _inStock: boolean
+  variantId: string,
+  inStock: boolean
 ): Promise<{ ok: boolean; error?: string }> {
-  return { ok: false, error: "توفّر الخيارات لكل خيار يبدأ في INV.2E (غير مفعّل حالياً)." };
+  const unauth = await requireUser();
+  if (unauth) return { ok: false, error: unauth.error };
+  const admin = writableClient();
+  const res = await setVariantAvailabilityState(admin, String(variantId), inStock);
+  if (!res.ok) return { ok: false, error: res.error };
+
+  revalidatePath("/inventory");
+  revalidatePath("/dashboard");
+  return { ok: true };
 }

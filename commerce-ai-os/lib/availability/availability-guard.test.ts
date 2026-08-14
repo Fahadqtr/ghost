@@ -51,10 +51,12 @@ function assertNoQuantityWrite(body: string, label: string) {
 
 // ── engine.ts ─────────────────────────────────────────────────────────────────
 
-test("engine writes ONLY products.stock_status", () => {
+test("engine writes ONLY the two stock_status columns (product + variant)", () => {
   const ENGINE = code(read("lib/availability/engine.ts"));
   assert.ok(/\.from\(["']products["']\)\s*\.update\(\{\s*stock_status/.test(ENGINE), "engine sets products.stock_status");
-  for (const t of ["inventory", "product_variants", "shelf_stock", "variant_shelf_stock"]) {
+  assert.ok(/\.from\(["']product_variants["']\)\s*\.update\(\{\s*stock_status/.test(ENGINE), "engine sets product_variants.stock_status (INV.2E)");
+  // It may touch product_variants ONLY to set stock_status — never a quantity/shelf table.
+  for (const t of ["inventory", "shelf_stock", "variant_shelf_stock"]) {
     assert.equal(new RegExp(`\\.from\\(["']${t}["']\\)`).test(ENGINE), false, `engine must not touch ${t}`);
   }
   assertNoQuantityWrite(ENGINE, "engine");
@@ -97,10 +99,10 @@ test("setManyAvailability delegates to the engine; no quantity write", () => {
   assertNoQuantityWrite(fn, "setManyAvailability");
 });
 
-test("setVariantAvailability is a deferred non-destructive no-op (INV.2E)", () => {
+test("setVariantAvailability (INV.2E) delegates to the engine; no quantity write", () => {
   const fn = code(fnBody(INV, "setVariantAvailability"));
-  assert.ok(/INV\.2E/.test(fnBody(INV, "setVariantAvailability")), "marked deferred to INV.2E");
-  assert.equal(/\.update\(/.test(fn), false, "no DB write");
+  assert.ok(/setVariantAvailabilityState\(/.test(fn), "calls the variant engine writer");
+  assert.equal(/\.from\(["']product_variants["']\)/.test(fn), false, "no direct variant table write (engine owns it)");
   assertNoQuantityWrite(fn, "setVariantAvailability");
 });
 
@@ -121,9 +123,10 @@ for (const name of ["staffSetAvailability", "staffSetAvailabilityInv", "staffSet
   });
 }
 
-test("staffSetVariantAvailability is a deferred non-destructive no-op", () => {
+test("staffSetVariantAvailability (INV.2E) delegates to the engine; no quantity write", () => {
   const fn = code(fnBody(STAFF, "staffSetVariantAvailability"));
-  assert.equal(/\.update\(/.test(fn), false, "no DB write");
+  assert.ok(/setVariantAvailabilityState\(/.test(fn), "calls the variant engine writer");
+  assert.equal(/\.from\(["']product_variants["']\)\s*\.update/.test(fn), false, "no direct variant quantity/status update (engine owns the write)");
   assertNoQuantityWrite(fn, "staffSetVariantAvailability");
 });
 

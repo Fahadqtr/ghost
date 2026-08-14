@@ -79,7 +79,7 @@ export default async function InventoryPage() {
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase
           .from("product_variants")
-          .select("id, parent_product_id, variant_name, sku, barcode, color, size, stock_quantity")
+          .select("id, parent_product_id, variant_name, sku, barcode, color, size, stock_quantity, stock_status")
           .range(from, from + 999);
         if (error) break;
         for (const v of (data ?? []) as any[]) {
@@ -91,6 +91,7 @@ export default async function InventoryPage() {
             color: v.color,
             size: v.size,
             stock_quantity: v.stock_quantity,
+            stock_status: v.stock_status ?? null,
           });
         }
         if (!data || data.length < 1000) break;
@@ -184,10 +185,9 @@ export default async function InventoryPage() {
     new Set(rows.map((r) => r.category).filter((c): c is string => !!c))
   ).sort();
 
-  // Simple-mode rows (INV.2C): product availability is the EXPLICIT
-  // products.stock_status — never derived from quantity. Per-variant availability
-  // is deferred to INV.2E (needs product_variants.stock_status), so options are
-  // omitted from the availability surface for now.
+  // Simple-mode rows: product AND variant availability are the EXPLICIT
+  // stock_status (products.stock_status / product_variants.stock_status, INV.2E)
+  // — never derived from quantity.
   const availOut = rows.filter((r) => !isAvailable(r.stock_status)).length;
   const availabilityRows = rows.map((r) => ({
     id: r.id,
@@ -197,7 +197,11 @@ export default async function InventoryPage() {
     sku: r.sku,
     image_url: r.image_url,
     in_stock: isAvailable(r.stock_status),
-    variants: [] as { id: string; name: string | null; in_stock: boolean }[],
+    variants: (r.product_id ? variantsByProduct[r.product_id] ?? [] : []).map((v: any) => ({
+      id: String(v.id),
+      name: v.variant_name ?? null,
+      in_stock: isAvailable(v.stock_status),
+    })),
   }));
 
   return (

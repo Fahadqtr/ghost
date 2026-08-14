@@ -9,7 +9,7 @@
 // helper rather than re-derived from quantity. The durable mapping key is the
 // variant SKU — never product_variants.id, never array order, never an index.
 
-import { isAvailable } from "../availability/read.ts";
+import { isAvailable, normalizeAvailability } from "../availability/read.ts";
 
 export type MappingStatus = "active" | "needs_review" | "archived";
 
@@ -44,6 +44,8 @@ export interface ExportVariantInput {
   variant_name_en: string | null;   // English option name
   price: number | string | null;
   stock_quantity?: number | string | null;
+  /** Explicit variant availability (product_variants.stock_status), INV.2E. */
+  stock_status?: string | null;
 }
 
 export type TalabatWarningKind =
@@ -268,10 +270,14 @@ export function buildTalabatExport(
       // every variant row is flagged for review until it gets a real image.
       warnings.push({ kind: "no_variant_image", masterProductId: p.id, masterVariantSku: sku, exportedSku: sku, message: "variant inherits the parent image (no per-variant image)" });
 
-      // INV.2D — availability is the product-level explicit state (above), NOT
-      // derived from variant quantity. Every variant row inherits it.
-      if (availability === "OutOfStock") {
-        warnings.push({ kind: "out_of_stock", masterProductId: p.id, masterVariantSku: sku, exportedSku: sku, message: "product is out of stock (still listed; availability reflects OutOfStock)" });
+      // INV.2E — availability is the EXPLICIT variant stock_status when set,
+      // else it inherits the product-level availability (above). Never derived
+      // from variant quantity.
+      const vExplicit = normalizeAvailability(v.stock_status);
+      const vAvailability: "InStock" | "OutOfStock" =
+        vExplicit ? (vExplicit === "In Stock" ? "InStock" : "OutOfStock") : availability;
+      if (vAvailability === "OutOfStock") {
+        warnings.push({ kind: "out_of_stock", masterProductId: p.id, masterVariantSku: sku, exportedSku: sku, message: "option is out of stock (still listed; availability reflects OutOfStock)" });
       }
 
       const price = priceForVariant(p, v);
@@ -285,7 +291,7 @@ export function buildTalabatExport(
           // mirrors lib/talabat/mapping.ts classifyMappingStatus (needs_review is
           // reserved for incomplete/invalid mappings, which are blocked above).
           mappingStatus: "active",
-          exportSnapshot: { nameEn, nameAr, price: priceStr(price), barcode, imageFilename: image, availability },
+          exportSnapshot: { nameEn, nameAr, price: priceStr(price), barcode, imageFilename: image, availability: vAvailability },
         },
       });
     }
