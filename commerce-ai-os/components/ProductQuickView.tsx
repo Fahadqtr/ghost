@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { setProductApproval, setProductStatus } from "@/app/(app)/products/actions";
 import { setProductAvailability } from "@/app/(app)/inventory/actions";
+import { isAvailable } from "@/lib/availability/read";
 import { PriceCell } from "@/components/ProductTable";
 import type { ProductRow } from "@/components/ProductTable";
 import type { Locale } from "@/lib/i18n";
@@ -19,8 +20,8 @@ const apprCls = (s: string) =>
 // A tap-to-open quick card for one product: see it big and change approval,
 // status and availability right here — without leaving the catalog list.
 export default function ProductQuickView({
-  product: p, locale = "ar", simpleMode = false, approval, status, stock,
-  onClose, onApproval, onStatus, onStock,
+  product: p, locale = "ar", simpleMode = false, approval, status, stock, stock_status,
+  onClose, onApproval, onStatus, onAvailability,
 }: {
   product: ProductRow;
   locale?: Locale;
@@ -28,10 +29,11 @@ export default function ProductQuickView({
   approval: string | null;
   status: string | null;
   stock: number | null;
+  stock_status: string | null;
   onClose: () => void;
   onApproval: (v: string) => void;
   onStatus: (v: string) => void;
-  onStock: (v: number) => void;
+  onAvailability: (inStock: boolean) => void;
 }) {
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
@@ -46,7 +48,8 @@ export default function ProductQuickView({
   }, [onClose]);
 
   const active = status === "Active";
-  const inStock = Number(stock) > 0;
+  // INV.2F — availability is the EXPLICIT product state, never derived from quantity.
+  const inStock = isAvailable(stock_status);
 
   const changeApproval = (v: string) => {
     const prev = approval ?? "";
@@ -67,11 +70,10 @@ export default function ProductQuickView({
   };
   const toggleAvail = () => {
     const next = !inStock;
-    const prevStock = Number(stock) || 0;
-    onStock(next ? (prevStock > 0 ? prevStock : 1) : 0); setMsg("");
+    onAvailability(next); setMsg(""); // optimistic explicit availability; no quantity write
     start(async () => {
       const r = await setProductAvailability(p.id, next);
-      if (r?.error) { onStock(prevStock); setMsg(`❌ ${r.error}`); }
+      if (r?.error) { onAvailability(inStock); setMsg(`❌ ${r.error}`); }
     });
   };
 

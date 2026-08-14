@@ -62,9 +62,11 @@ async function commitStock(sb: Sb, a: MalakAction): Promise<CommitOutcome | { er
   } else {
     await sb.from("inventory").insert({ product_id: p.id, stock_quantity: value, low_stock_threshold: 5, sold_quantity: 0 });
   }
-  // keep the denormalized fields on products in sync for the catalog views.
-  const stock_status = value <= 0 ? "Out of Stock" : value < 5 ? "Low Stock" : "In Stock";
-  await sb.from("products").update({ stock_quantity: value, stock_status }).eq("id", p.id);
+  // INV.2F — keep the denormalized QUANTITY mirror in sync for catalog views.
+  // Availability (products.stock_status) is NO LONGER derived from quantity here:
+  // it is an explicit state owned by the Availability Engine. A Malak stock
+  // (quantity) update never changes availability.
+  await sb.from("products").update({ stock_quantity: value }).eq("id", p.id);
 
   return { message: `تم تحديث مخزون ${p.name_en}: ${oldVal} ← ${value}`, productId: p.id, field: "stock_quantity", oldValue: oldVal, newValue: value };
 }

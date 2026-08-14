@@ -165,6 +165,7 @@ export type StaffItem = {
   barcode: string | null;
   image: string | null;
   stock: number;
+  stock_status: string | null; // INV.2F — explicit product availability
 };
 
 // Look up products to move — exact barcode first (scanner), else fuzzy by
@@ -178,7 +179,7 @@ export async function staffLookup(query: string): Promise<{ items: StaffItem[]; 
   const admin = adminClient();
   if (!admin) return { items: [], error: NO_DB };
 
-  const cols = "id, sku, name_en, name_ar, barcode, image_url";
+  const cols = "id, sku, name_en, name_ar, barcode, image_url, stock_status";
   let prods: any[] = (await admin.from("products").select(cols).eq("barcode", q).limit(5)).data ?? [];
   if (prods.length === 0) {
     const like = `%${q.replace(/[%,()]/g, " ")}%`;
@@ -207,6 +208,7 @@ export async function staffLookup(query: string): Promise<{ items: StaffItem[]; 
       barcode: p.barcode ?? null,
       image: p.image_url ?? null,
       stock: inv.stock_quantity ?? 0,
+      stock_status: p.stock_status ?? null,
     });
   }
   return { items };
@@ -322,6 +324,7 @@ export type StaffProduct = {
   image: string | null;
   category: string | null;
   stock: number | null;
+  stock_status: string | null; // INV.2F — explicit product availability (products.stock_status)
   price: number | null; // null unless the employee has the "prices" permission
   variants?: StaffVariant[]; // options, populated by staffAllProducts
 };
@@ -335,7 +338,7 @@ export async function staffProducts(query: string): Promise<{ items: StaffProduc
   const admin = adminClient();
   if (!admin) return { items: [], showPrices, error: NO_DB };
 
-  const cols = "id, sku, name_en, name_ar, barcode, image_url, main_category, price, discount_price, inventory(stock_quantity)";
+  const cols = "id, sku, name_en, name_ar, barcode, image_url, main_category, price, discount_price, stock_status, inventory(stock_quantity)";
   const q = String(query || "").trim();
   let rows: any[] = [];
   if (!q) {
@@ -361,6 +364,7 @@ export async function staffProducts(query: string): Promise<{ items: StaffProduc
     image: p.image_url ?? null,
     category: p.main_category ?? null,
     stock: p.inventory?.[0]?.stock_quantity ?? null,
+    stock_status: p.stock_status ?? null,
     price: showPrices ? (p.discount_price ?? p.price ?? null) : null,
   }));
   return { items, showPrices };
@@ -415,7 +419,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
     }
   } catch { /* variants optional */ }
 
-  const cols = "id, sku, name_en, name_ar, barcode, image_url, main_category, price, discount_price, inventory(stock_quantity)";
+  const cols = "id, sku, name_en, name_ar, barcode, image_url, main_category, price, discount_price, stock_status, inventory(stock_quantity)";
   const items: StaffProduct[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await admin.from("products").select(cols).order("name_en", { ascending: true }).range(from, from + 999);
@@ -430,6 +434,7 @@ export async function staffAllProducts(): Promise<{ items: StaffProduct[]; showP
         image: p.image_url ?? null,
         category: p.main_category ?? null,
         stock: p.inventory?.[0]?.stock_quantity ?? null,
+        stock_status: p.stock_status ?? null,
         price: showPrices ? (p.discount_price ?? p.price ?? null) : null,
         variants: varsByParent.get(String(p.id)) ?? [],
       });
@@ -450,7 +455,7 @@ export async function staffItemForProduct(productId: string): Promise<{ item: St
 
   const { data: p } = await admin
     .from("products")
-    .select("id, sku, name_en, name_ar, barcode, image_url")
+    .select("id, sku, name_en, name_ar, barcode, image_url, stock_status")
     .eq("id", String(productId))
     .maybeSingle();
   if (!p) return { error: "المنتج غير موجود." };
@@ -476,6 +481,7 @@ export async function staffItemForProduct(productId: string): Promise<{ item: St
     barcode: p.barcode ?? null,
     image: p.image_url ?? null,
     stock: Number(inv.stock_quantity) || 0,
+    stock_status: (p as any).stock_status ?? null,
   } };
 }
 
@@ -1517,7 +1523,7 @@ export async function staffSetAvailability(productId: string, inStock: boolean):
 /** Current system inventory mode, for the staff scan tab UI. */
 export async function staffInventoryMode(): Promise<"quantities" | "simple"> {
   const who = await currentStaff();
-  if (!who) return "quantities";
+  if (!who) return "simple"; // INV.2F — Simple Availability is the default mode
   return getInventoryMode();
 }
 

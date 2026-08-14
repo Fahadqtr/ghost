@@ -36,7 +36,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         supabase
           .from("products")
           .select(
-            "id, sku, snoonu_id, barcode, name_en, name_ar, main_category, approval, rejection_reason, platform_status, notes, price, discount_price, image_url, product_variants(count), inventory(stock_quantity)"
+            "id, sku, snoonu_id, barcode, name_en, name_ar, main_category, approval, rejection_reason, platform_status, notes, price, discount_price, image_url, stock_status, product_variants(count), inventory(stock_quantity)"
           )
           .order("sku", { ascending: true })
           .range(from, to)
@@ -95,6 +95,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
       discount_price: p.discount_price,
       priceEff: effectivePrice(p.price, p.discount_price, pricesByProduct.get(p.id)),
       stock: p.inventory?.[0]?.stock_quantity ?? null,
+      stock_status: p.stock_status ?? null,
       variant_count: p.product_variants?.[0]?.count ?? 0,
       variants: variantsByProduct.get(p.id) ?? [],
       channels: statusByProduct.get(p.id) ?? {},

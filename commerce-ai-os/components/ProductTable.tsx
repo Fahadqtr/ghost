@@ -9,6 +9,7 @@ import { archiveAndDeleteProducts } from "@/app/(app)/products/archive/actions";
 import ProductQuickView from "@/components/ProductQuickView";
 import BulkImageUpload from "@/components/BulkImageUpload";
 import { priceRangeLabel, type EffectivePrice } from "@/lib/products/price-compute";
+import { isAvailable } from "@/lib/availability/read";
 import type { Locale } from "@/lib/i18n";
 
 const PAGE_SIZE = 50;
@@ -45,6 +46,7 @@ export interface ProductRow {
   // has priced options; falls back to the parent price otherwise.
   priceEff?: EffectivePrice;
   stock: number | null;
+  stock_status: string | null; // INV.2F — explicit product availability
   variant_count: number;
   variants?: { name: string | null; barcode: string }[];
   channels: Record<string, string>;
@@ -165,7 +167,10 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   // card — kept here so both surfaces reflect the change without a full reload.
   const [apprOv, setApprOv] = useState<Record<string, string>>({});
   const [statOv, setStatOv] = useState<Record<string, string>>({});
-  const [stockOv, setStockOv] = useState<Record<string, number>>({});
+  // INV.2F — quantity overrides are no longer produced from this surface
+  // (availability moved to availOv); effStock just reflects the server value.
+  const [stockOv] = useState<Record<string, number>>({});
+  const [availOv, setAvailOv] = useState<Record<string, string>>({}); // INV.2F explicit availability override
   const [imgOv, setImgOv] = useState<Record<string, string>>({});
   const [bulkImg, setBulkImg] = useState(false);
   // "Convert to manual tasks" modal: pick which platforms an employee should add
@@ -177,6 +182,8 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
   const effImg = (p: ProductRow) => (p.id in imgOv ? imgOv[p.id] : p.image_url);
   const effStatus = (p: ProductRow) => (p.id in statOv ? statOv[p.id] : p.platform_status);
   const effStock = (p: ProductRow): number | null => (p.id in stockOv ? stockOv[p.id] : p.stock);
+  // INV.2F — explicit availability (products.stock_status), with a live override.
+  const effAvail = (p: ProductRow): string | null => (p.id in availOv ? availOv[p.id] : p.stock_status);
   const toggleExpand = (id: string) =>
     setExpanded((s) => {
       const n = new Set(s);
@@ -208,10 +215,12 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
       const matchesCat = !cat || p.main_category === cat;
       const matchesAppr = !appr || (appr === "none" ? !ap : ap === appr);
       const n = Number(st);
+      // INV.2F — in simple mode In/Out come from EXPLICIT availability, not quantity.
+      const av = isAvailable(p.id in availOv ? availOv[p.id] : p.stock_status);
       const matchesStk = !stk
-        || (stk === "out" ? !(n > 0)
+        || (stk === "out" ? (simpleMode ? !av : !(n > 0))
           : stk === "low" ? (n > 0 && n < 10)
-          : stk === "in" ? (simpleMode ? n > 0 : n >= 10) : true);
+          : stk === "in" ? (simpleMode ? av : n >= 10) : true);
       const matchesPlat = !plat || (plat === "active" ? ps === "Active" : ps !== "Active");
       const rr = p.rejection_reason ?? "";
       const img = p.id in imgOv ? imgOv[p.id] : p.image_url;
@@ -228,7 +237,7 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         : true);
       return !removed.has(p.id) && matchesQ && matchesCat && matchesAppr && matchesStk && matchesPlat && matchesGrp;
     });
-  }, [products, dq, cat, appr, stk, plat, grp, removed, simpleMode, apprOv, statOv, stockOv, imgOv]);
+  }, [products, dq, cat, appr, stk, plat, grp, removed, simpleMode, apprOv, statOv, stockOv, availOv, imgOv]);
 
   const anyFilter = !!(q || cat || appr || stk || plat || grp);
   const clearFilters = () => { setQ(""); setCat(""); setAppr(""); setStk(""); setPlat(""); setGrp(""); };
@@ -492,10 +501,15 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <PriceCell p={p} en={en} />
                   {(() => {
+                    // INV.2F — simple mode: In/Out from EXPLICIT availability.
+                    if (simpleMode) {
+                      return isAvailable(effAvail(p))
+                        ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
+                        : <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>;
+                    }
                     const s = effStock(p);
                     return s == null ? null
                       : Number(s) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
-                      : simpleMode ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
                       : Number(s) < 10 ? <span className="text-amber-700 tabular-nums">{L("مخزون", "stock")} {s}</span>
                       : <span className="text-slate-600 tabular-nums">{L("مخزون", "stock")} {s}</span>;
                   })()}
@@ -579,10 +593,15 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
                   </td>
                   <td className="px-3 py-3">
                     {(() => {
+                      // INV.2F — simple mode: In/Out from EXPLICIT availability.
+                      if (simpleMode) {
+                        return isAvailable(effAvail(p))
+                          ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
+                          : <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>;
+                      }
                       const s = effStock(p);
                       return s == null ? <span className="text-slate-400">—</span>
                         : Number(s) <= 0 ? <span className="badge bg-red-100 text-red-700">{L("نافد", "Out")}</span>
-                        : simpleMode ? <span className="badge bg-emerald-100 text-emerald-700">{L("متوفر", "In")}</span>
                         : Number(s) < 10 ? <span className="text-amber-700 tabular-nums">{s}</span>
                         : <span className="text-slate-600 tabular-nums">{s}</span>;
                     })()}
@@ -693,11 +712,11 @@ export default function ProductTable({ products, locale = "ar", initialGroup = "
         return (
           <ProductQuickView
             product={p} locale={locale} simpleMode={simpleMode}
-            approval={effAppr(p)} status={effStatus(p)} stock={effStock(p)}
+            approval={effAppr(p)} status={effStatus(p)} stock={effStock(p)} stock_status={effAvail(p)}
             onClose={() => setQuickId(null)}
             onApproval={(v) => setApprOv((s) => ({ ...s, [p.id]: v }))}
             onStatus={(v) => setStatOv((s) => ({ ...s, [p.id]: v }))}
-            onStock={(v) => setStockOv((s) => ({ ...s, [p.id]: v }))}
+            onAvailability={(inStock) => setAvailOv((s) => ({ ...s, [p.id]: inStock ? "In Stock" : "Out of Stock" }))}
           />
         );
       })() : null}
