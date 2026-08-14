@@ -153,11 +153,12 @@ result, created_at` (types updated to match).
 
 Added one local dependency: `xlsx` (SheetJS) — runs in the browser, no external API.
 
-**Upload Excel** (`ExcelImport.tsx`)
+**Upload Excel** _(Phase-1 importer — retired in the Catalog Migration; see "Catalog Migration" below)_
 - [x] Parses `.xlsx`/`.csv` in-browser; maps headers → the 28 master-sheet columns (alias-aware)
 - [x] Preview table + lists ignored/unmapped columns
-- [x] Commit behind a confirm → `importProducts` server action inserts products + seeds inventory
+- [x] Commit behind a confirm → server action inserts products + seeds inventory
 - [x] Category not in the 11 is **flagged & skipped** (never force-fit); unknown brand left blank
+- [x] **Superseded** by the V2 importer at `/v2/catalog/import` (UX.4E-9B); the Phase-1 component and its import action were deleted.
 
 **Upload Images** (`ImageUpload.tsx`)
 - [x] Uploads to Supabase Storage bucket `product-images`; optional link to a product
@@ -218,3 +219,22 @@ Per owner decision, sample data is delivered as a **SQL file you run yourself**
 All milestones M0–M6 done (M2 was pre-done in Supabase). Phase 2 (loading the
 cleaned master sheet, real channel exports, agent AI) does not begin until the
 product database is confirmed clean.
+
+---
+
+## Catalog Migration (UX.4E): COMPLETE
+The product catalog runtime has fully migrated to V2. There is now exactly one
+runtime path for each concern, and the Phase-1 originals were deleted:
+
+- **Create** → `/v2/catalog/new` (AI Product Creator).
+- **Edit** → `/v2/catalog/[id]/edit` (Product Editor).
+- **Import** → `/v2/catalog/import`.
+- **Variant editing** → the shared Variant Studio, used by both Create and Edit.
+
+Legacy retired (deleted, with permanent redirects preserved for old URLs):
+- the legacy product form and its create/edit server actions (UX.4E-9A/9C);
+- the legacy Excel importer and its import server action (UX.4E-9B).
+
+`/products/new` and `/products/[id]/edit` still redirect into their precise V2
+replacements (product id/context preserved). Source guards keep the legacy
+files absent.

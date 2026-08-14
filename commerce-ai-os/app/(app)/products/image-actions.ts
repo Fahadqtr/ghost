@@ -4,18 +4,7 @@ import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { revalidatePath } from "next/cache";
-import { editProductImageCore } from "@/lib/products/imageEdit";
 import { storePrimaryProductImage, storePrimaryProductImageBySku } from "@/lib/products/imageStore";
-
-const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
-const EXT: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
-
-const BUCKET = "product-images";
 
 function revalidate(productId: string) {
   revalidatePath(`/products/${productId}/edit`);
@@ -61,44 +50,6 @@ export async function applyCatalogImageBySku(formData: FormData) {
   return r;
 }
 
-// Upload an image for a product that doesn't exist yet (the "New product"
-// form). Stores the file in the bucket and returns its public URL + filename so
-// the form can set image_url/image_filename; the product is created afterwards
-// with createProduct. No product_images row is written (there's no product id).
-export async function uploadNewProductImage(formData: FormData) {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
-
-  const file = formData.get("file");
-  const skuRaw = String(formData.get("sku") || "").replace(/[^a-zA-Z0-9_-]/g, "");
-  if (!(file instanceof File) || file.size === 0) return { error: "No file selected." };
-  if (file.size > MAX_BYTES) return { error: `File too large (${(file.size / 1048576).toFixed(1)} MB). Max 10 MB.` };
-
-  const ext = EXT[file.type];
-  if (!ext) return { error: `Unsupported type "${file.type || "unknown"}". Use JPG, PNG, WebP, or GIF (HEIC isn't supported by browsers).` };
-
-  let admin;
-  try { admin = createAdminClient(); }
-  catch (e) { return { error: e instanceof Error ? e.message : "Service role unavailable." }; }
-
-  // Name by SKU when known (catalog convention), else a unique temporary name.
-  const base = skuRaw || `new-${Date.now()}`;
-  const filename = `${base}.${ext}`;
-
-  try {
-    const buf = Buffer.from(await file.arrayBuffer());
-    const { error: upErr } = await admin.storage
-      .from(BUCKET)
-      .upload(filename, buf, { contentType: file.type, upsert: true, cacheControl: "3600" });
-    if (upErr) return { error: `Upload failed: ${upErr.message}` };
-
-    const publicUrl = admin.storage.from(BUCKET).getPublicUrl(filename).data.publicUrl;
-    const url = `${publicUrl}?t=${Date.now()}`;
-    return { ok: true, url, filename };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Unexpected upload error." };
-  }
-}
-
 // Remove an image (by url). If it was the primary, repoint products.image_url
 // to another image (or null). Storage object is left in place (harmless).
 export async function removeProductImage(productId: string, url: string) {
@@ -135,15 +86,4 @@ export async function removeProductImage(productId: string, url: string) {
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Unexpected error." };
   }
-}
-
-// AI photo edit for the New-product form (same engine as the staff tab — the
-// OpenAI edit + storage logic is shared in lib/products/imageEdit). Returns a
-// NEW stored image URL; the form swaps image_url to it.
-export async function editNewProductImage(imageUrl: string, prompt: string): Promise<{ imageUrl: string } | { error: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
-  let admin;
-  try { admin = createAdminClient(); }
-  catch (e) { return { error: e instanceof Error ? e.message : "Service role unavailable." }; }
-  return editProductImageCore(admin, imageUrl, prompt, "products-ai");
 }
