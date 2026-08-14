@@ -67,10 +67,12 @@ test("applyStocktake writes a single stocktake audit (action 'stocktake')", () =
   assert.equal(stocktakeAudits, 1, "exactly one stocktake audit action label");
 });
 
-// Regression: the NOT-yet-migrated writers in the SAME file still write directly.
-test("variant + shelf writers remain direct (untouched by INV.4A)", () => {
-  assert.equal(PV_STOCK_WRITE.test(fnBody(ACTIONS, "applyVariantStocktake")), true, "applyVariantStocktake still direct (INV.4B)");
-  assert.equal(PV_STOCK_WRITE.test(fnBody(ACTIONS, "recordVariantMovement")), true, "recordVariantMovement still direct (INV.4B)");
+// The variant writers moved to the engine in INV.4B (pinned in detail by
+// inv-4b-writer-guard.test.ts); the shelf writers in the same file stay direct
+// until INV.4C. This guard only asserts the shelf-writer regression here.
+test("shelf writers remain direct (untouched by INV.4A/4B)", () => {
+  assert.equal(PV_STOCK_WRITE.test(fnBody(ACTIONS, "applyVariantStocktake")), false, "applyVariantStocktake migrated to the engine (INV.4B)");
+  assert.equal(PV_STOCK_WRITE.test(fnBody(ACTIONS, "recordVariantMovement")), false, "recordVariantMovement migrated to the engine (INV.4B)");
   const shelfSave = fnBody(ACTIONS, "saveShelfStock");
   assert.ok(/\.from\(\s*["']shelf_stock["']\s*\)/.test(shelfSave), "saveShelfStock still writes shelf_stock (INV.4C)");
 });

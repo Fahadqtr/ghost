@@ -6,8 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { applyMovement } from "@/lib/inventory/movements";
 // INV.4A — product-grain stock writes go through the Inventory Engine (atomic
 // RPC), never a direct inventory.stock_quantity write.
-import { setAbsolute, type EngineResult } from "@/lib/inventory/engine";
-import { logStockTransition } from "@/lib/inventory/transition";
+import { setAbsolute, setVariantAbsolute, adjustVariantMovement, type EngineResult } from "@/lib/inventory/engine";
+import { logStockTransition, logAuthoritativeVariantTransition } from "@/lib/inventory/transition";
 import { requireUser } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
@@ -84,6 +84,36 @@ function stockEngineMessage(r: Extract<EngineResult, { ok: false }>): string {
       return "حالة المخزون غير متسقة — راجع المنتج.";
     default:
       return "تعذّر تحديث المخزون.";
+  }
+}
+
+// INV.4B — map a VARIANT Inventory Engine failure (inv_adjust_variant_movement /
+// inv_set_variant_absolute) to a clear operator message. Shelf-tracked variants
+// (and variant products carrying a product-level shelf) are rejected fail-closed —
+// their quantity is managed from the shelves (INV.4C), never a bare stock write.
+function variantStockEngineMessage(r: Extract<EngineResult, { ok: false }>): string {
+  switch (r.reason) {
+    case "variant_has_shelf_rows":
+      return "هذا الخيار مُدار من الرفوف — استخدم جرد رفوف الخيار (shelf) لتعديل كميته.";
+    case "parent_has_shelf_rows":
+      return "المنتج موزّع على رفوف — استخدم جرد الرفوف لتعديل الكمية.";
+    case "insufficient_stock":
+      return "الكمية المطلوب إخراجها أكبر من مخزون الخيار المتاح.";
+    case "missing_variant":
+      return "الخيار غير موجود.";
+    case "missing_parent":
+      return "الخيار غير مرتبط بمنتج.";
+    case "invalid_quantity":
+    case "invalid_delta":
+      return "كمية غير صالحة (لازم رقم صحيح ≥ 0).";
+    case "sold_delta_mismatch":
+      return "خلل في احتساب المبيعات مع الحركة — أعد المحاولة.";
+    case "sold_inconsistent":
+      return "حالة مبيعات المنتج غير متسقة — راجع المنتج.";
+    case "inventory_inconsistent":
+      return "حالة المخزون غير متسقة — راجع المنتج.";
+    default:
+      return "تعذّر تحديث مخزون الخيار.";
   }
 }
 
@@ -293,10 +323,8 @@ export async function applyVariantStocktake(counts: VariantCount[]) {
   const unauth = await requireUser();
   if (unauth) return { ok: 0, failed: counts.length, errors: [unauth.error] };
   const admin = writableClient();
-  const now = new Date().toISOString();
   let ok = 0;
   const errors: string[] = [];
-  const parents = new Set<string>();
 
   for (const c of counts) {
     const rawCounted = Number(c.counted);
@@ -305,51 +333,54 @@ export async function applyVariantStocktake(counts: VariantCount[]) {
       continue;
     }
     const counted = Math.max(0, Math.floor(rawCounted));
-    const { data: v, error: readErr } = await admin
-      .from("product_variants")
-      .select("id, stock_quantity, parent_product_id")
-      .eq("id", c.variantId)
-      .single();
-    if (readErr || !v) {
-      errors.push(`${c.sku ?? c.variantId}: not found`);
+
+    // Variant stock + parent rollup → Inventory Engine (atomic). Shelf-tracked
+    // variants (and variant products with a product-level shelf) are rejected
+    // fail-closed by the RPC — no direct product_variants write, no manual parent
+    // sibling re-total here. The RPC owns the rollup.
+    const res = await setVariantAbsolute(admin, c.variantId, counted);
+    if (!res.ok) {
+      errors.push(`${c.sku ?? c.variantId}: ${variantStockEngineMessage(res)}`);
       continue;
     }
-    const before = v.stock_quantity ?? 0;
-    if (before !== counted) {
-      const { error: upErr } = await admin
-        .from("product_variants")
-        .update({ stock_quantity: counted })
-        .eq("id", v.id);
-      if (upErr) {
-        errors.push(`${c.sku ?? c.variantId}: ${upErr.message}`);
-        continue;
+    const before = Number(res.data.before);
+    const after = Number(res.data.after);
+    const parentStock = Number(res.data.parentStock);
+    const parentBefore = Number(res.data.parentBefore);
+    const productId = (res.data.parentProductId as string | null) ?? null;
+
+    // SINGLE stocktake audit per variant that actually changed (no double audit,
+    // no audit on a no-op), old/new from the engine's real before/after.
+    if (after !== before) {
+      try {
+        await insertAuditRow(admin, {
+          agent: "stocktake",
+          action: "stocktake",
+          action_type: "stocktake",
+          sku: c.sku ?? null,
+          product_id: productId,
+          field: "variant_stock_quantity",
+          old_value: String(before),
+          new_value: String(after),
+          status: "done",
+          details: { variantId: c.variantId, productId, counted: after, previous: before, variance: after - before },
+        });
+      } catch (e) {
+        console.error("[variant stocktake audit]", e instanceof Error ? e.message : e);
       }
-      // Best-effort variance ledger (see note in applyStocktake).
-      await insertAuditRow(admin, {
-        agent: "stocktake",
-        action: "stocktake",
-        action_type: "stocktake",
-        sku: c.sku ?? null,
-        product_id: v.parent_product_id ?? null,
-        field: "variant_stock_quantity",
-        old_value: String(before),
-        new_value: String(counted),
-        status: "done",
-        details: { variantId: v.id, productId: v.parent_product_id ?? null, counted, previous: before, variance: counted - before },
+      // Authoritative zero-crossing transition (best-effort) using the engine's
+      // parentBefore/parentStock — never the double-counting totalStock helper.
+      await logAuthoritativeVariantTransition(admin, {
+        productId,
+        variantId: c.variantId,
+        variantName: "خيار",
+        variantBefore: before,
+        variantAfter: after,
+        parentBefore,
+        parentAfter: parentStock,
       });
     }
-    if (v.parent_product_id) parents.add(v.parent_product_id);
     ok++;
-  }
-
-  // Re-total each affected parent: inventory.stock_quantity = sum of its variants.
-  for (const pid of parents) {
-    const { data: sibs } = await admin
-      .from("product_variants")
-      .select("stock_quantity")
-      .eq("parent_product_id", pid);
-    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
-    await admin.from("inventory").update({ stock_quantity: sum, updated_at: now }).eq("product_id", pid);
   }
 
   revalidatePath("/inventory");
@@ -1071,62 +1102,39 @@ export async function recordVariantMovement(input: VariantMovementInput) {
   }
   if (input.type !== "in" && input.type !== "out") return { error: "Invalid movement type." };
 
-  const { data: v, error: readErr } = await admin
-    .from("product_variants")
-    .select("id, stock_quantity, parent_product_id")
-    .eq("id", input.variantId)
-    .single();
-  if (readErr || !v) return { error: "Variant not found." };
-
-  const before = v.stock_quantity ?? 0;
+  // Variant stock ± parent rollup ± (sale-out only) sold_quantity → Inventory
+  // Engine, ALL atomic in one RPC. No read-modify-write, no sibling sum, no
+  // inventory/sold update outside the RPC. A read-only metadata lookup (barcode /
+  // name) is allowed for the audit/UI, but NEVER used to compute the mutation.
+  const isSale = input.type === "out" && (input.reason ?? "").trim().toLowerCase() === "sale";
   const delta = input.type === "in" ? qty : -qty;
-  const after = before + delta;
-  if (after < 0) {
-    return { error: `Not enough stock: have ${before}, tried to remove ${qty}.` };
-  }
+  const soldDelta = isSale ? qty : 0;
 
-  const { error: upErr } = await admin
-    .from("product_variants")
-    .update({ stock_quantity: after })
-    .eq("id", v.id);
-  if (upErr) return { error: upErr.message };
+  const res = await adjustVariantMovement(admin, { variantId: input.variantId, delta, soldDelta });
+  if (!res.ok) return { error: variantStockEngineMessage(res) };
 
-  // Re-total the parent product's inventory = sum of all its variants' stock.
-  // (Bump sold_quantity on a sale, like recordMovement does.)
-  const now = new Date().toISOString();
-  const parentId = v.parent_product_id;
-  if (parentId) {
-    const { data: sibs } = await admin
-      .from("product_variants")
-      .select("stock_quantity")
-      .eq("parent_product_id", parentId);
-    const sum = ((sibs ?? []) as any[]).reduce((s, r) => s + (r.stock_quantity ?? 0), 0);
-    const patch: Record<string, unknown> = { stock_quantity: sum, updated_at: now };
-    if (input.type === "out" && (input.reason ?? "").toLowerCase() === "sale") {
-      const { data: invRow } = await admin
-        .from("inventory")
-        .select("sold_quantity")
-        .eq("product_id", parentId)
-        .maybeSingle();
-      patch.sold_quantity = ((invRow as any)?.sold_quantity ?? 0) + qty;
-    }
-    await admin.from("inventory").update(patch).eq("product_id", parentId);
-  }
+  // Authoritative before/after/parent/sold come from the Engine result — never a
+  // local read.
+  const before = Number(res.data.before);
+  const after = Number(res.data.after);
+  const parentBefore = Number(res.data.parentBefore);
+  const parentAfter = Number(res.data.parentStock);
+  const parentId = (res.data.productId as string | null) ?? null;
 
-  // Best-effort ledger row (see note in recordMovement).
+  // Best-effort ledger row (see note in recordMovement). old/new from the engine.
   const { error: logErr } = await insertAuditRow(admin, {
     agent: input.by || "inventory",
     action: input.type === "in" ? "stock_in" : "stock_out",
     action_type: input.type === "in" ? "stock_in" : "stock_out",
     sku: input.sku ?? null,
-    product_id: parentId ?? null,
+    product_id: parentId,
     field: "variant_stock_quantity",
     old_value: String(before),
     new_value: String(after),
     status: "done",
     details: {
-      variantId: v.id,
-      productId: parentId ?? null,
+      variantId: input.variantId,
+      productId: parentId,
       quantity: qty,
       direction: input.type,
       reason: input.reason ?? null,
@@ -1134,6 +1142,19 @@ export async function recordVariantMovement(input: VariantMovementInput) {
     },
   });
   if (logErr) console.error("[recordVariantMovement] audit insert failed:", logErr.message);
+
+  // Authoritative zero-crossing transition (best-effort) — engine parentBefore/
+  // parentStock, not the double-counting totalStock helper.
+  await logAuthoritativeVariantTransition(admin, {
+    productId: parentId,
+    variantId: input.variantId,
+    variantName: "خيار",
+    variantBefore: before,
+    variantAfter: after,
+    parentBefore,
+    parentAfter,
+    actor: input.by || "inventory",
+  });
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/movements");

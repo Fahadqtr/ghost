@@ -74,20 +74,23 @@ const REGISTRY: Entry[] = [
     file: "app/(app)/inventory/actions.ts",
     classification: "legacy-direct",
     direct: true,
-    note: "MIGRATED in INV.4A → engine.setAbsolute (no direct stock_quantity write): manual edit " +
-      "(updateInventory), bulk edit (bulkUpdateInventory), CSV import (importInventoryBySku), and product " +
-      "stocktake (applyStocktake). STILL legacy-direct because the SAME FILE retains un-migrated writers: " +
-      "applyVariantStocktake, recordVariantMovement (product_variants.stock_quantity → INV.4B) and all shelf " +
-      "writers — setLocation / applyShelfCounts / saveShelfStock / saveVariantShelfStock / moveShelfStock / " +
-      "removeFromShelf / bulkAssignShelf / bulkAssignVariantShelf (shelf_stock / variant_shelf_stock → INV.4C). " +
-      "The four migrated functions are pinned no-direct-stock-write by inv-4a-writer-guard.test.ts.",
+    note: "INV.4A migrated the product-grain writers → engine.setAbsolute (updateInventory, bulkUpdateInventory, " +
+      "importInventoryBySku, applyStocktake). INV.4B migrated the variant writers → engine.adjustVariantMovement / " +
+      "setVariantAbsolute + authoritative transition (recordVariantMovement, applyVariantStocktake) — no direct " +
+      "product_variants.stock_quantity / parent rollup / sold_quantity write. STILL legacy-direct because the SAME " +
+      "FILE retains the shelf writers — setLocation / applyShelfCounts / saveShelfStock / saveVariantShelfStock / " +
+      "moveShelfStock / removeFromShelf / bulkAssignShelf / bulkAssignVariantShelf (shelf_stock / variant_shelf_stock " +
+      "→ INV.4C). The migrated functions are pinned no-direct-write by inv-4a-writer-guard.test.ts (4A) and " +
+      "inv-4b-writer-guard.test.ts (4B).",
   },
   {
     file: "app/staff/actions.ts",
     classification: "legacy-direct",
     direct: true,
-    note: "Staff variant movement (product_variants.stock_quantity) and on-demand inventory-row seed. " +
-      "Migrate the variant movement to inv_adjust_variant in INV.4A+.",
+    note: "INV.4B migrated staffMoveVariant → engine.adjustVariantMovement (soldDelta 0) + authoritative transition " +
+      "(no direct product_variants.stock_quantity write, parent rollup now atomic via the RPC). STILL legacy-direct " +
+      "because of the on-demand inventory-row seed in staffItemForProduct (a create-seed insert, not a live-quantity " +
+      "mutation). staffMoveVariant is pinned no-direct-write by inv-4b-writer-guard.test.ts.",
   },
   {
     file: "app/api/malak/commit/route.ts",
