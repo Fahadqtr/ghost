@@ -17,9 +17,11 @@ import { buildDraftPrompt, parseProductDraft, EMPTY_DRAFT, type ProductDraft } f
 import { editProductImageCore } from "@/lib/products/imageEdit";
 import { storePrimaryProductImage } from "@/lib/products/imageStore";
 import { logCatalogTask, computeFieldChanges } from "@/lib/tasks/catalog-log";
-import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransition, logStockTransition } from "@/lib/tasks/stock-tasks";
+import { openStockTask, totalStock, openVariantStockTask, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode } from "@/lib/settings";
+import { setProductAvailabilityState, writeProductAvailability } from "@/lib/availability/engine";
+import { availabilityFromInStock } from "@/lib/availability/read";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
 import { createProductCore } from "@/lib/products/product-create";
 import { nextMkSku } from "@/lib/products/sku-generate";
@@ -1490,10 +1492,11 @@ export async function staffOpenStockTask(productId: string, action: "oos" | "res
 }
 
 /**
- * Simple-mode availability toggle for staff: mark a product In-stock / Out-of-
- * stock without a quantity. Out → 0; In → keep the existing count if positive,
- * else 1. Fires the same OOS/restock catalog task as a movement. Gated on the
- * same "stock" permission as stock in/out.
+ * INV.2C — Simple-mode availability toggle for staff. Writes the explicit
+ * product-level availability (products.stock_status) through the Availability
+ * Engine; NEVER mutates quantity. Gated on the same "stock" permission. The
+ * returned `stock` is the current (unchanged) quantity, kept only for response
+ * shape — availability no longer changes it.
  */
 export async function staffSetAvailability(productId: string, inStock: boolean): Promise<{ ok: true; stock: number } | { error: string }> {
   const who = await currentStaff();
@@ -1502,30 +1505,13 @@ export async function staffSetAvailability(productId: string, inStock: boolean):
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
 
-  const { data: invRows } = await admin.from("inventory").select("id, stock_quantity").eq("product_id", String(productId)).limit(1);
-  let inv = (invRows ?? [])[0] as { id: string; stock_quantity: number | null } | undefined;
-  if (!inv) {
-    const ins = await admin
-      .from("inventory")
-      .insert({ product_id: String(productId), stock_quantity: 0, sold_quantity: 0, low_stock_threshold: 5 })
-      .select("id, stock_quantity")
-      .single();
-    if (ins.error || !ins.data) return { error: "ما قدرت أجهز صف المخزون." };
-    inv = ins.data as { id: string; stock_quantity: number | null };
-  }
+  const res = await setProductAvailabilityState(admin, String(productId), inStock);
+  if (!res.ok) return { error: res.error };
 
-  const before = Number(inv.stock_quantity) || 0;
-  const after = inStock ? (before > 0 ? before : 1) : 0;
-  if (after === before) return { ok: true as const, stock: after };
-
-  const { error } = await admin
-    .from("inventory")
-    .update({ stock_quantity: after, updated_at: new Date().toISOString() })
-    .eq("id", inv.id);
-  if (error) return { error: error.message };
-
-  await logStockTransition(admin, { productId: String(productId), before, after, actor: `موظف: ${who.name}` });
-  return { ok: true as const, stock: after };
+  // Response shape preserved: report the current (unchanged) quantity, if any.
+  const { data: invRows } = await admin.from("inventory").select("stock_quantity").eq("product_id", String(productId)).limit(1);
+  const stock = Number((invRows ?? [])[0]?.stock_quantity) || 0;
+  return { ok: true as const, stock };
 }
 
 /** Current system inventory mode, for the staff scan tab UI. */
@@ -1535,7 +1521,9 @@ export async function staffInventoryMode(): Promise<"quantities" | "simple"> {
   return getInventoryMode();
 }
 
-/** Same as staffSetAvailability but keyed by inventory row id (scan tab). */
+/** INV.2C — Same as staffSetAvailability but keyed by inventory row id (scan tab):
+ *  resolves the product, then writes products.stock_status via the engine. No
+ *  quantity write; `stock` returned is the current (unchanged) count. */
 export async function staffSetAvailabilityInv(inventoryId: string, inStock: boolean): Promise<{ ok: true; stock: number } | { error: string }> {
   const who = await currentStaff();
   if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
@@ -1544,13 +1532,10 @@ export async function staffSetAvailabilityInv(inventoryId: string, inStock: bool
   if (!admin) return { error: NO_DB };
   const { data: row } = await admin.from("inventory").select("id, product_id, stock_quantity").eq("id", String(inventoryId)).maybeSingle();
   if (!row) return { error: "الصنف غير موجود." };
-  const before = Number((row as any).stock_quantity) || 0;
-  const after = inStock ? (before > 0 ? before : 1) : 0;
-  if (after === before) return { ok: true as const, stock: after };
-  const { error } = await admin.from("inventory").update({ stock_quantity: after, updated_at: new Date().toISOString() }).eq("id", (row as any).id);
-  if (error) return { error: error.message };
-  await logStockTransition(admin, { productId: (row as any).product_id, before, after, actor: `موظف: ${who.name}` });
-  return { ok: true as const, stock: after };
+  if (!(row as any).product_id) return { error: "الصنف غير مرتبط بمنتج." };
+  const res = await setProductAvailabilityState(admin, String((row as any).product_id), inStock);
+  if (!res.ok) return { error: res.error };
+  return { ok: true as const, stock: Number((row as any).stock_quantity) || 0 };
 }
 
 // Search the catalog for the manual "رجع المخزون" flow: matching products with
@@ -1637,49 +1622,25 @@ export async function staffSuperviseSetStatus(id: string, status: "open" | "in_p
   return { ok: true as const };
 }
 
-/** Bulk simple-mode toggle for staff: mark many products In / Out at once. */
+/** INV.2C — Bulk simple-mode toggle for staff: mark many products In / Out at
+ *  once via the Availability Engine (products.stock_status). No quantity writes. */
 export async function staffSetManyAvailability(productIds: string[], inStock: boolean): Promise<{ ok: true; count: number } | { error: string }> {
   const who = await currentStaff();
   if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
   if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية تحديث المخزون." };
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
-  const ids = Array.from(new Set((productIds ?? []).map((s) => String(s)).filter(Boolean)));
-  if (ids.length === 0) return { ok: true as const, count: 0 };
-  const now = new Date().toISOString();
-  let count = 0;
-  for (let i = 0; i < ids.length; i += 200) {
-    const chunk = ids.slice(i, i + 200);
-    let q = admin.from("inventory").update({ stock_quantity: inStock ? 1 : 0, updated_at: now }).in("product_id", chunk);
-    if (inStock) q = q.lte("stock_quantity", 0);
-    const { error } = await q;
-    if (error) return { error: error.message };
-    count += chunk.length;
-  }
-  return { ok: true as const, count };
+  const res = await writeProductAvailability(admin, productIds ?? [], availabilityFromInStock(inStock));
+  if (!res.ok) return { error: res.error };
+  return { ok: true as const, count: res.count };
 }
 
-/** Simple-mode toggle for ONE option (variant) from the staff portal. */
-export async function staffSetVariantAvailability(variantId: string, inStock: boolean): Promise<{ ok: true; stock: number } | { error: string }> {
-  const who = await currentStaff();
-  if (!who) return { error: "انتهت الجلسة — سجّل دخول مرة ثانية." };
-  if (!hasPerm(who.perms, "stock")) return { error: "ما عندك صلاحية تحديث المخزون." };
-  const admin = adminClient();
-  if (!admin) return { error: NO_DB };
-  const { data: v } = await admin
-    .from("product_variants")
-    .select("id, parent_product_id, variant_name, stock_quantity")
-    .eq("id", String(variantId))
-    .maybeSingle();
-  if (!v) return { error: "الخيار غير موجود." };
-  const before = Number((v as any).stock_quantity) || 0;
-  const after = inStock ? (before > 0 ? before : 1) : 0;
-  if (after === before) return { ok: true as const, stock: after };
-  const { error } = await admin.from("product_variants").update({ stock_quantity: after }).eq("id", String(variantId));
-  if (error) return { error: error.message };
-  await logVariantStockTransition(admin, {
-    productId: (v as any).parent_product_id, variantId: String(variantId),
-    variantName: (v as any).variant_name ?? "", before, after, actor: `موظف: ${who.name}`,
-  });
-  return { ok: true as const, stock: after };
+/**
+ * INV.2C — DEFERRED (same rule as the manager path). Per-variant explicit
+ * availability needs product_variants.stock_status (INV.2E). Non-destructive
+ * no-op — the old product_variants.stock_quantity write has been REMOVED so
+ * availability can never destroy a variant count.
+ */
+export async function staffSetVariantAvailability(_variantId: string, _inStock: boolean): Promise<{ ok: true; stock: number } | { error: string }> {
+  return { error: "توفّر الخيارات لكل خيار يبدأ في INV.2E." };
 }

@@ -6,6 +6,7 @@ import InventoryTable, { type InventoryRow } from "@/components/InventoryTable";
 import InventoryModeToggle from "@/components/InventoryModeToggle";
 import SimpleAvailabilityList from "@/components/SimpleAvailabilityList";
 import { getInventoryMode } from "@/lib/settings";
+import { isAvailable } from "@/lib/availability/read";
 import { getT } from "@/lib/i18n-server";
 
 // Count staff movements still awaiting the owner's review (details.review unset).
@@ -120,7 +121,7 @@ export default async function InventoryPage() {
   const PAGE = 1000;
   const sel = `id, product_id, stock_quantity, low_stock_threshold, sold_quantity, updated_at${
     hasLocation ? ", location" : ""
-  }, products(name_en, name_ar, sku, image_url, main_category, barcode)`;
+  }, products(name_en, name_ar, sku, image_url, main_category, barcode, stock_status)`;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("inventory")
@@ -146,6 +147,7 @@ export default async function InventoryPage() {
         stock_quantity: r.stock_quantity,
         low_stock_threshold: r.low_stock_threshold,
         sold_quantity: r.sold_quantity,
+        stock_status: r.products?.stock_status ?? null,
         updated_at: r.updated_at ?? null,
       });
     }
@@ -182,20 +184,20 @@ export default async function InventoryPage() {
     new Set(rows.map((r) => r.category).filter((c): c is string => !!c))
   ).sort();
 
-  // Simple-mode rows: one In/Out flag per product (derived from effective stock)
-  // plus its options, each with its own In/Out flag.
+  // Simple-mode rows (INV.2C): product availability is the EXPLICIT
+  // products.stock_status — never derived from quantity. Per-variant availability
+  // is deferred to INV.2E (needs product_variants.stock_status), so options are
+  // omitted from the availability surface for now.
+  const availOut = rows.filter((r) => !isAvailable(r.stock_status)).length;
   const availabilityRows = rows.map((r) => ({
     id: r.id,
+    product_id: r.product_id,
     product_name: r.product_name,
     product_name_ar: r.product_name_ar,
     sku: r.sku,
     image_url: r.image_url,
-    in_stock: effectiveStock(r) > 0,
-    variants: (r.product_id ? variantsByProduct[r.product_id] ?? [] : []).map((v: any) => ({
-      id: String(v.id),
-      name: v.variant_name ?? null,
-      in_stock: (Number(v.stock_quantity) || 0) > 0,
-    })),
+    in_stock: isAvailable(r.stock_status),
+    variants: [] as { id: string; name: string | null; in_stock: boolean }[],
   }));
 
   return (
@@ -226,8 +228,8 @@ export default async function InventoryPage() {
         <>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
             <KpiCard title={L("منتجات", "Products")} value={nf(total)} icon="🏷️" />
-            <KpiCard title={L("متوفر", "In stock")} value={nf(total - out)} icon="✅" />
-            <KpiCard title={L("نافد", "Out of stock")} value={nf(out)} icon="⛔" />
+            <KpiCard title={L("متوفر", "In stock")} value={nf(total - availOut)} icon="✅" />
+            <KpiCard title={L("نافد", "Out of stock")} value={nf(availOut)} icon="⛔" />
           </div>
           <SimpleAvailabilityList rows={availabilityRows} locale={locale} />
         </>

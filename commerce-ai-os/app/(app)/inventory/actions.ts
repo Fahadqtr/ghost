@@ -8,9 +8,10 @@ import { applyMovement } from "@/lib/inventory/movements";
 import { requireUser } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
-import { logStockTransition, logVariantStockTransition } from "@/lib/tasks/stock-tasks";
 import { pushInventoryStockToShopify } from "@/lib/shopify/admin";
 import { summarizeStockSync, type ShopifyStockSyncStatus } from "@/lib/shopify/stock-push";
+import { setProductAvailabilityState, writeProductAvailability } from "@/lib/availability/engine";
+import { availabilityFromInStock } from "@/lib/availability/read";
 import Anthropic from "@anthropic-ai/sdk";
 
 function toNum(v: string | number | null | undefined): number | null {
@@ -1471,111 +1472,61 @@ export async function switchInventoryMode(mode: InventoryMode): Promise<{ ok: bo
 }
 
 /**
- * Simple-mode toggle: mark a product In-stock / Out-of-stock without touching a
- * number. Out → stock 0; In → keep the existing quantity if it's already
- * positive, else set it to 1. Fires the same OOS/restock catalog task as a
- * normal movement so the platforms checklist still flows.
+ * INV.2C — Simple-mode availability toggle. Availability is an EXPLICIT
+ * product-level state written to products.stock_status through the Availability
+ * Engine. It NEVER mutates quantity (inventory/variant stock, shelves, sold) —
+ * the reconciled counts stay byte-identical. Keyed by product id. Channel
+ * propagation (Shopify/Talabat/overlay) is INV.2D.
  */
 export async function setProductAvailability(
-  inventoryId: string,
+  productId: string,
   inStock: boolean
 ): Promise<{ ok: boolean; error?: string }> {
   const unauth = await requireUser();
   if (unauth) return { ok: false, error: unauth.error };
   const admin = writableClient();
-  const { data: row, error: readErr } = await admin
-    .from("inventory")
-    .select("id, product_id, stock_quantity")
-    .eq("id", inventoryId)
-    .maybeSingle();
-  if (readErr) return { ok: false, error: readErr.message };
-  if (!row) return { ok: false, error: "الصنف غير موجود." };
-
-  const before = Number((row as any).stock_quantity) || 0;
-  const after = inStock ? (before > 0 ? before : 1) : 0;
-  if (after === before) return { ok: true };
-
-  const { error } = await admin
-    .from("inventory")
-    .update({ stock_quantity: after, updated_at: new Date().toISOString() })
-    .eq("id", inventoryId);
-  if (error) return { ok: false, error: error.message };
-
-  await logStockTransition(admin, {
-    productId: (row as any).product_id,
-    before,
-    after,
-    actor: "مدير — متوفر/نفذ",
-  });
+  const res = await setProductAvailabilityState(admin, String(productId), inStock);
+  if (!res.ok) return { ok: false, error: res.error };
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/out-of-stock");
   revalidatePath("/dashboard");
+  revalidatePath("/products");
   return { ok: true };
 }
 
-/** Bulk simple-mode toggle: mark many products In / Out at once (select-all). */
+/**
+ * Bulk simple-mode toggle: mark many products In / Out at once (select-all).
+ * INV.2C — writes products.stock_status via the engine; no quantity writes.
+ * Keyed by product id.
+ */
 export async function setManyAvailability(
-  inventoryIds: string[],
+  productIds: string[],
   inStock: boolean
 ): Promise<{ ok: boolean; count: number; error?: string }> {
   const unauth = await requireUser();
   if (unauth) return { ok: false, count: 0, error: unauth.error };
   const admin = writableClient();
-  const ids = Array.from(new Set((inventoryIds ?? []).map((s) => String(s)).filter(Boolean)));
-  if (ids.length === 0) return { ok: true, count: 0 };
-  const now = new Date().toISOString();
-  let count = 0;
-  for (let i = 0; i < ids.length; i += 200) {
-    const chunk = ids.slice(i, i + 200);
-    // Out → 0 for all. In → 1 only where it's currently 0/empty (keep real counts).
-    let q = admin.from("inventory").update({ stock_quantity: inStock ? 1 : 0, updated_at: now }).in("id", chunk);
-    if (inStock) q = q.lte("stock_quantity", 0);
-    const { error } = await q;
-    if (error) return { ok: false, count, error: error.message };
-    count += chunk.length;
-  }
+  const res = await writeProductAvailability(admin, productIds ?? [], availabilityFromInStock(inStock));
+  if (!res.ok) return { ok: false, count: res.count, error: res.error };
+
   revalidatePath("/inventory");
   revalidatePath("/inventory/out-of-stock");
   revalidatePath("/products");
   revalidatePath("/dashboard");
-  return { ok: true, count };
+  return { ok: true, count: res.count };
 }
 
-/** Simple-mode toggle for ONE option (variant): In / Out without a quantity. */
+/**
+ * INV.2C — DEFERRED. Per-variant explicit availability needs a dedicated
+ * product_variants.stock_status column, added in INV.2E. Until then this is a
+ * non-destructive no-op: the old behaviour (writing product_variants.stock_quantity)
+ * has been REMOVED so availability can never destroy a variant count. Variant
+ * availability is managed at the product level for this phase.
+ */
 export async function setVariantAvailability(
-  variantId: string,
-  inStock: boolean
+  _variantId: string,
+  _inStock: boolean
 ): Promise<{ ok: boolean; error?: string }> {
-  const unauth = await requireUser();
-  if (unauth) return { ok: false, error: unauth.error };
-  const admin = writableClient();
-  const { data: v, error: readErr } = await admin
-    .from("product_variants")
-    .select("id, parent_product_id, variant_name, stock_quantity")
-    .eq("id", String(variantId))
-    .maybeSingle();
-  if (readErr) return { ok: false, error: readErr.message };
-  if (!v) return { ok: false, error: "الخيار غير موجود." };
-
-  const before = Number((v as any).stock_quantity) || 0;
-  const after = inStock ? (before > 0 ? before : 1) : 0;
-  if (after === before) return { ok: true };
-  const { error } = await admin
-    .from("product_variants")
-    .update({ stock_quantity: after })
-    .eq("id", String(variantId));
-  if (error) return { ok: false, error: error.message };
-
-  await logVariantStockTransition(admin, {
-    productId: (v as any).parent_product_id,
-    variantId: String(variantId),
-    variantName: (v as any).variant_name ?? "",
-    before,
-    after,
-    actor: "مدير — متوفر/نفذ",
-  });
-  revalidatePath("/inventory");
-  revalidatePath("/dashboard");
-  return { ok: true };
+  return { ok: false, error: "توفّر الخيارات لكل خيار يبدأ في INV.2E (غير مفعّل حالياً)." };
 }

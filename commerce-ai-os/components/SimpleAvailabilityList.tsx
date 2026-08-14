@@ -22,7 +22,8 @@ export interface AvailabilityVariant {
   in_stock: boolean;
 }
 export interface AvailabilityRow {
-  id: string; // inventory row id
+  id: string; // inventory row id (React/state key)
+  product_id: string | null; // availability target (products.stock_status is product-keyed)
   product_name: string | null;
   product_name_ar: string | null;
   sku: string | null;
@@ -69,10 +70,12 @@ export default function SimpleAvailabilityList({ rows, locale = "ar" }: { rows: 
 
   const toggle = (r: AvailabilityRow, next: boolean) => {
     if (busyId) return;
+    if (!r.product_id) { setErr(L("الصنف غير مرتبط بمنتج.", "Item isn’t linked to a product.")); return; }
+    const productId = r.product_id;
     setErr(""); setBusyId(r.id);
     setState((s) => ({ ...s, [r.id]: next }));
     start(async () => {
-      const res = await setProductAvailability(r.id, next);
+      const res = await setProductAvailability(productId, next);
       if (!res.ok) { setState((s) => ({ ...s, [r.id]: !next })); setErr(res.error ?? ""); }
       setBusyId(null);
     });
@@ -100,12 +103,14 @@ export default function SimpleAvailabilityList({ rows, locale = "ar" }: { rows: 
   const doBulk = () => {
     if (confirmBulk === null) return;
     const inStock = confirmBulk;
-    const ids = filtered.map((r) => r.id);
+    const rowsToApply = filtered.filter((r) => r.product_id);
+    const ids = rowsToApply.map((r) => r.id); // inventory-row keys for optimistic state
+    const productIds = rowsToApply.map((r) => r.product_id as string); // engine target
     setConfirmBulk(null);
-    if (ids.length === 0) return;
+    if (productIds.length === 0) return;
     setErr("");
     startBulk(async () => {
-      const res = await setManyAvailability(ids, inStock);
+      const res = await setManyAvailability(productIds, inStock);
       if (!res.ok) { setErr(res.error ?? ""); return; }
       setState((s) => { const n = { ...s }; ids.forEach((id) => (n[id] = inStock)); return n; });
     });

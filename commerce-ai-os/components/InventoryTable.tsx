@@ -42,6 +42,7 @@ export interface InventoryRow {
   stock_quantity: number | null;
   low_stock_threshold: number | null;
   sold_quantity: number | null;
+  stock_status?: string | null;
   updated_at: string | null;
 }
 
