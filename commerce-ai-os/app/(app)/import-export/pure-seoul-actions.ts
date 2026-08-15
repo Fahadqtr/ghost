@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isSignedIn } from "@/lib/auth/requireUser";
+import { safeError } from "@/lib/security/safe-error";
 import { computePureSeoulIdMap, type CatalogNameRow } from "@/lib/pure-seoul-map-compute";
 import { createProductsBatchCore } from "@/lib/products/product-create-batch";
 import { makeSimpleProductsInitializer } from "@/lib/products/inventory-initializer";
@@ -17,8 +19,7 @@ const PS = "pure_seoul";
 // Upsert a Pure-Seoul-only approval/rejection for the given product ids. An
 // empty approval clears the row's status; reason is stored as its own field.
 export async function setPureSeoulApproval(ids: string[], approval: string, reason?: string) {
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { error: "غير مسجّل الدخول.", updated: 0 };
+  if (!(await isSignedIn())) return { error: "غير مسجّل الدخول.", updated: 0 };
   const list = (ids ?? []).filter(Boolean);
   if (list.length === 0) return { error: "ما في منتجات محدّدة.", updated: 0 };
   const sb = createClient();
@@ -52,9 +53,8 @@ export async function rejectPureSeoulProducts(ids: string[], reason: string) {
 // rejection are left untouched. Requires:
 //   alter table platform_status add column if not exists availability text;
 export async function applyPureSeoulAvailability(outIds: string[], inIds: string[]) {
+  if (!(await isSignedIn())) return { error: "غير مسجّل الدخول.", outOfStock: 0, inStock: 0 };
   const sb = createClient();
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { error: "غير مسجّل الدخول.", outOfStock: 0, inStock: 0 };
   const now = new Date().toISOString();
   const mk = (ids: string[], availability: string) =>
     [...new Set((ids ?? []).filter(Boolean))].map((product_id) => ({ product_id, platform: PS, availability, updated_at: now }));
@@ -67,10 +67,12 @@ export async function applyPureSeoulAvailability(outIds: string[], inIds: string
     if (error) { failed += chunk.length; if (!firstErr) firstErr = error.message; }
   }
   if (firstErr) {
-    const hint = /availability/.test(firstErr)
-      ? " — شغّل في Supabase: alter table platform_status add column if not exists availability text;"
-      : "";
-    return { error: firstErr + hint, outOfStock: 0, inStock: 0, failed };
+    // Keep the operator hint for the known missing-column case (safe, fixed
+    // instruction), but never return the raw DB error — log it internally.
+    const publicMsg = /availability/.test(firstErr)
+      ? "عمود availability غير موجود — شغّل في Supabase: alter table platform_status add column if not exists availability text;"
+      : "تعذّر تطبيق التوفّر.";
+    return { error: safeError("pureSeoul.applyAvailability", firstErr, publicMsg), outOfStock: 0, inStock: 0, failed };
   }
   revalidatePath("/platforms/pure_seoul");
   revalidatePath("/import-export/pure-seoul");
@@ -89,9 +91,8 @@ export interface PSRejected {
 // List products currently rejected on Pure Seoul (independent of Malika). Reads
 // the standalone status table and joins the product's display fields.
 export async function getPureSeoulRejected(): Promise<PSRejected[]> {
+  if (!(await isSignedIn())) return [];
   const sb = createClient();
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return [];
   const { data, error } = await sb
     .from("platform_status")
     .select("product_id, rejection_reason, updated_at, products(sku, name_en, main_category)")
@@ -199,10 +200,10 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
   };
   if (!rows?.length) return { ...empty, error: "ما في صفوف في الملف." };
 
+  if (!(await isSignedIn())) return { ...empty, error: "غير مسجّل الدخول." };
+
   try {
     const sb = createClient();
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return { ...empty, error: "غير مسجّل الدخول." };
 
     const all: any[] = [];
     for (let f = 0; ; f += 1000) {
@@ -212,12 +213,12 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
         // Tolerate a catalog that hasn't run the pure_seoul_id migration yet.
         if (/pure_seoul_id/.test(error.message)) {
           const retry = await sb.from("products").select("id, snoonu_id, sku, name_en, price, main_category").range(f, f + 999);
-          if (retry.error) return { ...empty, error: retry.error.message };
+          if (retry.error) return { ...empty, error: safeError("pureSeoul.compare.read", retry.error, "تعذّر قراءة الكتالوج.") };
           all.push(...(retry.data ?? []));
           if ((retry.data ?? []).length < 1000) break;
           continue;
         }
-        return { ...empty, error: error.message };
+        return { ...empty, error: safeError("pureSeoul.compare.read", error, "تعذّر قراءة الكتالوج.") };
       }
       all.push(...(data ?? []));
       if ((data ?? []).length < 1000) break;
@@ -324,7 +325,7 @@ export async function comparePureSeoul(rows: PSRow[]): Promise<PSCompare> {
       applyInIds,
     };
   } catch (e) {
-    return { ...empty, error: e instanceof Error ? e.message : "خطأ غير متوقع." };
+    return { ...empty, error: safeError("pureSeoul.compare", e, "خطأ غير متوقع.") };
   }
 }
 
@@ -344,12 +345,11 @@ export async function setPureSeoulIds(rows: PSRow[]): Promise<PsIdMapResult> {
   const base: PsIdMapResult = { ok: false, mapped: 0, alreadySet: 0, unmatched: 0, failed: 0 };
   if (!rows?.length) return { ...base, error: "ما في صفوف في الملف." };
 
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { ...base, error: "غير مسجّل الدخول." };
+  if (!(await isSignedIn())) return { ...base, error: "غير مسجّل الدخول." };
 
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); }
-  catch (e) { return { ...base, error: e instanceof Error ? e.message : "الخادم غير مهيأ." }; }
+  catch (e) { return { ...base, error: safeError("pureSeoul.setIds.admin", e, "الخادم غير مهيأ.") }; }
 
   // Read catalog names + existing pure_seoul_id (paged).
   const cat: CatalogNameRow[] = [];
@@ -357,7 +357,7 @@ export async function setPureSeoulIds(rows: PSRow[]): Promise<PsIdMapResult> {
     const { data, error } = await admin.from("products").select("id, name_en, name_ar, pure_seoul_id").range(f, f + 999);
     if (error) {
       if (/pure_seoul_id/.test(error.message)) return { ...base, error: "شغّل supabase/pure_seoul_id.sql في Supabase أول." };
-      return { ...base, error: error.message };
+      return { ...base, error: safeError("pureSeoul.setIds.read", error, "تعذّر قراءة الكتالوج.") };
     }
     cat.push(...((data ?? []) as CatalogNameRow[]));
     if ((data ?? []).length < 1000) break;
@@ -401,12 +401,11 @@ export async function addPureSeoulNewProducts(rows: PSRow[]): Promise<AddPsResul
   const base: AddPsResult = { ok: false, added: 0, skipped: 0, failed: 0 };
   if (!rows?.length) return { ...base, error: "ما في صفوف في الملف." };
 
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { ...base, error: "غير مسجّل الدخول." };
+  if (!(await isSignedIn())) return { ...base, error: "غير مسجّل الدخول." };
 
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); }
-  catch (e) { return { ...base, error: e instanceof Error ? e.message : "الخادم غير مهيأ." }; }
+  catch (e) { return { ...base, error: safeError("pureSeoul.addNew.admin", e, "الخادم غير مهيأ.") }; }
 
   // Read the catalog: name index + existing pure_seoul_ids + max mk# + barcodes.
   const cat: any[] = [];
@@ -414,7 +413,7 @@ export async function addPureSeoulNewProducts(rows: PSRow[]): Promise<AddPsResul
     const { data, error } = await admin.from("products").select("id, name_en, name_ar, pure_seoul_id, sku, barcode").range(f, f + 999);
     if (error) {
       if (/pure_seoul_id/.test(error.message)) return { ...base, error: "شغّل supabase/pure_seoul_id.sql في Supabase أول." };
-      return { ...base, error: error.message };
+      return { ...base, error: safeError("pureSeoul.addNew.read", error, "تعذّر قراءة الكتالوج.") };
     }
     cat.push(...(data ?? []));
     if ((data ?? []).length < 1000) break;

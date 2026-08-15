@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { safeError } from "@/lib/security/safe-error";
 import { revalidatePath } from "next/cache";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { verdictForTask, type VerifyTaskLite } from "@/lib/tasks/verify-compute";
@@ -63,7 +64,7 @@ export async function listTalabatQueue(): Promise<{ ok: boolean; ready: boolean;
       if ((error as any).code === "42P01" || /talabat_queue/i.test(error.message)) {
         return { ok: true, ready: false, items: [] }; // migration not run yet
       }
-      return { ok: false, ready: true, items: [], error: error.message };
+      return { ok: false, ready: true, items: [], error: safeError("talabat.listQueue", error, "تعذّر تحميل الطابور.") };
     }
     const ids = ((q ?? []) as { product_id: string; queued_at: string | null }[]);
     if (!ids.length) return { ok: true, ready: true, items: [] };
@@ -87,7 +88,7 @@ export async function listTalabatQueue(): Promise<{ ok: boolean; ready: boolean;
       .sort((a, b) => String(b.queued_at ?? "").localeCompare(String(a.queued_at ?? "")));
     return { ok: true, ready: true, items };
   } catch (e) {
-    return { ok: false, ready: true, items: [], error: e instanceof Error ? e.message : "فشل تحميل طابور طلبات." };
+    return { ok: false, ready: true, items: [], error: safeError("talabat.listQueue", e, "فشل تحميل طابور طلبات.") };
   }
 }
 
@@ -105,11 +106,11 @@ export async function markTalabatSent(productIds: string[]): Promise<{ ok: boole
       .update({ sent_at: new Date().toISOString(), sent_by: by || "owner" }, { count: "exact" })
       .in("product_id", ids)
       .is("sent_at", null);
-    if (error) return { ok: false, marked: 0, error: error.message };
+    if (error) return { ok: false, marked: 0, error: safeError("talabat.markSent", error, "تعذّر تعليم الإرسال.") };
     revalidatePath("/import-export/talabat-sync");
     return { ok: true, marked: count ?? ids.length };
   } catch (e) {
-    return { ok: false, marked: 0, error: e instanceof Error ? e.message : "فشل تعليم الإرسال." };
+    return { ok: false, marked: 0, error: safeError("talabat.markSent", e, "فشل تعليم الإرسال.") };
   }
 }
 
@@ -143,7 +144,7 @@ export async function computeTalabatDiff(rows: Record<string, unknown>[]): Promi
     }));
     return diffTalabat(ours, rows.slice(0, 20000));
   } catch (e) {
-    return { ...EMPTY_DIFF, error: e instanceof Error ? e.message : "Diff failed." };
+    return { ...EMPTY_DIFF, error: safeError("talabat.computeDiff", e, "تعذّر حساب الفروقات.") };
   }
 }
 
@@ -181,7 +182,7 @@ export async function buildTalabatPackage(productIds: string[]): Promise<Talabat
         sel = "id, sku, price, discount_price, name_en, name_ar, main_category, description_en, description_ar, image_filename, image_url";
         ({ data, error } = await sb.from("products").select(sel).in("id", ids.slice(i, i + 200)));
       }
-      if (error) return { ok: false, error: error.message, ...empty };
+      if (error) return { ok: false, error: safeError("talabat.buildPackage.read", error, "تعذّر قراءة المنتجات."), ...empty };
       prods.push(...(data ?? []));
     }
 
@@ -220,7 +221,7 @@ export async function buildTalabatPackage(productIds: string[]): Promise<Talabat
       emailText: talabatEmailText(built.rows.length),
     };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Package failed.", ...empty };
+    return { ok: false, error: safeError("talabat.buildPackage", e, "تعذّر تجهيز الحزمة."), ...empty };
   }
 }
 
@@ -339,6 +340,6 @@ export async function verifyCatalogEntries(rows: Record<string, unknown>[]): Pro
     revalidatePath("/tasks");
     return { ok: true, checked, confirmed, reopened, autoClosed, flagged };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Verification failed.", ...V_EMPTY };
+    return { ok: false, error: safeError("talabat.verifyEntries", e, "تعذّر التحقّق."), ...V_EMPTY };
   }
 }
