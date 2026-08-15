@@ -17,19 +17,20 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createProductCore } from "./product-create.ts";
+import { createProductCore, type InitializeInventoryState } from "./product-create.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
-// ── 1. Stateful "no orphan" proof (the P5 fix) ────────────────────────────────
-// A fake client backed by real Maps: products.insert adds a row, inventory.insert
-// is injected to fail, products.delete removes the row. This models exactly what
-// Malak now does — createProductCore(sb, row, []) — and proves the compensating
-// rollback empties the products store on inventory failure.
-function statefulClient(opts: { failInventory: boolean }) {
+// ── 1. Stateful "no orphan" proof (the P5 fix, INV.6B shape) ──────────────────
+// A fake client backed by real Maps for the PRODUCT row only: products.insert adds
+// a row, products.delete removes it. Authoritative inventory is set up by the
+// injected initializer (the atomic service-role RPC in production), whose fake here
+// owns the inventory Map and can be told to fail. This models exactly what Malak now
+// does — createProductCore(sb, row, [], makeInventoryInitializer(sb)) — and proves
+// the compensating rollback empties the products store on an init failure.
+function statefulClient() {
   const products = new Map<string, Record<string, unknown>>();
-  const inventory = new Map<string, Record<string, unknown>>();
   let seq = 0;
   const client = {
     from(table: string) {
@@ -46,12 +47,8 @@ function statefulClient(opts: { failInventory: boolean }) {
               };
             },
             then<T>(onOk: (v: { error: unknown }) => T, onErr?: (e: unknown) => T) {
-              if (table === "inventory") {
-                if (opts.failInventory) return Promise.resolve({ error: { message: "inv down" } }).then(onOk, onErr);
-                const v = values as Record<string, unknown>;
-                inventory.set(String(v.product_id), v);
-                return Promise.resolve({ error: null }).then(onOk, onErr);
-              }
+              // The core never does a non-single insert; a direct inventory write
+              // creeping back in would show up here.
               return Promise.resolve({ error: null }).then(onOk, onErr);
             },
           };
@@ -60,7 +57,6 @@ function statefulClient(opts: { failInventory: boolean }) {
           return {
             filter(column: string, _op: string, value: string) {
               if (table === "products" && column === "id") products.delete(value);
-              if (table === "inventory" && column === "product_id") inventory.delete(value);
               return Promise.resolve({ error: null });
             },
           };
@@ -68,7 +64,19 @@ function statefulClient(opts: { failInventory: boolean }) {
       };
     },
   };
-  return { client, products, inventory };
+  return { client, products };
+}
+
+// Fake service-role initializer: owns the inventory it would create, records the
+// (productId, simpleStock, variantCount) it was asked to initialize, and can fail.
+function statefulInit(opts: { fail: boolean }) {
+  const inventory = new Map<string, { simpleStock: number; variantCount: number }>();
+  const initialize: InitializeInventoryState = async ({ productId, simpleStock, variants }) => {
+    if (opts.fail) return { ok: false, reason: "not_a_pristine_seed" };
+    inventory.set(productId, { simpleStock, variantCount: variants.length });
+    return { ok: true };
+  };
+  return { initialize, inventory };
 }
 
 const MALAK_ROW = {
@@ -81,27 +89,29 @@ const MALAK_ROW = {
   notes: "أُضيف عبر ملاك (Malak) — الصورة تُرفع لاحقًا من صفحة التعديل.",
 };
 
-test("inventory failure → product rolled back → NO orphan remains", async () => {
-  const { client, products, inventory } = statefulClient({ failInventory: true });
-  const res = await createProductCore(client, MALAK_ROW, []);
+test("inventory init failure → product rolled back → NO orphan remains", async () => {
+  const { client, products } = statefulClient();
+  const { initialize, inventory } = statefulInit({ fail: true });
+  const res = await createProductCore(client, MALAK_ROW, [], initialize);
   assert.equal(res.ok, false);
   if (!res.ok) {
     assert.equal(res.stage, "inventory_insert");
     assert.equal(res.cleanup, "done");
   }
   assert.equal(products.size, 0, "the product was deleted — no orphan");
-  assert.equal(inventory.size, 0, "no inventory row lingers");
+  assert.equal(inventory.size, 0, "no inventory row was initialized");
 });
 
-test("happy path → exactly one product + one inventory row, no variants", async () => {
-  const { client, products, inventory } = statefulClient({ failInventory: false });
-  const res = await createProductCore(client, MALAK_ROW, []);
+test("happy path → exactly one product + one initialized inventory, no variants", async () => {
+  const { client, products } = statefulClient();
+  const { initialize, inventory } = statefulInit({ fail: false });
+  const res = await createProductCore(client, MALAK_ROW, [], initialize);
   assert.ok(res.ok);
   if (res.ok) assert.equal(res.productId, "p1");
   assert.equal(products.size, 1);
   assert.equal(inventory.size, 1);
-  const inv = [...inventory.values()][0];
-  assert.deepEqual(inv, { product_id: "p1", stock_quantity: 0, low_stock_threshold: 5, sold_quantity: 0 });
+  const inv = inventory.get("p1")!;
+  assert.deepEqual(inv, { simpleStock: 0, variantCount: 0 }, "simple product seeded to 0, no variants");
 });
 
 // ── 2. Malak route source guards + characterization ───────────────────────────
@@ -113,10 +123,14 @@ const ADD_BODY = ROUTE.slice(
   ROUTE.indexOf("async function commitSetImage"),
 );
 
-test("commitAddProduct delegates product+inventory to createProductCore", () => {
+test("commitAddProduct delegates product+inventory to createProductCore via the service-role initializer", () => {
   assert.ok(ADD_BODY.length > 0, "located commitAddProduct");
-  assert.ok(/createProductCore\(sb, row, \[\]\)/.test(ADD_BODY), "calls createProductCore(sb, row, [])");
+  assert.ok(
+    /createProductCore\(sb, row, \[\], makeInventoryInitializer\(sb\)\)/.test(ADD_BODY),
+    "calls createProductCore(sb, row, [], makeInventoryInitializer(sb))",
+  );
   assert.ok(ROUTE.includes('from "@/lib/products/product-create"'), "imports the core");
+  assert.ok(ROUTE.includes('from "@/lib/products/inventory-initializer"'), "imports the service-role initializer");
 });
 
 test("commitAddProduct performs NO direct product/inventory insert anymore", () => {

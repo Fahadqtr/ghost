@@ -11,6 +11,7 @@ import { clean } from "@/lib/malak/talabat-export.mjs";
 
 import { buildCodeIndex, fillCodes, type FillItem, type FillResult, type CatalogCodeRow } from "@/lib/snoonu-fill";
 import { createProductsBatchCore } from "@/lib/products/product-create-batch";
+import { makeSimpleProductsInitializer } from "@/lib/products/inventory-initializer";
 import { nextMkSku } from "@/lib/products/sku-generate";
 
 export type { SnoonuExportRow, SnoonuDiff } from "@/lib/snoonu-diff";
@@ -349,7 +350,7 @@ export async function addSnoonuNewProducts(
     // (200) insert + inventory seed with per-chunk compensating rollback — a chunk
     // whose inventory seed fails is deleted rather than left orphaned. Identity,
     // mapping, dedup, skipped, and the response shape are unchanged.
-    const res = await createProductsBatchCore(admin, toInsert, { seedQuantity: 0 });
+    const res = await createProductsBatchCore(admin, toInsert, makeSimpleProductsInitializer(admin), { seedQuantity: 0 });
     if (res.cleanup === "failed") {
       console.error("[snoonu-sync] batch inventory rollback incomplete — review the catalog for orphaned products.");
     }

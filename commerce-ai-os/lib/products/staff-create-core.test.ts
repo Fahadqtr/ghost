@@ -18,15 +18,16 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createProductCore } from "./product-create.ts";
+import { createProductCore, type InitializeInventoryState } from "./product-create.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
 // ── 1. Spine contract: seedQuantity seeds inventory; inventory failure rolls back ─
-function statefulClient(failInventory: boolean) {
+// The client owns the PRODUCT row; the injected initializer owns the inventory it
+// would set up (via the atomic service-role RPC in production) and can be failed.
+function statefulClient() {
   const products = new Map<string, Record<string, unknown>>();
-  const inventory = new Map<string, Record<string, unknown>>();
   let seq = 0;
   const client = {
     from(table: string) {
@@ -43,11 +44,6 @@ function statefulClient(failInventory: boolean) {
               };
             },
             then<T>(onOk: (v: { error: unknown }) => T, onErr?: (e: unknown) => T) {
-              if (table === "inventory") {
-                if (failInventory) return Promise.resolve({ error: { message: "inv down" } }).then(onOk, onErr);
-                const v = values as Record<string, unknown>;
-                inventory.set(String(v.product_id), v);
-              }
               return Promise.resolve({ error: null }).then(onOk, onErr);
             },
           };
@@ -63,24 +59,36 @@ function statefulClient(failInventory: boolean) {
       };
     },
   };
-  return { client, products, inventory };
+  return { client, products };
+}
+
+function statefulInit(opts: { fail: boolean }) {
+  const inventory = new Map<string, number>();
+  const initialize: InitializeInventoryState = async ({ productId, simpleStock }) => {
+    if (opts.fail) return { ok: false, reason: "not_a_pristine_seed" };
+    inventory.set(productId, simpleStock);
+    return { ok: true };
+  };
+  return { initialize, inventory };
 }
 
 // Staff row shape: NO stock_quantity on the product row — stock rides seedQuantity.
 const STAFF_ROW = { sku: "mk5", barcode: "2001234567890", name_en: "Serum", platform_status: "Draft", approval: null };
 
 test("spine: product row carries no stock_quantity; inventory seeded from seedQuantity", async () => {
-  const { client, products, inventory } = statefulClient(false);
-  const res = await createProductCore(client, STAFF_ROW, [], { seedQuantity: 12 });
+  const { client, products } = statefulClient();
+  const { initialize, inventory } = statefulInit({ fail: false });
+  const res = await createProductCore(client, STAFF_ROW, [], initialize, { seedQuantity: 12 });
   assert.ok(res.ok);
   const prod = [...products.values()][0];
   assert.ok(!("stock_quantity" in prod), "product row keeps no stock_quantity");
-  assert.deepEqual([...inventory.values()][0], { product_id: "p1", stock_quantity: 12, low_stock_threshold: 5, sold_quantity: 0 });
+  assert.equal(inventory.get("p1"), 12, "simple seed = seedQuantity");
 });
 
-test("spine: inventory failure rolls the product back — no orphan", async () => {
-  const { client, products } = statefulClient(true);
-  const res = await createProductCore(client, STAFF_ROW, [], { seedQuantity: 12 });
+test("spine: inventory init failure rolls the product back — no orphan", async () => {
+  const { client, products } = statefulClient();
+  const { initialize } = statefulInit({ fail: true });
+  const res = await createProductCore(client, STAFF_ROW, [], initialize, { seedQuantity: 12 });
   assert.equal(res.ok, false);
   if (!res.ok) assert.equal(res.stage, "inventory_insert");
   assert.equal(products.size, 0, "product deleted — no orphan");
@@ -93,8 +101,9 @@ const FN = SRC.slice(SRC.indexOf("export async function staffAddProduct"), SRC.i
 
 test("options are delegated to createProductCore (parent seed = Σ variants), not a separate loop", () => {
   assert.ok(FN.length > 0, "located staffAddProduct");
-  assert.ok(/createProductCore\(admin, row, variantRows, \{ seedQuantity: stock \}\)/.test(FN), "calls the core with the built variantRows");
+  assert.ok(/createProductCore\(admin, row, variantRows, makeInventoryInitializer\(admin\), \{ seedQuantity: stock \}\)/.test(FN), "calls the core with the built variantRows + service-role initializer");
   assert.ok(SRC.includes('from "@/lib/products/product-create"'), "imports the single-product core");
+  assert.ok(SRC.includes('from "@/lib/products/inventory-initializer"'), "imports the service-role initializer");
   assert.ok(/const id = core\.productId/.test(FN), "uses core.productId");
 });
 

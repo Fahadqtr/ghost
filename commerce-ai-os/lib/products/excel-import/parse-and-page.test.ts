@@ -103,12 +103,19 @@ test("actions: auth on every step; nothing is written at upload/preview time", (
   }
 });
 
-test("actions: session client + existing cores only — no admin, no rpc, no raw errors", () => {
-  for (const banned of ["createAdminClient", "service_role", ".rpc(", "error.message", "console.log", "SQLSTATE"]) {
+test("actions: session client for metadata + shared cores; admin ONLY for the structural boundary; no rpc, no raw errors", () => {
+  // INV.6B: no raw error leakage, no service-role KEY, no direct RPC in the action.
+  for (const banned of ["service_role", ".rpc(", "error.message", "console.log", "SQLSTATE"]) {
     assert.ok(!ACTIONS_SRC.includes(banned), `actions must not contain ${banned}`);
   }
   assert.ok(ACTIONS_SRC.includes("createProductCore"), "creates go through the shared core");
-  assert.ok(ACTIONS_SRC.includes("syncProductVariants(supabase"), "variant appends go through the existing sync path");
+  // Product METADATA is written through the SESSION client (RLS applies)…
+  assert.ok(ACTIONS_SRC.includes("createProductCore(supabase"), "product metadata create uses the session client");
+  // …and the admin/service-role client (INV.6B) backs ONLY the structural writes that
+  // are admin-only after the lockdown: inventory initialization + atomic variant sync.
+  assert.ok(ACTIONS_SRC.includes("makeInventoryInitializer(admin)"), "inventory init uses the service-role initializer");
+  assert.ok(ACTIONS_SRC.includes("syncProductVariants(admin"), "variant appends go through the admin (service-role) sync path");
+  assert.ok(!ACTIONS_SRC.includes("syncProductVariants(supabase"), "variant sync no longer runs on the session client (admin-only post-lockdown)");
   assert.ok(ACTIONS_SRC.includes("loadProductForEdit"), "the FULL current variant list is loaded before appending");
   assert.ok(ACTIONS_SRC.includes('approval: ""'), "new products forced un-approved");
   assert.ok(ACTIONS_SRC.includes('platform_status: ""'), "no platform status -> no sync pickup");

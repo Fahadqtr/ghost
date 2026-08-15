@@ -60,7 +60,7 @@ interface PathEntry {
   label: string;
   classification: Classification;
   client: "agnostic" | "session" | "admin";
-  seed: "inventorySeed" | "inline-partial" | "snapshot" | "via-core" | "none";
+  seed: "inventorySeed" | "via-initializer" | "inline-partial" | "snapshot" | "via-core" | "none";
   variants: "batch-stamped" | "per-row-loop" | "verbatim" | "none";
   rollback: boolean;
   /** true = this file physically inserts a products row; false = it delegates to the core. */
@@ -77,23 +77,26 @@ const REGISTRY: PathEntry[] = [
     label: "createProductsBatchCore (Snoonu + Pure Seoul)",
     classification: "canonical",
     client: "agnostic", // caller injects the admin client (importers have no RLS session)
-    seed: "inventorySeed",
+    seed: "via-initializer",
     variants: "none",
     rollback: true,
     direct: true,
-    note: "The shared BATCH spine. Client-agnostic; chunk-200 insert + inventory seed with " +
-      "per-chunk compensating rollback + cleanup reporting. No SKU/barcode/dedup/mapping.",
+    note: "The shared BATCH spine. Client-agnostic; chunk-200 product insert; INV.6B delegates " +
+      "authoritative inventory to the injected service-role initializer (inv_initialize_simple_products) " +
+      "with per-chunk compensating rollback + cleanup reporting. No SKU/barcode/dedup/mapping, no direct inventory write.",
   },
   {
     file: "lib/products/product-create.ts",
     label: "createProductCore (V2 Create + V2 Import + Malak)",
     classification: "canonical",
     client: "agnostic", // caller injects the client (V2: session; Malak: admin)
-    seed: "inventorySeed",
+    seed: "via-initializer",
     variants: "batch-stamped",
     rollback: true,
     direct: true,
-    note: "The shared spine. Client-agnostic; compensating rollback + 23505 detection.",
+    note: "The shared spine. Client-agnostic; inserts ONLY the product row and INV.6B delegates all " +
+      "authoritative inventory/variant state to the injected service-role initializer " +
+      "(inv_initialize_product_state). Compensating rollback (product delete → FK cascade) + 23505 detection.",
   },
   {
     file: "app/api/malak/commit/route.ts",
@@ -212,10 +215,12 @@ test("V2 Create and V2 Import go through createProductCore with the SESSION clie
   }
 });
 
-test("createProductCore has the compensating rollback + inventorySeed", () => {
+test("createProductCore delegates inventory to an injected initializer + has the compensating rollback", () => {
   const src = read("lib/products/product-create.ts");
   assert.ok(/const rollback =/.test(src), "core defines a rollback");
-  assert.ok(/\.\.\.inventorySeed\(/.test(src), "core seeds inventory via inventorySeed");
+  assert.ok(/await initialize\(/.test(src), "core delegates authoritative state to the injected initializer");
+  assert.equal(/\.\.\.inventorySeed\(/.test(src), false, "INV.6B: core no longer writes inventory directly via inventorySeed");
+  assert.equal(/\.from\(\s*["']inventory["']\s*\)\s*\.insert\b/.test(src), false, "core performs no direct inventory insert");
   assert.ok(/23505/.test(src), "core detects duplicate identity via 23505");
 });
 
@@ -252,11 +257,17 @@ test("adapter-candidate paths still use the admin client (a real convergence blo
 
 // ── 4. Seed adoption baseline (mirrors inventory-seed.test.ts, per registry) ───
 
-test("inventorySeed adoption matches the registry's seed classification", () => {
+test("seed classification matches the source: inventorySeed vs the service-role initializer", () => {
   for (const e of REGISTRY) {
     const usesSeed = /\.\.\.inventorySeed\(/.test(read(e.file));
     if (e.seed === "inventorySeed") assert.ok(usesSeed, `${e.label} should use inventorySeed`);
-    else assert.equal(usesSeed, false, `${e.label} should NOT use inventorySeed yet (seed=${e.seed})`);
+    else assert.equal(usesSeed, false, `${e.label} should NOT use inventorySeed (seed=${e.seed})`);
+  }
+  // INV.6B: the canonical cores delegate authoritative inventory to an injected
+  // initializer (backed by a service-role RPC), never a direct inventory write.
+  for (const e of REGISTRY.filter((x) => x.seed === "via-initializer")) {
+    assert.ok(/initialize/.test(read(e.file)), `${e.label} delegates to an injected initializer`);
+    assert.equal(/\.from\(\s*["']inventory["']\s*\)\s*\.insert\b/.test(read(e.file)), false, `${e.label} performs no direct inventory insert`);
   }
 });
 

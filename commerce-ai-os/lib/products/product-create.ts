@@ -18,7 +18,7 @@
 // imports — node:test loads this module directly; the only import is the pure,
 // dependency-free inventory-seed sibling.
 
-import { inventorySeed, isValidSeedQuantity, computeVariantParentSeed } from "./inventory-seed.ts";
+import { isValidSeedQuantity, computeVariantParentSeed } from "./inventory-seed.ts";
 
 export interface CreateVariantRow {
   parent_product_id?: string; // set by the core after the product insert
@@ -54,6 +54,18 @@ export interface CreateProductCoreOptions {
   seedQuantity?: number;
 }
 
+// INV.6B — the injected server-only inventory-INITIALIZATION adapter. The core no
+// longer inserts inventory/variant rows itself (those direct writes are impossible
+// after the strict ACL lockdown); it delegates all authoritative numeric/structural
+// state to the atomic inv_initialize_product_state RPC via this callback (built
+// from a service-role client — see lib/products/inventory-initializer.ts). Injected
+// so the core stays DB-free-testable. `variants` carry NORMALIZED stock (blank → 0).
+export type InitializeInventoryState = (args: {
+  productId: string;
+  simpleStock: number;
+  variants: readonly CreateVariantRow[];
+}) => Promise<{ ok: true } | { ok: false; reason: string; duplicateIdentity?: boolean }>;
+
 export type CreateProductCoreResult =
   | { ok: true; productId: string }
   | {
@@ -73,34 +85,33 @@ export async function createProductCore(
   client: ProductCreateClient,
   row: Record<string, unknown>,
   variantRows: readonly CreateVariantRow[],
+  initialize: InitializeInventoryState,
   opts?: CreateProductCoreOptions,
 ): Promise<CreateProductCoreResult> {
-  // INV.6A — create-time stock AUTHORITY (the products.stock_quantity mirror is
-  // RETIRED since INV.4E). The requested starting stock is a FORM field that seeds
-  // the authoritative `inventory` row ONLY:
-  //   VARIANT product → parent inventory seed = Σ NORMALIZED variant stock; the
-  //     top-level stock / opts.seedQuantity is IGNORED as authority. Each variant
-  //     stock is normalized (blank/null → 0); a malformed variant stock (negative,
-  //     fractional, NaN, Infinity, overflow) FAILS CLOSED before any insert.
+  // INV.6B — create-time stock AUTHORITY, validated in TS then applied ATOMICALLY
+  // by the injected inv_initialize_product_state adapter. The core performs NO
+  // direct inventory/variant write (impossible after the strict ACL lockdown); it
+  // inserts only the product row and delegates all authoritative numeric/structural
+  // state to `initialize`. The products.stock_quantity mirror stays RETIRED (INV.4E).
+  //   VARIANT product → parent seed = Σ NORMALIZED variant stock (blank/null → 0);
+  //     a malformed variant stock (negative/fractional/NaN/Infinity/overflow) FAILS
+  //     CLOSED before any insert; the top-level/opts.seedQuantity is ignored.
   //   SIMPLE product  → the requested seed must be a valid non-negative int4.
-  // The seed is computed BEFORE the insert; stock_quantity is then stripped from
-  // the product row so the frozen legacy column is never written (`row` is not
-  // mutated — a fresh object is inserted).
-  let seedQty: number;
-  let seededVariantRows: readonly CreateVariantRow[] = variantRows;
+  let simpleStock = 0;
+  let initVariants: readonly CreateVariantRow[] = variantRows;
   if (variantRows.length > 0) {
     const parentSeed = computeVariantParentSeed(variantRows.map((v) => v.stock_quantity));
     if (!parentSeed.ok) {
       return { ok: false, stage: "invalid_variant_stock", duplicateIdentity: false, cleanup: "not_needed" };
     }
-    seedQty = parentSeed.seed;
-    seededVariantRows = variantRows.map((v, i) => ({ ...v, stock_quantity: parentSeed.normalized[i] }));
+    initVariants = variantRows.map((v, i) => ({ ...v, stock_quantity: parentSeed.normalized[i] }));
   } else {
-    seedQty = opts?.seedQuantity ?? ((row.stock_quantity as number | null) ?? 0);
-    if (!isValidSeedQuantity(seedQty)) {
+    simpleStock = opts?.seedQuantity ?? ((row.stock_quantity as number | null) ?? 0);
+    if (!isValidSeedQuantity(simpleStock)) {
       return { ok: false, stage: "invalid_seed", duplicateIdentity: false, cleanup: "not_needed" };
     }
   }
+  // stock_quantity is stripped so the frozen legacy mirror is never written.
   const { stock_quantity: _mirrorOmit, ...productRow } = row;
 
   const { data: product, error: productErr } = await client
@@ -118,10 +129,8 @@ export async function createProductCore(
     };
   }
 
-  // INV.6A — compensation deletes ONLY the just-created product row; its inventory
-  // seed and variant rows are removed by ON DELETE CASCADE (inventory → products,
-  // product_variants → products, and their shelf overlays in turn). No manual
-  // child-delete chain.
+  // INV.6A/6B — compensation deletes ONLY the just-created product row; the
+  // auto-seed inventory row + any variant rows are removed by ON DELETE CASCADE.
   const rollback = async (): Promise<"done" | "failed"> => {
     try {
       const r = await client.from("products").delete().filter("id", "eq", productId);
@@ -131,34 +140,23 @@ export async function createProductCore(
     }
   };
 
-  // The inventory seed quantity (computed above, before the mirror strip)
-  // defaults to the product row's requested stock_quantity (V2 create/import,
-  // Malak) but callers may override it via opts.seedQuantity — e.g. Shopify
-  // import seeds from the store's variant quantity. It seeds the authoritative
-  // `inventory` row; the products mirror is never written (INV.4E).
-  const invErr = (
-    await client.from("inventory").insert({
-      product_id: productId,
-      ...inventorySeed(seedQty),
-    })
-  ).error;
-  if (invErr) {
+  // Atomic authoritative state via the injected service-role initializer (RPC).
+  // No direct inventory/variant write here. Any failure rolls back the product
+  // (FK cascade removes the auto-seed row). The RPC's classified reason maps to a
+  // stage: invalid_seed / invalid_variant_stock are pre-checked above but also
+  // re-mapped if the RPC re-classifies them; a variant-product structural failure
+  // surfaces as variant_insert (so the caller shows the variant message), a simple
+  // one as inventory_insert. A duplicate-identity signal (variant SKU/barcode
+  // collision) is carried through so the caller can show the "already taken" copy.
+  const init = await initialize({ productId, simpleStock, variants: initVariants });
+  if (!init.ok) {
     const cleanup = await rollback();
-    return { ok: false, stage: "inventory_insert", duplicateIdentity: false, cleanup };
-  }
-
-  if (seededVariantRows.length > 0) {
-    const rows = seededVariantRows.map((v) => ({ ...v, parent_product_id: productId }));
-    const vErr = (await client.from("product_variants").insert(rows)).error;
-    if (vErr) {
-      const cleanup = await rollback();
-      return {
-        ok: false,
-        stage: "variant_insert",
-        duplicateIdentity: vErr?.code === "23505",
-        cleanup,
-      };
-    }
+    const isVariant = initVariants.length > 0;
+    const stage = init.reason === "invalid_seed" ? "invalid_seed"
+      : init.reason === "invalid_variant_stock" ? "invalid_variant_stock"
+      : isVariant ? "variant_insert"
+      : "inventory_insert";
+    return { ok: false, stage, duplicateIdentity: init.duplicateIdentity === true, cleanup };
   }
 
   return { ok: true, productId };

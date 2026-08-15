@@ -16,11 +16,13 @@
 // Availability writes (product_variants.stock_status) are NOT numeric and are
 // deliberately excluded.
 //
-// After INV.6A: legacy-direct = 0. The ONLY remaining direct writers are the two
-// CREATE-SEED paths (product-create / product-create-batch), which insert a FRESH
-// inventory row (+ variant rows) for a brand-new product and never mutate a live
-// quantity. products.stock_quantity is a RETIRED mirror (INV.4E) — not an
-// inventory table and never written.
+// After INV.6B runtime convergence: legacy-direct = 0 AND create-seed = 0 — there
+// are ZERO direct numeric/structural inventory writers left in the runtime. Every
+// create path now delegates its fresh inventory (+ variant) rows to the service-role
+// initializer RPCs (inv_initialize_product_state / inv_initialize_simple_products),
+// so the two create cores insert ONLY the products row; every live mutation goes
+// through the Inventory Engine RPCs. products.stock_quantity is a RETIRED mirror
+// (INV.4E) — not an inventory table and never written.
 //
 // SQL migrations / RPC definitions are a SEPARATE layer (supabase/**) and are NOT
 // part of this runtime TypeScript scan.
@@ -75,27 +77,30 @@ interface Entry {
   note: string;
 }
 
-// The authoritative registry at INV.6A. legacy-direct = 0 (every daily runtime
-// writer is converged onto the Inventory Engine RPCs). The only direct writers
-// are the two create-seed paths.
+// The authoritative registry at INV.6B. legacy-direct = 0 AND create-seed = 0:
+// every daily runtime writer is converged onto the Inventory Engine RPCs, and the
+// two create cores now delegate their fresh seed inserts to the service-role
+// initializer RPCs. NO runtime file directly writes numeric/structural inventory.
 const REGISTRY: Entry[] = [
-  // ── create-seed-exempt: fresh-product seed inserts (never a live mutation) ────
+  // ── converged create cores: delegate the fresh seed to the initializer RPC ────
   {
     file: "lib/products/product-create.ts",
-    classification: "create-seed-exempt",
-    direct: true,
-    note: "createProductCore — inserts a FRESH inventory seed + fresh variant rows for a brand-new product; " +
-      "compensation deletes ONLY the product row (FK cascade removes the children). Create semantics, never a " +
-      "live-quantity mutation. INV.6A: the parent seed is the authoritative Σ variants for a variant product " +
-      "(top-level stock ignored); a malformed variant/simple seed fails closed before any insert. products.stock_quantity " +
-      "(retired mirror, INV.4E) is never written. Pinned by product-stock-mirror-guard.test.ts / product-create tests.",
+    classification: "converged",
+    direct: false,
+    note: "INV.6B: createProductCore inserts ONLY the products row and delegates the FRESH inventory seed + variant " +
+      "rows to the injected service-role initializer (inv_initialize_product_state) — no direct inventory/variant " +
+      "write remains. Compensation deletes ONLY the product row (FK cascade removes the children). The parent seed is " +
+      "the authoritative Σ variants for a variant product (top-level stock ignored); a malformed variant/simple seed " +
+      "fails closed before any insert. products.stock_quantity (retired mirror, INV.4E) is never written. Pinned by " +
+      "product-create / product-stock-mirror-guard / inv-6b-strict-enforcement-guard tests.",
   },
   {
     file: "lib/products/product-create-batch.ts",
-    classification: "create-seed-exempt",
-    direct: true,
-    note: "createProductsBatchCore — batch fresh inventory seed insert (importers). Create semantics. Every seed " +
-      "is a validated non-negative int4; products.stock_quantity (retired mirror) is never written.",
+    classification: "converged",
+    direct: false,
+    note: "INV.6B: createProductsBatchCore inserts ONLY product rows (chunked) and delegates the batch fresh inventory " +
+      "seed to the injected service-role initializer (inv_initialize_simple_products) — no direct inventory write " +
+      "remains. Every seed is a validated non-negative int4; products.stock_quantity (retired mirror) is never written.",
   },
   // ── converged: fully migrated — no direct numeric/structural write remains ────
   {
@@ -196,20 +201,22 @@ test("registry direct flags match the source", () => {
   }
 });
 
-// ── 3. classifications valid; legacy-direct = 0 (the INV.6A closure) ───────────
+// ── 3. classifications valid; legacy-direct = 0 AND direct writers = 0 (INV.6B) ─
 
-test("classifications are valid and legacy-direct is now ZERO", () => {
+test("classifications are valid and there are ZERO direct numeric/structural writers", () => {
   const allowed = new Set<Classification>(["engine", "approved-rpc", "converged", "create-seed-exempt", "structural-writer", "legacy-direct"]);
   for (const e of REGISTRY) assert.ok(allowed.has(e.classification), `${e.file}: valid classification`);
-  assert.equal(REGISTRY.filter((e) => e.classification === "legacy-direct").length, 0, "no legacy-direct writers remain after INV.6A");
-  // The only direct writers are the two create-seed paths.
-  assert.deepEqual(
-    REGISTRY.filter((e) => e.direct).map((e) => e.classification),
-    ["create-seed-exempt", "create-seed-exempt"],
-    "every remaining direct writer is a create-seed-exempt path",
-  );
-  // The daily runtime writers are converged (not legacy-direct, not exempt).
-  for (const f of ["lib/inventory/movements.ts", "app/staff/actions.ts", "app/(app)/inventory/actions.ts"]) {
+  assert.equal(REGISTRY.filter((e) => e.classification === "legacy-direct").length, 0, "no legacy-direct writers remain");
+  // INV.6B: no runtime file directly writes numeric/structural inventory anymore.
+  assert.deepEqual(REGISTRY.filter((e) => e.direct), [], "zero direct numeric/structural inventory writers remain");
+  // The create cores + daily runtime writers are all converged.
+  for (const f of [
+    "lib/products/product-create.ts",
+    "lib/products/product-create-batch.ts",
+    "lib/inventory/movements.ts",
+    "app/staff/actions.ts",
+    "app/(app)/inventory/actions.ts",
+  ]) {
     assert.equal(REGISTRY.find((e) => e.file === f)?.classification, "converged", `${f} is converged`);
   }
 });

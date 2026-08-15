@@ -9,6 +9,7 @@ import { requireMalakWriter } from "@/lib/malak/authz";
 import { consumeOnce } from "@/lib/malak/ratelimit";
 import { insertAuditRow } from "@/lib/audit";
 import { createProductCore } from "@/lib/products/product-create";
+import { makeInventoryInitializer } from "@/lib/products/inventory-initializer";
 import { setAbsolute } from "@/lib/inventory/engine";
 import { logAuthoritativeStockTransition } from "@/lib/inventory/transition";
 
@@ -167,7 +168,7 @@ async function commitAddProduct(sb: Sb, a: MalakAction): Promise<CommitOutcome |
   // COMPENSATES (deletes the product) if the inventory seed fails, so a failed
   // seed can no longer leave an orphan product behind. Malak has no RLS session,
   // so it injects its admin client (the core is client-agnostic). No variants.
-  const core = await createProductCore(sb, row, []);
+  const core = await createProductCore(sb, row, [], makeInventoryInitializer(sb));
   if (!core.ok) {
     // Never surface a raw DB message; map the structured result to fixed Arabic.
     if (core.cleanup === "failed") {

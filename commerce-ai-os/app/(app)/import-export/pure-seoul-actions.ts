@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computePureSeoulIdMap, type CatalogNameRow } from "@/lib/pure-seoul-map-compute";
 import { createProductsBatchCore } from "@/lib/products/product-create-batch";
+import { makeSimpleProductsInitializer } from "@/lib/products/inventory-initializer";
 import { nextMkSku } from "@/lib/products/sku-generate";
 
 // Pure Seoul is an INDEPENDENT platform selling the same products as Malika. Its
@@ -488,7 +489,7 @@ export async function addPureSeoulNewProducts(rows: PSRow[]): Promise<AddPsResul
   // (200) insert + inventory seed with per-chunk compensating rollback — a chunk
   // whose inventory seed fails is deleted rather than left orphaned. Identity,
   // mapping, exact + fuzzy dedup, skipped, and the response shape are unchanged.
-  const res = await createProductsBatchCore(admin, toInsert, { seedQuantity: 0 });
+  const res = await createProductsBatchCore(admin, toInsert, makeSimpleProductsInitializer(admin), { seedQuantity: 0 });
   if (res.cleanup === "failed") {
     console.error("[pure-seoul] batch inventory rollback incomplete — review the catalog for orphaned products.");
   }

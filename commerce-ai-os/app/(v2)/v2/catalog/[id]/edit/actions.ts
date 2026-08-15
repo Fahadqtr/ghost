@@ -46,6 +46,9 @@ export async function saveProductEdit(
   const admin = createAdminClient();
   const core = await updateProductCore(supabase, validId, input, {
     inventory: createInventoryAdapter(admin),
+    // INV.6B — the atomic variant-sync RPC is admin-only (service-role) after the
+    // lockdown, so it runs on the admin client; product metadata stays on `supabase`.
+    variantSyncClient: admin,
   });
   if (!core.ok) return { error: editFailureMessage(core) };
 
