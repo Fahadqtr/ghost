@@ -258,12 +258,15 @@ test("arg validation rejects before any RPC call", async () => {
 
 // ── reconcile delegates to the reconcile layer (read-only) ─────────────────────
 
-test("reconcile delegates to the reconcile read layer", async () => {
+test("reconcile delegates to the reconcile read layer (empty inventory ⇒ missing_inventory_row)", async () => {
   const readClient = { from() { return { select() { return { eq() { return Promise.resolve({ data: [], error: null }); }, in() { return Promise.resolve({ data: [], error: null }); } }; } }; } };
   const r = await reconcile(readClient, "p1");
   assert.equal(r.productId, "p1");
-  assert.equal(r.status, "clean");
   assert.equal(r.kind, "simple");
+  // Production-Reconciliation: a product with no inventory row is inconsistent
+  // (never clean) — proves the strengthened exactly-one-inventory invariant.
+  assert.equal(r.status, "inconsistent");
+  assert.deepEqual(r.issues.map((i) => i.code), ["missing_inventory_row"]);
 });
 
 // ── unimplemented ops throw; they can NEVER perform a mutation ─────────────────
