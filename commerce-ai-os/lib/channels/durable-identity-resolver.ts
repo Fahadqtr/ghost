@@ -36,6 +36,13 @@ export interface ExternalListingReaderPort {
   ): Promise<ExternalListingRecord[]>;
   /** Listings matching an exported SKU within one storefront (Talabat grain). */
   bySku(storefrontKey: string, sku: string): Promise<ExternalListingRecord[]>;
+  /**
+   * Optional: needs_review rows whose CONTESTED external id (kept in
+   * metadata.claimed_external_product_id, not the unique column) equals the
+   * lookup id. Lets the resolver surface NEEDS_REVIEW for a duplicate external
+   * id instead of a misleading "unmapped" — without ever picking one product.
+   */
+  byClaimedExternalId?(storefrontKey: string, claimedExternalProductId: string): Promise<ExternalListingRecord[]>;
 }
 
 export type ResolutionStatus = "resolved" | "unmapped" | "ambiguous" | "needs_review";
@@ -134,6 +141,23 @@ export function createDurableIdentityResolver(port: ExternalListingReaderPort): 
       rows = await port.byExternalId(q.storefront, s(q.externalProductId) || null, s(q.externalVariantId) || null);
     } else if (s(q.sku)) {
       rows = await port.bySku(q.storefront, s(q.sku));
+    }
+    // A duplicate external id lives in needs_review rows with a NULL unique
+    // external_product_id (the contested id is in metadata). Surface it as
+    // NEEDS_REVIEW so the caller never treats a real conflict as "unmapped" and
+    // never picks a product.
+    if (rows.length === 0 && s(q.externalProductId) && port.byClaimedExternalId) {
+      const claimed = await port.byClaimedExternalId(q.storefront, s(q.externalProductId));
+      if (claimed.length > 0) {
+        return {
+          status: "needs_review",
+          productId: null,
+          variantId: null,
+          variantSku: null,
+          health: "NEEDS_REVIEW",
+          provenance: { source: "external_channel_listings", storefrontKey: q.storefront, identityType: claimed[0].identityType },
+        };
+      }
     }
     const status = statusOf(rows);
     const hit = status === "resolved" || status === "needs_review" ? rows[0] : null;

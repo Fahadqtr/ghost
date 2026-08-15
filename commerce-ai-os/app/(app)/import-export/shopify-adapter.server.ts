@@ -13,9 +13,8 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { createShopifyAdapter, type ShopifyAdapterDeps } from "@/lib/adapters/shopify/shopify-adapter";
-import { createProjectionIdentityResolver } from "@/lib/adapters/identity";
+import { getExternalIdentityResolver } from "@/lib/channels/identity-resolver.server";
 import { type ChannelAdapter } from "@/lib/adapters/types";
-import { loadProductChannelProjection, type ChannelReadClient } from "@/lib/channels/channel-read-model";
 import {
   fetchAllShopifyProducts,
   updateShopifyProductContent,
@@ -32,12 +31,9 @@ import {
 
 /** Build the concrete Shopify adapter, bound to the real integration functions. */
 export function shopifyAdapter(): ChannelAdapter {
-  // Internal→external identity comes from the CH.2 read-model (no new tables).
-  const resolver = createProjectionIdentityResolver((productId) =>
-    // The CH.2 reader takes an injected minimal READ client; cast the session
-    // client to that narrow surface (avoids a deep structural instantiation).
-    loadProductChannelProjection(createClient() as unknown as ChannelReadClient, productId),
-  );
+  // CH.5 Phase D: identity comes from the DEFAULT resolver — durable
+  // external_channel_listings (primary) with legacy dual-read fallback.
+  const resolver = getExternalIdentityResolver();
 
   const deps: ShopifyAdapterDeps = {
     resolver,
