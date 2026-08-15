@@ -32,7 +32,10 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const FRAMEWORK = walk("lib/adapters").filter((f) => !/\.test\.ts$/.test(f));
+// The pure framework = adapter contracts + adapter factories. Server READERS
+// (*.server.ts) are the concrete server layer (server-only, may read storage),
+// excluded here just like tests — same treatment as the app-layer wiring in §6.
+const FRAMEWORK = walk("lib/adapters").filter((f) => !/\.test\.ts$/.test(f) && !/\.server\.ts$/.test(f));
 
 test("1. the lib/adapters framework is PURE (no @/ imports, no server-only)", () => {
   for (const f of FRAMEWORK) {
