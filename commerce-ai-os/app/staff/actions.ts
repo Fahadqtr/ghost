@@ -25,7 +25,7 @@ import { getInventoryMode } from "@/lib/settings";
 import { setProductAvailabilityState, writeProductAvailability, setVariantAvailabilityState } from "@/lib/availability/engine";
 import { availabilityFromInStock } from "@/lib/availability/read";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
-import { createProductCore } from "@/lib/products/product-create";
+import { createProductCore, type CreateVariantRow } from "@/lib/products/product-create";
 import { nextMkSku } from "@/lib/products/sku-generate";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
@@ -463,17 +463,11 @@ export async function staffItemForProduct(productId: string): Promise<{ item: St
   if (!p) return { error: "المنتج غير موجود." };
 
   const { data: invRows } = await admin.from("inventory").select("id, stock_quantity").eq("product_id", p.id).limit(1);
-  let inv = (invRows ?? [])[0] as { id: string; stock_quantity: number | null } | undefined;
-  if (!inv) {
-    // Older products may predate the inventory table — seed a zero row.
-    const ins = await admin
-      .from("inventory")
-      .insert({ product_id: p.id, stock_quantity: 0, sold_quantity: 0, low_stock_threshold: 5 })
-      .select("id, stock_quantity")
-      .single();
-    if (ins.error || !ins.data) return { error: "ما قدرت أجهز صف المخزون للمنتج." };
-    inv = ins.data as { id: string; stock_quantity: number | null };
-  }
+  const inv = (invRows ?? [])[0] as { id: string; stock_quantity: number | null } | undefined;
+  // INV.6A — after the production reconciliation, a missing inventory row is
+  // CORRUPTION, not something the staff browse page should silently repair. Fail
+  // closed: no lazy seed, no INSERT — direct the operator to review the product.
+  if (!inv) return { error: "صف المخزون غير موجود لهذا المنتج — راجع المنتج قبل تسجيل حركة." };
 
   return { item: {
     inventoryId: String(inv.id),
@@ -982,7 +976,26 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
   // so a failed inventory seed can no longer leave an orphan. Variants are
   // deliberately NOT passed (variants=[]): the per-variant loop below stays
   // tolerant — one failed option never fails the product.
-  const core = await createProductCore(admin, row, [], { seedQuantity: stock });
+  // INV.6A — options go THROUGH the create core so the parent inventory seed is
+  // the authoritative Σ variants (the top-level `stock` is ignored for a variant
+  // product) and product+inventory+variants create all-or-nothing. Pre-generate
+  // each option's scannable barcode before the atomic create.
+  const variantRows: CreateVariantRow[] = [];
+  for (const v of varInputs) {
+    variantRows.push({
+      variant_name: v.name || v.name_en || null,
+      variant_name_en: v.name_en || null,
+      sku: null,
+      barcode: await genUniqueBarcode(admin),
+      color: null,
+      size: null,
+      price: v.price,
+      stock_quantity: v.stock,
+    });
+  }
+  // Simple product → seed from the entered top-level stock; variant product →
+  // the core computes seed = Σ variants (seedQuantity is ignored when variants exist).
+  const core = await createProductCore(admin, row, variantRows, { seedQuantity: stock });
   if (!core.ok) {
     // Never surface a raw DB error.
     if (core.duplicateIdentity) return { error: "تعارض في الكود/الباركود — حاول مرة ثانية." };
@@ -1010,24 +1023,15 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
     }
   } catch { /* gallery is best-effort */ }
 
-  // Register the options — each with its own auto-generated barcode so it's
-  // scannable in the stock flows right away.
-  const createdVariants: CreatedProduct["variants"] = [];
-  for (const v of varInputs) {
-    const vBarcode = await genUniqueBarcode(admin);
-    const vErr = (await admin.from("product_variants").insert({
-      parent_product_id: id,
-      variant_name: v.name || v.name_en,
-      variant_name_en: v.name_en || null,
-      barcode: vBarcode,
-      price: v.price,
-      stock_quantity: v.stock,
-    })).error;
-    if (!vErr) createdVariants.push({ name: v.name || v.name_en, name_en: v.name_en, barcode: vBarcode, price: v.price, stock: v.stock });
-  }
-  if (varInputs.length && createdVariants.length < varInputs.length) {
-    console.error("[staffAddProduct] some variants failed to save", { want: varInputs.length, got: createdVariants.length });
-  }
+  // The options were created atomically inside the core (each with its scannable
+  // barcode); surface them for the response from the rows we passed.
+  const createdVariants: CreatedProduct["variants"] = variantRows.map((v) => ({
+    name: v.variant_name || v.variant_name_en || "",
+    name_en: v.variant_name_en || "",
+    barcode: v.barcode || "",
+    price: v.price,
+    stock: v.stock_quantity ?? 0,
+  }));
 
   // Came from a supervisor's photo-task? Close it and leave the trace.
   if (input.sourceTaskId) {

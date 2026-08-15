@@ -1,10 +1,12 @@
-// Staff convergence guards (createProductCore for the product+inventory spine,
-// per-variant tolerance kept in the wrapper). Two things:
-//   1. a stateful proof of the spine contract Staff now relies on — product ok +
-//      inventory fail → product rolled back (no orphan), seeded from seedQuantity;
-//   2. source guards that staffAddProduct delegates ONLY the spine to the core
-//      (variants=[]), keeps its tolerant per-variant loop + 200-prefix barcodes +
-//      gallery + staff_tasks + response, and skips all side effects on core failure.
+// Staff convergence guards. INV.6A: staffAddProduct now hands its options THROUGH
+// createProductCore (so the parent inventory seed = Σ variants and the whole
+// create is all-or-nothing) instead of a tolerant per-variant insert loop. Two
+// things:
+//   1. a stateful proof of the spine contract — product ok + inventory fail →
+//      product rolled back (no orphan), seeded from seedQuantity;
+//   2. source guards that staffAddProduct builds variantRows (own 200-barcodes),
+//      passes them to the core, keeps gallery + staff_tasks + response, and skips
+//      all side effects on core failure.
 //
 // PURE — no DB, no network, no React. Stateful fake client + source scan.
 //
@@ -89,9 +91,9 @@ test("spine: inventory failure rolls the product back — no orphan", async () =
 const SRC = read("app/staff/actions.ts");
 const FN = SRC.slice(SRC.indexOf("export async function staffAddProduct"), SRC.indexOf("\nexport ", SRC.indexOf("export async function staffAddProduct") + 1));
 
-test("spine delegated to createProductCore with variants=[] and seedQuantity: stock", () => {
+test("options are delegated to createProductCore (parent seed = Σ variants), not a separate loop", () => {
   assert.ok(FN.length > 0, "located staffAddProduct");
-  assert.ok(/createProductCore\(admin, row, \[\], \{ seedQuantity: stock \}\)/.test(FN), "calls the core with []+seedQuantity");
+  assert.ok(/createProductCore\(admin, row, variantRows, \{ seedQuantity: stock \}\)/.test(FN), "calls the core with the built variantRows");
   assert.ok(SRC.includes('from "@/lib/products/product-create"'), "imports the single-product core");
   assert.ok(/const id = core\.productId/.test(FN), "uses core.productId");
 });
@@ -110,20 +112,21 @@ test("core failure: fixed messages, no raw DB error, no side effects", () => {
   assert.ok(block.includes("تعارض في الكود/الباركود"), "duplicate → existing conflict message");
   assert.ok(block.includes("تعذّر إنشاء المنتج"), "other → fixed safe message");
   assert.equal(/\.message/.test(block), false, "no raw DB message surfaced");
-  // Side-effects (gallery/variants/tasks) come AFTER the guard, so a core failure
-  // returns before any of them.
+  // Post-create side-effects (gallery + task close) come AFTER the guard, so a
+  // core failure returns before any of them.
   assert.ok(FN.indexOf('from("product_images")') > end, "gallery is after the core-success point");
-  assert.ok(FN.indexOf("for (const v of varInputs)") > end, "variant loop is after the core-success point");
   assert.ok(FN.indexOf('from("staff_tasks")') > end, "task close is after the core-success point");
 });
 
-test("per-variant tolerance preserved (loop, own 200-barcode, one failure never fails the product)", () => {
-  assert.ok(/for \(const v of varInputs\)/.test(FN), "per-variant loop kept");
-  assert.ok(/const vBarcode = await genUniqueBarcode\(admin\)/.test(FN), "each variant gets its own barcode");
-  assert.ok(/from\("product_variants"\)\.insert\(/.test(FN), "variant insert stays in the wrapper (not the core)");
-  assert.ok(/if \(!vErr\) createdVariants\.push/.test(FN), "successful variants kept; failed ones omitted (tolerant)");
-  // variants are NOT handed to the core:
-  assert.equal(/createProductCore\([^)]*varInputs/.test(FN), false, "variants not passed to the core");
+test("options go through the core atomically (INV.6A) — no tolerant per-variant loop", () => {
+  // Options are built into variantRows (each with its own 200-barcode) BEFORE the
+  // atomic create and handed to the core, so the parent inventory seed = Σ variants
+  // and the whole create is all-or-nothing — no direct per-variant insert.
+  assert.ok(/const variantRows: CreateVariantRow\[\] = \[\]/.test(FN), "builds variantRows for the core");
+  assert.ok(/barcode: await genUniqueBarcode\(admin\)/.test(FN), "each option gets its own barcode before the atomic create");
+  assert.equal(/from\("product_variants"\)\.insert\(/.test(FN), false, "no direct variant insert in the wrapper");
+  assert.ok(/createProductCore\(admin, row, variantRows/.test(FN), "variants ARE passed to the core");
+  assert.ok(/createdVariants[^\n]*variantRows\.map/.test(FN), "response variants derived from the created rows");
 });
 
 test("Staff-specific behavior unchanged", () => {

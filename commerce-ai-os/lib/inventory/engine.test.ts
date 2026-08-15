@@ -9,7 +9,7 @@ import {
   adjustVariant, setVariantAbsolute, adjustVariantMovement, setAbsolute,
   placeOnShelf, removeShelf, replaceShelfDistribution, assignFullShelf, moveShelf, reconcile,
   adjust, sell, receive, reverseMovement,
-  InventoryEngineNotImplementedError, NOT_IMPLEMENTED_OPS,
+  recordProductMovement, editProductMovement, deleteProductMovement,
 } from "./engine.ts";
 
 // A fake whose rpc returns a configured {data,error}. Its `from` THROWS — so any
@@ -313,15 +313,39 @@ test("sell fails closed on transport error, classified status:error, and malform
   assert.equal(mal.ok, false, "missing deductedUnits/products/variants → fail closed");
 });
 
-test("future ops throw; sell + shelf ops are implemented (INV.4C/INV.5)", () => {
-  for (const fn of [adjust, receive, reverseMovement]) {
-    assert.throws(() => (fn as () => never)(), InventoryEngineNotImplementedError);
-  }
-  assert.deepEqual([...NOT_IMPLEMENTED_OPS].sort(),
-    ["adjust", "receive", "reverseMovement"]);
-  for (const op of ["setAbsolute", "sell", "moveShelf", "removeShelf", "placeOnShelf", "assignFullShelf", "replaceShelfDistribution"]) {
-    assert.equal([...NOT_IMPLEMENTED_OPS].includes(op as never), false, `${op} is implemented, not a stub`);
-  }
+test("INV.6A movement ops (record/edit/delete/reverse/adjust/receive) are real fail-closed wrappers", async () => {
+  // Invalid input → fail closed, NO rpc (the fake's `from` throws, proving no fallback).
+  const c0 = rpcClient({ data: null, error: null });
+  assert.equal((await adjust(c0, { inventoryId: "", delta: 1 })).ok, false);
+  assert.equal((await adjust(c0, { inventoryId: "i1", delta: 0 })).ok, false);
+  assert.equal((await receive(c0, { inventoryId: "i1", quantity: 0 })).ok, false);
+  assert.equal((await recordProductMovement(c0, { inventoryId: "i1", direction: "sideways" as never, quantity: 1 })).ok, false);
+  assert.equal((await editProductMovement(c0, { auditId: 1, newQuantity: 0 })).ok, false);
+  assert.equal((await deleteProductMovement(c0, { auditId: NaN })).ok, false);
+  assert.equal((await reverseMovement(c0, { auditId: NaN })).ok, false);
+  assert.equal(c0.calls.length, 0, "no RPC on invalid input");
+
+  // adjust(+delta) routes to the record RPC as an IN and interprets the payload.
+  const rec = { status: "applied", auditId: 5, productId: "p1", inventoryId: "i1", before: 3, after: 5, soldBefore: 0, soldAfter: 0, quantity: 2, direction: "in" };
+  const cAdj = rpcClient({ data: rec, error: null });
+  const okAdj = await adjust(cAdj, { inventoryId: "i1", delta: 2 });
+  assert.equal(okAdj.ok, true);
+  assert.equal(cAdj.calls[0]?.name, "inv_record_product_movement");
+  assert.equal((cAdj.calls[0]?.params as { p_direction: string }).p_direction, "in");
+
+  // receive routes to the record RPC as an IN.
+  const cRcv = rpcClient({ data: rec, error: null });
+  assert.equal((await receive(cRcv, { inventoryId: "i1", quantity: 2 })).ok, true);
+  assert.equal((cRcv.calls[0]?.params as { p_direction: string }).p_direction, "in");
+
+  // reverseMovement routes to the reverse RPC and requires its derived fields.
+  const cRev = rpcClient({ data: { status: "applied", auditId: 5, reversalAuditId: 6, productId: "p1", inventoryId: "i1", before: 5, after: 3 }, error: null });
+  assert.equal((await reverseMovement(cRev, { auditId: 5 })).ok, true);
+  assert.equal(cRev.calls[0]?.name, "inv_reverse_product_movement");
+
+  // Fail-closed on transport error / missing derived field.
+  assert.equal((await recordProductMovement(rpcClient({ data: null, error: { message: "boom" } }), { inventoryId: "i1", direction: "in", quantity: 1 })).ok, false);
+  assert.equal((await recordProductMovement(rpcClient({ data: { status: "applied", auditId: 1 }, error: null }), { inventoryId: "i1", direction: "in", quantity: 1 })).ok, false);
 });
 
 // ── availability boundary + no legacy mirror write (engine source scan) ────────

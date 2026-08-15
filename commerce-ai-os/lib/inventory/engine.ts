@@ -356,38 +356,114 @@ export async function reconcile(admin: any, productId: string): Promise<Reconcil
   return reconcileProductState(admin, productId);
 }
 
-// ── Future operations — declared, but with NO implementation yet ──────────────
+// ── INV.6A — manual product-grain movement wrappers (atomic RPCs) ─────────────
 //
-// These are part of the target engine contract but have no atomic RPC yet. They
-// are intentionally NOT backed by a legacy JS read-modify-write. Each throws so
-// it can never perform an unsafe mutation; the writer-migration phases add the
-// real atomic implementations.
+// The SOLE Engine path for a simple-product manual movement (record / edit /
+// delete / reverse). Each drives one SECURITY DEFINER RPC that mutates stock +
+// (for a canonical sale) sold_quantity AND the malak_audit ledger/review state
+// atomically, in BIGINT with underflow/overflow fail-closed and NO clamp. Every
+// wrapper is fail-closed: transport error / status:'error' (the RPC's classified
+// reason surfaced verbatim) / malformed body / a missing derived field is a
+// FAILURE — never a direct-write fallback. Availability (stock_status) and the
+// retired products mirror are never touched.
 
-export const NOT_IMPLEMENTED_OPS = [
-  "adjust",            // product-grain delta (needs an atomic product RPC)
-  "receive",           // product-grain purchase-in
-  "reverseMovement",   // invert a ledger movement
-] as const;
-// setAbsolute is implemented (INV.4A); adjustVariantMovement (INV.4B);
-// placeOnShelf / removeShelf / replaceShelfDistribution / assignFullShelf /
-// moveShelf are implemented (INV.4C); sell is implemented (INV.5) — see above.
+export type MovementDirection = "in" | "out";
 
-export type NotImplementedOp = (typeof NOT_IMPLEMENTED_OPS)[number];
-
-export class InventoryEngineNotImplementedError extends Error {
-  readonly op: NotImplementedOp;
-  constructor(op: NotImplementedOp) {
-    super(`Inventory Engine op "${op}" has no atomic implementation yet (post-INV.3D). Do NOT fall back to a direct write.`);
-    this.name = "InventoryEngineNotImplementedError";
-    this.op = op;
-  }
+/** Record a manual IN/OUT (RPC inv_record_product_movement). */
+export async function recordProductMovement(
+  admin: any,
+  args: { inventoryId: string; direction: MovementDirection; quantity: number; reason?: string | null; note?: string | null; actor?: string | null; sku?: string | null },
+): Promise<EngineResult> {
+  const op = "recordProductMovement";
+  const { inventoryId, direction, quantity } = args;
+  if (!inventoryId) return { ok: false, op, reason: "missing_inventory" };
+  if (direction !== "in" && direction !== "out") return { ok: false, op, reason: "invalid_direction" };
+  if (!Number.isInteger(quantity) || quantity <= 0) return { ok: false, op, reason: "invalid_quantity" };
+  const { data, error } = await admin.rpc("inv_record_product_movement", {
+    p_inventory_id: inventoryId, p_direction: direction, p_quantity: quantity,
+    p_reason: args.reason ?? null, p_note: args.note ?? null, p_actor: args.actor ?? null, p_sku: args.sku ?? null,
+  });
+  return interpret(op, error, data, ["auditId", "productId", "before", "after", "soldBefore", "soldAfter"]);
 }
 
-function notImplemented(op: NotImplementedOp): never {
-  throw new InventoryEngineNotImplementedError(op);
+/** Edit a recorded movement's quantity (RPC inv_edit_product_movement). */
+export async function editProductMovement(
+  admin: any,
+  args: { auditId: number; newQuantity: number; actor?: string | null },
+): Promise<EngineResult> {
+  const op = "editProductMovement";
+  if (!Number.isInteger(args.auditId)) return { ok: false, op, reason: "invalid_audit_id" };
+  if (!Number.isInteger(args.newQuantity) || args.newQuantity <= 0) return { ok: false, op, reason: "invalid_quantity" };
+  const { data, error } = await admin.rpc("inv_edit_product_movement", {
+    p_audit_id: args.auditId, p_new_quantity: args.newQuantity, p_actor: args.actor ?? null,
+  });
+  return interpret(op, error, data, ["auditId", "quantity"]);
 }
 
-// Throwing stubs — present in the contract, impossible to call as a mutation.
-export const adjust = (..._args: unknown[]): never => notImplemented("adjust");
-export const receive = (..._args: unknown[]): never => notImplemented("receive");
-export const reverseMovement = (..._args: unknown[]): never => notImplemented("reverseMovement");
+/** Delete (undo + mark) a recorded movement (RPC inv_delete_product_movement). */
+export async function deleteProductMovement(
+  admin: any,
+  args: { auditId: number; actor?: string | null },
+): Promise<EngineResult> {
+  const op = "deleteProductMovement";
+  if (!Number.isInteger(args.auditId)) return { ok: false, op, reason: "invalid_audit_id" };
+  const { data, error } = await admin.rpc("inv_delete_product_movement", {
+    p_audit_id: args.auditId, p_actor: args.actor ?? null,
+  });
+  return interpret(op, error, data, ["auditId", "reviewed"]);
+}
+
+/** Reverse a recorded movement — exact inverse + reversal audit (RPC inv_reverse_product_movement). */
+export async function reverseMovement(
+  admin: any,
+  args: { auditId: number; actor?: string | null },
+): Promise<EngineResult> {
+  const op = "reverseMovement";
+  if (!Number.isInteger(args.auditId)) return { ok: false, op, reason: "invalid_audit_id" };
+  const { data, error } = await admin.rpc("inv_reverse_product_movement", {
+    p_audit_id: args.auditId, p_actor: args.actor ?? null,
+  });
+  return interpret(op, error, data, ["auditId", "reversalAuditId", "before", "after"]);
+}
+
+/**
+ * Apply a ± delta to a SIMPLE product's stock as a manual movement, through the
+ * canonical movement RPC with an explicit adjustment reason. No second arithmetic
+ * implementation — it routes to recordProductMovement.
+ */
+export async function adjust(
+  admin: any,
+  args: { inventoryId: string; delta: number; reason?: string | null; note?: string | null; actor?: string | null; sku?: string | null },
+): Promise<EngineResult> {
+  const op = "adjust";
+  if (!args.inventoryId) return { ok: false, op, reason: "missing_inventory" };
+  if (!Number.isInteger(args.delta) || args.delta === 0) return { ok: false, op, reason: "invalid_delta" };
+  return recordProductMovement(admin, {
+    inventoryId: args.inventoryId,
+    direction: args.delta > 0 ? "in" : "out",
+    quantity: Math.abs(args.delta),
+    reason: args.reason ?? "adjustment",
+    note: args.note ?? null,
+    actor: args.actor ?? null,
+    sku: args.sku ?? null,
+  });
+}
+
+/** Receive stock into a SIMPLE product — a positive IN through the same primitive. */
+export async function receive(
+  admin: any,
+  args: { inventoryId: string; quantity: number; reason?: string | null; note?: string | null; actor?: string | null; sku?: string | null },
+): Promise<EngineResult> {
+  const op = "receive";
+  if (!args.inventoryId) return { ok: false, op, reason: "missing_inventory" };
+  if (!Number.isInteger(args.quantity) || args.quantity <= 0) return { ok: false, op, reason: "invalid_quantity" };
+  return recordProductMovement(admin, {
+    inventoryId: args.inventoryId,
+    direction: "in",
+    quantity: args.quantity,
+    reason: args.reason ?? "receive",
+    note: args.note ?? null,
+    actor: args.actor ?? null,
+    sku: args.sku ?? null,
+  });
+}

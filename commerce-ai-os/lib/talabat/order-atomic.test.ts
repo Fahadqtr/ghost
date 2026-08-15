@@ -269,10 +269,12 @@ test("10: the audit insert matches the real malak_audit schema", () => {
   for (const col of m![1].split(",").map((s) => s.trim().toLowerCase())) {
     assert.ok(tableCols.has(col), `inserted column ${col} not in malak_audit`);
   }
-  // the values used (action_type 'stock_out', status 'done') match the existing ledger writer
-  const mv = read("lib/inventory/movements.ts");
-  assert.match(mv, /"stock_out"/);
-  assert.match(mv, /status:\s*"done"/);
+  // the values used (action_type 'stock_out', status 'done') are the canonical
+  // ledger-writer values, asserted on the RPC under test itself. (INV.6A converged
+  // the manual movements.ts engine onto the atomic movement RPCs, so those string
+  // literals now live in SQL, not in movements.ts.)
+  assert.match(SQL_CODE, /'stock_out'/);
+  assert.match(SQL_CODE, /'done'/);
 });
 
 test("31: the Talabat webhook wires server-side processing store-first, and never calls the RPC directly (Phase 2A.3B)", () => {

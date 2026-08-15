@@ -634,6 +634,7 @@ export async function upsertVariants(
     const bc = r.barcode && r.barcode.trim() !== "" ? r.barcode.trim() : null;
     const name = r.variant_name && r.variant_name.trim() !== "" ? r.variant_name.trim() : null;
     if (r.id) {
+      // Metadata-only update (name / barcode) — never stock. Safe here.
       const { error } = await admin
         .from("product_variants")
         .update({ variant_name: name, barcode: bc })
@@ -642,10 +643,12 @@ export async function upsertVariants(
     } else {
       // Skip empty new rows (no name and no barcode).
       if (!name && !bc) continue;
-      const { error } = await admin
-        .from("product_variants")
-        .insert({ parent_product_id: parentProductId, variant_name: name, barcode: bc });
-      if (error) return { error: error.message };
+      // INV.6A — adding a NEW option is a STRUCTURAL change to the product's stock
+      // authority: it converts the parent's rollup and could strand a simple
+      // product's stock. It is NOT allowed through this metadata path. Require the
+      // full product editor, whose atomic sync_product_variants recomputes the
+      // parent rollup (inventory.stock = Σ variants) in one transaction.
+      return { error: "لإضافة خيار جديد استخدم محرّر المنتج الكامل — لا يمكن إضافته من هنا." };
     }
   }
   revalidatePath("/catalog/health");

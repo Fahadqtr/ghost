@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { planVariantDiff, type SubmittedVariant } from "./variant-diff.ts";
-import { deleteShelfStockForProduct } from "./shelf-cleanup.ts";
 
 function strip(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
@@ -160,109 +159,23 @@ test("malformed input is tolerated without throwing", () => {
   assert.equal(ok(planVariantDiff([V1], [null as never])).deletes.length, 1);
 });
 
-// ── Shelf cleanup helper ─────────────────────────────────────────────────────
+// ── Full-product delete relies on FK cascade (INV.6A) ────────────────────────
+// After INV.6A the shelf tables carry ON DELETE CASCADE FKs (shelf_stock →
+// inventory, variant_shelf_stock → product_variants) alongside the existing
+// inventory/product_variants/channel_products → products cascades. Both delete
+// paths therefore remove ONLY the product row and let the database cascade every
+// numeric dependent — no manual child-delete chain, no retired shelf-cleanup
+// helper, no stranded shelf rows.
 
-function fakeClient(
-  variantIds: string[],
-  opts: { selectError?: boolean; deleteError?: boolean; throwOnSelect?: boolean } = {},
-) {
-  const calls: { table: string; op: string; column?: string; operator?: string; value?: string }[] = [];
-  const client = {
-    from(table: string) {
-      calls.push({ table, op: "from" });
-      return {
-        select() {
-          return {
-            filter(column: string, operator: string, value: string) {
-              calls.push({ table, op: "select.filter", column, operator, value });
-              if (opts.throwOnSelect) throw new Error("boom");
-              return Promise.resolve(
-                opts.selectError
-                  ? { data: null, error: { message: "boom" } }
-                  : { data: variantIds.map((id) => ({ id })), error: null },
-              );
-            },
-          };
-        },
-        delete() {
-          return {
-            filter(column: string, operator: string, value: string) {
-              calls.push({ table, op: "delete.filter", column, operator, value });
-              return Promise.resolve(opts.deleteError ? { error: { message: "boom" } } : { error: null });
-            },
-          };
-        },
-      };
-    },
-  };
-  return { client, calls };
-}
-
-test("shelf cleanup deletes the shelf rows of every variant of the product", async () => {
-  const { client, calls } = fakeClient([V1, V2]);
-  const r = await deleteShelfStockForProduct(client, "p1");
-  assert.deepEqual(r, { ok: true, deletedVariantIds: 2 });
-  const del = calls.find((c) => c.op === "delete.filter");
-  assert.equal(del?.table, "variant_shelf_stock");
-  assert.equal(del?.column, "variant_id");
-  assert.equal(del?.operator, "in");
-  assert.ok(del?.value?.includes(V1) && del?.value?.includes(V2));
-});
-
-test("a product with no variants is a clean success — nothing can be stranded", async () => {
-  const { client, calls } = fakeClient([]);
-  assert.deepEqual(await deleteShelfStockForProduct(client, "p1"), { ok: true, deletedVariantIds: 0 });
-  assert.equal(calls.some((c) => c.op === "delete.filter"), false, "no delete is issued");
-});
-
-test("shelf cleanup FAILS CLOSED on a read error, a delete error, a throw, or a bad id", async () => {
-  assert.deepEqual(await deleteShelfStockForProduct(fakeClient([V1], { selectError: true }).client, "p1"), { ok: false });
-  assert.deepEqual(await deleteShelfStockForProduct(fakeClient([V1], { deleteError: true }).client, "p1"), { ok: false });
-  assert.deepEqual(await deleteShelfStockForProduct(fakeClient([V1], { throwOnSelect: true }).client, "p1"), { ok: false });
-  assert.deepEqual(await deleteShelfStockForProduct(fakeClient([V1]).client, ""), { ok: false });
-});
-
-test("the DELETE error is checked, never ignored", () => {
-  const src = strip(readFileSync(new URL("./shelf-cleanup.ts", import.meta.url), "utf8"));
-  assert.ok(/if \(del\.error\) return \{ ok: false \}/.test(src), "the delete result's error is inspected");
-  assert.ok(!/Best-effort/i.test(src), "the helper is no longer best-effort");
-});
-
-// ── Full-product delete aborts when cleanup fails ────────────────────────────
-
-test("a cleanup failure aborts the whole product deletion in both paths", () => {
+test("both delete paths delete only the product row (FK cascade owns the rest)", () => {
   for (const [name, raw] of [["deleteProduct", ACTIONS_SRC], ["deleteProductById", HEALTH_SRC]] as const) {
     const src = strip(raw);
-    const guardAt = src.indexOf("if (!shelfCleanup.ok) return");
-    const variantDeleteAt = src.indexOf('from("product_variants").delete()');
-    const productDeleteAt = src.indexOf('from("products").delete()');
-    assert.ok(guardAt > 0, `${name} guards on the cleanup result`);
-    assert.ok(guardAt < variantDeleteAt, `${name} returns before deleting variant rows`);
-    assert.ok(guardAt < productDeleteAt, `${name} returns before deleting the product`);
-  }
-});
-
-test("the abort message is fixed and leaks nothing", () => {
-  const msg = "تعذّر حذف بيانات رفوف خيارات المنتج. لم يتم حذف المنتج.";
-  assert.ok(ACTIONS_SRC.includes(msg), "deleteProduct uses the fixed message");
-  assert.ok(HEALTH_SRC.includes(msg), "deleteProductById uses the fixed message");
-  for (const [name, raw] of [["actions", ACTIONS_SRC], ["health", HEALTH_SRC]] as const) {
-    const guardLine = strip(raw)
-      .split("\n")
-      .find((l) => l.includes("shelfCleanup.ok"));
-    assert.ok(guardLine !== undefined, `${name} has the guard`);
-    for (const banned of ["error.message", "variant_shelf_stock", "product_variants"]) {
-      assert.ok(!guardLine.includes(banned), `${name} guard must not leak ${banned}`);
-    }
-  }
-});
-
-test("a successful cleanup still runs before the variants are deleted", () => {
-  for (const [name, raw] of [["deleteProduct", ACTIONS_SRC], ["deleteProductById", HEALTH_SRC]] as const) {
-    const src = strip(raw);
-    const cleanupAt = src.indexOf("deleteShelfStockForProduct(supabase, id)");
-    const variantDeleteAt = src.indexOf('from("product_variants").delete()');
-    assert.ok(cleanupAt > 0 && cleanupAt < variantDeleteAt, `${name} cleans shelf rows first`);
+    assert.ok(/from\("products"\)\s*\.delete\(\)/.test(src), `${name} deletes the product row`);
+    assert.ok(!/from\("product_variants"\)\s*\.delete\(\)/.test(src), `${name} does not manually delete variants`);
+    assert.ok(!/from\("inventory"\)\s*\.delete\(\)/.test(src), `${name} does not manually delete inventory`);
+    assert.ok(!/from\("variant_shelf_stock"\)\s*\.delete\(\)/.test(src), `${name} does not manually delete variant shelf rows`);
+    assert.ok(!/from\("channel_products"\)\s*\.delete\(\)/.test(src), `${name} does not manually delete channel rows`);
+    assert.ok(!/deleteShelfStockForProduct/.test(src), `${name} no longer calls the retired shelf-cleanup helper`);
   }
 });
 

@@ -79,15 +79,18 @@ test("Talabat processor uses the order RPC + best-effort transitions, no direct 
 test("movements + approvals guard channel sale audits as immutable", () => {
   assert.ok(/export function isChannelSaleAudit/.test(read("lib/inventory/channel-immutability.ts")), "pure guard helper exists");
   const mv = read("lib/inventory/movements.ts");
-  assert.ok(/isChannelSaleAudit\(row\)/.test(mv), "editMovementQty / deleteMovement consult the guard");
+  // INV.6A — the movement RPCs enforce channel immutability (returning
+  // movement_locked); movements.ts maps that to the fixed locked message.
+  assert.ok(/movement_locked/.test(mv), "movement engine maps the RPC's channel-immutability rejection");
   assert.ok(/CHANNEL_SALE_LOCKED_MSG/.test(mv), "movement endpoints return the fixed locked message");
   const appr = read("app/(app)/inventory/approvals-actions.ts");
-  assert.ok(/isChannelSaleAudit\(row\)/.test(appr), "reverseMovement / approveMovements consult the guard");
+  assert.ok(/isChannelSaleAudit\(row\)/.test(appr), "approveMovements consults the guard");
 });
 
-// ── movements.ts numeric engine stays legacy-direct (NOT migrated in INV.5) ────
+// ── movements.ts numeric engine CONVERGED onto the Engine RPCs (INV.6A) ───────
 
-test("movements.ts numeric movement engine remains legacy-direct (untouched by INV.5)", () => {
+test("movements.ts performs no direct numeric write (converged in INV.6A)", () => {
   const mv = strip(read("lib/inventory/movements.ts"));
-  assert.ok(anyNumericWrite(mv), "applyMovement/editMovementQty still do their direct RMW (reversal is a later phase)");
+  assert.equal(anyNumericWrite(mv), false,
+    "applyMovement/editMovementQty/deleteMovement/reverseMovement route through the atomic Inventory Engine RPCs");
 });
