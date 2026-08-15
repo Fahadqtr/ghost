@@ -68,5 +68,13 @@ export function createExternalListingReader(client: ExternalListingReadClient): 
     },
     bySku: (storefrontKey, sku) =>
       rows(client.from(TABLE).select(COLS).eq("storefront_key", storefrontKey).eq("exported_sku", sku)),
+    byClaimedExternalId: (storefrontKey, claimedExternalProductId) =>
+      rows(
+        client.from(TABLE).select(COLS)
+          .eq("storefront_key", storefrontKey)
+          .eq("mapping_status", "needs_review")
+          // PostgREST JSON filter: metadata->>claimed_external_product_id = value
+          .eq("metadata->>claimed_external_product_id", claimedExternalProductId),
+      ),
   };
 }
