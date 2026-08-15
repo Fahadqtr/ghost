@@ -676,7 +676,9 @@ async function productDetail(sb: Sb, input: any) {
   const ep = effectivePrice(p.price, p.discount_price, (variants ?? []) as { price: number | null }[]);
 
   const byPlat = new Map((psRows ?? []).map((r: any) => [r.platform, r]));
-  const stock = inv?.stock_quantity ?? p.stock_quantity ?? 0;
+  // INV.4E — authoritative stock is the inventory row only; the retired
+  // products.stock_quantity mirror is never read as a fallback.
+  const stock = inv?.stock_quantity ?? 0;
   const platforms = PLATFORMS.map((pl) => {
     if (pl.master) return { platform: pl.label, availability: stock > 0 ? "متوفّر" : "نافد", approval: p.approval ?? "—" };
     const r: any = byPlat.get(pl.key);
@@ -1271,10 +1273,12 @@ async function prepareWrite(sb: Sb, name: string, input: any, ctx: { imageUrl?: 
     const value = Number(input?.value);
     if (!sku) return { ok: false, error: "SKU مطلوب." };
     if (!Number.isFinite(value) || value < 0) return { ok: false, error: "قيمة المخزون غير صالحة." };
-    const p = await firstRow(sb.from("products").select("id, name_en, sku, stock_quantity").ilike("sku", sku));
+    const p = await firstRow(sb.from("products").select("id, name_en, sku").ilike("sku", sku));
     if (!p) return { ok: false, error: `ما لقيت منتج بالـSKU: ${sku}` };
     const inv = await firstRow(sb.from("inventory").select("stock_quantity").eq("product_id", p.id));
-    const oldVal = inv?.stock_quantity ?? p.stock_quantity ?? 0;
+    // INV.4E — authoritative stock is the inventory row only; the retired
+    // products.stock_quantity mirror is never read as a fallback.
+    const oldVal = inv?.stock_quantity ?? 0;
     const token = signAction({
       v: 1, type: "update_stock", agent: "malak", sku: p.sku, productId: p.id,
       field: "stock_quantity", oldValue: oldVal, newValue: value, ts: Date.now(),

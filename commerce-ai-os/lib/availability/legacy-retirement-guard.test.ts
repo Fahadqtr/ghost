@@ -195,6 +195,9 @@ test("Malak commitStock writes quantity only — never availability", () => {
   const file = code(read("app/api/malak/commit/route.ts"));
   const i = file.indexOf("async function commitStock");
   const body = file.slice(i, file.indexOf("\nasync function commitPrice"));
-  assert.ok(/\.from\(["']products["']\)\s*\.update\(\{\s*stock_quantity/.test(body), "keeps the quantity mirror");
+  // INV.4E: the products.stock_quantity mirror is retired — commitStock writes
+  // ONLY the authoritative inventory (via the Engine), never the products mirror.
+  assert.equal(/\.from\(["']products["']\)\s*\.update\(\{\s*stock_quantity/.test(body), false, "no mirror write");
+  assert.ok(/setAbsolute\(sb,/.test(body), "quantity goes through the Inventory Engine");
   assert.equal(/stock_status/.test(body), false, "commitStock never derives/writes availability");
 });

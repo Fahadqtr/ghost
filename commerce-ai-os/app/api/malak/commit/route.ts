@@ -85,9 +85,9 @@ async function commitStock(sb: Sb, a: MalakAction): Promise<CommitOutcome | { er
   const oldVal = Number(res.data.before);
   const newVal = Number(res.data.after);
 
-  // TEMPORARY products.stock_quantity mirror (retired in INV.4E). Never read as
-  // authority, never a fallback. Availability (stock_status) is NOT touched here.
-  await sb.from("products").update({ stock_quantity: newVal }).eq("id", p.id);
+  // INV.4E — the products.stock_quantity mirror is RETIRED. Authoritative stock
+  // lives in `inventory` (set atomically by the Engine above); nothing is written
+  // back to the products table. Availability (stock_status) is NOT touched here.
 
   // Best-effort authoritative zero-crossing transition (never blocks the write).
   await logAuthoritativeStockTransition(sb, { productId: p.id, before: oldVal, after: newVal, actor: "malak" });
@@ -156,7 +156,9 @@ async function commitAddProduct(sb: Sb, a: MalakAction): Promise<CommitOutcome |
     platform_status: pr.platform_status || "Draft",
     description_en: pr.description_en,
     description_ar: pr.description_ar,
-    stock_quantity: 0,
+    // INV.4E — no products.stock_quantity mirror. The fresh inventory row is
+    // seeded to 0 by createProductCore (its default seedQuantity); stock_status
+    // stays an explicit availability field.
     stock_status: "Out of Stock",
     notes: "أُضيف عبر ملاك (Malak) — الصورة تُرفع لاحقًا من صفحة التعديل.",
   };

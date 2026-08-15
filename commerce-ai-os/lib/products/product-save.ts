@@ -401,7 +401,7 @@ export const INVENTORY_MISSING_MESSAGE =
   "Product saved, but its inventory row is missing — stock was not changed.";
 
 /**
- * The shared save path for editing an existing product (INV.4D authoritative order):
+ * The shared save path for editing an existing product (INV.4E authoritative order):
  *
  *   1. validate + project the form input
  *   2. update the product METADATA only (never stock_quantity in this write)
@@ -415,8 +415,11 @@ export const INVENTORY_MISSING_MESSAGE =
  *        · simple   → the top-level field is the requested stock; call the
  *          Inventory Engine setAbsolute ONLY when it actually changed (so a
  *          metadata-only save never trips the shelf-tracked guard)
- *   6. write the TEMPORARY products.stock_quantity mirror = authoritative final
- *      stock (compatibility only, retired in INV.4E — never read as authority)
+ *
+ * INV.4E: the products.stock_quantity mirror is RETIRED — this core writes the
+ * products table for METADATA ONLY (step 2) and never writes a stock quantity to
+ * it. The authoritative final stock is returned (stockBefore/stockAfter) for the
+ * caller's transition/audit; it is not mirrored back to the products column.
  *
  * Session-scoped client for product metadata + the SECURITY INVOKER variant RPC
  * (RLS applies). Numeric inventory quantities go ONLY through the injected
@@ -451,9 +454,10 @@ export async function updateProductCore(
     .filter("id", "eq", id)
     .maybeSingle();
 
-  // METADATA ONLY — stock_quantity is deliberately excluded here. The mirror is
-  // written later (step 6) from the authoritative final stock. stock_status stays
-  // an explicit, user-owned field (Availability), never derived from quantity.
+  // METADATA ONLY — stock_quantity is deliberately excluded here. INV.4E retired
+  // the products.stock_quantity mirror, so it is never written back at all.
+  // stock_status stays an explicit, user-owned field (Availability), never
+  // derived from quantity.
   const { stock_quantity: _stockOmit, ...metadataPatch } = row;
   const { error } = await client.from("products").update(metadataPatch).filter("id", "eq", id);
   if (error) {
@@ -510,10 +514,10 @@ export async function updateProductCore(
     stockChanged = false;
   }
 
-  // TEMPORARY products.stock_quantity mirror = authoritative final stock. Best
-  // effort: the authoritative inventory is already correct; the mirror is retired
-  // in INV.4E and is never read as authority.
-  await client.from("products").update({ stock_quantity: stockAfter }).filter("id", "eq", id);
+  // INV.4E — the products.stock_quantity mirror is RETIRED. The editor no longer
+  // writes it: the authoritative stock lives in `inventory` (simple) / Σ variants
+  // (variant), and stockAfter is returned for transition/audit only. Nothing here
+  // writes back to the products table's frozen legacy column.
 
   return {
     ok: true,

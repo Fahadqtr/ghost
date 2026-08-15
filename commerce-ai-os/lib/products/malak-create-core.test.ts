@@ -158,7 +158,9 @@ test("SKU re-check + millisecond suffix-on-clash preserved", () => {
 test("no barcode is added by Malak add_product; row content unchanged", () => {
   assert.equal(/barcode:/.test(ADD_BODY), false, "row has no barcode key");
   assert.ok(/platform_status: pr\.platform_status \|\| "Draft"/.test(ADD_BODY), "platform_status default Draft");
-  assert.ok(/stock_quantity: 0/.test(ADD_BODY), "stock_quantity 0");
+  // INV.4E: the products.stock_quantity mirror is retired — the add-product row
+  // no longer carries stock_quantity; createProductCore seeds inventory to 0.
+  assert.equal(/stock_quantity: 0/.test(ADD_BODY), false, "no stock_quantity mirror on the row");
   assert.ok(/stock_status: "Out of Stock"/.test(ADD_BODY), "stock_status Out of Stock");
   assert.ok(/notes: "أُضيف عبر ملاك/.test(ADD_BODY), "Malak provenance note kept");
 });

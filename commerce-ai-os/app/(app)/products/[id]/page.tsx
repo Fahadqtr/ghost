@@ -65,7 +65,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       main_category: product.main_category, sub_category: product.sub_category, product_type: product.product_type,
       color: product.color, size: product.size,
       price: product.price, discount_price: product.discount_price,
-      stock: inv?.stock_quantity ?? product.stock_quantity, stock_status: product.stock_status,
+      stock: inv?.stock_quantity ?? 0, stock_status: product.stock_status,
       description_en: product.description_en, description_ar: product.description_ar,
       keywords_en: product.keywords_en, keywords_ar: product.keywords_ar,
       notes: product.notes,
@@ -162,7 +162,8 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
           <Field label="Price" value={product.price} />
           <Field label="Discount Price" value={product.discount_price} />
           <Field label="Cost" value={product.cost} />
-          <Field label="Stock Quantity (product)" value={product.stock_quantity} />
+          {/* INV.4E: the products.stock_quantity mirror is retired (frozen legacy
+              column). Authoritative stock is shown from the inventory row below. */}
           <Field label="Stock Status" value={product.stock_status} />
           <Field label="Platform Status" value={product.platform_status} />
           <Field label="Image Filename" value={product.image_filename} />

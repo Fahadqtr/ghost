@@ -316,10 +316,11 @@ test("updateProductCore: VARIANT product — parent stock comes from the atomic 
     assert.equal(res.stockChanged, true);
   }
   assert.equal(invCalls.length, 0, "no setAbsolute for a variant product");
-  // metadata update must NOT carry stock_quantity; the mirror write (2nd) carries it.
+  // INV.4E: exactly ONE products write (metadata) and it must NOT carry
+  // stock_quantity. The products.stock_quantity mirror is retired — never written.
   const prodUpdates = calls.filter((c) => c.kind === "update" && c.table === "products");
+  assert.equal(prodUpdates.length, 1, "only the metadata update — no mirror write");
   assert.equal("stock_quantity" in (prodUpdates[0].values ?? {}), false, "metadata patch excludes stock");
-  assert.equal(prodUpdates[1].values?.stock_quantity, 9, "mirror = authoritative parent stock");
   const kinds = calls.map((c) => `${c.kind}:${c.table ?? c.fn}`);
   assert.deepEqual(kinds, [
     "select-single:products",
@@ -327,11 +328,10 @@ test("updateProductCore: VARIANT product — parent stock comes from the atomic 
     "select-single:inventory",
     "select-list:product_variants",
     "rpc:sync_product_variants",
-    "update:products",
   ]);
 });
 
-test("updateProductCore: SIMPLE product with a changed stock calls the Engine adapter (setAbsolute) and mirrors the result", async () => {
+test("updateProductCore: SIMPLE product with a changed stock calls the Engine adapter (setAbsolute); no mirror write", async () => {
   const { client, calls } = makeClient({ rpc: rpcSimple });
   const { deps, invCalls } = opts({ ok: true, before: 3, after: 7, productId: "p1" });
   const res = await updateProductCore(client, "p1", input({ stock_quantity: "7" }), deps);
@@ -343,8 +343,10 @@ test("updateProductCore: SIMPLE product with a changed stock calls the Engine ad
     assert.equal(res.stockChanged, true);
   }
   assert.deepEqual(invCalls, [{ inventoryId: "inv-1", quantity: 7 }]);
-  const mirror = calls.filter((c) => c.kind === "update" && c.table === "products").at(-1);
-  assert.equal(mirror?.values?.stock_quantity, 7);
+  // INV.4E: only the metadata products.update — the stock_quantity mirror is retired.
+  const prodUpdates = calls.filter((c) => c.kind === "update" && c.table === "products");
+  assert.equal(prodUpdates.length, 1, "no products.stock_quantity mirror write");
+  assert.equal("stock_quantity" in (prodUpdates[0].values ?? {}), false, "metadata patch excludes stock");
 });
 
 test("updateProductCore: SIMPLE product with UNCHANGED stock does NOT call the Engine (metadata-only save)", async () => {

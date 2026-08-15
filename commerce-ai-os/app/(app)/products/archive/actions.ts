@@ -4,9 +4,36 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
+import { reconcile } from "@/lib/inventory/reconcile";
 
 const NO_DB = "الخادم غير مهيأ (SUPABASE_SERVICE_ROLE_KEY غير مضبوط).";
-const NO_TABLE = "جدول الأرشيف غير موجود — شغّل supabase/product_archive.sql أولاً.";
+const NO_SETUP = "أدوات الأرشيف غير مهيأة — شغّل هجرة INV.4E (supabase/migrations) أولاً.";
+
+// Fixed, user-safe Arabic for every restore_product_archive reason code. Never a
+// raw DB message, a table/column name, or a uuid.
+const RESTORE_REASON_AR: Record<string, string> = {
+  archive_not_found: "سجل الأرشيف غير موجود.",
+  bundle_invalid: "بيانات الأرشيف ناقصة أو تالفة — تعذّرت الاستعادة.",
+  inventory_row_invalid: "بيانات مخزون الأرشيف غير صالحة — تعذّرت الاستعادة.",
+  reference_mismatch: "بيانات الأرشيف غير متسقة — تعذّرت الاستعادة.",
+  duplicate_identity: "بيانات الأرشيف مكرّرة — تعذّرت الاستعادة.",
+  malformed_quantity: "كميات الأرشيف غير صالحة — تعذّرت الاستعادة.",
+  parent_has_shelf_rows: "حالة رفوف غير متسقة على المنتج الأب — تعذّرت الاستعادة.",
+  restore_conflict: "الكود أو الباركود مستخدم الآن — عدّله قبل الاستعادة.",
+  restore_failed: "تعذّرت الاستعادة — حاول مجددًا.",
+};
+function restoreReasonAr(reason: unknown): string {
+  if (typeof reason === "string" && Object.hasOwn(RESTORE_REASON_AR, reason)) {
+    return RESTORE_REASON_AR[reason];
+  }
+  return "تعذّرت الاستعادة — حاول مجددًا.";
+}
+// The RPC/migration is missing (function not deployed yet).
+function isMissingRpc(error: { code?: string; message?: string } | null): boolean {
+  const code = error?.code ?? "";
+  const msg = error?.message ?? "";
+  return code === "42883" || code === "PGRST202" || /function .*does not exist/i.test(msg);
+}
 
 function adminClient(): any | null {
   try { return createAdminClient(); } catch { return null; }
@@ -59,7 +86,10 @@ export async function matchProductsForArchive(text: string): Promise<{ matched: 
 }
 
 // Snapshot each product's full bundle into product_archive, then delete it (and
-// its dependent rows) from the live catalog.
+// every dependent row — inventory, variants, BOTH shelf tables, channel rows) in
+// ONE transaction. INV.4E: this delegates to the atomic archive_product_bundle
+// RPC — the action performs no direct product/inventory/variant/shelf/channel
+// write of its own (no partial archive, no orphan shelf rows).
 export async function archiveAndDeleteProducts(ids: string[]): Promise<{ ok: true; archived: number; failed: string[] } | { error: string }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
@@ -73,36 +103,17 @@ export async function archiveAndDeleteProducts(ids: string[]): Promise<{ ok: tru
   const failed: string[] = [];
   for (const id of list) {
     try {
-      const { data: product } = await admin.from("products").select("*").eq("id", id).single();
-      if (!product) { failed.push(id); continue; }
-      const [{ data: inventory }, { data: variants }, { data: channel_products }] = await Promise.all([
-        admin.from("inventory").select("*").eq("product_id", id),
-        admin.from("product_variants").select("*").eq("parent_product_id", id),
-        admin.from("channel_products").select("*").eq("product_id", id),
-      ]);
-
-      const arch = await admin.from("product_archive").insert({
-        product_id: id,
-        sku: product.sku ?? null,
-        barcode: product.barcode ?? null,
-        name_en: product.name_en ?? null,
-        name_ar: product.name_ar ?? null,
-        image_url: product.image_url ?? null,
-        bundle: { product, inventory: inventory ?? [], variants: variants ?? [], channel_products: channel_products ?? [] },
-        archived_by: by,
+      const { data, error } = await admin.rpc("archive_product_bundle", {
+        p_product_id: id,
+        p_archived_by: by,
       });
-      if (arch.error) {
-        if ((arch.error as any).code === "42P01") return { error: NO_TABLE };
-        failed.push(id); continue;
+      if (error) {
+        if (isMissingRpc(error)) return { error: NO_SETUP };
+        failed.push(id);
+        continue;
       }
-
-      // Remove dependents first, then the product.
-      await admin.from("product_variants").delete().eq("parent_product_id", id);
-      await admin.from("channel_products").delete().eq("product_id", id);
-      await admin.from("inventory").delete().eq("product_id", id);
-      const del = await admin.from("products").delete().eq("id", id);
-      if (del.error) { failed.push(id); continue; }
-      archived++;
+      if ((data as any)?.status === "archived") archived++;
+      else failed.push(id);
     } catch {
       failed.push(id);
     }
@@ -136,31 +147,50 @@ export async function listArchive(limit = 100): Promise<{ rows: ArchivedRow[]; r
   return { rows: (data ?? []) as ArchivedRow[], ready: true };
 }
 
-// Re-insert an archived product (and its bundle) into the live catalog, then
-// drop the archive entry. Best-effort on dependents.
+// Re-insert an archived product bundle into the live catalog, then drop the
+// archive entry — atomically. INV.4E: this delegates to restore_product_archive,
+// which validates + reconciles the bundle to the authoritative inventory model
+// (never restores drift or the retired products.stock_quantity mirror) and does
+// the whole re-insert + archive-delete in one transaction. The action performs
+// no direct product/inventory/variant/shelf/channel insert of its own; on any
+// failure the RPC rolls back and the archive row stays put (no partial restore).
 export async function restoreFromArchive(archiveId: string): Promise<{ ok: true } | { error: string }> {
   const unauth = await requireUser();
   if (unauth) return unauth;
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
-  const { data: row, error } = await admin.from("product_archive").select("bundle").eq("id", archiveId).single();
-  if (error || !row) return { error: "سجل الأرشيف غير موجود." };
-  const b = row.bundle || {};
-  const product = b.product;
-  if (!product?.id) return { error: "بيانات الأرشيف ناقصة." };
 
-  const ins = await admin.from("products").insert(product);
-  if (ins.error) {
-    if ((ins.error as any).code === "23505") return { error: "الكود أو الباركود مستخدم الآن — عدّله قبل الاستعادة." };
-    return { error: ins.error.message };
+  const { data, error } = await admin.rpc("restore_product_archive", { p_archive_id: archiveId });
+  if (error) {
+    if (isMissingRpc(error)) return { error: NO_SETUP };
+    // Never surface a raw DB message.
+    return { error: "تعذّرت الاستعادة — حاول مجددًا." };
   }
-  // Best-effort restore of dependents.
-  if (Array.isArray(b.inventory) && b.inventory.length) await admin.from("inventory").insert(b.inventory);
-  if (Array.isArray(b.variants) && b.variants.length) await admin.from("product_variants").insert(b.variants);
-  if (Array.isArray(b.channel_products) && b.channel_products.length) await admin.from("channel_products").insert(b.channel_products);
+  const result = data as { status?: string; reason?: string; productId?: string } | null;
+  if (!result || result.status !== "applied") {
+    return { error: restoreReasonAr(result?.reason) };
+  }
 
-  await admin.from("product_archive").delete().eq("id", archiveId);
+  // INV.4E Phase 17 — best-effort, READ-ONLY verification only. The RPC already
+  // guarantees the authoritative invariants inside its transaction; this reconcile
+  // never writes and never "repairs". A surprising verdict is logged for
+  // diagnosis (the transaction has already committed — no rollback is implied).
+  try {
+    if (result.productId) {
+      const verdict = await reconcile(admin, result.productId);
+      if (verdict.status !== "clean") {
+        console.error(
+          "[archive-restore] post-restore reconcile not clean:",
+          JSON.stringify({ productId: result.productId, status: verdict.status, issues: verdict.issues }),
+        );
+      }
+    }
+  } catch (e) {
+    console.error("[archive-restore] post-restore reconcile threw:", e instanceof Error ? e.message : e);
+  }
+
   revalidatePath("/products");
   revalidatePath("/products/archive");
+  revalidatePath("/dashboard");
   return { ok: true as const };
 }

@@ -154,7 +154,7 @@ test("row without stock_quantity and no opts seeds 0", async () => {
   assert.equal(inv.stock_quantity, 0);
 });
 
-test("opts.seedQuantity overrides ONLY the inventory seed — product row untouched, not mutated", async () => {
+test("opts.seedQuantity overrides ONLY the inventory seed — product row strips the mirror, not mutated", async () => {
   const { client, calls } = makeClient();
   const row = { sku: "mk9", name_ar: "سيروم", stock_quantity: 7 };
   const before = JSON.stringify(row);
@@ -166,10 +166,10 @@ test("opts.seedQuantity overrides ONLY the inventory seed — product row untouc
   assert.equal(inv.low_stock_threshold, 5);
   assert.equal(inv.sold_quantity, 0);
 
-  // …the PRODUCT row inserted is exactly what was passed (row.stock_quantity kept as 7),
-  // and the caller's row object was not mutated.
+  // …the PRODUCT row inserted has NO stock_quantity (INV.4E: the mirror is retired
+  // and stripped before insert), and the caller's row object is not mutated.
   const prod = calls.find((c) => c.kind === "insert-select")!.values as Record<string, unknown>;
-  assert.equal(prod.stock_quantity, 7, "product row keeps its own stock_quantity");
+  assert.ok(!("stock_quantity" in prod), "product row strips the retired stock_quantity mirror");
   assert.equal(JSON.stringify(row), before, "row object not mutated");
 });
 

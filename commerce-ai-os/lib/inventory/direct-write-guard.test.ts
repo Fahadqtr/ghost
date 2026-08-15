@@ -102,13 +102,17 @@ const REGISTRY: Entry[] = [
     classification: "exempt",
     direct: true,
     note: "createProductCore — inserts a FRESH inventory seed (never mutates an existing quantity), with " +
-      "compensating rollback delete on seed failure. Create semantics, not a stock mutation.",
+      "compensating rollback delete on seed failure. Create semantics, not a stock mutation. INV.4E: strips " +
+      "stock_quantity from the product row before insert (mirror retired); the requested stock seeds ONLY the " +
+      "inventory row. Pinned by product-stock-mirror-guard.test.ts.",
   },
   {
     file: "lib/products/product-create-batch.ts",
     classification: "exempt",
     direct: true,
-    note: "createProductsBatchCore — batch fresh inventory seed insert (importers). Create semantics.",
+    note: "createProductsBatchCore — batch fresh inventory seed insert (importers). Create semantics. INV.4E: strips " +
+      "stock_quantity from every product row before insert (mirror retired); requested stock seeds ONLY inventory. " +
+      "Pinned by product-stock-mirror-guard.test.ts.",
   },
   // ── exempt: product deletion / archive-restore ──────────────────────────────
   {
@@ -126,10 +130,12 @@ const REGISTRY: Entry[] = [
   },
   {
     file: "app/(app)/products/archive/actions.ts",
-    classification: "exempt",
-    direct: true,
-    note: "Archive deletes the inventory row into a snapshot; restore re-inserts the archived rows verbatim " +
-      "to preserve identity. Snapshot semantics — must not go through the create/engine paths.",
+    classification: "approved-rpc",
+    direct: false,
+    note: "INV.4E: archive/restore are now the atomic archive_product_bundle / restore_product_archive RPCs " +
+      "(service-role only). The action snapshots+deletes and validates+reconciles+re-inserts entirely inside " +
+      "those transactions — it performs NO direct inventory/variant/shelf/channel/product write of its own. " +
+      "Pinned no-direct-write by inv-4e-writer-guard.test.ts.",
   },
   {
     file: "lib/products/shelf-cleanup.ts",
