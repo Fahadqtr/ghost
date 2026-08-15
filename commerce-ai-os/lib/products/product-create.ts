@@ -75,9 +75,17 @@ export async function createProductCore(
   variantRows: readonly CreateVariantRow[],
   opts?: CreateProductCoreOptions,
 ): Promise<CreateProductCoreResult> {
+  // INV.4E — the products.stock_quantity mirror is RETIRED. The requested
+  // starting stock is a FORM field that seeds the authoritative `inventory` row
+  // ONLY: compute the seed quantity BEFORE the insert, then strip stock_quantity
+  // from the product row so the products table's frozen legacy column is never
+  // written. `row` is not mutated (a fresh object is inserted).
+  const seedQty = opts?.seedQuantity ?? ((row.stock_quantity as number | null) ?? 0);
+  const { stock_quantity: _mirrorOmit, ...productRow } = row;
+
   const { data: product, error: productErr } = await client
     .from("products")
-    .insert(row)
+    .insert(productRow)
     .select("id")
     .single();
   const productId = typeof product?.id === "string" ? product.id : null;
@@ -109,12 +117,11 @@ export async function createProductCore(
     return okAll ? "done" : "failed";
   };
 
-  // The inventory seed quantity defaults to the product row's own stock_quantity
-  // (V2 create/import, Malak) but callers may override it WITHOUT touching the
-  // product row — e.g. Shopify import seeds from the store's variant quantity
-  // while its product row deliberately carries no stock_quantity. `row` is never
-  // mutated; only the inventory seed reads this value.
-  const seedQty = opts?.seedQuantity ?? ((row.stock_quantity as number | null) ?? 0);
+  // The inventory seed quantity (computed above, before the mirror strip)
+  // defaults to the product row's requested stock_quantity (V2 create/import,
+  // Malak) but callers may override it via opts.seedQuantity — e.g. Shopify
+  // import seeds from the store's variant quantity. It seeds the authoritative
+  // `inventory` row; the products mirror is never written (INV.4E).
   const invErr = (
     await client.from("inventory").insert({
       product_id: productId,

@@ -162,13 +162,14 @@ const REGISTRY: PathEntry[] = [
     label: "Archive restore",
     classification: "exempt",
     client: "admin",
-    seed: "snapshot", // re-inserts the archived inventory rows verbatim
-    variants: "verbatim",
+    seed: "none", // INV.4E: restore is an atomic RPC — no client-side inventory seed
+    variants: "rpc",
     rollback: false,
-    direct: true,
-    note: "EXEMPT — restore semantics, not create. Resurrects the ORIGINAL id/sku/barcode/inventory/" +
-      "variants/channel_products from a product_archive snapshot. Minting a fresh product (new id, " +
-      "zero seed, re-stamped parents) would destroy restore fidelity, so it must NOT use createProductCore.",
+    direct: false, // INV.4E: restore_product_archive RPC — no direct products.insert
+    note: "EXEMPT — restore semantics, not create. INV.4E: delegates to the atomic restore_product_archive " +
+      "RPC (validate + reconcile + re-insert + archive-delete in one transaction), so it no longer performs a " +
+      "client-side products.insert. It still resurrects the ORIGINAL id/sku/barcode from the product_archive " +
+      "snapshot (never mints a fresh product through the create core).",
   },
 ];
 

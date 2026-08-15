@@ -80,8 +80,19 @@ export async function createProductsBatchCore(
   for (let start = 0; start < rows.length; start += chunkSize) {
     const chunk = rows.slice(start, start + chunkSize);
 
+    // INV.4E — the products.stock_quantity mirror is RETIRED. Capture each row's
+    // requested starting stock (a FORM field) for the authoritative inventory
+    // seed BEFORE the insert, then strip stock_quantity from every product row so
+    // the products table's frozen legacy column is never written. `chunk` (a
+    // slice of the caller's rows) is not mutated; fresh objects are inserted.
+    const seedQtys = chunk.map((r) => opts?.seedQuantity ?? ((r.stock_quantity as number | null) ?? 0));
+    const productRows = chunk.map((r) => {
+      const { stock_quantity: _mirrorOmit, ...rest } = r as Record<string, unknown>;
+      return rest;
+    });
+
     // 1. Insert the chunk's product rows in one atomic statement.
-    const { data, error } = await client.from("products").insert(chunk as Record<string, unknown>[]).select("id");
+    const { data, error } = await client.from("products").insert(productRows).select("id");
     if (error || !data) {
       // Product chunk failed → nothing was written, nothing to compensate.
       markChunkFailed(start, chunk.length);
@@ -95,10 +106,10 @@ export async function createProductsBatchCore(
       continue;
     }
 
-    // 3. Seed one inventory row per created product.
+    // 3. Seed one inventory row per created product (positional: ids[i] ↔ chunk[i]).
     const invRows = ids.map((product_id, i) => ({
       product_id,
-      ...inventorySeed(opts?.seedQuantity ?? ((chunk[i]?.stock_quantity as number | null) ?? 0)),
+      ...inventorySeed(seedQtys[i] ?? 0),
     }));
     const invErr = (await client.from("inventory").insert(invRows)).error;
 
