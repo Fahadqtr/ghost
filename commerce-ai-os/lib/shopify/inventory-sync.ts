@@ -1,11 +1,16 @@
 import "server-only";
 import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, setInventoryQuantities, fetchRecentShopifyOrders } from "./admin";
 import { planInventorySync } from "@/lib/shopify-diff";
-import { planOrderDeductions, type CatalogRowLite } from "./order-deduct-compute";
+import { planOrderDeductions, type CatalogRowLite, type VariantRowLite } from "./order-deduct-compute";
 import { classifyShopifyOrderChannel } from "./orders-compute";
 import { claimAndDeduct, syncCanPush, type ClaimDeductPorts, type ClaimDeductPlanners, type BlockedReason } from "./order-ledger";
-import { logStockTransition } from "@/lib/tasks/stock-tasks";
+import { logAuthoritativeStockTransition, logAuthoritativeVariantOnlyTransition } from "@/lib/inventory/transition";
 import { shopifyOosZeroPushList } from "@/lib/availability/channel-policy";
+
+const SHOPIFY_ORDER_ACTOR = "شوبي فاي — طلب متجر";
+/** A zero crossing in either direction (matches planStockTransition's <=0 threshold). */
+const crossedZero = (before: number, after: number): boolean =>
+  (before > 0 && after <= 0) || (before <= 0 && after > 0);
 
 // Stock → Shopify sync core, shared by the manual button on /import-export/
 // shopify-sync and the nightly availability cron. Our `inventory` table (plus
@@ -84,7 +89,7 @@ interface OrderStep {
   ordersNote?: string;
 }
 
-async function deductRecentOrders(sb: any, catalog: CatalogRowLite[]): Promise<OrderStep> {
+async function deductRecentOrders(sb: any, catalog: CatalogRowLite[], variants: VariantRowLite[]): Promise<OrderStep> {
   const none = { ordersProcessed: 0, deducted: 0 };
   try {
     const since = new Date(Date.now() - 72 * 3600_000).toISOString();
@@ -121,11 +126,32 @@ async function deductRecentOrders(sb: any, catalog: CatalogRowLite[]): Promise<O
           p_deductions: args.p_deductions,
           p_baseline: args.p_baseline,
         }),
-      logStock: (args) =>
-        logStockTransition(sb, { productId: args.productId, before: args.before, after: args.after, actor: "شوبي فاي — طلب متجر" }),
+      // INV.5 — authoritative transitions from the sale RPC's before/after. Parent
+      // task once per product; a variant-only task only when its parent did NOT
+      // cross zero (no duplicate parent tasks). Best-effort; no inventory write.
+      logTransitions: async ({ products, variants: vChanges }) => {
+        const parentCrossed = new Map<string, boolean>();
+        for (const p of products) {
+          const before = Number(p.before) || 0;
+          const after = Number(p.after) || 0;
+          parentCrossed.set(p.productId, crossedZero(before, after));
+          await logAuthoritativeStockTransition(sb, { productId: p.productId, before, after, actor: SHOPIFY_ORDER_ACTOR });
+        }
+        for (const v of vChanges) {
+          if (parentCrossed.get(v.productId)) continue; // parent task already covers it
+          await logAuthoritativeVariantOnlyTransition(sb, {
+            productId: v.productId,
+            variantId: v.variantId,
+            variantName: v.variantSku ?? "",
+            variantBefore: Number(v.before) || 0,
+            variantAfter: Number(v.after) || 0,
+            actor: SHOPIFY_ORDER_ACTOR,
+          });
+        }
+      },
     };
     const planners: ClaimDeductPlanners = {
-      plan: planOrderDeductions,
+      plan: (o, c, seen) => planOrderDeductions(o, c, variants, seen),
       classifyChannel: classifyShopifyOrderChannel,
     };
 
@@ -152,10 +178,15 @@ export async function runShopifyInventorySync(sb: any): Promise<InventorySyncRes
     const prods = await pageAll<{ id: string; sku: string | null; name_en: string | null; stock_status: string | null }>(
       (from, to) => sb.from("products").select("id, sku, name_en, stock_status").range(from, to));
 
+    // INV.5 — variant rows for grain-aware order matching (a variant product's
+    // parent inventory is never deducted directly by a store sale).
+    const variants = await pageAll<VariantRowLite>(
+      (from, to) => sb.from("product_variants").select("id, parent_product_id, sku, variant_name").range(from, to));
+
     // Store sales first: subtract new Shopify orders from our inventory via the
     // transactional deduction RPC (preserved — this is real sales, not
     // availability). This is the only inventory write on this path.
-    const orderStep = await deductRecentOrders(sb, prods);
+    const orderStep = await deductRecentOrders(sb, prods, variants);
 
     // FAIL CLOSED: if the order step did not fully settle (RPC error, missing
     // migration, null/unknown response, an unmatched order line, or truncated

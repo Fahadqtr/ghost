@@ -29,8 +29,10 @@ import {
 import { planOrderDeductions, type CatalogRowLite, type OrderForDeduction } from "./order-deduct-compute.ts";
 import { classifyShopifyOrderChannel } from "./orders-compute.ts";
 
+// INV.5: the planner is grain-aware (orders, catalog, variants, seen). These
+// ledger tests use simple products only, so variants = [].
 const PLANNERS: ClaimDeductPlanners = {
-  plan: planOrderDeductions,
+  plan: (o, c, seen) => planOrderDeductions(o, c, [], seen),
   classifyChannel: classifyShopifyOrderChannel,
 };
 
@@ -49,7 +51,10 @@ const order = (over: Partial<OrderForDeduction>): OrderForDeduction => ({
 });
 
 const ok = (data: unknown): RpcResult => ({ data, error: null });
-const processed = (deducted: number, products: any[] = []): RpcResult => ok({ status: "processed", deducted, products });
+// INV.5 canonical result: deductedUnits + products[] + variants[].
+const processed = (deductedUnits: number, products: any[] = [], variants: any[] = []): RpcResult =>
+  ok({ status: "processed", deductedUnits, products, variants });
+const saleError = (reason: string): RpcResult => ok({ status: "error", reason });
 
 interface HarnessOpts {
   rpc?: RpcResult[];
@@ -57,7 +62,7 @@ interface HarnessOpts {
 }
 function harness(opts: HarnessOpts = {}) {
   const calls: { args: DeductionRpcArgs }[] = [];
-  const logs: { productId: string; before: number; after: number }[] = [];
+  const transitions: { products: any[]; variants: any[] }[] = [];
   const queue = [...(opts.rpc ?? [])];
   const ports: ClaimDeductPorts = {
     callDeduction: async (args) => {
@@ -65,11 +70,11 @@ function harness(opts: HarnessOpts = {}) {
       if (opts.rpcFor) return opts.rpcFor(args);
       return queue.shift() ?? processed(1);
     },
-    logStock: async (a) => {
-      logs.push(a);
+    logTransitions: async (a) => {
+      transitions.push(a);
     },
   };
-  return { ports, calls, logs };
+  return { ports, calls, transitions };
 }
 
 // ── isMissingDeductionMigration + syncCanPush ──────────────────────────────
@@ -175,7 +180,7 @@ test("RPC error → complete=false (Shopify push blocked), nothing deducted", as
 });
 
 test("missing migration → complete=false (push blocked), migration reason", async () => {
-  const { ports, logs } = harness({
+  const { ports, transitions } = harness({
     rpc: [{ data: null, error: { code: "PGRST202", message: "Could not find the function process_shopify_order_deduction" } }],
   });
   const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
@@ -183,7 +188,7 @@ test("missing migration → complete=false (push blocked), migration reason", as
   assert.equal(res.blockedReason, "migration_required");
   assert.equal(syncCanPush(res), false);
   assert.equal(res.deducted, 0);
-  assert.equal(logs.length, 0);
+  assert.equal(transitions.length, 0);
 });
 
 test("null RPC response → complete=false (push blocked), fail closed", async () => {
@@ -267,7 +272,26 @@ test("two lines of the same product aggregate into one p_deductions entry", asyn
     ports,
     PLANNERS,
   );
-  assert.deepEqual(calls[0].args.p_deductions, [{ product_id: "p1", quantity: 5 }]);
+  assert.deepEqual(calls[0].args.p_deductions, [{ productId: "p1", variantId: null, quantity: 5 }]);
+});
+
+// ── classified sale failure → fail closed, nothing recorded, push blocked ─────
+
+test("insufficient_stock RPC result → complete=false, retryable, no push", async () => {
+  const { ports } = harness({ rpc: [saleError("insufficient_stock")] });
+  const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.equal(res.complete, false);
+  assert.equal(res.blockedReason, "insufficient_stock");
+  assert.equal(res.processed, 0);
+  assert.equal(res.deducted, 0);
+});
+
+test("inventory_inconsistent RPC result → complete=false, no push", async () => {
+  const { ports } = harness({ rpc: [saleError("inventory_inconsistent")] });
+  const res = await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
+  assert.equal(res.complete, false);
+  assert.equal(res.blockedReason, "inventory_inconsistent");
+  assert.equal(res.deducted, 0);
 });
 
 // ── channel from payment method only ───────────────────────────────────────
@@ -304,10 +328,14 @@ test("refunded order → recorded via RPC with empty deductions, still complete"
   assert.equal(res.processed, 1);
 });
 
-test("processed order logs stock transitions from RPC-reported deltas", async () => {
-  const { ports, logs } = harness({ rpc: [processed(1, [{ product_id: "p1", before: 3, after: 0 }])] });
+test("processed order fires authoritative transitions from the RPC's products/variants", async () => {
+  const { ports, transitions } = harness({
+    rpc: [processed(1, [{ productId: "p1", before: 3, after: 0 }], [{ productId: "p1", variantId: "v1", variantSku: "S", before: 2, after: 0 }])],
+  });
   await claimAndDeduct([order({})], CATALOG, new Set(), false, new Map(), ports, PLANNERS);
-  assert.deepEqual(logs, [{ productId: "p1", before: 3, after: 0 }]);
+  assert.equal(transitions.length, 1);
+  assert.deepEqual(transitions[0].products, [{ productId: "p1", before: 3, after: 0 }]);
+  assert.deepEqual(transitions[0].variants, [{ productId: "p1", variantId: "v1", variantSku: "S", before: 2, after: 0 }]);
 });
 
 test("nothing considered → complete run with no RPC calls", async () => {

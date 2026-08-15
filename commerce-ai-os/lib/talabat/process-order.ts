@@ -44,6 +44,10 @@ export interface ProcessOrderDeps {
   loadContext: (admin: any) => Promise<ContextResult>;
   loadSnapshots: (admin: any, targets: SnapshotTarget[]) => Promise<SnapshotResult>;
   nowIso?: () => string;
+  // INV.5 — best-effort authoritative zero-crossing transitions from the RPC's
+  // canonical result (products[] + variants[]). Optional + fire-and-forget: a
+  // transition failure NEVER changes a processed sale. No totalStock, no availability.
+  logTransitions?: (admin: any, args: { products: any[]; variants: any[] }) => Promise<void>;
 }
 
 type UpdateOutcome = "updated" | "already_processed" | "already_manual_review" | "already_failed" | "status_update_failed";
@@ -305,7 +309,19 @@ export async function processStoredTalabatOrder(
     }
 
     const status = String(rpc.data.status ?? "");
-    if (status === "processed") return { outcome: "processed" };
+    if (status === "processed") {
+      // Best-effort authoritative transitions from the canonical sale result.
+      // Never blocks or reverses the processed sale.
+      if (deps.logTransitions) {
+        try {
+          await deps.logTransitions(admin, {
+            products: Array.isArray(rpc.data.products) ? rpc.data.products : [],
+            variants: Array.isArray(rpc.data.variants) ? rpc.data.variants : [],
+          });
+        } catch { /* transitions are best-effort */ }
+      }
+      return { outcome: "processed" };
+    }
     if (status === "manual_review") {
       // Verify the DB state before creating/parking anything.
       const reason = normalizeTalabatProcessingReason(rpc.data.reason);

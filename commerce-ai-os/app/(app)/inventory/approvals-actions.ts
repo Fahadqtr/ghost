@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
-import { applyMovement, editMovementQty, deleteMovement as deleteMovementCore } from "@/lib/inventory/movements";
+import { applyMovement, editMovementQty, deleteMovement as deleteMovementCore, isChannelSaleAudit, CHANNEL_SALE_LOCKED_MSG } from "@/lib/inventory/movements";
 
 export type StaffMove = {
   id: number;
@@ -100,6 +100,8 @@ export async function approveMovements(ids: number[]) {
   for (const id of ids) {
     const { data: row } = await admin.from("malak_audit").select("details").eq("id", id).single();
     if (!row) continue;
+    // INV.5 — never approve an automatic channel sale through the staff endpoint.
+    if (isChannelSaleAudit(row)) continue;
     const details = { ...(row.details ?? {}), review: "approved", reviewedBy: email, reviewedAt: now };
     const { error } = await admin.from("malak_audit").update({ details }).eq("id", id);
     if (!error) updated++;
@@ -117,6 +119,7 @@ export async function reverseMovement(id: number) {
   if (!admin) return { error: NO_DB };
   const { data: row } = await admin.from("malak_audit").select("sku, action_type, details").eq("id", id).single();
   if (!row) return { error: "الحركة غير موجودة." };
+  if (isChannelSaleAudit(row)) return { error: CHANNEL_SALE_LOCKED_MSG };
   if (row.details?.review === "reversed") return { error: "هذه الحركة معكوسة مسبقًا." };
   const inventoryId = row.details?.inventoryId;
   const qty = Number(row.details?.quantity ?? 0);

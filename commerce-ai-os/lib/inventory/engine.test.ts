@@ -268,13 +268,55 @@ test("reconcile delegates to the reconcile read layer", async () => {
 
 // ── unimplemented ops throw; they can NEVER perform a mutation ─────────────────
 
-test("future ops throw; shelf ops (moveShelf/removeShelf) are implemented in INV.4C", () => {
-  for (const fn of [adjust, sell, receive, reverseMovement]) {
+// ── sell (INV.5) — canonical grain-aware sale via inv_sell ─────────────────────
+
+const saleApplied = (extra: Record<string, unknown> = {}) =>
+  ({ data: { status: "applied", deductedUnits: 3, products: [{ productId: "p1", before: 10, after: 7 }], variants: [], ...extra }, error: null });
+
+test("sell(product) calls inv_sell with mapped params + fail-closed required fields", async () => {
+  const c = rpcClient(saleApplied());
+  const r = await sell(c, { scope: "product", targetId: "p1", quantity: 3, source: "shopify", externalId: "gid://o/1" });
+  assert.equal(r.ok, true);
+  assert.deepEqual(c.calls, [{ name: "inv_sell", params: {
+    p_scope: "product", p_target_id: "p1", p_quantity: 3, p_source: "shopify", p_external_id: "gid://o/1" } }]);
+  if (r.ok) { assert.equal(r.data.deductedUnits, 3); assert.ok(Array.isArray(r.data.products)); }
+});
+
+test("sell(variant) maps scope + passes null externalId when omitted", async () => {
+  const c = rpcClient(saleApplied({ variants: [{ productId: "p1", variantId: "v1", variantSku: "S", before: 5, after: 3 }] }));
+  const r = await sell(c, { scope: "variant", targetId: "v1", quantity: 2, source: "engine" });
+  assert.equal(r.ok, true);
+  assert.equal(c.calls[0].params && (c.calls[0].params as any).p_external_id, null);
+});
+
+test("sell rejects a non-positive / non-integer quantity and a bad scope BEFORE any RPC", async () => {
+  const c = rpcClient(saleApplied());
+  for (const q of [0, -1, 2.5]) {
+    const r = await sell(c, { scope: "product", targetId: "p1", quantity: q, source: "shopify" });
+    assert.equal(r.ok, false);
+  }
+  const bad = await sell(c, { scope: "warehouse" as any, targetId: "p1", quantity: 1, source: "shopify" });
+  assert.equal(bad.ok, false);
+  assert.equal(c.calls.length, 0, "no RPC on invalid input");
+});
+
+test("sell fails closed on transport error, classified status:error, and malformed body", async () => {
+  const err = await sell(rpcClient({ data: null, error: { message: "boom" } }), { scope: "product", targetId: "p1", quantity: 1, source: "shopify" });
+  assert.equal(err.ok, false);
+  const cls = await sell(rpcClient({ data: { status: "error", reason: "insufficient_stock" }, error: null }), { scope: "product", targetId: "p1", quantity: 1, source: "shopify" });
+  assert.equal(cls.ok, false);
+  if (!cls.ok) assert.equal(cls.reason, "insufficient_stock");
+  const mal = await sell(rpcClient({ data: { status: "applied" }, error: null }), { scope: "product", targetId: "p1", quantity: 1, source: "shopify" });
+  assert.equal(mal.ok, false, "missing deductedUnits/products/variants → fail closed");
+});
+
+test("future ops throw; sell + shelf ops are implemented (INV.4C/INV.5)", () => {
+  for (const fn of [adjust, receive, reverseMovement]) {
     assert.throws(() => (fn as () => never)(), InventoryEngineNotImplementedError);
   }
   assert.deepEqual([...NOT_IMPLEMENTED_OPS].sort(),
-    ["adjust", "receive", "reverseMovement", "sell"]);
-  for (const op of ["setAbsolute", "moveShelf", "removeShelf", "placeOnShelf", "assignFullShelf", "replaceShelfDistribution"]) {
+    ["adjust", "receive", "reverseMovement"]);
+  for (const op of ["setAbsolute", "sell", "moveShelf", "removeShelf", "placeOnShelf", "assignFullShelf", "replaceShelfDistribution"]) {
     assert.equal([...NOT_IMPLEMENTED_OPS].includes(op as never), false, `${op} is implemented, not a stub`);
   }
 });
