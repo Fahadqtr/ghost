@@ -105,3 +105,30 @@ export async function logAuthoritativeStockTransition(admin: any, opts: {
     console.error("[authoritative-stock-transition]", e instanceof Error ? e.message : e);
   }
 }
+
+// INV.5 — AUTHORITATIVE VARIANT-ONLY zero-crossing transition. Unlike
+// logAuthoritativeVariantTransition (which escalates to a PRODUCT task when the
+// parent pool crosses zero), this opens ONLY a variant-level oos/restock task on
+// the variant's OWN crossing. A channel sale fires the parent transition ONCE per
+// affected product (logAuthoritativeStockTransition); for variants whose parent
+// did NOT cross zero it fires this variant-only task — so several variants of one
+// parent never produce duplicate parent tasks. Best-effort; never writes
+// availability; a task failure never undoes the sale.
+export async function logAuthoritativeVariantOnlyTransition(admin: any, opts: {
+  productId: string | null | undefined;
+  variantId: string;
+  variantName: string;
+  variantBefore: number;
+  variantAfter: number;
+  actor?: string;
+}): Promise<void> {
+  try {
+    const productId = opts.productId ? String(opts.productId) : "";
+    if (!productId || !opts.variantId) return;
+    const action = planStockTransition({ before: opts.variantBefore, after: opts.variantAfter });
+    if (!action) return;
+    await openVariantStockTask(admin, productId, { id: opts.variantId, name: opts.variantName }, action, opts.actor);
+  } catch (e) {
+    console.error("[authoritative-variant-only-transition]", e instanceof Error ? e.message : e);
+  }
+}

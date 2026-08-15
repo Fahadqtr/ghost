@@ -24,6 +24,12 @@ export type MovementResult =
   | { error: string }
   | { ok: true; before: number; after: number; qty: number; sku: string | null };
 
+// INV.5 — immutability guard for automatic CHANNEL SALE audits (pure rule lives in
+// ./channel-immutability.ts so node:test can import it without this file's next/cache
+// + @/ dependencies). Re-exported here for the movement/approval call sites.
+export { isChannelSaleAudit, CHANNEL_SALE_LOCKED_MSG } from "./channel-immutability.ts";
+import { isChannelSaleAudit, CHANNEL_SALE_LOCKED_MSG } from "./channel-immutability.ts";
+
 /** Apply a movement with an already-authorized (service-role) client. */
 export async function applyMovement(admin: any, input: MovementInput): Promise<MovementResult> {
   const qty = normalizeQty(input.quantity);
@@ -92,6 +98,7 @@ export async function editMovementQty(admin: any, id: number, newQty: number, ac
   if (!q) return { error: "الكمية لازم تكون أكبر من صفر." };
   const { data: row } = await admin.from("malak_audit").select("action_type, old_value, details").eq("id", id).single();
   if (!row) return { error: "الحركة غير موجودة." };
+  if (isChannelSaleAudit(row)) return { error: CHANNEL_SALE_LOCKED_MSG };
   const rev = row.details?.review;
   if (rev === "reversed" || rev === "deleted") return { error: "لا يمكن تعديل حركة محذوفة أو معكوسة." };
   const inventoryId = row.details?.inventoryId;
@@ -126,6 +133,7 @@ export async function editMovementQty(admin: any, id: number, newQty: number, ac
 export async function deleteMovement(admin: any, id: number, actor: string): Promise<{ ok: true } | { error: string }> {
   const { data: row } = await admin.from("malak_audit").select("action_type, details").eq("id", id).single();
   if (!row) return { error: "الحركة غير موجودة." };
+  if (isChannelSaleAudit(row)) return { error: CHANNEL_SALE_LOCKED_MSG };
   const rev = row.details?.review;
   if (rev === "deleted") return { error: "الحركة محذوفة مسبقًا." };
   const inventoryId = row.details?.inventoryId;

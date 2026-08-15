@@ -8,6 +8,7 @@ import { evaluateDeductGate, isAutoDeductEnabled } from "@/lib/talabat/event-gat
 import { loadTalabatResolutionContext } from "@/lib/talabat/resolution-context";
 import { loadStockSnapshots } from "@/lib/talabat/stock-snapshots";
 import { processStoredTalabatOrder, handleScheduleFailure, handleUnexpectedProcessingFailure, type ProcessOrderDeps } from "@/lib/talabat/process-order";
+import { logAuthoritativeStockTransition, logAuthoritativeVariantOnlyTransition } from "@/lib/inventory/transition";
 import {
   handleTalabatWebhookPost,
   handleTalabatWebhookGet,
@@ -48,6 +49,31 @@ function buildProcessDeps(): ProcessOrderDeps {
     evaluateGate: evaluateDeductGate,
     loadContext: loadTalabatResolutionContext,
     loadSnapshots: loadStockSnapshots,
+    // INV.5 — best-effort authoritative transitions from the canonical sale result:
+    // a parent product task once per product, and a variant-only task for a variant
+    // whose parent did NOT cross zero (no duplicate parent tasks). Never totalStock.
+    logTransitions: async (admin, { products, variants }) => {
+      const parentCrossed = new Map<string, boolean>();
+      for (const p of products) {
+        const before = Number(p.before) || 0;
+        const after = Number(p.after) || 0;
+        const productId = String(p.productId ?? "");
+        parentCrossed.set(productId, (before > 0 && after <= 0) || (before <= 0 && after > 0));
+        await logAuthoritativeStockTransition(admin, { productId, before, after, actor: "طلبات — Talabat" });
+      }
+      for (const v of variants) {
+        const productId = String(v.productId ?? "");
+        if (parentCrossed.get(productId)) continue;
+        await logAuthoritativeVariantOnlyTransition(admin, {
+          productId,
+          variantId: String(v.variantId ?? ""),
+          variantName: v.variantSku ?? "",
+          variantBefore: Number(v.before) || 0,
+          variantAfter: Number(v.after) || 0,
+          actor: "طلبات — Talabat",
+        });
+      }
+    },
   };
 }
 

@@ -317,6 +317,40 @@ export async function moveShelf(
   return interpret(op, error, data, required);
 }
 
+/**
+ * INV.5 — canonical grain-aware SALE (RPC inv_sell → inv_apply_sale_targets). The
+ * SOLE Engine path a channel/sale writer uses to decrement stock: it lowers the
+ * authoritative quantity (simple inventory / variant + parent rollup), spreads a
+ * shelf-tracked sale biggest-first (deleting emptied placements + recomputing the
+ * primary location), advances inventory.sold_quantity (per parent), and writes an
+ * immutable stock_out audit — never a products mirror, never availability.
+ *
+ * Fail-closed like every wrapper: transport error / status:'error' (the RPC's
+ * classified reason — insufficient_stock / inventory_inconsistent / invalid_plan /
+ * parent_has_shelf_rows — surfaced verbatim) / malformed body / a missing derived
+ * field is a FAILURE. Never a direct-write fallback. Required success fields:
+ * deductedUnits, products, variants.
+ */
+export async function sell(
+  admin: any,
+  args: { scope: ShelfScope; targetId: string; quantity: number; source: string; externalId?: string | null },
+): Promise<EngineResult> {
+  const op = "sell";
+  const { scope, targetId, quantity, source } = args;
+  if (scope !== "product" && scope !== "variant") return { ok: false, op, reason: "invalid_scope" };
+  if (!targetId) return { ok: false, op, reason: "missing_target" };
+  if (!Number.isInteger(quantity) || quantity <= 0) return { ok: false, op, reason: "invalid_quantity" };
+  if (!source || !source.trim()) return { ok: false, op, reason: "invalid_source" };
+  const { data, error } = await admin.rpc("inv_sell", {
+    p_scope: scope,
+    p_target_id: targetId,
+    p_quantity: quantity,
+    p_source: source,
+    p_external_id: args.externalId ?? null,
+  });
+  return interpret(op, error, data, ["deductedUnits", "products", "variants"]);
+}
+
 /** Read-only reconciliation verdict for a product (delegates to reconcile.ts). */
 export async function reconcile(admin: any, productId: string): Promise<ReconcileResult> {
   return reconcileProductState(admin, productId);
@@ -331,13 +365,12 @@ export async function reconcile(admin: any, productId: string): Promise<Reconcil
 
 export const NOT_IMPLEMENTED_OPS = [
   "adjust",            // product-grain delta (needs an atomic product RPC)
-  "sell",              // stock − + sold + shelf spread (channel symmetry, INV.5)
   "receive",           // product-grain purchase-in
   "reverseMovement",   // invert a ledger movement
 ] as const;
 // setAbsolute is implemented (INV.4A); adjustVariantMovement (INV.4B);
 // placeOnShelf / removeShelf / replaceShelfDistribution / assignFullShelf /
-// moveShelf are implemented (INV.4C) — see the wrappers above.
+// moveShelf are implemented (INV.4C); sell is implemented (INV.5) — see above.
 
 export type NotImplementedOp = (typeof NOT_IMPLEMENTED_OPS)[number];
 
@@ -356,6 +389,5 @@ function notImplemented(op: NotImplementedOp): never {
 
 // Throwing stubs — present in the contract, impossible to call as a mutation.
 export const adjust = (..._args: unknown[]): never => notImplemented("adjust");
-export const sell = (..._args: unknown[]): never => notImplemented("sell");
 export const receive = (..._args: unknown[]): never => notImplemented("receive");
 export const reverseMovement = (..._args: unknown[]): never => notImplemented("reverseMovement");

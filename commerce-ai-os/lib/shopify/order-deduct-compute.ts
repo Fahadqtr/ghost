@@ -28,10 +28,29 @@ export interface CatalogRowLite {
   name_en: string | null;
 }
 
+// INV.5 — variant rows for grain-aware resolution. A product is "simple" when it
+// has NO variant rows; otherwise it is a variant product and its parent inventory
+// is Σ variants (never deducted directly by a channel sale).
+export interface VariantRowLite {
+  id: string;
+  parent_product_id: string;
+  sku: string | null;
+  variant_name?: string | null;
+}
+
+// A durable, grain-aware deduction target. variantId=null → simple product;
+// variantId set → a specific variant. SKU is NOT carried into the SQL sale.
+export interface DeductionTarget {
+  productId: string;
+  variantId: string | null;
+  name_en: string;
+  qty: number;
+}
+
 export interface OrderDeductionPlan {
   orderIds: string[];                                            // to mark as synced (all considered)
-  deductions: { product_id: string; name_en: string; qty: number }[];
-  unmatched: { title: string; qty: number }[];                   // items we couldn't map to the catalog
+  deductions: DeductionTarget[];
+  unmatched: { title: string; qty: number }[];                   // items we couldn't map (or ambiguous) → block the order
   // Per considered (not-already-synced) order — carries the payment data so the
   // caller can persist channel attribution. Does NOT influence what is deducted.
   considered: { id: string; name: string; paymentGatewayNames: string[] }[];
@@ -46,29 +65,91 @@ export function isVoidOrder(o: Pick<OrderForDeduction, "financial" | "cancelledA
   return /REFUNDED|VOIDED/i.test(o.financial);
 }
 
+type ResolvedTarget = { productId: string; variantId: string | null; name_en: string };
+
 /**
- * Map new (not-yet-synced) orders' line items onto catalog products — by SKU
- * first, then by normalized title — and total the quantity to deduct per
- * product. Every considered order lands in orderIds so it is only ever
- * processed once, even when some of its items didn't match.
+ * INV.5 grain-aware line resolution. Priority:
+ *   1. Exact UNIQUE variant SKU            → variant target.
+ *   2. Exact UNIQUE simple-product SKU     → simple target (simple = no variants).
+ *   3. Normalized title, UNIQUE simple only → simple target.
+ * Everything else — a duplicate/ambiguous SKU, a variant-parent SKU that does not
+ * resolve a specific option, a title that matches a variant parent, a duplicate
+ * title, or no match — returns null → the line is unmatched and BLOCKS the order.
+ * A variant product's parent inventory is NEVER deducted by a channel sale.
+ */
+function resolveLine(
+  sku: string | undefined,
+  title: string,
+  maps: {
+    variantBySku: Map<string, ResolvedTarget[]>;
+    simpleBySku: Map<string, ResolvedTarget[]>;
+    parentSku: Set<string>;
+    simpleByTitle: Map<string, ResolvedTarget[]>;
+  },
+): ResolvedTarget | null {
+  const s = key(sku);
+  if (s) {
+    const vs = maps.variantBySku.get(s);
+    if (vs) return vs.length === 1 ? vs[0] : null;         // duplicate variant SKU → ambiguous → block
+    const ps = maps.simpleBySku.get(s);
+    if (ps) return ps.length === 1 ? ps[0] : null;         // duplicate simple SKU → block
+    if (maps.parentSku.has(s)) return null;                // parent SKU on a variant product → cannot resolve option → block
+    // SKU matched nothing → fall through to a title fallback.
+  }
+  const t = key(title);
+  const ts = maps.simpleByTitle.get(t);
+  if (ts && ts.length === 1) return ts[0];                 // unique simple title only
+  return null;                                             // no match / ambiguous / variant-parent title → block
+}
+
+/**
+ * Map new (not-yet-synced) orders' line items onto DURABLE grain-aware targets
+ * (unique variant SKU → simple SKU → unique simple title) and total the quantity
+ * per (product, variant). Every considered order lands in orderIds so it is only
+ * processed once. An unresolved/ambiguous line becomes `unmatched` so the caller
+ * blocks the whole order (all-or-nothing) — a variant product is never deducted
+ * at the parent grain.
  */
 export function planOrderDeductions(
   orders: OrderForDeduction[],
   catalog: CatalogRowLite[],
+  variants: VariantRowLite[],
   alreadySynced: Set<string>,
 ): OrderDeductionPlan {
-  const bySku = new Map<string, CatalogRowLite>();
-  const byTitle = new Map<string, CatalogRowLite>();
-  for (const c of catalog) {
-    const k = key(c.sku);
-    if (k && !bySku.has(k)) bySku.set(k, c);
-    const t = key(c.name_en);
-    if (t && !byTitle.has(t)) byTitle.set(t, c);
+  const withVariants = new Set<string>();
+  for (const v of variants) if (v.parent_product_id) withVariants.add(v.parent_product_id);
+
+  const variantBySku = new Map<string, ResolvedTarget[]>();
+  const parentSku = new Set<string>();
+  const simpleBySku = new Map<string, ResolvedTarget[]>();
+  const simpleByTitle = new Map<string, ResolvedTarget[]>();
+
+  const push = (m: Map<string, ResolvedTarget[]>, k: string, v: ResolvedTarget) => {
+    const arr = m.get(k); if (arr) arr.push(v); else m.set(k, [v]);
+  };
+
+  for (const v of variants) {
+    const k = key(v.sku);
+    if (!k) continue;
+    push(variantBySku, k, { productId: v.parent_product_id, variantId: v.id, name_en: String(v.variant_name ?? "") });
   }
+  for (const c of catalog) {
+    const isSimple = !withVariants.has(c.id);
+    const sk = key(c.sku);
+    if (sk) {
+      if (isSimple) push(simpleBySku, sk, { productId: c.id, variantId: null, name_en: String(c.name_en ?? "") });
+      else parentSku.add(sk);
+    }
+    if (isSimple) {
+      const t = key(c.name_en);
+      if (t) push(simpleByTitle, t, { productId: c.id, variantId: null, name_en: String(c.name_en ?? "") });
+    }
+  }
+  const maps = { variantBySku, simpleBySku, parentSku, simpleByTitle };
 
   const orderIds: string[] = [];
   const considered: { id: string; name: string; paymentGatewayNames: string[] }[] = [];
-  const perProduct = new Map<string, { product_id: string; name_en: string; qty: number }>();
+  const perTarget = new Map<string, DeductionTarget>();
   const unmatched: { title: string; qty: number }[] = [];
 
   for (const o of orders) {
@@ -79,15 +160,16 @@ export function planOrderDeductions(
     for (const it of o.items) {
       const qty = Math.max(0, Math.round(Number(it.qty) || 0));
       if (!qty) continue;
-      const hit = (it.sku ? bySku.get(key(it.sku)) : undefined) ?? byTitle.get(key(it.title));
+      const hit = resolveLine(it.sku, it.title, maps);
       if (!hit) { unmatched.push({ title: it.title, qty }); continue; }
-      const agg = perProduct.get(hit.id) ?? { product_id: hit.id, name_en: String(hit.name_en ?? it.title), qty: 0 };
+      const key2 = `${hit.productId}|${hit.variantId ?? ""}`;
+      const agg = perTarget.get(key2) ?? { productId: hit.productId, variantId: hit.variantId, name_en: hit.name_en || it.title, qty: 0 };
       agg.qty += qty;
-      perProduct.set(hit.id, agg);
+      perTarget.set(key2, agg);
     }
   }
 
-  return { orderIds, deductions: [...perProduct.values()], unmatched, considered };
+  return { orderIds, deductions: [...perTarget.values()], unmatched, considered };
 }
 
 /**

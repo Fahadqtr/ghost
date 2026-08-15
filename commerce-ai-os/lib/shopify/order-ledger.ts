@@ -24,7 +24,7 @@
 //   (a partial view would re-raise sold-out stock). There is NO TypeScript
 //   inventory write on this path.
 
-import type { CatalogRowLite, OrderForDeduction } from "./order-deduct-compute";
+import type { CatalogRowLite, OrderForDeduction, DeductionTarget } from "./order-deduct-compute";
 
 export interface DbError {
   code?: string | null;
@@ -40,9 +40,14 @@ export interface DeductionRpcArgs {
   p_order_name: string | null;
   p_channel: string;
   p_payment_gateway_names: string[];
-  p_deductions: { product_id: string; quantity: number }[];
+  // INV.5 grain-aware: variantId=null → simple product; set → a specific variant.
+  p_deductions: { productId: string; variantId: string | null; quantity: number }[];
   p_baseline: boolean;
 }
+
+/** Authoritative before/after per affected grain (from the canonical sale RPC). */
+export interface SettledProduct { productId: string; before: number; after: number }
+export interface SettledVariant { productId: string; variantId: string; variantSku: string | null; before: number; after: number }
 
 /**
  * True when the RPC / its migration is not present yet, so the whole step can skip
@@ -66,8 +71,9 @@ export function isMissingDeductionMigration(err: DbError | null | undefined): bo
 export interface ClaimDeductPorts {
   /** Call the single-transaction deduction RPC for one order. */
   callDeduction(args: DeductionRpcArgs): Promise<RpcResult>;
-  /** Best-effort stock-transition log/task hook (does NOT write inventory). */
-  logStock(args: { productId: string; before: number; after: number }): Promise<void>;
+  /** Best-effort authoritative transition hook (does NOT write inventory). Fired
+   *  once per settled order with every affected product + variant grain. */
+  logTransitions(args: { products: SettledProduct[]; variants: SettledVariant[] }): Promise<void>;
 }
 
 export interface ClaimDeductPlanners {
@@ -77,7 +83,7 @@ export interface ClaimDeductPlanners {
     alreadySynced: Set<string>,
   ): {
     considered: { id: string }[];
-    deductions: { product_id: string; qty: number }[];
+    deductions: DeductionTarget[];
     unmatched: { title: string; qty: number }[];
   };
   classifyChannel(paymentGatewayNames: string[] | null | undefined): string;
@@ -89,7 +95,16 @@ export type BlockedReason =
   | "unmatched_order"
   | "migration_required"
   | "db_error"
-  | "unknown_response";
+  | "unknown_response"
+  | "insufficient_stock"
+  | "inventory_inconsistent"
+  | "invalid_plan"
+  | "parent_has_shelf_rows";
+
+/** RPC classified sale-failure reasons → a BlockedReason (fail closed, retryable). */
+const SALE_FAILURE_REASONS = new Set<BlockedReason>([
+  "insufficient_stock", "inventory_inconsistent", "invalid_plan", "parent_has_shelf_rows",
+]);
 
 export interface ClaimDeductResult {
   complete: boolean; // when false the caller MUST NOT push stock to Shopify
@@ -104,9 +119,9 @@ export interface ClaimDeductResult {
 const BASELINE_NOTE = "أول تشغيل — سجّل الطلبات الحالية كخط أساس بدون خصم.";
 
 type Interpreted =
-  | { kind: "processed"; deducted: number; products: { product_id: string; before: number; after: number }[] }
+  | { kind: "processed"; deducted: number; products: SettledProduct[]; variants: SettledVariant[] }
   | { kind: "recorded" } // already_processed | baseline_recorded — recorded, nothing deducted here
-  | { kind: "skip"; reason: "db_error" | "unknown_response" } // FAIL CLOSED → deduct nothing
+  | { kind: "skip"; reason: BlockedReason } // FAIL CLOSED → deduct nothing
   | { kind: "migration" };
 
 /** Map an RPC result to an outcome. Anything not an explicit success is a safe skip. */
@@ -119,14 +134,22 @@ function interpret(res: RpcResult): Interpreted {
   const status = String((d as { status?: unknown }).status ?? "");
   if (status === "processed") {
     const products = (d as { products?: unknown }).products;
+    const variants = (d as { variants?: unknown }).variants;
     return {
       kind: "processed",
-      deducted: Number((d as { deducted?: unknown }).deducted) || 0,
-      products: Array.isArray(products) ? (products as { product_id: string; before: number; after: number }[]) : [],
+      deducted: Number((d as { deductedUnits?: unknown }).deductedUnits) || 0,
+      products: Array.isArray(products) ? (products as SettledProduct[]) : [],
+      variants: Array.isArray(variants) ? (variants as SettledVariant[]) : [],
     };
   }
   if (status === "already_processed" || status === "baseline_recorded") return { kind: "recorded" };
-  return { kind: "skip", reason: "unknown_response" }; // 'error' or any unknown status → fail closed
+  // A classified sale failure (status:'error', reason:…) → fail closed, retryable,
+  // NOTHING recorded by the RPC. Surface the specific reason when it's a known one.
+  if (status === "error") {
+    const reason = String((d as { reason?: unknown }).reason ?? "");
+    if (SALE_FAILURE_REASONS.has(reason as BlockedReason)) return { kind: "skip", reason: reason as BlockedReason };
+  }
+  return { kind: "skip", reason: "unknown_response" }; // any unknown status → fail closed
 }
 
 /** The Shopify stock push may proceed ONLY when the order step is fully complete. */
@@ -192,7 +215,7 @@ export async function claimAndDeduct(
       p_order_name: o.name ?? nameOf.get(o.id) ?? null,
       p_channel: planners.classifyChannel(gateways),
       p_payment_gateway_names: gateways,
-      p_deductions: per.deductions.map((d) => ({ product_id: d.product_id, quantity: d.qty })),
+      p_deductions: per.deductions.map((d) => ({ productId: d.productId, variantId: d.variantId, quantity: d.qty })),
       p_baseline: baseline,
     });
 
@@ -210,10 +233,9 @@ export async function claimAndDeduct(
     processed++;
     if (outcome.kind === "processed") {
       deducted += outcome.deducted;
-      // OOS "mark unavailable" tasks — reads totals, opens a task; no stock write.
-      for (const p of outcome.products) {
-        await ports.logStock({ productId: p.product_id, before: Number(p.before) || 0, after: Number(p.after) || 0 });
-      }
+      // Best-effort authoritative zero-crossing transitions (product + variant);
+      // reads totals / opens tasks — never writes inventory.
+      await ports.logTransitions({ products: outcome.products, variants: outcome.variants });
     }
   }
 
