@@ -10,6 +10,7 @@ import { runShopifyInventorySync, type InventorySyncResult } from "@/lib/shopify
 import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { diffShopify, targetShopifyPrice, indexShopify, normTitle, htmlFromPlain, mapShopifyToCatalogRow, type ShopifyDiff, type OurProductRow } from "@/lib/shopify-diff";
 import { createProductCore } from "@/lib/products/product-create";
+import { makeInventoryInitializer } from "@/lib/products/inventory-initializer";
 
 export type { ShopifyDiff } from "@/lib/shopify-diff";
 
@@ -267,7 +268,7 @@ export async function importShopifyProducts(shopifyIds: string[]): Promise<BulkM
       // unchanged. The core COMPENSATES (deletes the product) if the inventory
       // seed fails, so a failed seed can no longer leave an orphan product.
       const qty = Math.max(0, Number(p.variants[0]?.inventoryQuantity ?? 0) || 0);
-      const core = await createProductCore(sb, row as unknown as Record<string, unknown>, [], { seedQuantity: qty });
+      const core = await createProductCore(sb, row as unknown as Record<string, unknown>, [], makeInventoryInitializer(sb), { seedQuantity: qty });
       if (!core.ok) {
         // Fixed/safe text — never a raw DB error. Only advance the counters +
         // dedup sets on a fully-committed row, so a rolled-back product is not

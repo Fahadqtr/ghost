@@ -68,42 +68,45 @@ test("inventory-seed.ts has no @/ framework, DB, or React imports", () => {
   assert.equal(/createClient|createAdminClient/.test(src), false, "no DB client");
 });
 
-// ── adoption: the four byte-identical sites now spread inventorySeed ───────────
+// ── INV.6B: NO runtime create path spreads inventorySeed directly anymore ──────
+// After the strict lockdown, a client-side inventory INSERT is impossible for every
+// role, so every create path delegates authoritative inventory to the service-role
+// initializer (inv_initialize_product_state / inv_initialize_simple_products). The
+// cores import only the pure VALIDATORS (isValidSeedQuantity / computeVariantParentSeed)
+// from this module, never the row-shape builder. Each convergence is proven in its
+// own suite (product-create / product-create-batch / malak / shopify / staff / batch-
+// import-convergence). This guard pins that the direct-seed spread is fully retired.
 
-const ADOPTED: [string, string][] = [
-  ["lib/products/product-create.ts", "createProductCore"],
-  // Every runtime create path now seeds inventory THROUGH a core (single or batch),
-  // not by spreading inventorySeed directly — each proven in its own suite:
-  //  • Malak (P5) → createProductCore — malak-create-core.test.ts
-  //  • Shopify (P6) → createProductCore {seedQuantity} — shopify-create-core.test.ts
-  //  • Snoonu (P7) + Pure Seoul (P8) → createProductsBatchCore — product-create-batch.test.ts
-  //  • Staff (this phase) → createProductCore {seedQuantity: stock} — staff-create-core.test.ts
-  // (The batch core spreads inventorySeed too; it's a canonical core, covered by its own suite.)
+const NO_DIRECT_SEED: string[] = [
+  "lib/products/product-create.ts",
+  "lib/products/product-create-batch.ts",
+  "app/api/malak/commit/route.ts",
+  "app/staff/actions.ts",
+  "app/(app)/import-export/shopify-actions.ts",
+  "app/(app)/import-export/snoonu-actions.ts",
+  "app/(app)/import-export/pure-seoul-actions.ts",
 ];
 
-for (const [rel, name] of ADOPTED) {
-  test(`${name} adopted inventorySeed`, () => {
+for (const rel of NO_DIRECT_SEED) {
+  test(`${rel} does not spread inventorySeed(...) — inventory goes through the service-role initializer`, () => {
     const src = read(rel);
-    // `./inventory-seed.ts` (core, extensioned) or `@/lib/products/inventory-seed` (server files).
-    assert.ok(/from\s+["'][^"']*inventory-seed(?:\.ts)?["']/.test(src), `${rel} imports inventory-seed`);
-    assert.ok(/\.\.\.inventorySeed\(/.test(src), `${rel} spreads inventorySeed(...)`);
+    assert.equal(/\.\.\.inventorySeed\(/.test(src), false, `${rel} must not spread inventorySeed(...)`);
+    assert.equal(/\.from\(\s*["']inventory["']\s*\)\s*\.insert\b/.test(src), false, `${rel} must not insert inventory directly`);
   });
 }
 
-// ── P3 before/after persisted-shape equivalence ───────────────────────────────
+// ── canonical seed-shape equivalence (the shape the initializer RPC must produce) ─
 // Production defaults verified read-only: inventory.low_stock_threshold DEFAULT 5,
-// inventory.sold_quantity DEFAULT 0, both nullable, NO triggers. So the columns a
-// path omitted resolved to those same values on write. Writing them explicitly via
-// inventorySeed persists an identical row — these assertions pin that equivalence.
+// inventory.sold_quantity DEFAULT 0. The inv_initialize_product_state RPC writes a
+// row with exactly this shape (stock_quantity = seed, sold_quantity 0, threshold 5),
+// so inventorySeed() remains the canonical TS reference for that persisted shape.
 
-test("Staff seed: before (omit threshold, default→5) equals after (explicit inventorySeed)", () => {
-  const beforePersisted = { product_id: "P", stock_quantity: 7, sold_quantity: 0, low_stock_threshold: 5 /* DB default */ };
-  const afterWritten = { product_id: "P", ...inventorySeed(7) };
-  assert.deepEqual(afterWritten, beforePersisted);
+test("canonical seed shape: inventorySeed(7) is stock 7 / sold 0 / threshold 5", () => {
+  const persisted = { product_id: "P", stock_quantity: 7, sold_quantity: 0, low_stock_threshold: 5 };
+  assert.deepEqual({ product_id: "P", ...inventorySeed(7) }, persisted);
 });
 
-test("Shopify seed: before (omit threshold+sold, defaults→5/0) equals after (explicit inventorySeed)", () => {
-  const beforePersisted = { product_id: "P", stock_quantity: 42, low_stock_threshold: 5 /* default */, sold_quantity: 0 /* default */ };
-  const afterWritten = { product_id: "P", ...inventorySeed(42) };
-  assert.deepEqual(afterWritten, beforePersisted);
+test("canonical seed shape: inventorySeed(42) is stock 42 / sold 0 / threshold 5", () => {
+  const persisted = { product_id: "P", stock_quantity: 42, low_stock_threshold: 5, sold_quantity: 0 };
+  assert.deepEqual({ product_id: "P", ...inventorySeed(42) }, persisted);
 });

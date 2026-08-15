@@ -18,6 +18,8 @@
 // Supabase error, no database codes, no constraint name, no stack.
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { makeInventoryInitializer } from "@/lib/products/inventory-initializer";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { CATEGORIES } from "@/lib/constants";
 import { loadIdentitySnapshot } from "@/lib/products/catalog-identity-read";
@@ -683,6 +685,10 @@ export async function applyCatalogUpdates(
     }
 
     const supabase = createClient();
+    // INV.6B — structural variant sync goes through the service-role client; the
+    // atomic sync_product_variants RPC is admin-only after the lockdown. Product
+    // metadata still writes through the session `supabase` handle (RLS applies).
+    const admin = createAdminClient();
     const pipe = await runPipeline(supabase, file.bytes, sheetName.slice(0, 200), mapping);
     if (!pipe.ok) return { error: pipe.error };
     const p = pipe.p;
@@ -806,6 +812,11 @@ export async function applyCatalogCreates(
     }
 
     const supabase = createClient();
+    // INV.6B — product rows are inserted with the session client (RLS); inventory
+    // initialization goes through the service-role initializer adapter (direct
+    // inventory/variant writes are impossible after the strict lockdown).
+    const admin = createAdminClient();
+    const inventoryInit = makeInventoryInitializer(admin);
     const pipe = await runPipeline(supabase, file.bytes, sheetName.slice(0, 200), mapping);
     if (!pipe.ok) return { error: pipe.error };
     const p = pipe.p;
@@ -926,7 +937,7 @@ export async function applyCatalogCreates(
 
       try {
         const row = await toProductRow(input);
-        const core = await createProductCore(supabase, row, projectVariantInsertRows(variants));
+        const core = await createProductCore(supabase, row, projectVariantInsertRows(variants), inventoryInit);
         if (!core.ok) {
           results.push({
             rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode,
@@ -1016,7 +1027,7 @@ export async function applyCatalogCreates(
             stock_quantity: "",
           },
         ];
-        const sync = await syncProductVariants(supabase, parentId, full);
+        const sync = await syncProductVariants(admin, parentId, full);
         if (!sync.ok) {
           results.push({ rowNum, recordKind: "variant", recordId: null, sku: r.sku, barcode: vBarcode, status: "failed", message: sync.message, changedFields: [] });
           continue;

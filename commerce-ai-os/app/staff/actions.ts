@@ -26,6 +26,7 @@ import { setProductAvailabilityState, writeProductAvailability, setVariantAvaila
 import { availabilityFromInStock } from "@/lib/availability/read";
 import { clean, cleanDescription } from "@/lib/malak/talabat-export.mjs";
 import { createProductCore, type CreateVariantRow } from "@/lib/products/product-create";
+import { makeInventoryInitializer } from "@/lib/products/inventory-initializer";
 import { nextMkSku } from "@/lib/products/sku-generate";
 
 // Constant-time compare against the shared staff PIN (server-only env var).
@@ -995,7 +996,7 @@ export async function staffAddProduct(input: AddProductInput): Promise<{ product
   }
   // Simple product → seed from the entered top-level stock; variant product →
   // the core computes seed = Σ variants (seedQuantity is ignored when variants exist).
-  const core = await createProductCore(admin, row, variantRows, { seedQuantity: stock });
+  const core = await createProductCore(admin, row, variantRows, makeInventoryInitializer(admin), { seedQuantity: stock });
   if (!core.ok) {
     // Never surface a raw DB error.
     if (core.duplicateIdentity) return { error: "تعارض في الكود/الباركود — حاول مرة ثانية." };

@@ -45,6 +45,7 @@ import {
 import { CREATE_MESSAGES, validateAiProductInput } from "@/lib/products/create-validation";
 import { toProductRow, type ProductInput } from "@/lib/products/product-save";
 import { createProductCore, projectVariantInsertRows } from "@/lib/products/product-create";
+import { makeInventoryInitializer } from "@/lib/products/inventory-initializer";
 
 const BUCKET = "product-images";
 const ALLOWED_MEDIA: Record<string, string> = {
@@ -294,7 +295,7 @@ export async function createAiProduct(
     return { error: removed ? CREATE_MESSAGES.invalid_input : CREATE_MESSAGES.image_cleanup_failed };
   }
 
-  const core = await createProductCore(supabase, row, projectVariantInsertRows(variants));
+  const core = await createProductCore(supabase, row, projectVariantInsertRows(variants), makeInventoryInitializer(admin));
   if (!core.ok) {
     const removed = await removeImage();
     if (core.cleanup === "failed") return { error: CREATE_MESSAGES.cleanup_failed };

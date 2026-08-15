@@ -34,8 +34,9 @@ const PS = fnBody(PS_SRC, "addPureSeoulNewProducts");
 
 test("Snoonu: delegates writes to createProductsBatchCore; no direct product/inventory insert", () => {
   assert.ok(SNOONU.length > 0, "located addSnoonuNewProducts");
-  assert.ok(/createProductsBatchCore\(admin, toInsert, \{ seedQuantity: 0 \}\)/.test(SNOONU), "calls the batch core");
+  assert.ok(/createProductsBatchCore\(admin, toInsert, makeSimpleProductsInitializer\(admin\), \{ seedQuantity: 0 \}\)/.test(SNOONU), "calls the batch core with the service-role initializer");
   assert.ok(SNOONU_SRC.includes('from "@/lib/products/product-create-batch"'), "imports the batch core");
+  assert.ok(SNOONU_SRC.includes('from "@/lib/products/inventory-initializer"'), "imports the service-role batch initializer");
   assert.equal(/from\(["']products["']\)\s*\.insert/.test(SNOONU), false, "no direct products.insert");
   assert.equal(/from\(["']inventory["']\)\s*\.insert/.test(SNOONU), false, "no direct inventory.insert");
 });
@@ -54,8 +55,9 @@ test("Snoonu: identity, dedup, barcode range, skipped, response, revalidate pres
 
 test("Pure Seoul: delegates writes to createProductsBatchCore; no direct product/inventory insert", () => {
   assert.ok(PS.length > 0, "located addPureSeoulNewProducts");
-  assert.ok(/createProductsBatchCore\(admin, toInsert, \{ seedQuantity: 0 \}\)/.test(PS), "calls the batch core");
+  assert.ok(/createProductsBatchCore\(admin, toInsert, makeSimpleProductsInitializer\(admin\), \{ seedQuantity: 0 \}\)/.test(PS), "calls the batch core with the service-role initializer");
   assert.ok(PS_SRC.includes('from "@/lib/products/product-create-batch"'), "imports the batch core");
+  assert.ok(PS_SRC.includes('from "@/lib/products/inventory-initializer"'), "imports the service-role batch initializer");
   assert.equal(/from\(["']products["']\)\s*\.insert/.test(PS), false, "no direct products.insert");
   assert.equal(/from\(["']inventory["']\)\s*\.insert/.test(PS), false, "no direct inventory.insert");
 });

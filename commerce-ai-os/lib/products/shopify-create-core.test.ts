@@ -18,16 +18,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createProductCore } from "./product-create.ts";
+import { createProductCore, type InitializeInventoryState } from "./product-create.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
-// ── 1. Per-row rollback + continuation (stateful fake client) ─────────────────
+// ── 1. Per-row rollback + continuation (stateful fake client + initializer) ────
 // The Maps persist across calls, modeling the import loop's shared admin client.
-function statefulClient(failFor: Set<string>) {
+// The client owns the PRODUCT rows; the injected initializer owns the inventory it
+// would create (via the atomic service-role RPC in production) and can be told to
+// fail for a specific product id.
+function statefulClient() {
   const products = new Map<string, Record<string, unknown>>();
-  const inventory = new Map<string, Record<string, unknown>>();
   let seq = 0;
   const client = {
     from(table: string) {
@@ -44,15 +46,6 @@ function statefulClient(failFor: Set<string>) {
               };
             },
             then<T>(onOk: (v: { error: unknown }) => T, onErr?: (e: unknown) => T) {
-              if (table === "inventory") {
-                const v = values as Record<string, unknown>;
-                // Fail the seed for products whose id is marked to fail.
-                if (failFor.has(String(v.product_id))) {
-                  return Promise.resolve({ error: { message: "inv down" } }).then(onOk, onErr);
-                }
-                inventory.set(String(v.product_id), v);
-                return Promise.resolve({ error: null }).then(onOk, onErr);
-              }
               return Promise.resolve({ error: null }).then(onOk, onErr);
             },
           };
@@ -61,7 +54,6 @@ function statefulClient(failFor: Set<string>) {
           return {
             filter(column: string, _op: string, value: string) {
               if (table === "products" && column === "id") products.delete(value);
-              if (table === "inventory" && column === "product_id") inventory.delete(value);
               return Promise.resolve({ error: null });
             },
           };
@@ -69,34 +61,45 @@ function statefulClient(failFor: Set<string>) {
       };
     },
   };
-  return { client, products, inventory };
+  return { client, products };
 }
 
-test("row whose inventory seed fails is rolled back; the next row still succeeds", async () => {
-  // p1 (first insert) fails its inventory seed; p2 succeeds.
-  const { client, products, inventory } = statefulClient(new Set(["p1"]));
+function statefulInit(failFor: Set<string>) {
+  const inventory = new Map<string, number>();
+  const initialize: InitializeInventoryState = async ({ productId, simpleStock }) => {
+    if (failFor.has(productId)) return { ok: false, reason: "not_a_pristine_seed" };
+    inventory.set(productId, simpleStock);
+    return { ok: true };
+  };
+  return { initialize, inventory };
+}
+
+test("row whose inventory init fails is rolled back; the next row still succeeds", async () => {
+  // p1 (first insert) fails its inventory init; p2 succeeds.
+  const { client, products } = statefulClient();
+  const { initialize, inventory } = statefulInit(new Set(["p1"]));
   const rowA = { sku: "SH-A", name_en: "A", approval: "Approved" };
   const rowB = { sku: "SH-B", name_en: "B", approval: "Approved" };
 
-  const a = await createProductCore(client, rowA, [], { seedQuantity: 5 });
+  const a = await createProductCore(client, rowA, [], initialize, { seedQuantity: 5 });
   assert.equal(a.ok, false);
   if (!a.ok) assert.equal(a.stage, "inventory_insert");
 
   // The import loop would push failed[] and CONTINUE — model that by running row B.
-  const b = await createProductCore(client, rowB, [], { seedQuantity: 3 });
+  const b = await createProductCore(client, rowB, [], initialize, { seedQuantity: 3 });
   assert.ok(b.ok);
 
   // Only the good product survives; the rolled-back one left no orphan.
   assert.deepEqual([...products.values()].map((p) => p.sku), ["SH-B"], "no orphan from row A");
-  assert.equal(inventory.size, 1, "only row B seeded inventory");
-  const inv = [...inventory.values()][0];
-  assert.equal(inv.stock_quantity, 3, "row B inventory seeded from its seedQuantity");
+  assert.equal(inventory.size, 1, "only row B initialized inventory");
+  assert.equal(inventory.get("p2"), 3, "row B inventory seeded from its seedQuantity");
 });
 
 test("the product row inserted carries NO stock_quantity (mapping unchanged)", async () => {
-  const { client, products } = statefulClient(new Set());
+  const { client, products } = statefulClient();
+  const { initialize } = statefulInit(new Set());
   const row = { sku: "SH-C", name_en: "C", approval: "Approved" }; // exactly mapShopifyToCatalogRow's shape
-  await createProductCore(client, row, [], { seedQuantity: 12 });
+  await createProductCore(client, row, [], initialize, { seedQuantity: 12 });
   const stored = [...products.values()][0];
   assert.ok(!("stock_quantity" in stored), "no stock_quantity injected into the product row");
 });
@@ -113,8 +116,9 @@ test("import delegates to createProductCore with seedQuantity; no direct product
   assert.ok(BODY.length > 0, "located importShopifyProducts");
   // Tolerate a TS cast on `row` (e.g. `row as unknown as Record<string, unknown>`).
   assert.ok(/createProductCore\(sb, row\b/.test(BODY), "delegates to the core with the mapped row");
-  assert.ok(/\[\], \{ seedQuantity: qty \}\)/.test(BODY), "passes no variants + seedQuantity = store qty");
+  assert.ok(/\[\], makeInventoryInitializer\(sb\), \{ seedQuantity: qty \}\)/.test(BODY), "passes no variants + service-role initializer + seedQuantity = store qty");
   assert.ok(SRC.includes('from "@/lib/products/product-create"'), "imports the core");
+  assert.ok(SRC.includes('from "@/lib/products/inventory-initializer"'), "imports the service-role initializer");
   assert.equal(/from\(["']products["']\)\s*\.insert/.test(BODY), false, "no direct products.insert");
   assert.equal(/from\(["']inventory["']\)\s*\.insert/.test(BODY), false, "no direct inventory.insert");
 });

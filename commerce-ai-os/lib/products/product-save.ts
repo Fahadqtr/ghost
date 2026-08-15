@@ -179,6 +179,14 @@ export interface InventoryAdapter {
 export interface UpdateProductCoreOptions extends ProductSaveDeps {
   /** Service-role-backed numeric-stock port (Inventory Engine setAbsolute). */
   inventory: InventoryAdapter;
+  /**
+   * INV.6B — the client used for the atomic variant-sync RPC (sync_product_variants).
+   * After the strict lockdown that RPC is service_role-only and product_variants is
+   * SELECT-only for the session, so the editor injects the SERVICE-ROLE admin client
+   * here while the product metadata write still uses the session client. Defaults to
+   * the main `client` for callers/tests that pre-date the lockdown.
+   */
+  variantSyncClient?: ProductSaveClient;
 }
 
 /** One variant's before/after as reported by the atomic sync RPC (for audit). */
@@ -483,7 +491,7 @@ export async function updateProductCore(
 
   // Variants sync atomically; for a variant product the RPC also rolls the parent
   // inventory up to Σ variants inside the same transaction.
-  const sync = await syncProductVariants(client, id, input.variants, deps);
+  const sync = await syncProductVariants(opts.variantSyncClient ?? client, id, input.variants, deps);
   if (!sync.ok) {
     return { ok: false, stage: "variant_sync", message: sync.message };
   }

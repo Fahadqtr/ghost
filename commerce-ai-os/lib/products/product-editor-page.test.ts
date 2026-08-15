@@ -126,17 +126,20 @@ test("save action: thin shell over the shared core with auth, validation, fixed 
   assert.ok(EDIT_ACTIONS_SRC.includes("saved=1"), "success signal for the detail banner");
 });
 
-test("save action: metadata on the SESSION client; admin only backs the Inventory Engine adapter (INV.4D)", () => {
-  // The action itself makes no direct RPC, never surfaces a raw DB message, never logs.
+test("save action: metadata on the SESSION client; admin backs the Inventory adapter + the atomic variant sync (INV.6B)", () => {
+  // The action itself makes no direct RPC, never surfaces a raw DB message, never logs,
+  // and embeds no service-role KEY/env reference.
   for (const banned of ["service_role", "SUPABASE_SERVICE_ROLE", ".rpc(", "error.message", "console.log"]) {
     assert.ok(!EDIT_ACTIONS_SRC.includes(banned), `save action must not contain ${banned}`);
   }
-  // Product metadata + the SECURITY INVOKER variant sync run on the SESSION client
-  // through the shared core (RLS applies) — the session client is the first arg.
-  assert.ok(/updateProductCore\(\s*supabase,/.test(EDIT_ACTIONS_SRC), "core receives the session client");
-  // The admin/service-role client exists ONLY to build the narrow numeric-stock
-  // Inventory Engine adapter — never as the product-metadata client.
-  assert.ok(EDIT_ACTIONS_SRC.includes("createInventoryAdapter(admin)"), "admin flows only into the inventory adapter");
+  // Product METADATA runs on the SESSION client through the shared core (RLS applies)
+  // — the session client is the first arg.
+  assert.ok(/updateProductCore\(\s*supabase,/.test(EDIT_ACTIONS_SRC), "core receives the session client for metadata");
+  // The admin/service-role client backs ONLY the two numeric/structural writes that
+  // are admin-only after the INV.6B lockdown: the Inventory Engine adapter and the
+  // atomic variant-sync RPC — never the product-metadata write.
+  assert.ok(EDIT_ACTIONS_SRC.includes("createInventoryAdapter(admin)"), "admin backs the inventory adapter");
+  assert.ok(/variantSyncClient:\s*admin/.test(EDIT_ACTIONS_SRC), "admin (service-role) backs the atomic variant sync");
 });
 
 // ── form source scan ─────────────────────────────────────────────────────────

@@ -133,14 +133,19 @@ function makeCreateClient() {
   return { client, inserts };
 }
 
-test("createProductCore strips stock_quantity from the product row; inventory keeps the requested seed", async () => {
+test("createProductCore strips stock_quantity from the product row; the seed goes to the initializer", async () => {
   const { client, inserts } = makeCreateClient();
-  const res = await createProductCore(client, { sku: "mk9", name_ar: "x", stock_quantity: 17 }, []);
+  let seenSeed: number | null = null;
+  const initialize = async ({ simpleStock }: { simpleStock: number }) => {
+    seenSeed = simpleStock;
+    return { ok: true } as const;
+  };
+  const res = await createProductCore(client, { sku: "mk9", name_ar: "x", stock_quantity: 17 }, [], initialize);
   assert.ok(res.ok);
   const prod = inserts.find((i) => i.table === "products")!.values;
   assert.ok(!("stock_quantity" in prod), "product insert has NO stock_quantity mirror");
-  const inv = inserts.find((i) => i.table === "inventory")!.values;
-  assert.equal(inv.stock_quantity, 17, "inventory seed receives the requested quantity");
+  assert.equal(inserts.some((i) => i.table === "inventory"), false, "no direct inventory insert through the client");
+  assert.equal(seenSeed, 17, "the initializer receives the requested quantity");
 });
 
 function makeBatchClient() {
@@ -164,18 +169,23 @@ function makeBatchClient() {
   return { client, inserts };
 }
 
-test("createProductsBatchCore strips stock_quantity from every product row; inventories keep the requested seeds", async () => {
+test("createProductsBatchCore strips stock_quantity from every product row; the seeds go to the initializer", async () => {
   const { client, inserts } = makeBatchClient();
+  const targetsSeen: { productId: string; stockQuantity: number }[] = [];
+  const initializeSimple = async (targets: { productId: string; stockQuantity: number }[]) => {
+    targetsSeen.push(...targets);
+    return { ok: true } as const;
+  };
   const rows = [
     { sku: "a", stock_quantity: 17 },
     { sku: "b", stock_quantity: 3 },
   ];
-  const res = await createProductsBatchCore(client, rows);
+  const res = await createProductsBatchCore(client, rows, initializeSimple);
   assert.equal(res.added, 2);
   const productInsert = inserts.find((i) => i.table === "products")!.values;
   for (const r of productInsert) assert.ok(!("stock_quantity" in r), "each product insert row strips the mirror");
-  const invInsert = inserts.find((i) => i.table === "inventory")!.values;
-  assert.deepEqual(invInsert.map((r) => r.stock_quantity), [17, 3], "inventories seed from the requested quantities");
+  assert.equal(inserts.some((i) => i.table === "inventory"), false, "no direct inventory insert through the client");
+  assert.deepEqual(targetsSeen.map((t) => t.stockQuantity), [17, 3], "initializer targets seed from the requested quantities");
   // caller rows not mutated (mirror still present on the inputs)
   assert.equal(rows[0].stock_quantity, 17);
 });
