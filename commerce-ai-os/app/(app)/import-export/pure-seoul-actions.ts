@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { safeError } from "@/lib/security/safe-error";
 import { computePureSeoulIdMap, type CatalogNameRow } from "@/lib/pure-seoul-map-compute";
 import { createProductsBatchCore } from "@/lib/products/product-create-batch";
@@ -345,7 +346,7 @@ export async function setPureSeoulIds(rows: PSRow[]): Promise<PsIdMapResult> {
   const base: PsIdMapResult = { ok: false, mapped: 0, alreadySet: 0, unmatched: 0, failed: 0 };
   if (!rows?.length) return { ...base, error: "ما في صفوف في الملف." };
 
-  if (!(await isSignedIn())) return { ...base, error: "غير مسجّل الدخول." };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ...base, error: writer.error }; }
 
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); }
@@ -401,7 +402,7 @@ export async function addPureSeoulNewProducts(rows: PSRow[]): Promise<AddPsResul
   const base: AddPsResult = { ok: false, added: 0, skipped: 0, failed: 0 };
   if (!rows?.length) return { ...base, error: "ما في صفوف في الملف." };
 
-  if (!(await isSignedIn())) return { ...base, error: "غير مسجّل الدخول." };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ...base, error: writer.error }; }
 
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); }

@@ -71,7 +71,10 @@ test("snapshot: any read failure -> status error (never a throw, never raw text)
 
 test("actions: auth on every step, session client for DB, shared core, fixed messages", () => {
   assert.ok(ACTIONS_SRC.startsWith('"use server"'), "use server");
-  assert.equal(ACTIONS_SRC.split("isSignedIn()").length - 1, 3, "all three actions gate on the session");
+  // CH.3b: the two read/compute steps (analyze, prepare) gate on the session;
+  // the create MUTATION gates on the writer allow-list.
+  assert.equal(ACTIONS_SRC.split("isSignedIn()").length - 1, 2, "read steps gate on the session");
+  assert.ok(ACTIONS_SRC.includes("requireMalakWriter"), "the create mutation gates on the writer allow-list (CH.3b)");
   assert.ok(ACTIONS_SRC.includes("createProductCore"), "shared create core — no inline SQL-ish logic");
   assert.ok(ACTIONS_SRC.includes("loadIdentitySnapshot(supabase)"), "identity scans use the session client");
   assert.ok(ACTIONS_SRC.includes("validateAiProductInput"), "server-side validation");

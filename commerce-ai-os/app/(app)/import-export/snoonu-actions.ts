@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { safeError } from "@/lib/security/safe-error";
 import { revalidatePath } from "next/cache";
 import {
@@ -199,7 +200,7 @@ export async function applySnoonuUpdates(
   const selected = new Set((selectedCols ?? []).filter(Boolean));
   if (selected.size === 0) return { ...base, error: "No fields selected to sync." };
 
-  if (!(await isSignedIn())) return { ...base, error: "Not signed in." };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ...base, error: writer.error }; }
 
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); }
@@ -270,7 +271,7 @@ export async function addSnoonuNewProducts(
   const want = new Set((selectedIds ?? []).map((x) => String(x).trim()).filter(Boolean));
   if (want.size === 0) return { ...base, error: "No products selected to add." };
 
-  if (!(await isSignedIn())) return { ...base, error: "Not signed in." };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ...base, error: writer.error }; }
 
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); }

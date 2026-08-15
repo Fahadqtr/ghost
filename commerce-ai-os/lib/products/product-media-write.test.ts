@@ -25,7 +25,7 @@ const DISPLAY = src("../../components/v2/catalog/ProductMedia.tsx");
 
 test("media actions: thin server wrappers that REUSE the existing image cores", () => {
   assert.ok(ACTIONS.startsWith('"use server"'), "server actions");
-  assert.ok(ACTIONS.includes("isSignedIn"), "auth gated");
+  assert.ok(ACTIONS.includes("requireMalakWriter"), "auth gated — writer allow-list (CH.3b)");
   assert.ok(ACTIONS.includes("storePrimaryProductImage"), "upload reuses the imageStore core");
   assert.ok(ACTIONS.includes("removeProductImage"), "remove reuses the existing core");
   assert.ok(ACTIONS.includes("loadProductMedia"), "returns fresh state via the shared reader");

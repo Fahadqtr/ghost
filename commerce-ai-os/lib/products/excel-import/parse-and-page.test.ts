@@ -92,7 +92,11 @@ test("extract: more rows than the cap is a hard rejection, not a silent truncati
 
 test("actions: auth on every step; nothing is written at upload/preview time", () => {
   assert.ok(ACTIONS_SRC.startsWith('"use server"'));
-  assert.equal(ACTIONS_SRC.split("isSignedIn()").length - 1, 5, "all five actions gate on the session");
+  // CH.3b: the three read steps (inspect, readHeaders, preview) gate on the
+  // session; the two import MUTATIONS (applyCatalogUpdates/Creates) gate on the
+  // writer allow-list.
+  assert.equal(ACTIONS_SRC.split("isSignedIn()").length - 1, 3, "read steps gate on the session");
+  assert.equal(ACTIONS_SRC.split("requireMalakWriter(").length - 1, 2, "the two import mutations gate on the writer allow-list (CH.3b)");
   // From the first exported step through the end of preview — imports excluded.
   const previewSection = ACTIONS_SRC.slice(
     ACTIONS_SRC.indexOf("export async function inspectCatalogImport"),

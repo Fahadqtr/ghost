@@ -2,7 +2,7 @@
 
 import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { revalidatePath } from "next/cache";
 import { storePrimaryProductImage, storePrimaryProductImageBySku } from "@/lib/products/imageStore";
 
@@ -15,7 +15,7 @@ function revalidate(productId: string) {
 // Upload a new image, make it primary, point products.image_url at it.
 // (Shared core with the supervisor flow on /staff — lib/products/imageStore.)
 export async function uploadProductImage(formData: FormData) {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { error: writer.error }; }
 
   const file = formData.get("file");
   const productId = String(formData.get("productId") || "");
@@ -35,7 +35,7 @@ export async function uploadProductImage(formData: FormData) {
 // and streams progress. Returns { ok, url, productId, name } on success, or
 // { error, code } — code "no_product" means that SKU isn't in the catalog.
 export async function applyCatalogImageBySku(formData: FormData) {
-  if (!(await isSignedIn())) return { error: "Not signed in.", code: "auth" as const };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { error: writer.error, code: "auth" as const }; }
 
   const file = formData.get("file");
   const sku = String(formData.get("sku") || "");
@@ -53,7 +53,7 @@ export async function applyCatalogImageBySku(formData: FormData) {
 // Remove an image (by url). If it was the primary, repoint products.image_url
 // to another image (or null). Storage object is left in place (harmless).
 export async function removeProductImage(productId: string, url: string) {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { error: writer.error }; }
   if (!productId || !url) return { error: "Missing arguments." };
 
   let admin;

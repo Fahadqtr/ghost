@@ -27,6 +27,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { CATEGORIES } from "@/lib/constants";
 import { HOUSE_STYLE_EXAMPLE } from "@/lib/products/draft-compute";
 import { buildVisionExtractPrompt, parseVisionExtract, type VisionExtract } from "@/lib/products/ai-extract";
@@ -176,7 +177,9 @@ export async function createAiProduct(
   imageBase64: string,
   imageMediaType: string,
 ): Promise<{ error: string }> {
-  if (!(await isSignedIn())) return { error: CREATE_MESSAGES.not_signed_in };
+  // CH.3b — service-role catalog create: WRITER-only.
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error };
 
   const imageErr = imageProblem(imageBase64, imageMediaType);
   if (imageErr) return { error: imageErr };

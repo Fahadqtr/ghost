@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { safeError } from "@/lib/security/safe-error";
 import { revalidatePath } from "next/cache";
 import { isSignedIn } from "@/lib/auth/requireUser";
@@ -94,7 +95,8 @@ export async function listTalabatQueue(): Promise<{ ok: boolean; ready: boolean;
 
 /** The email went out — stamp the batch so it leaves the queue. */
 export async function markTalabatSent(productIds: string[]): Promise<{ ok: boolean; marked: number; error?: string }> {
-  if (!(await isSignedIn())) return { ok: false, marked: 0, error: "Not signed in." };
+  // CH.3b — service-role Talabat sync-state mutation: WRITER-only.
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ok: false, marked: 0, error: writer.error }; }
   const ids = [...new Set(productIds)].filter(Boolean).slice(0, 1000);
   if (!ids.length) return { ok: false, marked: 0, error: "ما في منتجات محددة." };
   try {
@@ -244,7 +246,8 @@ export interface VerifySummary {
 const V_EMPTY = { checked: 0, confirmed: 0, reopened: 0, autoClosed: 0, flagged: [] as { title: string; detail: string }[] };
 
 export async function verifyCatalogEntries(rows: Record<string, unknown>[]): Promise<VerifySummary> {
-  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...V_EMPTY };
+  // CH.3b — service-role catalog-verification mutation (staff_tasks): WRITER-only.
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ok: false, error: writer.error, ...V_EMPTY }; }
   if (!rows?.length) return { ok: false, error: "الملف فاضي.", ...V_EMPTY };
 
   try {

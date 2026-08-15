@@ -21,6 +21,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { makeInventoryInitializer } from "@/lib/products/inventory-initializer";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { CATEGORIES } from "@/lib/constants";
 import { loadIdentitySnapshot } from "@/lib/products/catalog-identity-read";
 import { findDuplicates, type IdentityRow } from "@/lib/products/duplicate-detect";
@@ -669,7 +670,9 @@ function parseJsonParam<T>(raw: unknown, maxLen: number): T | null {
 export async function applyCatalogUpdates(
   formData: FormData,
 ): Promise<{ data: { results: ImportRecordResult[] } } | { error: string }> {
-  if (!(await isSignedIn())) return { error: IMPORT_MESSAGES.not_signed_in };
+  // CH.3b — service-role catalog import (updates): WRITER-only.
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error };
   try {
     const file = await readImportFile(formData);
     if (!file.ok) return { error: file.error };
@@ -796,7 +799,9 @@ function emptyProductInput(): ProductInput {
 export async function applyCatalogCreates(
   formData: FormData,
 ): Promise<{ data: { results: ImportRecordResult[] } } | { error: string }> {
-  if (!(await isSignedIn())) return { error: IMPORT_MESSAGES.not_signed_in };
+  // CH.3b — service-role catalog import (creates): WRITER-only.
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error };
   try {
     const file = await readImportFile(formData);
     if (!file.ok) return { error: file.error };

@@ -15,7 +15,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { updateProductCore, type ProductInput } from "@/lib/products/product-save";
 import { createInventoryAdapter, applyEditorInventoryEffects } from "@/lib/products/inventory-editor-adapter";
 import { EDIT_MESSAGES, editFailureMessage, validateProductEditInput } from "@/lib/products/edit-validation";
@@ -30,7 +30,9 @@ export async function saveProductEdit(
   input: ProductInput,
   rawControls: Record<string, string | string[] | undefined>,
 ): Promise<{ error: string }> {
-  if (!(await isSignedIn())) return { error: EDIT_MESSAGES.not_signed_in };
+  // CH.3b — catalog mutation via the service-role Inventory Engine: WRITER-only.
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error };
 
   const validId = parseProductId(productId);
   if (validId === null) return { error: EDIT_MESSAGES.invalid_input };

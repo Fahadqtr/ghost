@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import {
   buildShopifyCsv, buildSnoonuCsv, buildRafeeqAoa, RAFEEQ_COL_WIDTHS,
   CHANNEL_KEYS, type ChannelKey, type ExportProduct,
@@ -76,6 +77,12 @@ export async function GET(
 
     let csv: string;
     if (channel === "talabat") {
+      // CH.3b — this branch persists channel_variant_mappings via the service-role
+      // client (fail-closed: mappings MUST persist before any file downloads), so
+      // it is a service-role mapping MUTATION → WRITER-only. Other channels below
+      // are read-only CSV downloads and stay at signed-in level.
+      const writer = await requireMalakWriter();
+      if (!writer.ok) return new Response("Forbidden", { status: 403 });
       // Flatten each variant into its own standalone Talabat product and persist
       // a channel_variant_mapping per VALID row. Blocked rows (missing SKU /
       // barcode / image, duplicates) are never exported.
