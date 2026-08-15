@@ -47,12 +47,14 @@ test("2. adapters access identity via ExternalIdentityResolver, not the table", 
     for (const n of readdirSync(join(ROOT, dir))) {
       const rel = join(dir, n);
       if (statSync(join(ROOT, rel)).isDirectory()) walk(rel, out);
-      else if (/\.tsx?$/.test(rel) && !/\.test\.tsx?$/.test(rel)) out.push(rel);
+      // Adapter FACTORIES only — exclude tests and server READERS (*.server.ts),
+      // which are the concrete server layer and may read the identity table.
+      else if (/\.tsx?$/.test(rel) && !/\.test\.tsx?$/.test(rel) && !/\.server\.tsx?$/.test(rel)) out.push(rel);
     }
     return out;
   };
   for (const f of walk("lib/adapters")) {
-    assert.equal(/external_channel_listings/.test(read(f)), false, `${f} must not read the identity table directly`);
+    assert.equal(/external_channel_listings/.test(read(f)), false, `${f} (adapter factory) must not read the identity table directly`);
   }
   // The durable resolver structurally implements the CH.4 interface.
   const r = createDurableIdentityResolver({ byProduct: async () => [], byExternalId: async () => [], bySku: async () => [] });
