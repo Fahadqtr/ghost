@@ -107,7 +107,8 @@ BEGIN
   -- ══ PASS 2 — APPLY + AUDIT (rowcount-checked) ═════════════════════════════
 
   -- 1) Target variant authority: NULL → operator-authorized value.
-  UPDATE product_variants SET stock_quantity = v_count, updated_at = now()
+  -- (product_variants has no updated_at column; stock_quantity is the only write.)
+  UPDATE product_variants SET stock_quantity = v_count
    WHERE id = v_variant AND parent_product_id = v_product AND stock_quantity IS NULL;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   IF v_rows <> 1 THEN RAISE EXCEPTION 'apply target variant rowcount %', v_rows; END IF;
