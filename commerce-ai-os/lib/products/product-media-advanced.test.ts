@@ -100,7 +100,7 @@ const EDITOR = src("../../components/v2/catalog/ProductMediaEditor.tsx");
 
 test("set-primary action: product-scoped, verifies ownership, syncs the pointer", () => {
   assert.ok(ACTIONS.includes("export async function setPrimaryProductMedia"), "action exists");
-  assert.ok(ACTIONS.includes("isSignedIn"), "auth gated");
+  assert.ok(ACTIONS.includes("requireMalakWriter"), "auth gated — writer allow-list (CH.3b)");
   assert.ok(ACTIONS.includes(".eq(\"product_id\", validId)"), "writes scoped to this product");
   assert.ok(ACTIONS.includes(".eq(\"id\", imageId)"), "targets the chosen image");
   assert.ok(ACTIONS.includes("image_url: target.url"), "syncs products.image_url");

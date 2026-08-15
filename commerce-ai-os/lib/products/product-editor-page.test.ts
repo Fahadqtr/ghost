@@ -116,7 +116,7 @@ test("edit loading state exists for the editor route only", () => {
 
 test("save action: thin shell over the shared core with auth, validation, fixed messages", () => {
   assert.ok(EDIT_ACTIONS_SRC.startsWith('"use server"'), "use server");
-  assert.ok(EDIT_ACTIONS_SRC.includes("isSignedIn"), "auth gate");
+  assert.ok(EDIT_ACTIONS_SRC.includes("requireMalakWriter"), "auth gate — writer allow-list (CH.3b)");
   assert.ok(EDIT_ACTIONS_SRC.includes("validateProductEditInput"), "server-side validation");
   assert.ok(EDIT_ACTIONS_SRC.includes("updateProductCore"), "shared save core — no parallel write path");
   assert.ok(EDIT_ACTIONS_SRC.includes("editFailureMessage"), "fixed Arabic mapping");

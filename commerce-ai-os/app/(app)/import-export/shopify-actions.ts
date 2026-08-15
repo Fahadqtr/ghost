@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { revalidatePath } from "next/cache";
 import { shopifyConfigured, fetchAllShopifyProducts, updateVariantPrice, updateShopifyProductContent, fetchPrimaryLocationId, createShopifyProduct, addProductImage } from "@/lib/shopify/admin";
 import { safeImageUrlOrNull, safeFetchImage } from "@/lib/net/safeImage";
@@ -62,7 +63,7 @@ export interface ShopifyApplyResult {
  * the safest, most valuable write; titles/status stay read-only for now).
  */
 export async function applyShopifyPrices(productIds: string[]): Promise<ShopifyApplyResult> {
-  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", updated: 0, failed: [] };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ok: false, error: writer.error, updated: 0, failed: [] }; }
   if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", updated: 0, failed: [] };
   const ids = [...new Set(productIds)].filter(Boolean).slice(0, 200);
   if (!ids.length) return { ok: false, error: "ما في منتجات محددة.", updated: 0, failed: [] };
@@ -104,7 +105,7 @@ export async function applyShopifyPrices(productIds: string[]): Promise<ShopifyA
  * wins: name_en becomes the store title, Approved -> ACTIVE else DRAFT).
  */
 export async function applyShopifyContent(productIds: string[]): Promise<ShopifyApplyResult> {
-  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", updated: 0, failed: [] };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ok: false, error: writer.error, updated: 0, failed: [] }; }
   if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", updated: 0, failed: [] };
   const ids = [...new Set(productIds)].filter(Boolean).slice(0, 200);
   if (!ids.length) return { ok: false, error: "ما في منتجات محددة.", updated: 0, failed: [] };
@@ -144,7 +145,7 @@ export async function applyShopifyContent(productIds: string[]): Promise<Shopify
 /** Push OUR stock quantities to Shopify (same engine as the nightly cron). */
 export async function syncShopifyInventory(): Promise<InventorySyncResult> {
   const empty = { matched: 0, unmatched: 0, drift: 0, updated: 0, examples: [] as string[] };
-  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...empty };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ok: false, error: writer.error, ...empty }; }
   let sb;
   try { sb = createAdminClient(); }
   catch { return { ok: false, error: "الخادم غير مهيأ (SUPABASE_SERVICE_ROLE_KEY).", ...empty }; }
@@ -169,7 +170,7 @@ const MOVE_EMPTY = { created: 0, skipped: 0, failed: [] as { name: string; error
  * double-taps can never create duplicates.
  */
 export async function pushProductsToShopify(productIds: string[]): Promise<BulkMoveResult> {
-  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...MOVE_EMPTY };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ok: false, error: writer.error, ...MOVE_EMPTY }; }
   if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", ...MOVE_EMPTY };
   const ids = [...new Set(productIds)].filter(Boolean).slice(0, 8);
   if (!ids.length) return { ok: false, error: "ما في منتجات محددة.", ...MOVE_EMPTY };
@@ -229,7 +230,7 @@ export async function pushProductsToShopify(productIds: string[]): Promise<BulkM
  * normalized title against existing products) are skipped.
  */
 export async function importShopifyProducts(shopifyIds: string[]): Promise<BulkMoveResult> {
-  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...MOVE_EMPTY };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ok: false, error: writer.error, ...MOVE_EMPTY }; }
   if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", ...MOVE_EMPTY };
   const ids = new Set([...new Set(shopifyIds)].filter(Boolean).slice(0, 40));
   if (!ids.size) return { ok: false, error: "ما في منتجات محددة.", ...MOVE_EMPTY };
@@ -359,7 +360,7 @@ export interface PushImagesResult {
 /** Push ONE slice of the missing-image pairs (client loops; ≤10 per call). */
 export async function pushShopifyImages(pairs: MissingImagePair[]): Promise<PushImagesResult> {
   const empty = { pushed: 0, skippedBroken: [], failed: [] };
-  if (!(await isSignedIn())) return { ok: false, error: "Not signed in.", ...empty };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ok: false, error: writer.error, ...empty }; }
   if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", ...empty };
   const list = (pairs ?? []).slice(0, 10);
   if (!list.length) return { ok: false, error: "ما في صور محددة.", ...empty };

@@ -20,7 +20,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { storePrimaryProductImage } from "@/lib/products/imageStore";
 import { removeProductImage } from "@/app/(app)/products/image-actions";
 import { loadProductMedia } from "@/lib/products/product-media-read";
@@ -69,7 +69,7 @@ async function readState(productId: string): Promise<ProductMediaState> {
  * primary and repoints products.image_url). Returns the fresh media state.
  */
 export async function uploadProductMedia(formData: FormData): Promise<MediaResult> {
-  if (!(await isSignedIn())) return { error: MEDIA_MESSAGES.not_signed_in };
+  { const gate = await requireMalakWriter(); if (!gate.ok) return { error: gate.error }; }
 
   const productId = parseProductId(String(formData.get("productId") ?? ""));
   if (productId === null) return { error: MEDIA_MESSAGES.invalid };
@@ -106,7 +106,7 @@ export async function uploadProductMedia(formData: FormData): Promise<MediaResul
  * remain. Returns the fresh media state.
  */
 export async function removeProductMedia(productId: string, url: string): Promise<MediaResult> {
-  if (!(await isSignedIn())) return { error: MEDIA_MESSAGES.not_signed_in };
+  { const gate = await requireMalakWriter(); if (!gate.ok) return { error: gate.error }; }
 
   const validId = parseProductId(productId);
   if (validId === null || typeof url !== "string" || url.trim() === "") {
@@ -134,7 +134,7 @@ export async function removeProductMedia(productId: string, url: string): Promis
  * only (the browser never holds it); auth is gated here.
  */
 export async function setPrimaryProductMedia(productId: string, imageId: string): Promise<MediaResult> {
-  if (!(await isSignedIn())) return { error: MEDIA_MESSAGES.not_signed_in };
+  { const gate = await requireMalakWriter(); if (!gate.ok) return { error: gate.error }; }
 
   const validId = parseProductId(productId);
   if (validId === null || typeof imageId !== "string" || imageId.trim() === "") {
@@ -190,7 +190,7 @@ export async function reorderProductMedia(
   imageId: string,
   direction: "up" | "down",
 ): Promise<MediaResult> {
-  if (!(await isSignedIn())) return { error: MEDIA_MESSAGES.not_signed_in };
+  { const gate = await requireMalakWriter(); if (!gate.ok) return { error: gate.error }; }
 
   const validId = parseProductId(productId);
   if (
