@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/requireUser";
+import { safeError } from "@/lib/security/safe-error";
 import { CHANNEL_STATUSES } from "@/lib/constants";
+
+const CHANNEL_WRITE_FAILED = "تعذّر تحديث حالة القناة. حاول مرة أخرى.";
 
 export async function setChannelStatus(
   productId: string,
@@ -32,14 +35,14 @@ export async function setChannelStatus(
       .from("channel_products")
       .update({ channel_status: status })
       .eq("id", existing.id);
-    if (error) return { error: error.message };
+    if (error) return { error: safeError("channels.setChannelStatus", error, CHANNEL_WRITE_FAILED) };
   } else {
     const { error } = await supabase.from("channel_products").insert({
       product_id: productId,
       channel_id: channelId,
       channel_status: status,
     });
-    if (error) return { error: error.message };
+    if (error) return { error: safeError("channels.setChannelStatus", error, CHANNEL_WRITE_FAILED) };
   }
 
   revalidatePath("/channels");

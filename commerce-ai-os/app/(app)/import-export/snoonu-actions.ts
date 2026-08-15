@@ -2,6 +2,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isSignedIn } from "@/lib/auth/requireUser";
+import { safeError } from "@/lib/security/safe-error";
 import { revalidatePath } from "next/cache";
 import {
   ALWAYS, OPTIONAL, readColumns, computeChanges, diffSnoonu, s,
@@ -34,9 +36,8 @@ export async function snoonuFillCodes(items: FillItem[]): Promise<SnoonuFillResp
   const empty = { ok: false, results: [], counts: { rows: 0, bySpi: 0, byName: 0, filled: 0, unmatched: 0 } };
   if (!Array.isArray(items) || !items.length) return { ...empty, error: "لا توجد صفوف في الملف." };
 
+  if (!(await isSignedIn())) return { ...empty, error: "غير مسجّل الدخول." };
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ...empty, error: "غير مسجّل الدخول." };
 
   try {
     // Pull the catalog codes (snoonu_id + sku + barcode + names), paged.
@@ -46,7 +47,7 @@ export async function snoonuFillCodes(items: FillItem[]): Promise<SnoonuFillResp
         .from("products")
         .select("snoonu_id, sku, barcode, name_en, name_ar")
         .range(from, from + 999);
-      if (error) return { ...empty, error: `تعذّر قراءة الكتالوج: ${error.message}` };
+      if (error) return { ...empty, error: safeError("snoonu.fillCodes.read", error, "تعذّر قراءة الكتالوج.") };
       rows.push(...((data ?? []) as CatalogCodeRow[]));
       if ((data ?? []).length < 1000) break;
     }
@@ -61,7 +62,7 @@ export async function snoonuFillCodes(items: FillItem[]): Promise<SnoonuFillResp
     }
     return { ok: true, results, counts: { rows: items.length, bySpi, byName, filled, unmatched: items.length - filled } };
   } catch (e) {
-    return { ...empty, error: e instanceof Error ? e.message : "خطأ غير متوقع أثناء التعبئة." };
+    return { ...empty, error: safeError("snoonu.fillCodes", e, "خطأ غير متوقع أثناء التعبئة.") };
   }
 }
 
@@ -98,9 +99,8 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
   };
   if (!rows?.length) return { ...empty, error: "No rows parsed from the export." };
 
+  if (!(await isSignedIn())) return { ...empty, error: "Not signed in." };
   const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ...empty, error: "Not signed in." };
 
   try {
     const { fields, existing: existingOptionalCols, missing: missingOptionalCols } = await detectFields(supabase);
@@ -172,7 +172,7 @@ export async function computeSnoonuDiff(rows: SnoonuExportRow[]): Promise<Snoonu
       outOfStock: outOfStock.slice(0, 300),
     };
   } catch (e) {
-    return { ...empty, error: e instanceof Error ? e.message : "Unexpected error while computing the diff." };
+    return { ...empty, error: safeError("snoonu.computeDiff", e, "تعذّر حساب الفروقات.") };
   }
 }
 
@@ -199,12 +199,11 @@ export async function applySnoonuUpdates(
   const selected = new Set((selectedCols ?? []).filter(Boolean));
   if (selected.size === 0) return { ...base, error: "No fields selected to sync." };
 
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { ...base, error: "Not signed in." };
+  if (!(await isSignedIn())) return { ...base, error: "Not signed in." };
 
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); }
-  catch (e) { return { ...base, error: e instanceof Error ? e.message : "Service role unavailable." }; }
+  catch (e) { return { ...base, error: safeError("snoonu.applyUpdates.admin", e, "الخادم غير مهيأ.") }; }
 
   try {
     const { fields: allFields } = await detectFields(admin);
@@ -244,7 +243,7 @@ export async function applySnoonuUpdates(
     revalidatePath("/import-export/snoonu-sync");
     return { ok: true, productsUpdated, fieldWrites, matched, unchanged, failed, columnsWritten: [...colsWritten] };
   } catch (e) {
-    return { ...base, error: e instanceof Error ? e.message : "Unexpected error while applying updates." };
+    return { ...base, error: safeError("snoonu.applyUpdates", e, "تعذّر تطبيق التحديثات.") };
   }
 }
 
@@ -271,12 +270,11 @@ export async function addSnoonuNewProducts(
   const want = new Set((selectedIds ?? []).map((x) => String(x).trim()).filter(Boolean));
   if (want.size === 0) return { ...base, error: "No products selected to add." };
 
-  const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { ...base, error: "Not signed in." };
+  if (!(await isSignedIn())) return { ...base, error: "Not signed in." };
 
   let admin: ReturnType<typeof createAdminClient>;
   try { admin = createAdminClient(); }
-  catch (e) { return { ...base, error: e instanceof Error ? e.message : "Service role unavailable." }; }
+  catch (e) { return { ...base, error: safeError("snoonu.addNew.admin", e, "الخادم غير مهيأ.") }; }
 
   try {
     // Existing snoonu_ids (avoid duplicates) + max mk#### number + barcodes
@@ -286,7 +284,7 @@ export async function addSnoonuNewProducts(
     const usedBarcodes = new Set<string>();
     for (let from = 0; ; from += 1000) {
       const { data, error } = await admin.from("products").select("snoonu_id, sku, barcode").range(from, from + 999);
-      if (error) return { ...base, error: `Read products failed: ${error.message}` };
+      if (error) return { ...base, error: safeError("snoonu.addNew.read", error, "تعذّر قراءة الكتالوج.") };
       for (const p of data ?? []) {
         if (p.snoonu_id) existing.add(String(p.snoonu_id).trim());
         skus.push(String(p.sku ?? ""));
@@ -359,6 +357,6 @@ export async function addSnoonuNewProducts(
     revalidatePath("/import-export/snoonu-sync");
     return { ok: true, added: res.added, skipped, failed: res.failed };
   } catch (e) {
-    return { ...base, error: e instanceof Error ? e.message : "Unexpected error while adding products." };
+    return { ...base, error: safeError("snoonu.addNew", e, "تعذّر إضافة المنتجات.") };
   }
 }
