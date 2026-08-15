@@ -95,6 +95,21 @@ export default function ProductEditForm({
   const [pending, startTransition] = useTransition();
   const newRowCounter = useRef(0);
 
+  // INV.4D — when the product has variants, the parent stock is Σ variants and is
+  // owned per-option (the atomic variant sync), NOT the top-level field. Show it
+  // read-only so the operator can never think they control the parent here; the
+  // server ignores this field for a variant product regardless.
+  const variantParent = useMemo(() => {
+    const inputs = buildVariantInputs(rows).filter(
+      (v) => v.variant_name.trim() !== "" || v.variant_name_en.trim() !== "" || v.sku.trim() !== "",
+    );
+    const sum = inputs.reduce((s, v) => {
+      const n = parseInt(String(v.stock_quantity), 10);
+      return s + (Number.isFinite(n) && n > 0 ? n : 0);
+    }, 0);
+    return { hasVariants: inputs.length > 0, sum };
+  }, [rows]);
+
   const dirty = useMemo(
     () => hasUnsavedChanges(initialScalars, scalars, initialRows, rows),
     [initialScalars, scalars, initialRows, rows],
@@ -512,9 +527,17 @@ export default function ProductEditForm({
               dir="ltr"
               inputMode="numeric"
               className="input"
-              value={scalars.stock_quantity}
+              value={variantParent.hasVariants ? String(variantParent.sum) : scalars.stock_quantity}
               onChange={(e) => setScalar("stock_quantity", e.target.value)}
+              readOnly={variantParent.hasVariants}
+              disabled={variantParent.hasVariants}
+              aria-readonly={variantParent.hasVariants}
             />
+            {variantParent.hasVariants ? (
+              <span className="text-xs text-ink-soft">
+                المخزون يُدار لكل خيار — الإجمالي محسوب تلقائيًا من الخيارات.
+              </span>
+            ) : null}
           </label>
           <label className="flex flex-col gap-1">
             <span className="label">حالة المخزون</span>

@@ -9,6 +9,8 @@ import { requireMalakWriter } from "@/lib/malak/authz";
 import { consumeOnce } from "@/lib/malak/ratelimit";
 import { insertAuditRow } from "@/lib/audit";
 import { createProductCore } from "@/lib/products/product-create";
+import { setAbsolute } from "@/lib/inventory/engine";
+import { logAuthoritativeStockTransition } from "@/lib/inventory/transition";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,28 +49,50 @@ async function findTarget(sb: Sb, a: MalakAction, cols: string): Promise<any | n
   return null;
 }
 
+// INV.4D — map an Inventory Engine failure to a fixed, safe Arabic message.
+function malakStockError(reason: string): string {
+  switch (reason) {
+    case "product_has_variants":
+      return "هذا المنتج لديه خيارات؛ عدّل مخزون كل خيار بدل المخزون الإجمالي.";
+    case "product_has_shelf_rows":
+      return "هذا المنتج يُدار من الرفوف؛ عدّل الكمية من إدارة الرفوف.";
+    case "missing_inventory":
+      return "لا يوجد صف مخزون لهذا المنتج — تعذّر التحديث.";
+    case "invalid_quantity":
+    case "overflow":
+      return "قيمة مخزون غير صالحة.";
+    default:
+      return "تعذّر تحديث المخزون — حاول مجددًا.";
+  }
+}
+
 async function commitStock(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {
-  const p = await findTarget(sb, a, "id, name_en, stock_quantity");
+  const p = await findTarget(sb, a, "id, name_en");
   if (!p) return { error: `المنتج غير موجود (${a.sku}).` };
   const value = Number(a.newValue);
-  if (!Number.isFinite(value) || value < 0) return { error: "قيمة مخزون غير صالحة." };
+  // Integer, non-negative — no fractional, no silent coercion.
+  if (!Number.isInteger(value) || value < 0) return { error: "قيمة مخزون غير صالحة." };
 
-  const inv = await firstRow(sb.from("inventory").select("id, stock_quantity").eq("product_id", p.id));
-  const oldVal = inv?.stock_quantity ?? p.stock_quantity ?? 0;
+  // Resolve the existing inventory row READ-ONLY. FAIL CLOSED if missing — Malak
+  // never lazily seeds an inventory row (fresh seeds live in the create core).
+  const inv = await firstRow(sb.from("inventory").select("id").eq("product_id", p.id));
+  if (!inv?.id) return { error: "لا يوجد صف مخزون لهذا المنتج — تعذّر التحديث." };
 
-  // inventory is the source of truth.
-  if (inv) {
-    await sb.from("inventory").update({ stock_quantity: value, updated_at: new Date().toISOString() }).eq("id", inv.id);
-  } else {
-    await sb.from("inventory").insert({ product_id: p.id, stock_quantity: value, low_stock_threshold: 5, sold_quantity: 0 });
-  }
-  // INV.2F — keep the denormalized QUANTITY mirror in sync for catalog views.
-  // Availability (products.stock_status) is NO LONGER derived from quantity here:
-  // it is an explicit state owned by the Availability Engine. A Malak stock
-  // (quantity) update never changes availability.
-  await sb.from("products").update({ stock_quantity: value }).eq("id", p.id);
+  // Product-grain stock goes through the Inventory Engine (atomic; rejects a
+  // variant / shelf-tracked product fail-closed). No direct inventory write.
+  const res = await setAbsolute(sb, inv.id, value);
+  if (!res.ok) return { error: malakStockError(res.reason) };
+  const oldVal = Number(res.data.before);
+  const newVal = Number(res.data.after);
 
-  return { message: `تم تحديث مخزون ${p.name_en}: ${oldVal} ← ${value}`, productId: p.id, field: "stock_quantity", oldValue: oldVal, newValue: value };
+  // TEMPORARY products.stock_quantity mirror (retired in INV.4E). Never read as
+  // authority, never a fallback. Availability (stock_status) is NOT touched here.
+  await sb.from("products").update({ stock_quantity: newVal }).eq("id", p.id);
+
+  // Best-effort authoritative zero-crossing transition (never blocks the write).
+  await logAuthoritativeStockTransition(sb, { productId: p.id, before: oldVal, after: newVal, actor: "malak" });
+
+  return { message: `تم تحديث مخزون ${p.name_en}: ${oldVal} ← ${newVal}`, productId: p.id, field: "stock_quantity", oldValue: oldVal, newValue: newVal };
 }
 
 async function commitPrice(sb: Sb, a: MalakAction): Promise<CommitOutcome | { error: string }> {

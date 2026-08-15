@@ -90,25 +90,11 @@ const REGISTRY: Entry[] = [
       "mutation). staffMoveVariant is pinned no-direct-write by inv-4b-writer-guard.test.ts.",
   },
   {
-    file: "app/api/malak/commit/route.ts",
-    classification: "legacy-direct",
-    direct: true,
-    note: "Malak commitStock sets inventory.stock_quantity (+ the products.stock_quantity mirror). " +
-      "Product create delegates to createProductCore (seed).",
-  },
-  {
     file: "lib/inventory/movements.ts",
     classification: "legacy-direct",
     direct: true,
     note: "applyMovement / editMovementQty / deleteMovement — product-grain stock + sold_quantity RMW " +
-      "with audit + zero-crossing task. The existing movement engine.",
-  },
-  {
-    file: "lib/products/product-save.ts",
-    classification: "legacy-direct",
-    direct: true,
-    note: "Product editor overwrites inventory.stock_quantity from the form field (the INV.3 parent-rollup " +
-      "drift generator) and seeds an inventory row when missing.",
+      "with audit + zero-crossing task. The existing movement engine (INV.4E+).",
   },
   // ── exempt: create-seed ─────────────────────────────────────────────────────
   {
@@ -166,6 +152,25 @@ const REGISTRY: Entry[] = [
       "slot is occupied; no placement auto-delete). The ONLY remaining inventory.update is low_stock_threshold " +
       "(not numeric-stock state). Pinned no-direct-write by inv-4a/4b/4c-writer-guard.test.ts.",
   },
+  {
+    file: "lib/products/product-save.ts",
+    classification: "converged",
+    direct: false,
+    note: "INV.4D: the product editor no longer writes inventory. Metadata saves exclude stock_quantity; a simple " +
+      "product's stock change goes through the injected Inventory Engine adapter (setAbsolute); a variant product's " +
+      "parent is the atomic Σ-variants rollup inside sync_product_variants. A missing inventory row FAILS CLOSED " +
+      "(no lazy seed). products.stock_quantity stays a TEMPORARY mirror (products table, not a numeric inventory " +
+      "table). Pinned by inv-4d-writer-guard.test.ts.",
+  },
+  {
+    file: "app/api/malak/commit/route.ts",
+    classification: "converged",
+    direct: false,
+    note: "INV.4D: Malak commitStock resolves the inventory row read-only (FAIL CLOSED if missing, no lazy seed) and " +
+      "sets stock through the Inventory Engine (setAbsolute) — no direct inventory update/insert. products.stock_quantity " +
+      "stays a TEMPORARY mirror; stock_status is never touched. Product create still delegates to createProductCore " +
+      "(exempt seed). Pinned by inv-4d-writer-guard.test.ts.",
+  },
   // ── engine: the facade — calls RPCs, never a direct table write ──────────────
   {
     file: "lib/inventory/engine.ts",
@@ -210,16 +215,19 @@ test("classifications are from the allowed set and no legacy writer is disguised
   // visible as legacy-direct (never quietly reclassified exempt/converged).
   for (const f of [
     "app/staff/actions.ts",
-    "app/api/malak/commit/route.ts",
     "lib/inventory/movements.ts",
-    "lib/products/product-save.ts",
   ]) {
     assert.equal(REGISTRY.find((e) => e.file === f)?.classification, "legacy-direct", `${f} stays legacy-direct`);
   }
-  // INV.4C: the inventory actions file is fully migrated → converged (not exempt).
-  assert.equal(REGISTRY.find((e) => e.file === "app/(app)/inventory/actions.ts")?.classification, "converged",
-    "inventory/actions.ts is converged after INV.4C");
-  assert.ok(REGISTRY.some((e) => e.classification === "legacy-direct"), "legacy writers still present (INV.4D+)");
+  // INV.4C/4D: these files are fully migrated → converged (not exempt).
+  for (const f of [
+    "app/(app)/inventory/actions.ts",   // INV.4C
+    "lib/products/product-save.ts",     // INV.4D
+    "app/api/malak/commit/route.ts",    // INV.4D
+  ]) {
+    assert.equal(REGISTRY.find((e) => e.file === f)?.classification, "converged", `${f} is converged`);
+  }
+  assert.ok(REGISTRY.some((e) => e.classification === "legacy-direct"), "legacy writers still present (INV.4E+)");
 });
 
 // ── 3b. matcher precision: threshold-only update is NOT a numeric-stock write, but
@@ -241,6 +249,13 @@ test("threshold-only inventory update is not a protected numeric-stock write", (
 test("inventory/actions.ts no longer performs any direct numeric-stock write", () => {
   assert.equal(isDirectNumericWriter(read("app/(app)/inventory/actions.ts")), false,
     "all stock_quantity / sold_quantity / location / shelf writes go through the engine after INV.4C");
+});
+
+test("product-save.ts and Malak commit no longer perform any direct numeric-stock write (INV.4D)", () => {
+  assert.equal(isDirectNumericWriter(read("lib/products/product-save.ts")), false,
+    "product editor routes stock through the Inventory Engine / atomic variant rollup after INV.4D");
+  assert.equal(isDirectNumericWriter(read("app/api/malak/commit/route.ts")), false,
+    "Malak commitStock routes through the Inventory Engine after INV.4D");
 });
 
 // ── 4. engine boundary: facade writes no numeric table directly, no availability
