@@ -1,5 +1,11 @@
 import "server-only";
 import { logCatalogTask } from "./catalog-log";
+import { totalStock } from "./total-stock";
+
+// Canonical total sellable stock (INV.6A — no double-count) lives in the
+// framework-free ./total-stock module so it is unit-testable; re-exported here so
+// every existing caller (transition.ts, staff/actions, …) keeps its import path.
+export { totalStock } from "./total-stock";
 
 // Auto-open a platforms task when a product's TOTAL stock crosses zero:
 //   >0 → 0 : "oos"     — mark it unavailable on the manual platforms
@@ -10,17 +16,6 @@ import { logCatalogTask } from "./catalog-log";
 
 const s = (v: unknown) => String(v ?? "").trim();
 
-/** TOTAL sellable stock of a product = its inventory rows + its variant rows. */
-export async function totalStock(admin: any, productId: string): Promise<number> {
-  let total = 0;
-  const { data: inv } = await admin.from("inventory").select("stock_quantity").eq("product_id", productId);
-  for (const r of (inv ?? []) as { stock_quantity: number | null }[]) total += Number(r.stock_quantity) || 0;
-  try {
-    const { data: vars } = await admin.from("product_variants").select("stock_quantity").eq("parent_product_id", productId);
-    for (const r of (vars ?? []) as { stock_quantity: number | null }[]) total += Number(r.stock_quantity) || 0;
-  } catch { /* variants table optional */ }
-  return total;
-}
 
 /**
  * Open an oos/restock task for the product unless an OPEN one of the same

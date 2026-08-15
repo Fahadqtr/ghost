@@ -1,18 +1,26 @@
-// INV.3D — direct numeric-inventory-write guard.
+// INV.6A — direct numeric/structural inventory-write guard (V2).
 //
-// Same philosophy as lib/products/create-paths-guard.test.ts: a SOURCE SCAN of
-// the current runtime plus an EXACT CLASSIFIED REGISTRY. Every runtime file that
-// directly mutates a numeric inventory table MUST appear in the registry, and the
-// scanned set must match the registry exactly. This makes the migration of each
-// legacy writer to the Inventory Engine (INV.4A+) a visible, reviewed change.
+// A SOURCE SCAN of the current runtime plus an EXACT CLASSIFIED REGISTRY. Every
+// runtime file that directly mutates numeric inventory state — OR structurally
+// changes it — MUST appear in the registry, and the scanned set must match the
+// registry's direct entries exactly.
 //
-// Protected numeric-inventory state:
+// Protected state (V2 — now includes STRUCTURAL variant writers):
 //   inventory (stock_quantity / sold_quantity / location) — any insert/update/
-//     upsert/delete;
-//   product_variants.stock_quantity — update whose payload sets stock_quantity
-//     (availability writes of product_variants.stock_status are NOT numeric and
-//     are excluded);
+//     upsert/delete; a variable-payload inventory.update is opaque → protected;
+//   product_variants.stock_quantity — an update whose payload sets stock_quantity;
+//   product_variants INSERT / DELETE — STRUCTURAL inventory state: inserting or
+//     deleting a variant changes the parent rollup (stock defaults matter) even
+//     when the payload names no stock column;
 //   shelf_stock / variant_shelf_stock — any insert/update/upsert/delete.
+// Availability writes (product_variants.stock_status) are NOT numeric and are
+// deliberately excluded.
+//
+// After INV.6A: legacy-direct = 0. The ONLY remaining direct writers are the two
+// CREATE-SEED paths (product-create / product-create-batch), which insert a FRESH
+// inventory row (+ variant rows) for a brand-new product and never mutate a live
+// quantity. products.stock_quantity is a RETIRED mirror (INV.4E) — not an
+// inventory table and never written.
 //
 // SQL migrations / RPC definitions are a SEPARATE layer (supabase/**) and are NOT
 // part of this runtime TypeScript scan.
@@ -42,148 +50,124 @@ function runtimeFiles(dirs: readonly string[]): string[] {
   return out;
 }
 
-// A file directly writes NUMERIC inventory state if it matches ANY of these.
 // `\s*` tolerates the newline some call sites put between `.from(...)` and the op.
-//
-// INV.4C refinement (Phase 18): an inventory UPDATE is a protected numeric-stock
-// write when it touches stock_quantity / sold_quantity / location. A threshold-only
-// update (low_stock_threshold) is NOT numeric-stock state, so an inline literal that
-// sets only that is NOT protected. But an UPDATE with a VARIABLE payload is opaque
-// (can't prove it isn't stock/sold/location) → treated as protected, conservatively.
 const INV_UPDATE_VAR = /\.from\(\s*["']inventory["']\s*\)\s*\.update\(\s*[A-Za-z_$]/;
 const INV_UPDATE_STOCK = /\.from\(\s*["']inventory["']\s*\)\s*\.update\(\s*\{[^}]*(stock_quantity|sold_quantity|location)/;
-// inventory row create/remove (create-seed / archive / product deletion).
 const INV_ROW_WRITE = /\.from\(\s*["']inventory["']\s*\)\s*\.(insert|upsert|delete)/;
 const SHELF_WRITE = /\.from\(\s*["'](shelf_stock|variant_shelf_stock)["']\s*\)\s*\.(update|insert|upsert|delete)/;
-// product_variants ONLY when the update payload sets stock_quantity (numeric).
-// `stock_status` (availability) writes are deliberately excluded.
+// product_variants numeric update (stock_quantity). stock_status is excluded.
 const PV_STOCK_WRITE = /\.from\(\s*["']product_variants["']\s*\)\s*\.update\(\s*\{[^}]*stock_quantity/;
+// INV.6A — product_variants INSERT / DELETE is STRUCTURAL inventory state.
+const PV_STRUCT_WRITE = /\.from\(\s*["']product_variants["']\s*\)\s*\.(insert|delete)/;
 
 function isDirectNumericWriter(src: string): boolean {
   return INV_UPDATE_VAR.test(src) || INV_UPDATE_STOCK.test(src) || INV_ROW_WRITE.test(src)
-    || SHELF_WRITE.test(src) || PV_STOCK_WRITE.test(src);
+    || SHELF_WRITE.test(src) || PV_STOCK_WRITE.test(src) || PV_STRUCT_WRITE.test(src);
 }
 
-type Classification = "engine" | "approved-rpc" | "legacy-direct" | "exempt" | "converged";
+type Classification = "engine" | "approved-rpc" | "converged" | "create-seed-exempt" | "structural-writer" | "legacy-direct";
 
 interface Entry {
   file: string;
   classification: Classification;
-  /** true = the file itself directly writes a numeric inventory table today. */
+  /** true = the file itself directly writes/structurally mutates inventory today. */
   direct: boolean;
   note: string;
 }
 
-// The authoritative registry, built from a fresh scan of master at INV.3D.
-// legacy-direct = a real writer awaiting migration to the engine (INV.4A+).
-// exempt        = create-seed / archive-restore / product-deletion semantics.
-// engine        = the Inventory Engine facade (calls RPCs, never a table write).
+// The authoritative registry at INV.6A. legacy-direct = 0 (every daily runtime
+// writer is converged onto the Inventory Engine RPCs). The only direct writers
+// are the two create-seed paths.
 const REGISTRY: Entry[] = [
-  // ── legacy-direct: daily numeric writers, migrate one-by-one in INV.4A+ ──────
-  {
-    file: "app/staff/actions.ts",
-    classification: "legacy-direct",
-    direct: true,
-    note: "INV.4B migrated staffMoveVariant → engine.adjustVariantMovement (soldDelta 0) + authoritative transition " +
-      "(no direct product_variants.stock_quantity write, parent rollup now atomic via the RPC). STILL legacy-direct " +
-      "because of the on-demand inventory-row seed in staffItemForProduct (a create-seed insert, not a live-quantity " +
-      "mutation). staffMoveVariant is pinned no-direct-write by inv-4b-writer-guard.test.ts.",
-  },
-  {
-    file: "lib/inventory/movements.ts",
-    classification: "legacy-direct",
-    direct: true,
-    note: "applyMovement / editMovementQty / deleteMovement — product-grain stock + sold_quantity RMW " +
-      "with audit + zero-crossing task. The existing movement engine (INV.4E+).",
-  },
-  // ── exempt: create-seed ─────────────────────────────────────────────────────
+  // ── create-seed-exempt: fresh-product seed inserts (never a live mutation) ────
   {
     file: "lib/products/product-create.ts",
-    classification: "exempt",
+    classification: "create-seed-exempt",
     direct: true,
-    note: "createProductCore — inserts a FRESH inventory seed (never mutates an existing quantity), with " +
-      "compensating rollback delete on seed failure. Create semantics, not a stock mutation. INV.4E: strips " +
-      "stock_quantity from the product row before insert (mirror retired); the requested stock seeds ONLY the " +
-      "inventory row. Pinned by product-stock-mirror-guard.test.ts.",
+    note: "createProductCore — inserts a FRESH inventory seed + fresh variant rows for a brand-new product; " +
+      "compensation deletes ONLY the product row (FK cascade removes the children). Create semantics, never a " +
+      "live-quantity mutation. INV.6A: the parent seed is the authoritative Σ variants for a variant product " +
+      "(top-level stock ignored); a malformed variant/simple seed fails closed before any insert. products.stock_quantity " +
+      "(retired mirror, INV.4E) is never written. Pinned by product-stock-mirror-guard.test.ts / product-create tests.",
   },
   {
     file: "lib/products/product-create-batch.ts",
-    classification: "exempt",
+    classification: "create-seed-exempt",
     direct: true,
-    note: "createProductsBatchCore — batch fresh inventory seed insert (importers). Create semantics. INV.4E: strips " +
-      "stock_quantity from every product row before insert (mirror retired); requested stock seeds ONLY inventory. " +
-      "Pinned by product-stock-mirror-guard.test.ts.",
+    note: "createProductsBatchCore — batch fresh inventory seed insert (importers). Create semantics. Every seed " +
+      "is a validated non-negative int4; products.stock_quantity (retired mirror) is never written.",
   },
-  // ── exempt: product deletion / archive-restore ──────────────────────────────
+  // ── converged: fully migrated — no direct numeric/structural write remains ────
   {
-    file: "app/(app)/products/actions.ts",
-    classification: "exempt",
-    direct: true,
-    note: "deleteProduct — removes the inventory row as part of full product deletion (row removal, not a " +
-      "quantity mutation).",
-  },
-  {
-    file: "app/(app)/catalog/health/actions.ts",
-    classification: "exempt",
-    direct: true,
-    note: "deleteProductById — mirrors deleteProduct (inventory row removal on full deletion).",
-  },
-  {
-    file: "app/(app)/products/archive/actions.ts",
-    classification: "approved-rpc",
+    file: "lib/inventory/movements.ts",
+    classification: "converged",
     direct: false,
-    note: "INV.4E: archive/restore are now the atomic archive_product_bundle / restore_product_archive RPCs " +
-      "(service-role only). The action snapshots+deletes and validates+reconciles+re-inserts entirely inside " +
-      "those transactions — it performs NO direct inventory/variant/shelf/channel/product write of its own. " +
-      "Pinned no-direct-write by inv-4e-writer-guard.test.ts.",
+    note: "INV.6A: the manual product-grain movement engine is CONVERGED onto the atomic Inventory Engine RPCs " +
+      "(recordProductMovement / editProductMovement / deleteProductMovement / reverseMovement). ZERO direct " +
+      "inventory writes, no JS numeric read-modify-write, no clamp — the RPCs own stock + sold + the audit ledger " +
+      "atomically. Pinned no-direct-write by inv-6a-runtime-closure-guard.test.ts.",
   },
   {
-    file: "lib/products/shelf-cleanup.ts",
-    classification: "exempt",
-    direct: true,
-    note: "deleteShelfStockForProduct — fail-closed deletion of variant_shelf_stock rows during FULL product " +
-      "deletion (variant_shelf_stock has no FK, so it must be cleared explicitly). Deletion cleanup, not a " +
-      "live-product quantity mutation. Surfaced fresh at INV.3D (extracted product-delete helper).",
+    file: "app/staff/actions.ts",
+    classification: "converged",
+    direct: false,
+    note: "INV.6A: the staff lazy inventory-row seed is REMOVED (a missing inventory row now fails closed — no " +
+      "INSERT), and staffAddProduct routes options THROUGH createProductCore (parent seed = Σ variants) instead of " +
+      "a direct per-variant insert loop. staffMoveVariant / recordStaffMovement go through the Inventory Engine. No " +
+      "direct inventory/variant/shelf write remains. Pinned by inv-6a-runtime-closure-guard.test.ts.",
   },
-  // ── converged: fully migrated — no direct numeric-stock write remains ────────
   {
     file: "app/(app)/inventory/actions.ts",
     classification: "converged",
     direct: false,
-    note: "FULLY MIGRATED to the Inventory Engine across INV.4A/4B/4C: product-grain (setAbsolute), variant " +
-      "movement + stocktake (adjustVariantMovement / setVariantAbsolute), and ALL shelf writers — setLocation, " +
-      "applyShelfCounts, saveShelfStock, saveVariantShelfStock, removeFromShelf, moveShelfStock, bulkAssignShelf, " +
-      "bulkAssignVariantShelf, and the applyStocktake location side-path (placeOnShelf / replaceShelfDistribution / " +
-      "assignFullShelf / moveShelf). deleteSlot / deleteShelf are fail-closed topology-only deletions (reject when a " +
-      "slot is occupied; no placement auto-delete). The ONLY remaining inventory.update is low_stock_threshold " +
-      "(not numeric-stock state). Pinned no-direct-write by inv-4a/4b/4c-writer-guard.test.ts.",
+    note: "FULLY MIGRATED to the Inventory Engine across INV.4A/4B/4C. INV.6A: upsertVariants no longer INSERTs a " +
+      "new option (structural) — it fails closed and requires the full editor; only metadata (name/barcode) updates " +
+      "and low_stock_threshold updates remain, neither of which is numeric/structural inventory state.",
   },
   {
     file: "lib/products/product-save.ts",
     classification: "converged",
     direct: false,
-    note: "INV.4D: the product editor no longer writes inventory. Metadata saves exclude stock_quantity; a simple " +
-      "product's stock change goes through the injected Inventory Engine adapter (setAbsolute); a variant product's " +
-      "parent is the atomic Σ-variants rollup inside sync_product_variants. A missing inventory row FAILS CLOSED " +
-      "(no lazy seed). products.stock_quantity stays a TEMPORARY mirror (products table, not a numeric inventory " +
-      "table). Pinned by inv-4d-writer-guard.test.ts.",
+    note: "INV.4D: the product editor writes no inventory — a simple product's stock goes through the Engine " +
+      "(setAbsolute) and a variant product's parent is the atomic Σ-variants rollup inside sync_product_variants. " +
+      "products.stock_quantity is a RETIRED mirror (INV.4E), not written. Pinned by inv-4d-writer-guard.test.ts.",
   },
   {
     file: "app/api/malak/commit/route.ts",
     classification: "converged",
     direct: false,
-    note: "INV.4D: Malak commitStock resolves the inventory row read-only (FAIL CLOSED if missing, no lazy seed) and " +
-      "sets stock through the Inventory Engine (setAbsolute) — no direct inventory update/insert. products.stock_quantity " +
-      "stays a TEMPORARY mirror; stock_status is never touched. Product create still delegates to createProductCore " +
-      "(exempt seed). Pinned by inv-4d-writer-guard.test.ts.",
+    note: "INV.4D: Malak commitStock resolves the inventory row read-only (FAIL CLOSED if missing) and sets stock " +
+      "through the Inventory Engine (setAbsolute). products.stock_quantity is a RETIRED mirror (INV.4E), never written.",
+  },
+  {
+    file: "app/(app)/products/actions.ts",
+    classification: "converged",
+    direct: false,
+    note: "INV.6A: deleteProduct now deletes ONLY the product row and lets ON DELETE CASCADE remove every numeric " +
+      "dependent (inventory → shelf_stock, product_variants → variant_shelf_stock, channel_products). No manual " +
+      "child-delete chain, no retired shelf-cleanup helper.",
+  },
+  {
+    file: "app/(app)/catalog/health/actions.ts",
+    classification: "converged",
+    direct: false,
+    note: "INV.6A: deleteProductById mirrors deleteProduct — product-row delete only, FK cascade owns the children.",
+  },
+  {
+    file: "app/(app)/products/archive/actions.ts",
+    classification: "approved-rpc",
+    direct: false,
+    note: "INV.4E: archive/restore are the atomic archive_product_bundle / restore_product_archive RPCs " +
+      "(service-role only); the action performs NO direct inventory/variant/shelf/channel/product write. " +
+      "Pinned by inv-4e-writer-guard.test.ts.",
   },
   // ── engine: the facade — calls RPCs, never a direct table write ──────────────
   {
     file: "lib/inventory/engine.ts",
     classification: "engine",
     direct: false,
-    note: "Inventory Engine facade. Mutates ONLY through the INV.3C/4A/4B/4C atomic RPCs (.rpc), never a direct " +
-      "table write, and never availability.",
+    note: "Inventory Engine facade. Mutates ONLY through the INV.3C/4A/4B/4C/5/6A atomic RPCs (.rpc), never a " +
+      "direct table write, and never availability.",
   },
 ];
 
@@ -191,7 +175,7 @@ const directFiles = REGISTRY.filter((e) => e.direct).map((e) => e.file);
 
 // ── 1. exact registry: scanned direct writers == registered direct entries ────
 
-test("every direct numeric-inventory writer is a classified registry entry (exact)", () => {
+test("every direct numeric/structural inventory writer is a classified registry entry (exact)", () => {
   const found = runtimeFiles(["app", "lib"]).filter((rel) => isDirectNumericWriter(read(rel)));
   assert.deepEqual(
     [...found].sort(),
@@ -207,79 +191,72 @@ test("registry direct flags match the source", () => {
     assert.equal(
       isDirectNumericWriter(read(e.file)),
       e.direct,
-      `${e.file}: direct flag (${e.direct}) must match whether it actually writes a numeric inventory table`,
+      `${e.file}: direct flag (${e.direct}) must match whether it actually writes/structurally mutates inventory`,
     );
   }
 });
 
-// ── 3. classifications are valid, and legacy writers are visible (not hidden) ──
+// ── 3. classifications valid; legacy-direct = 0 (the INV.6A closure) ───────────
 
-test("classifications are from the allowed set and no legacy writer is disguised as exempt", () => {
-  const allowed = new Set<Classification>(["engine", "approved-rpc", "legacy-direct", "exempt", "converged"]);
+test("classifications are valid and legacy-direct is now ZERO", () => {
+  const allowed = new Set<Classification>(["engine", "approved-rpc", "converged", "create-seed-exempt", "structural-writer", "legacy-direct"]);
   for (const e of REGISTRY) assert.ok(allowed.has(e.classification), `${e.file}: valid classification`);
-  // These writers still hold un-migrated numeric-stock mutations and MUST stay
-  // visible as legacy-direct (never quietly reclassified exempt/converged).
-  for (const f of [
-    "app/staff/actions.ts",
-    "lib/inventory/movements.ts",
-  ]) {
-    assert.equal(REGISTRY.find((e) => e.file === f)?.classification, "legacy-direct", `${f} stays legacy-direct`);
-  }
-  // INV.4C/4D: these files are fully migrated → converged (not exempt).
-  for (const f of [
-    "app/(app)/inventory/actions.ts",   // INV.4C
-    "lib/products/product-save.ts",     // INV.4D
-    "app/api/malak/commit/route.ts",    // INV.4D
-  ]) {
+  assert.equal(REGISTRY.filter((e) => e.classification === "legacy-direct").length, 0, "no legacy-direct writers remain after INV.6A");
+  // The only direct writers are the two create-seed paths.
+  assert.deepEqual(
+    REGISTRY.filter((e) => e.direct).map((e) => e.classification),
+    ["create-seed-exempt", "create-seed-exempt"],
+    "every remaining direct writer is a create-seed-exempt path",
+  );
+  // The daily runtime writers are converged (not legacy-direct, not exempt).
+  for (const f of ["lib/inventory/movements.ts", "app/staff/actions.ts", "app/(app)/inventory/actions.ts"]) {
     assert.equal(REGISTRY.find((e) => e.file === f)?.classification, "converged", `${f} is converged`);
   }
-  assert.ok(REGISTRY.some((e) => e.classification === "legacy-direct"), "legacy writers still present (INV.4E+)");
 });
 
-// ── 3b. matcher precision: threshold-only update is NOT a numeric-stock write, but
-//        a stock/sold/location update (inline or via a variable payload) IS ──────
+// ── 3b. matcher precision ─────────────────────────────────────────────────────
 
 test("threshold-only inventory update is not a protected numeric-stock write", () => {
   assert.equal(isDirectNumericWriter(`admin.from("inventory").update({ low_stock_threshold: 5, updated_at: x })`), false);
-  // stock / sold / location inline literals ARE protected
   assert.equal(isDirectNumericWriter(`admin.from("inventory").update({ stock_quantity: 3 })`), true);
   assert.equal(isDirectNumericWriter(`admin.from("inventory").update({ sold_quantity: 3 })`), true);
   assert.equal(isDirectNumericWriter(`admin.from("inventory").update({ location: "A1" })`), true);
-  // a variable payload is opaque → conservatively protected
   assert.equal(isDirectNumericWriter(`admin.from("inventory").update(patch).eq("id", x)`), true);
-  // insert / delete of an inventory row is always protected (create/archive/delete)
   assert.equal(isDirectNumericWriter(`admin.from("inventory").insert({ product_id: p })`), true);
   assert.equal(isDirectNumericWriter(`admin.from("inventory").delete().eq("id", x)`), true);
 });
 
-test("inventory/actions.ts no longer performs any direct numeric-stock write", () => {
-  assert.equal(isDirectNumericWriter(read("app/(app)/inventory/actions.ts")), false,
-    "all stock_quantity / sold_quantity / location / shelf writes go through the engine after INV.4C");
+test("product_variants INSERT/DELETE is structural (protected); metadata/availability update is not", () => {
+  // INV.6A structural writers.
+  assert.equal(isDirectNumericWriter(`admin.from("product_variants").insert({ parent_product_id: p })`), true);
+  assert.equal(isDirectNumericWriter(`admin.from("product_variants").delete().eq("id", x)`), true);
+  // numeric stock update is protected …
+  assert.equal(isDirectNumericWriter(`admin.from("product_variants").update({ stock_quantity: 3 })`), true);
+  // … but a metadata-only update (name/barcode) or an availability update is NOT.
+  assert.equal(isDirectNumericWriter(`admin.from("product_variants").update({ variant_name: n, barcode: b })`), false);
+  assert.equal(isDirectNumericWriter(`admin.from("product_variants").update({ stock_status: s })`), false);
 });
 
-test("product-save.ts and Malak commit no longer perform any direct numeric-stock write (INV.4D)", () => {
-  assert.equal(isDirectNumericWriter(read("lib/products/product-save.ts")), false,
-    "product editor routes stock through the Inventory Engine / atomic variant rollup after INV.4D");
-  assert.equal(isDirectNumericWriter(read("app/api/malak/commit/route.ts")), false,
-    "Malak commitStock routes through the Inventory Engine after INV.4D");
+test("inventory/actions.ts, movements.ts, and staff/actions.ts perform no direct numeric/structural write", () => {
+  for (const f of ["app/(app)/inventory/actions.ts", "lib/inventory/movements.ts", "app/staff/actions.ts"]) {
+    assert.equal(isDirectNumericWriter(read(f)), false, `${f} routes every stock change through the Inventory Engine after INV.6A`);
+  }
 });
 
 // ── 4. engine boundary: facade writes no numeric table directly, no availability
 
 test("the Inventory Engine facade uses RPCs only — no direct write, no availability", () => {
   const raw = read("lib/inventory/engine.ts");
-  assert.equal(isDirectNumericWriter(raw), false, "engine.ts performs no direct numeric table write");
+  assert.equal(isDirectNumericWriter(raw), false, "engine.ts performs no direct numeric/structural table write");
   const code = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
   assert.equal(/stock_status/.test(code), false, "engine.ts never touches stock_status (availability boundary)");
   assert.equal(/from\(["']products["']\)/.test(code), false, "engine.ts never touches the products table (no stale mirror)");
   assert.equal(/availability\//.test(code), false, "engine.ts imports no availability module");
-  assert.ok(/\.rpc\(\s*["']inv_(adjust_variant|set_variant_absolute|place_shelf)["']/.test(code), "engine.ts drives the INV.3C RPCs");
+  assert.ok(/\.rpc\(\s*["']inv_record_product_movement["']/.test(code), "engine.ts drives the INV.6A movement RPCs");
 });
 
 // ── 5. the availability engine is NOT a numeric writer (regression) ───────────
 
 test("availability engine is not mis-flagged as a numeric inventory writer", () => {
-  // It writes products.stock_status / product_variants.stock_status only — the
-  // numeric matchers must NOT catch it.
   assert.equal(isDirectNumericWriter(read("lib/availability/engine.ts")), false);
 });

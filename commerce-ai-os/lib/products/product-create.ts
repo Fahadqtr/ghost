@@ -18,7 +18,7 @@
 // imports — node:test loads this module directly; the only import is the pure,
 // dependency-free inventory-seed sibling.
 
-import { inventorySeed } from "./inventory-seed.ts";
+import { inventorySeed, isValidSeedQuantity, computeVariantParentSeed } from "./inventory-seed.ts";
 
 export interface CreateVariantRow {
   parent_product_id?: string; // set by the core after the product insert
@@ -58,7 +58,7 @@ export type CreateProductCoreResult =
   | { ok: true; productId: string }
   | {
       ok: false;
-      stage: "product_insert" | "inventory_insert" | "variant_insert";
+      stage: "invalid_seed" | "invalid_variant_stock" | "product_insert" | "inventory_insert" | "variant_insert";
       duplicateIdentity: boolean;
       cleanup: "not_needed" | "done" | "failed";
     };
@@ -75,12 +75,32 @@ export async function createProductCore(
   variantRows: readonly CreateVariantRow[],
   opts?: CreateProductCoreOptions,
 ): Promise<CreateProductCoreResult> {
-  // INV.4E — the products.stock_quantity mirror is RETIRED. The requested
-  // starting stock is a FORM field that seeds the authoritative `inventory` row
-  // ONLY: compute the seed quantity BEFORE the insert, then strip stock_quantity
-  // from the product row so the products table's frozen legacy column is never
-  // written. `row` is not mutated (a fresh object is inserted).
-  const seedQty = opts?.seedQuantity ?? ((row.stock_quantity as number | null) ?? 0);
+  // INV.6A — create-time stock AUTHORITY (the products.stock_quantity mirror is
+  // RETIRED since INV.4E). The requested starting stock is a FORM field that seeds
+  // the authoritative `inventory` row ONLY:
+  //   VARIANT product → parent inventory seed = Σ NORMALIZED variant stock; the
+  //     top-level stock / opts.seedQuantity is IGNORED as authority. Each variant
+  //     stock is normalized (blank/null → 0); a malformed variant stock (negative,
+  //     fractional, NaN, Infinity, overflow) FAILS CLOSED before any insert.
+  //   SIMPLE product  → the requested seed must be a valid non-negative int4.
+  // The seed is computed BEFORE the insert; stock_quantity is then stripped from
+  // the product row so the frozen legacy column is never written (`row` is not
+  // mutated — a fresh object is inserted).
+  let seedQty: number;
+  let seededVariantRows: readonly CreateVariantRow[] = variantRows;
+  if (variantRows.length > 0) {
+    const parentSeed = computeVariantParentSeed(variantRows.map((v) => v.stock_quantity));
+    if (!parentSeed.ok) {
+      return { ok: false, stage: "invalid_variant_stock", duplicateIdentity: false, cleanup: "not_needed" };
+    }
+    seedQty = parentSeed.seed;
+    seededVariantRows = variantRows.map((v, i) => ({ ...v, stock_quantity: parentSeed.normalized[i] }));
+  } else {
+    seedQty = opts?.seedQuantity ?? ((row.stock_quantity as number | null) ?? 0);
+    if (!isValidSeedQuantity(seedQty)) {
+      return { ok: false, stage: "invalid_seed", duplicateIdentity: false, cleanup: "not_needed" };
+    }
+  }
   const { stock_quantity: _mirrorOmit, ...productRow } = row;
 
   const { data: product, error: productErr } = await client
@@ -98,23 +118,17 @@ export async function createProductCore(
     };
   }
 
-  const rollback = async (withInventory: boolean, withVariants: boolean): Promise<"done" | "failed"> => {
-    let okAll = true;
+  // INV.6A — compensation deletes ONLY the just-created product row; its inventory
+  // seed and variant rows are removed by ON DELETE CASCADE (inventory → products,
+  // product_variants → products, and their shelf overlays in turn). No manual
+  // child-delete chain.
+  const rollback = async (): Promise<"done" | "failed"> => {
     try {
-      if (withVariants) {
-        const r = await client.from("product_variants").delete().filter("parent_product_id", "eq", productId);
-        if (r.error) okAll = false;
-      }
-      if (withInventory) {
-        const r = await client.from("inventory").delete().filter("product_id", "eq", productId);
-        if (r.error) okAll = false;
-      }
       const r = await client.from("products").delete().filter("id", "eq", productId);
-      if (r.error) okAll = false;
+      return r.error ? "failed" : "done";
     } catch {
-      okAll = false;
+      return "failed";
     }
-    return okAll ? "done" : "failed";
   };
 
   // The inventory seed quantity (computed above, before the mirror strip)
@@ -129,15 +143,15 @@ export async function createProductCore(
     })
   ).error;
   if (invErr) {
-    const cleanup = await rollback(false, false);
+    const cleanup = await rollback();
     return { ok: false, stage: "inventory_insert", duplicateIdentity: false, cleanup };
   }
 
-  if (variantRows.length > 0) {
-    const rows = variantRows.map((v) => ({ ...v, parent_product_id: productId }));
+  if (seededVariantRows.length > 0) {
+    const rows = seededVariantRows.map((v) => ({ ...v, parent_product_id: productId }));
     const vErr = (await client.from("product_variants").insert(rows)).error;
     if (vErr) {
-      const cleanup = await rollback(true, true);
+      const cleanup = await rollback();
       return {
         ok: false,
         stage: "variant_insert",

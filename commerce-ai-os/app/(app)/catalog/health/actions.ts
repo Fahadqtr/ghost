@@ -4,24 +4,18 @@ import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { revalidatePath } from "next/cache";
-import { deleteShelfStockForProduct } from "@/lib/products/shelf-cleanup";
 
-// Delete one product (and its dependent rows) WITHOUT redirecting — the catalog
-// health page stays put so the owner can clean several duplicates in a row.
-// Mirrors products/actions#deleteProduct minus the redirect.
+// Delete one product WITHOUT redirecting — the catalog health page stays put so
+// the owner can clean several duplicates in a row. Mirrors products/actions#deleteProduct
+// minus the redirect.
 export async function deleteProductById(id: string): Promise<{ ok: true } | { error: string }> {
   if (!(await isSignedIn())) return { error: "Not signed in." };
   if (!id) return { error: "Missing product id." };
   const supabase = createClient();
   const { data: doomed } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
-  // variant_shelf_stock holds variant ids with NO foreign key, so clear it
-  // BEFORE the variants go — otherwise its rows outlive them silently.
-  // Fail closed: abort the deletion rather than strand orphaned shelf rows.
-  const shelfCleanup = await deleteShelfStockForProduct(supabase, id);
-  if (!shelfCleanup.ok) return { error: "تعذّر حذف بيانات رفوف خيارات المنتج. لم يتم حذف المنتج." };
-  await supabase.from("product_variants").delete().eq("parent_product_id", id);
-  await supabase.from("channel_products").delete().eq("product_id", id);
-  await supabase.from("inventory").delete().eq("product_id", id);
+  // INV.6A — numeric dependents (inventory → shelf_stock, product_variants →
+  // variant_shelf_stock, channel_products) are removed by ON DELETE CASCADE, so
+  // deleting the product row is sufficient and atomic. No manual child deletes.
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) return { error: error.message };
   await logCatalogTask({ action: "delete", productId: id, snapshot: (doomed ?? {}) as Record<string, unknown> });

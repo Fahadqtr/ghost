@@ -8,7 +8,6 @@ import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { queueForTalabat } from "@/lib/talabat/queue";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
-import { deleteShelfStockForProduct } from "@/lib/products/shelf-cleanup";
 
 // The product create/edit save cores (row projection, inventory sync, the
 // id-preserving variant sync) live in lib/products/product-save.ts and are used
@@ -17,10 +16,6 @@ import { deleteShelfStockForProduct } from "@/lib/products/shelf-cleanup";
 // form (components/ProductForm.tsx) was removed. The input-shape types stay
 // re-exported for the approval/delete workflows and any external callers.
 export type { ProductInput, VariantInput } from "@/lib/products/product-save";
-
-// Fixed message for a full-product delete aborted because its shelf rows
-// could not be cleared. Leaks no table name, uuid, or database text.
-const SHELF_CLEANUP_FAILED = "تعذّر حذف بيانات رفوف خيارات المنتج. لم يتم حذف المنتج.";
 
 // --- actions --------------------------------------------------------------
 
@@ -236,16 +231,11 @@ export async function deleteProduct(id: string) {
     .from("product_variants")
     .select("variant_name, sku, barcode, color, size, price")
     .eq("parent_product_id", id);
-  // Clean up dependent rows first (in case FKs aren't ON DELETE CASCADE).
-  // variant_shelf_stock holds variant ids with NO foreign key, so it must be
-  // cleared BEFORE the variants go — otherwise its rows outlive them silently.
-  // Fail closed: if the cleanup cannot be proven to have succeeded, abort the
-  // whole deletion rather than strand shelf rows pointing at deleted variants.
-  const shelfCleanup = await deleteShelfStockForProduct(supabase, id);
-  if (!shelfCleanup.ok) return { error: SHELF_CLEANUP_FAILED };
-  await supabase.from("product_variants").delete().eq("parent_product_id", id);
-  await supabase.from("channel_products").delete().eq("product_id", id);
-  await supabase.from("inventory").delete().eq("product_id", id);
+  // INV.6A — every numeric dependent is removed by ON DELETE CASCADE: inventory
+  // → products, product_variants → products, shelf_stock → inventory,
+  // variant_shelf_stock → product_variants, channel_products → products. Deleting
+  // the product row is therefore sufficient and atomic in the database; no manual
+  // child-delete chain (no stranded shelf rows). Fail-closed on the delete error.
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) return { error: error.message };
   await logCatalogTask({ action: "delete", productId: id, snapshot: { ...(doomed ?? {}), variants: doomedVariants ?? [] } as Record<string, unknown> });

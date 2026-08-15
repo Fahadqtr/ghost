@@ -115,7 +115,7 @@ test("inventory failure rolls the product back — no partial product survives",
   assert.ok(!calls.some((c) => c.table === "product_variants" && c.kind === "insert"), "variants never attempted");
 });
 
-test("variant failure rolls back variants, inventory and the product — full compensation", async () => {
+test("variant failure rolls back the product only — FK cascade removes the children (INV.6A)", async () => {
   const { client, calls } = makeClient({ variantInsert: { error: { code: "23505", message: "dup sku" } } });
   const res = await createProductCore(client, ROW, VROWS);
   assert.ok(!res.ok);
@@ -125,7 +125,63 @@ test("variant failure rolls back variants, inventory and the product — full co
     assert.equal(res.cleanup, "done");
   }
   const deletes = calls.filter((c) => c.kind === "delete").map((d) => d.table);
-  assert.deepEqual(deletes, ["product_variants", "inventory", "products"], "reverse order");
+  assert.deepEqual(deletes, ["products"], "only the product row is deleted; inventory + variants cascade");
+});
+
+// ── INV.6A create-time authority ──────────────────────────────────────────────
+
+test("VARIANT create: parent inventory seed = Σ variants; top-level stock is IGNORED", async () => {
+  const { client, calls } = makeClient();
+  const vrows: CreateVariantRow[] = [
+    { variant_name: "a", variant_name_en: null, sku: "s-1", barcode: null, color: null, size: null, price: null, stock_quantity: 2 },
+    { variant_name: "b", variant_name_en: null, sku: "s-2", barcode: null, color: null, size: null, price: null, stock_quantity: 3 },
+    { variant_name: "c", variant_name_en: null, sku: "s-3", barcode: null, color: null, size: null, price: null, stock_quantity: 4 },
+  ];
+  // top-level stock 999 must NOT be authoritative for a variant product.
+  const res = await createProductCore(client, { sku: "mk9", name_ar: "x", stock_quantity: 999 }, vrows, { seedQuantity: 999 });
+  assert.ok(res.ok);
+  const inv = calls.find((c) => c.table === "inventory")!.values as Record<string, unknown>;
+  assert.equal(inv.stock_quantity, 9, "seed = 2 + 3 + 4, never the top-level 999");
+});
+
+test("VARIANT create: a blank variant stock normalizes to 0 in both the seed and the row", async () => {
+  const { client, calls } = makeClient();
+  const vrows: CreateVariantRow[] = [
+    { variant_name: "a", variant_name_en: null, sku: "s-1", barcode: null, color: null, size: null, price: null, stock_quantity: null },
+    { variant_name: "b", variant_name_en: null, sku: "s-2", barcode: null, color: null, size: null, price: null, stock_quantity: 5 },
+  ];
+  const res = await createProductCore(client, { sku: "mk9", name_ar: "x" }, vrows);
+  assert.ok(res.ok);
+  const inv = calls.find((c) => c.table === "inventory")!.values as Record<string, unknown>;
+  assert.equal(inv.stock_quantity, 5, "seed = 0 + 5");
+  const vInsert = calls.find((c) => c.table === "product_variants")!.values as Record<string, unknown>[];
+  assert.equal(vInsert[0].stock_quantity, 0, "blank variant stock normalized to 0");
+});
+
+test("VARIANT create: a malformed variant stock fails closed BEFORE any insert", async () => {
+  for (const bad of [-1, 1.5, Number.NaN, Infinity]) {
+    const { client, calls } = makeClient();
+    const vrows: CreateVariantRow[] = [
+      { variant_name: "a", variant_name_en: null, sku: "s-1", barcode: null, color: null, size: null, price: null, stock_quantity: bad },
+    ];
+    const res = await createProductCore(client, { sku: "mk9", name_ar: "x" }, vrows);
+    assert.ok(!res.ok);
+    if (!res.ok) {
+      assert.equal(res.stage, "invalid_variant_stock");
+      assert.equal(res.cleanup, "not_needed");
+    }
+    assert.equal(calls.length, 0, "no product/inventory/variant insert on a malformed variant stock");
+  }
+});
+
+test("SIMPLE create: a malformed seed fails closed before any insert", async () => {
+  for (const bad of [-1, 1.5, Number.NaN]) {
+    const { client, calls } = makeClient();
+    const res = await createProductCore(client, { sku: "mk9", name_ar: "x" }, [], { seedQuantity: bad });
+    assert.ok(!res.ok);
+    if (!res.ok) assert.equal(res.stage, "invalid_seed");
+    assert.equal(calls.length, 0, "nothing inserted on a malformed simple seed");
+  }
 });
 
 test("a failed compensation is REPORTED, never silent", async () => {

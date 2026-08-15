@@ -81,7 +81,8 @@ test("archive/restore never mutate stock_status (availability boundary)", () => 
 
 // ── out-of-scope writers stay as they were ────────────────────────────────────
 
-test("movements.ts stays a legacy direct writer (untouched by INV.4E)", () => {
+test("movements.ts was later converged onto the Inventory Engine (INV.6A)", () => {
   const mv = strip(read("lib/inventory/movements.ts"));
-  assert.ok(/\.from\(\s*["']inventory["']\s*\)\s*\.update\(/.test(mv), "movements still does its direct RMW (INV.4E leaves it)");
+  assert.equal(/\.from\(\s*["']inventory["']\s*\)\s*\.update\(/.test(mv), false,
+    "INV.6A converged the manual movement engine onto the atomic movement RPCs (no direct RMW)");
 });

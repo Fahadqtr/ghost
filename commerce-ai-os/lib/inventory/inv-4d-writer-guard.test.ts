@@ -107,9 +107,10 @@ test("malak commitStock: never mutates stock_status (availability boundary)", ()
 
 // ── out-of-scope files stay as they were ──────────────────────────────────────
 
-test("movements.ts stays a legacy direct writer (untouched by INV.4D)", () => {
+test("movements.ts was later converged onto the Inventory Engine (INV.6A)", () => {
   const mv = strip(read("lib/inventory/movements.ts"));
-  assert.ok(/\.from\(\s*["']inventory["']\s*\)\s*\.update\(/.test(mv), "movements still does its direct RMW (INV.4E+)");
+  assert.equal(/\.from\(\s*["']inventory["']\s*\)\s*\.update\(/.test(mv), false,
+    "INV.6A converged the manual movement engine onto the atomic movement RPCs (no direct RMW)");
 });
 
 test("the product editor does not couple stock to Availability, nor to Shopify / Talabat", () => {
