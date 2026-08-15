@@ -1,3 +1,11 @@
+-- ⚠️ SUPERSEDED — DO NOT RUN. Historical/stale definition.
+-- The LIVE production process_shopify_order_deduction is the INV.5-converged
+-- version defined in supabase/migrations/20260815120000_inv_5_sales_symmetry.sql,
+-- which delegates the numeric sale to inv_apply_sale_targets (variant-aware +
+-- sold_quantity). This file predates INV.5 (clamp-at-zero, no variant/sold) and
+-- does NOT reflect production behavior. Retained for history; retire in CH.9.
+-- (CH.1 documentation marker — no runtime effect.)
+--
 -- Phase 2A.4 (hardening) — TRANSACTIONAL Shopify POS order deduction.
 --
 -- ADDITIVE & idempotent. Run ONCE in the production SQL editor. It:

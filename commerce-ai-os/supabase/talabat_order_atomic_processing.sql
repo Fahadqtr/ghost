@@ -1,3 +1,8 @@
+-- ⚠️ SUPERSEDED — DO NOT RUN. Historical/stale definition.
+-- The LIVE production process_talabat_order_deduction delegates the numeric sale
+-- to inv_apply_sale_targets (INV.5 convergence); this file's inline body does not
+-- and no longer reflects production. Retained for history; retire in CH.9.
+-- (CH.1 documentation marker — no runtime effect.)
 -- ============================================================================
 -- process_talabat_order_deduction — atomic, all-or-nothing Talabat order
 -- deduction. Run ONCE in the Supabase SQL editor of the PRODUCTION project
