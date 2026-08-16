@@ -42,8 +42,10 @@ import {
   type IssuePage,
 } from "@/lib/operations/operations-queue";
 import { buildPlatformHealth, type PlatformHealth } from "@/lib/operations/platform-health";
+import { buildOperationsCenter, type OperationsCenterModel } from "@/lib/operations/ops-center";
 import Link from "next/link";
 import OperationsDashboard from "@/components/v2/operations/OperationsDashboard";
+import OperationsCenter from "@/components/v2/operations/OperationsCenter";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +61,7 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         queues: Queue[];
         platformOverview: PlatformOverview;
         platformHealth: PlatformHealth[];
+        opsCenter: OperationsCenterModel;
         pageResult: OperationsPage;
         matchCount: number;
         partial: boolean;
@@ -191,6 +194,14 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         queues: summary.queues,
         platformOverview: summary.platformOverview,
         platformHealth,
+        // OPS.1 — pure composition over the aggregates already computed above
+        // (no extra reads/scans, no writes). Orchestration only.
+        opsCenter: buildOperationsCenter({
+          kpis: summary.kpis,
+          overview: summary.platformOverview,
+          platformHealth,
+          items,
+        }),
         pageResult,
         matchCount: matched.total,
         partial: result.data.partial,
@@ -231,6 +242,9 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
 
   return (
     <>
+      <div className="mb-4">
+        <OperationsCenter model={loaded.opsCenter} />
+      </div>
       <div className="mb-3 flex flex-wrap justify-end gap-2">
         <Link
           href="/v2/operations/missing-products"
