@@ -57,9 +57,25 @@ test("the catalog section is unchanged", () => {
 test("links are grouped by section, in declaration order", () => {
   const sections = groupNavLinks();
   // UX.1 added «الإعدادات» and «أدوات إضافية ↗» after «العملاء».
-  assert.deepEqual(sections.map((s) => s.title), ["الكتالوج", "العمليات", "العملاء", "الإعدادات", "أدوات إضافية ↗"]);
-  assert.deepEqual(sections[1]!.links.map((l) => l.href), ["/v2/operations", "/v2/tasks"]);
-  assert.deepEqual(sections[2]!.links.map((l) => l.href), LOYALTY_HREFS);
+  // NAV.1 surfaced the OPS sub-centers under «العمليات» and added «التحليلات».
+  assert.deepEqual(sections.map((s) => s.title), [
+    "الكتالوج",
+    "العمليات",
+    "التحليلات",
+    "العملاء",
+    "الإعدادات",
+    "أدوات إضافية ↗",
+  ]);
+  assert.deepEqual(sections[1]!.links.map((l) => l.href), [
+    "/v2/operations",
+    "/v2/operations/media",
+    "/v2/operations/channels",
+    "/v2/operations/ai",
+    "/v2/operations/health",
+    "/v2/tasks",
+  ]);
+  assert.deepEqual(sections[2]!.links.map((l) => l.href), ["/v2/analytics"]);
+  assert.deepEqual(sections[3]!.links.map((l) => l.href), LOYALTY_HREFS);
   const flat = sections.flatMap((s) => s.links.map((l) => l.href));
   assert.equal(flat.length, V2_NAV_LINKS.length);
   assert.equal(new Set(flat).size, flat.length, "no duplicate hrefs");
