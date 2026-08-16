@@ -10,6 +10,7 @@
 
 import { loadChannelCenter } from "@/lib/operations/channels/channel-center.server";
 import { parseChannelFilters } from "@/lib/operations/channels/channel-center";
+import { parseActivityFilters } from "@/lib/operations/channels/activity";
 import ChannelCommandCenter from "@/components/v2/operations/ChannelCommandCenter";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +23,9 @@ export default async function ChannelCommandCenterPage({ searchParams }: { searc
   const params = searchParams ? await searchParams : {};
   const q = typeof params.q === "string" ? params.q : null;
   const filters = parseChannelFilters(params);
+  const activityFilters = parseActivityFilters(params);
 
-  const view = await loadChannelCenter({ query: q, filters });
+  const view = await loadChannelCenter({ query: q, filters, activityFilters });
 
   if ("error" in view) {
     return (
@@ -47,6 +49,8 @@ export default async function ChannelCommandCenterPage({ searchParams }: { searc
         filtered={view.filtered}
         filters={view.filters}
         search={view.search}
+        activity={view.activity}
+        activityFilters={view.activityFilters}
         degraded={view.degraded}
       />
     </div>

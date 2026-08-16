@@ -46,6 +46,10 @@ import {
   type SearchResult,
   type StorefrontCard,
 } from "./channel-center.ts";
+import { loadSnoonuMalikasOperational } from "./snoonu-malikas-reader.server.ts";
+import { loadChannelGapCounts } from "./gap-counts.server.ts";
+import { loadChannelActivity } from "./activity.server.ts";
+import { filterActivity, EMPTY_ACTIVITY_FILTERS, type ActivityEvent, type ActivityFilters } from "./activity.ts";
 
 const NOT_SIGNED_IN = "غير مسجّل الدخول.";
 const LOAD_FAILED = "تعذّر تحميل مركز القنوات.";
@@ -59,6 +63,9 @@ export interface ChannelCenterView {
   filtered: { storefronts: StorefrontCard[]; alerts: ChannelAlert[]; queues: ChannelQueue[] };
   filters: ChannelFilters;
   search: SearchResult | null;
+  /** OPS.4 — bounded cross-channel activity feed (already filtered) + its filters. */
+  activity: ActivityEvent[];
+  activityFilters: ActivityFilters;
   degraded: boolean;
 }
 
@@ -135,7 +142,7 @@ async function resolveExternalIdentity(
 }
 
 export async function loadChannelCenter(
-  opts?: { query?: string | null; filters?: ChannelFilters },
+  opts?: { query?: string | null; filters?: ChannelFilters; activityFilters?: ActivityFilters },
 ): Promise<ChannelCenterView | { error: string }> {
   if (!(await isSignedIn())) return { error: NOT_SIGNED_IN };
   try {
@@ -177,6 +184,23 @@ export async function loadChannelCenter(
       rafeeq: { available: ov.rafeeq.available, present: ov.rafeeq.present, missing: ov.rafeeq.missing, linked: ov.rafeeq.linked, stale: ov.rafeeq.stale, lastCapturedAt: ov.rafeeq.lastCapturedAt },
     };
 
+    // OPS.4 — three bounded, read-only additions, gathered in parallel:
+    //   1. snoonu:malikas operational state (merchant session PORT, no persistence)
+    //   2. live gap counts (ECL head counts + presence overview) — no catalog scan
+    //   3. cross-channel activity feed (bounded audit + talabat reads)
+    const shopifyPresence = { available: ov.shopify.available, mapped: ov.shopify.published, missing: ov.shopify.missing, review: ov.shopify.reviewRequired };
+    const [snoonuMalikas, gapCounts, activityView] = await Promise.all([
+      loadSnoonuMalikasOperational(),
+      loadChannelGapCounts(supabase as never, shopifyPresence),
+      loadChannelActivity(supabase as never),
+    ]);
+    const activityAll: ActivityEvent[] = "error" in activityView ? [] : activityView.events;
+    const activityDegraded = "error" in activityView ? true : activityView.degraded;
+    // Storefronts with a recent ERROR activity event feed the health model (§10).
+    const recentErrorStorefronts = Array.from(
+      new Set(activityAll.filter((e) => e.status === "error" && e.storefront).map((e) => e.storefront as string)),
+    );
+
     const ccItems: CcItem[] = items.map(toCcItem);
     const input: ChannelCenterInput = {
       kpis: {
@@ -190,13 +214,16 @@ export async function loadChannelCenter(
       platformHealth: platformHealth.map((h) => ({ platform: h.platform, freshnessState: h.freshnessState, healthLevel: h.healthLevel, reasons: h.reasons })),
       items: ccItems,
       degraded: { puresoul: result.data.puresoulDegraded, talabat: result.data.talabatDegraded, rafeeq: result.data.rafeeqDegraded },
-      // No snoonu:malikas presence/snapshot reader is wired (CH.CERT) — stays
-      // OPERATIONALLY_BLOCKED. rafeeqConflicts is intentionally left unset (the
-      // dashboard has no cheap live source; conflict review is a workflow queue).
-      snoonuMalikasReaderAvailable: false,
+      snoonuMalikas, //         OPS.4 real merchant-session state (blocked until CONNECTED)
+      gapCounts, //             OPS.4 bounded per-storefront gap counts (UNKNOWN where uncheap)
+      recentErrorStorefronts, // OPS.4 recent-error evidence for health
     };
 
     const model = buildChannelCenter(input);
+
+    // Activity feed (§4): filtered purely; bounded already by the reader.
+    const activityFilters = opts?.activityFilters ?? EMPTY_ACTIVITY_FILTERS;
+    const activity = filterActivity(activityAll, activityFilters);
 
     // Active filters (§14) — applied purely over the composed model. Card/alert
     // filters are storefront-first; brand/category re-scope the item-level queues.
@@ -224,7 +251,7 @@ export async function loadChannelCenter(
       search = { query: q, local, external: external.filter((m) => !localIds.has(m.id)) };
     }
 
-    return { model, filtered, filters, search, degraded: result.data.partial };
+    return { model, filtered, filters, search, activity, activityFilters, degraded: result.data.partial || activityDegraded };
   } catch (e) {
     return { error: safeError("ops3_channels_load", e, LOAD_FAILED) };
   }

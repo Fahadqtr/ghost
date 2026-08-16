@@ -22,6 +22,8 @@ import {
   HEALTH_REASON_LABEL,
   ROUTES,
 } from "@/lib/operations/channels/channel-center";
+import type { ActivityEvent, ActivityStatus, ActivityFilters } from "@/lib/operations/channels/activity";
+import { ACTIVITY_EVENT_LABEL } from "@/lib/operations/channels/activity";
 
 const STATUS_TONE: Record<StorefrontStatus, string> = {
   HEALTHY: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -65,12 +67,28 @@ function StorefrontDetail({ card }: { card: StorefrontCard }) {
         </span>
       </div>
 
-      <div className="mt-2 grid grid-cols-3 gap-1.5 text-center sm:grid-cols-5">
+      {card.operational && (
+        <div className="mt-2 rounded-lg border border-current/20 bg-white/50 px-2 py-1 text-[11px]">
+          <span className="font-semibold">جلسة التاجر:</span> {card.operational.state} — {card.operational.reason}
+          {card.operational.lastReadAt ? <span className="opacity-70"> · آخر قراءة {card.operational.lastReadAt.slice(0, 16).replace("T", " ")}</span> : null}
+        </div>
+      )}
+
+      <div className="mt-2 grid grid-cols-3 gap-1.5 text-center sm:grid-cols-6">
         <Metric label="مرتبط" value={num(card.mapped)} />
         <Metric label="بحاجة ربط" value={num(card.missingMappings)} />
         <Metric label="مراجعة" value={num(card.needsReview)} />
+        <Metric label="تعارضات" value={num(card.conflicts)} />
         <Metric label="انحراف" value={num(card.availabilityDrift)} />
         <Metric label="صور ناقصة" value={num(card.missingImages)} />
+      </div>
+
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] opacity-70">
+        <span>MISSING_ECL: {num(card.missingEcl)}</span>
+        <span>EXTERNAL_ONLY: {num(card.externalOnly)}</span>
+        {card.missingBarcodes !== null && <span>باركود ناقص: {card.missingBarcodes}</span>}
+        {card.gapSource && <span>المصدر: {card.gapSource}</span>}
+        <span>«—» = غير معروف</span>
       </div>
 
       {card.grainNote && <p className="mt-2 text-[11px] font-medium opacity-90">⚠ {card.grainNote}</p>}
@@ -164,20 +182,32 @@ function activeFilterList(filters: ChannelFilters): { key: string; value: string
   return out;
 }
 
+const ACTIVITY_TONE: Record<ActivityStatus, string> = {
+  ok: "text-emerald-700",
+  warning: "text-amber-700",
+  error: "text-rose-700",
+  info: "text-slate-600",
+};
+
 export default function ChannelCommandCenter({
   model,
   filtered,
   filters,
   search,
+  activity,
+  activityFilters,
   degraded,
 }: {
   model: ChannelCenterModel;
   filtered: { storefronts: StorefrontCard[]; alerts: ChannelAlert[]; queues: ChannelQueue[] };
   filters: ChannelFilters;
   search: SearchResult | null;
+  activity: ActivityEvent[];
+  activityFilters: ActivityFilters;
   degraded: boolean;
 }) {
   const active = activeFilterList(filters);
+  const activityActive = [activityFilters.channel, activityFilters.storefront, activityFilters.eventType, activityFilters.status].some(Boolean);
   return (
     <section className="space-y-4">
       {degraded && (
@@ -283,9 +313,9 @@ export default function ChannelCommandCenter({
           )}
         </div>
 
-        {/* Recent activity */}
+        {/* Snapshot freshness (per-storefront last snapshot) */}
         <div className="card space-y-2">
-          <h2 className="text-sm font-bold text-slate-700">النشاط الأخير (لقطات)</h2>
+          <h2 className="text-sm font-bold text-slate-700">آخر لقطة لكل واجهة</h2>
           <ul className="space-y-1 text-xs text-slate-600">
             {model.activity.map((e) => (
               <li key={e.storefront} className="flex items-center justify-between border-t border-slate-100 py-1 first:border-0">
@@ -294,10 +324,62 @@ export default function ChannelCommandCenter({
               </li>
             ))}
           </ul>
-          <p className="text-[10px] text-muted">
-            المصدر الموثوق الوحيد المشترك حاليًا هو وقت اللقطة لكل واجهة — سجل الأحداث التفصيلي عبر القنوات مؤجّل إلى OPS.4.
-          </p>
         </div>
+      </div>
+
+      {/* Cross-channel activity feed (OPS.4 — real recorded events, bounded) */}
+      <div className="card space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-bold text-slate-700">النشاط عبر القنوات</h2>
+          {activityActive && (
+            <Link href={ROUTES.channels} className="text-[11px] text-sky-700 hover:underline">
+              مسح مرشّحات النشاط ✕
+            </Link>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {["shopify", "snoonu", "talabat", "rafeeq", "internal"].map((c) => (
+            <Link key={`ac:${c}`} href={`${ROUTES.channels}?a_channel=${c}`} className="rounded-lg border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50">
+              {c}
+            </Link>
+          ))}
+          {(["ok", "warning", "error", "info"] as ActivityStatus[]).map((st) => (
+            <Link key={`as:${st}`} href={`${ROUTES.channels}?a_status=${st}`} className="rounded-lg border border-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-500 hover:bg-slate-50">
+              {st}
+            </Link>
+          ))}
+        </div>
+        {activity.length === 0 ? (
+          <p className="text-xs text-muted">لا نشاط مسجّل مطابق.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-[11px]">
+              <thead>
+                <tr className="text-slate-400">
+                  <th className="px-2 py-1 text-start font-medium">الوقت</th>
+                  <th className="px-2 py-1 text-start font-medium">الواجهة/القناة</th>
+                  <th className="px-2 py-1 text-start font-medium">الحدث</th>
+                  <th className="px-2 py-1 text-start font-medium">النتيجة</th>
+                  <th className="px-2 py-1 text-start font-medium"> </th>
+                </tr>
+              </thead>
+              <tbody>
+                {activity.map((e) => (
+                  <tr key={e.id} className="border-t border-slate-100">
+                    <td className="px-2 py-1 text-slate-500 whitespace-nowrap">{e.timestamp.slice(0, 16).replace("T", " ")}</td>
+                    <td className="px-2 py-1 text-slate-600">{e.storefront ?? e.channel}</td>
+                    <td className="px-2 py-1 text-slate-700">{ACTIVITY_EVENT_LABEL[e.eventType] ?? e.eventType}{e.summary ? <span className="opacity-60"> · {e.summary}</span> : null}</td>
+                    <td className={`px-2 py-1 font-semibold ${ACTIVITY_TONE[e.status]}`}>{e.status}</td>
+                    <td className="px-2 py-1"><Link href={e.link} className="text-sky-700 hover:underline">↗</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="text-[10px] text-muted">
+          مصدر موحّد للقراءة فقط من سجلات موجودة (malak_audit + طلبات طلبات) — بدون إنشاء سجل أحداث جديد؛ نافذة محدودة.
+        </p>
       </div>
 
       {/* Queues */}

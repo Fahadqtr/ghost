@@ -47,8 +47,8 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
   );
 }
 
-export default function AvailabilitySync({ canWrite }: { canWrite: boolean }) {
-  const [storefront, setStorefront] = useState<string>(STOREFRONTS[0].key);
+export default function AvailabilitySync({ canWrite, initialStorefront }: { canWrite: boolean; initialStorefront?: string }) {
+  const [storefront, setStorefront] = useState<string>(initialStorefront ?? STOREFRONTS[0].key);
   const [scan, setScan] = useState<AvailabilityScanResult | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());

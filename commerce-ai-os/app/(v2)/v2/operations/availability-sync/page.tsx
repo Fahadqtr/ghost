@@ -6,13 +6,22 @@
 // on render — the page performs no scan/apply itself.
 
 import { requireMalakWriter } from "@/lib/malak/authz";
+import { resolveStorefront } from "@/lib/operations/channels/deep-link";
 import AvailabilitySync from "@/components/v2/operations/AvailabilitySync";
 
 export const dynamic = "force-dynamic";
 
-export default async function AvailabilitySyncPage() {
+// CH.6C is Snoonu-only — a deep-link storefront is honoured only for these two.
+const SNOONU_STOREFRONTS = ["snoonu:pure_seoul", "snoonu:malikas"] as const;
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function AvailabilitySyncPage({ searchParams }: { searchParams?: SearchParams }) {
   const writer = await requireMalakWriter();
   const canWrite = writer.ok;
+
+  const params = searchParams ? await searchParams : {};
+  const initialStorefront = resolveStorefront(params, SNOONU_STOREFRONTS) ?? undefined;
 
   return (
     <div className="space-y-4">
@@ -23,7 +32,7 @@ export default async function AvailabilitySyncPage() {
           لا تُعدّل الكميات أو المخزون إطلاقًا — التوفّر فقط. المعاينة للقراءة، والتطبيق يمرّ حصريًا عبر محرّك التوفّر.
         </p>
       </header>
-      <AvailabilitySync canWrite={canWrite} />
+      <AvailabilitySync canWrite={canWrite} initialStorefront={initialStorefront} />
     </div>
   );
 }

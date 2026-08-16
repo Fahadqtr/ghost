@@ -37,8 +37,8 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
   );
 }
 
-export default function AiEnrichment({ canWrite, brands, categories }: { canWrite: boolean; brands: string[]; categories: string[] }) {
-  const [filters, setFilters] = useState<{ brand: string; category: string; sku: string; field: string }>({ brand: "", category: "", sku: "", field: "" });
+export default function AiEnrichment({ canWrite, brands, categories, initialFilters }: { canWrite: boolean; brands: string[]; categories: string[]; initialFilters?: Partial<{ brand: string; category: string; sku: string; field: string }> }) {
+  const [filters, setFilters] = useState<{ brand: string; category: string; sku: string; field: string }>({ brand: "", category: "", sku: "", field: "", ...initialFilters });
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [selProducts, setSelProducts] = useState<Set<string>>(new Set());
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
