@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { PLATFORMS } from "@/lib/constants";
 import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, setInventoryQuantities } from "@/lib/shopify/admin";
 import {
@@ -60,9 +61,10 @@ export async function applyReconciledAvailability(
   outIds: string[],
   inIds: string[]
 ): Promise<{ ok?: boolean; error?: string; platforms: number; outOfStock: number; inStock: number; failed?: number }> {
+  // INT.1 — mutating action: writer-gated (was login-only). Behavior unchanged.
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error, platforms: 0, outOfStock: 0, inStock: 0 };
   const sb = createClient();
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { error: "غير مسجّل الدخول.", platforms: 0, outOfStock: 0, inStock: 0 };
 
   const out = [...new Set((outIds ?? []).filter(Boolean))];
   const inn = [...new Set((inIds ?? []).filter(Boolean))];
@@ -98,9 +100,10 @@ export async function applyReconciledAvailability(
 export async function applyReconciledToShopify(
   outSkus: string[]
 ): Promise<{ ok?: boolean; error?: string; channelRows: number; shopify: { configured: boolean; pushed?: number; failed?: number; message?: string } }> {
+  // INT.1 — mutating action: writer-gated (was login-only). Behavior unchanged.
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error, channelRows: 0, shopify: { configured: false } };
   const sb = createClient();
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { error: "غير مسجّل الدخول.", channelRows: 0, shopify: { configured: false } };
 
   const skus = [...new Set((outSkus ?? []).filter(Boolean))];
   if (skus.length === 0) return { error: "ما في SKU نافدة.", channelRows: 0, shopify: { configured: false } };
@@ -170,9 +173,10 @@ export interface SystemOosResult {
 // out-of-stock that's already in the system onto Shopify" one-tap.
 export async function applySystemOutOfStockToShopify(): Promise<SystemOosResult> {
   const base: SystemOosResult = { outSkus: 0, channelRows: 0, shopify: { configured: false } };
+  // INT.1 — mutating action: writer-gated (was login-only). Behavior unchanged.
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { ...base, error: writer.error };
   const sb = createClient();
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { ...base, error: "غير مسجّل الدخول." };
 
   // Product ids flagged out-of-stock on ANY overlay platform (Pure Seoul, Talabat…).
   const outIds = new Set<string>();
