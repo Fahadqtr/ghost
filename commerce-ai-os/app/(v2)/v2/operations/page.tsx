@@ -231,7 +231,13 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
 
   return (
     <>
-      <div className="mb-3 flex justify-end">
+      <div className="mb-3 flex justify-end gap-2">
+        <Link
+          href="/v2/operations/barcode-completion"
+          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+        >
+          إكمال باركود سنونو ↗
+        </Link>
         <Link
           href="/v2/operations/availability-sync"
           className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
