@@ -9,9 +9,19 @@
 import { Suspense } from "react";
 
 import { loadActionCenter, loadActionCenterDetail } from "@/lib/actions/action-center.server";
+import { ACTION_LANES, type ActionLane } from "@/lib/actions/action-model";
 import ActionCenter from "@/components/v2/actions/ActionCenter";
 
 export const dynamic = "force-dynamic";
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+// OPS.7 — validate a deep-linked lane (e.g. from the Operations Owner-Actions
+// strip). Unknown values fall through to null so the page shows all lanes.
+function parseLane(v: string | string[] | undefined): ActionLane | null {
+  const s = Array.isArray(v) ? v[0] : v;
+  return typeof s === "string" && (ACTION_LANES as readonly string[]).includes(s) ? (s as ActionLane) : null;
+}
 
 function SectionSkeleton() {
   return (
@@ -32,7 +42,9 @@ async function ProductQueues() {
   return <ActionCenter view={detail} heading="مهام على مستوى المنتج" />;
 }
 
-export default async function ActionsPage() {
+export default async function ActionsPage({ searchParams }: { searchParams?: SearchParams }) {
+  const params = searchParams ? await searchParams : {};
+  const initialLane = parseLane(params.lane);
   const view = await loadActionCenter();
 
   return (
@@ -46,7 +58,7 @@ export default async function ActionsPage() {
         </p>
       </header>
 
-      <ActionCenter view={view} showSummary />
+      <ActionCenter view={view} showSummary initialLane={initialLane} />
 
       <Suspense fallback={<SectionSkeleton />}>
         <ProductQueues />

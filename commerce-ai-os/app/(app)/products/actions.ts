@@ -8,6 +8,7 @@ import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { queueForTalabat } from "@/lib/talabat/queue";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter, requireOwner } from "@/lib/malak/authz";
 
 // The product create/edit save cores (row projection, inventory sync, the
 // id-preserving variant sync) live in lib/products/product-save.ts and are used
@@ -62,7 +63,8 @@ export async function setProductApproval(id: string, approval: string, reason?: 
 // Inline product status toggle (Active / Draft) — straight from the catalog,
 // no need to open the product editor.
 export async function setProductStatus(id: string, status: string): Promise<{ ok?: true; error?: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  // OPS.7 §7 — lifecycle mutation: writer-gated (was login-only).
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { error: writer.error }; }
   if (!id) return { error: "Missing product id." };
   const value = status === "Active" ? "Active" : "Draft";
   const supabase = createClient();
@@ -220,7 +222,9 @@ export async function extractRejectedFromImages(
 }
 
 export async function deleteProduct(id: string) {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  // OPS.7 §7 — HARD delete is irreversible: owner-only (stricter than the writer
+  // boundary; was login-only). Not exposed from V2 in this phase.
+  { const owner = await requireOwner(); if (!owner.ok) return { error: owner.error }; }
   const supabase = createClient();
   // Full snapshot BEFORE deleting — the auto-task carries it so the assignee
   // can remove the product from the manual platforms too.

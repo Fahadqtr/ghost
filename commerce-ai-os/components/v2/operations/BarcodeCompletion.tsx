@@ -19,6 +19,7 @@ import type {
   BarcodeApplySummary,
 } from "@/lib/adapters/snoonu/barcode/barcode-completion.server";
 import type { BarcodeDiffRow } from "@/lib/adapters/snoonu/barcode/snoonu-barcode-diff";
+import { filterBarcodeRows, hasBarcodeFilter, type BarcodeFilter } from "@/lib/operations/barcode-filter";
 
 const STATUS_LABEL: Record<string, string> = {
   AUTO_COMPLETABLE: "قابل للإكمال",
@@ -50,16 +51,27 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
   );
 }
 
-export default function BarcodeCompletion({ canWrite }: { canWrite: boolean }) {
+export default function BarcodeCompletion({
+  canWrite,
+  initialFilter = { sku: null, status: null },
+}: {
+  canWrite: boolean;
+  /** OPS.7 — read-only deep-link filter (validated server-side); narrows the
+   *  preview only. Selection/apply still operate on the full actionable set. */
+  initialFilter?: BarcodeFilter;
+}) {
   const [scan, setScan] = useState<BarcodeScanResult | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [results, setResults] = useState<BarcodeApplyItem[] | null>(null);
   const [applySummary, setApplySummary] = useState<BarcodeApplySummary | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [filter, setFilter] = useState<BarcodeFilter>(initialFilter);
   const [isPending, startTransition] = useTransition();
 
   const actionableRows = useMemo(() => (scan?.rows ?? []).filter((r) => r.actionable), [scan]);
+  // Display-only: narrow the preview by the deep-link/user filter (pure helper).
+  const displayRows = useMemo(() => filterBarcodeRows(scan?.rows ?? [], filter), [scan, filter]);
   const allSelected = actionableRows.length > 0 && actionableRows.every((r) => selected.has(rowKey(r)));
 
   function reset() {
@@ -137,6 +149,22 @@ export default function BarcodeCompletion({ canWrite }: { canWrite: boolean }) {
       )}
 
       {showPreview && scan && (
+        <>
+        {hasBarcodeFilter(filter) ? (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted">مُصفّى:</span>
+            {filter.sku ? <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono">SKU: {filter.sku}</span> : null}
+            {filter.status ? <span className="rounded-full bg-slate-100 px-2 py-0.5">{STATUS_LABEL[filter.status] ?? filter.status}</span> : null}
+            <span className="text-muted">({displayRows.length}/{scan.rows.length})</span>
+            <button
+              type="button"
+              onClick={() => setFilter({ sku: null, status: null })}
+              className="rounded-lg border border-slate-300 px-2 py-0.5 hover:bg-slate-50"
+            >
+              مسح الفلترة
+            </button>
+          </div>
+        ) : null}
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full min-w-[820px] text-right text-sm">
             <thead className="bg-slate-50 text-xs text-slate-500">
@@ -153,7 +181,7 @@ export default function BarcodeCompletion({ canWrite }: { canWrite: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {scan.rows.map((r) => {
+              {displayRows.map((r) => {
                 const k = rowKey(r);
                 return (
                   <tr key={k} className="border-t border-slate-100">
@@ -169,10 +197,11 @@ export default function BarcodeCompletion({ canWrite }: { canWrite: boolean }) {
                   </tr>
                 );
               })}
-              {scan.rows.length === 0 && <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-400">لا توجد صفوف ناقصة.</td></tr>}
+              {displayRows.length === 0 && <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-400">لا توجد صفوف مطابقة.</td></tr>}
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {results && (
