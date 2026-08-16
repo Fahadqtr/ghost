@@ -43,7 +43,7 @@ test("composer never references inventory/availability/channel write columns or 
 test("composer only links to EXISTING workflow routes (no parallel screens)", () => {
   const s = read(COMPOSER);
   const routes = (s.match(/\/v2\/[a-z/-]+/g) ?? []).map((r) => r.replace(/[)"'`].*$/, ""));
-  const allowed = ["/v2/catalog", "/v2/operations", "/v2/operations/missing-products", "/v2/operations/ai-enrichment", "/v2/operations/barcode-completion", "/v2/operations/availability-sync"];
+  const allowed = ["/v2/catalog", "/v2/operations", "/v2/operations/missing-products", "/v2/operations/media", "/v2/operations/ai-enrichment", "/v2/operations/barcode-completion", "/v2/operations/availability-sync"];
   for (const r of routes) assert.ok(allowed.includes(r), `route ${r} is an existing workflow`);
 });
 
