@@ -42,6 +42,7 @@ import {
   type IssuePage,
 } from "@/lib/operations/operations-queue";
 import { buildPlatformHealth, type PlatformHealth } from "@/lib/operations/platform-health";
+import Link from "next/link";
 import OperationsDashboard from "@/components/v2/operations/OperationsDashboard";
 
 export const dynamic = "force-dynamic";
@@ -229,7 +230,16 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
   }
 
   return (
-    <OperationsDashboard
+    <>
+      <div className="mb-3 flex justify-end">
+        <Link
+          href="/v2/operations/availability-sync"
+          className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+        >
+          مزامنة توفّر سنونو ↗
+        </Link>
+      </div>
+      <OperationsDashboard
       kpis={loaded.kpis}
       queues={loaded.queues}
       platformOverview={loaded.platformOverview}
@@ -260,5 +270,6 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       queueCounts={loaded.queueCounts}
       queueCapped={loaded.queueCapped}
     />
+    </>
   );
 }
