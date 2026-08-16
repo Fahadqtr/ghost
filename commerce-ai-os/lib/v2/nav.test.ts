@@ -137,7 +137,16 @@ test("NAV.1 adds «التحليلات» → «لوحة الإدارة» (/v2/ana
   assert.equal(an!.icon, "analytics");
   assert.equal(an!.external, undefined, "analytics is a V2 route — not external");
   const analytics = groupNavLinks().find((s) => s.title === "التحليلات");
-  assert.equal(analytics?.links.length, 1, "التحليلات has exactly one link");
+  // AI.1 added «مركز الإجراءات» (/v2/actions) alongside the dashboard.
+  assert.deepEqual(analytics?.links.map((l) => l.href), ["/v2/analytics", "/v2/actions"]);
+});
+
+test("AI.1 adds «مركز الإجراءات» (/v2/actions) under التحليلات (in-shell, real page)", () => {
+  const ac = V2_NAV_LINKS.find((l) => l.href === "/v2/actions");
+  assert.ok(ac, "action center link exists");
+  assert.equal(ac!.label, "مركز الإجراءات");
+  assert.equal(ac!.section, "التحليلات");
+  assert.equal(ac!.external, undefined, "action center is a V2 route — not external");
 });
 
 test("activeNavHref behavior unchanged — longest-match still wins", () => {
