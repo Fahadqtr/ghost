@@ -20,7 +20,10 @@ const PS = "pure_seoul";
 // Upsert a Pure-Seoul-only approval/rejection for the given product ids. An
 // empty approval clears the row's status; reason is stored as its own field.
 export async function setPureSeoulApproval(ids: string[], approval: string, reason?: string) {
-  if (!(await isSignedIn())) return { error: "غير مسجّل الدخول.", updated: 0 };
+  // INT.1 — mutating action: writer-gated (was login-only). rejectPureSeoulProducts
+  // delegates here, so it inherits this gate. Behavior otherwise unchanged.
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error, updated: 0 };
   const list = (ids ?? []).filter(Boolean);
   if (list.length === 0) return { error: "ما في منتجات محدّدة.", updated: 0 };
   const sb = createClient();
@@ -54,7 +57,9 @@ export async function rejectPureSeoulProducts(ids: string[], reason: string) {
 // rejection are left untouched. Requires:
 //   alter table platform_status add column if not exists availability text;
 export async function applyPureSeoulAvailability(outIds: string[], inIds: string[]) {
-  if (!(await isSignedIn())) return { error: "غير مسجّل الدخول.", outOfStock: 0, inStock: 0 };
+  // INT.1 — mutating action: writer-gated (was login-only). Behavior unchanged.
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error, outOfStock: 0, inStock: 0 };
   const sb = createClient();
   const now = new Date().toISOString();
   const mk = (ids: string[], availability: string) =>

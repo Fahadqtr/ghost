@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import type { Locale } from "@/lib/i18n";
+import { uploadProductImage } from "@/app/(app)/products/image-actions";
 
+// Display-only bucket name for the help text. Uploads no longer write from the
+// browser — they route through the certified server action below.
 const BUCKET = "product-images";
 
 export default function ImageUpload({
@@ -26,43 +28,25 @@ export default function ImageUpload({
     setBusy(true); setError(null); setUploadedUrl(null);
 
     try {
-      const supabase = createClient();
-      const path = `${productId || "unattached"}/${Date.now()}-${file.name}`;
-
-      const { error: upErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, file, { upsert: false });
-
-      if (upErr) {
-        setError(
-          L(
-            `${upErr.message}. إذا كان المخزن غير موجود، أنشئ مخزن Storage عامًّا باسم "${BUCKET}" في Supabase.`,
-            `${upErr.message}. If the bucket is missing, create a public Storage bucket named "${BUCKET}" in Supabase.`
-          )
-        );
-        setBusy(false);
+      // INT.1 — security closure: uploads route through the certified,
+      // writer-gated imageStore (via the server action) instead of the previous
+      // ungated browser Storage write + raw product_images insert. Every upload
+      // links to a product (the server sets it primary, points products.image_url
+      // at it, and logs a catalog task); the old "unattached" ungated write is
+      // retired, so no duplicate write path remains.
+      if (!productId) {
+        setError(L("اختر منتجًا للربط أولاً.", "Select a product to attach first."));
         return;
       }
-
-      const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      const url = pub.publicUrl;
-      setUploadedUrl(url);
-
-      // Link to product_images (and set as primary if the product has none yet).
-      if (productId) {
-        const { count } = await supabase
-          .from("product_images")
-          .select("*", { count: "exact", head: true })
-          .eq("product_id", productId);
-
-        await supabase.from("product_images").insert({
-          product_id: productId,
-          url,
-          filename: file.name,
-          is_primary: (count ?? 0) === 0,
-          sort_order: count ?? 0,
-        });
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("productId", productId);
+      const r = await uploadProductImage(fd);
+      if ("error" in r) {
+        setError(r.error);
+        return;
       }
+      setUploadedUrl(r.url);
     } catch (err) {
       setError(err instanceof Error ? err.message : L("فشل الرفع.", "Upload failed."));
     } finally {
