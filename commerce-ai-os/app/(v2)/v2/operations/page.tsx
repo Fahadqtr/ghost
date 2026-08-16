@@ -253,6 +253,12 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
           مركز قيادة القنوات ↗
         </Link>
         <Link
+          href="/v2/operations/ai"
+          className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+        >
+          مركز الذكاء ↗
+        </Link>
+        <Link
           href="/v2/operations/missing-products"
           className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
         >
