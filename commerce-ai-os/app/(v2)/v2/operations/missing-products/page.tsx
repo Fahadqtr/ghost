@@ -9,6 +9,7 @@
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { CATEGORIES } from "@/lib/constants";
 import { STOREFRONTS } from "@/lib/channels/storefronts";
+import { resolveStorefront, validGapStatus, tabForStatus } from "@/lib/operations/channels/deep-link";
 import MissingProducts from "@/components/v2/operations/MissingProducts";
 
 export const dynamic = "force-dynamic";
@@ -18,9 +19,19 @@ const CH6F_STOREFRONTS = STOREFRONTS.filter((s) =>
   ["shopify:malikas", "snoonu:malikas", "snoonu:pure_seoul", "talabat:malikas", "rafeeq:malikas"].includes(s.key),
 ).map((s) => ({ key: s.key, label: s.label ?? s.key }));
 
-export default async function MissingProductsPage() {
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function MissingProductsPage({ searchParams }: { searchParams?: SearchParams }) {
   const writer = await requireMalakWriter();
   const canWrite = writer.ok;
+
+  // OPS.4 deep-link seed — validated against the CH.5/CH.6F registries; unknown
+  // values fall through to the workflow's own defaults (no arbitrary URL filters).
+  const params = searchParams ? await searchParams : {};
+  const initialStorefront = resolveStorefront(params) ?? undefined;
+  const initialStatusVal = validGapStatus(params.status);
+  const initialStatus = initialStatusVal ?? undefined;
+  const initialTab = initialStatusVal ? tabForStatus(initialStatusVal) : undefined;
 
   return (
     <div className="space-y-4">
@@ -32,7 +43,14 @@ export default async function MissingProductsPage() {
           القنوات. الاستيراد وإنشاء الروابط يمرّان عبر مسارات الإنشاء والهوية المعتمدة فقط.
         </p>
       </header>
-      <MissingProducts canWrite={canWrite} storefronts={CH6F_STOREFRONTS} categories={CATEGORIES as unknown as string[]} />
+      <MissingProducts
+        canWrite={canWrite}
+        storefronts={CH6F_STOREFRONTS}
+        categories={CATEGORIES as unknown as string[]}
+        initialStorefront={initialStorefront}
+        initialStatus={initialStatus}
+        initialTab={initialTab}
+      />
     </div>
   );
 }

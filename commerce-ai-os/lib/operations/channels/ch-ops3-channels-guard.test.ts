@@ -101,7 +101,8 @@ test("no auto-publish and no Rafeeq conflict auto-resolution anywhere in OPS.3",
 // ── Snoonu store isolation ─────────────────────────────────────────────────────
 test("Snoonu stores are isolated — malikas is gated by its own reader flag, never folded into pure_seoul", () => {
   const s = read(COMPOSER);
-  assert.ok(/snoonuMalikasReaderAvailable/.test(s), "malikas gated on its own reader flag");
+  // OPS.4 — malikas is gated on its own merchant-session operational state.
+  assert.ok(/snoonuMalikasOperational|snoonuMalikas/.test(s), "malikas gated on its own operational state");
   assert.ok(/"snoonu:malikas"/.test(s) && /"snoonu:pure_seoul"/.test(s), "both Snoonu storefronts are distinct cases");
 });
 

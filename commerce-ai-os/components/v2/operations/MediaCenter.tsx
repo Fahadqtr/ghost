@@ -59,6 +59,7 @@ export default function MediaCenter({
   missing,
   duplicates,
   degraded,
+  initialStorefront,
 }: {
   canWrite: boolean;
   dashboard: MediaDashboard;
@@ -66,10 +67,12 @@ export default function MediaCenter({
   missing: MissingImageItem[];
   duplicates: DuplicateGroup[];
   degraded: boolean;
+  // OPS.4 deep-link seed (validated server-side; Snoonu recovery storefront).
+  initialStorefront?: string;
 }) {
   const [filter, setFilter] = useState<MediaFilter>("all");
   const [query, setQuery] = useState("");
-  const [storefront, setStorefront] = useState<string>("snoonu:malikas");
+  const [storefront, setStorefront] = useState<string>(initialStorefront ?? "snoonu:malikas");
   const [scan, setScan] = useState<MissingImageScanResult | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [results, setResults] = useState<ApplyItemResult[] | null>(null);

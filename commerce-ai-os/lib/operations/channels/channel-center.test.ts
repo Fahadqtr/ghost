@@ -62,10 +62,13 @@ function baseInput(over: Partial<ChannelCenterInput> = {}): ChannelCenterInput {
       item({ id: "b", sku: "SKU-B", barcode: "222", nameAr: "بيتا", brandId: "b2", category: "Hair", needsReview: true, reasons: [REASON_MISSING_BARCODE], shopifyStatus: "different", talabatState: "review", rafeeqState: "missing" }),
     ],
     degraded: { puresoul: false, talabat: false, rafeeq: false },
-    snoonuMalikasReaderAvailable: false,
+    // OPS.4 defaults: no snoonuMalikas ⇒ SESSION_REQUIRED (blocked); no gapCounts.
     ...over,
   };
 }
+
+// OPS.4 helper — a CONNECTED snoonu:malikas operational descriptor.
+const CONNECTED_SNOONU = { state: "CONNECTED" as const, connected: true, reason: "connected" as const, lastReadAt: "2026-08-16T09:00:00Z", readError: null };
 
 const cardByKey = (input: ChannelCenterInput, key: string) => buildStorefrontCards(input).find((c) => c.key === key)!;
 
@@ -103,10 +106,27 @@ test("Snoonu Malikas is OPERATIONALLY_BLOCKED with a merchant-session reason (no
   assert.ok(hrefs.includes(ROUTES.barcodeCompletion));
 });
 
-test("Snoonu Malikas becomes assessable once a reader is wired", () => {
-  const card = cardByKey(baseInput({ snoonuMalikasReaderAvailable: true }), "snoonu:malikas");
-  // with a reader but no data it is UNKNOWN (not blocked, not 'missing')
-  assert.equal(card.status, "UNKNOWN");
+test("Snoonu Malikas becomes assessable once the merchant session is CONNECTED", () => {
+  const card = cardByKey(baseInput({ snoonuMalikas: CONNECTED_SNOONU }), "snoonu:malikas");
+  // a genuine connected session unblocks the card (no longer OPERATIONALLY_BLOCKED)
+  assert.notEqual(card.status, "OPERATIONALLY_BLOCKED");
+  assert.equal(card.operationalBlocked, false);
+  assert.equal(card.operational?.state, "CONNECTED");
+});
+
+test("Snoonu Malikas OTP-pending and ERROR sessions stay blocked (never faked)", () => {
+  const otp = cardByKey(baseInput({ snoonuMalikas: { state: "SESSION_REQUIRED", connected: false, reason: "otp_required", lastReadAt: null, readError: null } }), "snoonu:malikas");
+  assert.equal(otp.status, "OPERATIONALLY_BLOCKED");
+  const err = cardByKey(baseInput({ snoonuMalikas: { state: "ERROR", connected: false, reason: "read_error", lastReadAt: null, readError: "x" } }), "snoonu:malikas");
+  assert.equal(err.status, "OPERATIONALLY_BLOCKED");
+  assert.ok(err.reasons.includes("degraded_read"));
+});
+
+test("Snoonu Malikas gap counts show even while operationally blocked (ECL is session-independent)", () => {
+  const card = cardByKey(baseInput({ gapCounts: { "snoonu:malikas": { storefront: "snoonu:malikas", grain: "product", source: "ecl", mapped: 55, missingEcl: null, internalOnly: 45, externalOnly: null, conflicts: 1, needsReview: 1 } } }), "snoonu:malikas");
+  assert.equal(card.status, "OPERATIONALLY_BLOCKED"); // no session
+  assert.equal(card.mapped, 55); // but ECL mapping counts are still surfaced
+  assert.equal(card.missingMappings, 45);
 });
 
 // ── Snoonu Pure Seoul card (§5) ───────────────────────────────────────────────
@@ -151,8 +171,9 @@ test("Talabat is variant-grain and never claims parent coverage is sufficient", 
 test("Rafeeq conflicts stay needs_review — surfaced only with evidence, never auto-resolved", () => {
   // no conflict count → no conflict alert (honest: never fabricated)
   assert.equal(buildChannelAlerts(baseInput()).some((a) => a.type === "RAFEEQ_CONFLICT"), false);
-  // with evidence → a manual-review link (never a resolver)
-  const withConflicts = baseInput({ rafeeqConflicts: 4 });
+  // with evidence (from the ECL gap model) → a manual-review link (never a resolver)
+  const rafeeqGap = { storefront: "rafeeq:malikas", grain: "product" as const, source: "ecl" as const, mapped: 25, missingEcl: null, internalOnly: 6, externalOnly: null, conflicts: 4, needsReview: 4 };
+  const withConflicts = baseInput({ gapCounts: { "rafeeq:malikas": rafeeqGap } });
   const alert = buildChannelAlerts(withConflicts).find((a) => a.type === "RAFEEQ_CONFLICT");
   assert.ok(alert);
   assert.equal(alert!.storefront, "rafeeq:malikas");
@@ -166,7 +187,7 @@ test("Rafeeq conflicts stay needs_review — surfaced only with evidence, never 
 
 // ── alerts (§9) ───────────────────────────────────────────────────────────────
 test("every alert identifies storefront, explains a reason, and links to a workflow", () => {
-  const alerts = buildChannelAlerts(baseInput({ rafeeqConflicts: 1 }));
+  const alerts = buildChannelAlerts(baseInput({ gapCounts: { "rafeeq:malikas": { storefront: "rafeeq:malikas", grain: "product", source: "ecl", mapped: 25, missingEcl: null, internalOnly: 6, externalOnly: null, conflicts: 1, needsReview: 1 } } }));
   assert.ok(alerts.length > 0);
   for (const a of alerts) {
     assert.equal(typeof a.reason, "string");
@@ -287,7 +308,7 @@ test("filters parse and apply over cards / alerts / queues / items", () => {
 });
 
 test("alert filtering respects storefront and channel scoping", () => {
-  const alerts = buildChannelAlerts(baseInput({ rafeeqConflicts: 2 }));
+  const alerts = buildChannelAlerts(baseInput({ gapCounts: { "rafeeq:malikas": { storefront: "rafeeq:malikas", grain: "product", source: "ecl", mapped: 25, missingEcl: null, internalOnly: 6, externalOnly: null, conflicts: 2, needsReview: 2 } } }));
   const onlyRafeeq = filterAlerts(alerts, parseChannelFilters({ storefront: "rafeeq:malikas" }));
   assert.ok(onlyRafeeq.every((a) => a.storefront === "rafeeq:malikas"));
 });
@@ -331,7 +352,7 @@ test("filter options expose channels, storefronts, statuses, brands, categories"
 
 // ── whole model (read-only shape) ─────────────────────────────────────────────
 test("buildChannelCenter composes a complete read-only model", () => {
-  const model = buildChannelCenter(baseInput({ rafeeqConflicts: 1 }));
+  const model = buildChannelCenter(baseInput());
   assert.equal(model.storefronts.length, 5);
   assert.equal(model.counts.storefronts, 5);
   assert.equal(model.counts.blocked, 1); // snoonu:malikas

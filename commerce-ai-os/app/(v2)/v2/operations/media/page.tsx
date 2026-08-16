@@ -8,15 +8,23 @@
 
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { loadMediaCenter } from "@/lib/operations/media/media-center.server";
+import { resolveStorefront } from "@/lib/operations/channels/deep-link";
 import MediaCenter from "@/components/v2/operations/MediaCenter";
 
 export const dynamic = "force-dynamic";
 
 const LOAD_ERROR = "تعذّر تحميل مركز الوسائط.";
 
-export default async function MediaCenterPage() {
+// Snoonu image recovery is the only storefront-scoped affordance here.
+const SNOONU_STOREFRONTS = ["snoonu:malikas", "snoonu:pure_seoul"] as const;
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function MediaCenterPage({ searchParams }: { searchParams?: SearchParams }) {
   const writer = await requireMalakWriter();
   const canWrite = writer.ok;
+  const params = searchParams ? await searchParams : {};
+  const initialStorefront = resolveStorefront(params, SNOONU_STOREFRONTS) ?? undefined;
   const view = await loadMediaCenter();
 
   if ("error" in view) {
@@ -44,6 +52,7 @@ export default async function MediaCenterPage() {
         missing={view.missing}
         duplicates={view.duplicates}
         degraded={view.degraded}
+        initialStorefront={initialStorefront}
       />
     </div>
   );

@@ -79,15 +79,22 @@ export default function MissingProducts({
   canWrite,
   storefronts,
   categories,
+  initialStorefront,
+  initialStatus,
+  initialTab,
 }: {
   canWrite: boolean;
   storefronts: Storefront[];
   categories: string[];
+  // OPS.4 deep-link seeds (already validated server-side against canonical enums).
+  initialStorefront?: string;
+  initialStatus?: string;
+  initialTab?: Tab;
 }) {
-  const [storefront, setStorefront] = useState<string>(storefronts[0]?.key ?? "");
+  const [storefront, setStorefront] = useState<string>(initialStorefront ?? storefronts[0]?.key ?? "");
   const [scan, setScan] = useState<ScanResult | null>(null);
-  const [tab, setTab] = useState<Tab>("internal");
-  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "internal");
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatus ?? "");
   const [skuFilter, setSkuFilter] = useState<string>("");
   const [selectedEcl, setSelectedEcl] = useState<Set<string>>(new Set());
   const [selectedImport, setSelectedImport] = useState<Set<string>>(new Set());

@@ -18,6 +18,8 @@
 // isolation / links-only invariants.
 
 import { STOREFRONTS, type Storefront } from "../../channels/storefronts.ts";
+import { type SnoonuOperational, type SnoonuOperationalState, SNOONU_OPERATIONAL_REASON_LABEL } from "./snoonu-operational.ts";
+import { type GapCounts, type CountValue } from "./gap-counts.ts";
 
 // ── input shapes (structural SUBSETS of the existing dashboard types, so the
 //     page passes its kpis / platformOverview / platformHealth / items directly) ─
@@ -114,15 +116,31 @@ export interface ChannelCenterInput {
   platformHealth: readonly CcHealthLite[];
   items: readonly CcItem[];
   degraded: CcDegraded;
-  /** Whether a live snoonu:malikas presence/snapshot reader is wired. The
-   *  dashboard has NONE (CH.CERT operational note) — snoonu:malikas therefore
-   *  stays OPERATIONALLY_BLOCKED here, never reported as "missing". Default false. */
-  snoonuMalikasReaderAvailable?: boolean;
-  /** Optional, evidence-only Rafeeq conflict (needs_review) count. The dashboard
-   *  has no cheap live source for it, so it defaults to undefined — the Rafeeq
-   *  conflict review is then a workflow ENTRY-POINT queue (count computed inside
-   *  CH.6F), never a fabricated alert. */
-  rafeeqConflicts?: number;
+  /** OPS.4 — snoonu:malikas operational state from the merchant-session reader.
+   *  Undefined ⇒ treated as SESSION_REQUIRED (OPERATIONALLY_BLOCKED), preserving
+   *  the OPS.3 default. Only a genuine CONNECTED session unblocks the card (§1). */
+  snoonuMalikas?: SnoonuOperational;
+  /** OPS.4 — per-storefront live bounded gap counts (ECL for identity storefronts,
+   *  presence for Shopify). A field may be null = UNKNOWN, never an estimate (§5). */
+  gapCounts?: Record<string, GapCounts>;
+  /** OPS.4 — storefront keys with recent ERROR activity (feeds health, §10). */
+  recentErrorStorefronts?: readonly string[];
+}
+
+/** The default operational state when no reader value is supplied — SESSION_REQUIRED
+ *  keeps snoonu:malikas OPERATIONALLY_BLOCKED (never a faked connected state). */
+export const DEFAULT_SNOONU_OPERATIONAL: SnoonuOperational = {
+  state: "SESSION_REQUIRED",
+  connected: false,
+  reason: "session_required",
+  lastReadAt: null,
+  readError: null,
+};
+
+/** Coalesce a possibly-UNKNOWN (null) count to a numeric fallback for health math
+ *  (UNKNOWN never signals a problem — it is not evidence). */
+function coalesceCount(primary: CountValue | undefined, fallback: number): number {
+  return typeof primary === "number" ? primary : fallback;
 }
 
 // ── existing workflow routes (OPS.3 introduces NO parallel screen — every href
@@ -183,7 +201,8 @@ export type HealthReasonCode =
   | "sync_errors"
   | "needs_review"
   | "availability_drift"
-  | "stale_data";
+  | "stale_data"
+  | "recent_errors";
 
 export const HEALTH_REASON_LABEL: Record<HealthReasonCode, string> = {
   no_operational_source: "لا يوجد مصدر تشغيلي موصول (تتطلب جلسة/قارئ).",
@@ -195,6 +214,7 @@ export const HEALTH_REASON_LABEL: Record<HealthReasonCode, string> = {
   needs_review: "عناصر بحاجة مراجعة.",
   availability_drift: "انحراف في التوفّر/السعر.",
   stale_data: "اللقطة قديمة — يُنصح بالتحديث.",
+  recent_errors: "أخطاء حديثة في النشاط.",
 };
 
 /** Normalized per-storefront signals the deterministic classifier consumes. It
@@ -212,6 +232,8 @@ export interface StorefrontMetrics {
   availabilityDrift: number;
   syncErrors: number;
   stale: boolean;
+  /** OPS.4 — recent ERROR activity recorded for this storefront (§10). */
+  recentErrors: boolean;
 }
 
 /**
@@ -239,9 +261,10 @@ export function computeStorefrontStatus(m: StorefrontMetrics): {
   if (m.needsReview > 0) reasons.push("needs_review");
   if (m.availabilityDrift > 0) reasons.push("availability_drift");
   if (m.stale) reasons.push("stale_data");
+  if (m.recentErrors) reasons.push("recent_errors");
 
   const actionable = m.missingMappings > 0 || m.conflicts > 0 || m.syncErrors > 0;
-  const warn = m.needsReview > 0 || m.availabilityDrift > 0 || m.stale;
+  const warn = m.needsReview > 0 || m.availabilityDrift > 0 || m.stale || m.recentErrors;
   if (actionable) return { status: "ACTION_REQUIRED", reasons };
   if (warn) return { status: "WARNING", reasons };
   return { status: "HEALTHY", reasons };
@@ -259,10 +282,16 @@ export interface StorefrontCard {
   reasons: HealthReasonCode[];
   available: boolean;
   operationalBlocked: boolean;
-  /** counts are null when the storefront is blocked/unknown (never fabricated). */
+  /** OPS.4 live gap counts (ECL/presence). Each may be null = UNKNOWN, never an
+   *  estimate; they are shown even when operationally blocked (ECL is our mapping,
+   *  independent of the live session). */
   mapped: number | null;
-  missingMappings: number | null;
+  missingMappings: number | null; // internal-only (unmapped) — the "needs mapping" count
+  missingEcl: number | null; //     UNKNOWN without the external source
+  externalOnly: number | null; //   UNKNOWN without the CH.6F scan
+  conflicts: number | null;
   needsReview: number | null;
+  gapSource: GapCounts["source"] | null;
   availabilityDrift: number | null;
   syncErrors: number | null;
   /** catalog-wide advisory listing-data gaps (same across storefronts where they
@@ -273,17 +302,12 @@ export interface StorefrontCard {
   lastSyncAt: string | null;
   /** Talabat is variant-grain: a note that parent coverage ≠ variant coverage. */
   grainNote: string | null;
+  /** OPS.4 — snoonu:malikas merchant-session detail (null for other storefronts).
+   *  Session material is NEVER included here — only the state + a safe reason. */
+  operational: { state: SnoonuOperationalState; reason: string; lastReadAt: string | null; readError: string | null } | null;
   /** per-storefront quick actions (links only). */
   actions: QuickAction[];
 }
-
-const nullMetrics = (): { mapped: null; missingMappings: null; needsReview: null; availabilityDrift: null; syncErrors: null } => ({
-  mapped: null,
-  missingMappings: null,
-  needsReview: null,
-  availabilityDrift: null,
-  syncErrors: null,
-});
 
 const TALABAT_GRAIN_NOTE =
   "التغطية تُقاس على مستوى المتغيّر (Talabat يفرد المتغيّرات كإدراجات) — تغطية المنتج الأب لا تعني تغطية كل متغيّراته.";
@@ -332,77 +356,61 @@ function storefrontActions(sf: Storefront): QuickAction[] {
  *  Storefronts are kept STRICTLY ISOLATED: snoonu:malikas and snoonu:pure_seoul
  *  never share SPI/session/state — each reads its own overview slice, and
  *  snoonu:malikas has NO reader so it is blocked, never folded into pure_seoul. */
+/** snoonu:malikas operational descriptor (defaults to SESSION_REQUIRED/blocked). */
+export function snoonuMalikasOperational(input: ChannelCenterInput): SnoonuOperational {
+  return input.snoonuMalikas ?? DEFAULT_SNOONU_OPERATIONAL;
+}
+
 function metricsFor(sf: Storefront, input: ChannelCenterInput): StorefrontMetrics {
   const o = input.overview;
+  const gap = input.gapCounts?.[sf.key];
+  const recentErrors = (input.recentErrorStorefronts ?? []).includes(sf.key);
+  // Gap counts (ECL/presence) are the mapping truth where present; the presence
+  // overview is the fallback so a missing gap read never zeroes a real number.
+  const missing = (fb: number) => coalesceCount(gap?.internalOnly, fb);
+  const review = (fb: number) => coalesceCount(gap?.needsReview, fb);
+  const conflicts = () => coalesceCount(gap?.conflicts, 0);
   switch (sf.key) {
     case "shopify:malikas":
-      return {
-        hasReader: true,
-        degraded: false,
-        available: o.shopify.available,
-        missingMappings: o.shopify.missing,
-        needsReview: o.shopify.reviewRequired,
-        conflicts: 0,
-        availabilityDrift: o.shopify.different,
-        syncErrors: 0,
-        stale: o.shopify.stale,
-      };
+      return { hasReader: true, degraded: false, available: o.shopify.available, missingMappings: missing(o.shopify.missing), needsReview: review(o.shopify.reviewRequired), conflicts: conflicts(), availabilityDrift: o.shopify.different, syncErrors: 0, stale: o.shopify.stale, recentErrors };
     case "snoonu:pure_seoul":
+      return { hasReader: true, degraded: input.degraded.puresoul, available: o.puresoul.available, missingMappings: missing(o.puresoul.missing), needsReview: review(o.puresoul.reviewRequired), conflicts: conflicts(), availabilityDrift: o.puresoul.priceDifferent, syncErrors: 0, stale: o.puresoul.stale, recentErrors };
+    case "snoonu:malikas": {
+      // OPS.4 — gated on the REAL merchant session state (never faked). ECL gap
+      // counts are still populated (they are our mapping, independent of session),
+      // but the operational status stays BLOCKED until a genuine CONNECTED session:
+      //   SESSION_REQUIRED / OTP → no_operational_source · ERROR → degraded_read ·
+      //   UNKNOWN → no_snapshot · CONNECTED/STALE → assessable.
+      const op = snoonuMalikasOperational(input);
       return {
-        hasReader: true,
-        degraded: input.degraded.puresoul,
-        available: o.puresoul.available,
-        missingMappings: o.puresoul.missing,
-        needsReview: o.puresoul.reviewRequired,
-        conflicts: 0,
-        availabilityDrift: o.puresoul.priceDifferent,
-        syncErrors: 0,
-        stale: o.puresoul.stale,
-      };
-    case "snoonu:malikas":
-      // No presence/snapshot reader is wired (CH.CERT). It is OPERATIONALLY
-      // BLOCKED — never inherits Pure Seoul's numbers (strict store isolation).
-      return {
-        hasReader: input.snoonuMalikasReaderAvailable === true,
-        degraded: false,
-        available: false,
-        missingMappings: 0,
-        needsReview: 0,
-        conflicts: 0,
+        hasReader: op.state !== "SESSION_REQUIRED",
+        degraded: op.state === "ERROR",
+        available: op.connected,
+        missingMappings: missing(0),
+        needsReview: review(0),
+        conflicts: conflicts(),
         availabilityDrift: 0,
         syncErrors: 0,
-        stale: false,
+        stale: op.state === "STALE",
+        recentErrors,
       };
+    }
     case "talabat:malikas":
-      return {
-        hasReader: true,
-        degraded: input.degraded.talabat,
-        available: o.talabat.available,
-        missingMappings: o.talabat.missing,
-        needsReview: o.talabat.review,
-        conflicts: 0,
-        availabilityDrift: 0,
-        syncErrors: 0,
-        stale: o.talabat.stale,
-      };
+      // §6 — Talabat gap counts are VARIANT-grain (from the gap model), so a parent
+      // product never hides missing variant listings.
+      return { hasReader: true, degraded: input.degraded.talabat, available: o.talabat.available, missingMappings: missing(o.talabat.missing), needsReview: review(o.talabat.review), conflicts: conflicts(), availabilityDrift: 0, syncErrors: 0, stale: o.talabat.stale, recentErrors };
     case "rafeeq:malikas":
-      return {
-        hasReader: true,
-        degraded: input.degraded.rafeeq,
-        available: o.rafeeq.available,
-        missingMappings: o.rafeeq.missing,
-        needsReview: input.rafeeqConflicts ?? 0,
-        conflicts: input.rafeeqConflicts ?? 0,
-        availabilityDrift: 0,
-        syncErrors: 0,
-        stale: o.rafeeq.stale,
-      };
+      // §7 — Rafeeq needs_review/conflicts come precisely from ECL now.
+      return { hasReader: true, degraded: input.degraded.rafeeq, available: o.rafeeq.available, missingMappings: missing(o.rafeeq.missing), needsReview: review(0), conflicts: conflicts(), availabilityDrift: 0, syncErrors: 0, stale: o.rafeeq.stale, recentErrors };
     default:
-      return { hasReader: false, degraded: false, available: false, missingMappings: 0, needsReview: 0, conflicts: 0, availabilityDrift: 0, syncErrors: 0, stale: false };
+      return { hasReader: false, degraded: false, available: false, missingMappings: 0, needsReview: 0, conflicts: 0, availabilityDrift: 0, syncErrors: 0, stale: false, recentErrors: false };
   }
 }
 
-function mappedCountFor(sf: Storefront, input: ChannelCenterInput): number {
+function mappedCountFor(sf: Storefront, input: ChannelCenterInput): number | null {
+  // Prefer the gap model's mapped count (ECL/presence); fall back to presence.
+  const gap = input.gapCounts?.[sf.key];
+  if (gap && typeof gap.mapped === "number") return gap.mapped;
   const o = input.overview;
   switch (sf.key) {
     case "shopify:malikas":
@@ -414,7 +422,7 @@ function mappedCountFor(sf: Storefront, input: ChannelCenterInput): number {
     case "rafeeq:malikas":
       return o.rafeeq.present + o.rafeeq.linked;
     default:
-      return 0;
+      return null;
   }
 }
 
@@ -440,11 +448,14 @@ export function buildStorefrontCards(input: ChannelCenterInput): StorefrontCard[
   return STOREFRONTS.map((sf) => {
     const m = metricsFor(sf, input);
     const { status, reasons } = computeStorefrontStatus(m);
-    const blocked = status === "OPERATIONALLY_BLOCKED" || status === "UNKNOWN";
-    const nulls = nullMetrics();
+    const gap = input.gapCounts?.[sf.key] ?? null;
+    // availabilityDrift needs a live presence read, so it is null when the
+    // storefront could not be assessed; mapping gap counts (ECL) stay visible.
+    const presenceUnavailable = status === "OPERATIONALLY_BLOCKED" || status === "UNKNOWN";
     // barcode identity matters for Snoonu + Talabat (barcode/SKU identity); it is
-    // not part of Shopify/Rafeeq identity, so it is only surfaced there as null.
+    // not part of Shopify/Rafeeq identity, so it is only surfaced there.
     const barcodeRelevant = sf.channel === "snoonu" || sf.channel === "talabat";
+    const op = sf.key === "snoonu:malikas" ? snoonuMalikasOperational(input) : null;
     return {
       key: sf.key,
       label: sf.label,
@@ -456,16 +467,21 @@ export function buildStorefrontCards(input: ChannelCenterInput): StorefrontCard[
       reasons,
       available: m.available,
       operationalBlocked: status === "OPERATIONALLY_BLOCKED",
-      mapped: blocked ? nulls.mapped : mappedCountFor(sf, input),
-      missingMappings: blocked ? nulls.missingMappings : m.missingMappings,
-      needsReview: blocked ? nulls.needsReview : m.needsReview,
-      availabilityDrift: blocked ? nulls.availabilityDrift : m.availabilityDrift,
-      syncErrors: blocked ? nulls.syncErrors : m.syncErrors,
-      missingImages: blocked ? null : needsImage,
-      missingBarcodes: blocked || !barcodeRelevant ? null : missingBarcode,
+      mapped: mappedCountFor(sf, input),
+      missingMappings: gap ? gap.internalOnly : presenceUnavailable ? null : m.missingMappings,
+      missingEcl: gap ? gap.missingEcl : null,
+      externalOnly: gap ? gap.externalOnly : null,
+      conflicts: gap ? gap.conflicts : presenceUnavailable ? null : m.conflicts,
+      needsReview: gap ? gap.needsReview : presenceUnavailable ? null : m.needsReview,
+      gapSource: gap ? gap.source : null,
+      availabilityDrift: presenceUnavailable ? null : m.availabilityDrift,
+      syncErrors: presenceUnavailable ? null : m.syncErrors,
+      missingImages: needsImage,
+      missingBarcodes: barcodeRelevant ? missingBarcode : null,
       stale: m.stale,
-      lastSyncAt: lastSyncFor(sf, input),
+      lastSyncAt: op ? op.lastReadAt : lastSyncFor(sf, input),
       grainNote: sf.listingGrain === "variant" ? TALABAT_GRAIN_NOTE : null,
+      operational: op ? { state: op.state, reason: SNOONU_OPERATIONAL_REASON_LABEL[op.reason], lastReadAt: op.lastReadAt, readError: op.readError } : null,
       actions: storefrontActions(sf),
     };
   });
@@ -511,15 +527,18 @@ export function buildChannelAlerts(input: ChannelCenterInput): ChannelAlert[] {
   const o = input.overview;
   const push = (a: ChannelAlert) => alerts.push(a);
 
-  // snoonu:malikas — operational source not wired (merchant session required).
-  if (input.snoonuMalikasReaderAvailable !== true) {
+  // snoonu:malikas — merchant session evidence (OPS.4). Only a genuine CONNECTED
+  // session clears the alert; SESSION_REQUIRED / OTP / ERROR each keep it with an
+  // explicit reason from the real session state (never faked).
+  const snoonuOp = snoonuMalikasOperational(input);
+  if (!snoonuOp.connected) {
     push({
       key: "snoonu:malikas:session",
       type: "MERCHANT_SESSION_MISSING",
-      level: "action",
+      level: snoonuOp.state === "ERROR" ? "warning" : "action",
       storefront: "snoonu:malikas",
       label: "Snoonu — Malika's Universe",
-      reason: "قدرات سنونو (مالكاز) المباشرة غير مُفعّلة — تتطلب جلسة تاجر.",
+      reason: `سنونو (مالكاز): ${SNOONU_OPERATIONAL_REASON_LABEL[snoonuOp.reason]}`,
       href: ROUTES.availabilitySync,
       count: null,
     });
@@ -558,10 +577,12 @@ export function buildChannelAlerts(input: ChannelCenterInput): ChannelAlert[] {
     push({ key: "talabat:review", type: "TALABAT_MANUAL_REVIEW", level: "warning", storefront: "talabat:malikas", label: "Talabat — Malika's Universe", reason: `عناصر Talabat بحاجة مراجعة يدوية: ${o.talabat.review}.`, href: missingProductsLink("talabat:malikas", "NEEDS_REVIEW"), count: o.talabat.review });
   }
 
-  // Rafeeq conflicts — emitted ONLY with evidence; never auto-resolved (links to
+  // Rafeeq conflicts — the exact needs_review count now comes from the ECL gap
+  // model (OPS.4 §7). Emitted ONLY with evidence; never auto-resolved (links to
   // manual review). Contested rows remain needs_review (§8).
-  if (input.rafeeqConflicts !== undefined && input.rafeeqConflicts > 0) {
-    push({ key: "rafeeq:conflict", type: "RAFEEQ_CONFLICT", level: "action", storefront: "rafeeq:malikas", label: "Rafeeq — Malika's Universe", reason: `صفوف رفيق متنازع عليها بحاجة حسم يدوي: ${input.rafeeqConflicts}.`, href: missingProductsLink("rafeeq:malikas", "NEEDS_REVIEW"), count: input.rafeeqConflicts });
+  const rafeeqConflicts = input.gapCounts?.["rafeeq:malikas"]?.needsReview ?? null;
+  if (rafeeqConflicts !== null && rafeeqConflicts > 0) {
+    push({ key: "rafeeq:conflict", type: "RAFEEQ_CONFLICT", level: "action", storefront: "rafeeq:malikas", label: "Rafeeq — Malika's Universe", reason: `صفوف رفيق متنازع عليها بحاجة حسم يدوي: ${rafeeqConflicts}.`, href: missingProductsLink("rafeeq:malikas", "NEEDS_REVIEW"), count: rafeeqConflicts });
   }
 
   // Catalog-wide listing-data gaps (image/barcode) — one alert each.
@@ -651,7 +672,7 @@ export function buildChannelQueues(input: ChannelCenterInput, top: number = DEFA
   const internalOnly = needsMapping;
 
   const blockers: QueueRow[] = [];
-  if (input.snoonuMalikasReaderAvailable !== true) blockers.push({ id: "snoonu:malikas", sku: null, name: "Snoonu — Malika's Universe", storefront: "snoonu:malikas" });
+  if (!snoonuMalikasOperational(input).connected) blockers.push({ id: "snoonu:malikas", sku: null, name: "Snoonu — Malika's Universe", storefront: "snoonu:malikas" });
   if (!input.overview.shopify.available) blockers.push({ id: "shopify:malikas", sku: null, name: "Shopify — Malika's Universe", storefront: "shopify:malikas" });
   if (input.degraded.puresoul) blockers.push({ id: "snoonu:pure_seoul", sku: null, name: "Snoonu — Pure Seoul", storefront: "snoonu:pure_seoul" });
   if (input.degraded.talabat) blockers.push({ id: "talabat:malikas", sku: null, name: "Talabat — Malika's Universe", storefront: "talabat:malikas" });
