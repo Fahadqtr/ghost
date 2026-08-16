@@ -44,6 +44,7 @@ export const ROUTES = {
   catalog: "/v2/catalog",
   operations: "/v2/operations",
   missingProducts: "/v2/operations/missing-products",
+  media: "/v2/operations/media",
   aiEnrichment: "/v2/operations/ai-enrichment",
   barcodeCompletion: "/v2/operations/barcode-completion",
   availabilitySync: "/v2/operations/availability-sync",
@@ -245,7 +246,8 @@ export function buildAlerts(input: OpsCenterInput): Alert[] {
 export interface QuickAction { key: string; label: string; href: string }
 export function buildQuickActions(): QuickAction[] {
   return [
-    { key: "images", label: "استرجاع الصور", href: ROUTES.missingProducts },
+    { key: "media", label: "مركز الوسائط", href: ROUTES.media },
+    { key: "images", label: "استرجاع الصور", href: ROUTES.media },
     { key: "ai", label: "توليد ذكي", href: ROUTES.aiEnrichment },
     { key: "barcode", label: "إكمال الباركود", href: ROUTES.barcodeCompletion },
     { key: "availability", label: "مزامنة التوفّر", href: ROUTES.availabilitySync },

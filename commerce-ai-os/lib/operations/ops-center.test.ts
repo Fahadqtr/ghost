@@ -167,7 +167,7 @@ test("alerts: images + review + per-channel missing + stale", () => {
 // ── quick actions ────────────────────────────────────────────────────────────
 test("quick actions link only to existing workflows (no parallel screens)", () => {
   const qa = buildQuickActions();
-  const allowed = new Set([ROUTES.missingProducts, ROUTES.aiEnrichment, ROUTES.barcodeCompletion, ROUTES.availabilitySync, ROUTES.rafeeqConflicts, ROUTES.operations]);
+  const allowed = new Set([ROUTES.missingProducts, ROUTES.media, ROUTES.aiEnrichment, ROUTES.barcodeCompletion, ROUTES.availabilitySync, ROUTES.rafeeqConflicts, ROUTES.operations]);
   for (const a of qa) assert.ok(allowed.has(a.href), `${a.key} → ${a.href} is an existing route`);
   assert.ok(qa.some((a) => a.key === "rafeeq"));
   assert.ok(qa.some((a) => a.key === "refresh"));
