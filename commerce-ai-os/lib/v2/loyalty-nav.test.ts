@@ -74,7 +74,7 @@ test("links are grouped by section, in declaration order", () => {
     "/v2/operations/health",
     "/v2/tasks",
   ]);
-  assert.deepEqual(sections[2]!.links.map((l) => l.href), ["/v2/analytics"]);
+  assert.deepEqual(sections[2]!.links.map((l) => l.href), ["/v2/analytics", "/v2/actions"]);
   assert.deepEqual(sections[3]!.links.map((l) => l.href), LOYALTY_HREFS);
   const flat = sections.flatMap((s) => s.links.map((l) => l.href));
   assert.equal(flat.length, V2_NAV_LINKS.length);

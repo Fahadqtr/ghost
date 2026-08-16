@@ -58,6 +58,9 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // Analytics (Phase NAV.1) — the BI.2 Executive Dashboard. New group; the page
   // ships already (merged in BI.2) and simply had no menu entry.
   { href: "/v2/analytics", label: "لوحة الإدارة", icon: "analytics", section: "التحليلات" },
+  // Action Center (Phase AI.1) — the owner-first hub that aggregates actionable
+  // items from the certified OPS + BI read models. In-shell, read-only.
+  { href: "/v2/actions", label: "مركز الإجراءات", icon: "analytics", section: "التحليلات" },
 
   // «مكافآت الجمال» (Beauty Rewards) — the customer page calls it
   // «دليل المسابقة». These pages now live INSIDE the V2 route group, so they
