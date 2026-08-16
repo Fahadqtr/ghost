@@ -247,6 +247,12 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       </div>
       <div className="mb-3 flex flex-wrap justify-end gap-2">
         <Link
+          href="/v2/operations/channels"
+          className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+        >
+          مركز قيادة القنوات ↗
+        </Link>
+        <Link
           href="/v2/operations/missing-products"
           className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
         >
