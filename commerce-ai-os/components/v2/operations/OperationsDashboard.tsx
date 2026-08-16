@@ -39,6 +39,7 @@ import {
   type IssueSeverity,
 } from "@/lib/operations/operations-queue";
 import { MATRIX_STATE_LABELS } from "@/lib/operations/platform-matrix";
+import { resolveIssueHref, productDetailHref } from "@/lib/operations/issue-resolver";
 import type { PlatformHealth } from "@/lib/operations/platform-health";
 import PlatformHealthSection from "@/components/v2/operations/PlatformHealth";
 import InPageNav from "@/components/v2/InPageNav";
@@ -239,7 +240,15 @@ function PlatformOverviewSection({ overview }: { overview: PlatformOverview }) {
   const s = overview.shopify;
   return (
     <section className="space-y-3">
-      <h2 className="text-sm font-semibold text-ink">نظرة عامة على المنصات</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-ink">نظرة عامة على المنصات</h2>
+        {/* OPS.7 §6 — the freshness/staleness notes below are diagnosed here; the
+            snapshot refresh runs automatically on load. This links to the safe
+            diagnostic route (Platform Health) and re-renders the dashboard. */}
+        <Link href="/v2/operations/health" className="text-xs font-semibold text-sky-700 hover:underline">
+          صحّة المنصّة والتحديث ↗
+        </Link>
+      </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {/* Malikas — source of truth */}
         <div className="card space-y-2 p-3">
@@ -522,11 +531,16 @@ function UnifiedQueueSection({
               <span className="text-muted">{ISSUE_REASON_LABELS[issue.reason]}</span>
               <span className="text-muted">·</span>
               <span className="font-mono text-[11px] text-muted">{issue.sku ?? "—"}</span>
+              {/* OPS.7 — the issue routes to its EXISTING resolver (storefront/status
+                  filtered); the product page stays as a secondary escape hatch. */}
+              <Link href={resolveIssueHref(issue)} className="btn-ghost ms-auto text-[11px] font-semibold text-sky-700">
+                الحل ↗
+              </Link>
               <Link
-                href={`/v2/catalog/${encodeURIComponent(issue.productId)}`}
-                className="btn-ghost ms-auto text-[11px]"
+                href={productDetailHref(issue.productId)}
+                className="btn-ghost text-[11px]"
               >
-                فتح المنتج
+                المنتج
               </Link>
             </div>
           ))}

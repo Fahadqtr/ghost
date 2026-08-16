@@ -130,6 +130,21 @@ test("channel health maps 5 storefronts; snoonu:malikas is OPERATIONALLY_BLOCKED
   assert.equal(talabat.mapped, 75); // present 70 + linked 5
 });
 
+test("OPS.7: every channel row deep-links to its own storefront-filtered Missing-Products", () => {
+  for (const r of buildChannelHealth(input())) {
+    assert.ok(
+      r.href === `${ROUTES.missingProducts}?storefront=${encodeURIComponent(r.storefront)}`,
+      `${r.storefront} → ${r.href} is its own storefront resolver`,
+    );
+  }
+});
+
+test("OPS.7: the images card + alert now route to the Media Center", () => {
+  const card = buildHealthCards(input({ kpis: { totalProducts: 10, needsImage: 3, needsReview: 0, ready: 5, readinessAverage: 60 } }))
+    .find((c) => c.key === "images_missing")!;
+  assert.equal(card.href, ROUTES.media);
+});
+
 test("channel health: unavailable overview → operationalBlocked (never 'missing')", () => {
   const inp = input({ overview: { ...input().overview, shopify: { available: false, published: 0, missing: 0, different: 0, reviewRequired: 0, stale: false } } });
   const shop = buildChannelHealth(inp).find((r) => r.storefront === "shopify:malikas")!;

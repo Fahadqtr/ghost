@@ -44,12 +44,23 @@ import {
 import { buildPlatformHealth, type PlatformHealth } from "@/lib/operations/platform-health";
 import { buildOperationsCenter, type OperationsCenterModel } from "@/lib/operations/ops-center";
 import Link from "next/link";
+import { Suspense } from "react";
 import OperationsDashboard from "@/components/v2/operations/OperationsDashboard";
 import OperationsCenter from "@/components/v2/operations/OperationsCenter";
+import OwnerActionsStrip from "@/components/v2/operations/OwnerActionsStrip";
+import { loadActionCenter } from "@/lib/actions/action-center.server";
 
 export const dynamic = "force-dynamic";
 
 const LOAD_ERROR = "تعذر تحميل مركز العمليات.";
+
+// OPS.7 — Owner Actions summary. Streamed under Suspense so the AI.1 read (which
+// runs its own aggregate) never blocks or slows the main dashboard's single scan.
+// Reuses loadActionCenter; renders four lane counts only — not the action list.
+async function OwnerActionsSlot() {
+  const view = await loadActionCenter();
+  return <OwnerActionsStrip summary={view.summary} />;
+}
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -242,6 +253,11 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
 
   return (
     <>
+      <div className="mb-4">
+        <Suspense fallback={<div className="mb-4 h-24 animate-pulse rounded-xl bg-slate-100" aria-hidden="true" />}>
+          <OwnerActionsSlot />
+        </Suspense>
+      </div>
       <div className="mb-4">
         <OperationsCenter model={loaded.opsCenter} />
       </div>

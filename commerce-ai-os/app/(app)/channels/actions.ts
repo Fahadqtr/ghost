@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireUser } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { safeError } from "@/lib/security/safe-error";
 import { CHANNEL_STATUSES } from "@/lib/constants";
 
@@ -13,8 +13,9 @@ export async function setChannelStatus(
   channelId: string,
   status: string
 ) {
-  const unauth = await requireUser();
-  if (unauth) return { error: unauth.error };
+  // OPS.7 §7 — channel republish/unpublish mutation: writer-gated (was login-only).
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error };
 
   if (!CHANNEL_STATUSES.includes(status as (typeof CHANNEL_STATUSES)[number])) {
     return { error: `Invalid status "${status}".` };

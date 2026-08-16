@@ -46,13 +46,16 @@ export default function ActionCenter({
   view,
   heading,
   showSummary = false,
+  initialLane = null,
 }: {
   view: ActionCenterView;
   heading?: string;
   showSummary?: boolean;
+  /** OPS.7 — a validated deep-linked lane (e.g. /v2/actions?lane=critical). */
+  initialLane?: ActionLane | null;
 }) {
   const [selected, setSelected] = useState<Action | null>(null);
-  const [lane, setLane] = useState<ActionLane | null>(null);
+  const [lane, setLane] = useState<ActionLane | null>(initialLane);
   const [query, setQuery] = useState("");
 
   const groups = useMemo(

@@ -89,7 +89,7 @@ export function buildHealthCards(input: OpsCenterInput): HealthCard[] {
   return [
     { key: "products", label: "المنتجات", value: kpis.totalProducts, tone: "neutral", href: ROUTES.catalog },
     { key: "ready", label: "جاهزة", value: kpis.ready, tone: "good", href: ROUTES.operations },
-    { key: "images_missing", label: "صور ناقصة", value: kpis.needsImage, tone: problemTone(kpis.needsImage), href: ROUTES.missingProducts },
+    { key: "images_missing", label: "صور ناقصة", value: kpis.needsImage, tone: problemTone(kpis.needsImage), href: ROUTES.media },
     { key: "description_missing", label: "وصف ناقص", value: descMissing, tone: problemTone(descMissing), href: ROUTES.aiEnrichment },
     { key: "barcode_missing", label: "باركود ناقص", value: barcodeMissing, tone: problemTone(barcodeMissing), href: ROUTES.barcodeCompletion },
     { key: "needs_review", label: "بحاجة مراجعة", value: kpis.needsReview, tone: problemTone(kpis.needsReview), href: ROUTES.missingProducts },
@@ -153,7 +153,15 @@ export interface ChannelHealthRow {
   needsReview: number;
   syncErrors: number;
   operationalBlocked: boolean;
+  /** OPS.7 — storefront-filtered Missing-Products deep-link (the resolver for a
+   *  channel's mapping/gap issues). Always a real, validated storefront key. */
+  href: string;
 }
+
+// OPS.7 — every channel row deep-links to Missing-Products pre-filtered to that
+// storefront (routing only; the storefront key is a canonical CH.5 key).
+const channelHref = (storefrontKey: string): string =>
+  `${ROUTES.missingProducts}?storefront=${encodeURIComponent(storefrontKey)}`;
 
 export function buildChannelHealth(input: OpsCenterInput): ChannelHealthRow[] {
   const { overview } = input;
@@ -166,6 +174,7 @@ export function buildChannelHealth(input: OpsCenterInput): ChannelHealthRow[] {
       needsReview: overview.shopify.reviewRequired,
       syncErrors: 0,
       operationalBlocked: !overview.shopify.available,
+      href: channelHref("shopify:malikas"),
     },
     {
       // No snoonu:malikas presence reader is wired into the dashboard (CH.CERT
@@ -177,6 +186,7 @@ export function buildChannelHealth(input: OpsCenterInput): ChannelHealthRow[] {
       needsReview: 0,
       syncErrors: 0,
       operationalBlocked: input.snoonuMalikasReaderAvailable !== true,
+      href: channelHref("snoonu:malikas"),
     },
     {
       storefront: "snoonu:pure_seoul",
@@ -186,6 +196,7 @@ export function buildChannelHealth(input: OpsCenterInput): ChannelHealthRow[] {
       needsReview: overview.puresoul.reviewRequired,
       syncErrors: 0,
       operationalBlocked: !overview.puresoul.available,
+      href: channelHref("snoonu:pure_seoul"),
     },
     {
       storefront: "talabat:malikas",
@@ -195,6 +206,7 @@ export function buildChannelHealth(input: OpsCenterInput): ChannelHealthRow[] {
       needsReview: overview.talabat.review,
       syncErrors: 0,
       operationalBlocked: !overview.talabat.available,
+      href: channelHref("talabat:malikas"),
     },
     {
       storefront: "rafeeq:malikas",
@@ -204,6 +216,7 @@ export function buildChannelHealth(input: OpsCenterInput): ChannelHealthRow[] {
       needsReview: 0,
       syncErrors: 0,
       operationalBlocked: !overview.rafeeq.available,
+      href: channelHref("rafeeq:malikas"),
     },
   ];
 }
@@ -222,7 +235,7 @@ export function buildAlerts(input: OpsCenterInput): Alert[] {
     alerts.push({ key: "snoonu_session", level: "info", message: "قدرات سنونو (مالكاز) المباشرة غير مُفعّلة — تتطلب جلسة تاجر.", href: ROUTES.availabilitySync });
   }
   if (kpis.needsImage > 0) {
-    alerts.push({ key: "images", level: "warning", message: `صور ناقصة: ${kpis.needsImage} منتج.`, href: ROUTES.missingProducts });
+    alerts.push({ key: "images", level: "warning", message: `صور ناقصة: ${kpis.needsImage} منتج.`, href: ROUTES.media });
   }
   if (kpis.needsReview > 0) {
     alerts.push({ key: "review", level: "warning", message: `عناصر بحاجة مراجعة: ${kpis.needsReview}.`, href: ROUTES.missingProducts });

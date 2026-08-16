@@ -93,7 +93,12 @@ export default function OperationsCenter({ model }: { model: OperationsCenterMod
               <tbody>
                 {model.channels.map((ch) => (
                   <tr key={ch.storefront} className="border-t border-slate-100">
-                    <td className="px-2 py-1.5 font-medium text-slate-700">{ch.label}</td>
+                    <td className="px-2 py-1.5 font-medium text-slate-700">
+                      {/* OPS.7 — deep-link the storefront to its filtered Missing-Products resolver. */}
+                      <Link href={ch.href} className="text-sky-700 hover:underline">
+                        {ch.label} ↗
+                      </Link>
+                    </td>
                     <td className="px-2 py-1.5 text-center">{ch.operationalBlocked ? "—" : ch.mapped}</td>
                     <td className="px-2 py-1.5 text-center">{ch.operationalBlocked ? "—" : ch.needsMapping}</td>
                     <td className="px-2 py-1.5 text-center">{ch.operationalBlocked ? "—" : ch.needsReview}</td>

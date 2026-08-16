@@ -6,13 +6,19 @@
 // render — the page performs no scan/apply itself.
 
 import { requireMalakWriter } from "@/lib/malak/authz";
+import { parseBarcodeFilter } from "@/lib/operations/barcode-filter";
 import BarcodeCompletion from "@/components/v2/operations/BarcodeCompletion";
 
 export const dynamic = "force-dynamic";
 
-export default async function BarcodeCompletionPage() {
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function BarcodeCompletionPage({ searchParams }: { searchParams?: SearchParams }) {
   const writer = await requireMalakWriter();
   const canWrite = writer.ok;
+  // OPS.7 — validated read-only deep-link filter (sku/status) from Operations.
+  const params = searchParams ? await searchParams : {};
+  const initialFilter = parseBarcodeFilter(params);
 
   return (
     <div className="space-y-4">
@@ -23,7 +29,7 @@ export default async function BarcodeCompletionPage() {
           لا يُعدّل الكميات أو التوفّر أو الصور، ولا يستبدل باركودًا موجودًا. المعاينة للقراءة، والإكمال يمرّ عبر حدّ الباركود المعتمد فقط.
         </p>
       </header>
-      <BarcodeCompletion canWrite={canWrite} />
+      <BarcodeCompletion canWrite={canWrite} initialFilter={initialFilter} />
     </div>
   );
 }
