@@ -1,13 +1,31 @@
-// Malikas V2 navigation model (Phase UI.3C review fix).
+// Malikas V2 navigation model (Phase NAV.1 — Unified Navigation Refresh).
 //
-// Pure and framework-free: the sidebar's link list plus the rule that decides
-// which link is highlighted. Kept out of the .tsx component so the rule is
-// directly unit-testable (node's type stripping cannot load .tsx).
+// Pure and framework-free: the sidebar's link list plus the rules that decide
+// which link (and which group heading) is highlighted. Kept out of the .tsx
+// component so the rules are directly unit-testable (node's type stripping
+// cannot load .tsx).
+//
+// NAV.1 makes every completed platform discoverable: the Operations group now
+// surfaces the OPS sub-centers (Media, Channels, AI, Health) and a new
+// «التحليلات» group surfaces the BI.2 Executive Dashboard. This is a
+// navigation-only change — no new routes are minted (every href points at a
+// page that already ships) and no route is ever renamed.
+
+export type V2NavIcon =
+  | "catalog"
+  | "shopify"
+  | "rewards"
+  | "operations"
+  | "media"
+  | "channels"
+  | "ai"
+  | "health"
+  | "analytics";
 
 export interface V2NavLink {
   href: string;
   label: string;
-  icon: "catalog" | "shopify" | "rewards" | "operations";
+  icon: V2NavIcon;
   /** Heading this link sits under in the sidebar. */
   section: string;
   /**
@@ -27,7 +45,19 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // Operations Center (Phase UI.7.2/7.3) — reads lib/operations/* engines.
   // Label matches the page's own H1 «مركز العمليات» (UX.1 discoverability).
   { href: "/v2/operations", label: "مركز العمليات", icon: "operations", section: "العمليات" },
+  // NAV.1 — surface the OPS sub-centers so every completed operations platform
+  // is discoverable from the shell (they previously had no top-level entry and
+  // were reachable only via deep-links from the Operations Center). All four are
+  // existing V2 pages; nothing is renamed.
+  { href: "/v2/operations/media", label: "مركز الصور", icon: "media", section: "العمليات" },
+  { href: "/v2/operations/channels", label: "مركز القنوات", icon: "channels", section: "العمليات" },
+  { href: "/v2/operations/ai", label: "مركز الذكاء الاصطناعي", icon: "ai", section: "العمليات" },
+  { href: "/v2/operations/health", label: "صحة المنصة", icon: "health", section: "العمليات" },
   { href: "/v2/tasks", label: "المهام", icon: "operations", section: "العمليات" },
+
+  // Analytics (Phase NAV.1) — the BI.2 Executive Dashboard. New group; the page
+  // ships already (merged in BI.2) and simply had no menu entry.
+  { href: "/v2/analytics", label: "لوحة الإدارة", icon: "analytics", section: "التحليلات" },
 
   // «مكافآت الجمال» (Beauty Rewards) — the customer page calls it
   // «دليل المسابقة». These pages now live INSIDE the V2 route group, so they
@@ -102,4 +132,22 @@ export function activeNavHref(
     if (best === null || href.length > best.length) best = href;
   }
   return best;
+}
+
+/**
+ * The section (group heading) that owns the currently-active link, or null when
+ * nothing matches. Derived from {@link activeNavHref} so the group highlight can
+ * never disagree with the link highlight. Used by the sidebar to mark the active
+ * group — including on deep links, where the active link's own section wins.
+ */
+export function activeNavSection(
+  pathname: string | null | undefined,
+  links: readonly V2NavLink[] = V2_NAV_LINKS,
+): string | null {
+  const href = activeNavHref(pathname, links);
+  if (href === null) return null;
+  const active = (Array.isArray(links) ? links : []).find((l) => l?.href === href);
+  return active && typeof active.section === "string" && active.section.length > 0
+    ? active.section
+    : null;
 }

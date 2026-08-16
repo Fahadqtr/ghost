@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 
-import { V2_NAV_LINKS, activeNavHref, groupNavLinks } from "./nav.ts";
+import { V2_NAV_LINKS, activeNavHref, activeNavSection, groupNavLinks } from "./nav.ts";
 
 test("operations label is «مركز العمليات» (matches the page H1; no longer «لوحة العمليات»)", () => {
   const ops = V2_NAV_LINKS.find((l) => l.href === "/v2/operations");
@@ -86,11 +86,58 @@ test("existing catalog / operations / customers links are unchanged", () => {
   assert.equal(byHref("/rewards")?.external, true);
 });
 
-test("section order: الكتالوج, العمليات, العملاء, الإعدادات, أدوات إضافية ↗", () => {
+test("section order (NAV.1): الكتالوج, العمليات, التحليلات, العملاء, الإعدادات, أدوات إضافية ↗", () => {
   assert.deepEqual(
     groupNavLinks().map((s) => s.title),
-    ["الكتالوج", "العمليات", "العملاء", "الإعدادات", "أدوات إضافية ↗"],
+    ["الكتالوج", "العمليات", "التحليلات", "العملاء", "الإعدادات", "أدوات إضافية ↗"],
   );
+});
+
+// ── NAV.1: the OPS sub-centers are now discoverable under «العمليات» ──────────
+test("NAV.1 surfaces the four OPS sub-centers under «العمليات» (existing routes, in-shell)", () => {
+  const byHref = (h: string) => V2_NAV_LINKS.find((l) => l.href === h);
+  const expected: ReadonlyArray<readonly [string, string, string]> = [
+    ["/v2/operations/media", "مركز الصور", "media"],
+    ["/v2/operations/channels", "مركز القنوات", "channels"],
+    ["/v2/operations/ai", "مركز الذكاء الاصطناعي", "ai"],
+    ["/v2/operations/health", "صحة المنصة", "health"],
+  ];
+  for (const [href, label, icon] of expected) {
+    const link = byHref(href);
+    assert.ok(link, `${href} is in the nav`);
+    assert.equal(link!.label, label, `${href} label`);
+    assert.equal(link!.section, "العمليات", `${href} sits under العمليات`);
+    assert.equal(link!.icon, icon, `${href} icon`);
+    assert.equal(link!.external, undefined, `${href} is a V2 route — not external`);
+  }
+});
+
+test("NAV.1 «العمليات» group order: center, media, channels, ai, health, then tasks", () => {
+  const ops = groupNavLinks().find((s) => s.title === "العمليات");
+  assert.ok(ops, "العمليات group exists");
+  assert.deepEqual(
+    ops!.links.map((l) => l.href),
+    [
+      "/v2/operations",
+      "/v2/operations/media",
+      "/v2/operations/channels",
+      "/v2/operations/ai",
+      "/v2/operations/health",
+      "/v2/tasks",
+    ],
+  );
+});
+
+// ── NAV.1: the BI.2 Executive Dashboard gets its own «التحليلات» group ────────
+test("NAV.1 adds «التحليلات» → «لوحة الإدارة» (/v2/analytics, BarChart icon, in-shell)", () => {
+  const an = V2_NAV_LINKS.find((l) => l.href === "/v2/analytics");
+  assert.ok(an, "analytics link exists");
+  assert.equal(an!.label, "لوحة الإدارة");
+  assert.equal(an!.section, "التحليلات");
+  assert.equal(an!.icon, "analytics");
+  assert.equal(an!.external, undefined, "analytics is a V2 route — not external");
+  const analytics = groupNavLinks().find((s) => s.title === "التحليلات");
+  assert.equal(analytics?.links.length, 1, "التحليلات has exactly one link");
 });
 
 test("activeNavHref behavior unchanged — longest-match still wins", () => {
@@ -100,10 +147,30 @@ test("activeNavHref behavior unchanged — longest-match still wins", () => {
   assert.equal(activeNavHref("/v2/catalog/shopify"), "/v2/catalog/shopify");
   // operations sub-path
   assert.equal(activeNavHref("/v2/operations"), "/v2/operations");
-  // the new settings link lights up on its own page
+  // OPS sub-centers claim their own subtree — the Operations Center above them
+  // does NOT re-light (longest-match wins), incl. on their deep sub-pages
+  assert.equal(activeNavHref("/v2/operations/media"), "/v2/operations/media");
+  assert.equal(activeNavHref("/v2/operations/channels"), "/v2/operations/channels");
+  assert.equal(activeNavHref("/v2/operations/ai"), "/v2/operations/ai");
+  assert.equal(activeNavHref("/v2/operations/health"), "/v2/operations/health");
+  assert.equal(activeNavHref("/v2/operations/health/anything"), "/v2/operations/health");
+  // analytics lights up on its own page and sub-pages
+  assert.equal(activeNavHref("/v2/analytics"), "/v2/analytics");
+  // the settings link lights up on its own page
   assert.equal(activeNavHref("/v2/settings/integrations/ticktick"), "/v2/settings/integrations/ticktick");
   // segment boundary respected — /v2/catalogue never matches /v2/catalog
   assert.equal(activeNavHref("/v2/catalogue"), null);
   // unmatched path
   assert.equal(activeNavHref("/nope"), null);
+});
+
+test("activeNavSection returns the active link's group (for current-group highlight)", () => {
+  assert.equal(activeNavSection("/v2/catalog/12345"), "الكتالوج");
+  assert.equal(activeNavSection("/v2/operations"), "العمليات");
+  assert.equal(activeNavSection("/v2/operations/media"), "العمليات");
+  assert.equal(activeNavSection("/v2/analytics"), "التحليلات");
+  assert.equal(activeNavSection("/v2/loyalty/qr"), "العملاء");
+  assert.equal(activeNavSection("/v2/settings/integrations/ticktick"), "الإعدادات");
+  // no match → no active group
+  assert.equal(activeNavSection("/nope"), null);
 });
