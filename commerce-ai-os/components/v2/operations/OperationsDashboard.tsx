@@ -40,6 +40,7 @@ import {
 } from "@/lib/operations/operations-queue";
 import { MATRIX_STATE_LABELS } from "@/lib/operations/platform-matrix";
 import { resolveIssueHref, productDetailHref } from "@/lib/operations/issue-resolver";
+import type { LifecycleBreakdown } from "@/lib/operations/lifecycle-signal";
 import type { PlatformHealth } from "@/lib/operations/platform-health";
 import PlatformHealthSection from "@/components/v2/operations/PlatformHealth";
 import InPageNav from "@/components/v2/InPageNav";
@@ -594,6 +595,7 @@ export default function OperationsDashboard({
   issuePage,
   queueCounts,
   queueCapped,
+  lifecycle,
 }: {
   kpis: DashboardKpis;
   queues: Queue[];
@@ -624,6 +626,8 @@ export default function OperationsDashboard({
   issuePage: IssuePage;
   queueCounts: QueueCounts;
   queueCapped: boolean;
+  /** OPS.8B read-only lifecycle breakdown (reuses the lifecycle read model). */
+  lifecycle?: LifecycleBreakdown | null;
 }) {
   const hasPrev = page.page > 1;
   const hasNext = page.page < page.totalPages;
@@ -634,6 +638,33 @@ export default function OperationsDashboard({
         <h1 className="font-serif text-2xl font-semibold text-ink">مركز العمليات</h1>
         <p className="text-sm text-muted">جاهزية المنتجات والمهام وحالة المنصات — محسوبة من ماليكاس، المصدر الرئيسي.</p>
       </div>
+
+      {/* OPS.8B — read-only product lifecycle breakdown (derived; no new queue,
+          no writes). Deep-links to the catalog where each product's lifecycle
+          review lives. */}
+      {lifecycle && lifecycle.total > 0 ? (
+        <div className="card p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-sm font-semibold text-ink">دورة حياة المنتجات</span>
+            <Link href="/v2/catalog" className="text-[11px] text-muted underline">
+              الكتالوج ↗
+            </Link>
+          </div>
+          <div className="grid grid-cols-4 gap-2 text-center">
+            {([
+              ["مسودة", lifecycle.draft],
+              ["جاهز", lifecycle.ready],
+              ["نشط", lifecycle.active],
+              ["موقوف", lifecycle.stopped],
+            ] as const).map(([label, value]) => (
+              <div key={label} className="rounded-lg border border-slate-200 p-2">
+                <div className="text-lg font-bold text-ink">{value}</div>
+                <div className="mt-0.5 text-[11px] text-muted">{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {/* In-page section nav (UX.2) — anchors only, no client JS. Reuses the
           existing #unified-queue anchor. */}

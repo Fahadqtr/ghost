@@ -59,8 +59,10 @@ export interface OperationsProduct {
   imageUrl: string | null;
   /** raw approval text: "Approved" | "Rejected" | "SentAI" | "" (house values) */
   approval: string | null;
-  /** raw platform_status text; "" = never pushed anywhere */
+  /** raw platform_status text; "" = never pushed anywhere (legacy/compat) */
   platformStatus: string | null;
+  /** canonical stored lifecycle_state (OPS.8A); null when unread/absent */
+  lifecycleState?: string | null;
   /** number of variant rows the product currently has */
   variantCount: number;
   /**

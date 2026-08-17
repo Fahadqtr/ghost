@@ -180,7 +180,7 @@ function overlayToPureSoulState(p: PlatformPresence): PureSoulState | undefined 
 }
 
 const PRODUCT_COLUMNS =
-  "id, sku, barcode, name_ar, name_en, description_ar, description_en, brand_id, main_category, price, image_url, approval, platform_status";
+  "id, sku, barcode, name_ar, name_en, description_ar, description_en, brand_id, main_category, price, image_url, approval, platform_status, lifecycle_state";
 const VARIANT_COLUMNS = "parent_product_id";
 const PAGE_SIZE = 1000;
 const MAX_PRODUCTS = 20000;
