@@ -1,12 +1,21 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { computeShopifyDiff, applyShopifyPrices, applyShopifyContent, syncShopifyInventory, pushProductsToShopify, importShopifyProducts, listShopifyMissingImages, pushShopifyImages, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
+import { computeShopifyDiff, syncShopifyInventory, importShopifyProducts, listShopifyMissingImages, pushShopifyImages, type ShopifyDiff } from "@/app/(app)/import-export/shopify-actions";
 import { applySystemOutOfStockToShopify } from "@/app/(app)/import-export/availability-actions";
 
-// One-tap live reconcile against the Shopify store: pull products over the
-// Admin API, diff vs our catalog (source of truth), then push price fixes
-// and/or title+status fixes for the rows the owner keeps selected.
+// One-tap live reconcile against the Shopify store: pull products over the Admin
+// API and diff vs our catalog (source of truth), plus inventory sync, image push,
+// and import.
+//
+// INT.2F — the legacy OUTBOUND catalog push (prices / titles+status / create
+// product) has been RETIRED from this tool. It used fuzzy title matching and
+// duplicated the certified Shopify publisher; operators now publish catalog
+// changes through the Export Center (/v2/export/shopify:malikas), which is
+// ECL-identity-safe, idempotent, and audited. This page keeps the read/diff,
+// import, inventory sync, out-of-stock, and missing-image flows.
+
+const EXPORT_CENTER_HREF = "/v2/export/shopify:malikas";
 
 const FIELD_AR: Record<string, string> = {
   price: "السعر", compare_at: "السعر قبل الخصم", title: "الاسم", status: "الحالة",
@@ -15,39 +24,17 @@ const FIELD_AR: Record<string, string> = {
 export default function ShopifySync() {
   const [diff, setDiff] = useState<ShopifyDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [applyMsg, setApplyMsg] = useState("");
   const [invMsg, setInvMsg] = useState("");
-  const [pushMsg, setPushMsg] = useState("");
   const [importMsg, setImportMsg] = useState("");
   const [imgMsg, setImgMsg] = useState("");
   const [busy, start] = useTransition();
 
   const run = () => {
-    setError(null); setDiff(null); setApplyMsg("");
+    setError(null); setDiff(null);
     start(async () => {
       const d = await computeShopifyDiff();
       if (!d.ok) { setError(d.error ?? "فشل الجلب."); return; }
       setDiff(d);
-      setSelected(new Set(d.updated.map((u) => u.product_id)));
-    });
-  };
-
-  const apply = () => {
-    setApplyMsg("…يحدّث الأسعار في شوبي فاي");
-    start(async () => {
-      const r = await applyShopifyPrices([...selected]);
-      if (!r.ok) { setApplyMsg(`❌ ${r.error}`); return; }
-      setApplyMsg(`✅ تحدّث ${r.updated} منتج${r.failed.length ? ` — فشل ${r.failed.length}: ${r.failed.map((f) => f.name).join("، ").slice(0, 200)}` : ""}`);
-    });
-  };
-
-  const applyContent = () => {
-    setApplyMsg("…يزامن الأسماء والحالات في شوبي فاي");
-    start(async () => {
-      const r = await applyShopifyContent([...selected]);
-      if (!r.ok) { setApplyMsg(`❌ ${r.error}`); return; }
-      setApplyMsg(`✅ تزامن ${r.updated} منتج${r.failed.length ? ` — فشل ${r.failed.length}: ${r.failed.map((f) => f.name).join("، ").slice(0, 200)}` : ""} — اضغط «قارن الآن» للتحديث`);
     });
   };
 
@@ -81,27 +68,6 @@ export default function ShopifySync() {
           ? `✅ الكميات متطابقة أصلًا (${r.matched} منتج)`
           : `✅ تحدّثت كميات ${r.updated} منتج${r.examples.length ? ` — مثل: ${r.examples.join("، ")}` : ""}`) + ordersBit + noteBit,
       );
-    });
-  };
-
-  // Client-driven chunking (same pattern as the week plan) so every server
-  // call stays inside the 60s route budget.
-  const pushAll = () => {
-    const ids = (diff?.onlyOurs ?? []).map((p) => p.product_id);
-    if (!ids.length) return;
-    setPushMsg(`…يرفع 0/${ids.length} لشوبي فاي — خلّ الصفحة مفتوحة`);
-    start(async () => {
-      let created = 0, skipped = 0, failed = 0, firstErr = "";
-      for (let i = 0; i < ids.length; i += 8) {
-        const r = await pushProductsToShopify(ids.slice(i, i + 8));
-        if (!r.ok) { failed += Math.min(8, ids.length - i); if (!firstErr) firstErr = r.error ?? ""; }
-        else {
-          created += r.created; skipped += r.skipped; failed += r.failed.length;
-          if (!firstErr && r.failed.length) firstErr = `${r.failed[0].name}: ${r.failed[0].error}`;
-        }
-        setPushMsg(`…يرفع ${Math.min(i + 8, ids.length)}/${ids.length} لشوبي فاي`);
-      }
-      setPushMsg(`✅ انرفع ${created} منتج${skipped ? ` · تخطى ${skipped} (موجود)` : ""}${failed ? ` · فشل ${failed}${firstErr ? ` — ${firstErr.slice(0, 120)}` : ""}` : ""} — اضغط «قارن الآن» لتحديث القوائم`);
     });
   };
 
@@ -148,9 +114,6 @@ export default function ShopifySync() {
     });
   };
 
-  const toggle = (id: string) =>
-    setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-
   return (
     <div className="space-y-4">
       <div className="card space-y-3">
@@ -158,8 +121,13 @@ export default function ShopifySync() {
           <h3 className="text-sm font-semibold text-ink">مقارنة حية مع متجر شوبي فاي</h3>
           <p className="text-xs text-muted">
             يسحب منتجات المتجر مباشرة عبر Admin API ويقارنها مع الكتالوج (المطابقة بالـ SKU ثم بالاسم الإنجليزي).
-            المعاينة للقراءة فقط — ما يتغيّر شي إلا بزر التطبيق.
+            المعاينة للقراءة فقط.
           </p>
+        </div>
+        <div className="rounded-lg border border-brand/30 bg-brand-light/40 px-3 py-2 text-xs text-muted">
+          نشر تغييرات الكتالوج (الأسعار · الأسماء/الحالات · إنشاء منتجات) انتقل إلى{" "}
+          <a href={EXPORT_CENTER_HREF} className="font-semibold text-brand underline" dir="ltr">مركز التصدير (Shopify)</a>{" "}
+          — نشر آمن الهوية (ECL) وخاضع للتدقيق. هذه الأداة تُبقي المقارنة والاستيراد ومزامنة المخزون والصور فقط.
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn text-sm disabled:opacity-50" onClick={run} disabled={busy}>
@@ -213,37 +181,23 @@ export default function ShopifySync() {
 
           {diff.updated.length ? (
             <div className="card space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-ink">تغييرات معلّقة ({diff.updated.length})</h3>
-                <div className="flex flex-wrap justify-end gap-2">
-                  <button type="button" className="btn text-xs disabled:opacity-50" onClick={apply} disabled={busy || selected.size === 0}>
-                    💾 حدّث أسعار المحدد ({selected.size})
-                  </button>
-                  <button type="button" className="btn-ghost text-xs disabled:opacity-50" onClick={applyContent} disabled={busy || selected.size === 0}>
-                    🏷️ زامن أسماء/حالات المحدد
-                  </button>
-                </div>
+                <a href={EXPORT_CENTER_HREF} className="btn text-xs" dir="ltr">انشر عبر مركز التصدير ↗</a>
               </div>
-              {applyMsg ? <p className="text-xs text-muted">{applyMsg}</p> : null}
+              <p className="text-xs text-muted">هذه فروقات للاطّلاع فقط — النشر يتم عبر مركز التصدير (نشر آمن الهوية).</p>
               <div className="max-h-96 space-y-2 overflow-y-auto">
                 {diff.updated.map((u) => (
-                  <label key={u.product_id} className="flex items-start gap-2 rounded-lg border border-[#efe3d6] bg-white/60 p-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(u.product_id)}
-                      onChange={() => toggle(u.product_id)}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="font-semibold text-ink">{u.name_en}</span>
-                      <span className="mt-0.5 block space-y-0.5">
-                        {u.changes.map((c, i) => (
-                          <span key={i} className="block text-muted">
-                            {FIELD_AR[c.field] ?? c.field}: <s>{c.old || "—"}</s> ← <b className="text-ink">{c.new || "—"}</b>
-                          </span>
-                        ))}
-                      </span>
+                  <div key={u.product_id} className="rounded-lg border border-[#efe3d6] bg-white/60 p-2 text-xs">
+                    <span className="font-semibold text-ink">{u.name_en}</span>
+                    <span className="mt-0.5 block space-y-0.5">
+                      {u.changes.map((c, i) => (
+                        <span key={i} className="block text-muted">
+                          {FIELD_AR[c.field] ?? c.field}: <s>{c.old || "—"}</s> ← <b className="text-ink">{c.new || "—"}</b>
+                        </span>
+                      ))}
                     </span>
-                  </label>
+                  </div>
                 ))}
               </div>
             </div>
@@ -268,11 +222,11 @@ export default function ShopifySync() {
             <details className="card">
               <summary className="cursor-pointer text-sm font-semibold text-ink">في الكتالوج وليس في شوبي فاي ({diff.onlyOurs.length})</summary>
               <div className="mt-2 space-y-2">
-                <button type="button" className="btn text-xs disabled:opacity-50" onClick={pushAll} disabled={busy}>
-                  ⬆️ ارفع الكل لشوبي فاي ({diff.onlyOurs.length})
-                </button>
-                <p className="text-[11px] text-muted">ينرفع بصورته وسعره ووصفه وكميته — المعتمد يظهر ACTIVE والمرفوض DRAFT.</p>
-                {pushMsg ? <p className="text-xs text-muted">{pushMsg}</p> : null}
+                <p className="text-[11px] text-muted">
+                  لإنشاء هذه المنتجات في شوبي فاي استخدم{" "}
+                  <a href={EXPORT_CENTER_HREF} className="font-semibold text-brand underline" dir="ltr">مركز التصدير</a>{" "}
+                  (إنشاء كمسودّة، آمن الهوية عبر ECL، دون تكرار).
+                </p>
                 <div className="max-h-60 space-y-1 overflow-y-auto text-xs text-muted">
                   {diff.onlyOurs.map((p) => <div key={p.product_id}>{p.name_en || p.product_id}</div>)}
                 </div>

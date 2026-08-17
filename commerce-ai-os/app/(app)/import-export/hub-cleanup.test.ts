@@ -11,7 +11,8 @@ const HUB = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
 const IMAGES = readFileSync(new URL("./images/page.tsx", import.meta.url), "utf8");
 const EXPORTS = readFileSync(new URL("./export/page.tsx", import.meta.url), "utf8");
 
-const HEAVY = ["ExcelImport", "ImageHealth", "ImageUpload", "CatalogImageBySku", "ExportButtons", "TalabatExport"];
+// INT.2F — ExportButtons was deleted (legacy per-channel export UI retired).
+const HEAVY = ["ExcelImport", "ImageHealth", "ImageUpload", "CatalogImageBySku", "TalabatExport"];
 
 // ── Hub is now a light landing page ─────────────────────────────────────────
 
@@ -62,14 +63,14 @@ test("images workspace renders the three image components unchanged", () => {
   assert.ok(IMAGES.includes("limit(1000)"), "product-list read now lives on the images page");
 });
 
-test("exports workspace renders the export components unchanged", () => {
-  for (const c of ["ExportButtons", "TalabatExport"]) {
+test("exports workspace renders the retained Talabat export trigger (INT.2F)", () => {
+  for (const c of ["TalabatExport"]) {
     assert.ok(EXPORTS.includes(`<${c}`), `exports page renders <${c}>`);
     assert.ok(EXPORTS.includes(`components/${c}`), `exports page imports ${c} from its existing module`);
   }
-  // the category scan + counts moved here (not the hub).
+  // the Talabat category scan + new-products count stay here (the image-batch
+  // count left with ExportButtons in INT.2F).
   assert.ok(EXPORTS.includes("main_category"), "category scan now lives on the exports page");
-  assert.ok(EXPORTS.includes("image_filename"), "image count now lives on the exports page");
   assert.ok(EXPORTS.includes("Imported from Snoonu sync"), "new-products count now lives on the exports page");
 });
 

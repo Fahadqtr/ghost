@@ -199,15 +199,15 @@ test("20: no channel_stock is ever produced (module + persistence)", () => {
   assert.ok(!/channel_stock/i.test(JSON.stringify(r)));
 });
 
-test("21: other channels' exports are unchanged in the route (Shopify fenced by INT.2E.2)", () => {
+test("21: legacy channel exports are retired; only Talabat (mappings) remains (INT.2F)", () => {
   const route = read("app/api/export/[channel]/route.ts");
-  // INT.2E.2 fenced the legacy Shopify CSV path (moved to /v2/export/shopify:malikas).
-  assert.ok(!/buildShopifyCsv/.test(route), "legacy Shopify CSV branch removed");
-  assert.match(route, /channel === "shopify"[\s\S]*?410/, "Shopify legacy route returns 410");
-  // Snoonu / Rafeeq / Talabat file workflows remain untouched (full retirement: INT.2F).
-  assert.match(route, /buildSnoonuCsv/);
-  assert.match(route, /buildRafeeqAoa/);
-  assert.match(route, /buildTalabatExport/, "talabat branch uses the new builder");
+  // INT.2F — Shopify/Snoonu/Rafeeq legacy file exports are retired (410 → Export Center).
+  assert.equal(/buildShopifyCsv|buildSnoonuCsv|buildRafeeqAoa/.test(route), false, "legacy CSV/AoA builders removed from the route");
+  assert.match(route, /RETIRED/, "route declares the retired channels");
+  assert.match(route, /status: 410/, "retired channels return 410");
+  // Talabat is retained solely as the channel_variant_mappings writer.
+  assert.match(route, /buildTalabatExport/, "talabat branch retained");
+  assert.match(route, /persistTalabatMappings/, "talabat branch still persists mappings");
 });
 
 test("22: the export module is pure — no network/Supabase", () => {
@@ -360,10 +360,9 @@ test("R: the route uses explicit approval + exact channel + fail-closed gate", (
   assert.ok(!/chanIds\[0\]/.test(route), "must not pick chanIds[0]");
   assert.match(route, /decideExportGate/);
   assert.match(route, /status:\s*gate\.httpStatus/);
-  // Other file channels untouched (Shopify legacy CSV fenced by INT.2E.2).
-  assert.ok(!/buildShopifyCsv/.test(route), "legacy Shopify CSV branch removed");
-  assert.match(route, /buildSnoonuCsv/);
-  assert.match(route, /buildRafeeqAoa/);
+  // INT.2F — legacy per-channel CSV/AoA builders are gone; only the Talabat
+  // mapping-persist path remains.
+  assert.equal(/buildShopifyCsv|buildSnoonuCsv|buildRafeeqAoa/.test(route), false, "legacy CSV/AoA builders removed");
 });
 
 // ---- Final review: exact channel pricing + redacted errors ------------------
@@ -387,13 +386,12 @@ test("F1: route loads price + mappings from the EXACT Talabat channel only", () 
 test("F2: Talabat errors are redacted to a static safe 503 (no raw error / no CSV)", () => {
   const route = read("app/api/export/[channel]/route.ts");
   assert.match(route, /Talabat export is temporarily unavailable/);
-  const catchIdx = route.lastIndexOf("catch (e)");
+  const catchIdx = route.lastIndexOf("} catch");
   assert.ok(catchIdx >= 0);
-  const guardIdx = route.indexOf('if (channel === "talabat")', catchIdx);
   const staticIdx = route.indexOf("Talabat export is temporarily unavailable", catchIdx);
-  const rawIdx = route.indexOf("Export failed:", catchIdx);
-  assert.ok(guardIdx > catchIdx, "catch has a talabat guard");
-  assert.ok(staticIdx > guardIdx && staticIdx < rawIdx, "talabat returns the static 503 before the raw path");
+  assert.ok(staticIdx > catchIdx, "the catch returns the static 503");
+  // INT.2F — no raw error path remains (the route only serves Talabat now).
+  assert.equal(route.includes("Export failed:"), false, "no raw error is ever surfaced");
   // The safe 503 body carries no error interpolation.
   assert.ok(!/Talabat export is temporarily unavailable[^"]*\$\{/.test(route), "static message has no interpolation");
 });
