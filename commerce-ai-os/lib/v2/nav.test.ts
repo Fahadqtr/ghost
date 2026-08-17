@@ -112,7 +112,7 @@ test("NAV.1 surfaces the four OPS sub-centers under «العمليات» (existi
   }
 });
 
-test("NAV.1 «العمليات» group order: center, media, channels, ai, health, then tasks", () => {
+test("NAV.1/INT.2A «العمليات» group order: center, media, channels, ai, health, export, then tasks", () => {
   const ops = groupNavLinks().find((s) => s.title === "العمليات");
   assert.ok(ops, "العمليات group exists");
   assert.deepEqual(
@@ -123,9 +123,19 @@ test("NAV.1 «العمليات» group order: center, media, channels, ai, healt
       "/v2/operations/channels",
       "/v2/operations/ai",
       "/v2/operations/health",
+      "/v2/export",
       "/v2/tasks",
     ],
   );
+});
+
+test("INT.2A adds «العمليات» → «مركز التصدير» (/v2/export, export icon, in-shell)", () => {
+  const ex = V2_NAV_LINKS.find((l) => l.href === "/v2/export");
+  assert.ok(ex, "/v2/export link exists");
+  assert.equal(ex!.label, "مركز التصدير");
+  assert.equal(ex!.section, "العمليات");
+  assert.equal(ex!.icon, "export");
+  assert.equal(ex!.external, undefined, "Export Center is a V2 route — not external");
 });
 
 // ── NAV.1: the BI.2 Executive Dashboard gets its own «التحليلات» group ────────

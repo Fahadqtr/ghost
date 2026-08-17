@@ -105,10 +105,22 @@ function AnalyticsIcon() {
   );
 }
 
+function ExportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="M8 7l4-4 4 4" />
+      <path d="M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" />
+    </svg>
+  );
+}
+
 function NavIcon({ icon }: { icon: V2NavIcon }) {
   switch (icon) {
     case "shopify":
       return <ShopifyIcon />;
+    case "export":
+      return <ExportIcon />;
     case "rewards":
       return <RewardsIcon />;
     case "operations":

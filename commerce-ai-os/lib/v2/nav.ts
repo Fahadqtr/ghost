@@ -20,7 +20,8 @@ export type V2NavIcon =
   | "channels"
   | "ai"
   | "health"
-  | "analytics";
+  | "analytics"
+  | "export";
 
 export interface V2NavLink {
   href: string;
@@ -53,6 +54,9 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   { href: "/v2/operations/channels", label: "مركز القنوات", icon: "channels", section: "العمليات" },
   { href: "/v2/operations/ai", label: "مركز الذكاء الاصطناعي", icon: "ai", section: "العمليات" },
   { href: "/v2/operations/health", label: "صحة المنصة", icon: "health", section: "العمليات" },
+  // Export Center (Phase INT.2A) — the unified outbound export/publish entry
+  // point. Read-only foundation; a new V2 page (legacy /import-export stays).
+  { href: "/v2/export", label: "مركز التصدير", icon: "export", section: "العمليات" },
   { href: "/v2/tasks", label: "المهام", icon: "operations", section: "العمليات" },
 
   // Analytics (Phase NAV.1) — the BI.2 Executive Dashboard. New group; the page
