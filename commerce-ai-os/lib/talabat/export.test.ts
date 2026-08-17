@@ -199,9 +199,12 @@ test("20: no channel_stock is ever produced (module + persistence)", () => {
   assert.ok(!/channel_stock/i.test(JSON.stringify(r)));
 });
 
-test("21: other channels' exports are unchanged in the route", () => {
+test("21: other channels' exports are unchanged in the route (Shopify fenced by INT.2E.2)", () => {
   const route = read("app/api/export/[channel]/route.ts");
-  assert.match(route, /buildShopifyCsv/);
+  // INT.2E.2 fenced the legacy Shopify CSV path (moved to /v2/export/shopify:malikas).
+  assert.ok(!/buildShopifyCsv/.test(route), "legacy Shopify CSV branch removed");
+  assert.match(route, /channel === "shopify"[\s\S]*?410/, "Shopify legacy route returns 410");
+  // Snoonu / Rafeeq / Talabat file workflows remain untouched (full retirement: INT.2F).
   assert.match(route, /buildSnoonuCsv/);
   assert.match(route, /buildRafeeqAoa/);
   assert.match(route, /buildTalabatExport/, "talabat branch uses the new builder");
@@ -357,8 +360,8 @@ test("R: the route uses explicit approval + exact channel + fail-closed gate", (
   assert.ok(!/chanIds\[0\]/.test(route), "must not pick chanIds[0]");
   assert.match(route, /decideExportGate/);
   assert.match(route, /status:\s*gate\.httpStatus/);
-  // Other channels untouched.
-  assert.match(route, /buildShopifyCsv/);
+  // Other file channels untouched (Shopify legacy CSV fenced by INT.2E.2).
+  assert.ok(!/buildShopifyCsv/.test(route), "legacy Shopify CSV branch removed");
   assert.match(route, /buildSnoonuCsv/);
   assert.match(route, /buildRafeeqAoa/);
 });

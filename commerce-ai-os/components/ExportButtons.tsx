@@ -12,8 +12,11 @@ export default function ExportButtons({ imageCount = 0, locale = "ar" }: { image
   const en = locale === "en";
   const L = (ar: string, e: string) => (en ? e : ar);
 
+  // INT.2E.2 — the legacy Shopify CSV export is retired from operator navigation.
+  // Shopify publishing now lives in the new Export Center (/v2/export/shopify:malikas),
+  // which is ECL-identity-safe, idempotent, and audited. Talabat/Snoonu/Rafeeq file
+  // workflows are unchanged here (full legacy retirement is INT.2F).
   const EXPORTS = [
-    { key: "shopify", label: "Shopify CSV" },
     { key: "snoonu", label: L("قائمة سنونو الرئيسية", "Snoonu masterlist") },
     { key: "talabat", label: L("طلبات CSV المقسّم", "Talabat split-CSV") },
   ] as const;

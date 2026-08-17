@@ -115,18 +115,24 @@ test("server reader is server-only + read-only and batches its internal reads", 
   assert.ok(fromCalls <= 1, `expected a single .from() (in readAll), found ${fromCalls}`);
 });
 
-// ── client component holds no DB access and no network mutation ───────────────
-test("the client component holds no DB/network mutation access", () => {
+// ── client component holds no DB access and no credentials ────────────────────
+// INT.2E.2: the component may now POST to the writer-gated publish route (fetch
+// is allowed); it still holds NO DB access and NO secrets.
+test("the client component holds no DB access or credentials", () => {
   const c = read(COMPONENT);
-  for (const bad of [/createAdminClient/, /createClient\(/, /@\/lib\/supabase/, /\.from\(/, /fetch\(/]) {
+  for (const bad of [/createAdminClient/, /createClient\(/, /@\/lib\/supabase/, /\.from\(/, /SHOPIFY_ADMIN_TOKEN/, /X-Shopify-Access-Token/]) {
     assert.equal(bad.test(c), false, `component must not contain ${bad}`);
   }
 });
 
-// ── the detail route renders the read-only preview and never publishes ────────
-test("the Shopify detail route is read-only (no publish, no generation)", () => {
+// ── the detail route loads the certified preview; the READ boundary stays read-only ─
+// INT.2E.2 wires publishing on this page, but the PREVIEW READER
+// (preview.server.ts) performs no Shopify mutation — writes live only in
+// publish.server (covered by int2e2-shopify-publish-guard).
+test("the Shopify detail route loads the certified preview; the read boundary stays read-only", () => {
   const s = read(ROUTE);
-  assert.ok(/ShopifyPreview/.test(s), "renders the read-only preview surface");
-  assert.ok(/loadShopifyPreview\(\)/.test(s), "loads the certified preview");
-  assert.equal(/pushProductsToShopify|createShopifyProduct|\.publish\(/.test(s), false, "no publish/create in the route");
+  assert.ok(/ShopifyPreview/.test(s), "renders the preview surface");
+  assert.ok(/loadShopifyPreviewContext\(\)/.test(s), "loads the certified preview context");
+  const reader = read(SERVER);
+  assert.equal(/createShopifyProduct|updateVariantPrice|updateShopifyProductContent|addProductImage|setInventoryQuantities/.test(reader), false, "the preview reader performs no Shopify mutation");
 });

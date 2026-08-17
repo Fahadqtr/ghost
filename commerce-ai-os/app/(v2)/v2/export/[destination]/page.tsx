@@ -19,8 +19,11 @@ import type { SnoonuStorefrontKey } from "@/lib/export/snoonu/preview";
 import SnoonuExport, { type SnoonuRowVM } from "@/components/v2/export/SnoonuExport";
 import { loadRafeeqPreview } from "@/lib/export/rafeeq/preview.server";
 import RafeeqExport, { type RafeeqRowVM } from "@/components/v2/export/RafeeqExport";
-import { loadShopifyPreview } from "@/lib/export/shopify/preview.server";
-import ShopifyPreview, { type ShopifyRowVM } from "@/components/v2/export/ShopifyPreview";
+import { loadShopifyPreviewContext } from "@/lib/export/shopify/preview.server";
+import { buildPublishRows } from "@/lib/export/shopify/publish.server";
+import { loadRecentExportRuns } from "@/lib/export/shopify/run-store.server";
+import ShopifyPreview, { type ShopifyRowVM, type ShopifyRunVM } from "@/components/v2/export/ShopifyPreview";
+import { createClient } from "@/lib/supabase/server";
 import { requireMalakWriter } from "@/lib/malak/authz";
 
 export const dynamic = "force-dynamic";
@@ -308,7 +311,15 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
 // only: no Shopify product/price/media/inventory is created or changed, no ECL is
 // written, and there is no generate/publish action on this page.
 async function ShopifyDetail({ dest }: { dest: NonNullable<ReturnType<typeof exportDestinationByKey>> }) {
-  const result = await loadShopifyPreview();
+  const [ctx, writer, runs] = await Promise.all([
+    loadShopifyPreviewContext(),
+    requireMalakWriter(),
+    loadRecentExportRuns(createClient() as never, "shopify:malikas", 10),
+  ]);
+  const canWrite = writer.ok;
+
+  // Per-row publish view (fingerprint + eligibility) from the SAME planner.
+  const publishByProduct = ctx ? new Map(buildPublishRows(ctx).map((p) => [p.internalProductId, p])) : new Map();
 
   return (
     <div className="space-y-4">
@@ -322,34 +333,46 @@ async function ShopifyDetail({ dest }: { dest: NonNullable<ReturnType<typeof exp
         </p>
       </div>
 
-      {result === null ? (
+      {ctx === null ? (
         <div className="card text-center text-sm text-muted">
           تعذّر تحميل المعاينة الآن — الرجاء المحاولة لاحقاً (لا توجد بيانات ملفّقة).
         </div>
       ) : (
         <ShopifyPreview
           vm={{
-            shopifyAvailable: result.shopifyAvailable,
-            productsRead: result.apiStats.shopifyProductsRead,
-            counts: result.counts,
-            rows: result.rows.map<ShopifyRowVM>((r) => ({
-              id: r.internalProductId,
-              sku: r.sku,
-              barcode: r.barcode,
-              title: r.title,
-              price: r.price,
-              compareAtPrice: r.compareAtPrice,
-              shopifyProductGid: r.shopifyProductGid,
-              hasVariants: r.hasVariants,
-              variantCount: r.variantCount,
-              variantMatchedCount: r.variantMatchedCount,
-              hasImage: r.hasImage,
-              imageCount: r.imageCount,
-              status: r.status,
-              changedFields: r.changedFields,
-              reasons: r.reasons.map((x) => ({ code: x.code, blocking: x.blocking })),
-              plannedOps: r.plannedOps.map((o) => o.type),
+            shopifyAvailable: ctx.result.shopifyAvailable,
+            productsRead: ctx.result.apiStats.shopifyProductsRead,
+            canWrite,
+            historyAvailable: runs.availability === "AVAILABLE",
+            recentRuns: runs.runs.map<ShopifyRunVM>((r) => ({
+              id: r.id, status: r.status, actor: r.actor, finishedAt: r.finishedAt,
+              createdCount: r.createdCount, updatedCount: r.updatedCount, unchangedCount: r.unchangedCount,
+              blockedCount: r.blockedCount, failedCount: r.failedCount,
             })),
+            counts: ctx.result.counts,
+            rows: ctx.result.rows.map<ShopifyRowVM>((r) => {
+              const pub = publishByProduct.get(r.internalProductId);
+              return {
+                id: r.internalProductId,
+                sku: r.sku,
+                barcode: r.barcode,
+                title: r.title,
+                price: r.price,
+                compareAtPrice: r.compareAtPrice,
+                shopifyProductGid: r.shopifyProductGid,
+                hasVariants: r.hasVariants,
+                variantCount: r.variantCount,
+                variantMatchedCount: r.variantMatchedCount,
+                hasImage: r.hasImage,
+                imageCount: r.imageCount,
+                status: r.status,
+                changedFields: r.changedFields,
+                reasons: r.reasons.map((x) => ({ code: x.code, blocking: x.blocking })),
+                plannedOps: r.plannedOps.map((o) => o.type),
+                fingerprint: pub?.fingerprint ?? "",
+                eligible: canWrite && (pub?.eligible ?? false),
+              };
+            }),
           }}
         />
       )}

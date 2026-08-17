@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import {
-  buildShopifyCsv, buildSnoonuCsv, buildRafeeqAoa, RAFEEQ_COL_WIDTHS,
+  buildSnoonuCsv, buildRafeeqAoa, RAFEEQ_COL_WIDTHS,
   CHANNEL_KEYS, type ChannelKey, type ExportProduct,
   type StatusMap,
 } from "@/lib/exporters";
@@ -36,6 +36,18 @@ export async function GET(
   const channel = (await params).channel as ChannelKey;
   if (!CHANNEL_KEYS.includes(channel)) {
     return new Response("Unknown channel", { status: 400 });
+  }
+
+  // INT.2E.2 — the legacy Shopify CSV export is FENCED. Shopify now publishes
+  // through the new Export Center (/v2/export/shopify:malikas): ECL-identity-safe,
+  // idempotent, and audited. This legacy path used fuzzy channel matching + legacy
+  // id columns, so it must not be an operator entry point for Shopify. Other
+  // channels (Snoonu/Talabat/Rafeeq) are untouched here (full retirement: INT.2F).
+  if (channel === "shopify") {
+    return new Response(
+      "Shopify export moved to the Export Center: /v2/export/shopify:malikas",
+      { status: 410, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   const supabase = createClient();
@@ -183,8 +195,6 @@ export async function GET(
           "X-Talabat-Warnings": String(result.warnings.length),
         },
       });
-    } else if (channel === "shopify") {
-      csv = buildShopifyCsv(products, status);
     } else if (channel === "snoonu") {
       csv = buildSnoonuCsv(products, status);
     } else {

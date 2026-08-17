@@ -27,6 +27,20 @@ import {
   type ShopifyPreviewResult,
 } from "./preview.ts";
 
+/**
+ * The full assembled context behind a preview: the certified result PLUS the
+ * exact internal target data + identity evidence + live snapshot it was built
+ * from. INT.2E.2's publisher consumes THIS so it re-reads and re-plans through
+ * the SAME single read path and the SAME buildShopifyPreview planner — there is
+ * no second read and no second diff engine.
+ */
+export interface ShopifyPreviewContext {
+  result: ShopifyPreviewResult;
+  internalProducts: ShopifyInternalProduct[];
+  mappingByProductId: Record<string, ShopifyIdentityEvidence>;
+  live: readonly ShopifyLiveProduct[] | null;
+}
+
 const PAGE = 1000;
 const MAX = 20000;
 
@@ -48,6 +62,11 @@ const s = (v: unknown): string | null => (typeof v === "string" && v.trim() !== 
 const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 export async function loadShopifyPreview(): Promise<ShopifyPreviewResult | null> {
+  const ctx = await loadShopifyPreviewContext();
+  return ctx ? ctx.result : null;
+}
+
+export async function loadShopifyPreviewContext(): Promise<ShopifyPreviewContext | null> {
   try {
     const client = createClient();
 
@@ -158,7 +177,8 @@ export async function loadShopifyPreview(): Promise<ShopifyPreviewResult | null>
       };
     });
 
-    return buildShopifyPreview({ products, live, mappingByProductId });
+    const result = buildShopifyPreview({ products, live, mappingByProductId });
+    return { result, internalProducts: products, mappingByProductId, live };
   } catch {
     return null;
   }
