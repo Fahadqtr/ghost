@@ -78,8 +78,10 @@ test("export route: the Talabat branch (persists mappings) requires the writer a
   assert.ok(/requireMalakWriter/.test(src), "export route imports requireMalakWriter");
   // INT.2F — only Talabat remains live in this route (others 410). The writer
   // gate must run BEFORE the mapping-persist call.
+  // INT.2F.1 — persistence delegates to the mapping-sync boundary; the gate must
+  // still run BEFORE the delegation.
   const gateIdx = src.indexOf("requireMalakWriter(");
-  const persistIdx = src.indexOf("persistTalabatMappings(");
-  assert.ok(gateIdx > -1 && persistIdx > -1, "route gates and persists mappings");
+  const persistIdx = src.indexOf("syncTalabatMappings(");
+  assert.ok(gateIdx > -1 && persistIdx > -1, "route gates and delegates mapping persistence");
   assert.ok(gateIdx < persistIdx, "the writer gate runs before mappings are persisted");
 });

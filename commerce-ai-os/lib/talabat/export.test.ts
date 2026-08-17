@@ -207,7 +207,7 @@ test("21: legacy channel exports are retired; only Talabat (mappings) remains (I
   assert.match(route, /status: 410/, "retired channels return 410");
   // Talabat is retained solely as the channel_variant_mappings writer.
   assert.match(route, /buildTalabatExport/, "talabat branch retained");
-  assert.match(route, /persistTalabatMappings/, "talabat branch still persists mappings");
+  assert.match(route, /syncTalabatMappings/, "talabat branch persists mappings via the INT.2F.1 boundary");
 });
 
 test("22: the export module is pure — no network/Supabase", () => {

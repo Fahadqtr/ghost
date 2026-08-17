@@ -3,7 +3,7 @@ import {
   planMappingWrite,
   type TalabatMappingCandidate,
   type ExistingMappingRow,
-} from "./export";
+} from "./export.ts";
 
 // Server-side persistence for Talabat channel_variant_mappings. SERVICE ROLE
 // ONLY — the caller passes a service-role client (lib/supabase/admin); this
