@@ -45,10 +45,10 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
 
     const [productRows, variantRows, imageRows, approvalRows, eclRows] = await Promise.all([
       readAll(client, "products",
-        "id, sku, barcode, name_en, name_ar, price, discount_price, main_category, image_url, image_filename, lifecycle_state, platform_status",
+        "id, sku, barcode, name_en, name_ar, price, discount_price, main_category, description_en, description_ar, image_url, image_filename, lifecycle_state, platform_status",
         "id"),
       readAll(client, "product_variants", "id, parent_product_id, sku, barcode, variant_name, variant_name_en, price", "parent_product_id"),
-      readAll(client, "product_images", "product_id", "product_id"),
+      readAll(client, "product_images", "product_id, url, filename, is_primary, sort_order", "product_id"),
       // approval overlay (platform_status is a per-platform table; talabat rows only)
       readAll(client, "platform_status", "product_id, platform, approval", "product_id").catch(() => []),
       // Talabat identity evidence (read-only; storefront-scoped)
@@ -72,13 +72,27 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
       variantsByProduct.set(pid, list);
     }
 
-    // image count by product
-    const imageCountByProduct = new Map<string, number>();
+    // Gallery images by product — ordered deterministically (is_primary first,
+    // then sort_order, then url). Carries the retrievable URL so the package
+    // generator can fetch the primary (+ extras for a simple product).
+    interface Img { url: string | null; isPrimary: boolean; sortOrder: number }
+    const imagesByProduct = new Map<string, Img[]>();
     for (const img of imageRows) {
       const pid = typeof img.product_id === "string" ? img.product_id : "";
       if (!pid) continue;
-      imageCountByProduct.set(pid, (imageCountByProduct.get(pid) ?? 0) + 1);
+      const list = imagesByProduct.get(pid) ?? [];
+      list.push({
+        url: s(img.url),
+        isPrimary: img.is_primary === true,
+        sortOrder: n(img.sort_order) ?? 0,
+      });
+      imagesByProduct.set(pid, list);
     }
+    const orderImages = (list: Img[]): Img[] =>
+      [...list].sort((a, b) =>
+        (a.isPrimary === b.isPrimary ? 0 : a.isPrimary ? -1 : 1) ||
+        a.sortOrder - b.sortOrder ||
+        String(a.url ?? "").localeCompare(String(b.url ?? "")));
 
     // talabat approval by product
     const approvedByProduct = new Map<string, boolean>();
@@ -102,8 +116,14 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
 
     const products: TalabatPreviewProduct[] = productRows.map((p) => {
       const id = typeof p.id === "string" ? p.id : "";
-      const gallery = imageCountByProduct.get(id) ?? 0;
-      const hasPrimary = s(p.image_url) !== null || s(p.image_filename) !== null;
+      const ordered = orderImages(imagesByProduct.get(id) ?? []);
+      const rowUrls = ordered.map((im) => im.url).filter((u): u is string => u !== null);
+      // Primary source URL: the flagged/ordered gallery primary, else products.image_url.
+      const primaryUrl = rowUrls[0] ?? s(p.image_url);
+      // Additional images = the ordered gallery minus the primary (deterministic).
+      const galleryImageUrls = rowUrls.filter((u) => u !== primaryUrl);
+      const hasPrimary = primaryUrl !== null || s(p.image_filename) !== null;
+      const imageCount = rowUrls.length > 0 ? rowUrls.length : hasPrimary ? 1 : 0;
       return {
         id,
         sku: s(p.sku),
@@ -113,9 +133,12 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
         price: n(p.price),
         discountPrice: n(p.discount_price),
         category: s(p.main_category),
-        imageUrl: s(p.image_url),
+        descriptionEn: s(p.description_en),
+        descriptionAr: s(p.description_ar),
+        imageUrl: primaryUrl,
         imageFilename: s(p.image_filename),
-        imageCount: gallery > 0 ? gallery : hasPrimary ? 1 : 0,
+        galleryImageUrls,
+        imageCount,
         approved: approvedByProduct.get(id) ?? false,
         lifecycleState: p.lifecycle_state,
         platformStatus: p.platform_status,

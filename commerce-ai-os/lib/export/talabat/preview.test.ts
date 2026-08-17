@@ -125,6 +125,24 @@ test("simple product image filename uses the product SKU (primary naming)", () =
   assert.equal(res.rows[0]!.inheritedParentImage, false);
 });
 
+// ── variant sharing the product image is DISCLOSED (warning), never blocked ────
+test("a variant using the product image is WARNING with IMAGE_SHARED_FROM_PRODUCT, not blocked", () => {
+  const res = buildTalabatPreview({
+    products: [product({
+      sku: "MK2000",
+      imageUrl: "https://cdn/x/pic.jpg",
+      variants: [{ id: "v1", sku: "mk2000-red", barcode: "9990001112", nameEn: "Red", nameAr: "أحمر", price: 40 }],
+    })],
+  });
+  const r = res.rows[0]!;
+  assert.equal(r.isVariant, true);
+  assert.equal(r.status, "WARNING", "shared image discloses a warning, never blocks");
+  assert.ok(r.reasons.some((x) => x.code === "IMAGE_SHARED_FROM_PRODUCT" && !x.blocking));
+  // it is NOT a MISSING_IMAGE and there is no MISSING_VARIANT_IMAGE concept
+  assert.ok(!r.reasons.some((x) => x.code === "MISSING_IMAGE"));
+  assert.equal(r.hasImage, true);
+});
+
 // ── §3: title reuses the certified flattened-name projection ──────────────────
 test("variant title reuses the certified buildFlattenedName projection", () => {
   const p = product({

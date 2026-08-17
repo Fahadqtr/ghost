@@ -11,7 +11,9 @@ import { EMPTY_VALIDATION_SUMMARY } from "@/lib/export/validation";
 import { emptyPreview } from "@/lib/export/preview";
 import { unavailableHistory } from "@/lib/export/history";
 import { loadTalabatPreview } from "@/lib/export/talabat/preview.server";
+import { previewGenerationPlan } from "@/lib/export/talabat/package";
 import TalabatPreview, { type TalabatPreviewVM } from "@/components/v2/export/TalabatPreview";
+import TalabatPackageControls from "@/components/v2/export/TalabatPackageControls";
 
 export const dynamic = "force-dynamic";
 
@@ -140,40 +142,37 @@ async function TalabatDetail({ dest }: { dest: NonNullable<ReturnType<typeof exp
           تعذّر تحميل المعاينة الآن — الرجاء المحاولة لاحقاً (لا توجد بيانات ملفّقة).
         </div>
       ) : (
-        <TalabatPreview
-          vm={{
-            rows: result.rows.map<TalabatPreviewVM["rows"][number]>((r) => ({
-              internalProductId: r.internalProductId,
-              variantId: r.variantId,
-              isVariant: r.isVariant,
-              sku: r.sku,
-              barcode: r.barcode,
-              title: r.title,
-              price: r.price,
-              category: r.category,
-              hasImage: r.hasImage,
-              imageExportName: r.imageExportName,
-              inheritedParentImage: r.inheritedParentImage,
-              mappingStatus: r.mapping.status,
-              status: r.status,
-              reasons: r.reasons.map((x) => ({ code: x.code, blocking: x.blocking })),
-            })),
-            summary: result.summary,
-            counts: result.counts,
-          }}
-        />
-      )}
+        <>
+          <TalabatPreview
+            vm={{
+              rows: result.rows.map<TalabatPreviewVM["rows"][number]>((r) => ({
+                internalProductId: r.internalProductId,
+                variantId: r.variantId,
+                isVariant: r.isVariant,
+                sku: r.sku,
+                barcode: r.barcode,
+                title: r.title,
+                price: r.price,
+                category: r.category,
+                hasImage: r.hasImage,
+                imageExportName: r.imageExportName,
+                inheritedParentImage: r.inheritedParentImage,
+                mappingStatus: r.mapping.status,
+                status: r.status,
+                reasons: r.reasons.map((x) => ({ code: x.code, blocking: x.blocking })),
+              })),
+              summary: result.summary,
+              counts: result.counts,
+            }}
+          />
 
-      <section className="card space-y-2">
-        <h2 className="text-sm font-semibold text-ink">الإجراءات المستقبلية</h2>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" disabled className="btn-ghost cursor-not-allowed opacity-50">توليد الحزمة (XLSX/ZIP)</button>
-          <button type="button" disabled className="btn-ghost cursor-not-allowed opacity-50">نشر إلى طلبات</button>
-        </div>
-        <p className="text-[11px] text-muted">
-          هذه المرحلة معاينة وتحقّق فقط — لا يتم توليد ملفات ولا النشر (للقراءة فقط).
-        </p>
-      </section>
+          {/* INT.2B.2 — real package generation (Generate Ready Package). The
+              generator runs server-side through a writer-gated API route; this
+              page renders only the read-only preview + the controls. Talabat
+              publish stays unavailable — this phase produces files only. */}
+          <TalabatPackageControls plan={previewGenerationPlan(result.rows, { mode: "ready" })} />
+        </>
+      )}
     </div>
   );
 }

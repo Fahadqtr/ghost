@@ -45,6 +45,7 @@ const REASON_LABEL: Record<ExportReasonCode, string> = {
   DUPLICATE_BARCODE: "باركود مكرّر",
   INVALID_BARCODE: "صيغة باركود غير قياسية",
   MISSING_IMAGE: "صورة مفقودة",
+  IMAGE_SHARED_FROM_PRODUCT: "الصورة مشتركة من المنتج",
   MISSING_TITLE: "عنوان مفقود",
   MISSING_PRICE: "سعر مفقود",
   MISSING_CATEGORY: "فئة مفقودة",

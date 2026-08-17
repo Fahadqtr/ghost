@@ -43,8 +43,17 @@ export interface TalabatPreviewProduct {
   price: number | null;
   discountPrice: number | null;
   category: string | null;
+  /** product long-form descriptions (product-level; variants inherit these). */
+  descriptionEn?: string | null;
+  descriptionAr?: string | null;
   imageUrl: string | null;
   imageFilename: string | null;
+  /**
+   * Additional (non-primary) product image URLs in deterministic order. Used
+   * ONLY to package extra images for a SIMPLE product (§5). Variants never
+   * inherit a gallery — INT.2B only inherits the parent PRIMARY image.
+   */
+  galleryImageUrls?: readonly string[];
   /** product image count (image_url + gallery). Variants inherit these. */
   imageCount: number;
   /** platform_status(platform='talabat').approval === "Approved" */
@@ -76,13 +85,21 @@ export interface TalabatPreviewRow {
   isVariant: boolean;
   sku: string; // normalized; "" when missing
   barcode: string | null;
-  title: string;
+  title: string; // flattened English listing name
+  /** flattened Arabic listing name (same flattening as `title`). */
+  titleAr: string;
+  descriptionEn: string;
+  descriptionAr: string;
   price: number | null;
   category: string | null;
   hasImage: boolean;
   imageCount: number;
   /** SKU-based export image filename (INT.2A canonical); null when SKU missing. */
   imageExportName: string | null;
+  /** the retrievable PRIMARY image source URL (variant inherits the parent's); null when none. */
+  primaryImageUrl: string | null;
+  /** additional (non-primary) image source URLs — SIMPLE products only (never variants). */
+  galleryImageUrls: readonly string[];
   /** variant inherits the parent image (no per-variant image column exists). */
   inheritedParentImage: boolean;
   lifecycleState: LifecycleState;
@@ -210,6 +227,11 @@ function buildRow(
   const sku = normalizeExportedSku(isVariant ? v!.sku : p.sku);
   const barcode = normalizeBarcode(isVariant ? v!.barcode : p.barcode);
   const title = buildFlattenedName(p.nameEn ?? p.nameAr, isVariant ? (v!.nameEn ?? v!.nameAr) : "");
+  // Arabic listing name uses the SAME certified flattening (no second algorithm).
+  const titleAr = buildFlattenedName(p.nameAr ?? p.nameEn, isVariant ? (v!.nameAr ?? v!.nameEn) : "");
+  // Descriptions are product-level (variants inherit them) — mirrors the legacy export.
+  const descriptionEn = clean(p.descriptionEn);
+  const descriptionAr = clean(p.descriptionAr);
   const price = isVariant ? positive(v!.price) ?? positive(p.discountPrice) ?? positive(p.price)
     : positive(p.discountPrice) ?? positive(p.price);
   const category = clean(p.category) || null;
@@ -217,6 +239,11 @@ function buildRow(
   const inheritedParentImage = isVariant && hasImage; // no per-variant image column exists
   const ext = extensionFromUrl(p.imageFilename || p.imageUrl);
   const imageExportName = sku ? (isVariant ? variantImageName(sku, ext) : primaryImageName(sku, ext)) : null;
+  // The retrievable PRIMARY source URL (variant inherits the parent primary — the
+  // exact documented INT.2B behavior; no new fallback). Gallery extras are for
+  // SIMPLE products only; a variant never inherits a gallery.
+  const primaryImageUrl = clean(p.imageUrl) !== "" ? p.imageUrl : null;
+  const galleryImageUrls = isVariant ? [] : (Array.isArray(p.galleryImageUrls) ? p.galleryImageUrls.filter((u) => clean(u) !== "") : []);
   const state = resolveLifecycleState({ lifecycle_state: p.lifecycleState, platform_status: p.platformStatus });
   const mapping = sku ? (mappingBySku[sku.toLowerCase()] ?? UNMAPPED) : UNMAPPED;
 
@@ -243,6 +270,12 @@ function buildRow(
 
   // Image (P0) — a row with no product image at all is blocked (certified missing_image).
   if (!hasImage) block("MISSING_IMAGE");
+  // The catalog has no variant-media model yet, so a variant legitimately ships
+  // with the product-level image. This is DISCLOSED as an informational WARNING
+  // (never blocking) so preview + package + manifest agree exactly on what the
+  // exported image represents. True per-variant images arrive in a later Variant
+  // Media project — no new fallback logic is added here.
+  else if (inheritedParentImage) warn("IMAGE_SHARED_FROM_PRODUCT", "الصورة مشتركة من المنتج (لا يوجد نموذج صور للمتغيّرات بعد).");
 
   // Title / price / category.
   if (clean(title) === "") block("MISSING_TITLE");
@@ -260,11 +293,16 @@ function buildRow(
     sku,
     barcode,
     title,
+    titleAr,
+    descriptionEn,
+    descriptionAr,
     price,
     category,
     hasImage,
     imageCount: p.imageCount,
     imageExportName,
+    primaryImageUrl,
+    galleryImageUrls,
     inheritedParentImage,
     lifecycleState: state,
     approved: p.approved,
