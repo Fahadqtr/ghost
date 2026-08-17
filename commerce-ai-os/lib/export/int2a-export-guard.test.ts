@@ -73,7 +73,8 @@ test("foundation touches no inventory / availability / lifecycle / ECL write pat
       /@\/lib\/inventory\/engine/,
       /@\/lib\/availability\/engine/,
       /transitionProductLifecycle/,
-      /\.from\(["']external_channel_listings["']\)/,
+      // ECL reads for identity evidence are allowed (INT.2B); ECL WRITES are not
+      // (the blanket no-write test above already forbids insert/update/delete/upsert).
       /ecl-repair-write/,
     ]) {
       assert.equal(re.test(s), false, `${f} must not match ${re}`);
@@ -92,10 +93,16 @@ test("foundation does not depend on legacy identity columns", () => {
 });
 
 // ── no platform-specific business logic duplicated ────────────────────────────
+// INT.2B REUSES the certified Talabat atomic helpers (buildFlattenedName /
+// normalizeExportedSku / normalizeBarcode / isApprovedForTalabat) rather than
+// reinventing them — that reuse is the point, not a violation. What stays
+// forbidden is DUPLICATING logic via the legacy platform adapters / exporters /
+// diff, and running the whole-export GENERATOR (buildTalabatExport is forbidden
+// by the xlsx/package test above).
 test("foundation imports no platform adapter / legacy exporter (no duplicated logic)", () => {
   for (const f of FOUNDATION) {
     const s = read(f);
-    for (const re of [/@\/lib\/adapters\//, /@\/lib\/exporters/, /@\/lib\/talabat\/export/, /@\/lib\/talabat-diff/]) {
+    for (const re of [/@\/lib\/adapters\//, /@\/lib\/exporters/, /@\/lib\/talabat-diff/]) {
       assert.equal(re.test(s), false, `${f} must not import ${re}`);
     }
   }
@@ -108,17 +115,16 @@ test("adapter contract declares NOT_IMPLEMENTED foundations for generate/publish
   assert.ok(/notImplementedPackage/.test(s) && /notImplementedPublish/.test(s));
 });
 
-// ── Talabat sellable-grain invariant pinned (metadata only, no flattener) ─────
-test("Talabat sellable-listing invariant is pinned as metadata, not implemented", () => {
+// ── Talabat sellable-grain invariant pinned in the registry ───────────────────
+// (INT.2B implements the flattener in lib/export/talabat/preview.ts — the
+// int2b-preview-guard test owns the "one row per variant, no parent row" proof;
+// here we only pin that the grain is declared in the certified registries.)
+test("Talabat sellable-listing invariant is pinned in the registry", () => {
   const dest = read("lib/export/destinations.ts");
   assert.ok(/"talabat:malikas":\s*\[[^\]]*"flattened_variants"/.test(dest), "talabat declares flattened_variants");
   // the certified grain lives in the storefront registry (talabat = variant)
   const sf = read("lib/channels/storefronts.ts");
   assert.ok(/"talabat:malikas"[\s\S]*?listingGrain:\s*"variant"/.test(sf), "storefront registry pins Talabat variant grain");
-  // no actual per-variant row expansion / flattening generator exists in the foundation
-  for (const f of walk("lib/export")) {
-    assert.equal(/flatMap\(/.test(read(f)), false, `${f} must not implement variant flattening yet`);
-  }
 });
 
 // ── Snoonu two-store isolation pinned ─────────────────────────────────────────
