@@ -650,12 +650,13 @@ export default function OperationsDashboard({
               الكتالوج ↗
             </Link>
           </div>
-          <div className="grid grid-cols-4 gap-2 text-center">
+          <div className="grid grid-cols-3 gap-2 text-center sm:grid-cols-5">
             {([
               ["مسودة", lifecycle.draft],
               ["جاهز", lifecycle.ready],
               ["نشط", lifecycle.active],
               ["موقوف", lifecycle.stopped],
+              ["مؤرشف", lifecycle.archived],
             ] as const).map(([label, value]) => (
               <div key={label} className="rounded-lg border border-slate-200 p-2">
                 <div className="text-lg font-bold text-ink">{value}</div>

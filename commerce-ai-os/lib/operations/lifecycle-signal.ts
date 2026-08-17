@@ -19,14 +19,30 @@ export interface LifecycleBreakdown {
   ready: number;
   active: number;
   stopped: number;
+  /** ARCHIVED is DERIVED from product_archive (cold storage) — passed in, never
+   *  scanned here (OPS.8C §9: reuse the archive count, no second scanner). */
+  archived: number;
+  /** live product total (excludes archived). */
   total: number;
 }
 
-/** Count live products by DERIVED display state. Deep-link target is the catalog. */
+/**
+ * Count live products by DERIVED display state. `archivedCount` comes from the
+ * existing product_archive source (reused, not re-scanned) — ARCHIVED products
+ * have no live row so they can only be counted from cold storage.
+ */
 export function buildLifecycleBreakdown(
   items: readonly LifecycleSignalItem[] | null | undefined,
+  archivedCount = 0,
 ): LifecycleBreakdown {
-  const b: LifecycleBreakdown = { draft: 0, ready: 0, active: 0, stopped: 0, total: 0 };
+  const b: LifecycleBreakdown = {
+    draft: 0,
+    ready: 0,
+    active: 0,
+    stopped: 0,
+    archived: Number.isFinite(archivedCount) && archivedCount > 0 ? Math.floor(archivedCount) : 0,
+    total: 0,
+  };
   if (!Array.isArray(items)) return b;
   for (const it of items) {
     const state = resolveLifecycleState({

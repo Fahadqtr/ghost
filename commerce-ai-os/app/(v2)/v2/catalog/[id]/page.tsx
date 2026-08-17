@@ -81,6 +81,9 @@ export default async function ProductDetailPage({
   // Product lifecycle view (OPS.8B). Best-effort + isolated: derived read-only
   // (stored lifecycle_state + certified readiness). A failure omits the panel.
   let lifecycle: ProductLifecycleView | null = null;
+  // OPS.8C — Action Center deep-links here with ?panel=lifecycle. Validated to the
+  // exact literal (never the raw value) so the lifecycle panel is highlighted.
+  let highlightLifecycle = false;
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
@@ -92,6 +95,7 @@ export default async function ProductDetailPage({
     backHref = catalogHref(controls, controls.page);
     saved = sp.saved === "1";
     created = sp.created === "1";
+    highlightLifecycle = sp.panel === "lifecycle";
 
     const { id } = await params;
     const validId = parseProductId(id);
@@ -208,7 +212,7 @@ export default async function ProductDetailPage({
       </section>
       {lifecycle ? (
         <section id="lifecycle" className="scroll-mt-28">
-          <LifecyclePanel view={lifecycle} action={runLifecycleTransition} />
+          <LifecyclePanel view={lifecycle} action={runLifecycleTransition} highlight={highlightLifecycle} />
         </section>
       ) : null}
       {platformMatrix ? (

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth/requireUser";
-import { requireMalakWriter } from "@/lib/malak/authz";
+import { requireOwner } from "@/lib/malak/authz";
 import { reconcile } from "@/lib/inventory/reconcile";
 
 const NO_DB = "الخادم غير مهيأ (SUPABASE_SERVICE_ROLE_KEY غير مضبوط).";
@@ -92,9 +92,11 @@ export async function matchProductsForArchive(text: string): Promise<{ matched: 
 // RPC — the action performs no direct product/inventory/variant/shelf/channel
 // write of its own (no partial archive, no orphan shelf rows).
 export async function archiveAndDeleteProducts(ids: string[]): Promise<{ ok: true; archived: number; failed: string[] } | { error: string }> {
-  // CH.3b — service-role catalog delete (archive bundle RPC): WRITER-only.
-  const writer = await requireMalakWriter();
-  if (!writer.ok) return { error: writer.error };
+  // OPS.8C §1 — archive is a terminal, irreversible cold-storage move: OWNER-only
+  // (hardened from the earlier CH.3b writer gate). Archive/restore RPC semantics
+  // (INV.4E / OPS.8A) are unchanged; only the authorization boundary is stricter.
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const list = Array.from(new Set((ids ?? []).map(String))).filter(Boolean);
   if (!list.length) return { ok: true as const, archived: 0, failed: [] };
   const admin = adminClient();
@@ -157,9 +159,11 @@ export async function listArchive(limit = 100): Promise<{ rows: ArchivedRow[]; r
 // no direct product/inventory/variant/shelf/channel insert of its own; on any
 // failure the RPC rolls back and the archive row stays put (no partial restore).
 export async function restoreFromArchive(archiveId: string): Promise<{ ok: true } | { error: string }> {
-  // CH.3b — service-role catalog restore (archive RPC): WRITER-only.
-  const writer = await requireMalakWriter();
-  if (!writer.ok) return { error: writer.error };
+  // OPS.8C §1 — restore re-inserts a product into the live catalog: OWNER-only
+  // (hardened from the earlier CH.3b writer gate). Restore RPC semantics
+  // (INV.4E / OPS.8A) are unchanged — the restored product still returns DRAFT.
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
 

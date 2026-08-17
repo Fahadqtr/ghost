@@ -39,7 +39,7 @@ const base = (over: Partial<ActionInput> = {}): ActionInput => ({
 
 // ── Registry (§2) ─────────────────────────────────────────────────────────────
 test("registry has an entry for every action type, incl. UNKNOWN", () => {
-  assert.equal(ACTION_TYPES.length, 16);
+  assert.equal(ACTION_TYPES.length, 19);
   assert.ok(ACTION_TYPES.includes("UNKNOWN"));
   for (const t of ACTION_TYPES) {
     const spec = ACTION_REGISTRY[t];
@@ -58,6 +58,8 @@ test("every action delegates to an EXISTING workflow route (no executor, real pa
       const rel = href.replace(/^\/v2/, "");
       return existsSync(new URL(`../../app/(v2)/v2${rel}/page.tsx`, import.meta.url));
     }
+    // OPS.8C — RESTORE_CANDIDATE delegates to the certified (app) archive route.
+    if (href === "/products/archive") return existsSync(new URL("../../app/(app)/products/archive/page.tsx", import.meta.url));
     return false;
   };
   for (const t of ACTION_TYPES) {

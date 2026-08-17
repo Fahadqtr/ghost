@@ -184,7 +184,7 @@ export const TRANSITION_ACTION_LABEL: Record<LifecycleState, string> = {
  * never inline in a list. Pure string builder; the id is URL-encoded.
  */
 export function lifecycleReviewHref(productId: string): string {
-  return `/v2/catalog/${encodeURIComponent(productId)}#lifecycle`;
+  return `/v2/catalog/${encodeURIComponent(productId)}?panel=lifecycle#lifecycle`;
 }
 
 /** The stored states, derived from the matrix so this module needs no runtime
