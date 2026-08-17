@@ -19,6 +19,8 @@ import type { SnoonuStorefrontKey } from "@/lib/export/snoonu/preview";
 import SnoonuExport, { type SnoonuRowVM } from "@/components/v2/export/SnoonuExport";
 import { loadRafeeqPreview } from "@/lib/export/rafeeq/preview.server";
 import RafeeqExport, { type RafeeqRowVM } from "@/components/v2/export/RafeeqExport";
+import { loadShopifyPreview } from "@/lib/export/shopify/preview.server";
+import ShopifyPreview, { type ShopifyRowVM } from "@/components/v2/export/ShopifyPreview";
 import { requireMalakWriter } from "@/lib/malak/authz";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +57,11 @@ export default async function ExportDestinationPage({ params }: { params: Params
   // INT.2D — Rafeeq export adapter.
   if (dest.key === "rafeeq:malikas") {
     return <RafeeqDetail dest={dest} />;
+  }
+
+  // INT.2E — Shopify validation + publish preview (read-only).
+  if (dest.key === "shopify:malikas") {
+    return <ShopifyDetail dest={dest} />;
   }
 
   // Foundation placeholders — no real validation/preview/history is produced yet.
@@ -287,6 +294,61 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
               imageCount: r.imageCount,
               status: r.status,
               reasons: r.reasons.map((x) => ({ code: x.code, blocking: x.blocking })),
+            })),
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// INT.2E — Shopify validation + publish preview detail (READ-ONLY). Loads the
+// certified preview (ECL-scoped GID identity + a single live Shopify read) and
+// hands the classified rows + future plan to the presentational surface. It reads
+// only: no Shopify product/price/media/inventory is created or changed, no ECL is
+// written, and there is no generate/publish action on this page.
+async function ShopifyDetail({ dest }: { dest: NonNullable<ReturnType<typeof exportDestinationByKey>> }) {
+  const result = await loadShopifyPreview();
+
+  return (
+    <div className="space-y-4">
+      <Link href="/v2/export" className="btn-ghost">رجوع لمركز التصدير</Link>
+
+      <div className="space-y-1">
+        <h1 className="font-serif text-2xl font-semibold text-ink">{dest.label}</h1>
+        <p className="text-sm text-muted" dir="ltr">{dest.key}</p>
+        <p className="text-[11px] text-muted">
+          حبيبة المعاينة: منتج — والمنتجات ذات المتغيّرات تُقارَن على مستوى المتغيّر (SKU / باركود / سعر / مُعرّف المتغيّر).
+        </p>
+      </div>
+
+      {result === null ? (
+        <div className="card text-center text-sm text-muted">
+          تعذّر تحميل المعاينة الآن — الرجاء المحاولة لاحقاً (لا توجد بيانات ملفّقة).
+        </div>
+      ) : (
+        <ShopifyPreview
+          vm={{
+            shopifyAvailable: result.shopifyAvailable,
+            productsRead: result.apiStats.shopifyProductsRead,
+            counts: result.counts,
+            rows: result.rows.map<ShopifyRowVM>((r) => ({
+              id: r.internalProductId,
+              sku: r.sku,
+              barcode: r.barcode,
+              title: r.title,
+              price: r.price,
+              compareAtPrice: r.compareAtPrice,
+              shopifyProductGid: r.shopifyProductGid,
+              hasVariants: r.hasVariants,
+              variantCount: r.variantCount,
+              variantMatchedCount: r.variantMatchedCount,
+              hasImage: r.hasImage,
+              imageCount: r.imageCount,
+              status: r.status,
+              changedFields: r.changedFields,
+              reasons: r.reasons.map((x) => ({ code: x.code, blocking: x.blocking })),
+              plannedOps: r.plannedOps.map((o) => o.type),
             })),
           }}
         />
