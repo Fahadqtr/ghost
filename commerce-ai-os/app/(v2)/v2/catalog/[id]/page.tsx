@@ -32,6 +32,9 @@ import ProductMedia from "@/components/v2/catalog/ProductMedia";
 import { loadProductMedia } from "@/lib/products/product-media-read";
 import { EMPTY_PRODUCT_MEDIA, type ProductMediaState } from "@/lib/products/product-media";
 import InPageNav from "@/components/v2/InPageNav";
+import LifecyclePanel from "@/components/v2/catalog/LifecyclePanel";
+import { loadProductLifecycle, type ProductLifecycleView } from "@/lib/lifecycle/lifecycle-read.server";
+import { runLifecycleTransition } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +78,9 @@ export default async function ProductDetailPage({
   // (+ product_images gallery) projected through the shared reducer. A failure
   // simply omits the media block — the rest of the page is unaffected.
   let media: ProductMediaState = EMPTY_PRODUCT_MEDIA;
+  // Product lifecycle view (OPS.8B). Best-effort + isolated: derived read-only
+  // (stored lifecycle_state + certified readiness). A failure omits the panel.
+  let lifecycle: ProductLifecycleView | null = null;
   let state:
     | { kind: "ok"; product: MasterCatalogProduct; variants: CatalogVariant[] }
     | { kind: "notfound" }
@@ -131,6 +137,11 @@ export default async function ProductDetailPage({
         } catch {
           media = EMPTY_PRODUCT_MEDIA;
         }
+        try {
+          lifecycle = await loadProductLifecycle(supabase as never, validId);
+        } catch {
+          lifecycle = null;
+        }
       }
     }
   } catch {
@@ -178,6 +189,7 @@ export default async function ProductDetailPage({
       <InPageNav
         items={[
           { href: "#details", label: "تفاصيل" },
+          { href: "#lifecycle", label: "الحالة" },
           { href: "#platforms", label: "المنصات" },
           { href: "#tasks", label: "المهام" },
           { href: "#activity", label: "النشاط" },
@@ -194,6 +206,11 @@ export default async function ProductDetailPage({
           editHref={editHref}
         />
       </section>
+      {lifecycle ? (
+        <section id="lifecycle" className="scroll-mt-28">
+          <LifecyclePanel view={lifecycle} action={runLifecycleTransition} />
+        </section>
+      ) : null}
       {platformMatrix ? (
         <section id="platforms" className="scroll-mt-28">
           <PlatformMatrix

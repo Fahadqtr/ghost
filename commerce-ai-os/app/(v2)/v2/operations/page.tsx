@@ -46,6 +46,7 @@ import { buildOperationsCenter, type OperationsCenterModel } from "@/lib/operati
 import Link from "next/link";
 import { Suspense } from "react";
 import OperationsDashboard from "@/components/v2/operations/OperationsDashboard";
+import { buildLifecycleBreakdown, type LifecycleBreakdown } from "@/lib/operations/lifecycle-signal";
 import OperationsCenter from "@/components/v2/operations/OperationsCenter";
 import OwnerActionsStrip from "@/components/v2/operations/OwnerActionsStrip";
 import { loadActionCenter } from "@/lib/actions/action-center.server";
@@ -97,6 +98,7 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         issuePage: IssuePage;
         queueCounts: QueueCounts;
         queueCapped: boolean;
+        lifecycle: LifecycleBreakdown;
       }
     | null = null;
 
@@ -237,6 +239,8 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         issuePage,
         queueCounts: queues.counts,
         queueCapped: queues.capped,
+        // OPS.8B — read-only lifecycle breakdown over the SAME items (no scan).
+        lifecycle: buildLifecycleBreakdown(items),
       };
     }
   } catch {
@@ -335,6 +339,7 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       issuePage={loaded.issuePage}
       queueCounts={loaded.queueCounts}
       queueCapped={loaded.queueCapped}
+      lifecycle={loaded.lifecycle}
     />
     </>
   );

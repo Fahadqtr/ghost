@@ -39,6 +39,9 @@ export interface OperationsListItem {
   taskCount: number;
   tasks: OperationTask[];
   platforms: PlatformStatus[];
+  /** canonical stored lifecycle_state (OPS.8A); null when unread/absent. Carried
+   *  read-only so the operations lifecycle signal reuses the lifecycle model. */
+  lifecycleState: string | null;
   /**
    * How many of this product's COMPUTED tasks are currently mirrored in TickTick
    * (matched by the deterministic marker). Enriched server-side from a best-effort
@@ -95,6 +98,7 @@ export function mapProductRow(
     imageUrl: s(row.image_url),
     approval: s(row.approval),
     platformStatus: s(row.platform_status),
+    lifecycleState: s(row.lifecycle_state),
     variantCount: Number.isFinite(variantCount) && variantCount > 0 ? variantCount : 0,
     // expectsVariants deliberately omitted — no trusted source (see UI.7.1)
     ...(platforms ? { platforms } : {}),
@@ -180,6 +184,7 @@ export function toListItem(
     taskCount: tasks.length,
     tasks: [...tasks],
     platforms: [...platforms],
+    lifecycleState: product.lifecycleState ?? null,
   };
 }
 
