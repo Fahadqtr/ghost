@@ -12,6 +12,7 @@ import { createClient } from "@/lib/supabase/server";
 import { loadOperationsDashboard } from "@/lib/operations/read-model";
 import { loadChannelGapCounts } from "@/lib/operations/channels/gap-counts.server";
 import { loadTalabatPreview } from "./talabat/preview.server";
+import { loadRafeeqPreview } from "./rafeeq/preview.server";
 import {
   buildExportCenter,
   UNKNOWN,
@@ -69,6 +70,21 @@ export async function loadExportCenter(now: Date = new Date()): Promise<{ model:
       }
     } catch {
       /* leave the Talabat card on the UNKNOWN foundation path */
+    }
+
+    // INT.2D — real Rafeeq card counts from ONE bounded read (reused adapter);
+    // a failed/absent read leaves the card on the UNKNOWN foundation path.
+    try {
+      const rafeeq = await loadRafeeqPreview();
+      if (rafeeq) {
+        countsByDestination["rafeeq:malikas"] = {
+          eligible: rafeeq.summary.ready,
+          blocked: rafeeq.summary.blocked,
+          warnings: rafeeq.summary.warnings,
+        };
+      }
+    } catch {
+      /* leave the Rafeeq card on the UNKNOWN foundation path */
     }
 
     const model = buildExportCenter({
