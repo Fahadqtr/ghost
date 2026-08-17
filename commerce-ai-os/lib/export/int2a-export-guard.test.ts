@@ -29,9 +29,20 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// The full INT.2A foundation surface (pure lib + routes + component).
+// INT.2E.2 introduced the FIRST sanctioned write path in the Export Center — the
+// Shopify publisher + its durable run store. Those two server-only modules are a
+// deliberate, writer-gated, audited write boundary with their OWN dedicated guard
+// (int2e2-shopify-publish-guard). They are therefore excluded from the READ-ONLY
+// foundation scan below; everything else in lib/export stays read-only.
+const WRITE_BOUNDARY = new Set([
+  "lib/export/shopify/publish.server.ts",
+  "lib/export/shopify/run-store.server.ts",
+]);
+
+// The full INT.2A foundation surface (pure lib + routes + component), minus the
+// sanctioned INT.2E.2 write boundary.
 const FOUNDATION = [
-  ...walk("lib/export"),
+  ...walk("lib/export").filter((f) => !WRITE_BOUNDARY.has(f)),
   ...walk("app/(v2)/v2/export"),
   "components/v2/export/ExportCenter.tsx",
 ];

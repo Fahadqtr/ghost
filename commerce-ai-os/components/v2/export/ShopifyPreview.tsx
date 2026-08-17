@@ -1,18 +1,22 @@
 "use client";
 
-// INT.2E — Shopify validation + publish preview surface (presentational + client
-// filter state only). READ-ONLY: it renders the certified preview and holds NO
-// I/O, NO mutation, NO identity re-derivation, and NO publish/generate action. It
-// shows the dashboard counts (Total / Matched / New / Updates / Conflicts /
-// Blocked / Unknown), the deterministic future mutation-plan tally (§12), the
-// honest read cost (§14), a filterable/searchable table with per-row field &
-// variant change chips, and — when Shopify is unreadable — a clear "unknown"
-// banner instead of any invented diff.
+// INT.2E / INT.2E.2 — Shopify validation, publish preview, and safe publish.
+//
+// The read-only preview (INT.2E) plus the operator-confirmed publish workflow
+// (INT.2E.2): Validate → Preview → Select Eligible → Publish Selected. It holds
+// only view + selection state; it computes NO diff and executes NO Shopify call
+// itself — publishing POSTs the SELECTED rows (each with the fingerprint it was
+// previewed at) to the writer-gated /api/export/shopify/publish route, which
+// re-reads, re-plans, and hard-stops CONFLICT/BLOCKED/UNKNOWN server-side. Only
+// eligible (NEW / UPDATE_REQUIRED with a supported op) rows are ever selectable;
+// creating new products requires an explicit extra confirmation.
 
 import { useMemo, useState } from "react";
 import type { ExportReasonCode } from "@/lib/export/validation";
 import type { ShopifyPreviewStatus, ShopifyPlanOpType } from "@/lib/export/shopify/preview";
 import { paginate, DEFAULT_PAGE_SIZE } from "@/lib/ui/pagination";
+import { toggleKey, selectKeys, clearSelection, allSelected, countSelectedWithin } from "@/lib/ui/selection";
+import SelectionToolbar from "@/components/v2/ui/SelectionToolbar";
 import EmptyState from "@/components/v2/ui/EmptyState";
 
 export interface ShopifyRowVM {
@@ -32,11 +36,30 @@ export interface ShopifyRowVM {
   changedFields: string[];
   reasons: { code: ExportReasonCode; blocking: boolean }[];
   plannedOps: ShopifyPlanOpType[];
+  /** INT.2E.2 — deterministic fingerprint of exactly what would be written. */
+  fingerprint: string;
+  /** INT.2E.2 — true when the row may be published (subject to server re-check). */
+  eligible: boolean;
+}
+
+export interface ShopifyRunVM {
+  id: string;
+  status: string;
+  actor: string | null;
+  finishedAt: string | null;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  blockedCount: number;
+  failedCount: number;
 }
 
 export interface ShopifyPreviewVM {
   shopifyAvailable: boolean;
-  productsRead: number; // §14 — live Shopify products read in the single batch
+  productsRead: number;
+  canWrite: boolean;
+  historyAvailable: boolean;
+  recentRuns: ShopifyRunVM[];
   counts: {
     total: number;
     matched: number;
@@ -78,11 +101,22 @@ const OP_LABEL: Record<ShopifyPlanOpType, string> = {
   CREATE_PRODUCT: "إنشاء منتج", UPDATE_PRODUCT: "تحديث منتج", UPDATE_VARIANT: "تحديث متغيّر",
   UPDATE_PRICE: "تحديث سعر", UPDATE_MEDIA: "تحديث صورة", NOOP: "بدون تغيير", BLOCKED: "محظور",
 };
+interface PublishItem { internalProductId: string; sku: string | null; result: string; error: string | null; ops: string[] }
+interface PublishResponse { ok: boolean; error?: string; runStatus: string; counts: Record<string, number>; items: PublishItem[]; durablePersisted: boolean }
 
 export default function ShopifyPreview({ vm }: { vm: ShopifyPreviewVM }) {
   const [filter, setFilter] = useState<RowFilter>("ALL");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmCreate, setConfirmCreate] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<PublishResponse | null>(null);
+
+  const rowById = useMemo(() => new Map(vm.rows.map((r) => [r.id, r])), [vm.rows]);
+  const eligibleAllKeys = useMemo(() => vm.rows.filter((r) => r.eligible).map((r) => r.id), [vm.rows]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -97,24 +131,56 @@ export default function ShopifyPreview({ vm }: { vm: ShopifyPreviewVM }) {
   }, [vm.rows, filter, q]);
 
   const pageView = useMemo(() => paginate(filtered, page, DEFAULT_PAGE_SIZE), [filtered, page]);
+  const eligiblePageKeys = useMemo(() => pageView.pageItems.filter((r) => r.eligible).map((r) => r.id), [pageView]);
+  const selectedCount = countSelectedWithin(selected, eligibleAllKeys);
+
+  const selectedRows = useMemo(() => [...selected].map((id) => rowById.get(id)).filter(Boolean) as ShopifyRowVM[], [selected, rowById]);
+  const selCreate = selectedRows.filter((r) => r.status === "NEW").length;
+  const selUpdate = selectedRows.filter((r) => r.status === "UPDATE_REQUIRED").length;
+
   const chip = (active: boolean) => `rounded-full border px-3 py-1 text-xs transition-colors ${active ? "border-brand bg-brand-light text-brand" : "border-slate-200 bg-white text-muted hover:bg-slate-50"}`;
   const opEntries = (Object.entries(vm.counts.plannedOps) as [ShopifyPlanOpType, number][]).filter(([, n]) => n > 0);
+
+  async function publish() {
+    if (busy || selectedRows.length === 0) return;
+    if (selCreate > 0 && !confirmCreate) return; // explicit create confirmation required
+    setBusy(true); setError(null); setResult(null);
+    try {
+      const res = await fetch(`/api/export/shopify/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          confirm: true,
+          confirmCreate,
+          selections: selectedRows.map((r) => ({ internalProductId: r.id, expectedFingerprint: r.fingerprint })),
+        }),
+      });
+      const payload = (await res.json().catch(() => null)) as PublishResponse | null;
+      if (!payload) { setError("تعذّر تنفيذ النشر الآن."); return; }
+      setResult(payload);
+      setConfirmOpen(false);
+      setSelected(clearSelection());
+    } catch {
+      setError("تعذّر الاتصال بالخادم — الرجاء المحاولة لاحقاً.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-muted">
-        معاينة للقراءة فقط — لا يتم إنشاء أو تعديل أي منتج في شوبي فاي. الهوية تُقرأ من ECL
-        (<span dir="ltr">shopify:malikas</span>) عبر مُعرّف المنتج/المتغيّر فقط — لا تخمين ولا مطابقة بالاسم.
-        الفروقات تُعرض فقط عندما يمكن إثباتها من بيانات موثوقة.
+        النشر ينفّذ الخطة المعتمدة فقط — إنشاء منتج جديد (كمسودّة)، أو تحديث العنوان/السعر/إضافة صورة ناقصة. لا نشر تلقائي، لا حذف صور،
+        لا كتابة مخزون. الهوية من ECL (<span dir="ltr">shopify:malikas</span>) عبر مُعرّف المنتج/المتغيّر فقط.
       </p>
 
       {!vm.shopifyAvailable && (
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          شوبي فاي غير مهيأ أو تعذّرت قراءته الآن — كل الصفوف «غير معروفة» ولا تُعرض أي فروقات ملفّقة.
+          شوبي فاي غير مهيأ أو تعذّرت قراءته الآن — كل الصفوف «غير معروفة»، والنشر غير متاح.
         </div>
       )}
 
-      {/* Dashboard counts (§11) */}
+      {/* Dashboard counts */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         <Card value={vm.counts.total} label="إجمالي" tone="ink" />
         <Card value={vm.counts.matched} label="مطابق" tone="emerald" />
@@ -125,27 +191,93 @@ export default function ShopifyPreview({ vm }: { vm: ShopifyPreviewVM }) {
         <Card value={vm.counts.unknown} label="غير معروف" tone="slate" />
       </div>
 
-      {/* Future mutation plan (§12) + read cost (§14) */}
-      <div className="card space-y-2">
+      {/* Publish control bar */}
+      <div className="card space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-ink">خطة التغيير المستقبلية (معاينة فقط)</div>
+          <div className="text-sm font-semibold text-ink">النشر إلى شوبي فاي</div>
           <span className="text-[11px] text-muted">قراءة شوبي فاي: {vm.productsRead} منتج · دفعة واحدة</span>
         </div>
-        {opEntries.length === 0 ? (
-          <p className="text-[11px] text-muted">لا توجد عمليات مخطّطة بعد.</p>
-        ) : (
+
+        {opEntries.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {opEntries.map(([op, n]) => (
               <span key={op} className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-ink">{OP_LABEL[op]} · {n}</span>
             ))}
           </div>
         )}
+
+        {vm.canWrite ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setSelected(selectKeys(new Set(), eligibleAllKeys))} disabled={eligibleAllKeys.length === 0}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-40">
+              تحديد كل المؤهّل ({eligibleAllKeys.length})
+            </button>
+            <button type="button" onClick={() => setSelected(clearSelection())} disabled={selectedCount === 0}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-50 disabled:opacity-40">
+              مسح التحديد
+            </button>
+            <span className="text-[11px] text-muted">محدّد {selectedCount} من {eligibleAllKeys.length} مؤهّل</span>
+            <button type="button" onClick={() => { setConfirmCreate(false); setConfirmOpen(true); }} disabled={selectedCount === 0 || !vm.shopifyAvailable}
+              className="btn-primary disabled:cursor-not-allowed disabled:opacity-50">
+              نشر المحدد ({selectedCount})
+            </button>
+          </div>
+        ) : (
+          <span className="text-[11px] text-muted">🔒 النشر متاح لأصحاب صلاحية التعديل فقط.</span>
+        )}
+
+        {/* Confirm step (§15) — explicit, never one-click on load */}
+        {confirmOpen && (
+          <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <div className="text-sm font-semibold">تأكيد النشر</div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
+              <Row label="إنشاء" value={String(selCreate)} />
+              <Row label="تحديث" value={String(selUpdate)} />
+              <Row label="إجمالي محدّد" value={String(selectedRows.length)} />
+            </div>
+            {selCreate > 0 && (
+              <label className="flex items-center gap-2 pt-1">
+                <input type="checkbox" checked={confirmCreate} onChange={(e) => setConfirmCreate(e.target.checked)} />
+                <span>أؤكّد إنشاء {selCreate} منتج جديد في شوبي فاي (كمسودّة — لن يُنشر للعملاء تلقائياً).</span>
+              </label>
+            )}
+            <div className="flex items-center gap-2 pt-1">
+              <button type="button" onClick={publish} disabled={busy || (selCreate > 0 && !confirmCreate)}
+                className="btn-primary disabled:cursor-not-allowed disabled:opacity-50">
+                {busy ? "جارٍ النشر…" : "تأكيد وتنفيذ"}
+              </button>
+              <button type="button" onClick={() => setConfirmOpen(false)} disabled={busy} className="btn-ghost">إلغاء</button>
+            </div>
+          </div>
+        )}
+
+        {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">{error}</div>}
+
+        {result && (
+          <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-900">
+            <div className="text-xs font-semibold text-emerald-800">
+              نتيجة النشر: {result.runStatus}{result.durablePersisted ? " · مُسجّل" : ""}
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
+              <Row label="أُنشئ" value={String(result.counts.created ?? 0)} />
+              <Row label="حُدّث" value={String(result.counts.updated ?? 0)} />
+              <Row label="دون تغيير" value={String(result.counts.unchanged ?? 0)} />
+              <Row label="محظور/تعارض" value={String((result.counts.blocked ?? 0) + (result.counts.conflict ?? 0))} />
+              <Row label="قديم" value={String(result.counts.stale ?? 0)} />
+              <Row label="فشل" value={String(result.counts.failed ?? 0)} />
+              <Row label="يحتاج مطابقة" value={String(result.counts.needsReconciliation ?? 0)} />
+              <Row label="تخطّي" value={String(result.counts.skippedUnsupported ?? 0)} />
+            </div>
+            <p className="text-[10px] text-emerald-800">أعد تحميل الصفحة لتحديث المعاينة بأحدث حالة من شوبي فاي.</p>
+          </div>
+        )}
+
         <p className="text-[11px] text-muted">
-          هذه خطة للاطّلاع فقط — لا يوجد أي تنفيذ في هذه المرحلة (INT.2E). لا نشر تلقائي ولا كتابة مخزون.
+          النشر يعيد القراءة والتخطيط من جديد قبل أي تعديل، ويرفض أي صف تغيّرت بياناته منذ المعاينة (قديم). المخزون والإتاحة لا تُكتب من هنا.
         </p>
       </div>
 
-      {/* Filters (§11) */}
+      {/* Filters */}
       <div className="card flex flex-wrap items-center gap-2">
         {(["ALL", "MATCH", "NEW", "UPDATE_REQUIRED", "CONFLICT", "BLOCKED", "UNKNOWN"] as RowFilter[]).map((f) => (
           <button key={f} type="button" onClick={() => { setFilter(f); setPage(1); }} className={chip(filter === f)}>
@@ -156,15 +288,28 @@ export default function ShopifyPreview({ vm }: { vm: ShopifyPreviewVM }) {
         <span className="text-[11px] text-muted">يعرض {pageView.pageItems.length} من {filtered.length}</span>
       </div>
 
-      {/* Table (§11) */}
+      {vm.canWrite && selectedCount >= 0 && eligiblePageKeys.length > 0 && (
+        <SelectionToolbar
+          selectedCount={selectedCount}
+          total={eligibleAllKeys.length}
+          pageCount={eligiblePageKeys.length}
+          pageAllSelected={allSelected(selected, eligiblePageKeys)}
+          onSelectPage={() => setSelected((prev) => selectKeys(prev, eligiblePageKeys))}
+          onSelectAllFiltered={() => setSelected((prev) => selectKeys(prev, eligibleAllKeys))}
+          onClear={() => setSelected(clearSelection())}
+        />
+      )}
+
+      {/* Table */}
       {filtered.length === 0 ? (
         <EmptyState title="لا توجد صفوف مطابقة" message="لا توجد منتجات مطابقة للفلاتر الحالية. جرّب تغيير الفلتر أو مسح البحث." />
       ) : (
         <>
           <div className="card overflow-x-auto p-0">
-            <table className="w-full min-w-[920px] text-right text-xs">
+            <table className="w-full min-w-[980px] text-right text-xs">
               <thead className="border-b border-slate-200 bg-slate-50 text-[11px] text-muted">
                 <tr>
+                  {vm.canWrite && <th className="px-3 py-2 text-center">تحديد</th>}
                   <th className="px-3 py-2 font-medium">SKU</th>
                   <th className="px-3 py-2 font-medium">المنتج</th>
                   <th className="px-3 py-2 font-medium">مُعرّف شوبي فاي / جديد</th>
@@ -177,13 +322,22 @@ export default function ShopifyPreview({ vm }: { vm: ShopifyPreviewVM }) {
               </thead>
               <tbody>
                 {pageView.pageItems.map((r) => {
-                  const accent = r.status === "CONFLICT" || r.status === "BLOCKED" ? "border-s-4 border-s-rose-400"
+                  const isSel = selected.has(r.id);
+                  const accent = isSel ? "bg-blue-50 border-s-4 border-s-blue-400"
+                    : r.status === "CONFLICT" || r.status === "BLOCKED" ? "border-s-4 border-s-rose-400"
                     : r.status === "UPDATE_REQUIRED" ? "border-s-4 border-s-amber-400"
                     : r.status === "NEW" ? "border-s-4 border-s-sky-400"
                     : r.status === "MATCH" ? "border-s-4 border-s-emerald-400"
                     : "border-s-4 border-s-slate-300";
                   return (
                     <tr key={r.id} className={`border-b border-slate-100 last:border-0 ${accent}`}>
+                      {vm.canWrite && (
+                        <td className="px-3 py-2 text-center">
+                          {r.eligible
+                            ? <input type="checkbox" checked={isSel} onChange={() => setSelected((prev) => toggleKey(prev, r.id))} aria-label={`تحديد ${r.sku}`} />
+                            : <span className="text-slate-300">—</span>}
+                        </td>
+                      )}
                       <td className="px-3 py-2 font-mono text-[11px]" dir="ltr">{r.sku || (r.hasVariants ? <span className="text-muted">متغيّرات</span> : <span className="text-rose-600">—</span>)}</td>
                       <td className="px-3 py-2 text-ink">{r.title || <span className="text-rose-600">بدون عنوان</span>}</td>
                       <td className="px-3 py-2 font-mono text-[10px]" dir="ltr">
@@ -191,9 +345,7 @@ export default function ShopifyPreview({ vm }: { vm: ShopifyPreviewVM }) {
                           ? <span title={r.shopifyProductGid}>…{r.shopifyProductGid.slice(-10)}</span>
                           : r.status === "NEW" ? <span className="text-sky-600">جديد</span> : <span className="text-muted">—</span>}
                       </td>
-                      <td className="px-3 py-2 tabular-nums" dir="ltr">
-                        {r.variantMatchedCount}/{r.variantCount}
-                      </td>
+                      <td className="px-3 py-2 tabular-nums" dir="ltr">{r.variantMatchedCount}/{r.variantCount}</td>
                       <td className="px-3 py-2" dir="ltr">
                         {r.price ?? <span className="text-amber-600">—</span>}
                         {r.compareAtPrice !== null && <span className="ms-1 text-[10px] text-muted line-through">{r.compareAtPrice}</span>}
@@ -229,6 +381,39 @@ export default function ShopifyPreview({ vm }: { vm: ShopifyPreviewVM }) {
           </div>
         </>
       )}
+
+      {/* Durable publish history (§13) */}
+      <div className="card space-y-2">
+        <h2 className="text-sm font-semibold text-ink">سجل النشر</h2>
+        {!vm.historyAvailable ? (
+          <p className="text-[11px] text-muted">سجل النشر الدائم غير مُفعّل بعد (لم تُطبَّق هجرة <span dir="ltr">export_runs</span> على الإنتاج).</p>
+        ) : vm.recentRuns.length === 0 ? (
+          <p className="text-[11px] text-muted">لا توجد عمليات نشر سابقة.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-right text-[11px]">
+              <thead className="text-muted"><tr>
+                <th className="px-2 py-1 font-medium">الوقت</th><th className="px-2 py-1 font-medium">الحالة</th>
+                <th className="px-2 py-1 font-medium">أُنشئ</th><th className="px-2 py-1 font-medium">حُدّث</th>
+                <th className="px-2 py-1 font-medium">محظور</th><th className="px-2 py-1 font-medium">فشل</th><th className="px-2 py-1 font-medium">بواسطة</th>
+              </tr></thead>
+              <tbody>
+                {vm.recentRuns.map((run) => (
+                  <tr key={run.id} className="border-t border-slate-100">
+                    <td className="px-2 py-1" dir="ltr">{run.finishedAt ?? "—"}</td>
+                    <td className="px-2 py-1">{run.status}</td>
+                    <td className="px-2 py-1 tabular-nums">{run.createdCount}</td>
+                    <td className="px-2 py-1 tabular-nums">{run.updatedCount}</td>
+                    <td className="px-2 py-1 tabular-nums">{run.blockedCount}</td>
+                    <td className="px-2 py-1 tabular-nums">{run.failedCount}</td>
+                    <td className="px-2 py-1" dir="ltr">{run.actor ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -243,4 +428,7 @@ function Card({ value, label, tone }: { value: number; label: string; tone: "ink
     slate: "border-slate-200 bg-slate-50 text-slate-600",
   };
   return <div className={`rounded-lg border p-3 text-center ${cls[tone]}`}><div className="text-xl font-bold">{value}</div><div className="mt-0.5 text-[10px] text-muted">{label}</div></div>;
+}
+function Row({ label, value }: { label: string; value: string }) {
+  return <div className="flex items-center justify-between gap-2"><span>{label}</span><span className="font-mono tabular-nums">{value}</span></div>;
 }
