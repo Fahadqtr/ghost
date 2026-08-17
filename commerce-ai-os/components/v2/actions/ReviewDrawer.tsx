@@ -77,6 +77,8 @@ export default function ReviewDrawer({ action, onClose }: { action: Action | nul
             <Field label="الحالة المقترحة">{action.suggestedState ?? <span className="text-muted">—</span>}</Field>
           </div>
 
+          {action.impact ? <Field label="الأثر">{action.impact}</Field> : null}
+
           {action.entityLabel ? <Field label="العنصر">{action.entityLabel}</Field> : null}
 
           <div className="border-t border-[#efe3d6] pt-4">
@@ -85,7 +87,7 @@ export default function ReviewDrawer({ action, onClose }: { action: Action | nul
                 href={action.workflowHref}
                 className="inline-flex items-center gap-2 rounded-xl bg-brand px-3.5 py-2 text-sm font-semibold text-white hover:opacity-90"
               >
-                فتح سير العمل الأصلي
+                {action.source === "lifecycle" ? "فتح مراجعة دورة الحياة" : "فتح سير العمل الأصلي"}
                 <span aria-hidden="true">↗</span>
               </Link>
             ) : (

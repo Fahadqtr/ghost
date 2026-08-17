@@ -9,6 +9,8 @@
 // database. Tests drive it with synthetic reader-shaped inputs.
 
 import type { ActionInput, ActionType } from "./action-model.ts";
+import { lifecycleReviewHref } from "../lifecycle/transitions.ts";
+import type { LifecycleActionRow } from "./lifecycle-source.server.ts";
 import type { AnalyticsSnapshot, Metric } from "@/lib/analytics/analytics-read";
 import type { HealthCenterModel, HealthFinding, DomainKey } from "@/lib/operations/health/health-center";
 import type { MediaCenterView } from "@/lib/operations/media/media-center.server";
@@ -210,4 +212,50 @@ export function actionsFromAi(model: AiCenterModel | null | undefined): ActionIn
       workflowHref: "/v2/operations/ai",
     };
   });
+}
+
+// ── OPS.8C. Lifecycle → per-product READY_FOR_ACTIVATION ──────────────────────
+/**
+ * The lifecycle facts (already computed by the certified readiness + lifecycle
+ * engines) → Action Center items. OPS.8C wires exactly ONE evidence-backed type:
+ *
+ *   READY_FOR_ACTIVATION — a stored DRAFT the certified readiness engine reports
+ *   as complete AND approved (readyToPublish). Deterministic; recommends
+ *   DRAFT → ACTIVE and deep-links to the product lifecycle review. Activation is
+ *   NEVER performed here — the Action Center is read-only.
+ *
+ * STOP_CANDIDATE / RESTORE_CANDIDATE / (per-product) ARCHIVE_CANDIDATE are
+ * deliberately NOT emitted: no certified deterministic per-product signal exists
+ * yet (OPS.8C §10/§12/§13). They stay registered and empty; heuristic detection
+ * belongs to a future Catalog/Analytics Agent phase, not this wiring phase.
+ */
+export function actionsFromLifecycle(rows: readonly LifecycleActionRow[] | null | undefined): ActionInput[] {
+  if (!Array.isArray(rows)) return [];
+  const out: ActionInput[] = [];
+  for (const r of rows) {
+    if (r === null || typeof r !== "object") continue;
+    if (r.lifecycleState === "DRAFT" && r.ready === true) {
+      const label = r.name ?? r.sku ?? r.productId;
+      out.push({
+        id: `READY_FOR_ACTIVATION:lifecycle:${r.productId}`,
+        type: "READY_FOR_ACTIVATION",
+        source: "lifecycle",
+        confidence: "high",
+        title: label,
+        reason: "المنتج مكتمل ومعتمد وجاهز للتفعيل.",
+        evidence: [
+          { label: "الحالة", value: "مسودة (جاهز)" },
+          { label: "الجاهزية", value: `${r.readinessPercent}%` },
+          { label: "الاعتماد", value: "معتمد" },
+        ],
+        currentState: "مسودة (جاهز)",
+        suggestedState: "نشط",
+        impact: "التفعيل يُدخل المنتج دورة البيع؛ لا يَنشُر المنتج على أي متجر تلقائياً — النشر يتطلب إجراءً منفصلاً.",
+        entityId: r.productId,
+        entityLabel: label,
+        workflowHref: lifecycleReviewHref(r.productId),
+      });
+    }
+  }
+  return out;
 }

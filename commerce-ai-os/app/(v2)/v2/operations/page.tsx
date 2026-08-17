@@ -201,6 +201,18 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         new Date().getTime(),
       );
 
+      // OPS.8C — ARCHIVED count: reuse product_archive (cold storage), a single
+      // head count, never a second lifecycle scanner. Best-effort → 0 on failure.
+      let archivedCount = 0;
+      try {
+        const { count } = await supabase
+          .from("product_archive")
+          .select("id", { count: "exact", head: true });
+        if (typeof count === "number") archivedCount = count;
+      } catch {
+        archivedCount = 0;
+      }
+
       loaded = {
         controls,
         kpis: summary.kpis,
@@ -239,8 +251,9 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
         issuePage,
         queueCounts: queues.counts,
         queueCapped: queues.capped,
-        // OPS.8B — read-only lifecycle breakdown over the SAME items (no scan).
-        lifecycle: buildLifecycleBreakdown(items),
+        // OPS.8B/8C — read-only lifecycle breakdown over the SAME items (no scan);
+        // ARCHIVED reuses the product_archive head count above.
+        lifecycle: buildLifecycleBreakdown(items, archivedCount),
       };
     }
   } catch {

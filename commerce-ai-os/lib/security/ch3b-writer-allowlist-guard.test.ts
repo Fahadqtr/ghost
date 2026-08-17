@@ -41,7 +41,8 @@ const WRITER_REQUIRED: Record<string, string[]> = {
     "uploadProductMedia", "removeProductMedia", "setPrimaryProductMedia", "reorderProductMedia",
   ],
   "app/(app)/products/image-actions.ts": ["uploadProductImage", "applyCatalogImageBySku", "removeProductImage"],
-  "app/(app)/products/archive/actions.ts": ["archiveAndDeleteProducts", "restoreFromArchive"],
+  // NOTE: archive/restore were hardened to OWNER-only in OPS.8C (stricter than the
+  // writer allow-list) — their owner gate is asserted in the OPS.8C lifecycle guard.
 };
 
 // file → read-only siblings that must STAY open (signed-in), never writer-gated.

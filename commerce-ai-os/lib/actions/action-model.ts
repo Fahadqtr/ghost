@@ -19,6 +19,9 @@ export const ACTION_TYPES = [
   "PRICE_REVIEW",
   "ARCHIVE_CANDIDATE",
   "DELETE_CANDIDATE",
+  "READY_FOR_ACTIVATION",
+  "STOP_CANDIDATE",
+  "RESTORE_CANDIDATE",
   "LOW_STOCK",
   "OUT_OF_STOCK",
   "HEALTH_ALERT",
@@ -39,7 +42,8 @@ export type ActionSource =
   | "availability"
   | "barcode"
   | "ecl"
-  | "analytics";
+  | "analytics"
+  | "lifecycle";
 
 export type ActionSeverity = "critical" | "warning" | "info";
 export type ActionConfidence = "high" | "medium" | "low";
@@ -88,6 +92,8 @@ export interface Action {
   currentState: string | null;
   /** §6 Suggested State — null when not applicable. */
   suggestedState: string | null;
+  /** Human impact of acting (§8 drawer). Null when not applicable. */
+  impact?: string | null;
   /** The product/entity this concerns, or null for catalog-wide actions. */
   entityId: string | null;
   entityLabel: string | null;
@@ -126,6 +132,9 @@ export const ACTION_REGISTRY: Record<ActionType, ActionTypeSpec> = {
   PRICE_REVIEW: { label: "مراجعة السعر", defaultSeverity: "warning", autoEligible: false, workflow: "/v2/analytics" },
   ARCHIVE_CANDIDATE: { label: "مرشّح للأرشفة", defaultSeverity: "warning", autoEligible: false, workflow: "/v2/catalog" },
   DELETE_CANDIDATE: { label: "مرشّح للحذف", defaultSeverity: "critical", autoEligible: false, workflow: "/v2/catalog" },
+  READY_FOR_ACTIVATION: { label: "جاهز للتفعيل", defaultSeverity: "info", autoEligible: false, workflow: "/v2/catalog" },
+  STOP_CANDIDATE: { label: "مرشّح للإيقاف", defaultSeverity: "warning", autoEligible: false, workflow: "/v2/catalog" },
+  RESTORE_CANDIDATE: { label: "مرشّح للاسترجاع", defaultSeverity: "info", autoEligible: false, workflow: "/products/archive" },
   LOW_STOCK: { label: "مخزون منخفض", defaultSeverity: "warning", autoEligible: false, workflow: "/v2/operations/availability-sync" },
   OUT_OF_STOCK: { label: "نفد المخزون", defaultSeverity: "critical", autoEligible: false, workflow: "/v2/operations/availability-sync" },
   HEALTH_ALERT: { label: "تنبيه صحّة المنصة", defaultSeverity: "warning", autoEligible: false, workflow: "/v2/operations/health" },
@@ -187,6 +196,7 @@ export function normalizeAction(input: ActionInput): Action {
     evidence: Array.isArray(input.evidence) ? input.evidence : [],
     currentState: input.currentState ?? null,
     suggestedState: input.suggestedState ?? null,
+    impact: input.impact ?? null,
     entityId: input.entityId ?? null,
     entityLabel: input.entityLabel ?? null,
     workflowHref: input.workflowHref ?? ACTION_REGISTRY[type].workflow,

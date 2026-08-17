@@ -63,9 +63,12 @@ const OUTCOME_MESSAGE: Record<TransitionResult["outcome"], string> = {
 export default function LifecyclePanel({
   view,
   action,
+  highlight = false,
 }: {
   view: ProductLifecycleView;
   action: ActionFn;
+  /** OPS.8C — set when deep-linked via ?panel=lifecycle: draws attention to the panel. */
+  highlight?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -87,7 +90,7 @@ export default function LifecyclePanel({
   };
 
   return (
-    <div className="card space-y-4">
+    <div className={`card space-y-4${highlight ? " ring-2 ring-brand" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold">دورة حياة المنتج</h2>
         <span className={`rounded-full border px-3 py-1 text-xs font-medium ${BADGE_TONE[view.display]}`}>

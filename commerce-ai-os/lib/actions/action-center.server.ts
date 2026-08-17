@@ -21,8 +21,9 @@ import { loadAnalytics } from "@/lib/analytics/analytics-read.server";
 import { loadMediaCenter } from "@/lib/operations/media/media-center.server";
 import { loadAiCenter } from "@/lib/operations/ai/ai-center.server";
 import { EMPTY_AI_FILTERS } from "@/lib/operations/ai/ai-center";
+import { loadLifecycleActionRows } from "./lifecycle-source.server.ts";
 
-import { actionsFromAi, actionsFromAnalytics, actionsFromHealth, actionsFromMedia } from "./action-sources.ts";
+import { actionsFromAi, actionsFromAnalytics, actionsFromHealth, actionsFromMedia, actionsFromLifecycle } from "./action-sources.ts";
 import { buildActionCenter, type ActionCenterView, type ActionInput, type ActionSourceStatus } from "./action-model.ts";
 
 // Each certified reader, request-cached so a section and the summary that share a
@@ -31,6 +32,7 @@ const getHealth = cache(() => loadHealthCenter());
 const getAnalytics = cache(() => loadAnalytics());
 const getMedia = cache(() => loadMediaCenter());
 const getAi = cache(() => loadAiCenter(EMPTY_AI_FILTERS));
+const getLifecycle = cache(() => loadLifecycleActionRows());
 
 function hasError(v: unknown): v is { error: string } {
   return v !== null && typeof v === "object" && "error" in v;
@@ -66,9 +68,10 @@ export async function loadActionCenter(now: Date = new Date()): Promise<ActionCe
  * Suspense so the primary summary paints first. Best-effort per source.
  */
 export async function loadActionCenterDetail(now: Date = new Date()): Promise<ActionCenterView> {
-  const [mediaRes, aiRes] = await Promise.all([
+  const [mediaRes, aiRes, lifecycleRes] = await Promise.all([
     getMedia().catch(() => ({ error: "media_failed" }) as const),
     getAi().catch(() => ({ error: "ai_failed" }) as const),
+    getLifecycle().catch(() => null),
   ]);
 
   const inputs: ActionInput[] = [];
@@ -83,6 +86,12 @@ export async function loadActionCenterDetail(now: Date = new Date()): Promise<Ac
   const aiActions = actionsFromAi(aiModel);
   inputs.push(...aiActions);
   sources.push({ source: "ops_ai", ok: !hasError(aiRes), count: aiActions.length });
+
+  // OPS.8C — lifecycle actions (READY_FOR_ACTIVATION). Best-effort: a null read
+  // contributes zero actions and is reported ok:false, never a fabricated item.
+  const lifecycleActions = actionsFromLifecycle(lifecycleRes);
+  inputs.push(...lifecycleActions);
+  sources.push({ source: "lifecycle", ok: lifecycleRes !== null, count: lifecycleActions.length });
 
   return buildActionCenter(inputs, { sources, generatedAt: now.toISOString() });
 }

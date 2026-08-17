@@ -9,6 +9,7 @@ import { queueForTalabat } from "@/lib/talabat/queue";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { requireMalakWriter, requireOwner } from "@/lib/malak/authz";
+import { transitionProductLifecycle } from "@/lib/lifecycle/transition.server";
 
 // The product create/edit save cores (row projection, inventory sync, the
 // id-preserving variant sync) live in lib/products/product-save.ts and are used
@@ -62,11 +63,32 @@ export async function setProductApproval(id: string, approval: string, reason?: 
 
 // Inline product status toggle (Active / Draft) — straight from the catalog,
 // no need to open the product editor.
+//
+// OPS.8C §2 — CONVERGENCE: the lifecycle change now DELEGATES to the canonical
+// lifecycle boundary (the sole writer of lifecycle_state, which enforces the
+// OPS.8B transition matrix, readiness, authorization, staleness and audit). This
+// action never writes lifecycle_state itself. platform_status is written ONLY as
+// a legacy compatibility MIRROR after a successful lifecycle change — it is no
+// longer the lifecycle authority (canonical reads prefer lifecycle_state).
 export async function setProductStatus(id: string, status: string): Promise<{ ok?: true; error?: string }> {
-  // OPS.7 §7 — lifecycle mutation: writer-gated (was login-only).
+  // Writer minimum for the compat mirror write; the boundary re-checks and, for
+  // owner-gated edges (e.g. ACTIVE→DRAFT), enforces requireOwner itself.
   { const writer = await requireMalakWriter(); if (!writer.ok) return { error: writer.error }; }
   if (!id) return { error: "Missing product id." };
   const value = status === "Active" ? "Active" : "Draft";
+  const target = status === "Active" ? "ACTIVE" : "DRAFT";
+
+  // Canonical lifecycle transition (validates matrix + readiness + auth + audit).
+  const result = await transitionProductLifecycle({
+    productId: id,
+    targetState: target,
+    reason: "legacy status toggle",
+  });
+  if (result.outcome === "BLOCKED" || result.outcome === "STALE" || result.outcome === "FAILED") {
+    return { error: result.error ?? result.reasons?.[0] ?? "تعذّر تغيير حالة المنتج." };
+  }
+
+  // Legacy compatibility mirror only (platform_status is NOT lifecycle authority).
   const supabase = createClient();
   const { error } = await supabase.from("products").update({ platform_status: value }).eq("id", id);
   if (error) return { error: error.message };
