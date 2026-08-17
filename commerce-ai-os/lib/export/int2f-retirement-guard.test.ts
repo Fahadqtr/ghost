@@ -35,7 +35,7 @@ test("legacy Shopify/Snoonu/Rafeeq channel exports are retired (410 → Export C
 test("the Talabat legacy branch is retained as the mappings writer (unreplaced capability)", () => {
   const r = read(LEGACY_ROUTE);
   assert.ok(/channel !== "talabat"/.test(r), "only Talabat proceeds");
-  assert.ok(/persistTalabatMappings\(/.test(r), "still persists channel_variant_mappings");
+  assert.ok(/syncTalabatMappings\(/.test(r), "still persists channel_variant_mappings (via the INT.2F.1 boundary)");
   assert.ok(/requireMalakWriter\(\)/.test(r), "writer-gated");
 });
 

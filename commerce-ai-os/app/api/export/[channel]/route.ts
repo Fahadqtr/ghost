@@ -6,7 +6,7 @@ import {
   isApprovedForTalabat, resolveExactChannelId, decideExportGate,
   type ExportProductInput, type ExportVariantInput, type PersistCounts,
 } from "@/lib/talabat/export";
-import { persistTalabatMappings, type MappingWriteClient } from "@/lib/talabat/persist-mappings";
+import { syncTalabatMappings, type MappingSyncAdmin } from "@/lib/talabat/mapping-sync/mapping-sync.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -170,8 +170,11 @@ export async function GET(
     let persist: PersistCounts | null = null;
     if (result.rows.length > 0 && channelRes.status === "ok") {
       try {
-        const admin = createAdminClient() as unknown as MappingWriteClient;
-        persist = await persistTalabatMappings(admin, channelRes.id, result.mappings, new Date().toISOString());
+        // INT.2F.1 — persistence is delegated to the certified mapping-sync
+        // boundary (writer-gate owned by this route's early check above). Behavior
+        // is identical: same idempotent upsert + counts, plus a best-effort audit.
+        const admin = createAdminClient() as unknown as MappingSyncAdmin;
+        persist = await syncTalabatMappings(admin, channelRes.id, result.mappings, new Date().toISOString(), writer.email);
       } catch {
         persist = null; // treated as failure by the gate
       }
