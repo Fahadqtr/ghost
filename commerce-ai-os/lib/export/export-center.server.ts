@@ -11,7 +11,14 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { loadOperationsDashboard } from "@/lib/operations/read-model";
 import { loadChannelGapCounts } from "@/lib/operations/channels/gap-counts.server";
-import { buildExportCenter, UNKNOWN, type ExportCenterModel, type Unknownable } from "./export-center.ts";
+import { loadTalabatPreview } from "./talabat/preview.server";
+import {
+  buildExportCenter,
+  UNKNOWN,
+  type DestinationAdapterCounts,
+  type ExportCenterModel,
+  type Unknownable,
+} from "./export-center.ts";
 
 export async function loadExportCenter(now: Date = new Date()): Promise<{ model: ExportCenterModel } | { error: string }> {
   try {
@@ -46,10 +53,29 @@ export async function loadExportCenter(now: Date = new Date()): Promise<{ model:
       /* leave the map empty ⇒ per-card UNKNOWN */
     }
 
+    // Real per-destination adapter counts (INT.2B): the Talabat adapter reports
+    // its own sellable-listing eligible/blocked/warnings from ONE bounded read
+    // (reused here — the detail route reads it again on demand; no per-card scan).
+    // A failed/absent read leaves the card UNKNOWN via the foundation path.
+    const countsByDestination: Record<string, DestinationAdapterCounts> = {};
+    try {
+      const talabat = await loadTalabatPreview();
+      if (talabat) {
+        countsByDestination["talabat:malikas"] = {
+          eligible: talabat.summary.ready,
+          blocked: talabat.summary.blocked,
+          warnings: talabat.summary.warnings,
+        };
+      }
+    } catch {
+      /* leave the Talabat card on the UNKNOWN foundation path */
+    }
+
     const model = buildExportCenter({
       eligible,
       blocked,
       warningsByDestination,
+      countsByDestination,
       generatedAt: now.toISOString(),
     });
     return { model };

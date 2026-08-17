@@ -12,9 +12,10 @@ import { EXPORT_DESTINATIONS } from "./destinations.ts";
 export const UNKNOWN = "UNKNOWN" as const;
 export type Unknownable<T> = T | typeof UNKNOWN;
 
-/** Foundation operational state: the destination is registered and its
- *  validate/preview contracts exist; generation/publish are not implemented. */
-export type DestinationOperationalState = "FOUNDATION_READY" | "UNKNOWN";
+/** Destination operational state.
+ *  • FOUNDATION_READY — registered; validate/preview contracts exist, no adapter yet.
+ *  • ADAPTER_READY    — a real validation+preview adapter is live (INT.2B). */
+export type DestinationOperationalState = "ADAPTER_READY" | "FOUNDATION_READY" | "UNKNOWN";
 
 export interface DestinationCardVM {
   key: string;
@@ -41,12 +42,23 @@ export interface ExportCenterModel {
   generatedAt: string | null;
 }
 
+/** Real per-destination adapter counts (INT.2B). One card gets these once an
+ *  adapter exists; the rest stay UNKNOWN. Sourced from a single bounded read. */
+export interface DestinationAdapterCounts {
+  eligible: number;
+  blocked: number;
+  warnings: number;
+}
+
 export interface ExportCenterFacts {
   /** global catalog readiness (reused from loadOperationsDashboard). */
   eligible: Unknownable<number>;
   blocked: Unknownable<number>;
   /** per-destination ECL gap warning counts; a missing key ⇒ UNKNOWN for that card. */
   warningsByDestination: Readonly<Record<string, number>>;
+  /** per-destination REAL adapter counts (INT.2B). A present key overrides the
+   *  card's eligible/blocked/warnings with the adapter's own numbers. */
+  countsByDestination?: Readonly<Record<string, DestinationAdapterCounts>>;
   generatedAt: string | null;
 }
 
@@ -57,24 +69,34 @@ export function exportDetailHref(key: string): string {
 /** Build the dashboard model. Pure — one card per registered destination. */
 export function buildExportCenter(facts: ExportCenterFacts): ExportCenterModel {
   const warnings = facts?.warningsByDestination ?? {};
-  const destinations: DestinationCardVM[] = EXPORT_DESTINATIONS.map((d) => ({
-    key: d.key,
-    label: d.label,
-    channel: d.channel,
-    businessUnit: d.businessUnit,
-    listingGrain: d.listingGrain,
-    capabilities: d.capabilities,
-    operationalState: "FOUNDATION_READY",
-    // Destination-specific eligibility is not computed in the foundation.
-    productsEligible: UNKNOWN,
-    productsBlocked: UNKNOWN,
-    // No durable per-destination timeline exists (see history.ts).
-    lastValidation: UNKNOWN,
-    lastExport: UNKNOWN,
-    lastPublish: UNKNOWN,
-    warnings: Object.prototype.hasOwnProperty.call(warnings, d.key) ? warnings[d.key] : UNKNOWN,
-    detailHref: exportDetailHref(d.key),
-  }));
+  const adapterCounts = facts?.countsByDestination ?? {};
+  const destinations: DestinationCardVM[] = EXPORT_DESTINATIONS.map((d) => {
+    // A destination with a real adapter (INT.2B: talabat:malikas) reports its own
+    // eligible/blocked/warnings from a single bounded read; the rest stay UNKNOWN
+    // (destination rules arrive with their adapters).
+    const real = Object.prototype.hasOwnProperty.call(adapterCounts, d.key) ? adapterCounts[d.key] : null;
+    return {
+      key: d.key,
+      label: d.label,
+      channel: d.channel,
+      businessUnit: d.businessUnit,
+      listingGrain: d.listingGrain,
+      capabilities: d.capabilities,
+      operationalState: real ? "ADAPTER_READY" : "FOUNDATION_READY",
+      productsEligible: real ? real.eligible : UNKNOWN,
+      productsBlocked: real ? real.blocked : UNKNOWN,
+      // No durable per-destination timeline exists (see history.ts).
+      lastValidation: UNKNOWN,
+      lastExport: UNKNOWN,
+      lastPublish: UNKNOWN,
+      warnings: real
+        ? real.warnings
+        : Object.prototype.hasOwnProperty.call(warnings, d.key)
+          ? warnings[d.key]
+          : UNKNOWN,
+      detailHref: exportDetailHref(d.key),
+    };
+  });
   return {
     destinations,
     readinessBaseline: {

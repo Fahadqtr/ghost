@@ -10,6 +10,8 @@ import { exportDestinationByKey } from "@/lib/export/destinations";
 import { EMPTY_VALIDATION_SUMMARY } from "@/lib/export/validation";
 import { emptyPreview } from "@/lib/export/preview";
 import { unavailableHistory } from "@/lib/export/history";
+import { loadTalabatPreview } from "@/lib/export/talabat/preview.server";
+import TalabatPreview, { type TalabatPreviewVM } from "@/components/v2/export/TalabatPreview";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +32,11 @@ export default async function ExportDestinationPage({ params }: { params: Params
         <div className="card text-center text-sm text-muted">{NOT_FOUND}</div>
       </div>
     );
+  }
+
+  // INT.2B — the Talabat adapter renders a REAL sellable-listing preview.
+  if (dest.key === "talabat:malikas") {
+    return <TalabatDetail dest={dest} />;
   }
 
   // Foundation placeholders — no real validation/preview/history is produced yet.
@@ -104,6 +111,68 @@ export default async function ExportDestinationPage({ params }: { params: Params
           <button type="button" disabled className="btn-ghost cursor-not-allowed opacity-50">نشر</button>
         </div>
         <p className="text-[11px] text-muted">لا يوجد تنفيذ في هذه المرحلة — الإجراءات معطّلة (للقراءة فقط).</p>
+      </section>
+    </div>
+  );
+}
+
+// INT.2B — Talabat sellable-listing preview detail (read-only). Loads the REAL
+// adapter output in ONE bounded read and hands the flattened + validated rows to
+// the presentational client component. It generates no file and mutates nothing;
+// the future generate/publish actions stay disabled.
+async function TalabatDetail({ dest }: { dest: NonNullable<ReturnType<typeof exportDestinationByKey>> }) {
+  const result = await loadTalabatPreview();
+
+  return (
+    <div className="space-y-4">
+      <Link href="/v2/export" className="btn-ghost">رجوع لمركز التصدير</Link>
+
+      <div className="space-y-1">
+        <h1 className="font-serif text-2xl font-semibold text-ink">{dest.label}</h1>
+        <p className="text-sm text-muted" dir="ltr">{dest.key}</p>
+        <p className="text-[11px] text-muted">
+          حبيبة التصدير: قائمة قابلة للبيع — المنتج البسيط صف واحد، وكل متغيّر صف مستقل (لا يوجد صف أب).
+        </p>
+      </div>
+
+      {result === null ? (
+        <div className="card text-center text-sm text-muted">
+          تعذّر تحميل المعاينة الآن — الرجاء المحاولة لاحقاً (لا توجد بيانات ملفّقة).
+        </div>
+      ) : (
+        <TalabatPreview
+          vm={{
+            rows: result.rows.map<TalabatPreviewVM["rows"][number]>((r) => ({
+              internalProductId: r.internalProductId,
+              variantId: r.variantId,
+              isVariant: r.isVariant,
+              sku: r.sku,
+              barcode: r.barcode,
+              title: r.title,
+              price: r.price,
+              category: r.category,
+              hasImage: r.hasImage,
+              imageExportName: r.imageExportName,
+              inheritedParentImage: r.inheritedParentImage,
+              mappingStatus: r.mapping.status,
+              status: r.status,
+              reasons: r.reasons.map((x) => ({ code: x.code, blocking: x.blocking })),
+            })),
+            summary: result.summary,
+            counts: result.counts,
+          }}
+        />
+      )}
+
+      <section className="card space-y-2">
+        <h2 className="text-sm font-semibold text-ink">الإجراءات المستقبلية</h2>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" disabled className="btn-ghost cursor-not-allowed opacity-50">توليد الحزمة (XLSX/ZIP)</button>
+          <button type="button" disabled className="btn-ghost cursor-not-allowed opacity-50">نشر إلى طلبات</button>
+        </div>
+        <p className="text-[11px] text-muted">
+          هذه المرحلة معاينة وتحقّق فقط — لا يتم توليد ملفات ولا النشر (للقراءة فقط).
+        </p>
       </section>
     </div>
   );

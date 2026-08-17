@@ -26,8 +26,18 @@ function DestinationCard({ d }: { d: DestinationCardVM }) {
           <div className="text-sm font-semibold text-ink">{d.label}</div>
           <div className="mt-0.5 text-[11px] text-muted" dir="ltr">{d.key}</div>
         </div>
-        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600">
-          {d.operationalState === "FOUNDATION_READY" ? "الأساس جاهز" : "غير معروف"}
+        <span
+          className={
+            d.operationalState === "ADAPTER_READY"
+              ? "rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700"
+              : "rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600"
+          }
+        >
+          {d.operationalState === "ADAPTER_READY"
+            ? "المُحوِّل جاهز"
+            : d.operationalState === "FOUNDATION_READY"
+              ? "الأساس جاهز"
+              : "غير معروف"}
         </span>
       </div>
 
