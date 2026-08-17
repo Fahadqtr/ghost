@@ -1,15 +1,19 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireOwner } from "@/lib/malak/authz";
 import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { revalidatePath } from "next/cache";
 
 // Delete one product WITHOUT redirecting — the catalog health page stays put so
 // the owner can clean several duplicates in a row. Mirrors products/actions#deleteProduct
 // minus the redirect.
+//
+// OPS.8A §7 — hard delete is irreversible; retire casual exposure by gating this
+// emergency duplicate-cleanup tool to OWNER only (was login-only). Archive is the
+// normal terminal product operation; this stays as owner-only manual tooling.
 export async function deleteProductById(id: string): Promise<{ ok: true } | { error: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  { const owner = await requireOwner(); if (!owner.ok) return { error: owner.error }; }
   if (!id) return { error: "Missing product id." };
   const supabase = createClient();
   const { data: doomed } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
