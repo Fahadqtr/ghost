@@ -122,10 +122,16 @@ test("server adapter is server-only and batches reads (no per-variant query)", (
   assert.ok(fromCalls <= 1, `expected a single .from() (in readAll), found ${fromCalls}`);
 });
 
-// ── the route only enables real actions as DISABLED (no generate/publish) ─────
-test("the Talabat detail route keeps generate/publish disabled (preview only)", () => {
+// ── the route delegates generation to the writer-gated controls; never publishes ─
+// INT.2B was preview-only; INT.2B.2 enables package GENERATION — but the route
+// (a server component) still generates nothing itself: it renders the read-only
+// preview + the client controls, which POST to the writer-gated API route. The
+// route file must remain free of xlsx/zip generation AND of any Talabat publish.
+test("the Talabat detail route delegates generation and never publishes", () => {
   const s = read(ROUTE);
-  assert.ok(/disabled/.test(s), "future actions disabled");
-  // it does not import a package generator or publisher
-  assert.equal(/buildTalabatExport|pushProductsToShopify|\.publish\(/.test(s), false);
+  // generation is delegated to the controls component (not inlined in the route)
+  assert.ok(/TalabatPackageControls/.test(s), "renders the package controls");
+  // the route itself performs no file generation and no publish
+  assert.equal(/from ["']xlsx["']|require\(["']xlsx["']\)|\bXLSX\.|aoa_to_sheet|JSZip/.test(s), false, "no xlsx/zip in the route");
+  assert.equal(/buildTalabatExport|talabatResultToCsv|pushProductsToShopify|\.publish\(/.test(s), false, "no publish/legacy exporter");
 });
