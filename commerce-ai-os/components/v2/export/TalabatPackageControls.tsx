@@ -22,6 +22,7 @@ export interface TalabatPlanVM {
   blocked: number;
   rowsIncluded: number;
   imagesExpected: number;
+  imagesSharedFromProduct: number;
   blockersByReason: Partial<Record<ExportReasonCode, number>>;
 }
 
@@ -31,6 +32,7 @@ interface GeneratedSummary {
   simpleRows: string;
   variantRows: string;
   images: string;
+  sharedImages: string;
   warnings: string;
   excludedBlocked: string;
   excludedNoImage: string;
@@ -45,6 +47,7 @@ const REASON_LABEL: Record<string, string> = {
   DUPLICATE_BARCODE: "باركود مكرّر",
   INVALID_BARCODE: "صيغة باركود غير قياسية",
   MISSING_IMAGE: "صورة مفقودة",
+  IMAGE_SHARED_FROM_PRODUCT: "الصورة مشتركة من المنتج",
   MISSING_TITLE: "عنوان مفقود",
   MISSING_PRICE: "سعر مفقود",
   MISSING_CATEGORY: "فئة مفقودة",
@@ -84,6 +87,7 @@ export default function TalabatPackageControls({ plan }: { plan: TalabatPlanVM }
         simpleRows: h.get("X-Talabat-Simple-Rows") ?? "0",
         variantRows: h.get("X-Talabat-Variant-Rows") ?? "0",
         images: h.get("X-Talabat-Image-Count") ?? "0",
+        sharedImages: h.get("X-Talabat-Shared-Image-Count") ?? "0",
         warnings: h.get("X-Talabat-Warning-Count") ?? "0",
         excludedBlocked: h.get("X-Talabat-Excluded-Blocked") ?? "0",
         excludedNoImage: h.get("X-Talabat-Excluded-No-Image") ?? "0",
@@ -131,7 +135,15 @@ export default function TalabatPackageControls({ plan }: { plan: TalabatPlanVM }
         <Stat label="منتجات بسيطة" value={plan.simpleProducts} />
         <Stat label="صفوف متغيّرات" value={plan.variantRows} />
         <Stat label="صور متوقّعة" value={plan.imagesExpected} />
+        <Stat label="صور مشتركة من المنتج" value={plan.imagesSharedFromProduct} />
       </div>
+
+      {plan.imagesSharedFromProduct > 0 ? (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800" dir="rtl">
+          {plan.imagesSharedFromProduct} صف يستخدم صورة المنتج المشتركة (لا يوجد نموذج صور خاص بالمتغيّرات بعد) —
+          هذا للعلم فقط ولا يمنع التصدير. الصور الخاصة بكل متغيّر ستُضاف في مشروع «صور المتغيّرات» لاحقاً.
+        </div>
+      ) : null}
 
       {blockerEntries.length > 0 ? (
         <div className="space-y-1">
@@ -177,6 +189,7 @@ export default function TalabatPackageControls({ plan }: { plan: TalabatPlanVM }
             <ResultRow label="الصفوف" value={result.sellableRows} />
             <ResultRow label="المتغيّرات" value={result.variantRows} />
             <ResultRow label="الصور" value={result.images} />
+            <ResultRow label="صور مشتركة من المنتج" value={result.sharedImages} />
             <ResultRow label="تحذيرات" value={result.warnings} />
             <ResultRow label="محظور مُستبعَد" value={result.excludedBlocked} />
             <ResultRow label="بلا صورة مُستبعَد" value={result.excludedNoImage} />

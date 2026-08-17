@@ -61,6 +61,7 @@ export async function POST(req: Request) {
       "X-Talabat-Variant-Rows": String(s.variantRowCount),
       "X-Talabat-Image-Count": String(s.imageCount),
       "X-Talabat-Warning-Count": String(s.warningCount),
+      "X-Talabat-Shared-Image-Count": String(s.imageSharedFromProductCount),
       "X-Talabat-Excluded-Blocked": String(s.excludedBlockedCount),
       "X-Talabat-Excluded-No-Image": String(s.excludedNoImageCount),
       "X-Talabat-Generated-At": s.generatedAt,

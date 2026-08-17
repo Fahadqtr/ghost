@@ -270,6 +270,12 @@ function buildRow(
 
   // Image (P0) — a row with no product image at all is blocked (certified missing_image).
   if (!hasImage) block("MISSING_IMAGE");
+  // The catalog has no variant-media model yet, so a variant legitimately ships
+  // with the product-level image. This is DISCLOSED as an informational WARNING
+  // (never blocking) so preview + package + manifest agree exactly on what the
+  // exported image represents. True per-variant images arrive in a later Variant
+  // Media project — no new fallback logic is added here.
+  else if (inheritedParentImage) warn("IMAGE_SHARED_FROM_PRODUCT", "الصورة مشتركة من المنتج (لا يوجد نموذج صور للمتغيّرات بعد).");
 
   // Title / price / category.
   if (clean(title) === "") block("MISSING_TITLE");

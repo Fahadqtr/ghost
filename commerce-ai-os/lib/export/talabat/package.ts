@@ -60,6 +60,16 @@ export function isExportableRow(r: Pick<TalabatPreviewRow, "status">): boolean {
   return r.status === "READY" || r.status === "WARNING";
 }
 
+/**
+ * True when the row's packaged image is the product-level image shared onto a
+ * variant (the disclosed interim behavior — the catalog has no variant-media
+ * model yet). Informational only; never blocks. Detected from the certified
+ * IMAGE_SHARED_FROM_PRODUCT warning so preview/package/manifest agree exactly.
+ */
+export function usesSharedProductImage(r: Pick<TalabatPreviewRow, "reasons">): boolean {
+  return (r.reasons ?? []).some((x) => x.code === "IMAGE_SHARED_FROM_PRODUCT");
+}
+
 export interface GenerationSelection {
   mode: TalabatGenerationMode;
   /** Row keys to include when mode === "selected" (previewRowKey values). */
@@ -321,6 +331,8 @@ export interface GenerationPlanPreview {
   rowsIncluded: number;
   /** primary + gallery images the package will contain for the included rows. */
   imagesExpected: number;
+  /** included rows whose image is the product image shared onto a variant (disclosed). */
+  imagesSharedFromProduct: number;
   /** grouped BLOCKING reason counts across blocked rows. */
   blockersByReason: Partial<Record<ExportReasonCode, number>>;
 }
@@ -345,10 +357,12 @@ export function previewGenerationPlan(
   }
 
   let imagesExpected = 0;
+  let imagesSharedFromProduct = 0;
   for (const r of set.included) {
     const plan = planRowImages(r);
     if (plan.primary) imagesExpected += 1;
     imagesExpected += plan.gallery.length;
+    if (usesSharedProductImage(r)) imagesSharedFromProduct += 1;
   }
 
   const blockersByReason: Partial<Record<ExportReasonCode, number>> = {};
@@ -369,6 +383,7 @@ export function previewGenerationPlan(
     blocked: set.counts.blocked,
     rowsIncluded: set.counts.includedRows,
     imagesExpected,
+    imagesSharedFromProduct,
     blockersByReason,
   };
 }
@@ -384,6 +399,8 @@ export interface TalabatManifestInput {
   sellableRowCount: number;
   imageCount: number;
   warningCount: number;
+  /** packaged rows whose image is the product image shared onto a variant (disclosed). */
+  imageSharedFromProductCount: number;
   excludedBlockedCount: number;
   outputFilename: string;
   previewReference: Record<string, unknown>;
@@ -404,6 +421,7 @@ export function buildManifest(input: TalabatManifestInput): Record<string, unkno
     sellable_row_count: input.sellableRowCount,
     image_count: input.imageCount,
     warning_count: input.warningCount,
+    image_shared_from_product_count: input.imageSharedFromProductCount,
     excluded_blocked_count: input.excludedBlockedCount,
     output_filename: input.outputFilename,
     preview_reference: input.previewReference,

@@ -14,6 +14,7 @@ import {
   buildManifest,
   previewGenerationPlan,
   previewRowKey,
+  usesSharedProductImage,
   sniffImageExtension,
   mimeToExt,
   resolvePackagedExtension,
@@ -100,6 +101,27 @@ test("variant product → 3 rows, zero parent row, each image named by the VARIA
   assert.deepEqual(r.map((x) => x.title), ["Lip Tint — Red", "Lip Tint — Pink", "Lip Tint — Nude"]);
 });
 
+// ── shared-image disclosure: variants warn (not block); simple products do not ─
+test("a variant discloses the shared product image as a WARNING and stays exportable", () => {
+  const r = rows([variantProduct()]);
+  assert.ok(r.every((x) => x.status === "WARNING"), "variants are WARNING (not blocked)");
+  assert.ok(r.every((x) => usesSharedProductImage(x)), "each variant flags IMAGE_SHARED_FROM_PRODUCT");
+  assert.ok(
+    r.every((x) => x.reasons.some((y) => y.code === "IMAGE_SHARED_FROM_PRODUCT" && !y.blocking)),
+    "the disclosure is non-blocking",
+  );
+  // still packaged (never MISSING_VARIANT_IMAGE, never blocked)
+  const set = resolveGenerationSet(r, { mode: "ready" });
+  assert.equal(set.included.length, 3);
+  assert.equal(set.excludedBlocked.length, 0);
+});
+
+test("a simple product does NOT disclose a shared image (its image is its own)", () => {
+  const r = rows([simpleProduct()]);
+  assert.equal(r[0].status, "READY");
+  assert.equal(usesSharedProductImage(r[0]), false);
+});
+
 // ── §20 ready-only subset: a blocked variant is excluded, never sibling-imaged ─
 test("2 ready + 1 blocked variant → package includes exactly 2 rows / 2 primary images", () => {
   // one variant is blocked (missing its own barcode) — a per-variant block.
@@ -130,10 +152,11 @@ test("selected mode never leaks a blocked row", () => {
   const blocked = { ...p, variants: [p.variants[0], { ...p.variants[1], sku: null }] };
   const all = rows([blocked]);
   const blockedKey = previewRowKey(all.find((x) => x.status === "BLOCKED")!);
-  const readyKey = previewRowKey(all.find((x) => x.status === "READY")!);
-  const set = resolveGenerationSet(all, { mode: "selected", selectedKeys: [blockedKey, readyKey] });
-  assert.equal(set.included.length, 1, "only the ready selected row is included");
-  assert.equal(previewRowKey(set.included[0]), readyKey);
+  // a non-blocked variant is WARNING (shared product image) — still exportable
+  const exportableKey = previewRowKey(all.find((x) => x.status !== "BLOCKED")!);
+  const set = resolveGenerationSet(all, { mode: "selected", selectedKeys: [blockedKey, exportableKey] });
+  assert.equal(set.included.length, 1, "only the exportable selected row is included");
+  assert.equal(previewRowKey(set.included[0]), exportableKey);
   assert.equal(set.excludedBlocked.length, 1);
 });
 
@@ -214,11 +237,15 @@ test("pre-generation plan reports products / simple / variant / ready / images",
   assert.equal(plan.sellableRows, 4); // 1 simple + 3 variants
   assert.equal(plan.simpleProducts, 1);
   assert.equal(plan.variantRows, 3);
-  assert.equal(plan.ready, 4);
+  // the simple product is READY; the 3 variants are WARNING (shared product image)
+  assert.equal(plan.ready, 1);
+  assert.equal(plan.warnings, 3);
   assert.equal(plan.blocked, 0);
-  assert.equal(plan.rowsIncluded, 4);
+  assert.equal(plan.rowsIncluded, 4); // ready + warning are all exportable
   // images expected = 1 (simple primary) + 1 (simple gallery) + 3 (variant primaries)
   assert.equal(plan.imagesExpected, 5);
+  // the 3 variant rows disclose the shared product image; the simple product does not
+  assert.equal(plan.imagesSharedFromProduct, 3);
 });
 
 test("pre-generation plan groups blocker reasons for excluded rows", () => {
@@ -258,13 +285,15 @@ test("manifest carries counts and provenance and no credentials", () => {
     variantRowCount: 3,
     sellableRowCount: 4,
     imageCount: 5,
-    warningCount: 0,
+    warningCount: 3,
+    imageSharedFromProductCount: 3,
     excludedBlockedCount: 2,
     outputFilename: "talabat-export-2026-08-17T09-00-00Z.zip",
     previewReference: { sellable_row_count: 6 },
   });
   assert.equal(m.destination, "talabat:malikas");
   assert.equal(m.sellable_row_count, 4);
+  assert.equal(m.image_shared_from_product_count, 3);
   assert.equal(m.excluded_blocked_count, 2);
   const json = JSON.stringify(m).toLowerCase();
   for (const secret of ["service_role", "supabase_", "authorization", "bearer ", "password", "secret"]) {

@@ -61,6 +61,18 @@ test("no parent row or parent SKU/image is ever used for a variant", () => {
   assert.equal(/(primaryImageName|variantImageName|additionalImageName)\([^)]*(title|nameEn|nameAr)/.test(pkg), false, "never name an image from a title");
 });
 
+// ── variant image is DISCLOSED, never blocked; MISSING_VARIANT_IMAGE never added ─
+test("a variant sharing the product image is a non-blocking disclosure, never a block", () => {
+  const preview = read(PREVIEW);
+  // the shared-image case is emitted as a WARNING (warn), never as a block
+  assert.ok(/warn\("IMAGE_SHARED_FROM_PRODUCT"/.test(preview), "shared image → warn(), not block()");
+  assert.equal(/block\("IMAGE_SHARED_FROM_PRODUCT"/.test(preview), false, "never blocks on shared image");
+  // the forbidden MISSING_VARIANT_IMAGE concept was never introduced anywhere
+  for (const f of [PREVIEW, PKG, SERVER, XLSX, ROUTE, CONTROLS]) {
+    assert.equal(/MISSING_VARIANT_IMAGE/.test(read(f)), false, `${f} must not introduce MISSING_VARIANT_IMAGE`);
+  }
+});
+
 // ── no blocked row is ever packaged ───────────────────────────────────────────
 test("blocked rows can never enter the package", () => {
   const s = read(PKG);

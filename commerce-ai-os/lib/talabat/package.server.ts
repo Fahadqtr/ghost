@@ -29,6 +29,7 @@ import {
   resolveGenerationSet,
   planRowImages,
   toPackageRow,
+  usesSharedProductImage,
   checkReferentialIntegrity,
   buildManifest,
   sniffImageExtension,
@@ -61,6 +62,7 @@ export interface TalabatPackageSummary {
   variantRowCount: number;
   imageCount: number;
   warningCount: number;
+  imageSharedFromProductCount: number;
   excludedBlockedCount: number;
   excludedNoImageCount: number;
   cappedExcludedCount: number;
@@ -214,6 +216,7 @@ export async function generateTalabatPackage(opts: GeneratePackageOptions): Prom
     const variantRowCount = survivors.filter((s) => s.row.isVariant).length;
     const simpleProductCount = survivors.length - variantRowCount;
     const warningCount = survivors.filter((s) => s.row.status === "WARNING").length;
+    const imageSharedFromProductCount = survivors.filter((s) => usesSharedProductImage(s.row)).length;
     const imageCount = packaged.length;
     const outputFilename = `talabat-export-${fileStamp(now)}.zip`;
 
@@ -226,6 +229,7 @@ export async function generateTalabatPackage(opts: GeneratePackageOptions): Prom
       sellableRowCount: survivors.length,
       imageCount,
       warningCount,
+      imageSharedFromProductCount,
       excludedBlockedCount: set.excludedBlocked.length,
       outputFilename,
       previewReference: {
@@ -257,6 +261,7 @@ export async function generateTalabatPackage(opts: GeneratePackageOptions): Prom
       variantRowCount,
       imageCount,
       warningCount,
+      imageSharedFromProductCount,
       excludedBlockedCount: set.excludedBlocked.length,
       excludedNoImageCount,
       cappedExcludedCount,
@@ -279,6 +284,7 @@ export async function generateTalabatPackage(opts: GeneratePackageOptions): Prom
         variantRowCount: 0,
         imageCount: 0,
         warningCount: 0,
+        imageSharedFromProductCount: 0,
         excludedBlockedCount: set.excludedBlocked.length,
         excludedNoImageCount: 0,
         cappedExcludedCount,
@@ -318,6 +324,7 @@ async function recordAudit(summary: TalabatPackageSummary, status: "done" | "err
         simple_product_count: summary.simpleProductCount,
         image_count: summary.imageCount,
         warning_count: summary.warningCount,
+        image_shared_from_product_count: summary.imageSharedFromProductCount,
         error_count: status === "error" ? 1 : 0,
         output_filename: summary.outputFilename,
         excluded_blocked_count: summary.excludedBlockedCount,
