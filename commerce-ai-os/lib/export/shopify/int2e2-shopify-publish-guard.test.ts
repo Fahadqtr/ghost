@@ -33,7 +33,6 @@ const ROUTE = "app/api/export/shopify/publish/route.ts";
 const COMPONENT = "components/v2/export/ShopifyPreview.tsx";
 const PREVIEW_SERVER = "lib/export/shopify/preview.server.ts";
 const LEGACY_ROUTE = "app/api/export/[channel]/route.ts";
-const EXPORT_BUTTONS = "components/ExportButtons.tsx";
 const MIGRATION = "supabase/export_runs.sql";
 
 // ── reuse the certified preview/plan; no second diff engine ───────────────────
@@ -126,13 +125,12 @@ test("durable export_runs audit is written and tolerates an unmigrated database"
 });
 
 // ── legacy Shopify operator export path is fenced (§19) ───────────────────────
-test("the legacy Shopify export path is fenced", () => {
-  assert.equal(/key: "shopify"/.test(read(EXPORT_BUTTONS)), false, "no Shopify CSV button in the legacy export card");
+test("the legacy Shopify export path is fenced (retired in INT.2F)", () => {
   const legacy = read(LEGACY_ROUTE);
-  assert.ok(/channel === "shopify"[\s\S]*?410/.test(legacy), "legacy [channel] route returns 410 for shopify");
+  // INT.2F retired the Shopify/Snoonu/Rafeeq legacy file exports (410 → Export Center).
+  assert.ok(/shopify:\s*"\/v2\/export\/shopify:malikas"/.test(legacy), "shopify is in the retired→Export Center map");
+  assert.ok(/status: 410/.test(legacy), "retired channels return 410");
   assert.equal(/buildShopifyCsv/.test(legacy), false, "the legacy Shopify CSV branch is removed");
-  // Talabat/Snoonu/Rafeeq file paths are NOT retired in this phase.
-  assert.ok(/buildSnoonuCsv/.test(legacy) && /buildRafeeqAoa/.test(legacy), "other channels untouched (INT.2F)");
 });
 
 // ── stale protection is enforced at execution ─────────────────────────────────

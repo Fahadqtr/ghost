@@ -76,8 +76,10 @@ for (const [file, fns] of Object.entries(READ_ONLY_OPEN)) {
 test("export route: the Talabat branch (persists mappings) requires the writer allow-list", () => {
   const src = read("app/api/export/[channel]/route.ts");
   assert.ok(/requireMalakWriter/.test(src), "export route imports requireMalakWriter");
-  const branch = src.slice(src.indexOf('if (channel === "talabat")'));
-  const nextChannel = branch.indexOf('if (channel ===', 1);
-  const talabatRegion = nextChannel < 0 ? branch : branch.slice(0, nextChannel);
-  assert.ok(/requireMalakWriter\s*\(/.test(talabatRegion), "the Talabat mapping-persist branch gates on the writer allow-list");
+  // INT.2F — only Talabat remains live in this route (others 410). The writer
+  // gate must run BEFORE the mapping-persist call.
+  const gateIdx = src.indexOf("requireMalakWriter(");
+  const persistIdx = src.indexOf("persistTalabatMappings(");
+  assert.ok(gateIdx > -1 && persistIdx > -1, "route gates and persists mappings");
+  assert.ok(gateIdx < persistIdx, "the writer gate runs before mappings are persisted");
 });

@@ -1,12 +1,18 @@
-// /import-export/export — Exports workspace (UX.3A). Wrapper page: it renders the
-// EXISTING export components unchanged (no logic moved into them). The category
-// tally + image/new counts that used to run on the Import/Export hub on every open
-// were MOVED here verbatim, so those reads (including the category scan) only run
-// when this workspace is opened. Auth is the (app) layout login gate, same as before.
+// /import-export/export — Talabat identity/export (legacy, RETAINED).
+//
+// INT.2F retired the legacy export platform. The bulk per-channel file exports
+// (Snoonu masterlist, Rafeeq file, product-image ZIP, and their download
+// surface) are gone — the Export Center (/v2/export) is the sole export system.
+//
+// This page is RETAINED for ONE reason only: TalabatExport is the operator
+// trigger for the legacy Talabat CSV export, whose GET side-effect is the sole
+// writer of channel_variant_mappings (the authoritative first rung of Talabat
+// order-deduction identity). That identity-persistence capability is not yet
+// replaced by the certified Talabat package, so it stays until a dedicated
+// mapping-sync phase re-homes it.
 
 import { createClient } from "@/lib/supabase/server";
 import { getT } from "@/lib/i18n-server";
-import ExportButtons from "@/components/ExportButtons";
 import TalabatExport, { type CatCount } from "@/components/TalabatExport";
 
 export const dynamic = "force-dynamic";
@@ -14,12 +20,6 @@ export const dynamic = "force-dynamic";
 export default async function ImportExportExportsPage() {
   const supabase = createClient();
   const { locale } = await getT();
-
-  // How many products have a downloadable image (drives the batch buttons).
-  const { count: imageCount } = await supabase
-    .from("products")
-    .select("*", { count: "exact", head: true })
-    .not("image_filename", "is", null);
 
   // Category counts for the Talabat category picker.
   const catRows: { main_category: string | null }[] = [];
@@ -47,8 +47,11 @@ export default async function ImportExportExportsPage() {
 
   return (
     <div className="space-y-6">
+      <div className="card border-brand/30 bg-brand-light/40 text-xs text-muted">
+        صُدِّرت المنصات (شوبي فاي · سنونو · رفيق) الآن عبر <span dir="ltr">مركز التصدير (/v2/export)</span>.
+        هذه الصفحة مخصّصة فقط لتصدير طلبات — لتحديث ربط المتغيّرات (channel_variant_mappings).
+      </div>
       <TalabatExport categories={categories} newCount={newCount ?? 0} locale={locale} />
-      <ExportButtons imageCount={imageCount ?? 0} locale={locale} />
     </div>
   );
 }
