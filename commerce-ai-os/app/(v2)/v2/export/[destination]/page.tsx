@@ -14,6 +14,10 @@ import { loadTalabatPreview } from "@/lib/export/talabat/preview.server";
 import { previewGenerationPlan } from "@/lib/export/talabat/package";
 import TalabatPreview, { type TalabatPreviewVM } from "@/components/v2/export/TalabatPreview";
 import TalabatPackageControls from "@/components/v2/export/TalabatPackageControls";
+import { loadSnoonuPreview } from "@/lib/export/snoonu/preview.server";
+import type { SnoonuStorefrontKey } from "@/lib/export/snoonu/preview";
+import SnoonuExport, { type SnoonuRowVM } from "@/components/v2/export/SnoonuExport";
+import { requireMalakWriter } from "@/lib/malak/authz";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +43,11 @@ export default async function ExportDestinationPage({ params }: { params: Params
   // INT.2B — the Talabat adapter renders a REAL sellable-listing preview.
   if (dest.key === "talabat:malikas") {
     return <TalabatDetail dest={dest} />;
+  }
+
+  // INT.2C — Snoonu multi-store adapters (independent storefronts).
+  if (dest.key === "snoonu:malikas" || dest.key === "snoonu:pure_seoul") {
+    return <SnoonuDetail dest={dest} />;
   }
 
   // Foundation placeholders — no real validation/preview/history is produced yet.
@@ -172,6 +181,60 @@ async function TalabatDetail({ dest }: { dest: NonNullable<ReturnType<typeof exp
               publish stays unavailable — this phase produces files only. */}
           <TalabatPackageControls plan={previewGenerationPlan(result.rows, { mode: "ready" })} />
         </>
+      )}
+    </div>
+  );
+}
+
+// INT.2C — Snoonu storefront detail (read-only preview + writer-gated package).
+// Loads ONE storefront's certified preview (storefront-scoped ECL identity) in a
+// single bounded read and hands the flattened + validated rows to the client
+// surface. It generates no file and mutates nothing; the API route (writer-gated)
+// produces the package on demand. Snoonu publish stays unavailable.
+async function SnoonuDetail({ dest }: { dest: NonNullable<ReturnType<typeof exportDestinationByKey>> }) {
+  const key = dest.key as SnoonuStorefrontKey;
+  const unit: "malikas" | "pure-seoul" = key === "snoonu:malikas" ? "malikas" : "pure-seoul";
+  const [result, writer] = await Promise.all([loadSnoonuPreview(key), requireMalakWriter()]);
+  const canWrite = writer.ok;
+
+  return (
+    <div className="space-y-4">
+      <Link href="/v2/export" className="btn-ghost">رجوع لمركز التصدير</Link>
+
+      <div className="space-y-1">
+        <h1 className="font-serif text-2xl font-semibold text-ink">{dest.label}</h1>
+        <p className="text-sm text-muted" dir="ltr">{dest.key}</p>
+      </div>
+
+      {result === null ? (
+        <div className="card text-center text-sm text-muted">
+          تعذّر تحميل المعاينة الآن — الرجاء المحاولة لاحقاً (لا توجد بيانات ملفّقة).
+        </div>
+      ) : (
+        <SnoonuExport
+          vm={{
+            unit,
+            storefrontKey: key,
+            label: dest.label,
+            canWrite,
+            counts: result.counts,
+            rows: result.rows.map<SnoonuRowVM>((r) => ({
+              id: r.internalProductId,
+              sku: r.sku,
+              barcode: r.barcode,
+              title: r.title,
+              category: r.category,
+              price: r.price,
+              spi: r.spi,
+              snoonuStatus: r.snoonuStatus,
+              hasImage: r.hasImage,
+              imageExportName: r.imageExportName,
+              imageCount: r.imageCount,
+              status: r.status,
+              reasons: r.reasons.map((x) => ({ code: x.code, blocking: x.blocking })),
+            })),
+          }}
+        />
       )}
     </div>
   );

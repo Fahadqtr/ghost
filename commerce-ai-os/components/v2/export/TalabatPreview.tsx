@@ -52,6 +52,7 @@ const REASON_LABEL: Record<ExportReasonCode, string> = {
   LIFECYCLE_NOT_ELIGIBLE: "غير مؤهّل (دورة الحياة)",
   IDENTITY_MISSING: "هوية مفقودة",
   IDENTITY_CONFLICT: "تعارض في الهوية",
+  IDENTITY_NEEDS_REVIEW: "ربط بحاجة لمراجعة",
   VARIANT_NOT_READY: "متغيّر غير جاهز",
   UNSUPPORTED: "غير مدعوم",
 };
