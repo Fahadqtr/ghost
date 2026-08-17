@@ -191,6 +191,28 @@ export function isStale(freshFingerprint: string, confirmedFingerprint: string |
   return !confirmedFingerprint || freshFingerprint !== confirmedFingerprint;
 }
 
+/**
+ * Deduplicate publish selections by internalProductId (§6 — never trust the
+ * client to be unique). FIRST occurrence wins, so ordering AND the confirmed
+ * fingerprint stay deterministic; entries without a valid id are dropped. A
+ * request that repeats the same product therefore executes it AT MOST ONCE,
+ * closing the intra-batch duplicate-create vector. Pure — the server orchestrator
+ * runs exactly this before execution.
+ */
+export function dedupeSelections<T extends { internalProductId?: unknown }>(
+  selections: readonly T[] | null | undefined,
+): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const s of Array.isArray(selections) ? selections : []) {
+    const id = s && typeof s.internalProductId === "string" ? s.internalProductId : "";
+    if (id === "" || seen.has(id)) continue;
+    seen.add(id);
+    out.push(s);
+  }
+  return out;
+}
+
 // ── Run aggregation (§13) ────────────────────────────────────────────────────────
 export interface PublishRunCounts {
   productCount: number;

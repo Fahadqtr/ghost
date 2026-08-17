@@ -141,3 +141,12 @@ test("stale confirmations are rejected before any mutation", () => {
   assert.ok(/rowFingerprint\(row, target\)/.test(s), "recomputes the fingerprint from the fresh plan");
   assert.ok(/isStale\(fresh, sel\.expectedFingerprint\)/.test(s), "compares against the confirmed fingerprint");
 });
+
+// ── §6 fix: selections are deduped server-side before execution ───────────────
+test("publish selections are deduped by internalProductId before the execution loop", () => {
+  const s = read(SERVER);
+  const dedupeAt = s.indexOf("dedupeSelections(input.selections");
+  const loopAt = s.indexOf("for (const sel of selections)");
+  assert.ok(dedupeAt > -1, "server dedupes selections (does not trust the client Set)");
+  assert.ok(loopAt > -1 && dedupeAt < loopAt, "dedupe happens before the execution loop");
+});

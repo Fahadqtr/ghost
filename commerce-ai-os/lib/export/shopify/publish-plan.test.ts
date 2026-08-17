@@ -7,6 +7,7 @@ import {
   evaluateRow,
   rowFingerprint,
   isStale,
+  dedupeSelections,
   tallyResult,
   emptyCounts,
   runStatusFromCounts,
@@ -143,6 +144,58 @@ test("run aggregation → SUCCEEDED / PARTIAL / FAILED", () => {
 
   // systemic abort forces FAILED
   assert.equal(runStatusFromCounts(c, { systemicAbort: true }), "FAILED");
+});
+
+// ── INT.2E.2 safety fix: server-side selection dedupe (§6) ────────────────────
+const sel = (id: string, fp: string) => ({ internalProductId: id, expectedFingerprint: fp });
+
+test("dedupe: repeated same internalProductId collapses to exactly one selection", () => {
+  const out = dedupeSelections([sel("p1", "fa"), sel("p1", "fb"), sel("p1", "fc")]);
+  assert.equal(out.length, 1, "a repeated product executes at most once");
+  assert.equal(out[0].internalProductId, "p1");
+  assert.equal(out[0].expectedFingerprint, "fa", "first occurrence wins (deterministic fingerprint)");
+});
+
+test("dedupe: mixed duplicate + unique — each unique product appears once, order preserved", () => {
+  const out = dedupeSelections([sel("a", "1"), sel("b", "2"), sel("a", "9"), sel("c", "3"), sel("b", "8")]);
+  assert.deepEqual(out.map((s) => s.internalProductId), ["a", "b", "c"], "order preserved, first occurrence kept");
+  assert.deepEqual(out.map((s) => s.expectedFingerprint), ["1", "2", "3"], "each keeps its first fingerprint");
+});
+
+test("dedupe: fingerprint/stale behaviour is unaffected by dedupe (first entry's fp flows through)", () => {
+  const out = dedupeSelections([sel("p1", "GOOD"), sel("p1", "STALE-DUP")]);
+  // the surviving selection carries the first fingerprint; stale-checking it still works
+  assert.equal(isStale("GOOD", out[0].expectedFingerprint), false, "matching fresh fp → not stale");
+  assert.equal(isStale("CHANGED", out[0].expectedFingerprint), true, "changed fresh fp → stale");
+});
+
+test("dedupe: result counts cannot double-count a duplicated selection", () => {
+  // The executor tallies once per surviving selection; dedupe guarantees N distinct.
+  const out = dedupeSelections([sel("a", "1"), sel("a", "1"), sel("a", "1"), sel("b", "2")]);
+  assert.equal(out.length, 2, "3×a + 1×b → 2 distinct selections");
+  let counts = emptyCounts();
+  for (const _ of out) counts = tallyResult(counts, "CREATED");
+  assert.equal(counts.created, 2, "created counted per distinct product, never per duplicate");
+  assert.equal(counts.productCount, 2);
+});
+
+test("dedupe: an already-unique batch is unchanged (no regression to normal/retry flows)", () => {
+  const unique = [sel("a", "1"), sel("b", "2"), sel("c", "3")];
+  assert.deepEqual(dedupeSelections(unique), unique, "identity on unique input");
+  // pure + stateless → holds no cross-request memory, so per-request dedupe never
+  // interferes with the fresh-replan retry idempotency (a retry is a new request).
+  assert.deepEqual(dedupeSelections(unique), unique, "second call identical — no retained state");
+});
+
+test("dedupe: drops entries without a valid internalProductId", () => {
+  const out = dedupeSelections([sel("", "x"), { internalProductId: 123 as unknown as string, expectedFingerprint: "y" }, sel("ok", "z")]);
+  assert.deepEqual(out.map((s) => s.internalProductId), ["ok"]);
+});
+
+test("dedupe: null/undefined input is safe", () => {
+  assert.deepEqual(dedupeSelections(null), []);
+  assert.deepEqual(dedupeSelections(undefined), []);
+  assert.deepEqual(dedupeSelections([]), []);
 });
 
 test("supported execution ops are the conservative set (no UPDATE_VARIANT, no BLOCKED)", () => {

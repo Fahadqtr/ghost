@@ -42,6 +42,7 @@ import {
   evaluateRow,
   isStale,
   rowFingerprint,
+  dedupeSelections,
   emptyCounts,
   tallyResult,
   runStatusFromCounts,
@@ -171,7 +172,11 @@ export async function executeShopifyPublish(input: PublishInput): Promise<Publis
   if (!input?.confirm) return fail("لم يتم تأكيد النشر."); // §15 explicit confirmation
   if (!shopifyConfigured()) return fail("شوبي فاي غير مربوط.");
 
-  const selections = (input.selections ?? []).slice(0, MAX_SELECTIONS);
+  // §6 — SERVER-SIDE dedupe by internalProductId (never trust the client to be
+  // unique). First occurrence wins (deterministic order + fingerprint); a request
+  // that repeats a product executes it AT MOST ONCE. Dedupe runs before the cap,
+  // so MAX_SELECTIONS counts distinct products.
+  const selections = dedupeSelections(input.selections ?? []).slice(0, MAX_SELECTIONS);
   if (selections.length === 0) return fail("ما في عناصر محددة.");
 
   // §1/§5 — FRESH re-read + re-plan through the SAME context (never stale client state).
