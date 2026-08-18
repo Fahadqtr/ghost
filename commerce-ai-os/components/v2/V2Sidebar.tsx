@@ -23,6 +23,15 @@ function CatalogIcon() {
   );
 }
 
+function HomeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <path d="M3 11.5 12 4l9 7.5" />
+      <path d="M5.5 10v9.5a1 1 0 0 0 1 1H10V15h4v5.5h3.5a1 1 0 0 0 1-1V10" />
+    </svg>
+  );
+}
+
 function ShopifyIcon() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
@@ -117,6 +126,8 @@ function ExportIcon() {
 
 function NavIcon({ icon }: { icon: V2NavIcon }) {
   switch (icon) {
+    case "home":
+      return <HomeIcon />;
     case "shopify":
       return <ShopifyIcon />;
     case "export":

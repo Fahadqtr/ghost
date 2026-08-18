@@ -547,7 +547,9 @@ test("nav rule: matches whole segments only, and tolerates missing/foreign paths
   // A sibling route that merely shares a prefix must NOT light the catalog link.
   assert.equal(activeNavHref("/v2/catalogue"), null);
   assert.equal(activeNavHref("/v2/catalog-archive"), null);
-  assert.equal(activeNavHref("/v2"), null);
+  // HOME.1 — /v2 is now the Executive Home link (exact-match only; it never
+  // becomes a subtree catch-all, so the foreign paths above still resolve null).
+  assert.equal(activeNavHref("/v2"), "/v2");
   assert.equal(activeNavHref("/dashboard"), null);
   assert.equal(activeNavHref(null), null);
   assert.equal(activeNavHref(undefined), null);
