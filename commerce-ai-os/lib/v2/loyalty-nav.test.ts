@@ -49,8 +49,9 @@ test("the entries use the canonical label and sit under العملاء", () => {
 
 test("the catalog section is unchanged", () => {
   const catalog = V2_NAV_LINKS.filter((l) => l.section === "الكتالوج");
-  assert.deepEqual(catalog.map((l) => l.href), ["/v2/catalog", "/v2/catalog/shopify"]);
-  assert.deepEqual(catalog.map((l) => l.label), ["كتالوج ماليكاس", "كتالوج Shopify"]);
+  // WAVE.1A added «حملة الإطلاق» (/v2/catalog/launch) under the catalog section.
+  assert.deepEqual(catalog.map((l) => l.href), ["/v2/catalog", "/v2/catalog/shopify", "/v2/catalog/launch"]);
+  assert.deepEqual(catalog.map((l) => l.label), ["كتالوج ماليكاس", "كتالوج Shopify", "حملة الإطلاق"]);
   for (const l of catalog) assert.equal(l.external, undefined, "V2 pages are not external");
 });
 

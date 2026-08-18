@@ -47,6 +47,8 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
 
   { href: "/v2/catalog", label: "كتالوج ماليكاس", icon: "catalog", section: "الكتالوج" },
   { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify", section: "الكتالوج" },
+  // WAVE.1A — Launch Campaign Workspace (read-only operational screen).
+  { href: "/v2/catalog/launch", label: "حملة الإطلاق", icon: "operations", section: "الكتالوج" },
 
   // Operations Center (Phase UI.7.2/7.3) — reads lib/operations/* engines.
   // Label matches the page's own H1 «مركز العمليات» (UX.1 discoverability).

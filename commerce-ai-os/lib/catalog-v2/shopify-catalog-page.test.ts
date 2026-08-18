@@ -486,14 +486,15 @@ test("the catalog section contains exactly the Malikas and Shopify catalog links
   // The sidebar now carries a Beauty Rewards section too, so this pins the
   // CATALOG SECTION specifically rather than the whole list.
   const catalog = V2_NAV_LINKS.filter((l) => l.section === "الكتالوج");
+  // WAVE.1A added the read-only «حملة الإطلاق» (/v2/catalog/launch) workspace.
   assert.deepEqual(
     catalog.map((l) => l.href),
-    ["/v2/catalog", "/v2/catalog/shopify"],
-    "exactly two catalog links, in order",
+    ["/v2/catalog", "/v2/catalog/shopify", "/v2/catalog/launch"],
+    "catalog links, in order",
   );
   assert.deepEqual(
     catalog.map((l) => l.label),
-    ["كتالوج ماليكاس", "كتالوج Shopify"],
+    ["كتالوج ماليكاس", "كتالوج Shopify", "حملة الإطلاق"],
   );
   // No sales platform beyond Shopify is introduced yet.
   const serialized = JSON.stringify(V2_NAV_LINKS) + SIDEBAR_SRC;

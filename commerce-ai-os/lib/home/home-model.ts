@@ -384,7 +384,7 @@ function sumKnown(values: readonly Maybe<number>[]): Maybe<number> {
   return nums.reduce((a, b) => a + b, 0);
 }
 
-function buildLaunchReadiness(lr: LaunchReadinessFacts | null): LaunchReadinessVM {
+export function buildLaunchReadiness(lr: LaunchReadinessFacts | null): LaunchReadinessVM {
   if (!lr) {
     return {
       readinessPct: UNKNOWN,
