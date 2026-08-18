@@ -74,6 +74,28 @@ export interface EnrichmentOutput {
   notes: string;
 }
 
+/**
+ * AI.FIX.1 — the exact enrichment output schema, handed to the provider's
+ * structured-output mechanism (Anthropic `output_config.format`, json_schema) so
+ * the model is CONSTRAINED to emit exactly these keys/types instead of free prose.
+ * The pure validator below is kept as defense-in-depth (fail-closed) regardless.
+ */
+export const ENRICHMENT_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    keywords_en: { type: "string" },
+    keywords_ar: { type: "string" },
+    description_en: { type: "string" },
+    description_ar: { type: "string" },
+    insufficient_data: { type: "boolean" },
+    notes: { type: "string" },
+  },
+  required: ["keywords_en", "keywords_ar", "description_en", "description_ar", "insufficient_data", "notes"],
+  additionalProperties: false,
+} as const;
+
+const STRING_FIELDS = ["keywords_en", "keywords_ar", "description_en", "description_ar", "notes"] as const;
+
 const asText = (v: unknown): string => {
   if (typeof v === "string") return v.trim();
   if (Array.isArray(v)) return keywordsToString(v.map((x) => String(x ?? "")));
@@ -81,23 +103,15 @@ const asText = (v: unknown): string => {
 };
 
 /** Extract the first balanced JSON object from raw model text. */
-function extractJson(text: string): unknown {
+export function extractJson(text: string): unknown {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
   try { return JSON.parse(text.slice(start, end + 1)); } catch { return null; }
 }
 
-/**
- * Structurally validate model output. Returns null when malformed (rejected
- * before any preview). Keywords are normalized/deduped here; unrecognized fields
- * are ignored — nothing from the model reaches a column un-validated.
- */
-export function parseEnrichmentOutput(text: unknown): EnrichmentOutput | null {
-  if (typeof text !== "string" || text.trim() === "") return null;
-  const obj = extractJson(text);
-  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
-  const o = obj as Record<string, unknown>;
+/** Normalize a validated object into the canonical EnrichmentOutput. */
+function normalizeOutput(o: Record<string, unknown>): EnrichmentOutput {
   return {
     keywords_en: keywordsToString(normalizeKeywordList(asText(o.keywords_en).split(","))),
     keywords_ar: keywordsToString(normalizeKeywordList(asText(o.keywords_ar).split(","))),
@@ -106,6 +120,45 @@ export function parseEnrichmentOutput(text: unknown): EnrichmentOutput | null {
     insufficient_data: o.insufficient_data === true,
     notes: asText(o.notes),
   };
+}
+
+/** Discriminated parse result — distinguishes unparseable JSON from a wrong shape. */
+export type ParseEnrichmentResult =
+  | { ok: true; output: EnrichmentOutput }
+  | { ok: false; code: "MALFORMED_JSON" | "SCHEMA_MISMATCH" };
+
+/**
+ * AI.FIX.1 — structurally validate model output, distinguishing:
+ *   • MALFORMED_JSON  — no parseable JSON object at all (empty/prose/truncated).
+ *   • SCHEMA_MISMATCH — parseable, but a required key is missing or mistyped.
+ * Fail-closed: only a fully-shaped object yields an EnrichmentOutput. Keyword
+ * fields also accept an array form (normalized here); nothing reaches a column
+ * un-validated.
+ */
+export function parseEnrichmentResult(text: unknown): ParseEnrichmentResult {
+  if (typeof text !== "string" || text.trim() === "") return { ok: false, code: "MALFORMED_JSON" };
+  const obj = extractJson(text);
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return { ok: false, code: "MALFORMED_JSON" };
+  const o = obj as Record<string, unknown>;
+  for (const k of STRING_FIELDS) {
+    if (!(k in o)) return { ok: false, code: "SCHEMA_MISMATCH" };
+    const v = o[k];
+    const isKw = k === "keywords_en" || k === "keywords_ar";
+    if (typeof v !== "string" && !(isKw && Array.isArray(v))) return { ok: false, code: "SCHEMA_MISMATCH" };
+  }
+  if (typeof o.insufficient_data !== "boolean") return { ok: false, code: "SCHEMA_MISMATCH" };
+  return { ok: true, output: normalizeOutput(o) };
+}
+
+/**
+ * Compatibility wrapper: returns the validated output, or null when malformed OR
+ * schema-mismatched (rejected before any preview). Existing callers/tests keep
+ * their null-means-rejected contract; new callers use parseEnrichmentResult to
+ * learn WHY it was rejected.
+ */
+export function parseEnrichmentOutput(text: unknown): EnrichmentOutput | null {
+  const r = parseEnrichmentResult(text);
+  return r.ok ? r.output : null;
 }
 
 /** The suggested value for a specific field from a parsed output. */

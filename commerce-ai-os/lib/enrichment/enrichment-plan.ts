@@ -10,6 +10,7 @@
 import { type EnrichmentField } from "./enrichment-fields.ts";
 import { type Quality } from "./enrichment-classify.ts";
 import { type EnrichmentOutput, suggestionFor } from "./enrichment-prompt.ts";
+import { type FailureCode } from "./enrichment-diagnostics.ts";
 
 export type SuggestionStatus = "READY" | "UNCHANGED" | "NEEDS_REVIEW" | "INSUFFICIENT_DATA" | "FAILED";
 
@@ -26,6 +27,8 @@ export interface Suggestion {
   /** true only for MISSING fields — WEAK requires explicit operator selection. */
   autoEligible: boolean;
   notes: string;
+  /** AI.FIX.1 — the precise failure code when status is FAILED (safe to surface). */
+  failureCode?: FailureCode;
 }
 
 const norm = (v: string | null | undefined): string => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -43,6 +46,8 @@ export interface BuildSuggestionInput {
   currentQuality: Quality;
   /** parsed+validated output, or null when the generation call failed. */
   output: EnrichmentOutput | null;
+  /** AI.FIX.1 — the precise failure code when output is null (optional). */
+  failureCode?: FailureCode;
 }
 
 /** Assemble one suggestion + its status from a validated output. */
@@ -53,7 +58,12 @@ export function buildSuggestion(input: BuildSuggestionInput): Suggestion {
     autoEligible: input.currentQuality === "MISSING",
   };
   if (!input.output) {
-    return { ...base, suggestedValue: "", reason: "generation failed or returned malformed output", status: "FAILED", notes: "" };
+    const code = input.failureCode;
+    return {
+      ...base, suggestedValue: "",
+      reason: code ? `generation failed (${code})` : "generation failed or returned malformed output",
+      status: "FAILED", notes: "", ...(code ? { failureCode: code } : {}),
+    };
   }
   const suggested = norm(suggestionFor(input.output, input.field));
   const notes = input.output.notes ?? "";
