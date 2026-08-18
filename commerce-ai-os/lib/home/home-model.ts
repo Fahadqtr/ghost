@@ -153,9 +153,31 @@ export interface ActivityFact {
   status: Maybe<string>;
 }
 
+export interface ChannelReadyFact {
+  key: string;
+  label: string;
+  ready: Maybe<number>;
+  href: string;
+}
+
+export interface LaunchReadinessFacts {
+  exportReady: Maybe<number>; // certified export-readiness baseline (eligible)
+  blocked: Maybe<number>; // certified export-readiness baseline (blocked)
+  channels: readonly ChannelReadyFact[]; // per-channel READY = certified active-mapping count
+  criticalBlockers: Maybe<number>; // Action Center summary.critical
+  missingPrice: Maybe<number>;
+  missingImage: Maybe<number>;
+  missingCategory: Maybe<number>;
+  variantProblems: Maybe<number>; // certified readiness reason "missing_variants"
+  needsReview: Maybe<number>; // ECL needs_review across channels
+  lifecycleBlocked: Maybe<number>; // OPS.8 lifecycle STOPPED
+  availabilityBlocked: Maybe<number>; // Availability Engine OutOfStock
+}
+
 export interface HomeFacts {
   now: string; // ISO string
   ownerName: string;
+  launchReadiness: LaunchReadinessFacts | null;
   actions: ActionFacts | null;
   lifecycle: LifecycleFacts | null;
   catalog: CatalogFacts | null;
@@ -243,7 +265,21 @@ export interface QuickAction {
   href: string;
 }
 
+export interface LaunchReadinessVM {
+  readinessPct: Maybe<number>;
+  headline: HomeStat[];
+  blockedSummary: HomeStat[];
+  progress: {
+    currentPct: Maybe<number>;
+    targetPct: number;
+    productsRemaining: Maybe<number>;
+    estimatedRemainingWork: Maybe<number>; // deterministic sum of open blocker items
+  };
+  available: boolean;
+}
+
 export interface HomeDashboardModel {
+  launchReadiness: LaunchReadinessVM;
   welcome: WelcomeVM;
   overview: OverviewVM;
   actionCenter: ActionCenterVM;
@@ -328,6 +364,89 @@ const PROVIDER_LABEL: Record<string, { label: string; tone: HomeTone }> = {
   UNAVAILABLE: { label: "غير مهيأ", tone: "bad" },
 };
 
+/** Deep-links to EXISTING pages (no new workflows). */
+const BLOCKER_HREF = {
+  price: "/v2/catalog",
+  image: "/v2/operations/media",
+  category: "/v2/catalog",
+  variants: "/v2/catalog",
+  needs_review: "/v2/export/rafeeq:malikas",
+  lifecycle: "/v2/operations",
+  availability: "/v2/operations/availability-sync",
+} as const;
+
+const channelReadyHref = (key: string): string => `/v2/export/${encodeURIComponent(key)}`;
+
+/** Sum only the numeric (non-UNKNOWN) blocker counts — deterministic, no estimation. */
+function sumKnown(values: readonly Maybe<number>[]): Maybe<number> {
+  const nums = values.filter(isNum);
+  if (nums.length === 0) return UNKNOWN;
+  return nums.reduce((a, b) => a + b, 0);
+}
+
+function buildLaunchReadiness(lr: LaunchReadinessFacts | null): LaunchReadinessVM {
+  if (!lr) {
+    return {
+      readinessPct: UNKNOWN,
+      headline: [],
+      blockedSummary: [],
+      progress: { currentPct: UNKNOWN, targetPct: 100, productsRemaining: UNKNOWN, estimatedRemainingWork: UNKNOWN },
+      available: false,
+    };
+  }
+  const ready = num(lr.exportReady);
+  const blocked = num(lr.blocked);
+  const total = isNum(ready) && isNum(blocked) ? ready + blocked : null;
+  const readinessPct: Maybe<number> = total != null && total > 0 ? Math.round((ready as number) / total * 100) : UNKNOWN;
+
+  const chan = Array.isArray(lr.channels) ? lr.channels : [];
+  const byKey = (k: string) => chan.find((c) => c.key === k);
+  const channelCard = (key: string, label: string): HomeStat => {
+    const c = byKey(key);
+    return { key: `ready_${key}`, label, value: c ? num(c.ready) : UNKNOWN, tone: "good", href: c ? c.href : channelReadyHref(key) };
+  };
+
+  const headline: HomeStat[] = [
+    { key: "readiness_pct", label: "جاهزية الإطلاق ٪", value: readinessPct, tone: readinessPct === UNKNOWN ? "neutral" : (readinessPct >= 90 ? "good" : readinessPct >= 60 ? "warn" : "bad") },
+    { key: "export_ready", label: "جاهز للنشر", value: ready, tone: "good", href: "/v2/export" },
+    { key: "blocked_products", label: "منتجات محظورة", value: blocked, tone: attentionTone(blocked, true), href: "/v2/export" },
+    channelCard("shopify:malikas", "Shopify جاهز"),
+    channelCard("talabat:malikas", "Talabat جاهز"),
+    channelCard("snoonu:malikas", "Snoonu Malikas جاهز"),
+    channelCard("snoonu:pure_seoul", "Snoonu Pure Seoul جاهز"),
+    channelCard("rafeeq:malikas", "Rafeeq جاهز"),
+    { key: "critical_blockers", label: "معوّقات حرجة", value: num(lr.criticalBlockers), tone: attentionTone(num(lr.criticalBlockers), true), href: "/v2/actions" },
+  ];
+
+  const blockedSummary: HomeStat[] = [
+    { key: "missing_price", label: "سعر ناقص", value: num(lr.missingPrice), tone: attentionTone(num(lr.missingPrice), true), href: BLOCKER_HREF.price },
+    { key: "missing_image", label: "صورة ناقصة", value: num(lr.missingImage), tone: attentionTone(num(lr.missingImage), true), href: BLOCKER_HREF.image },
+    { key: "missing_category", label: "تصنيف ناقص", value: num(lr.missingCategory), tone: attentionTone(num(lr.missingCategory)), href: BLOCKER_HREF.category },
+    { key: "variant_problems", label: "مشاكل الخيارات", value: num(lr.variantProblems), tone: attentionTone(num(lr.variantProblems)), href: BLOCKER_HREF.variants },
+    { key: "needs_review", label: "بحاجة مراجعة", value: num(lr.needsReview), tone: attentionTone(num(lr.needsReview)), href: BLOCKER_HREF.needs_review },
+    { key: "lifecycle_blocked", label: "محظور دورة الحياة", value: num(lr.lifecycleBlocked), tone: attentionTone(num(lr.lifecycleBlocked)), href: BLOCKER_HREF.lifecycle },
+    { key: "availability_blocked", label: "محظور التوفّر", value: num(lr.availabilityBlocked), tone: attentionTone(num(lr.availabilityBlocked)), href: BLOCKER_HREF.availability },
+  ];
+
+  const estimatedRemainingWork = sumKnown([
+    lr.missingPrice, lr.missingImage, lr.missingCategory, lr.variantProblems,
+    lr.needsReview, lr.lifecycleBlocked, lr.availabilityBlocked,
+  ]);
+
+  return {
+    readinessPct,
+    headline,
+    blockedSummary,
+    progress: {
+      currentPct: readinessPct,
+      targetPct: 100,
+      productsRemaining: blocked,
+      estimatedRemainingWork,
+    },
+    available: true,
+  };
+}
+
 // ── the composer ───────────────────────────────────────────────────────────────
 
 export function buildHomeDashboard(facts: HomeFacts): HomeDashboardModel {
@@ -340,6 +459,11 @@ export function buildHomeDashboard(facts: HomeFacts): HomeDashboardModel {
     dateLabel: dateLabel(now),
     platformStatus: platformStatus(f.health?.averageScore ?? UNKNOWN),
   };
+
+  // SECTION 0 — Launch Readiness (top KPI). Deterministic; composed from certified
+  // facts only (export-readiness baseline, channel mappings, catalog gaps, the
+  // certified readiness/lifecycle/availability signals). No new rules, no estimation.
+  const launchReadiness = buildLaunchReadiness(f.launchReadiness ?? null);
 
   // SECTION 2 — Today's Overview
   const overview: OverviewVM = {
@@ -471,6 +595,7 @@ export function buildHomeDashboard(facts: HomeFacts): HomeDashboardModel {
   ];
 
   return {
+    launchReadiness,
     welcome,
     overview,
     actionCenter,

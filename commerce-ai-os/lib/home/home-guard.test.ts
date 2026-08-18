@@ -75,6 +75,26 @@ test("recent-activity reader only reads (audit source), never writes", () => {
   assert.ok(/\.select\(/.test(s) && !/\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/.test(s), "select-only");
 });
 
+// ── HOME.2 Launch Readiness composes certified facts only (no new rule/scan) ──
+test("launch readiness composes certified facts only — no new rule, no new scan", () => {
+  const comp = strip(read(COMPOSER));
+  // the composer exposes the section and derives % arithmetically (no rule engine)
+  assert.ok(/buildLaunchReadiness/.test(comp), "composer builds the launch readiness section");
+  assert.ok(/launchReadiness/.test(read(COMPOSER)), "model carries launchReadiness");
+  for (const dup of DUP_LOGIC) assert.equal(dup.test(comp), false, `launch readiness must not recompute (${dup})`);
+  // the certified variant blocker is the readiness engine's own reason code — read,
+  // not recomputed (the assembler counts an existing reason over the existing scan).
+  const asm = read(ASSEMBLER);
+  assert.ok(/missing_variants/.test(asm), "variant problems reuse the certified readiness reason");
+  assert.equal(/computeProductReadiness/.test(strip(asm)), false, "assembler does not recompute readiness");
+  // availability blocker reuses the certified analytics snapshot (Availability Engine)
+  assert.ok(/inventory\?\.outOfStock/.test(asm), "availability blocked reuses the certified out-of-stock signal");
+  // blocked-summary deep-links only to EXISTING pages (no new workflow route minted)
+  for (const href of ["/v2/operations/media", "/v2/catalog", "/v2/export/rafeeq:malikas", "/v2/operations/availability-sync", "/v2/actions", "/v2/operations"]) {
+    assert.ok(read(COMPOSER).includes(href), `launch readiness links to existing page ${href}`);
+  }
+});
+
 // ── the UI is presentational (read-only) ──────────────────────────────────────
 test("home panel is presentational — no data client, writes, secrets or network", () => {
   const s = strip(read(PANEL));

@@ -99,6 +99,39 @@ export default function HomeDashboard({ model }: { model: HomeDashboardModel }) 
         </span>
       </section>
 
+      {/* SECTION 0 — Launch Readiness (top KPI, HOME.2) */}
+      {m.launchReadiness.available ? (
+        <section className="card border-brand/30 bg-gradient-to-l from-brand-light/40 to-white">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-bold text-brand">جاهزية الإطلاق</h2>
+              <div className="flex items-end gap-2">
+                <span className="text-4xl font-extrabold text-ink">
+                  {typeof m.launchReadiness.readinessPct === "number" ? `${m.launchReadiness.readinessPct}%` : UNKNOWN_TEXT}
+                </span>
+                <span className="pb-1 text-xs text-muted">الهدف {m.launchReadiness.progress.targetPct}%</span>
+              </div>
+            </div>
+            <div className="text-end text-xs text-muted">
+              <div>متبقٍّ: <b className="text-ink">{fmt(m.launchReadiness.progress.productsRemaining)}</b> منتج</div>
+              <div>بنود تحتاج معالجة: <b className="text-ink">{fmt(m.launchReadiness.progress.estimatedRemainingWork)}</b></div>
+            </div>
+          </div>
+          {typeof m.launchReadiness.progress.currentPct === "number" ? (
+            <div className="mb-4 h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-brand" style={{ width: `${Math.min(100, Math.max(0, m.launchReadiness.progress.currentPct))}%` }} />
+            </div>
+          ) : null}
+          <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {m.launchReadiness.headline.map((c) => <StatCard key={c.key} stat={c} />)}
+          </div>
+          <h3 className="mb-2 text-xs font-bold text-slate-600">ملخّص المعوّقات (اضغط للانتقال)</h3>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+            {m.launchReadiness.blockedSummary.map((c) => <StatCard key={c.key} stat={c} />)}
+          </div>
+        </section>
+      ) : null}
+
       {/* SECTION 2 — Today's Overview */}
       <section>
         <SectionTitle>نظرة اليوم</SectionTitle>
