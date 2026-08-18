@@ -24,7 +24,6 @@ import {
   applyShopifyPrices,
   applyShopifyContent,
   syncShopifyInventory,
-  pushProductsToShopify,
   listShopifyMissingImages,
   pushShopifyImages,
 } from "@/app/(app)/import-export/shopify-actions";
@@ -77,8 +76,20 @@ export function shopifyAdapter(): ChannelAdapter {
     // Prices — the existing price-push action.
     syncPrices: (idsArr) => applyShopifyPrices(idsArr),
 
-    // Publish = create/move products into the store.
-    publish: (idsArr) => pushProductsToShopify(idsArr),
+    // Publish = create products in the store. RETIRED (INT.2G): the legacy
+    // create path (pushProductsToShopify) bypassed ECL identity / row
+    // fingerprinting / export_runs auditing and is no longer wired here. The sole
+    // Shopify publish boundary is the certified Export Center flow
+    // (/api/export/shopify/publish → lib/export/shopify/publish.server.ts). This
+    // dormant adapter refuses to publish so it can never resurrect the duplicate
+    // boundary; operator publishing goes through /v2/export/shopify:malikas.
+    publish: async () => ({
+      ok: false,
+      error: "Retired — publish via the Export Center (/v2/export/shopify:malikas).",
+      created: 0,
+      skipped: 0,
+      failed: [],
+    }),
 
     // Unpublish = set the matched Shopify products to DRAFT. No prior orchestration
     // existed; this is a thin SKU-match loop over existing admin calls.
