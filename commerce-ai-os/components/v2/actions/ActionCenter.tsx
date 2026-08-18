@@ -31,6 +31,7 @@ const LANE_TILES: { lane: ActionLane; label: string; key: keyof ActionCenterView
 ];
 
 const SOURCE_LABEL: Record<string, string> = {
+  evidence: "الأدلة",
   ops_health: "صحة المنصة",
   analytics: "التحليلات",
   ops_media: "مركز الصور",
@@ -40,6 +41,7 @@ const SOURCE_LABEL: Record<string, string> = {
   availability: "التوفّر",
   barcode: "الباركود",
   ecl: "الربط الخارجي",
+  lifecycle: "دورة الحياة",
 };
 
 export default function ActionCenter({

@@ -43,7 +43,9 @@ export type ActionSource =
   | "barcode"
   | "ecl"
   | "analytics"
-  | "lifecycle";
+  | "lifecycle"
+  /** CAT.1C — canonical CAT.1B evidence projected into the Action Center. */
+  | "evidence";
 
 export type ActionSeverity = "critical" | "warning" | "info";
 export type ActionConfidence = "high" | "medium" | "low";

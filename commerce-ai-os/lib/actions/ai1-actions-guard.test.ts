@@ -88,7 +88,9 @@ test("server assembler is server-only, reuses certified readers via cache, reads
   const raw = read(SERVER);
   assert.ok(/import\s+["']server-only["']/.test(raw), "server is server-only");
   const s = strip(raw);
-  for (const reader of [/loadHealthCenter/, /loadAnalytics/, /loadMediaCenter/, /loadAiCenter/]) {
+  // CAT.1C — the AI needsGeneration projection was retired; the server now reuses
+  // the canonical CAT.1B evidence batch (loadEvidenceActions) as the catalog-quality source.
+  for (const reader of [/loadHealthCenter/, /loadAnalytics/, /loadMediaCenter/, /loadEvidenceActions/]) {
     assert.ok(reader.test(s), `server reuses ${reader}`);
   }
   assert.ok(/\bcache\(/.test(s), "certified reads are request-cached (no repeated scans)");
