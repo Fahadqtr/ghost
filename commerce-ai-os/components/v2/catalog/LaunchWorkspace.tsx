@@ -164,7 +164,12 @@ export default function LaunchWorkspace({ model }: { model: LaunchWorkspaceModel
                     <td className="p-2"><span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${PRIORITY_TONE[r.priority]}`}>{PRIORITY_LABEL[r.priority]}</span></td>
                     <td className="p-2 font-semibold text-slate-500">{r.wave}</td>
                     <td className="p-2">
-                      <Link href={r.href} className="rounded-lg bg-brand px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90">فتح المحرّر ↗</Link>
+                      <div className="flex items-center gap-1.5">
+                        <Link href={r.href} className="rounded-lg bg-brand px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90">فتح المحرّر ↗</Link>
+                        {r.blockerKey === "image" ? (
+                          <Link href={`/v2/operations/media/discovery?productId=${encodeURIComponent(r.id)}`} className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700 hover:bg-sky-100">🔍 Snoonu</Link>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
