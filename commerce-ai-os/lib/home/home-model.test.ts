@@ -10,6 +10,18 @@ function fullFacts(): HomeFacts {
   return {
     now: "2026-08-18T08:30:00.000Z",
     ownerName: "Fahad",
+    launchReadiness: {
+      exportReady: 150, blocked: 50,
+      channels: [
+        { key: "shopify:malikas", label: "Shopify", ready: 120, href: "/v2/export/shopify:malikas" },
+        { key: "talabat:malikas", label: "Talabat", ready: 130, href: "/v2/export/talabat:malikas" },
+        { key: "snoonu:malikas", label: "Snoonu Malikas", ready: 140, href: "/v2/export/snoonu:malikas" },
+        { key: "snoonu:pure_seoul", label: "Snoonu Pure Seoul", ready: 110, href: "/v2/export/snoonu:pure_seoul" },
+        { key: "rafeeq:malikas", label: "Rafeeq", ready: 135, href: "/v2/export/rafeeq:malikas" },
+      ],
+      criticalBlockers: 2, missingPrice: 5, missingImage: 8, missingCategory: 3,
+      variantProblems: 4, needsReview: 2, lifecycleBlocked: 7, availabilityBlocked: 9,
+    },
     actions: { critical: 2, approvalRequired: 5, waiting: 3, completedToday: 0, total: 10, high: 4, medium: 6 },
     lifecycle: { active: 100, draft: 40, stopped: 7, ready: 12 },
     catalog: { total: 200, ready: 150, blocked: 50, needsImage: 8, needsCategory: 3, needsPrice: 1, needsBrand: 9 },
@@ -41,6 +53,61 @@ test("welcome derives greeting, date and platform status from certified health s
   assert.ok(m.welcome.dateLabel.length > 0);
   assert.equal(m.welcome.platformStatus.label, "جيد"); // 82 ⇒ Good
   assert.equal(m.welcome.platformStatus.tone, "good");
+});
+
+test("launch readiness: % = exportReady / (exportReady + blocked), deterministic", () => {
+  const m = buildHomeDashboard(fullFacts());
+  assert.equal(m.launchReadiness.available, true);
+  assert.equal(m.launchReadiness.readinessPct, 75); // 150 / (150+50) = 75%
+  const byKey = Object.fromEntries(m.launchReadiness.headline.map((c) => [c.key, c.value]));
+  assert.equal(byKey.readiness_pct, 75);
+  assert.equal(byKey.export_ready, 150);
+  assert.equal(byKey.blocked_products, 50);
+  assert.equal(byKey.critical_blockers, 2);
+  assert.equal(byKey["ready_shopify:malikas"], 120);
+  assert.equal(byKey["ready_talabat:malikas"], 130);
+  assert.equal(byKey["ready_snoonu:malikas"], 140);
+  assert.equal(byKey["ready_snoonu:pure_seoul"], 110);
+  assert.equal(byKey["ready_rafeeq:malikas"], 135);
+});
+
+test("launch readiness: blocked summary carries exact counts + deep-links to existing pages", () => {
+  const m = buildHomeDashboard(fullFacts());
+  const bs = Object.fromEntries(m.launchReadiness.blockedSummary.map((c) => [c.key, c]));
+  assert.equal(bs.missing_price.value, 5);
+  assert.equal(bs.missing_image.value, 8);
+  assert.equal(bs.missing_category.value, 3);
+  assert.equal(bs.variant_problems.value, 4);
+  assert.equal(bs.needs_review.value, 2);
+  assert.equal(bs.lifecycle_blocked.value, 7);
+  assert.equal(bs.availability_blocked.value, 9);
+  // deep-links point to EXISTING pages (no new workflows)
+  assert.equal(bs.missing_image.href, "/v2/operations/media");
+  assert.equal(bs.missing_category.href, "/v2/catalog");
+  assert.equal(bs.needs_review.href, "/v2/export/rafeeq:malikas");
+  assert.equal(bs.variant_problems.href, "/v2/catalog");
+  assert.equal(bs.availability_blocked.href, "/v2/operations/availability-sync");
+});
+
+test("launch readiness progress: target 100, products remaining = blocked, work = sum of known blockers", () => {
+  const m = buildHomeDashboard(fullFacts());
+  const p = m.launchReadiness.progress;
+  assert.equal(p.targetPct, 100);
+  assert.equal(p.currentPct, 75);
+  assert.equal(p.productsRemaining, 50);
+  // deterministic sum: 5+8+3+4+2+7+9 = 38
+  assert.equal(p.estimatedRemainingWork, 38);
+});
+
+test("launch readiness passes UNKNOWN through (never fabricated) when a source is down", () => {
+  const f = fullFacts();
+  f.launchReadiness = { ...f.launchReadiness!, exportReady: UNKNOWN, blocked: UNKNOWN, availabilityBlocked: UNKNOWN };
+  const m = buildHomeDashboard(f);
+  assert.equal(m.launchReadiness.readinessPct, UNKNOWN);
+  const bs = Object.fromEntries(m.launchReadiness.blockedSummary.map((c) => [c.key, c.value]));
+  assert.equal(bs.availability_blocked, UNKNOWN);
+  // work sum still counts the known blockers only (5+8+3+4+2+7 = 29)
+  assert.equal(m.launchReadiness.progress.estimatedRemainingWork, 29);
 });
 
 test("today's overview maps the four certified counts", () => {
@@ -127,11 +194,15 @@ test("quick actions expose the 7 required entry points", () => {
 test("degraded (all-null) facts never throw and surface UNKNOWN, not fabricated zeros", () => {
   const empty: HomeFacts = {
     now: "2026-08-18T20:00:00.000Z", ownerName: "Fahad",
+    launchReadiness: null,
     actions: null, lifecycle: null, catalog: null, health: null, evidence: null,
     recommendations: null, channels: null, exports: null, ai: null, rewards: null,
     analytics: null, activity: null, generatedAt: null,
   };
   const m = buildHomeDashboard(empty);
+  assert.equal(m.launchReadiness.available, false);
+  assert.equal(m.launchReadiness.readinessPct, UNKNOWN);
+  assert.equal(m.launchReadiness.headline.length, 0);
   assert.equal(m.welcome.platformStatus.label, "غير معروف");
   assert.equal(m.overview.cards.find((c) => c.key === "platform_health")?.value, UNKNOWN);
   assert.equal(m.actionCenter.available, false);

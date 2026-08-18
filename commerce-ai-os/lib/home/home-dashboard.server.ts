@@ -8,6 +8,8 @@ import type {
   HomeFacts,
   Maybe,
   ChannelFacts,
+  ChannelReadyFact,
+  LaunchReadinessFacts,
   ExportRunFact,
   HomeTextStat,
 } from "./home-model.ts";
@@ -79,9 +81,16 @@ const getOperations = cache(async () => {
       if (typeof count === "number") archived = count;
     } catch { archived = 0; }
     const opsCenter = buildOperationsCenter({ kpis: summary.kpis, overview: summary.platformOverview, platformHealth, items });
+    // Certified variant blocker: the readiness engine's "missing_variants" reason
+    // (a product that expects variants but has none). Counted over the SAME scan —
+    // no new scan, no new rule.
+    const variantProblems = (result.data.readiness ?? []).filter(
+      (r) => Array.isArray(r.reasons) && r.reasons.some((x) => x.code === "missing_variants"),
+    ).length;
     return {
       lifecycle: buildLifecycleBreakdown(items, archived),
       channels: opsCenter.channels,
+      variantProblems,
     };
   } catch {
     return null;
@@ -264,9 +273,45 @@ export const loadHomeDashboard = cache(async (now: Date = new Date()): Promise<H
       }
     : null;
 
+  // SECTION 0 — Launch Readiness facts. Composed ENTIRELY from data already
+  // fetched above (export-readiness baseline, ops channels + readiness + lifecycle,
+  // getCeoKpis, action center, availability from the analytics snapshot). No new
+  // loader, no new scan, no new rule.
+  const availabilityBlocked: Maybe<number> =
+    analytics && analytics.inventory?.outOfStock?.status === "available" && analytics.inventory.outOfStock.value != null
+      ? analytics.inventory.outOfStock.value
+      : UNKNOWN;
+  const needsReviewTotal: Maybe<number> = ops
+    ? ops.channels.reduce((n, c) => n + (Number(c.needsReview) || 0), 0)
+    : UNKNOWN;
+  const readyChannels: ChannelReadyFact[] = ops
+    ? ops.channels.map((c) => ({
+        key: c.storefront,
+        label: c.label,
+        ready: numOr(c.mapped),
+        href: `/v2/export/${encodeURIComponent(c.storefront)}`,
+      }))
+    : [];
+  const launchReadinessFacts: LaunchReadinessFacts | null = ops || exportCenter
+    ? {
+        exportReady: eligible,
+        blocked,
+        channels: readyChannels,
+        criticalBlockers: numOr(action?.summary.critical),
+        missingPrice: numOr(ceo?.missingPrice),
+        missingImage: numOr(ceo?.missingImage),
+        missingCategory: numOr(ceo?.missingCategory),
+        variantProblems: ops ? numOr(ops.variantProblems) : UNKNOWN,
+        needsReview: needsReviewTotal,
+        lifecycleBlocked: ops ? numOr(ops.lifecycle.stopped) : UNKNOWN,
+        availabilityBlocked,
+      }
+    : null;
+
   const facts: HomeFacts = {
     now: nowIso,
     ownerName: OWNER_NAME,
+    launchReadiness: launchReadinessFacts,
     actions: actionsFacts,
     lifecycle: lifecycleFacts,
     catalog: catalogFacts,
