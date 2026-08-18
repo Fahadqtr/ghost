@@ -601,9 +601,10 @@ export async function approveSubmission(submissionId: string): Promise<void> {
   const shown = Math.min(nextStamps, STAMPS_REQUIRED);
   const msg =
     shown >= STAMPS_REQUIRED
-      ? `🎉🌷 مبروك ${customer.name}! أكملتِ قلوبك الـ${STAMPS_REQUIRED} في بطاقة مكافآت الجمال — Malika's Universe.\n` +
-        `جمالك استحق المكافأة 💝 افتحي بطاقتك واختاري جائزتك الحين، وبتوصلك على واتساب.`
-      : `❤ تم ختم قلب لكِ يا ${customer.name}! صار عندك ${shown} من ${STAMPS_REQUIRED} في بطاقة مكافآت الجمال. ${STAMPS_REQUIRED - shown} باقية على هديتك 🌷`;
+      ? `🎉🌷 مبروك يا ${customer.name}! أكملتِ الـ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من Malika's Universe 💝\n` +
+        `هديتك جاهزة — افتحي بطاقتك واختاري جائزتك الحين، وبتوصلك على واتساب. شكراً لجمالك وذوقك 🌷`
+      : `❤️ تم ختم قلب لكِ يا ${customer.name}! 🌷\n` +
+        `صار عندك ${shown} من ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من Malika's Universe — باقي ${STAMPS_REQUIRED - shown} على هديتك 💝`;
   try {
     await sendWhatsAppTo(customer.phone, msg);
   } catch {

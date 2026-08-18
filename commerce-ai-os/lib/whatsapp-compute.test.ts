@@ -20,6 +20,25 @@ test("strips +, spaces, dashes and anything non-digit", () => {
   assert.equal(normalizeWaNumber(""), "");
 });
 
+test("prepends Qatar country code to a bare local mobile so Meta can deliver", () => {
+  // the exact case from the rewards card: 8-digit local number, no country code
+  assert.equal(normalizeWaNumber("50090928"), "97450090928");
+  assert.equal(normalizeWaNumber("3012 3456"), "97430123456"); // 3-prefix mobile
+  assert.equal(normalizeWaNumber("6612-3456"), "97466123456");
+  assert.equal(normalizeWaNumber("7712 3456"), "97477123456");
+  // trunk-0 local form → drop the 0, then add the country code
+  assert.equal(normalizeWaNumber("050090928"), "97450090928");
+  // "00" international prefix is stripped
+  assert.equal(normalizeWaNumber("0097450090928"), "97450090928");
+});
+
+test("never double-prefixes a number that already has a country code", () => {
+  assert.equal(normalizeWaNumber("97450090928"), "97450090928"); // already E.164
+  assert.equal(normalizeWaNumber("974"), "974"); // fragment left as-is
+  // a non-Qatar 8-digit-looking number that does not start 3/5/6/7 is untouched
+  assert.equal(normalizeWaNumber("12345678"), "12345678");
+});
+
 // ---- sanitizeTemplateParam ------------------------------------------------------
 
 test("flattens newlines/tabs/multi-spaces (Meta rejects them in params)", () => {
