@@ -19,11 +19,24 @@ import "server-only";
 //     request id) instead of text only, so failures are classifiable;
 //   • disables the SDK's built-in retries (maxRetries: 0) so the single-retry
 //     policy in enrichment-diagnostics is the ONLY retry (no hidden loops).
+//
+// AI.FIX.2 endpoint fix (DIAG.AI.2 root cause):
+//   Structured output (`output_config.format`) is wired in the installed SDK ONLY
+//   through the BETA messages surface, which sends the required
+//   `structured-outputs-2025-12-15` beta header. AI.FIX.1 sent it on the non-beta
+//   `client.messages.create`, which omits that header → the provider rejected the
+//   request (~400) → systematic PROVIDER_ERROR. This calls `client.beta.messages
+//   .create` with that beta so there is ONE deterministic structured-output
+//   contract. Model, budget, schema, validator, retry taxonomy are unchanged.
+//
 // It never returns or logs the API key or any auth header.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { ENRICHMENT_OUTPUT_SCHEMA } from "./enrichment-prompt.ts";
 import { ENRICHMENT_MAX_TOKENS, type ProviderResponse } from "./enrichment-diagnostics.ts";
+
+/** Beta required by the installed SDK to send `output_config.format`. */
+export const STRUCTURED_OUTPUT_BETA = "structured-outputs-2025-12-15";
 
 /** The single method the enrichment pipeline needs: (system,user) → structured response. */
 export interface EnrichmentProvider {
@@ -44,16 +57,18 @@ export function createAnthropicEnrichmentProvider(): EnrichmentProvider {
       if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured");
       // maxRetries: 0 — the enrichment single-retry policy owns retries.
       const client = new Anthropic({ apiKey, maxRetries: 0 });
-      const resp = await client.messages.create({
+      // Structured output goes through the BETA surface + its required beta header.
+      const resp = await client.beta.messages.create({
         model,
         max_tokens: ENRICHMENT_MAX_TOKENS,
         system,
         messages: [{ role: "user", content: [{ type: "text", text: user }] }],
         // Structured output: constrain the model to the exact enrichment schema.
         output_config: { format: { type: "json_schema", schema: ENRICHMENT_OUTPUT_SCHEMA } },
+        betas: [STRUCTURED_OUTPUT_BETA],
       });
       const text = resp.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
         .map((b) => b.text)
         .join("");
       // _request_id is a safe, non-enumerable id the SDK attaches to responses.

@@ -58,6 +58,7 @@ import {
   generateWithRetry,
   type FailureCode,
   type ProviderUsage,
+  type ProviderCategory,
 } from "./enrichment-diagnostics.ts";
 
 const NOT_SIGNED_IN = "غير مسجّل الدخول.";
@@ -236,7 +237,7 @@ export interface GenerateStats {
   /** AI.FIX.1 — how many products used the single safe retry. */
   retried: number;
 }
-/** AI.FIX.1 — safe per-product generation diagnostics (NO secrets, NO raw payloads). */
+/** AI.FIX.1/2 — safe per-product generation diagnostics (NO secrets, NO raw payloads). */
 export interface EnrichmentDiagnostic {
   productId: string;
   model: string;
@@ -246,6 +247,11 @@ export interface EnrichmentDiagnostic {
   failureCode: FailureCode | null;
   retried: boolean;
   requestId: string | null;
+  /** AI.FIX.2 — safe provider-error detail on a thrown failure (else null). */
+  httpStatus: number | null;
+  errorType: string | null;
+  providerCategory: ProviderCategory | null;
+  safeErrorMessage: string | null;
 }
 export interface GenerateResult {
   suggestions: Suggestion[];
@@ -304,6 +310,10 @@ export async function generateEnrichment(opts: GenerateOptions = {}): Promise<Ge
     const output = attempt.outcome.ok ? attempt.outcome.output : null;
     const failureCode = attempt.outcome.ok ? null : attempt.outcome.code;
 
+    // A 200 refusal is a SAFETY_REFUSAL; a thrown error carries its own category.
+    const providerCategory: ProviderCategory | null =
+      attempt.response?.stopReason === "refusal" ? "SAFETY_REFUSAL" : attempt.error?.category ?? null;
+
     const diagnostic: EnrichmentDiagnostic = {
       productId: f.productId,
       model: provider.model,
@@ -312,7 +322,11 @@ export async function generateEnrichment(opts: GenerateOptions = {}): Promise<Ge
       usage: attempt.response?.usage ?? null,
       failureCode,
       retried: attempt.attempts > 1,
-      requestId: attempt.response?.requestId ?? null,
+      requestId: attempt.response?.requestId ?? attempt.error?.requestId ?? null,
+      httpStatus: attempt.error?.status ?? null,
+      errorType: attempt.error?.type ?? null,
+      providerCategory,
+      safeErrorMessage: attempt.error?.message ?? null,
     };
 
     const suggestions = fields.map((field) => {
