@@ -12,7 +12,7 @@ import path from "node:path";
 import {
   buildTalabatExport,
   buildFlattenedName,
-  talabatResultToCsv,
+  TALABAT_HEADERS,
   summarizeTalabatExport,
   planMappingWrite,
   isApprovedForTalabat,
@@ -199,15 +199,17 @@ test("20: no channel_stock is ever produced (module + persistence)", () => {
   assert.ok(!/channel_stock/i.test(JSON.stringify(r)));
 });
 
-test("21: legacy channel exports are retired; only Talabat (mappings) remains (INT.2F)", () => {
+test("21: ALL legacy channel exports are retired — Talabat too (INT.2F.2)", () => {
   const route = read("app/api/export/[channel]/route.ts");
-  // INT.2F — Shopify/Snoonu/Rafeeq legacy file exports are retired (410 → Export Center).
-  assert.equal(/buildShopifyCsv|buildSnoonuCsv|buildRafeeqAoa/.test(route), false, "legacy CSV/AoA builders removed from the route");
+  // INT.2F.2 — the legacy per-channel export route is fully retired: every
+  // channel (incl. talabat) returns 410 → Export Center. Mapping persistence has
+  // been re-homed to the certified package flow, so the route no longer flattens
+  // or persists anything.
+  assert.equal(/buildShopifyCsv|buildSnoonuCsv|buildRafeeqAoa/.test(route), false, "no legacy CSV/AoA builders in the route");
   assert.match(route, /RETIRED/, "route declares the retired channels");
   assert.match(route, /status: 410/, "retired channels return 410");
-  // Talabat is retained solely as the channel_variant_mappings writer.
-  assert.match(route, /buildTalabatExport/, "talabat branch retained");
-  assert.match(route, /syncTalabatMappings/, "talabat branch persists mappings via the INT.2F.1 boundary");
+  assert.match(route, /talabat:\s*"\/v2\/export\/talabat:malikas"/, "talabat is retired to the Export Center");
+  assert.equal(/buildTalabatExport|syncTalabatMappings|talabatResultToCsv/.test(route), false, "no Talabat flatten/persist/CSV remains in the route");
 });
 
 test("22: the export module is pure — no network/Supabase", () => {
@@ -220,13 +222,12 @@ test("22: the export module is pure — no network/Supabase", () => {
 
 // ---- format + summary -------------------------------------------------------
 
-test("CSV has the 10-column header and one data row per valid row", () => {
-  const r = buildTalabatExport([prod()], []);
-  const csv = talabatResultToCsv(r.rows);
-  const lines = csv.trimEnd().split("\r\n");
-  assert.equal(lines[0], "SKU,Barcode,Price (QAR),Discount,Product Name EN,Product Name AR,Category,Description EN,Description AR,New Image Filename");
-  assert.equal(lines.length, 2);
-  assert.ok(lines[1].startsWith("mk100,6291000000017,100,,"));
+test("the certified 10-column Talabat header contract is intact (INT.2F.2: CSV serializer removed)", () => {
+  assert.deepEqual([...TALABAT_HEADERS], [
+    "SKU", "Barcode", "Price (QAR)", "Discount",
+    "Product Name EN", "Product Name AR", "Category",
+    "Description EN", "Description AR", "New Image Filename",
+  ]);
 });
 
 // ---- Review fix 1: explicit Talabat approval ---------------------------------
@@ -351,18 +352,16 @@ test("INV.2E: a variant with UNSET availability inherits the product-level avail
 
 // ---- Review: route wiring (source scan) --------------------------------------
 
-test("R: the route uses explicit approval + exact channel + fail-closed gate", () => {
-  const route = read("app/api/export/[channel]/route.ts");
-  assert.match(route, /isApprovedForTalabat/);
-  assert.ok(!/!==\s*"Not Listed"/.test(route), "must not gate approval by channel_status !== Not Listed");
-  assert.match(route, /platform_status/);
-  assert.match(route, /resolveExactChannelId/);
-  assert.ok(!/chanIds\[0\]/.test(route), "must not pick chanIds[0]");
-  assert.match(route, /decideExportGate/);
-  assert.match(route, /status:\s*gate\.httpStatus/);
-  // INT.2F — legacy per-channel CSV/AoA builders are gone; only the Talabat
-  // mapping-persist path remains.
-  assert.equal(/buildShopifyCsv|buildSnoonuCsv|buildRafeeqAoa/.test(route), false, "legacy CSV/AoA builders removed");
+test("R: the re-homed catalog-sync uses explicit approval + exact channel + fail-closed gate", () => {
+  // INT.2F.2 — the mapping-persist logic moved verbatim from the retired route to
+  // the certified catalog-sync helper. Its safety wiring is preserved.
+  const sync = read("lib/talabat/mapping-sync/catalog-sync.server.ts");
+  assert.match(sync, /isApprovedForTalabat/);
+  assert.ok(!/!==\s*"Not Listed"/.test(sync), "must not gate approval by channel_status !== Not Listed");
+  assert.match(sync, /platform_status/);
+  assert.match(sync, /resolveExactChannelId/);
+  assert.ok(!/chanIds\[0\]/.test(sync), "must not pick chanIds[0]");
+  assert.match(sync, /decideExportGate/);
 });
 
 // ---- Final review: exact channel pricing + redacted errors ------------------
@@ -374,26 +373,22 @@ test("F1: the exact resolver ignores a 'Talabat Archive' sibling (archive never 
   assert.deepEqual(resolveExactChannelId([{ id: "t1", name: "Talabat" }, { id: "t2", name: "Talabat" }], "talabat"), { status: "ambiguous" });
 });
 
-test("F1: route loads price + mappings from the EXACT Talabat channel only", () => {
-  const route = read("app/api/export/[channel]/route.ts");
-  assert.match(route, /channel !== "talabat"/, "generic fuzzy channel_products load is skipped for talabat");
-  assert.match(route, /\.eq\("channel_id", channelRes\.id\)/, "talabat price loads by the exact channel id");
-  assert.match(route, /talabatPrice\[p\.id\]/, "productInputs use the exact-channel price map");
-  assert.ok(!/channel_price:\s*priceOverride/.test(route), "talabat must not use the fuzzy priceOverride");
-  assert.ok(!/\.in\("channel_id", chanIds\)[\s\S]{0,120}channel_price/.test(route), "no fuzzy channel_price load");
+test("F1: catalog-sync loads price + mappings from the EXACT Talabat channel only", () => {
+  const sync = read("lib/talabat/mapping-sync/catalog-sync.server.ts");
+  assert.match(sync, /\.eq\("channel_id", channelRes\.id\)/, "talabat price loads by the exact channel id");
+  assert.match(sync, /talabatPrice\[p\.id as string\]/, "productInputs use the exact-channel price map");
+  assert.ok(!/channel_price:\s*priceOverride/.test(sync), "talabat must not use a fuzzy priceOverride");
+  assert.ok(!/\.in\("channel_id", chanIds\)/.test(sync), "no fuzzy channel_price load");
 });
 
-test("F2: Talabat errors are redacted to a static safe 503 (no raw error / no CSV)", () => {
+test("F2: the retired route is a static 410 (no CSV, no raw error) and catalog-sync never throws", () => {
   const route = read("app/api/export/[channel]/route.ts");
-  assert.match(route, /Talabat export is temporarily unavailable/);
-  const catchIdx = route.lastIndexOf("} catch");
-  assert.ok(catchIdx >= 0);
-  const staticIdx = route.indexOf("Talabat export is temporarily unavailable", catchIdx);
-  assert.ok(staticIdx > catchIdx, "the catch returns the static 503");
-  // INT.2F — no raw error path remains (the route only serves Talabat now).
+  assert.match(route, /status: 410/, "retired route returns 410");
   assert.equal(route.includes("Export failed:"), false, "no raw error is ever surfaced");
-  // The safe 503 body carries no error interpolation.
-  assert.ok(!/Talabat export is temporarily unavailable[^"]*\$\{/.test(route), "static message has no interpolation");
+  assert.equal(/text\/csv|talabatResultToCsv/.test(route), false, "no CSV is ever generated");
+  // The re-homed sync is fail-safe: it returns a safe result on any read/write error.
+  const sync = read("lib/talabat/mapping-sync/catalog-sync.server.ts");
+  assert.match(sync, /catch\s*\{\s*\n?\s*return EMPTY;/, "catalog-sync returns a safe result on error (never throws)");
 });
 
 test("summary reports counts for preview / dry-run", () => {

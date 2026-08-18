@@ -12,7 +12,8 @@ const IMAGES = readFileSync(new URL("./images/page.tsx", import.meta.url), "utf8
 const EXPORTS = readFileSync(new URL("./export/page.tsx", import.meta.url), "utf8");
 
 // INT.2F — ExportButtons was deleted (legacy per-channel export UI retired).
-const HEAVY = ["ExcelImport", "ImageHealth", "ImageUpload", "CatalogImageBySku", "TalabatExport"];
+// TalabatExport was deleted in INT.2F.2 (legacy Talabat CSV UI retired).
+const HEAVY = ["ExcelImport", "ImageHealth", "ImageUpload", "CatalogImageBySku"];
 
 // ── Hub is now a light landing page ─────────────────────────────────────────
 
@@ -63,15 +64,13 @@ test("images workspace renders the three image components unchanged", () => {
   assert.ok(IMAGES.includes("limit(1000)"), "product-list read now lives on the images page");
 });
 
-test("exports workspace renders the retained Talabat export trigger (INT.2F)", () => {
-  for (const c of ["TalabatExport"]) {
-    assert.ok(EXPORTS.includes(`<${c}`), `exports page renders <${c}>`);
-    assert.ok(EXPORTS.includes(`components/${c}`), `exports page imports ${c} from its existing module`);
-  }
-  // the Talabat category scan + new-products count stay here (the image-batch
-  // count left with ExportButtons in INT.2F).
-  assert.ok(EXPORTS.includes("main_category"), "category scan now lives on the exports page");
-  assert.ok(EXPORTS.includes("Imported from Snoonu sync"), "new-products count now lives on the exports page");
+test("exports workspace is retired and redirects to the Export Center (INT.2F.2)", () => {
+  // INT.2F.2 — the legacy Talabat CSV trigger (TalabatExport) is deleted and this
+  // page now permanently redirects to the certified Export Center. The Export
+  // Center is the only operator-facing Talabat export path.
+  assert.equal(/TalabatExport/.test(EXPORTS), false, "no legacy TalabatExport trigger remains");
+  assert.ok(/redirect\(/.test(EXPORTS), "the page redirects");
+  assert.ok(EXPORTS.includes("/v2/export/talabat:malikas"), "redirects to the Export Center Talabat destination");
 });
 
 // ── Nothing deleted / no broken routes ──────────────────────────────────────

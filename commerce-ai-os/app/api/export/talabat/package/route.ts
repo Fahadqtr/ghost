@@ -11,6 +11,7 @@
 
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { generateTalabatPackage, type GeneratePackageError } from "@/lib/talabat/package.server";
+import { syncTalabatMappingsFromCatalog } from "@/lib/talabat/mapping-sync/catalog-sync.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +48,14 @@ export async function POST(req: Request) {
     return new Response(e.message, { status: e.status });
   }
 
+  // INT.2F.2 — re-homed channel_variant_mappings persistence. This is the
+  // side-effect the retired legacy CSV route used to perform: it syncs Talabat
+  // identity mappings over the FULL valid catalog (writer gate already enforced
+  // above). It is best-effort relative to THIS download — a mapping-write hiccup
+  // never deletes the package the operator just generated; the outcome is
+  // surfaced in the X-Talabat-Mapping-* headers instead. Never throws.
+  const mapping = await syncTalabatMappingsFromCatalog(writer.email);
+
   const s = result.summary;
   return new Response(new Uint8Array(result.bytes), {
     status: 200,
@@ -54,6 +63,11 @@ export async function POST(req: Request) {
       "Content-Type": "application/zip",
       "Content-Disposition": `attachment; filename="${result.filename}"`,
       "Cache-Control": "no-store",
+      "X-Talabat-Mapping-Ok": String(mapping.ok),
+      "X-Talabat-Mapping-Channel": mapping.channelStatus,
+      "X-Talabat-Mapping-Inserted": String(mapping.counts?.inserted ?? 0),
+      "X-Talabat-Mapping-Updated": String(mapping.counts?.updated ?? 0),
+      "X-Talabat-Mapping-Failed": String(mapping.counts?.failed ?? 0),
       // Summary surfaced to the client for the post-generation display (§17).
       "X-Talabat-Output-Filename": result.filename,
       "X-Talabat-Sellable-Rows": String(s.sellableRowCount),
