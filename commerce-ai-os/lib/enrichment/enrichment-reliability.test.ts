@@ -115,11 +115,13 @@ test("thrown errors map to TIMEOUT / TRANSPORT_ERROR / PROVIDER_ERROR", () => {
   assert.equal(classifyThrownError({}), "TRANSPORT_ERROR"); // unknown → transport (safe, retryable)
 });
 
-test("errorInfo extracts only {name,status} — never a message/stack/payload", () => {
+test("errorInfo extracts safe fields (name/status/type/requestId/message) — never a stack, secrets redacted", () => {
   const info = errorInfo(Object.assign(new Error("secret sk-ant-xxx in message"), { name: "APIError", status: 429 }));
-  assert.deepEqual(Object.keys(info).sort(), ["name", "status"]);
+  assert.deepEqual(Object.keys(info).sort(), ["message", "name", "requestId", "status", "type"]);
   assert.equal(info.name, "APIError");
   assert.equal(info.status, 429);
+  assert.equal("stack" in info, false, "no stack");
+  assert.equal(/sk-ant-xxx/.test(info.message ?? ""), false, "api key redacted from message");
 });
 
 // ── retry policy ───────────────────────────────────────────────────────────────
