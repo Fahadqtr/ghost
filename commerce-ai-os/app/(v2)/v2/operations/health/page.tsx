@@ -10,6 +10,8 @@
 import { loadHealthCenter } from "@/lib/operations/health/health-center.server";
 import { parseHealthFilters, filterFindings } from "@/lib/operations/health/health-center";
 import PlatformHealthCenter from "@/components/v2/operations/PlatformHealthCenter";
+import { loadCatalogHealthDistribution } from "@/lib/catalog/health/health-distribution.server";
+import CatalogHealthDistribution from "@/components/v2/operations/CatalogHealthDistribution";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +35,15 @@ export default async function PlatformHealthPage({ searchParams }: { searchParam
 
   const findings = filterFindings(view.model.findings, filters);
 
+  // CAT.1A — read-only catalog health distribution (best-effort; a failure
+  // simply omits the panel — it never blocks the page and never writes).
+  let catalogHealth = null;
+  try {
+    catalogHealth = await loadCatalogHealthDistribution();
+  } catch {
+    catalogHealth = null;
+  }
+
   return (
     <div className="space-y-4">
       <header className="space-y-1">
@@ -44,6 +55,7 @@ export default async function PlatformHealthPage({ searchParams }: { searchParam
         </p>
       </header>
       <PlatformHealthCenter model={view.model} findings={findings} filters={filters} degraded={view.degraded} />
+      {catalogHealth ? <CatalogHealthDistribution dist={catalogHealth} /> : null}
     </div>
   );
 }
