@@ -7,7 +7,10 @@
 // Campaign workspace).
 
 import { loadSnoonuDiscovery } from "@/lib/adapters/snoonu/merchant/discovery.server";
+import { loadSnoonuConnectionStatuses } from "@/lib/adapters/snoonu/merchant/session-status.server";
 import SnoonuDiscovery from "@/components/v2/operations/SnoonuDiscovery";
+import SnoonuConnectionManager from "@/components/v2/operations/SnoonuConnectionManager";
+import type { SnoonuSessionStatus } from "@/lib/adapters/snoonu/merchant/session-status";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -23,9 +26,13 @@ function first(v: string | string[] | undefined): string | null {
 
 export default async function SnoonuDiscoveryPage({ searchParams }: { searchParams?: SearchParams }) {
   let view: Awaited<ReturnType<typeof loadSnoonuDiscovery>> | null = null;
+  let statuses: SnoonuSessionStatus[] = [];
   try {
     const params = searchParams ? await searchParams : {};
-    view = await loadSnoonuDiscovery({ productId: first(params.productId), sku: first(params.sku) });
+    [view, statuses] = await Promise.all([
+      loadSnoonuDiscovery({ productId: first(params.productId), sku: first(params.sku) }),
+      loadSnoonuConnectionStatuses().catch(() => []),
+    ]);
   } catch {
     view = null;
   }
@@ -39,6 +46,7 @@ export default async function SnoonuDiscoveryPage({ searchParams }: { searchPara
         </div>
         <Link href="/v2/catalog/launch" className="text-xs font-semibold text-brand hover:underline">حملة الإطلاق →</Link>
       </div>
+      {statuses.length > 0 ? <SnoonuConnectionManager statuses={statuses} /> : null}
       {view === null ? (
         <div className="card border-rose-200 bg-rose-50 text-sm text-rose-700" role="alert">{LOAD_ERROR}</div>
       ) : (
