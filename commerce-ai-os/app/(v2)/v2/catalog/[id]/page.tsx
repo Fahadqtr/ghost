@@ -34,6 +34,9 @@ import { EMPTY_PRODUCT_MEDIA, type ProductMediaState } from "@/lib/products/prod
 import InPageNav from "@/components/v2/InPageNav";
 import LifecyclePanel from "@/components/v2/catalog/LifecyclePanel";
 import { loadProductLifecycle, type ProductLifecycleView } from "@/lib/lifecycle/lifecycle-read.server";
+import { loadCatalogHealth } from "@/lib/catalog/health/health.server";
+import type { CatalogHealth } from "@/lib/catalog/health/health-model";
+import CatalogHealthCard from "@/components/v2/catalog/CatalogHealthCard";
 import { runLifecycleTransition } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -81,6 +84,7 @@ export default async function ProductDetailPage({
   // Product lifecycle view (OPS.8B). Best-effort + isolated: derived read-only
   // (stored lifecycle_state + certified readiness). A failure omits the panel.
   let lifecycle: ProductLifecycleView | null = null;
+  let health: CatalogHealth | null = null;
   // OPS.8C — Action Center deep-links here with ?panel=lifecycle. Validated to the
   // exact literal (never the raw value) so the lifecycle panel is highlighted.
   let highlightLifecycle = false;
@@ -146,6 +150,13 @@ export default async function ProductDetailPage({
         } catch {
           lifecycle = null;
         }
+        // CAT.1A — certified read-only Catalog Health (best-effort; a failure
+        // simply omits the section — it never blocks the page and never writes).
+        try {
+          health = await loadCatalogHealth(validId);
+        } catch {
+          health = null;
+        }
       }
     }
   } catch {
@@ -194,6 +205,7 @@ export default async function ProductDetailPage({
         items={[
           { href: "#details", label: "تفاصيل" },
           { href: "#lifecycle", label: "الحالة" },
+          { href: "#health", label: "الصحة" },
           { href: "#platforms", label: "المنصات" },
           { href: "#tasks", label: "المهام" },
           { href: "#activity", label: "النشاط" },
@@ -213,6 +225,11 @@ export default async function ProductDetailPage({
       {lifecycle ? (
         <section id="lifecycle" className="scroll-mt-28">
           <LifecyclePanel view={lifecycle} action={runLifecycleTransition} highlight={highlightLifecycle} />
+        </section>
+      ) : null}
+      {health ? (
+        <section id="health" className="scroll-mt-28">
+          <CatalogHealthCard health={health} />
         </section>
       ) : null}
       {platformMatrix ? (
