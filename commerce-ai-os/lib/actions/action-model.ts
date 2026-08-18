@@ -45,7 +45,9 @@ export type ActionSource =
   | "analytics"
   | "lifecycle"
   /** CAT.1C — canonical CAT.1B evidence projected into the Action Center. */
-  | "evidence";
+  | "evidence"
+  /** CAT.1D — certified recommendations (evidence-derived) projected in. */
+  | "recommendation";
 
 export type ActionSeverity = "critical" | "warning" | "info";
 export type ActionConfidence = "high" | "medium" | "low";

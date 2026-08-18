@@ -8,6 +8,7 @@ import "server-only";
 // per-product ECL / channel / inventory are UNKNOWN in batch (the per-product
 // page shows the full picture). NO writes, no persistence.
 
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { computeCatalogHealth } from "../health/health-engine.ts";
@@ -36,8 +37,10 @@ export interface EvidenceBatch {
 /**
  * Bounded, read-only catalog evidence batch. Null when unauthenticated or on a
  * read failure. At most MAX_ROWS/PAGE = 5 paged reads. Pure compute per row.
+ * Request-cached (React.cache) so the CAT.1B overview, the CAT.1C evidence
+ * actions, and the CAT.1D recommendation summary share ONE scan per request (§12).
  */
-export async function loadCatalogEvidenceBatch(): Promise<EvidenceBatch | null> {
+export const loadCatalogEvidenceBatch = cache(async (): Promise<EvidenceBatch | null> => {
   if (!(await isSignedIn())) return null;
   const sb = createClient() as unknown as ReadClient;
   const observedAt = new Date().toISOString();
@@ -78,4 +81,4 @@ export async function loadCatalogEvidenceBatch(): Promise<EvidenceBatch | null> 
   });
 
   return { results, labels, scannedProducts: rows.length };
-}
+});

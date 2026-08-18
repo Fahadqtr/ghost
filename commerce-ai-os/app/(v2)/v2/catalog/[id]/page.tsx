@@ -40,6 +40,8 @@ import CatalogHealthCard from "@/components/v2/catalog/CatalogHealthCard";
 import { loadEvidence } from "@/lib/catalog/evidence/evidence.server";
 import type { EvidenceResult } from "@/lib/catalog/evidence/evidence-engine";
 import EvidenceSection from "@/components/v2/catalog/EvidenceSection";
+import { buildRecommendations } from "@/lib/catalog/recommendations/recommendation-engine";
+import RecommendationsPanel from "@/components/v2/catalog/RecommendationsPanel";
 import { runLifecycleTransition } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -242,6 +244,14 @@ export default async function ProductDetailPage({
         <section id="health" className="scroll-mt-28 space-y-4">
           <CatalogHealthCard health={health} />
           {evidence ? <EvidenceSection result={evidence} /> : null}
+          {/* CAT.1D — certified recommendations derived (purely) from the same
+              already-loaded evidence — zero extra reads. Read-only. */}
+          {evidence ? (
+            <RecommendationsPanel
+              recommendations={buildRecommendations(evidence.evidence, evidence.productId)}
+              evidence={evidence.evidence}
+            />
+          ) : null}
         </section>
       ) : null}
       {platformMatrix ? (
