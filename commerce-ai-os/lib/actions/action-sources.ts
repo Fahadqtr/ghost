@@ -4,6 +4,18 @@
 // the shared Action model. It duplicates NO detection logic and runs NO scan of
 // its own — it only re-shapes signals the OPS/BI readers already produced.
 //
+// CAT.1C — the canonical CAT.1B Evidence layer now owns evidence-backed
+// catalog-quality actions (image / description / keywords / barcode / price /
+// mapping / AI). The overlapping legacy projections were RETIRED here to keep a
+// single source per evidence identity (§3/§10):
+//   • Media  → keeps only IMAGE_REPLACE (duplicate images); per-product
+//     IMAGE_REQUIRED is owned by evidence (CAT_IMAGE_PRIMARY).
+//   • Analytics → keeps only inventory rollups (low / out / dead stock); the
+//     catalog-quality counts are owned by evidence.
+//   • AI (needsGeneration) → fully retired; description / keywords / AI-readiness
+//     are owned by evidence (CAT_DESC_* / CAT_KEYWORDS_* / CAT_AI_INSUFFICIENT_FACTS).
+// The catalog-quality projection itself lives in evidence-actions.ts.
+//
 // Runtime-pure: every `@/` import is `import type` (erased by the type-stripping
 // runtime), so this module performs no I/O, holds no clock, and never touches a
 // database. Tests drive it with synthetic reader-shaped inputs.
@@ -14,7 +26,6 @@ import type { LifecycleActionRow } from "./lifecycle-source.server.ts";
 import type { AnalyticsSnapshot, Metric } from "@/lib/analytics/analytics-read";
 import type { HealthCenterModel, HealthFinding, DomainKey } from "@/lib/operations/health/health-center";
 import type { MediaCenterView } from "@/lib/operations/media/media-center.server";
-import type { AiCenterModel } from "@/lib/operations/ai/ai-center";
 
 // ── small pure helpers ────────────────────────────────────────────────────────
 /** Stable, url/id-safe slug of arbitrary text (deterministic — no clock/random). */
@@ -68,33 +79,33 @@ export function actionsFromHealth(model: HealthCenterModel | null | undefined): 
   });
 }
 
-// ── 9. Analytics (BI.1) → catalog-quality + stock actions (catalog-wide) ──────
+// ── 9. Analytics (BI.1) → inventory rollups (catalog-wide) ────────────────────
 function isAvailable(m: Metric<number> | undefined | null): m is Metric<number> & { value: number } {
   return !!m && m.status === "available" && typeof m.value === "number" && m.value > 0;
 }
 
 /**
- * BI.1 catalog-quality + inventory metrics → one catalog-wide Action per non-zero
- * available metric. UNKNOWN metrics (status !== "available") emit nothing — they
- * are honestly absent, never a fabricated zero.
+ * BI.1 inventory metrics → one catalog-wide Action per non-zero available metric.
+ * UNKNOWN metrics (status !== "available") emit nothing — honestly absent, never
+ * a fabricated zero.
+ *
+ * CAT.1C — the catalog-QUALITY rollups (missing image / barcode / description /
+ * keywords / price / mapping / AI) are NO LONGER projected here: those dimensions
+ * are owned per-product by the canonical evidence layer (evidence-actions.ts).
+ * Inventory (low / out / dead stock) has no batch evidence rule — the evidence
+ * batch reads no per-product inventory — so it stays here (a genuinely different,
+ * non-overlapping operational signal).
  */
 export function actionsFromAnalytics(snap: AnalyticsSnapshot | null | undefined): ActionInput[] {
   if (!snap || typeof snap !== "object") return [];
   const out: ActionInput[] = [];
-  const cq = snap.catalogQuality;
   const inv = snap.inventory;
 
-  const catalogWide = (
-    type: ActionType,
-    metric: Metric<number> | undefined,
-    title: string,
-    verb: string,
-    scope: "catalog" | "inventory",
-  ) => {
+  const catalogWide = (type: ActionType, metric: Metric<number> | undefined, title: string, verb: string) => {
     if (!isAvailable(metric)) return;
     const n = metric.value;
     out.push({
-      id: `${type}:analytics:${scope}`,
+      id: `${type}:analytics:inventory`,
       type,
       source: "analytics",
       confidence: "high",
@@ -109,53 +120,27 @@ export function actionsFromAnalytics(snap: AnalyticsSnapshot | null | undefined)
     });
   };
 
-  if (cq) {
-    catalogWide("IMAGE_REQUIRED", cq.missingImages, "صور ناقصة في الكتالوج", "منتج بدون صورة", "catalog");
-    catalogWide("BARCODE_REQUIRED", cq.missingBarcode, "باركود ناقص", "منتج بدون باركود", "catalog");
-    catalogWide("DESCRIPTION_UPDATE", cq.missingDescription, "أوصاف ناقصة", "منتج بدون وصف", "catalog");
-    catalogWide("KEYWORDS_UPDATE", cq.missingKeywords, "كلمات مفتاحية ناقصة", "منتج بدون كلمات مفتاحية", "catalog");
-    catalogWide("PRICE_REVIEW", cq.missingPrice, "أسعار ناقصة", "منتج بدون سعر", "catalog");
-    catalogWide("MAPPING_REVIEW", cq.needsMapping, "بحاجة لمراجعة الربط", "عنصر بحاجة لمراجعة الربط", "catalog");
-    catalogWide("AI_REVIEW", cq.needsAi, "بحاجة لمراجعة الذكاء الاصطناعي", "منتج بحاجة للإثراء", "catalog");
-  }
   if (inv) {
-    catalogWide("LOW_STOCK", inv.lowStock, "مخزون منخفض", "منتج بمخزون منخفض", "inventory");
-    catalogWide("OUT_OF_STOCK", inv.outOfStock, "نفد المخزون", "منتج نفد مخزونه", "inventory");
-    catalogWide("ARCHIVE_CANDIDATE", inv.deadStock, "مخزون راكد — مرشّح للأرشفة", "منتج راكد", "inventory");
+    catalogWide("LOW_STOCK", inv.lowStock, "مخزون منخفض", "منتج بمخزون منخفض");
+    catalogWide("OUT_OF_STOCK", inv.outOfStock, "نفد المخزون", "منتج نفد مخزونه");
+    catalogWide("ARCHIVE_CANDIDATE", inv.deadStock, "مخزون راكد — مرشّح للأرشفة", "منتج راكد");
   }
   return out;
 }
 
-// ── 1(b). OPS Media → per-product IMAGE_REQUIRED + IMAGE_REPLACE ───────────────
+// ── 1(b). OPS Media → IMAGE_REPLACE (duplicate images) ────────────────────────
 /**
- * Media Center's already-computed queues: `missing[]` (products with no image) →
- * IMAGE_REQUIRED per product; `duplicates[]` (cross-product image reuse) →
- * IMAGE_REPLACE per group. No image scanning happens here.
+ * Media Center's `duplicates[]` (cross-product image reuse) → IMAGE_REPLACE per
+ * group. No image scanning happens here.
+ *
+ * CAT.1C — per-product IMAGE_REQUIRED (missing primary image) is NO LONGER
+ * projected here: it is owned by the canonical evidence rule CAT_IMAGE_PRIMARY
+ * (evidence-actions.ts), so one evidence identity yields exactly one action.
+ * Duplicate-image detection has no evidence rule, so it stays here (unique event).
  */
 export function actionsFromMedia(view: MediaCenterView | null | undefined): ActionInput[] {
   if (!view || typeof view !== "object") return [];
   const out: ActionInput[] = [];
-
-  for (const item of Array.isArray(view.missing) ? view.missing : []) {
-    const label = item.name ?? item.sku ?? item.productId;
-    out.push({
-      id: `IMAGE_REQUIRED:ops_media:${item.productId}`,
-      type: "IMAGE_REQUIRED",
-      source: "ops_media",
-      confidence: "high",
-      title: label,
-      reason: "المنتج بدون صورة أساسية",
-      evidence: [
-        ...(item.sku ? [{ label: "SKU", value: item.sku }] : []),
-        ...(item.category ? [{ label: "الفئة", value: item.category }] : []),
-      ],
-      currentState: "بدون صورة",
-      suggestedState: item.suggestedAction === "RECOVER_SNOONU" ? "استرجاع من سنونو" : "رفع صورة",
-      entityId: item.productId,
-      entityLabel: label,
-      workflowHref: "/v2/operations/media",
-    });
-  }
 
   for (const group of Array.isArray(view.duplicates) ? view.duplicates : []) {
     const ids = Array.isArray(group.productIds) ? group.productIds : [];
@@ -178,41 +163,13 @@ export function actionsFromMedia(view: MediaCenterView | null | undefined): Acti
   return out;
 }
 
-// ── 4. OPS AI → per-product DESCRIPTION_UPDATE / KEYWORDS_UPDATE / AI_REVIEW ───
-/**
- * AI Center's `needsGeneration[]` queue → one Action per row, typed by the field
- * kind (keywords / description) and otherwise AI_REVIEW. Confidence follows the
- * reader's own suggested action (`generate` is a clear signal → high).
- */
-export function actionsFromAi(model: AiCenterModel | null | undefined): ActionInput[] {
-  const rows = model && Array.isArray(model.needsGeneration) ? model.needsGeneration : [];
-  return rows.map((row) => {
-    const field = typeof row.field === "string" ? row.field : "";
-    const type: ActionType = field.startsWith("keywords")
-      ? "KEYWORDS_UPDATE"
-      : field.startsWith("description")
-        ? "DESCRIPTION_UPDATE"
-        : "AI_REVIEW";
-    const label = row.name ?? row.sku ?? row.productId;
-    return {
-      id: `${type}:ops_ai:${row.key}`,
-      type,
-      source: "ops_ai",
-      confidence: row.action === "generate" ? "high" : "medium",
-      title: label,
-      reason: row.reason,
-      evidence: [
-        ...(row.field ? [{ label: "الحقل", value: row.field }] : []),
-        ...(row.currentQuality ? [{ label: "الجودة الحالية", value: String(row.currentQuality) }] : []),
-      ],
-      currentState: row.currentQuality ? String(row.currentQuality) : null,
-      suggestedState: row.action === "generate" ? "توليد مقترح" : "مراجعة المقترح",
-      entityId: row.productId || null,
-      entityLabel: label,
-      workflowHref: "/v2/operations/ai",
-    };
-  });
-}
+// ── 4. OPS AI → RETIRED (CAT.1C) ──────────────────────────────────────────────
+// The AI Center `needsGeneration[]` projection (DESCRIPTION_UPDATE /
+// KEYWORDS_UPDATE / AI_REVIEW) was retired: those catalog-quality dimensions are
+// owned per-product by the canonical evidence layer (CAT_DESC_* / CAT_KEYWORDS_* /
+// CAT_AI_INSUFFICIENT_FACTS in evidence-actions.ts), so one evidence identity
+// yields exactly one action. The AI Center remains the resolver workflow the
+// projected AI_REVIEW actions deep-link into.
 
 // ── OPS.8C. Lifecycle → per-product READY_FOR_ACTIVATION ──────────────────────
 /**
