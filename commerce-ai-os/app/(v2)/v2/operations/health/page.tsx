@@ -12,6 +12,8 @@ import { parseHealthFilters, filterFindings } from "@/lib/operations/health/heal
 import PlatformHealthCenter from "@/components/v2/operations/PlatformHealthCenter";
 import { loadCatalogHealthDistribution } from "@/lib/catalog/health/health-distribution.server";
 import CatalogHealthDistribution from "@/components/v2/operations/CatalogHealthDistribution";
+import { loadEvidenceOverview } from "@/lib/catalog/evidence/evidence-overview.server";
+import EvidenceOverview from "@/components/v2/operations/EvidenceOverview";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +46,14 @@ export default async function PlatformHealthPage({ searchParams }: { searchParam
     catalogHealth = null;
   }
 
+  // CAT.1B — read-only unified evidence overview (best-effort; never blocks/writes).
+  let evidenceOverview = null;
+  try {
+    evidenceOverview = await loadEvidenceOverview();
+  } catch {
+    evidenceOverview = null;
+  }
+
   return (
     <div className="space-y-4">
       <header className="space-y-1">
@@ -56,6 +66,7 @@ export default async function PlatformHealthPage({ searchParams }: { searchParam
       </header>
       <PlatformHealthCenter model={view.model} findings={findings} filters={filters} degraded={view.degraded} />
       {catalogHealth ? <CatalogHealthDistribution dist={catalogHealth} /> : null}
+      {evidenceOverview ? <EvidenceOverview overview={evidenceOverview} /> : null}
     </div>
   );
 }

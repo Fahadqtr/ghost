@@ -37,6 +37,9 @@ import { loadProductLifecycle, type ProductLifecycleView } from "@/lib/lifecycle
 import { loadCatalogHealth } from "@/lib/catalog/health/health.server";
 import type { CatalogHealth } from "@/lib/catalog/health/health-model";
 import CatalogHealthCard from "@/components/v2/catalog/CatalogHealthCard";
+import { loadEvidence } from "@/lib/catalog/evidence/evidence.server";
+import type { EvidenceResult } from "@/lib/catalog/evidence/evidence-engine";
+import EvidenceSection from "@/components/v2/catalog/EvidenceSection";
 import { runLifecycleTransition } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -85,6 +88,7 @@ export default async function ProductDetailPage({
   // (stored lifecycle_state + certified readiness). A failure omits the panel.
   let lifecycle: ProductLifecycleView | null = null;
   let health: CatalogHealth | null = null;
+  let evidence: EvidenceResult | null = null;
   // OPS.8C — Action Center deep-links here with ?panel=lifecycle. Validated to the
   // exact literal (never the raw value) so the lifecycle panel is highlighted.
   let highlightLifecycle = false;
@@ -157,6 +161,13 @@ export default async function ProductDetailPage({
         } catch {
           health = null;
         }
+        // CAT.1B — unified read-only Evidence (best-effort; projected from the
+        // certified health rules; never blocks the page and never writes).
+        try {
+          evidence = await loadEvidence(validId);
+        } catch {
+          evidence = null;
+        }
       }
     }
   } catch {
@@ -228,8 +239,9 @@ export default async function ProductDetailPage({
         </section>
       ) : null}
       {health ? (
-        <section id="health" className="scroll-mt-28">
+        <section id="health" className="scroll-mt-28 space-y-4">
           <CatalogHealthCard health={health} />
+          {evidence ? <EvidenceSection result={evidence} /> : null}
         </section>
       ) : null}
       {platformMatrix ? (

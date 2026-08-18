@@ -52,26 +52,10 @@ export default function CatalogHealthCard({ health }: { health: CatalogHealth })
         ))}
       </div>
 
-      {/* Evidence — never an unexplained score */}
-      {health.evidence.length > 0 ? (
-        <div className="space-y-1">
-          <h4 className="text-xs font-semibold text-muted">الأدلة</h4>
-          <ul className="space-y-1">
-            {health.evidence.map((e) => (
-              <li key={e.id} className="flex items-start gap-2 text-xs">
-                <span className={`mt-0.5 rounded border px-1.5 py-0.5 font-semibold ${STATUS_TONE[e.status]}`}>{e.status}</span>
-                <span className="text-ink">
-                  <span dir="ltr">{e.evidence}</span>
-                  {e.recommendation ? <span className="text-muted"> — {e.recommendation}</span> : null}
-                  <span className="text-muted"> (−{e.scoreImpact})</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : (
-        <p className="text-xs text-emerald-700">لا توجد ملاحظات — كل المجالات سليمة.</p>
-      )}
+      {/* CAT.1B — explanations live in the unified Evidence section below; the
+          card shows the score, grade, and domain breakdown only (no duplicated
+          explanation logic). */}
+      <p className="text-xs text-muted">التفاصيل والأدلة في قسم «الأدلة» أدناه.</p>
     </div>
   );
 }
