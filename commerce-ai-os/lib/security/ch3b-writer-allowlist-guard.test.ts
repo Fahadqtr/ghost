@@ -73,15 +73,14 @@ for (const [file, fns] of Object.entries(READ_ONLY_OPEN)) {
   });
 }
 
-test("export route: the Talabat branch (persists mappings) requires the writer allow-list", () => {
-  const src = read("app/api/export/[channel]/route.ts");
-  assert.ok(/requireMalakWriter/.test(src), "export route imports requireMalakWriter");
-  // INT.2F — only Talabat remains live in this route (others 410). The writer
-  // gate must run BEFORE the mapping-persist call.
-  // INT.2F.1 — persistence delegates to the mapping-sync boundary; the gate must
-  // still run BEFORE the delegation.
+test("Talabat package route: mapping persistence requires the writer allow-list", () => {
+  // INT.2F.2 — the legacy CSV route is fully retired (410); channel_variant_mappings
+  // persistence is re-homed to the certified package route, which enforces the
+  // writer gate BEFORE triggering the catalog mapping sync.
+  const src = read("app/api/export/talabat/package/route.ts");
+  assert.ok(/requireMalakWriter/.test(src), "package route imports requireMalakWriter");
   const gateIdx = src.indexOf("requireMalakWriter(");
-  const persistIdx = src.indexOf("syncTalabatMappings(");
-  assert.ok(gateIdx > -1 && persistIdx > -1, "route gates and delegates mapping persistence");
-  assert.ok(gateIdx < persistIdx, "the writer gate runs before mappings are persisted");
+  const syncIdx = src.indexOf("syncTalabatMappingsFromCatalog(");
+  assert.ok(gateIdx > -1 && syncIdx > -1, "route gates and triggers mapping persistence");
+  assert.ok(gateIdx < syncIdx, "the writer gate runs before mappings are persisted");
 });

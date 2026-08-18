@@ -330,23 +330,15 @@ function dedupe(
 
 // ---- CSV (10-column Talabat format) -----------------------------------------
 
+// The 10 certified Talabat sheet columns. RETAINED — the INT.2B.2 XLSX package
+// (lib/export/talabat/package.ts) and talabat-actions build the sheet from these.
+// (INT.2F.2 removed the dead CSV serializer talabatResultToCsv; the certified
+// package is the sole Talabat export output.)
 export const TALABAT_HEADERS = [
   "SKU", "Barcode", "Price (QAR)", "Discount",
   "Product Name EN", "Product Name AR", "Category",
   "Description EN", "Description AR", "New Image Filename",
 ] as const;
-
-const csvCell = (v: string): string => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-
-/** Serialize valid rows to the 10-column CSV (CRLF; caller prepends any BOM). */
-export function talabatResultToCsv(rows: TalabatExportRow[]): string {
-  const line = (cells: readonly string[]) => cells.map(csvCell).join(",");
-  const out = [line(TALABAT_HEADERS)];
-  for (const r of rows) {
-    out.push(line([r.sku, r.barcode, r.priceQar, r.discount, r.nameEn, r.nameAr, r.category, r.descEn, r.descAr, r.imageFilename]));
-  }
-  return out.join("\r\n") + "\r\n";
-}
 
 // ---- Preview / dry-run summary ----------------------------------------------
 

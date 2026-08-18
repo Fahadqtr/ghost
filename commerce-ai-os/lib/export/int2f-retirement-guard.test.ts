@@ -21,30 +21,37 @@ const EXPORTERS = "lib/exporters.ts";
 const SHOPIFY_SYNC = "components/ShopifySync.tsx";
 const EXPORT_PAGE = "app/(app)/import-export/export/page.tsx";
 
-// ── legacy per-channel exports retired → 410 → Export Center ───────────────────
-test("legacy Shopify/Snoonu/Rafeeq channel exports are retired (410 → Export Center)", () => {
+// ── ALL legacy per-channel exports retired → 410 → Export Center (INT.2F.2) ────
+test("legacy Shopify/Snoonu/Rafeeq AND Talabat channel exports are retired (410 → Export Center)", () => {
   const r = read(LEGACY_ROUTE);
-  for (const dest of ["/v2/export/shopify:malikas", "/v2/export/snoonu:malikas", "/v2/export/rafeeq:malikas"]) {
+  for (const dest of ["/v2/export/shopify:malikas", "/v2/export/snoonu:malikas", "/v2/export/rafeeq:malikas", "/v2/export/talabat:malikas"]) {
     assert.ok(r.includes(dest), `retired map points to ${dest}`);
   }
   assert.ok(/status: 410/.test(r), "retired channels return 410");
-  assert.equal(/buildShopifyCsv|buildSnoonuCsv|buildRafeeqAoa|buildRafeeqCsv/.test(r), false, "no legacy CSV/AoA builders in the route");
+  assert.equal(/buildShopifyCsv|buildSnoonuCsv|buildRafeeqAoa|buildRafeeqCsv|buildTalabatExport|talabatResultToCsv/.test(r), false, "no legacy CSV/AoA builders in the route");
 });
 
-// ── Talabat branch retained solely as the channel_variant_mappings writer ─────
-test("the Talabat legacy branch is retained as the mappings writer (unreplaced capability)", () => {
+// ── Talabat CSV branch FULLY retired; mapping persistence re-homed (INT.2F.2) ──
+test("the Talabat CSV branch is retired and channel_variant_mappings persistence is re-homed", () => {
   const r = read(LEGACY_ROUTE);
-  assert.ok(/channel !== "talabat"/.test(r), "only Talabat proceeds");
-  assert.ok(/syncTalabatMappings\(/.test(r), "still persists channel_variant_mappings (via the INT.2F.1 boundary)");
-  assert.ok(/requireMalakWriter\(\)/.test(r), "writer-gated");
+  // The route no longer flattens, gates, or persists anything for Talabat.
+  assert.equal(/syncTalabatMappings|persistTalabatMappings|buildTalabatExport/.test(r), false, "no mapping persistence remains in the retired route");
+  // Mapping persistence now lives in the certified catalog-sync helper …
+  const sync = read("lib/talabat/mapping-sync/catalog-sync.server.ts");
+  assert.ok(/import "server-only"/.test(sync), "catalog-sync is server-only");
+  assert.ok(/syncTalabatMappings\(/.test(sync), "persists via the INT.2F.1 boundary");
+  // … triggered by the writer-gated certified package route.
+  const pkg = read("app/api/export/talabat/package/route.ts");
+  assert.ok(/requireMalakWriter\(\)/.test(pkg) && /syncTalabatMappingsFromCatalog\(/.test(pkg), "package route is writer-gated and triggers the sync");
 });
 
-// ── no legacy identity columns / no fuzzy product matching in the retired path ─
-test("the retired export flow reads no legacy identity columns", () => {
+// ── no legacy identity columns / no fuzzy product matching in the re-homed path ─
+test("the re-homed mapping flow reads no legacy identity columns and resolves the exact channel", () => {
   const r = read(LEGACY_ROUTE);
-  assert.equal(/snoonu_id|rafeeq_product_id|pure_seoul_id/.test(r), false, "no legacy id columns in the route");
-  // Talabat resolves its EXACT channel (certified) — not a product fuzzy match.
-  assert.ok(/resolveExactChannelId\(/.test(r), "exact channel resolution retained");
+  assert.equal(/snoonu_id|rafeeq_product_id|pure_seoul_id/.test(r), false, "no legacy id columns in the retired route");
+  const sync = read("lib/talabat/mapping-sync/catalog-sync.server.ts");
+  assert.equal(/snoonu_id|rafeeq_product_id|pure_seoul_id/.test(sync), false, "no legacy id columns in catalog-sync");
+  assert.ok(/resolveExactChannelId\(/.test(sync), "exact channel resolution retained (never a fuzzy sibling)");
 });
 
 // ── lib/exporters.ts is template-only (legacy builders + identity removed) ─────

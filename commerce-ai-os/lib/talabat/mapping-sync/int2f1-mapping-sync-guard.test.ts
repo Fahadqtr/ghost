@@ -18,7 +18,10 @@ const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
 const BOUNDARY = "lib/talabat/mapping-sync/mapping-sync.server.ts";
-const ROUTE = "app/api/export/[channel]/route.ts";
+// INT.2F.2 — mapping persistence was re-homed off the retired CSV route into the
+// certified catalog-sync helper, triggered by the writer-gated package route.
+const CATALOG_SYNC = "lib/talabat/mapping-sync/catalog-sync.server.ts";
+const PACKAGE_ROUTE = "app/api/export/talabat/package/route.ts";
 const WRITER = "lib/talabat/persist-mappings.ts";
 
 test("the boundary is server-only, audited, and delegates to the canonical writer", () => {
@@ -30,25 +33,34 @@ test("the boundary is server-only, audited, and delegates to the canonical write
   assert.equal(/\.from\(["']channel_variant_mappings["']\)/.test(b), false, "no direct table write in the boundary");
 });
 
-test("the legacy route delegates to the boundary and not to the low-level writer", () => {
-  const r = read(ROUTE);
-  assert.ok(/syncTalabatMappings\(/.test(r), "route calls the boundary");
-  assert.equal(/persistTalabatMappings\(/.test(r), false, "route no longer calls the low-level writer directly");
-  assert.equal(/from "@\/lib\/talabat\/persist-mappings"/.test(r), false, "route no longer imports the low-level writer");
+test("catalog-sync delegates to the boundary and not to the low-level writer", () => {
+  const s = read(CATALOG_SYNC);
+  assert.ok(/import "server-only"/.test(s), "catalog-sync is server-only");
+  assert.ok(/syncTalabatMappings\(/.test(s), "calls the boundary");
+  assert.equal(/persistTalabatMappings\(/.test(s), false, "does not call the low-level writer directly");
+  assert.equal(/from ["']@\/lib\/talabat\/persist-mappings["']/.test(s), false, "does not import the low-level writer");
 });
 
-test("the route owns the writer gate BEFORE delegating (fail-closed unchanged)", () => {
-  const r = read(ROUTE);
+test("the writer gate runs BEFORE the mapping delegation (fail-closed unchanged)", () => {
+  // The package route enforces the writer gate, then invokes catalog-sync.
+  const r = read(PACKAGE_ROUTE);
   const gateIdx = r.indexOf("requireMalakWriter(");
-  const syncIdx = r.indexOf("syncTalabatMappings(");
-  assert.ok(gateIdx > -1 && syncIdx > -1, "route gates and delegates");
-  assert.ok(gateIdx < syncIdx, "writer gate runs before the mapping delegation");
-  // the boundary receives the verified actor (writer email) as its last argument
-  assert.ok(/writer\.email\s*\)/.test(r), "verified actor (writer.email) forwarded to the boundary");
+  const syncIdx = r.indexOf("syncTalabatMappingsFromCatalog(");
+  assert.ok(gateIdx > -1 && syncIdx > -1, "package route gates and triggers the sync");
+  assert.ok(gateIdx < syncIdx, "writer gate runs before the mapping sync");
+  // the verified actor (writer email) is forwarded into the sync
+  assert.ok(/syncTalabatMappingsFromCatalog\(writer\.email\)/.test(r), "verified actor forwarded");
+  // catalog-sync forwards the actor into the audited boundary
+  assert.ok(/,\s*actor\)/.test(read(CATALOG_SYNC)), "actor threaded to the boundary");
+});
+
+test("the retired CSV route no longer persists mappings", () => {
+  const r = read("app/api/export/[channel]/route.ts");
+  assert.equal(/syncTalabatMappings|persistTalabatMappings/.test(r), false, "no mapping persistence remains in the retired route");
 });
 
 test("no legacy identity columns / fuzzy matching are introduced", () => {
-  for (const f of [BOUNDARY, WRITER]) {
+  for (const f of [BOUNDARY, WRITER, CATALOG_SYNC]) {
     const s = read(f);
     assert.equal(/snoonu_id|rafeeq_product_id|pure_seoul_id/.test(s), false, `${f} uses no legacy id column`);
     for (const re of [/levenshtein/i, /fuzzy/i, /similarity/i, /normTitle/]) {
