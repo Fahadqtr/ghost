@@ -12,6 +12,7 @@
 // page that already ships) and no route is ever renamed.
 
 export type V2NavIcon =
+  | "home"
   | "catalog"
   | "shopify"
   | "rewards"
@@ -40,6 +41,10 @@ export interface V2NavLink {
 
 /** The V2 sidebar links, in display order. */
 export const V2_NAV_LINKS: readonly V2NavLink[] = [
+  // HOME.1 — the Executive Home Dashboard is the V2 entry point (/v2). Read-only;
+  // composes the certified read models. First link so it heads the sidebar.
+  { href: "/v2", label: "الرئيسية", icon: "home", section: "الرئيسية" },
+
   { href: "/v2/catalog", label: "كتالوج ماليكاس", icon: "catalog", section: "الكتالوج" },
   { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify", section: "الكتالوج" },
 
@@ -134,7 +139,11 @@ export function activeNavHref(
   for (const link of Array.isArray(links) ? links : []) {
     const href = link?.href;
     if (typeof href !== "string" || href.length === 0) continue;
-    const isMatch = pathname === href || pathname.startsWith(`${href}/`);
+    // The shell root ("/v2", the Home dashboard) is EXACT-match only: it must not
+    // become a subtree catch-all that lights up on every /v2/* page (or on a
+    // foreign path like /v2/catalogue). Every other link keeps segment-prefix
+    // matching so a parent stays active on its own sub-pages.
+    const isMatch = href === "/v2" ? pathname === "/v2" : pathname === href || pathname.startsWith(`${href}/`);
     if (!isMatch) continue;
     if (best === null || href.length > best.length) best = href;
   }

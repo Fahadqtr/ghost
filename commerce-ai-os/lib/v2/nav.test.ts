@@ -86,11 +86,25 @@ test("existing catalog / operations / customers links are unchanged", () => {
   assert.equal(byHref("/rewards")?.external, true);
 });
 
-test("section order (NAV.1): الكتالوج, العمليات, التحليلات, العملاء, الإعدادات, أدوات إضافية ↗", () => {
+test("section order (HOME.1/NAV.1): الرئيسية, الكتالوج, العمليات, التحليلات, العملاء, الإعدادات, أدوات إضافية ↗", () => {
   assert.deepEqual(
     groupNavLinks().map((s) => s.title),
-    ["الكتالوج", "العمليات", "التحليلات", "العملاء", "الإعدادات", "أدوات إضافية ↗"],
+    ["الرئيسية", "الكتالوج", "العمليات", "التحليلات", "العملاء", "الإعدادات", "أدوات إضافية ↗"],
   );
+});
+
+test("HOME.1 adds «الرئيسية» → the Executive Home (/v2, home icon, in-shell) as the first link", () => {
+  const home = V2_NAV_LINKS.find((l) => l.href === "/v2");
+  assert.ok(home, "home link exists");
+  assert.equal(home!.label, "الرئيسية");
+  assert.equal(home!.section, "الرئيسية");
+  assert.equal(home!.icon, "home");
+  assert.equal(home!.external, undefined, "home is a V2 route — not external");
+  assert.equal(V2_NAV_LINKS[0]!.href, "/v2", "home heads the sidebar");
+  // exact-match only: the root never becomes a subtree catch-all.
+  assert.equal(activeNavHref("/v2"), "/v2");
+  assert.equal(activeNavHref("/v2/catalogue"), null);
+  assert.equal(activeNavSection("/v2"), "الرئيسية");
 });
 
 // ── NAV.1: the OPS sub-centers are now discoverable under «العمليات» ──────────
