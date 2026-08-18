@@ -15,7 +15,7 @@ const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 
 const D = "lib/enrichment";
-const PURE = [`${D}/enrichment-fields.ts`, `${D}/enrichment-keywords.ts`, `${D}/enrichment-classify.ts`, `${D}/enrichment-prompt.ts`, `${D}/enrichment-plan.ts`];
+const PURE = [`${D}/enrichment-fields.ts`, `${D}/enrichment-keywords.ts`, `${D}/enrichment-classify.ts`, `${D}/enrichment-prompt.ts`, `${D}/enrichment-plan.ts`, `${D}/enrichment-diagnostics.ts`];
 const PROVIDER = `${D}/enrichment-provider.server.ts`;
 const ORCH = `${D}/enrichment.server.ts`;
 const WRITER = "lib/products/enrichment-write.ts";

@@ -43,7 +43,6 @@ import { normalizeKeywords } from "./enrichment-keywords.ts";
 import {
   buildEnrichmentSystemPrompt,
   buildEnrichmentUserPrompt,
-  parseEnrichmentOutput,
 } from "./enrichment-prompt.ts";
 import {
   buildSuggestion,
@@ -55,6 +54,11 @@ import {
   createAnthropicEnrichmentProvider,
   type EnrichmentProvider,
 } from "./enrichment-provider.server.ts";
+import {
+  generateWithRetry,
+  type FailureCode,
+  type ProviderUsage,
+} from "./enrichment-diagnostics.ts";
 
 const NOT_SIGNED_IN = "غير مسجّل الدخول.";
 const MAX_GENERATE = 100; // hard batch cap (cost control §17)
@@ -221,8 +225,41 @@ export interface GenerateOptions {
   /** hard cap on how many products to generate for this call. */
   limit?: number;
 }
-export interface GenerateStats { requested: number; generated: number; failed: number; insufficient: number; model: string }
-export interface GenerateResult { suggestions: Suggestion[]; stats: GenerateStats }
+export interface GenerateStats {
+  requested: number;
+  generated: number;
+  failed: number;
+  insufficient: number;
+  model: string;
+  /** AI.FIX.1 — per-product count by precise failure code. */
+  byFailureCode: Record<FailureCode, number>;
+  /** AI.FIX.1 — how many products used the single safe retry. */
+  retried: number;
+}
+/** AI.FIX.1 — safe per-product generation diagnostics (NO secrets, NO raw payloads). */
+export interface EnrichmentDiagnostic {
+  productId: string;
+  model: string;
+  requestedFields: EnrichmentField[];
+  stopReason: string | null;
+  usage: ProviderUsage | null;
+  failureCode: FailureCode | null;
+  retried: boolean;
+  requestId: string | null;
+}
+export interface GenerateResult {
+  suggestions: Suggestion[];
+  stats: GenerateStats;
+  /** AI.FIX.1 — exposed (not persisted) diagnostics sufficient to debug failures. */
+  diagnostics: EnrichmentDiagnostic[];
+}
+
+function emptyFailureCounts(): Record<FailureCode, number> {
+  return {
+    PROVIDER_ERROR: 0, TRANSPORT_ERROR: 0, TIMEOUT: 0,
+    TRUNCATED_OUTPUT: 0, MALFORMED_JSON: 0, SCHEMA_MISMATCH: 0,
+  };
+}
 
 /** Run tasks with a fixed concurrency limit, collecting results in order. */
 async function pool<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
@@ -258,34 +295,58 @@ export async function generateEnrichment(opts: GenerateOptions = {}): Promise<Ge
 
   const provider = opts.provider ?? createAnthropicEnrichmentProvider();
   const system = buildEnrichmentSystemPrompt();
-  let failed = 0, insufficient = 0;
 
   const perProduct = await pool(capped, CONCURRENCY, async ({ facts: f, fields, qualities }) => {
     const user = buildEnrichmentUserPrompt(f, fields, CATEGORIES);
-    let output = null;
-    try {
-      let text = "";
-      try { text = await provider.generate(system, user); }
-      catch { text = await provider.generate(system, user); } // one retry for transient failure
-      output = parseEnrichmentOutput(text);
-    } catch { output = null; }
+    // Single safe retry lives in generateWithRetry (transport/timeout/truncation
+    // only). Malformed / schema-mismatch / provider errors fail closed here.
+    const attempt = await generateWithRetry(() => provider.generate(system, user));
+    const output = attempt.outcome.ok ? attempt.outcome.output : null;
+    const failureCode = attempt.outcome.ok ? null : attempt.outcome.code;
 
-    return fields.map((field) => {
+    const diagnostic: EnrichmentDiagnostic = {
+      productId: f.productId,
+      model: provider.model,
+      requestedFields: fields,
+      stopReason: attempt.response?.stopReason ?? null,
+      usage: attempt.response?.usage ?? null,
+      failureCode,
+      retried: attempt.attempts > 1,
+      requestId: attempt.response?.requestId ?? null,
+    };
+
+    const suggestions = fields.map((field) => {
       const q = qualities.find((x) => x.field === field)?.quality ?? ("MISSING" as Quality);
       const currentValue =
         field === "keywords_en" ? f.keywordsEn : field === "keywords_ar" ? f.keywordsAr :
         field === "description_en" ? f.descriptionEn : f.descriptionAr;
-      const s = buildSuggestion({ productId: f.productId, sku: f.sku, productName: f.nameEn ?? f.nameAr, field, currentValue, currentQuality: q, output });
-      if (s.status === "FAILED") failed++;
-      if (s.status === "INSUFFICIENT_DATA") insufficient++;
-      return s;
+      return buildSuggestion({
+        productId: f.productId, sku: f.sku, productName: f.nameEn ?? f.nameAr,
+        field, currentValue, currentQuality: q, output,
+        ...(failureCode ? { failureCode } : {}),
+      });
     });
+    return { suggestions, diagnostic };
   });
 
-  const suggestions = perProduct.flat();
+  const suggestions = perProduct.flatMap((p) => p.suggestions);
+  const diagnostics = perProduct.map((p) => p.diagnostic);
+
+  const byFailureCode = emptyFailureCounts();
+  for (const d of diagnostics) if (d.failureCode) byFailureCode[d.failureCode]++;
+
   return {
     suggestions,
-    stats: { requested: capped.length, generated: suggestions.filter((s) => s.status === "READY").length, failed, insufficient, model: provider.model },
+    stats: {
+      requested: capped.length,
+      generated: suggestions.filter((s) => s.status === "READY").length,
+      failed: suggestions.filter((s) => s.status === "FAILED").length,
+      insufficient: suggestions.filter((s) => s.status === "INSUFFICIENT_DATA").length,
+      model: provider.model,
+      byFailureCode,
+      retried: diagnostics.filter((d) => d.retried).length,
+    },
+    diagnostics,
   };
 }
 
