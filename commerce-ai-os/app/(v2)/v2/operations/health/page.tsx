@@ -14,6 +14,8 @@ import { loadCatalogHealthDistribution } from "@/lib/catalog/health/health-distr
 import CatalogHealthDistribution from "@/components/v2/operations/CatalogHealthDistribution";
 import { loadEvidenceOverview } from "@/lib/catalog/evidence/evidence-overview.server";
 import EvidenceOverview from "@/components/v2/operations/EvidenceOverview";
+import { loadRecommendationSummary } from "@/lib/catalog/recommendations/recommendation-summary.server";
+import RecommendationOverview from "@/components/v2/operations/RecommendationOverview";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +56,15 @@ export default async function PlatformHealthPage({ searchParams }: { searchParam
     evidenceOverview = null;
   }
 
+  // CAT.1D — read-only certified recommendation overview (best-effort; never
+  // blocks/writes). Derived purely from the same canonical evidence.
+  let recommendationSummary = null;
+  try {
+    recommendationSummary = await loadRecommendationSummary();
+  } catch {
+    recommendationSummary = null;
+  }
+
   return (
     <div className="space-y-4">
       <header className="space-y-1">
@@ -67,6 +78,7 @@ export default async function PlatformHealthPage({ searchParams }: { searchParam
       <PlatformHealthCenter model={view.model} findings={findings} filters={filters} degraded={view.degraded} />
       {catalogHealth ? <CatalogHealthDistribution dist={catalogHealth} /> : null}
       {evidenceOverview ? <EvidenceOverview overview={evidenceOverview} /> : null}
+      {recommendationSummary ? <RecommendationOverview summary={recommendationSummary} /> : null}
     </div>
   );
 }

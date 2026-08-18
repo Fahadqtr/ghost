@@ -7,16 +7,17 @@
 // failing/degraded reader contributes zero actions and is reported as `ok:false`,
 // never a fabricated item.
 //
-//   • loadActionCenter()        — the PRIMARY aggregated read: canonical CAT.1B
-//     Evidence (catalog-quality, per-product) + OPS Health (cross-domain platform
-//     roll-up) + BI inventory rollups. Backs the top summary + owner strip.
+//   • loadActionCenter()        — the PRIMARY aggregated read: certified CAT.1D
+//     Recommendations (evidence-derived, per-product) + OPS Health (cross-domain
+//     platform roll-up) + BI inventory rollups. Backs the top summary + owner strip.
 //   • loadActionCenterDetail()  — the LAZY secondary read: OPS Media duplicate
 //     images + lifecycle READY_FOR_ACTIVATION, streamed under Suspense (§9).
 //
-// CAT.1C — Evidence is the canonical source for catalog-quality actions. The
-// overlapping legacy projections (per-product media-missing, AI needsGeneration,
-// analytics catalog-quality) were retired in action-sources.ts so one active
-// evidence identity yields at most one active Action.
+// CAT.1D — the Action Center consumes the certified Recommendation Engine (§11):
+// it generates no recommendations itself. Recommendations derive only from
+// canonical CAT.1B evidence, so catalog-quality items still trace back to
+// evidence (via sourceEvidenceIds). This supersedes CAT.1C's direct evidence
+// projection: evidence now flows into the Action Center THROUGH recommendations.
 
 import "server-only";
 
@@ -29,7 +30,8 @@ import { loadLifecycleActionRows } from "./lifecycle-source.server.ts";
 import { loadEvidenceActions } from "./evidence-source.server.ts";
 
 import { actionsFromAnalytics, actionsFromHealth, actionsFromMedia, actionsFromLifecycle } from "./action-sources.ts";
-import { actionsFromEvidence } from "./evidence-actions.ts";
+import { actionsFromRecommendations } from "./recommendation-actions.ts";
+import { buildAllRecommendations } from "@/lib/catalog/recommendations/recommendation-engine";
 import { buildActionCenter, type ActionCenterView, type ActionInput, type ActionSourceStatus } from "./action-model.ts";
 
 // Each certified reader, request-cached so a section and the summary that share a
@@ -38,7 +40,8 @@ const getHealth = cache(() => loadHealthCenter());
 const getAnalytics = cache(() => loadAnalytics());
 const getMedia = cache(() => loadMediaCenter());
 const getLifecycle = cache(() => loadLifecycleActionRows());
-// CAT.1C — the single bounded evidence batch (shared with the CAT.1B overview).
+// CAT.1C/1D — the single bounded evidence batch (shared with the CAT.1B overview),
+// now feeding the certified Recommendation Engine.
 const getEvidence = cache(() => loadEvidenceActions());
 
 function hasError(v: unknown): v is { error: string } {
@@ -46,11 +49,11 @@ function hasError(v: unknown): v is { error: string } {
 }
 
 /**
- * PRIMARY read — canonical CAT.1B Evidence + OPS Health + BI inventory. Evidence
- * is the canonical catalog-quality source (one bounded batch, cached); Health is
- * the cross-domain platform roll-up; Analytics contributes inventory rollups only.
- * None needs a live merchant session, so the summary + owner strip populate
- * reliably.
+ * PRIMARY read — certified CAT.1D Recommendations + OPS Health + BI inventory.
+ * Recommendations are derived (purely) from the canonical CAT.1B evidence batch
+ * (one bounded read, cached); Health is the cross-domain platform roll-up;
+ * Analytics contributes inventory rollups only. None needs a live merchant
+ * session, so the summary + owner strip populate reliably.
  */
 export async function loadActionCenter(now: Date = new Date()): Promise<ActionCenterView> {
   const [healthRes, analytics, evidenceRes] = await Promise.all([
@@ -62,10 +65,13 @@ export async function loadActionCenter(now: Date = new Date()): Promise<ActionCe
   const inputs: ActionInput[] = [];
   const sources: ActionSourceStatus[] = [];
 
-  // CAT.1C — canonical evidence is the primary, catalog-quality source.
-  const evidenceActions = evidenceRes ? actionsFromEvidence(evidenceRes.evidence, { labels: evidenceRes.labels }) : [];
-  inputs.push(...evidenceActions);
-  sources.push({ source: "evidence", ok: evidenceRes !== null, count: evidenceActions.length });
+  // CAT.1D — the Action Center consumes the certified Recommendation Engine (§11);
+  // recommendations derive only from canonical evidence, so items still trace to
+  // evidence. The Action Center never generates recommendations itself.
+  const recommendations = evidenceRes ? buildAllRecommendations(evidenceRes.evidence) : [];
+  const recommendationActions = actionsFromRecommendations(recommendations, { labels: evidenceRes?.labels });
+  inputs.push(...recommendationActions);
+  sources.push({ source: "recommendation", ok: evidenceRes !== null, count: recommendationActions.length });
 
   const healthModel = hasError(healthRes) ? null : healthRes.model;
   const healthActions = actionsFromHealth(healthModel);

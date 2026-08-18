@@ -31,6 +31,7 @@ const LANE_TILES: { lane: ActionLane; label: string; key: keyof ActionCenterView
 ];
 
 const SOURCE_LABEL: Record<string, string> = {
+  recommendation: "التوصيات",
   evidence: "الأدلة",
   ops_health: "صحة المنصة",
   analytics: "التحليلات",
