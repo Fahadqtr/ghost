@@ -36,12 +36,11 @@ import LifecyclePanel from "@/components/v2/catalog/LifecyclePanel";
 import { loadProductLifecycle, type ProductLifecycleView } from "@/lib/lifecycle/lifecycle-read.server";
 import { loadCatalogHealth } from "@/lib/catalog/health/health.server";
 import type { CatalogHealth } from "@/lib/catalog/health/health-model";
-import CatalogHealthCard from "@/components/v2/catalog/CatalogHealthCard";
 import { loadEvidence } from "@/lib/catalog/evidence/evidence.server";
 import type { EvidenceResult } from "@/lib/catalog/evidence/evidence-engine";
-import EvidenceSection from "@/components/v2/catalog/EvidenceSection";
 import { buildRecommendations } from "@/lib/catalog/recommendations/recommendation-engine";
-import RecommendationsPanel from "@/components/v2/catalog/RecommendationsPanel";
+import { buildProductIntelligence } from "@/lib/catalog/intelligence/product-intelligence";
+import ProductIntelligencePanel from "@/components/v2/catalog/ProductIntelligencePanel";
 import { runLifecycleTransition } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -198,6 +197,21 @@ export default async function ProductDetailPage({
     );
   }
 
+  // CAT.1D/1E — pure composition over the already-loaded certified engines (no
+  // extra reads, no writes). Recommendations derive from the loaded evidence; the
+  // intelligence model composes health + evidence + recommendations + lifecycle +
+  // channels + export/AI (evidence-derived) + timeline count.
+  const recommendations = evidence ? buildRecommendations(evidence.evidence, evidence.productId) : [];
+  const intelligence = buildProductIntelligence({
+    productId: state.product.id,
+    health,
+    evidence: evidence?.evidence ?? null,
+    recommendations,
+    lifecycle,
+    channels: platformMatrix,
+    timelineCount: activityEvents?.length ?? 0,
+  });
+
   return (
     <div className="space-y-4">
       {saved ? (
@@ -217,8 +231,8 @@ export default async function ProductDetailPage({
       <InPageNav
         items={[
           { href: "#details", label: "تفاصيل" },
+          { href: "#intelligence", label: "الذكاء" },
           { href: "#lifecycle", label: "الحالة" },
-          { href: "#health", label: "الصحة" },
           { href: "#platforms", label: "المنصات" },
           { href: "#tasks", label: "المهام" },
           { href: "#activity", label: "النشاط" },
@@ -235,23 +249,28 @@ export default async function ProductDetailPage({
           editHref={editHref}
         />
       </section>
+      {/* CAT.1E — unified Product Intelligence Panel. Composed (purely) from the
+          already-loaded certified engines — zero extra reads, read-only. It is
+          the single diagnostic surface (Health · Evidence · Recommendations ·
+          Lifecycle · Channels · Export · AI · Timeline). The interactive
+          lifecycle transitions + full platform matrix + activity remain below as
+          the editable / detailed drill-downs (editing UX preserved). */}
+      {intelligence ? (
+        <section id="intelligence" className="scroll-mt-28">
+          <ProductIntelligencePanel
+            intelligence={intelligence}
+            health={health}
+            evidence={evidence}
+            recommendations={recommendations}
+            channels={platformMatrix}
+            timelineHref="#activity"
+            timelineCount={activityEvents?.length ?? 0}
+          />
+        </section>
+      ) : null}
       {lifecycle ? (
         <section id="lifecycle" className="scroll-mt-28">
           <LifecyclePanel view={lifecycle} action={runLifecycleTransition} highlight={highlightLifecycle} />
-        </section>
-      ) : null}
-      {health ? (
-        <section id="health" className="scroll-mt-28 space-y-4">
-          <CatalogHealthCard health={health} />
-          {evidence ? <EvidenceSection result={evidence} /> : null}
-          {/* CAT.1D — certified recommendations derived (purely) from the same
-              already-loaded evidence — zero extra reads. Read-only. */}
-          {evidence ? (
-            <RecommendationsPanel
-              recommendations={buildRecommendations(evidence.evidence, evidence.productId)}
-              evidence={evidence.evidence}
-            />
-          ) : null}
         </section>
       ) : null}
       {platformMatrix ? (
