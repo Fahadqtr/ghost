@@ -4,12 +4,12 @@ import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { revalidatePath } from "next/cache";
-import { shopifyConfigured, fetchAllShopifyProducts, updateVariantPrice, updateShopifyProductContent, fetchPrimaryLocationId, createShopifyProduct, addProductImage } from "@/lib/shopify/admin";
+import { shopifyConfigured, fetchAllShopifyProducts, updateVariantPrice, updateShopifyProductContent, addProductImage } from "@/lib/shopify/admin";
 import { safeImageUrlOrNull, safeFetchImage } from "@/lib/net/safeImage";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runShopifyInventorySync, type InventorySyncResult } from "@/lib/shopify/inventory-sync";
 import { logCatalogTask } from "@/lib/tasks/catalog-log";
-import { diffShopify, targetShopifyPrice, indexShopify, normTitle, htmlFromPlain, mapShopifyToCatalogRow, type ShopifyDiff, type OurProductRow } from "@/lib/shopify-diff";
+import { diffShopify, targetShopifyPrice, normTitle, mapShopifyToCatalogRow, type ShopifyDiff, type OurProductRow } from "@/lib/shopify-diff";
 import { createProductCore } from "@/lib/products/product-create";
 import { makeInventoryInitializer } from "@/lib/products/inventory-initializer";
 
@@ -165,63 +165,32 @@ export interface BulkMoveResult {
 const MOVE_EMPTY = { created: 0, skipped: 0, failed: [] as { name: string; error: string }[] };
 
 /**
- * Create the given catalog products ON SHOPIFY (≤8 per call — the client
- * chunks). Re-fetches the store first so already-matched rows are skipped:
- * double-taps can never create duplicates.
+ * RETIRED (INT.2G). This was the legacy operator path that CREATED products on
+ * Shopify — a SECOND publish boundary that bypassed the certified pipeline: it
+ * matched by fuzzy SKU/title (never ECL identity), computed no row fingerprint,
+ * skipped staleness detection, and wrote no export_runs audit row. It duplicated
+ * the certified Shopify publisher and could create divergent/duplicate listings.
+ *
+ * INT.2F removed its UI trigger from the Shopify Sync tool; INT.2G finishes the
+ * retirement at the code level so NO path (UI, action, or the dormant CH.4
+ * adapter) can create products through it. The single Shopify publish boundary is
+ * now exactly one flow:
+ *   Export Center → Shopify Preview → Shopify Publish
+ *   (/v2/export/shopify:malikas → /api/export/shopify/publish →
+ *    lib/export/shopify/publish.server.ts — ECL identity, row fingerprint,
+ *    staleness guard, export_runs audit).
+ *
+ * Kept as a writer-gated no-op (not deleted) so the authorization-boundary guards
+ * that pin this action stay green and no importer can be silently broken. It
+ * performs no side effect and never calls createShopifyProduct.
  */
-export async function pushProductsToShopify(productIds: string[]): Promise<BulkMoveResult> {
+export async function pushProductsToShopify(_productIds: string[]): Promise<BulkMoveResult> {
   { const writer = await requireMalakWriter(); if (!writer.ok) return { ok: false, error: writer.error, ...MOVE_EMPTY }; }
-  if (!shopifyConfigured()) return { ok: false, error: "شوبي فاي غير مربوط.", ...MOVE_EMPTY };
-  const ids = [...new Set(productIds)].filter(Boolean).slice(0, 8);
-  if (!ids.length) return { ok: false, error: "ما في منتجات محددة.", ...MOVE_EMPTY };
-
-  try {
-    const sb = createAdminClient();
-    const { data, error } = await sb
-      .from("products")
-      .select("id, sku, name_en, name_ar, description_en, description_ar, price, discount_price, approval, image_url")
-      .in("id", ids);
-    if (error) return { ok: false, error: error.message, ...MOVE_EMPTY };
-
-    const remote = await fetchAllShopifyProducts();
-    if (remote.error) return { ok: false, error: remote.error, ...MOVE_EMPTY };
-    const { match } = indexShopify(remote.products ?? []);
-    const loc = await fetchPrimaryLocationId();
-
-    let created = 0, skipped = 0;
-    const failed: { name: string; error: string }[] = [];
-    for (const p of (data ?? []) as (OurProductRow & { description_en: string | null; description_ar: string | null; image_url: string | null })[]) {
-      const name = String(p.name_en || p.name_ar || "").trim();
-      if (!name) { skipped++; continue; }
-      if (match(p.sku, p.name_en)) { skipped++; continue; } // already on the store
-
-      // Opening stock for the new product.
-      let stock = 0;
-      try {
-        const { data: inv } = await sb.from("inventory").select("stock_quantity").eq("product_id", p.id);
-        stock = ((inv ?? []) as { stock_quantity: number | null }[]).reduce((s, r) => s + (Number(r.stock_quantity) || 0), 0);
-      } catch { /* stock stays 0 */ }
-
-      const want = targetShopifyPrice(p);
-      const res = await createShopifyProduct({
-        title: name,
-        descriptionHtml: htmlFromPlain(p.description_en || p.description_ar || ""),
-        status: String(p.approval ?? "") === "Approved" ? "ACTIVE" : "DRAFT",
-        price: want.price || "0.00",
-        compareAtPrice: want.compareAtPrice,
-        sku: p.sku,
-        quantity: stock,
-        locationId: loc.locationId ?? null,
-        imageUrl: p.image_url,
-      });
-      if (res.ok) created++;
-      else failed.push({ name, error: res.error ?? "فشل الإنشاء" });
-    }
-    revalidatePath("/import-export/shopify-sync");
-    return { ok: true, created, skipped, failed };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Push failed.", ...MOVE_EMPTY };
-  }
+  return {
+    ok: false,
+    error: "تم إيقاف هذا المسار (نشر قديم). انشر المنتجات عبر مركز التصدير — شوبي فاي: /v2/export/shopify:malikas (نشر آمن الهوية عبر ECL وخاضع للتدقيق).",
+    ...MOVE_EMPTY,
+  };
 }
 
 /**
