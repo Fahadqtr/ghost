@@ -1,10 +1,9 @@
-// /v2/operations/media/discovery — Snoonu Media Discovery (MEDIA.1B). Read-only
-// Server Component. Discovers media candidates for a product across the two Snoonu
-// storefronts via the INJECTABLE merchant-session port. It writes nothing and
-// makes no real Snoonu request today — the default provider reports
-// SESSION_REQUIRED until a live MEDIA.1A-P adapter is provisioned. Auth is
-// enforced by the (v2) layout. Accepts ?productId= or ?sku= (e.g. from the Launch
-// Campaign workspace).
+// /v2/operations/media/discovery — Snoonu Media Discovery (MEDIA.1B/MEDIA.1A-P2).
+// Read-only Server Component. Discovers media candidates for a product across the
+// two Snoonu storefronts. With a provisioned session it performs live VERIFIED
+// name-search reads (live-adapter.server.ts); otherwise it honestly reports
+// SESSION_REQUIRED. It writes nothing. Auth is enforced by the (v2) layout.
+// Accepts ?productId= or ?sku= (e.g. from the Launch Campaign workspace).
 
 import { loadSnoonuDiscovery } from "@/lib/adapters/snoonu/merchant/discovery.server";
 import { loadSnoonuConnectionStatuses } from "@/lib/adapters/snoonu/merchant/session-status.server";

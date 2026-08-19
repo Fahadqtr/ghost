@@ -3,17 +3,17 @@ import { SNOONU_STOREFRONT_KEYS } from "./merchant-contract";
 import type { SnoonuStorefrontKey } from "./merchant-contract";
 import { runSnoonuSessionTest } from "./session-status";
 import type { SnoonuLiveSessionReader, SnoonuSessionStatus } from "./session-status";
+import { createConfiguredLiveSessionReader } from "./live-adapter.server";
 
-// MEDIA.1A-P — server-only Snoonu session-status layer.
+// MEDIA.1A-P / MEDIA.1A-P2 — server-only Snoonu session-status layer.
 //
 // Detects whether a per-storefront session SECRET is configured (PRESENCE ONLY —
-// never the value, length, or a hash) and runs a read-only session test. The
-// authenticated live read is an INJECTED, storefront-scoped reader that only
-// exists once an operator confirms the real Snoonu portal contract; there is NO
-// default live reader here (no confirmed endpoint = no HTTP call, no fabrication),
-// so a configured secret resolves to UNKNOWN, never CONNECTED. Secret material is
-// never returned, serialized, or logged. Storefronts are fully isolated — one
-// storefront's secret/reader is NEVER used for the other.
+// never the value, length, or a hash) and runs a read-only session test. Since
+// MEDIA.1A-P2 the portal contract is VERIFIED (operator capture), so the default
+// live reader is the real one (live-adapter.server.ts): CONNECTED appears only
+// when a genuine authenticated read succeeds — never from env presence alone.
+// Secret material is never returned, serialized, or logged. Storefronts are
+// fully isolated — one storefront's secret/reader is NEVER used for the other.
 
 /** Reserved per-storefront secret env NAMES (isolated; values live in server env only). */
 const SESSION_ENV: Record<SnoonuStorefrontKey, string> = {
@@ -31,9 +31,9 @@ export interface SessionTestDeps {
   /** Test override for `configured` (unit tests only). */
   configured?: boolean;
   /**
-   * The storefront-scoped live reader. A future MEDIA.1A-P live adapter injects
-   * this once the real portal contract is confirmed. Omitted → no live read is
-   * performed (UNKNOWN when a secret is present).
+   * The storefront-scoped live reader. Omitted → the verified live adapter's
+   * reader for this storefront (null when no secret is provisioned, so a live
+   * read is only attempted with real session material).
    */
   liveReader?: SnoonuLiveSessionReader | null;
 }
@@ -47,7 +47,9 @@ export async function testSnoonuSession(
   deps: SessionTestDeps = {},
 ): Promise<SnoonuSessionStatus> {
   const configured = deps.configured ?? isSnoonuSessionConfigured(storefrontKey);
-  const liveReader = deps.liveReader ?? null; // no confirmed contract ⇒ no default live reader
+  // Default: the VERIFIED live reader for THIS storefront (MEDIA.1A-P2).
+  // An explicit `liveReader: null` still disables the live read (tests).
+  const liveReader = deps.liveReader !== undefined ? deps.liveReader : createConfiguredLiveSessionReader(storefrontKey);
   return runSnoonuSessionTest(storefrontKey, configured, liveReader);
 }
 

@@ -32,7 +32,7 @@ test("no automation / captcha / invented Snoonu endpoint / Snoonu write anywhere
     for (const a of AUTOMATION) assert.equal(a.test(s), false, `${f} must not contain ${a}`);
     // no invented Snoonu URL/endpoint and no real HTTP call in this phase
     assert.equal(/https?:\/\/[^"'`]*snoonu/i.test(s), false, `${f} must not hardcode a Snoonu URL`);
-    assert.equal(/\bfetch\(/.test(s), false, `${f} makes no HTTP request (contract unconfirmed)`);
+    assert.equal(/\bfetch\(/.test(s), false, `${f} makes no HTTP request itself (only live-adapter.server.ts does)`);
     for (const w of [...WRITES, ...RECOVERY]) assert.equal(w.test(s), false, `${f} must not write (${w})`);
   }
 });
@@ -57,9 +57,13 @@ test("server layer: secret PRESENCE only, server-only, isolated, never returns t
   assert.equal(/JSON\.stringify\([^)]*raw/.test(s), false, "never serializes the raw secret");
   assert.equal(/console\.\w+\([^)]*raw/.test(s), false, "never logs the raw secret");
   assert.equal(/password/i.test(s), false, "no password handling");
-  // per-storefront isolation: env is keyed by the storefront; no default live reader
+  // per-storefront isolation: env is keyed by the storefront; the default live
+  // reader is the VERIFIED one (MEDIA.1A-P2) and an explicit null still disables it
   assert.ok(/SESSION_ENV\[storefrontKey\]/.test(raw), "reads only the requested storefront's env name");
-  assert.ok(/liveReader\s*=\s*deps\.liveReader\s*\?\?\s*null/.test(raw), "no default live reader (no confirmed contract)");
+  assert.ok(
+    /deps\.liveReader\s*!==\s*undefined\s*\?\s*deps\.liveReader\s*:\s*createConfiguredLiveSessionReader\(storefrontKey\)/.test(raw),
+    "default live reader is the verified adapter's, storefront-scoped, still injectable",
+  );
 });
 
 test("the Test action is read-only, signed-in gated, validates storefront, returns no secret", () => {
