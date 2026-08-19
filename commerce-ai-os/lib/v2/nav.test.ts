@@ -28,6 +28,14 @@ test("TickTick integrations lives under «الإعدادات» (in-shell, not ex
   assert.equal(tt!.external, undefined, "TickTick is a V2 route — not external");
 });
 
+test("Snoonu session helper (MEDIA.1A-P4) lives under «الإعدادات» (in-shell, not external)", () => {
+  const sh = V2_NAV_LINKS.find((l) => l.href === "/v2/settings/connections/snoonu/session-helper");
+  assert.ok(sh, "session-helper link exists — the owner page must be reachable from the menu");
+  assert.equal(sh!.label, "جلسة Snoonu");
+  assert.equal(sh!.section, "الإعدادات");
+  assert.equal(sh!.external, undefined, "session helper is a V2 route — not external");
+});
+
 test("Import/Export is an external «أدوات إضافية ↗» link to /import-export", () => {
   const ie = V2_NAV_LINKS.find((l) => l.href === "/import-export");
   assert.ok(ie, "Import/Export link exists");

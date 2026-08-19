@@ -89,6 +89,10 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // Settings (UX.1) — the TickTick integration browser is a real V2 page that
   // had no menu entry; surface it so it is discoverable. In-shell (not external).
   { href: "/v2/settings/integrations/ticktick", label: "تكاملات TickTick", icon: "operations", section: "الإعدادات" },
+  // Settings (MEDIA.1A-P4) — the Snoonu session capture helper. The page itself
+  // is requireOwner()-gated (non-owners get a fixed denial), so surfacing the
+  // link is safe; without it the page was reachable only by typing the URL.
+  { href: "/v2/settings/connections/snoonu/session-helper", label: "جلسة Snoonu", icon: "operations", section: "الإعدادات" },
 
   // Extra tools (UX.1) — still-used pages that live in the PREVIOUS interface and
   // are NOT in the legacy-redirect list. Linked (not reimplemented) and marked
