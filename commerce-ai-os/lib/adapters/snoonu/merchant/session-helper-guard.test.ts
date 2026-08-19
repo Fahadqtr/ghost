@@ -74,6 +74,17 @@ test("form: client-only — the secret can NEVER leave the browser through this 
   assert.ok(/navigator\.clipboard\.writeText\(generated\)/.test(raw), "copy is the only exit");
 });
 
+test("form: the generated JSON is VISIBLE and copy is never a silent no-op", () => {
+  const raw = read(FORM);
+  // read-only output the operator can always select manually
+  assert.ok(/<textarea[\s\S]{0,120}readOnly/.test(raw), "read-only output textarea exists");
+  assert.ok(/value=\{generated\}/.test(raw), "the textarea shows the generated JSON");
+  // clipboard API → selection fallback → explicit error; nothing is swallowed
+  assert.ok(/document\.execCommand\("copy"\)/.test(raw), "selection fallback when the clipboard API is unavailable");
+  assert.ok(/setCopyError\(true\)/.test(raw), "copy failure is surfaced to the operator");
+  assert.ok(/setShowJson\(true\)/.test(raw), "the JSON is revealed for manual copy on fallback/failure");
+});
+
 test("form: no password capture, sensitive fields masked + never autofilled", () => {
   const raw = read(FORM);
   // never asks for Snoonu credentials

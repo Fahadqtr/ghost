@@ -7,6 +7,7 @@
 
 import { loadSnoonuDiscovery } from "@/lib/adapters/snoonu/merchant/discovery.server";
 import { loadSnoonuConnectionStatuses } from "@/lib/adapters/snoonu/merchant/session-status.server";
+import { isOwner } from "@/lib/malak/authz";
 import SnoonuDiscovery from "@/components/v2/operations/SnoonuDiscovery";
 import SnoonuConnectionManager from "@/components/v2/operations/SnoonuConnectionManager";
 import type { SnoonuSessionStatus } from "@/lib/adapters/snoonu/merchant/session-status";
@@ -26,11 +27,13 @@ function first(v: string | string[] | undefined): string | null {
 export default async function SnoonuDiscoveryPage({ searchParams }: { searchParams?: SearchParams }) {
   let view: Awaited<ReturnType<typeof loadSnoonuDiscovery>> | null = null;
   let statuses: SnoonuSessionStatus[] = [];
+  let owner = false;
   try {
     const params = searchParams ? await searchParams : {};
-    [view, statuses] = await Promise.all([
+    [view, statuses, owner] = await Promise.all([
       loadSnoonuDiscovery({ productId: first(params.productId), sku: first(params.sku) }),
       loadSnoonuConnectionStatuses().catch(() => []),
+      isOwner().catch(() => false),
     ]);
   } catch {
     view = null;
@@ -43,7 +46,15 @@ export default async function SnoonuDiscoveryPage({ searchParams }: { searchPara
           <Link href="/v2/operations/media" className="text-xs text-brand hover:underline">← مركز الصور</Link>
           <h1 className="text-lg font-bold text-ink">اكتشاف وسائط Snoonu</h1>
         </div>
-        <Link href="/v2/catalog/launch" className="text-xs font-semibold text-brand hover:underline">حملة الإطلاق →</Link>
+        <div className="flex items-center gap-3">
+          {/* Navigation only — the helper page enforces its own requireOwner gate. */}
+          {owner ? (
+            <Link href="/v2/settings/connections/snoonu/session-helper" className="text-xs font-semibold text-brand hover:underline">
+              مساعد جلسة Snoonu
+            </Link>
+          ) : null}
+          <Link href="/v2/catalog/launch" className="text-xs font-semibold text-brand hover:underline">حملة الإطلاق →</Link>
+        </div>
       </div>
       {statuses.length > 0 ? <SnoonuConnectionManager statuses={statuses} /> : null}
       {view === null ? (

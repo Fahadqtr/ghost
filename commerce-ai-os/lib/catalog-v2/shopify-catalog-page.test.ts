@@ -496,10 +496,13 @@ test("the catalog section contains exactly the Malikas and Shopify catalog links
     catalog.map((l) => l.label),
     ["كتالوج ماليكاس", "كتالوج Shopify", "حملة الإطلاق"],
   );
-  // No sales platform beyond Shopify is introduced yet.
-  const serialized = JSON.stringify(V2_NAV_LINKS) + SIDEBAR_SRC;
+  // No sales platform beyond Shopify is introduced in the CATALOG section.
+  // MEDIA.1A-P4 legitimately added the owner-only Snoonu session helper under
+  // «الإعدادات», so this ban is scoped to catalog links + the sidebar component
+  // itself (which renders labels from data, never hardcodes a platform).
+  const serialized = JSON.stringify(catalog) + SIDEBAR_SRC;
   for (const banned of ["Talabat", "طلبات", "Pure Seoul", "Rafeeq", "رفيق", "Snoonu", "سنونو"]) {
-    assert.ok(!serialized.includes(banned), `sidebar must not link ${banned} yet`);
+    assert.ok(!serialized.includes(banned), `catalog section must not link ${banned} yet`);
   }
 });
 
