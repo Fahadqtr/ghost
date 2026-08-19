@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { isAllowedSnoonuImageUrl } from "./image-host-policy.ts";
 
 test("allows https Snoonu hosts and their subdomains", () => {
+  // VERIFIED CDN host from the MEDIA.1A-P2 operator capture
+  assert.equal(isAllowedSnoonuImageUrl("https://images.snoonu.com/product/2026-5/abc_x.jpeg"), true);
   assert.equal(isAllowedSnoonuImageUrl("https://cdn.snoonu.com/img/a.jpg"), true);
   assert.equal(isAllowedSnoonuImageUrl("https://media.snoonu.com/x.png"), true);
   assert.equal(isAllowedSnoonuImageUrl("https://sub.storage.snoonu.com/y.webp"), true);

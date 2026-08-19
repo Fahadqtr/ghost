@@ -1,9 +1,10 @@
 // MEDIA.1B — Snoonu Media Discovery guard (source scan). Proves the discovery
 // pipeline is READ-ONLY and DISCOVERS ONLY: pure contract/engine invent no Snoonu
-// endpoint and hold no rule; the server layer reuses the injectable session port,
-// writes nothing, recovers no image, and makes no real Snoonu request (default
-// provider is inert); the UI is presentational; and nothing anywhere adds browser
-// automation, a scraping framework, or credential storage.
+// endpoint and hold no rule; the server layer writes nothing, recovers no image,
+// and holds no portal URL/HTTP call of its own (live reads exist ONLY in
+// live-adapter.server.ts against the verified contract — see
+// live-adapter-guard.test.ts); the UI is presentational; and nothing anywhere
+// adds browser automation, a scraping framework, or credential storage.
 // node --conditions=react-server --experimental-strip-types --test lib/adapters/snoonu/merchant/discovery-guard.test.ts
 
 import test from "node:test";

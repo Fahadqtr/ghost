@@ -5,16 +5,17 @@ import { SNOONU_STOREFRONT_KEYS } from "./merchant-contract";
 import type { SnoonuStorefrontKey } from "./merchant-contract";
 import type { DiscoveryResult, SnoonuDiscoveryProvider } from "./discovery-contract";
 import { runSnoonuDiscovery } from "./discovery-engine";
-import { createDefaultSnoonuDiscoveryProvider } from "./discovery-provider.server";
+import { createConfiguredSnoonuDiscoveryProvider } from "./live-adapter.server";
 
 // MEDIA.1B — Snoonu Media Discovery orchestrator (SERVER, READ-ONLY).
 //
 // Reads the internal product's identifying facts from OUR catalog (read-only),
 // then runs the pure discovery engine INDEPENDENTLY for each Snoonu storefront
-// (Malikas + Pure Seoul) with the default (session_required) provider. It writes
-// nothing — no imageStore, no product_images, no ECL, no product mutation — and
-// makes no real Snoonu request (the default provider is inert). A future live
-// adapter is injected via `deps.providers` without any change here.
+// (Malikas + Pure Seoul). It writes nothing — no imageStore, no product_images,
+// no ECL, no product mutation. The default provider is resolved per storefront:
+// LIVE (verified name-search reads against the captured portal contract) when
+// that storefront's session config is provisioned, otherwise the inert
+// SESSION_REQUIRED default. Tests may still inject via `deps.providers`.
 
 export interface DiscoveryQueryContext {
   productId: string | null;
@@ -84,7 +85,7 @@ export const loadSnoonuDiscovery = cache(async (input: DiscoveryInput, deps?: Di
   // Independent search per storefront — storefront_key is retained on every result.
   const results = await Promise.all(
     SNOONU_STOREFRONT_KEYS.map((key) => {
-      const provider = deps?.providers?.[key] ?? createDefaultSnoonuDiscoveryProvider(key);
+      const provider = deps?.providers?.[key] ?? createConfiguredSnoonuDiscoveryProvider(key);
       return runSnoonuDiscovery(provider, {
         storefrontKey: key,
         barcode: product.barcode,

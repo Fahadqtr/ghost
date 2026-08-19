@@ -20,7 +20,8 @@ export async function testSnoonuConnection(storefrontKey: string): Promise<Snoon
   if (!(await isSignedIn())) {
     return { storefrontKey: key, state: "UNKNOWN", configured: false, connected: false };
   }
-  // No confirmed portal contract ⇒ no live reader injected ⇒ SESSION_REQUIRED /
-  // UNKNOWN only. Never CONNECTED until a real authenticated read proves it.
+  // MEDIA.1A-P2: the default live reader performs a real authenticated read
+  // against the VERIFIED portal contract when this storefront's session is
+  // provisioned. CONNECTED only ever appears from a proven read.
   return testSnoonuSession(key);
 }

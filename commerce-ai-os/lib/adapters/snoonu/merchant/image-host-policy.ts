@@ -6,9 +6,12 @@
 // hosts, so a compromised/spoofed listing cannot make the server fetch an
 // arbitrary URL. Only these hosts (or a subdomain of them) are permitted.
 //
-// NOTE: the exact Snoonu CDN hostnames must be confirmed from a live network
-// capture during operator setup; extend SNOONU_IMAGE_HOST_SUFFIXES then. Kept
-// conservative and centralized so there is one place to review.
+// NOTE: `images.snoonu.com` is VERIFIED from a live operator capture
+// (MEDIA.1A-P2) — it is the host observed serving product `images[].imageUri`.
+// It already matched via the `snoonu.com` suffix; it is listed explicitly to
+// mark it as the confirmed CDN host. The remaining entries stay conservative
+// until observed. One centralized place to review; suffix-anchored, https-only,
+// no IP literals — additions must keep passing image-host-policy.test.ts.
 //
 // PURE: no imports. node:test loads it directly.
 
@@ -16,6 +19,7 @@ export const SNOONU_IMAGE_HOST_SUFFIXES: readonly string[] = [
   "snoonu.com",
   "snoonu.app",
   "cdn.snoonu.com",
+  "images.snoonu.com", // VERIFIED (MEDIA.1A-P2 capture)
   "media.snoonu.com",
   "storage.snoonu.com",
 ];
