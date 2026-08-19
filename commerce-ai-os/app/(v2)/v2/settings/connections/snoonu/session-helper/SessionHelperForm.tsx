@@ -10,7 +10,7 @@
 // Sensitive fields are masked password inputs with autofill disabled and are
 // never echoed anywhere else in the UI.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { SNOONU_STOREFRONT_KEYS } from "@/lib/adapters/snoonu/merchant/merchant-contract";
 import type { SnoonuStorefrontKey } from "@/lib/adapters/snoonu/merchant/merchant-contract";
@@ -37,25 +37,56 @@ export default function SessionHelperForm() {
   const [generated, setGenerated] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const [showJson, setShowJson] = useState(false);
+  const outputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const envKey = SNOONU_SESSION_ENV_KEYS[storefront];
 
   const generate = () => {
     setCopied(false);
+    setCopyError(false);
+    setShowJson(false);
     const r = buildSnoonuSessionEnvJson({ businessUnitId, authorization, cookie, extraHeaderName, extraHeaderValue });
     if (r.ok) { setGenerated(r.json); setError(null); }
     else { setGenerated(null); setError(r.error); }
   };
 
+  const markCopied = () => {
+    setCopyError(false);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Copy must NEVER be a silent no-op: clipboard API first; if it is
+  // unavailable/denied (insecure context, webview, permissions policy), fall
+  // back to selecting the visible textarea + execCommand; if that also fails,
+  // reveal the JSON and say so — the operator can always select it manually.
   const copy = async () => {
     if (!generated) return;
     try {
       await navigator.clipboard.writeText(generated);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
+      markCopied();
+      return;
     } catch {
-      // clipboard unavailable (e.g. insecure context) — stay silent, no leak
+      // clipboard API unavailable — try the selection fallback below
     }
+    try {
+      const el = outputRef.current;
+      if (el) {
+        setShowJson(true);
+        el.focus();
+        el.select();
+        if (document.execCommand("copy")) {
+          markCopied();
+          return;
+        }
+      }
+    } catch {
+      // fall through to the explicit error
+    }
+    setShowJson(true);
+    setCopyError(true);
   };
 
   // Switching storefront invalidates the generated JSON on purpose: a session
@@ -193,9 +224,37 @@ export default function SessionHelperForm() {
           <p className="text-xs text-slate-500">
             الـ JSON مُولّد في ذاكرة المتصفح فقط — لم يُرسل ولن يُرسل إلى أي خادم أو قاعدة بيانات من هذه الصفحة.
           </p>
-          <button type="button" onClick={copy} className="btn-primary text-sm">
-            {copied ? "تم النسخ ✓" : "نسخ Session JSON"}
-          </button>
+          {/* The JSON is VISIBLE here (read-only), blurred until revealed, so the
+              operator can always select and copy it manually even when the
+              clipboard API is unavailable. */}
+          <textarea
+            ref={outputRef}
+            readOnly
+            value={generated}
+            rows={8}
+            dir="ltr"
+            spellCheck={false}
+            onFocus={(e) => e.currentTarget.select()}
+            className={`w-full rounded-xl border border-slate-200 bg-slate-50 p-2 font-mono text-[11px] text-ink ${showJson ? "" : "blur-sm select-all"}`}
+            aria-label="Session JSON"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={copy} className="btn-primary text-sm">
+              {copied ? "تم النسخ ✓" : "نسخ Session JSON"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowJson((v) => !v)}
+              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              {showJson ? "إخفاء JSON" : "إظهار JSON"}
+            </button>
+          </div>
+          {copyError ? (
+            <p className="text-xs text-rose-600" role="alert">
+              تعذّر النسخ التلقائي في هذا المتصفح — ظُهر الـ JSON أعلاه؛ حدّده وانسخه يدويًا (Ctrl/Cmd+C).
+            </p>
+          ) : null}
           <ol className="list-inside list-decimal space-y-1 text-xs text-slate-600">
             <li dir="ltr" className="text-right">
               Vercel ← Project ← Settings ← Environment Variables ← Add:
