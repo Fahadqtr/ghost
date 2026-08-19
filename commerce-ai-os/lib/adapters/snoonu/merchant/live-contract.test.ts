@@ -1,4 +1,4 @@
-// MEDIA.1A-P2 — verified-contract module unit tests (pure).
+// MEDIA.1A-P2/P3 — verified-contract module unit tests (pure).
 // node --conditions=react-server --experimental-strip-types --test lib/adapters/snoonu/merchant/live-contract.test.ts
 
 import test from "node:test";
@@ -8,29 +8,48 @@ import {
   SNOONU_PORTAL_ORIGIN,
   SNOONU_PRODUCTS_SEARCH_PATH,
   SEARCH_TERM_TYPE_NAME,
+  SEARCH_TERM_TYPE_SKU_OR_BARCODE,
   SNOONU_DISCOVERY_PAGE_SIZE,
+  buildIdentitySearchBody,
   buildNameSearchBody,
   parseSnoonuSessionConfig,
   parseSnoonuProductsResponse,
+  filterExactBarcode,
   filterExactName,
+  filterExactSku,
 } from "./live-contract.ts";
 
-test("constants match the VERIFIED capture exactly", () => {
+test("constants match the VERIFIED captures exactly", () => {
   assert.equal(SNOONU_PORTAL_ORIGIN, "https://api-portal.snoonu.com");
   assert.equal(SNOONU_PRODUCTS_SEARCH_PATH, "/api/marketplace/CatalogManagement/Products");
   assert.equal(SEARCH_TERM_TYPE_NAME, 2);
+  assert.equal(SEARCH_TERM_TYPE_SKU_OR_BARCODE, 1);
   assert.ok(SNOONU_DISCOVERY_PAGE_SIZE > 0 && SNOONU_DISCOVERY_PAGE_SIZE <= 50, "page size is bounded");
 });
 
-test("buildNameSearchBody emits exactly the verified request fields (name mode only)", () => {
+test("buildNameSearchBody: NAME search uses searchTermType = 2", () => {
   const body = buildNameSearchBody("bu-1", "vitamin serum");
   assert.deepEqual(body, {
     businessUnitId: "bu-1",
     searchTerm: "vitamin serum",
-    searchTermType: SEARCH_TERM_TYPE_NAME,
+    searchTermType: 2,
     productSkip: 0,
     productTake: SNOONU_DISCOVERY_PAGE_SIZE,
   });
+});
+
+test("buildIdentitySearchBody: SKU and BARCODE searches use searchTermType = 1", () => {
+  const bySku = buildIdentitySearchBody("bu-1", "mk2001");
+  const byBarcode = buildIdentitySearchBody("bu-1", "8801234567890");
+  assert.deepEqual(bySku, {
+    businessUnitId: "bu-1",
+    searchTerm: "mk2001",
+    searchTermType: 1,
+    productSkip: 0,
+    productTake: SNOONU_DISCOVERY_PAGE_SIZE,
+  });
+  assert.equal(byBarcode.searchTermType, 1, "barcode uses the same verified identity type");
+  assert.equal(byBarcode.searchTerm, "8801234567890");
 });
 
 test("parseSnoonuSessionConfig accepts only the documented shape", () => {
@@ -111,4 +130,20 @@ test("filterExactName: trimmed case-insensitive equality; blank target matches n
   assert.equal(filterExactName(c, "  cosrx snail mucin 96%  ").length, 1);
   assert.equal(filterExactName(c, "COSRX Snail").length, 0, "partial is not exact");
   assert.equal(filterExactName(c, "   ").length, 0);
+});
+
+test("filterExactBarcode: exact equality only — a loose portal match can never SAFE_MATCH", () => {
+  const c = parseSnoonuProductsResponse(RESPONSE, "snoonu:malikas");
+  assert.equal(filterExactBarcode(c, " 8801234567890 ").length, 1, "trimmed exact barcode matches");
+  assert.equal(filterExactBarcode(c, "880123456789").length, 0, "prefix/partial is rejected");
+  assert.equal(filterExactBarcode(c, "8801234567891").length, 0, "different barcode is rejected");
+  assert.equal(filterExactBarcode(c, "   ").length, 0, "blank matches nothing");
+});
+
+test("filterExactSku: trimmed case-insensitive exact equality only", () => {
+  const c = parseSnoonuProductsResponse(RESPONSE, "snoonu:malikas");
+  assert.equal(filterExactSku(c, " MK2001 ").length, 1, "case-insensitive exact SKU matches");
+  assert.equal(filterExactSku(c, "mk200").length, 0, "prefix/partial is rejected");
+  assert.equal(filterExactSku(c, "mk2002").length, 0, "different SKU is rejected");
+  assert.equal(filterExactSku(c, "   ").length, 0, "blank matches nothing");
 });

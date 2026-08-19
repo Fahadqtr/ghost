@@ -1,16 +1,13 @@
-// MEDIA.1A-P2 — VERIFIED Snoonu merchant-portal contract (PURE).
+// MEDIA.1A-P2/P3 — VERIFIED Snoonu merchant-portal contract (PURE).
 //
-// Every constant and shape in this file comes from a sanitized operator capture
-// of the authenticated Snoonu merchant portal — nothing is guessed. The capture
+// Every constant and shape in this file comes from sanitized operator captures
+// of the authenticated Snoonu merchant portal — nothing is guessed. The captures
 // verified: the API host, the Products search endpoint, the request body fields,
 // the response envelope (status/data.products with id, businessUnitId, barcode,
 // sku, price, locales[].name, images[].imageUri), the image CDN host
-// (images.snoonu.com), and that `searchTermType = 2` performs a NAME search.
-//
-// The searchTermType values for BARCODE and SKU searches are NOT yet verified
-// and are deliberately ABSENT from this file — those search modes stay unwired
-// until each is confirmed by its own sanitized capture. Do not add them by
-// inference.
+// (images.snoonu.com), and the searchTermType values: `2` performs a NAME
+// search; `1` performs the identity search used for both SKU and BARCODE terms
+// (MEDIA.1A-P3 captures). No other searchTermType value exists here.
 //
 // PURE: relative type imports only; no env, no network, no server-only, no IO.
 
@@ -25,6 +22,9 @@ export const SNOONU_PRODUCTS_SEARCH_PATH = "/api/marketplace/CatalogManagement/P
 /** VERIFIED: the portal sent searchTermType=2 when searching by product NAME. */
 export const SEARCH_TERM_TYPE_NAME = 2;
 
+/** VERIFIED: the portal sent searchTermType=1 when searching by SKU and when searching by BARCODE. */
+export const SEARCH_TERM_TYPE_SKU_OR_BARCODE = 1;
+
 /** Bounded page size for discovery reads (productTake). */
 export const SNOONU_DISCOVERY_PAGE_SIZE = 20;
 
@@ -37,12 +37,23 @@ export interface SnoonuProductsSearchBody {
   productTake: number;
 }
 
-/** Build the verified request body (name search only — the sole verified mode). */
+/** Build the verified request body for a NAME search (searchTermType = 2). */
 export function buildNameSearchBody(businessUnitId: string, searchTerm: string): SnoonuProductsSearchBody {
   return {
     businessUnitId,
     searchTerm,
     searchTermType: SEARCH_TERM_TYPE_NAME,
+    productSkip: 0,
+    productTake: SNOONU_DISCOVERY_PAGE_SIZE,
+  };
+}
+
+/** Build the verified request body for an identity search — SKU or barcode (searchTermType = 1). */
+export function buildIdentitySearchBody(businessUnitId: string, searchTerm: string): SnoonuProductsSearchBody {
+  return {
+    businessUnitId,
+    searchTerm,
+    searchTermType: SEARCH_TERM_TYPE_SKU_OR_BARCODE,
     productSkip: 0,
     productTake: SNOONU_DISCOVERY_PAGE_SIZE,
   };
@@ -142,4 +153,22 @@ export function filterExactName(candidates: DiscoveryCandidate[], name: string):
   const target = name.trim().toLowerCase();
   if (target === "") return [];
   return candidates.filter((c) => (c.name ?? "").trim().toLowerCase() === target);
+}
+
+/**
+ * Trimmed exact-equality barcode filter. The portal's identity search may match
+ * loosely; a barcode lookup returns ONLY rows whose own barcode equals the
+ * searched term, so a loose portal match can never become a SAFE_MATCH.
+ */
+export function filterExactBarcode(candidates: DiscoveryCandidate[], barcode: string): DiscoveryCandidate[] {
+  const target = barcode.trim();
+  if (target === "") return [];
+  return candidates.filter((c) => (c.barcode ?? "").trim() === target);
+}
+
+/** Trimmed, case-insensitive exact-equality SKU filter (same rationale as barcode). */
+export function filterExactSku(candidates: DiscoveryCandidate[], sku: string): DiscoveryCandidate[] {
+  const target = sku.trim().toLowerCase();
+  if (target === "") return [];
+  return candidates.filter((c) => (c.sku ?? "").trim().toLowerCase() === target);
 }
