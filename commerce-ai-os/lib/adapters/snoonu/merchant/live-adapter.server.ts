@@ -1,31 +1,35 @@
 import "server-only";
 import type { SnoonuStorefrontKey } from "./merchant-contract";
-import type { DiscoveryLookup, SnoonuDiscoveryProvider } from "./discovery-contract";
+import type { DiscoveryCandidate, DiscoveryLookup, SnoonuDiscoveryProvider } from "./discovery-contract";
 import type { LiveReadResult, SnoonuLiveSessionReader } from "./session-status";
 import {
   SNOONU_PORTAL_ORIGIN,
   SNOONU_PRODUCTS_SEARCH_PATH,
+  buildIdentitySearchBody,
   buildNameSearchBody,
+  filterExactBarcode,
   filterExactName,
+  filterExactSku,
   parseSnoonuProductsResponse,
   parseSnoonuSessionConfig,
+  type SnoonuProductsSearchBody,
   type SnoonuSessionConfig,
 } from "./live-contract";
 import { createDefaultSnoonuDiscoveryProvider } from "./discovery-provider.server";
 
-// MEDIA.1A-P2 — LIVE Snoonu portal adapter (SERVER-ONLY), built strictly from the
-// VERIFIED contract in live-contract.ts (operator capture). It performs
+// MEDIA.1A-P2/P3 — LIVE Snoonu portal adapter (SERVER-ONLY), built strictly from
+// the VERIFIED contract in live-contract.ts (operator captures). It performs
 // authenticated READS only against the single pinned portal origin:
 //
 //   POST https://api-portal.snoonu.com/api/marketplace/CatalogManagement/Products
 //
 // Scope and honesty rules:
-//   • NAME search only — the sole verified searchTermType (=2). The barcode and
-//     SKU search modes are NOT wired (their searchTermType values are unverified);
-//     they return zero candidates WITHOUT any request, so the engine falls
-//     through to the verified name search and can never fabricate a SAFE_MATCH.
-//   • No Snoonu write of any kind; no image recovery; classification (MEDIA.1B
-//     engine) is untouched.
+//   • All three verified search modes are wired: barcode + SKU use the verified
+//     identity searchTermType (=1, via buildIdentitySearchBody) and NAME uses the
+//     verified searchTermType (=2, via buildNameSearchBody). Barcode/SKU lookups
+//     return ONLY exact-equality rows, so a loose portal match can never become
+//     a SAFE_MATCH. The MEDIA.1B search order/classification is untouched.
+//   • No Snoonu write of any kind; no image recovery.
 //   • The per-storefront secret env holds a JSON config (businessUnitId + the
 //     operator's captured auth headers). It is read here only to authenticate
 //     requests — never logged, never serialized, never returned to any caller.
@@ -60,12 +64,12 @@ type PortalRead =
   | { kind: "error" };
 
 /** One authenticated POST to the verified Products search endpoint. */
-async function postProductsSearch(config: SnoonuSessionConfig, searchTerm: string): Promise<PortalRead> {
+async function postProductsSearch(config: SnoonuSessionConfig, body: SnoonuProductsSearchBody): Promise<PortalRead> {
   try {
     const res = await fetch(SNOONU_PORTAL_ORIGIN + SNOONU_PRODUCTS_SEARCH_PATH, {
       method: "POST",
       headers: { "content-type": "application/json", ...config.headers },
-      body: JSON.stringify(buildNameSearchBody(config.businessUnitId, searchTerm)),
+      body: JSON.stringify(body),
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -82,43 +86,53 @@ async function postProductsSearch(config: SnoonuSessionConfig, searchTerm: strin
   }
 }
 
-/** Honest lookup for a search mode whose portal contract is not verified yet. */
-const modeNotWired = (): Promise<DiscoveryLookup> =>
-  Promise.resolve({ state: "authenticated", candidates: [] });
-
 /**
  * The LIVE discovery provider for ONE storefront. Requires a parsed config.
- * One portal request per distinct name (memoized within this provider instance,
- * i.e. per request scope) — exact-name and contains-name reuse the same read.
+ * One portal request per distinct (searchTermType, term) pair (memoized within
+ * this provider instance, i.e. per request scope) — exact-name and contains-name
+ * reuse the same read.
  */
 export function createLiveSnoonuDiscoveryProvider(
   storefrontKey: SnoonuStorefrontKey,
   config: SnoonuSessionConfig,
 ): SnoonuDiscoveryProvider {
   const memo = new Map<string, Promise<PortalRead>>();
-  const search = (term: string): Promise<PortalRead> => {
-    let p = memo.get(term);
-    if (!p) { p = postProductsSearch(config, term); memo.set(term, p); }
+  const search = (body: SnoonuProductsSearchBody): Promise<PortalRead> => {
+    const key = `${body.searchTermType}:${body.searchTerm}`;
+    let p = memo.get(key);
+    if (!p) { p = postProductsSearch(config, body); memo.set(key, p); }
     return p;
   };
 
-  const nameLookup = async (name: string): Promise<DiscoveryLookup> => {
-    const read = await search(name);
+  const lookup = async (body: SnoonuProductsSearchBody): Promise<DiscoveryLookup> => {
+    const read = await search(body);
     if (read.kind === "unauthorized") return { state: "session_required", candidates: [] };
     if (read.kind !== "ok") return { state: "error", candidates: [], error: "Snoonu portal read failed." };
     return { state: "authenticated", candidates: parseSnoonuProductsResponse(read.json, storefrontKey) };
   };
+
+  // VERIFIED identity search (searchTermType=1, SKU and barcode alike). Only
+  // rows whose OWN field equals the searched term survive — exactness is what
+  // lets the engine treat a single row as SAFE_MATCH.
+  const identityLookup = async (
+    term: string,
+    exact: (candidates: DiscoveryCandidate[], term: string) => DiscoveryCandidate[],
+  ): Promise<DiscoveryLookup> => {
+    const lk = await lookup(buildIdentitySearchBody(config.businessUnitId, term));
+    if (lk.state !== "authenticated") return lk;
+    return { state: "authenticated", candidates: exact(lk.candidates, term) };
+  };
+
+  const nameLookup = (name: string): Promise<DiscoveryLookup> =>
+    lookup(buildNameSearchBody(config.businessUnitId, name));
 
   return {
     storefrontKey,
     // Configured ⇒ eligible to search; the truthful auth proof is each read's
     // own outcome (a dead session surfaces as SESSION_REQUIRED per lookup).
     state: async () => "authenticated",
-    // NOT WIRED: barcode/SKU searchTermType values are unverified. No request
-    // is made and no candidate is returned — the engine falls through to the
-    // verified name search (which can only ever yield NEEDS_REVIEW).
-    findByBarcode: () => modeNotWired(),
-    findBySku: () => modeNotWired(),
+    findByBarcode: (barcode) => identityLookup(barcode, filterExactBarcode),
+    findBySku: (sku) => identityLookup(sku, filterExactSku),
     searchExactName: async (name) => {
       const lk = await nameLookup(name);
       if (lk.state !== "authenticated") return lk;
@@ -161,7 +175,7 @@ export function createConfiguredLiveSessionReader(storefrontKey: SnoonuStorefron
   if (cfg.kind === "absent") return null;
   if (cfg.kind === "invalid") return async (): Promise<LiveReadResult> => ({ outcome: "error" });
   return async (): Promise<LiveReadResult> => {
-    const read = await postProductsSearch(cfg.config, "a");
+    const read = await postProductsSearch(cfg.config, buildNameSearchBody(cfg.config.businessUnitId, "a"));
     if (read.kind === "ok") return { outcome: "ok" };
     if (read.kind === "unauthorized") return { outcome: "expired" };
     if (read.kind === "timeout") return { outcome: "timeout" };
