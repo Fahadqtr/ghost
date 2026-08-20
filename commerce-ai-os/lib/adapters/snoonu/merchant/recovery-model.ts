@@ -15,7 +15,7 @@
 
 import type { DiscoveryCandidate, DiscoveryClassification, DiscoveryResult } from "./discovery-contract.ts";
 import { REASON_LABEL } from "./discovery-contract.ts";
-import type { ApplyItemResult, ImagePreviewRow } from "./merchant-contract.ts";
+import type { ApplyItemResult, ImagePreviewRow, SearchModeTrace } from "./merchant-contract.ts";
 
 export type RecoveryStatus =
   | "RECOVERED"
@@ -125,9 +125,54 @@ export function decideSnoonuRecovery(input: RecoveryDecisionInput): RecoveryDeci
  * live discovery pipeline the per-product page uses. Only MATCHED rows with a
  * source image are selectable (bulk applies SAFE matches only).
  */
+/** What the live adapter emits per lookup (term included for attribution). */
+export interface EmittedLookupTrace {
+  mode: "barcode" | "sku" | "name";
+  term: string;
+  read: "ok" | "unauthorized" | "timeout" | "error";
+  rawCount: number;
+  exactCount: number;
+}
+
+/**
+ * MEDIA.1C-HOTFIX3 — assemble the per-mode evidence for ONE candidate from the
+ * adapter's emitted lookups (pure). A mode with no term, or one the engine
+ * never reached (an earlier mode SAFE-matched), is attempted:false / skipped.
+ * Attribution is by (mode, term); memoized reads re-emit, so the first match
+ * carries the true counts for this candidate's term.
+ */
+export function buildRowModeTrace(
+  product: { barcode: string | null; sku: string | null; name: string | null },
+  emitted: EmittedLookupTrace[],
+): SearchModeTrace[] {
+  const forMode = (mode: SearchModeTrace["mode"], term: string | null): SearchModeTrace => {
+    const t = term && term.trim() !== "" ? term : null;
+    const hit = t ? emitted.find((e) => e.mode === mode && e.term === t) : undefined;
+    if (!t || !hit) return { mode, attempted: false, read: "skipped", rawCount: 0, exactCount: 0 };
+    return { mode, attempted: true, read: hit.read, rawCount: hit.rawCount, exactCount: hit.exactCount };
+  };
+  return [forMode("barcode", product.barcode), forMode("sku", product.sku), forMode("name", product.name)];
+}
+
+const TRACE_MODE_LABEL: Record<SearchModeTrace["mode"], string> = { barcode: "باركود", sku: "SKU", name: "اسم" };
+const TRACE_READ_LABEL: Record<SearchModeTrace["read"], string> = {
+  ok: "نجح", unauthorized: "مرفوض", timeout: "مهلة", error: "خطأ", skipped: "تخطّي",
+};
+
+/** Compact per-mode evidence suffix appended to a row's reason (pure). */
+export function formatModeTraceReason(trace: SearchModeTrace[]): string {
+  const parts = trace.map((t) =>
+    t.attempted
+      ? `${TRACE_MODE_LABEL[t.mode]}: ${TRACE_READ_LABEL[t.read]} خام ${t.rawCount} تام ${t.exactCount}`
+      : `${TRACE_MODE_LABEL[t.mode]}: ${TRACE_READ_LABEL.skipped}`,
+  );
+  return `[${parts.join(" · ")}]`;
+}
+
 export function discoveryResultToPreviewRow(
   product: { id: string; sku: string | null; barcode: string | null },
   r: DiscoveryResult,
+  modeTrace?: SearchModeTrace[],
 ): ImagePreviewRow {
   const best = r.candidates[0] ?? null;
   let matchStatus: ImagePreviewRow["matchStatus"];
@@ -172,7 +217,8 @@ export function discoveryResultToPreviewRow(
     currentImage: false, // batch candidates are, by construction, missing their primary image
     merchantImageUrl: best?.imageUrl ?? null,
     matchStatus,
-    reason,
+    reason: modeTrace ? `${reason} ${formatModeTraceReason(modeTrace)}` : reason,
+    modeTrace,
     provenance: {
       storefrontKey: r.storefrontKey,
       spi: best?.spi ?? null,

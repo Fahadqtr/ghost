@@ -66,7 +66,7 @@ test("CONNECTED session: even with identity modes rejected, discovery falls thro
   assert.deepEqual(calls, { state: 1, barcode: 1, sku: 1, exact: 1, contains: 0 });
 });
 
-test("CONNECTED session with a working identity mode still yields SAFE_MATCH (unchanged behavior)", async () => {
+test("CONNECTED + barcode exact ⇒ SAFE_MATCH (unchanged behavior)", async () => {
   const provider: SnoonuDiscoveryProvider = {
     storefrontKey: "snoonu:malikas",
     state: async () => "authenticated",
@@ -78,6 +78,35 @@ test("CONNECTED session with a working identity mode still yields SAFE_MATCH (un
   const r = await runSnoonuDiscovery(provider, { storefrontKey: "snoonu:malikas", barcode: "123", sku: "mk1", name: "P" });
   assert.equal(r.classification, "SAFE_MATCH");
   assert.equal(r.sessionState, "authenticated");
+});
+
+test("CONNECTED + barcode miss + SKU exact ⇒ SAFE_MATCH (order enforced: barcode → sku)", async () => {
+  const order: string[] = [];
+  const provider: SnoonuDiscoveryProvider = {
+    storefrontKey: "snoonu:malikas",
+    state: async () => "authenticated",
+    findByBarcode: async () => { order.push("barcode"); return authed([]); },
+    findBySku: async () => { order.push("sku"); return authed([cand()]); },
+    searchExactName: async () => { order.push("name"); return authed([]); },
+    searchContainsName: async () => { order.push("name"); return authed([]); },
+  };
+  const r = await runSnoonuDiscovery(provider, { storefrontKey: "snoonu:malikas", barcode: "123", sku: "mk1", name: "P" });
+  assert.equal(r.classification, "SAFE_MATCH");
+  assert.equal(r.matchReason, "exact_sku");
+  assert.deepEqual(order, ["barcode", "sku"], "name never reached after a SKU exact match");
+});
+
+test("CONNECTED + barcode miss + SKU miss + name miss (all three) ⇒ NO_MATCH", async () => {
+  const provider: SnoonuDiscoveryProvider = {
+    storefrontKey: "snoonu:malikas",
+    state: async () => "authenticated",
+    findByBarcode: async () => authed([]),
+    findBySku: async () => authed([]),
+    searchExactName: async () => authed([]),
+    searchContainsName: async () => authed([]),
+  };
+  const r = await runSnoonuDiscovery(provider, { storefrontKey: "snoonu:malikas", barcode: "123", sku: "mk1", name: "P" });
+  assert.equal(r.classification, "NO_MATCH");
 });
 
 // ── source guard: ONE session source, ONE resolver, real state(), safe logging ─
