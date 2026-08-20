@@ -33,6 +33,9 @@ test("Snoonu session helper (MEDIA.1A-P4) lives under «الإعدادات» (in
   assert.ok(sh, "session-helper link exists — the owner page must be reachable from the menu");
   assert.equal(sh!.label, "جلسة Snoonu");
   assert.equal(sh!.section, "الإعدادات");
+  // NAV-HOTFIX: connection-style icon pinned so the shortcut can't silently
+  // lose its identity (and, via the checks above, can't disappear at all).
+  assert.equal(sh!.icon, "channels", "connection/status icon");
   assert.equal(sh!.external, undefined, "session helper is a V2 route — not external");
 });
 

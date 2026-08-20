@@ -92,7 +92,9 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // Settings (MEDIA.1A-P4) — the Snoonu session capture helper. The page itself
   // is requireOwner()-gated (non-owners get a fixed denial), so surfacing the
   // link is safe; without it the page was reachable only by typing the URL.
-  { href: "/v2/settings/connections/snoonu/session-helper", label: "جلسة Snoonu", icon: "operations", section: "الإعدادات" },
+  // NAV-HOTFIX: connection-style icon so the session shortcut reads as a
+  // connections/status entry at a glance (the page itself stays owner-only).
+  { href: "/v2/settings/connections/snoonu/session-helper", label: "جلسة Snoonu", icon: "channels", section: "الإعدادات" },
 
   // Extra tools (UX.1) — still-used pages that live in the PREVIOUS interface and
   // are NOT in the legacy-redirect list. Linked (not reimplemented) and marked
