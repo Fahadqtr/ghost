@@ -13,7 +13,9 @@
 //
 // PURE: relative type imports only; no server-only, no env, no network, no clock.
 
-import type { DiscoveryCandidate, DiscoveryClassification } from "./discovery-contract.ts";
+import type { DiscoveryCandidate, DiscoveryClassification, DiscoveryResult } from "./discovery-contract.ts";
+import { REASON_LABEL } from "./discovery-contract.ts";
+import type { ApplyItemResult, ImagePreviewRow } from "./merchant-contract.ts";
 
 export type RecoveryStatus =
   | "RECOVERED"
@@ -112,4 +114,82 @@ export function decideSnoonuRecovery(input: RecoveryDecisionInput): RecoveryDeci
       return { allow: true, candidate };
     }
   }
+}
+
+/**
+ * MEDIA.1C-HOTFIX2 — map ONE product's LIVE discovery result to the Media
+ * Center's CH.6B-shaped preview row (pure). The batch scan previously ran
+ * through the legacy SnoonuMerchantSession SPI port, whose state() is a
+ * hardcoded session_required no-op — so it always reported SESSION_REQUIRED
+ * regardless of the provisioned session. Rows are now derived from the SAME
+ * live discovery pipeline the per-product page uses. Only MATCHED rows with a
+ * source image are selectable (bulk applies SAFE matches only).
+ */
+export function discoveryResultToPreviewRow(
+  product: { id: string; sku: string | null; barcode: string | null },
+  r: DiscoveryResult,
+): ImagePreviewRow {
+  const best = r.candidates[0] ?? null;
+  let matchStatus: ImagePreviewRow["matchStatus"];
+  let reason: string;
+  let selectable = false;
+
+  switch (r.classification) {
+    case "SESSION_REQUIRED":
+      matchStatus = "SESSION_REQUIRED";
+      reason = "الجلسة مطلوبة للبحث في Snoonu.";
+      break;
+    case "ERROR":
+      matchStatus = "NEEDS_REVIEW";
+      reason = "خطأ أثناء البحث — أعد المحاولة.";
+      break;
+    case "NO_MATCH":
+      matchStatus = "NOT_FOUND";
+      reason = "لا توجد نتيجة مطابقة في هذا المتجر.";
+      break;
+    case "SAFE_MATCH":
+      if (best && has(best.imageUrl)) {
+        matchStatus = "MATCHED";
+        reason = `تطابق مؤكد (${REASON_LABEL[r.matchReason]}).`;
+        selectable = true;
+      } else {
+        matchStatus = "NEEDS_REVIEW";
+        reason = "مطابقة مؤكدة لكن بلا صورة في المصدر.";
+      }
+      break;
+    case "NEEDS_REVIEW":
+      matchStatus = "NEEDS_REVIEW";
+      reason = `تحتاج مراجعة (${REASON_LABEL[r.matchReason]}).`;
+      break;
+  }
+
+  return {
+    productId: product.id,
+    sku: product.sku,
+    barcode: product.barcode,
+    storefrontKey: r.storefrontKey,
+    spi: best?.spi ?? null,
+    currentImage: false, // batch candidates are, by construction, missing their primary image
+    merchantImageUrl: best?.imageUrl ?? null,
+    matchStatus,
+    reason,
+    provenance: {
+      storefrontKey: r.storefrontKey,
+      spi: best?.spi ?? null,
+      merchantSku: best?.sku ?? null,
+      merchantBarcode: best?.barcode ?? null,
+      merchantTitle: best?.name ?? null,
+      internalProductId: product.id,
+      confidence: matchStatus === "MATCHED" ? "high" : matchStatus === "NEEDS_REVIEW" && best ? "medium" : "none",
+    },
+    selectable,
+  };
+}
+
+/** MEDIA.1C-HOTFIX2 — map one recovery outcome to the Media Center's apply-result shape (pure). */
+export function recoveryOutcomeToApplyResult(productId: string, o: RecoveryOutcome): ApplyItemResult {
+  if (o.status === "RECOVERED") return { productId, status: "IMPORTED", url: o.url };
+  if (o.status === "UNCHANGED" || o.status === "STALE") return { productId, status: "SKIPPED", reason: o.reason };
+  if (o.status === "NEEDS_REVIEW") return { productId, status: "NEEDS_REVIEW", reason: o.reason };
+  return { productId, status: "FAILED", reason: o.reason };
 }
