@@ -1,18 +1,15 @@
 "use client";
 
 // OPS.2 — Media Center operator surface. Orchestration only: it never writes and
-// holds no DB client. Snoonu recovery is a read-only Scan → writer-gated Recover
-// that DELEGATES to the CH.6B orchestrator via server actions; manual upload /
-// gallery management reuse the existing per-product media editor (deep link to
-// catalog edit). Duplicate detection is a read-only report — nothing is ever
-// auto-deleted.
+// holds no DB client. Snoonu recovery is the MEDIA.2 bulk workspace
+// (SnoonuBulkRecovery), which delegates every write to the certified MEDIA.1C
+// pipeline via server actions; manual upload / gallery management reuse the
+// existing per-product media editor (deep link to catalog edit). Duplicate
+// detection is a read-only report — nothing is ever auto-deleted.
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  scanSnoonuImageRecoveryAction,
-  recoverSnoonuImagesAction,
-} from "@/app/(v2)/v2/operations/media-actions";
+import SnoonuBulkRecovery from "@/components/v2/operations/SnoonuBulkRecovery";
 import {
   mediaHealthTone,
   applyMediaFilter,
@@ -25,11 +22,8 @@ import {
   type MediaFilter,
   type CardTone,
 } from "@/lib/operations/media/media-core";
-import type { MissingImageScanResult } from "@/lib/adapters/snoonu/merchant/missing-image-scan";
-import type { ApplyItemResult } from "@/lib/adapters/snoonu/merchant/merchant-contract";
 
 type ProductRow = MediaProductRow & { isDuplicate: boolean; healthScore: number };
-type Msg = { ok: boolean; text: string } | null;
 
 const CARD_TONE: Record<CardTone, string> = {
   neutral: "border-slate-200 bg-white text-slate-700",
@@ -47,10 +41,6 @@ const DUP_LABEL: Record<string, string> = {
   cross_product_filename: "اسم ملف مكرر عبر منتجات",
   same_product_url: "رابط مكرر داخل المنتج",
 };
-const SNOONU_STOREFRONTS = [
-  { key: "snoonu:malikas", label: "Snoonu — Malikas" },
-  { key: "snoonu:pure_seoul", label: "Snoonu — Pure Seoul" },
-];
 
 export default function MediaCenter({
   canWrite,
@@ -72,46 +62,9 @@ export default function MediaCenter({
 }) {
   const [filter, setFilter] = useState<MediaFilter>("all");
   const [query, setQuery] = useState("");
-  const [storefront, setStorefront] = useState<string>(initialStorefront ?? "snoonu:malikas");
-  const [scan, setScan] = useState<MissingImageScanResult | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [results, setResults] = useState<ApplyItemResult[] | null>(null);
-  const [msg, setMsg] = useState<Msg>(null);
-  const [isPending, startTransition] = useTransition();
 
   const dupIds = useMemo(() => duplicateProductIds(duplicates), [duplicates]);
   const rows = useMemo(() => searchRows(applyMediaFilter(products, filter, dupIds), query), [products, filter, dupIds, query]);
-  const matchedRows = useMemo(() => (scan?.rows ?? []).filter((r) => r.selectable), [scan]);
-  const allMatchedSelected = matchedRows.length > 0 && matchedRows.every((r) => selected.has(r.productId));
-
-  function runScan() {
-    setScan(null); setSelected(new Set()); setResults(null); setMsg(null);
-    startTransition(async () => {
-      const res = await scanSnoonuImageRecoveryAction(storefront);
-      if ("error" in res) { setMsg({ ok: false, text: res.error }); return; }
-      setScan(res);
-      setSelected(new Set(res.rows.filter((r) => r.selectable).map((r) => r.productId)));
-      if (res.summary.sessionRequired > 0 && res.summary.matched === 0) {
-        setMsg({ ok: true, text: "لا توجد جلسة تاجر سنونو مفعّلة — لا مرشّحات استرجاع حتمية الآن (آمن)." });
-      }
-    });
-  }
-
-  function toggle(id: string) {
-    setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  }
-
-  function recover(ids: string[]) {
-    if (!canWrite || ids.length === 0) return;
-    setResults(null); setMsg(null);
-    startTransition(async () => {
-      const res = await recoverSnoonuImagesAction(storefront, ids);
-      if ("error" in res) { setMsg({ ok: false, text: res.error }); return; }
-      setResults(res.results);
-      const imported = res.results.filter((r) => r.status === "IMPORTED").length;
-      setMsg({ ok: true, text: `تم الاسترجاع: ${imported} صورة. حدّث الصفحة لرؤية النتيجة.` });
-    });
-  }
 
   return (
     <div className="space-y-4">
@@ -127,71 +80,8 @@ export default function MediaCenter({
       </div>
       <div className="text-[11px] text-muted">متوسط صحة الوسائط: {dashboard.totals.averageHealth}%{degraded ? " · بيانات منقوصة (تعذّرت قراءة جزء)" : ""}</div>
 
-      {msg && (
-        <div className={`card text-sm ${msg.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`} role={msg.ok ? "status" : "alert"}>
-          {msg.text}
-        </div>
-      )}
-
-      {/* Snoonu recovery (reuses CH.6B) */}
-      <section className="card space-y-2">
-        <h2 className="text-sm font-bold text-slate-700">استرجاع الصور من سنونو</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <select value={storefront} onChange={(e) => setStorefront(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs">
-            {SNOONU_STOREFRONTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-          </select>
-          <button type="button" onClick={runScan} disabled={isPending} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
-            {isPending ? "…" : "فحص (معاينة)"}
-          </button>
-          {scan && (
-            <span className="text-xs text-muted">
-              مطابق {scan.summary.matched} · مراجعة {scan.summary.needsReview} · غير موجود {scan.summary.notFound} · بحاجة جلسة {scan.summary.sessionRequired}
-            </span>
-          )}
-        </div>
-
-        {scan && matchedRows.length > 0 && (
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <span className="text-xs text-muted">محدد {selected.size} / {matchedRows.length} حتمي</span>
-              <button type="button" onClick={() => setSelected(allMatchedSelected ? new Set() : new Set(matchedRows.map((r) => r.productId)))} className="rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-white">تحديد الكل</button>
-              <button
-                type="button"
-                onClick={() => recover([...selected])}
-                disabled={!canWrite || isPending || selected.size === 0}
-                title={canWrite ? undefined : "للقراءة فقط"}
-                className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
-              >
-                {canWrite ? "استرجاع المحدد" : "🔒 استرجاع المحدد"}
-              </button>
-              <button
-                type="button"
-                onClick={() => recover(matchedRows.map((r) => r.productId))}
-                disabled={!canWrite || isPending}
-                className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
-              >
-                استرجاع كل المؤهّل
-              </button>
-            </div>
-            <div className="space-y-1">
-              {matchedRows.slice(0, 300).map((r) => (
-                <label key={r.productId} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white px-3 py-1.5 text-xs">
-                  <input type="checkbox" disabled={!canWrite} checked={selected.has(r.productId)} onChange={() => toggle(r.productId)} />
-                  <span className="font-medium text-slate-700">{r.sku}</span>
-                  <span className="text-emerald-600">مطابق (SPI {r.spi})</span>
-                  <span className="ms-auto text-muted">{r.reason}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {results && (
-          <div className="text-xs text-muted">
-            النتائج: مسترجع {results.filter((r) => r.status === "IMPORTED").length} · متجاوَز {results.filter((r) => r.status === "SKIPPED").length} · مراجعة {results.filter((r) => r.status === "NEEDS_REVIEW").length} · فشل {results.filter((r) => r.status === "FAILED").length}
-          </div>
-        )}
-      </section>
+      {/* Snoonu bulk recovery (MEDIA.2) — delegates every write to MEDIA.1C */}
+      <SnoonuBulkRecovery canWrite={canWrite} initialStorefront={initialStorefront} />
 
       {/* Missing images queue */}
       {missing.length > 0 && (

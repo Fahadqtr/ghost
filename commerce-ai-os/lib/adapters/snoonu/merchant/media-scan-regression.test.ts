@@ -133,6 +133,9 @@ test("Media Center actions delegate ONLY to the live scan + MEDIA.1C recovery", 
   const s = strip(read(ACTIONS));
   assert.ok(/scanSnoonuMissingImagesLive\(/.test(s), "scan → live discovery batch");
   assert.ok(/recoverSnoonuImage\(\{\s*productId:/.test(s), "apply → MEDIA.1C orchestrator per item");
-  assert.ok(/recoveryOutcomeToApplyResult\(/.test(s), "outcomes mapped by the pure model");
+  // MEDIA.2: the bulk loop moved client-side (live progress + cancel after the
+  // current product); the action recovers exactly ONE product per call and
+  // returns the RecoveryOutcome unmapped (the pure bulk model aggregates it).
+  assert.equal((s.match(/recoverSnoonuImage\(/g) ?? []).length, 1, "exactly one recovery call site — one product per action call");
   assert.equal(/scanSnoonuMissingImages\(|applySnoonuImageImports\(/.test(s), false, "no legacy CH.6B delegation remains");
 });
