@@ -5,7 +5,7 @@ import { SNOONU_STOREFRONT_KEYS } from "./merchant-contract";
 import type { SnoonuStorefrontKey } from "./merchant-contract";
 import type { DiscoveryResult, SnoonuDiscoveryProvider } from "./discovery-contract";
 import { runSnoonuDiscovery } from "./discovery-engine";
-import { createConfiguredSnoonuDiscoveryProvider } from "./live-adapter.server";
+import { createConfiguredSnoonuDiscoveryProvider, getSnoonuSessionConfigState } from "./live-adapter.server";
 
 // MEDIA.1B — Snoonu Media Discovery orchestrator (SERVER, READ-ONLY).
 //
@@ -84,9 +84,10 @@ export const loadSnoonuDiscovery = cache(async (input: DiscoveryInput, deps?: Di
 
   // Independent search per storefront — storefront_key is retained on every result.
   const results = await Promise.all(
-    SNOONU_STOREFRONT_KEYS.map((key) => {
-      const provider = deps?.providers?.[key] ?? createConfiguredSnoonuDiscoveryProvider(key);
-      return runSnoonuDiscovery(provider, {
+    SNOONU_STOREFRONT_KEYS.map(async (key) => {
+      const injected = deps?.providers?.[key];
+      const provider = injected ?? createConfiguredSnoonuDiscoveryProvider(key);
+      const r = await runSnoonuDiscovery(provider, {
         storefrontKey: key,
         barcode: product.barcode,
         sku: product.sku,
@@ -101,6 +102,20 @@ export const loadSnoonuDiscovery = cache(async (input: DiscoveryInput, deps?: Di
         candidateCount: 0,
         error: "discovery failed",
       }));
+      // MEDIA.1C-HOTFIX trace (dev/test ONLY — stripped from production): proves
+      // which resolver served the scan and what the provider reported. The
+      // config KIND is logged, never any value/header/secret.
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[snoonu-discovery]", {
+          storefrontKey: key,
+          resolver: injected ? "injected(test)" : "configured-env",
+          configState: getSnoonuSessionConfigState(key),
+          providerInvoked: true,
+          sessionState: r.sessionState,
+          classification: r.classification,
+        });
+      }
+      return r;
     }),
   );
 

@@ -11,7 +11,7 @@
 //
 // PURE: relative type imports only; no env, no network, no server-only, no IO.
 
-import type { DiscoveryCandidate, SnoonuStorefrontKey } from "./discovery-contract.ts";
+import type { DiscoveryCandidate, MerchantSessionState, SnoonuStorefrontKey } from "./discovery-contract.ts";
 
 /** VERIFIED portal API origin (from capture). The ONLY host the live adapter calls. */
 export const SNOONU_PORTAL_ORIGIN = "https://api-portal.snoonu.com";
@@ -153,6 +153,34 @@ export function filterExactName(candidates: DiscoveryCandidate[], name: string):
   const target = name.trim().toLowerCase();
   if (target === "") return [];
   return candidates.filter((c) => (c.name ?? "").trim().toLowerCase() === target);
+}
+
+/** Outcome kind of one authenticated portal read (transport-level). */
+export type PortalReadKind = "ok" | "unauthorized" | "timeout" | "error";
+
+/**
+ * Session state proven by the PROBE read — the same name-mode request the
+ * Connection Manager's Test Connection performs. This is the ONE session
+ * resolver both surfaces share (MEDIA.1C-HOTFIX).
+ */
+export function mapProbeState(read: PortalReadKind): MerchantSessionState {
+  if (read === "ok") return "authenticated";
+  if (read === "unauthorized") return "session_required";
+  return "error";
+}
+
+/**
+ * Map one IDENTITY-search read (searchTermType=1) to a session state, judged
+ * against the probe. MEDIA.1C-HOTFIX: a 401/403 on a single search MODE must
+ * not masquerade as a dead session — when the probe proves the session alive,
+ * the rejected mode simply yields no candidates and the engine falls through
+ * to the verified name search (which can only ever produce NEEDS_REVIEW).
+ * Only when the probe is dead too is it a genuine session_required.
+ */
+export function mapIdentityLookupState(read: PortalReadKind, sessionAlive: boolean): MerchantSessionState {
+  if (read === "ok") return "authenticated";
+  if (read === "unauthorized") return sessionAlive ? "authenticated" : "session_required";
+  return "error";
 }
 
 /**
