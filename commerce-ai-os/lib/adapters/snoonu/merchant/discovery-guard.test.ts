@@ -1,10 +1,11 @@
-// MEDIA.1B — Snoonu Media Discovery guard (source scan). Proves the discovery
-// pipeline is READ-ONLY and DISCOVERS ONLY: pure contract/engine invent no Snoonu
-// endpoint and hold no rule; the server layer writes nothing, recovers no image,
-// and holds no portal URL/HTTP call of its own (live reads exist ONLY in
-// live-adapter.server.ts against the verified contract — see
-// live-adapter-guard.test.ts); the UI is presentational; and nothing anywhere
-// adds browser automation, a scraping framework, or credential storage.
+// MEDIA.1B/1C — Snoonu Media Discovery guard (source scan). Proves the discovery
+// pipeline is READ-ONLY: pure contract/engine invent no Snoonu endpoint and hold
+// no rule; the server layer writes nothing and holds no portal URL/HTTP call of
+// its own (live reads exist ONLY in live-adapter.server.ts against the verified
+// contract — see live-adapter-guard.test.ts); the UI performs no direct write or
+// fetch (MEDIA.1C recovery goes exclusively through the writer-gated server
+// action — see media-recovery-guard.test.ts); and nothing anywhere adds browser
+// automation, a scraping framework, or credential storage.
 // node --conditions=react-server --experimental-strip-types --test lib/adapters/snoonu/merchant/discovery-guard.test.ts
 
 import test from "node:test";
@@ -75,8 +76,8 @@ test("provider + orchestrator are read-only, reuse the session port, and never w
   assert.ok(/SNOONU_STOREFRONT_KEYS/.test(server), "runs per storefront (isolation)");
 });
 
-// ── UI is presentational and offers NO recovery/import action ─────────────────
-test("discovery UI is presentational — no data client, writes, recovery, secrets or network", () => {
+// ── UI holds no direct write/fetch — recovery exists ONLY via the gated action ─
+test("discovery UI has no data client, direct write, media boundary, secrets or network", () => {
   const s = strip(read(PANEL));
   for (const bad of [/createClient\(/, /@\/lib\/supabase/, /\.from\(["'`]/, ...WRITES, ...RECOVERY, /"use server"/, /process\.env/, /\bfetch\(/]) {
     assert.equal(bad.test(s), false, `${PANEL} must not contain ${bad}`);

@@ -167,7 +167,7 @@ export default function LaunchWorkspace({ model }: { model: LaunchWorkspaceModel
                       <div className="flex items-center gap-1.5">
                         <Link href={r.href} className="rounded-lg bg-brand px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90">فتح المحرّر ↗</Link>
                         {r.blockerKey === "image" ? (
-                          <Link href={`/v2/operations/media/discovery?productId=${encodeURIComponent(r.id)}`} className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700 hover:bg-sky-100">🔍 Snoonu</Link>
+                          <Link href={`/v2/operations/media/discovery?productId=${encodeURIComponent(r.id)}`} className="rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700 hover:bg-sky-100">🔍 استرجاع من Snoonu</Link>
                         ) : null}
                       </div>
                     </td>

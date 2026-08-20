@@ -1,16 +1,34 @@
 "use client";
 
-// MEDIA.1B — Snoonu Media Discovery (PRESENTATIONAL + view filters). Renders the
-// pre-composed discovery view: the product being searched, per-storefront session
-// state, classification, match reason, and any candidates the provider supplied
-// (preview only). It holds NO data client, issues NO queries, performs NO writes,
-// and offers NO recovery/import action. When no authenticated session exists it
-// shows a clear SESSION_REQUIRED state — never a fabricated result.
+// MEDIA.1B/1C — Snoonu Media Discovery + image recovery. Renders the pre-composed
+// discovery view (product, per-storefront session state, classification, match
+// reason, candidates) and — MEDIA.1C — offers per-candidate image recovery. The
+// component itself still holds NO data client, issues NO queries, and performs NO
+// direct write: recovery goes EXCLUSIVELY through the writer-gated server action
+// (recoverImageFromSnoonu → media-recovery.server → certified media boundary).
+// SAFE_MATCH recovers on one confirm; NEEDS_REVIEW requires picking a specific
+// candidate; a product that already has an image gets no recover button (and the
+// server re-checks). SESSION_REQUIRED stays honest — never a fabricated result.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { recoverImageFromSnoonu } from "@/app/(v2)/v2/operations/media/discovery/actions";
 import type { SnoonuDiscoveryView } from "@/lib/adapters/snoonu/merchant/discovery.server";
-import type { DiscoveryClassification, DiscoveryResult } from "@/lib/adapters/snoonu/merchant/discovery-contract";
+import type { DiscoveryCandidate, DiscoveryClassification, DiscoveryResult } from "@/lib/adapters/snoonu/merchant/discovery-contract";
 import { CLASSIFICATION_LABEL, REASON_LABEL } from "@/lib/adapters/snoonu/merchant/discovery-contract";
+import { RECOVERY_STATUS_LABEL } from "@/lib/adapters/snoonu/merchant/recovery-model";
+import type { RecoveryOutcome, RecoveryStatus } from "@/lib/adapters/snoonu/merchant/recovery-model";
+
+const OUTCOME_TONE: Record<RecoveryStatus, string> = {
+  RECOVERED: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  UNCHANGED: "border-slate-200 bg-slate-50 text-slate-600",
+  NEEDS_REVIEW: "border-amber-200 bg-amber-50 text-amber-700",
+  NO_MATCH: "border-slate-200 bg-slate-50 text-slate-600",
+  NO_IMAGE_SOURCE: "border-amber-200 bg-amber-50 text-amber-700",
+  SESSION_REQUIRED: "border-sky-200 bg-sky-50 text-sky-700",
+  STALE: "border-amber-200 bg-amber-50 text-amber-700",
+  FAILED: "border-rose-200 bg-rose-50 text-rose-700",
+};
 
 const CLASS_TONE: Record<DiscoveryClassification, string> = {
   SAFE_MATCH: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -49,7 +67,27 @@ function matches(r: DiscoveryResult, f: Filter): boolean {
   }
 }
 
-function ResultCard({ r }: { r: DiscoveryResult }) {
+function ResultCard({ r, productId, hasImage }: { r: DiscoveryResult; productId: string | null; hasImage: boolean }) {
+  const router = useRouter();
+  const [outcome, setOutcome] = useState<RecoveryOutcome | null>(null);
+  const [busy, start] = useTransition();
+
+  // Recovery is offered only when the product is actually missing its primary
+  // image and the candidate carries a source image. The server independently
+  // re-verifies everything (writer gate, CONNECTED, stale, eligibility).
+  const recoverable = (c: DiscoveryCandidate): boolean =>
+    !!productId && !hasImage && !!c.imageUrl && !!c.spi &&
+    (r.classification === "SAFE_MATCH" || r.classification === "NEEDS_REVIEW");
+
+  const recover = (c: DiscoveryCandidate) => {
+    if (!productId || !c.spi) return;
+    start(async () => {
+      const o = await recoverImageFromSnoonu({ productId, storefrontKey: r.storefrontKey, confirmedSpi: c.spi });
+      setOutcome(o);
+      if (o.status === "RECOVERED") router.refresh();
+    });
+  };
+
   return (
     <div className="card space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -91,8 +129,33 @@ function ResultCard({ r }: { r: DiscoveryResult }) {
                   {c.imageWidth && c.imageHeight ? <span dir="ltr">{c.imageWidth}×{c.imageHeight}</span> : null}
                 </div>
               </div>
+              {recoverable(c) ? (
+                <button
+                  type="button"
+                  onClick={() => recover(c)}
+                  disabled={busy}
+                  className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                >
+                  {busy ? "…يسترجع" : r.classification === "SAFE_MATCH" ? "استرجاع الصورة" : "تأكيد واسترجاع هذه الصورة"}
+                </button>
+              ) : null}
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {r.classification === "NEEDS_REVIEW" && !hasImage && r.candidates.length > 0 ? (
+        <p className="text-[11px] text-amber-600">
+          مطابقة غير مؤكدة (اسم/نتائج متعددة) — لا استرجاع تلقائي؛ اختر النتيجة الصحيحة بنفسك.
+        </p>
+      ) : null}
+
+      {outcome ? (
+        <div className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${OUTCOME_TONE[outcome.status]}`} role="status">
+          <span><b>{RECOVERY_STATUS_LABEL[outcome.status]}</b> — {outcome.reason}</span>
+          <button type="button" onClick={() => router.refresh()} className="shrink-0 font-semibold underline">
+            بحث مجددًا
+          </button>
         </div>
       ) : null}
     </div>
@@ -152,13 +215,17 @@ export default function SnoonuDiscovery({ view }: { view: SnoonuDiscoveryView })
         ))}
       </div>
 
-      {/* Per-storefront results */}
+      {/* Per-storefront results (recovery per storefront, fully independent) */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {filtered.map((r) => <ResultCard key={r.storefrontKey} r={r} />)}
+        {filtered.map((r) => (
+          <ResultCard key={r.storefrontKey} r={r} productId={q.productId} hasImage={!!q.currentImageUrl} />
+        ))}
         {filtered.length === 0 ? <p className="text-xs text-muted">لا توجد نتائج مطابقة للمرشّح.</p> : null}
       </div>
 
-      <p className="text-[11px] text-slate-400">اكتشاف فقط — لا يوجد استرجاع صور أو أي كتابة في هذه المرحلة.</p>
+      <p className="text-[11px] text-slate-400">
+        الاسترجاع يكتب فقط عبر مخزن الصور المعتمد، لمنتج بلا صورة أساسية، وبعد تأكيد صريح — ولا يغيّر مخزونًا أو توفرًا أو حالة إطلاق.
+      </p>
     </div>
   );
 }
