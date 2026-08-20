@@ -66,6 +66,21 @@ export interface ImageCandidateProduct {
   hasPrimaryImage: boolean;
 }
 
+/**
+ * MEDIA.1C-HOTFIX3 — per-mode search evidence for one candidate. `attempted`
+ * is false when the mode had no term to search or the engine SAFE-matched an
+ * earlier mode and never reached it (read = "skipped" in both cases).
+ */
+export interface SearchModeTrace {
+  mode: "barcode" | "sku" | "name";
+  attempted: boolean;
+  read: "ok" | "unauthorized" | "timeout" | "error" | "skipped";
+  /** Rows the portal returned for this mode BEFORE exact filtering. */
+  rawCount: number;
+  /** Rows surviving the exact-equality filter (name: exact-name matches). */
+  exactCount: number;
+}
+
 export interface ImagePreviewRow {
   productId: string;
   sku: string | null;
@@ -79,6 +94,8 @@ export interface ImagePreviewRow {
   provenance: MatchProvenance;
   /** true only for MATCHED rows — the sole rows an apply may act on. */
   selectable: boolean;
+  /** MEDIA.1C-HOTFIX3: per-mode evidence (live batch scan only; CH.6B leaves it unset). */
+  modeTrace?: SearchModeTrace[];
 }
 
 export interface ImagePreviewSummary {

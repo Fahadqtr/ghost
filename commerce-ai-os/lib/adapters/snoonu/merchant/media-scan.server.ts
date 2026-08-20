@@ -7,7 +7,8 @@ import type { MissingImageScanResult } from "./missing-image-scan";
 import type { DiscoveryResult } from "./discovery-contract";
 import { runSnoonuDiscovery } from "./discovery-engine";
 import { createConfiguredSnoonuDiscoveryProvider } from "./live-adapter.server";
-import { discoveryResultToPreviewRow } from "./recovery-model";
+import type { LiveLookupTrace } from "./live-adapter.server";
+import { buildRowModeTrace, discoveryResultToPreviewRow } from "./recovery-model";
 
 // MEDIA.1C-HOTFIX2 — LIVE missing-image batch scan (SERVER, READ-ONLY).
 //
@@ -70,8 +71,12 @@ export async function scanSnoonuMissingImagesLive(
   if (!candidates) return { error: "تعذّر قراءة المنتجات." };
 
   // ONE provider per scan: its session probe runs at most once, and repeated
-  // terms reuse the same portal read.
-  const provider = createConfiguredSnoonuDiscoveryProvider(key);
+  // terms reuse the same portal read. MEDIA.1C-HOTFIX3: every lookup emits a
+  // trace (memo hits included) so each row can carry per-mode evidence —
+  // attempted?, transport, raw rows, exact-equality survivors — attributed by
+  // (mode, term). Product terms/counts only; never config/header material.
+  const emitted: LiveLookupTrace[] = [];
+  const provider = createConfiguredSnoonuDiscoveryProvider(key, (t) => { emitted.push(t); });
 
   const results = new Array<DiscoveryResult>(candidates.length);
   for (let i = 0; i < candidates.length; i += SCAN_CONCURRENCY) {
@@ -94,7 +99,7 @@ export async function scanSnoonuMissingImagesLive(
     settled.forEach((r, j) => { results[i + j] = r; });
   }
 
-  const rows = candidates.map((c, i) => discoveryResultToPreviewRow(c, results[i]));
+  const rows = candidates.map((c, i) => discoveryResultToPreviewRow(c, results[i], buildRowModeTrace(c, emitted)));
   const summary: ImagePreviewSummary = {
     missing: rows.length,
     matched: rows.filter((r) => r.matchStatus === "MATCHED").length,

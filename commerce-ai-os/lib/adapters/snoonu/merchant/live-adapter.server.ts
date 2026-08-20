@@ -94,14 +94,30 @@ async function postProductsSearch(config: SnoonuSessionConfig, body: SnoonuProdu
 }
 
 /**
+ * MEDIA.1C-HOTFIX3 — per-lookup evidence emitted by the live provider. The
+ * batch scan collects these to expose, per candidate and per mode, whether the
+ * mode was attempted, its transport outcome, and raw vs exact-filtered counts.
+ * Product terms/counts only — never config or header material.
+ */
+export type LiveLookupTrace = {
+  mode: "barcode" | "sku" | "name";
+  term: string;
+  read: PortalRead["kind"];
+  rawCount: number;
+  exactCount: number;
+};
+
+/**
  * The LIVE discovery provider for ONE storefront. Requires a parsed config.
  * One portal request per distinct (searchTermType, term) pair (memoized within
  * this provider instance, i.e. per request scope) — exact-name and contains-name
- * reuse the same read.
+ * reuse the same read. `trace` (optional) is invoked after every lookup, memo
+ * hits included, so a batch scan can attribute evidence per candidate term.
  */
 export function createLiveSnoonuDiscoveryProvider(
   storefrontKey: SnoonuStorefrontKey,
   config: SnoonuSessionConfig,
+  trace?: (t: LiveLookupTrace) => void,
 ): SnoonuDiscoveryProvider {
   const memo = new Map<string, Promise<PortalRead>>();
   const search = (body: SnoonuProductsSearchBody): Promise<PortalRead> => {
@@ -136,27 +152,39 @@ export function createLiveSnoonuDiscoveryProvider(
   // provably alive it means "no candidates via this mode" (the engine falls
   // through to the verified name search), never a fabricated dead session.
   const identityLookup = async (
+    mode: "barcode" | "sku",
     term: string,
     exact: (candidates: DiscoveryCandidate[], term: string) => DiscoveryCandidate[],
   ): Promise<DiscoveryLookup> => {
     const read = await search(buildIdentitySearchBody(config.businessUnitId, term));
     const state = mapIdentityLookupState(read.kind, read.kind === "unauthorized" ? await sessionAlive() : true);
+    const raw = read.kind === "ok" ? parseSnoonuProductsResponse(read.json, storefrontKey) : [];
+    const exactRows = exact(raw, term);
+    trace?.({ mode, term, read: read.kind, rawCount: raw.length, exactCount: exactRows.length });
     if (state === "error") return { state: "error", candidates: [], error: "Snoonu portal read failed." };
     if (state !== "authenticated") return { state, candidates: [] };
-    const candidates = read.kind === "ok" ? parseSnoonuProductsResponse(read.json, storefrontKey) : [];
-    return { state: "authenticated", candidates: exact(candidates, term) };
+    return { state: "authenticated", candidates: exactRows };
   };
 
-  const nameLookup = (name: string): Promise<DiscoveryLookup> =>
-    lookup(buildNameSearchBody(config.businessUnitId, name));
+  const nameLookup = async (name: string): Promise<DiscoveryLookup> => {
+    const lk = await lookup(buildNameSearchBody(config.businessUnitId, name));
+    trace?.({
+      mode: "name",
+      term: name,
+      read: lk.state === "authenticated" ? "ok" : lk.state === "session_required" ? "unauthorized" : "error",
+      rawCount: lk.candidates.length,
+      exactCount: filterExactName(lk.candidates, name).length,
+    });
+    return lk;
+  };
 
   return {
     storefrontKey,
     // MEDIA.1C-HOTFIX: state() is a REAL probe (same request as Test
     // Connection) — never a hardcoded "authenticated".
     state: async () => mapProbeState((await probe()).kind),
-    findByBarcode: (barcode) => identityLookup(barcode, filterExactBarcode),
-    findBySku: (sku) => identityLookup(sku, filterExactSku),
+    findByBarcode: (barcode) => identityLookup("barcode", barcode, filterExactBarcode),
+    findBySku: (sku) => identityLookup("sku", sku, filterExactSku),
     searchExactName: async (name) => {
       const lk = await nameLookup(name);
       if (lk.state !== "authenticated") return lk;
@@ -171,9 +199,12 @@ export function createLiveSnoonuDiscoveryProvider(
  * config is provisioned + parseable, otherwise the inert SESSION_REQUIRED
  * default (absent) or an error-reporting provider (present but malformed).
  */
-export function createConfiguredSnoonuDiscoveryProvider(storefrontKey: SnoonuStorefrontKey): SnoonuDiscoveryProvider {
+export function createConfiguredSnoonuDiscoveryProvider(
+  storefrontKey: SnoonuStorefrontKey,
+  trace?: (t: LiveLookupTrace) => void,
+): SnoonuDiscoveryProvider {
   const cfg = readSessionConfig(storefrontKey);
-  if (cfg.kind === "ok") return createLiveSnoonuDiscoveryProvider(storefrontKey, cfg.config);
+  if (cfg.kind === "ok") return createLiveSnoonuDiscoveryProvider(storefrontKey, cfg.config, trace);
   if (cfg.kind === "absent") return createDefaultSnoonuDiscoveryProvider(storefrontKey);
   // Secret present but not the documented JSON shape: surface a truthful error
   // (never treated as authenticated, never fabricates results).
@@ -218,6 +249,8 @@ export type DiagnosticReadKind = "ok" | "unauthorized" | "timeout" | "error" | "
 
 export interface SearchModeDiagnostic {
   mode: "barcode" | "sku" | "name";
+  /** False when the mode had no term to search or the session config is unusable. */
+  attempted: boolean;
   /** The searched term (internal product data — not secret). Null = nothing to search. */
   term: string | null;
   read: DiagnosticReadKind;
@@ -246,7 +279,7 @@ export async function diagnoseSnoonuSearchModes(
     configState: cfg.kind,
     probe,
     modes: (["barcode", "sku", "name"] as const).map((mode) => ({
-      mode, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null,
+      mode, attempted: false, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null,
     })),
   });
   if (cfg.kind !== "ok") return skippedAll("skipped");
@@ -260,13 +293,14 @@ export async function diagnoseSnoonuSearchModes(
     body: (t: string) => SnoonuProductsSearchBody,
     exact: (c: DiscoveryCandidate[], t: string) => DiscoveryCandidate[],
   ): Promise<SearchModeDiagnostic> => {
-    if (!term || term.trim() === "") return { mode, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null };
+    if (!term || term.trim() === "") return { mode, attempted: false, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null };
     const read = await postProductsSearch(config, body(term));
-    if (read.kind !== "ok") return { mode, term, read: read.kind, rawCount: 0, exactCount: 0, sample: null };
+    if (read.kind !== "ok") return { mode, attempted: true, term, read: read.kind, rawCount: 0, exactCount: 0, sample: null };
     const raw = parseSnoonuProductsResponse(read.json, storefrontKey);
     const first = raw[0] ?? null;
     return {
       mode,
+      attempted: true,
       term,
       read: "ok",
       rawCount: raw.length,

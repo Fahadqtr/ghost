@@ -12,7 +12,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { discoveryResultToPreviewRow, recoveryOutcomeToApplyResult } from "./recovery-model.ts";
+import { buildRowModeTrace, discoveryResultToPreviewRow, formatModeTraceReason, recoveryOutcomeToApplyResult } from "./recovery-model.ts";
+import type { EmittedLookupTrace } from "./recovery-model.ts";
 import type { DiscoveryCandidate, DiscoveryResult } from "./discovery-contract.ts";
 
 const ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
@@ -74,11 +75,50 @@ test("recovery outcomes map onto the Media Center apply statuses", () => {
   }
 });
 
+// ── HOTFIX3: per-mode evidence on batch-scan rows (attempted/transport/raw/exact) ─
+test("mode trace: attributes emitted lookups per candidate; unreached/empty modes are attempted:false", () => {
+  const emitted: EmittedLookupTrace[] = [
+    { mode: "barcode", term: "555", read: "ok", rawCount: 2, exactCount: 0 },
+    { mode: "sku", term: "mk2245", read: "unauthorized", rawCount: 0, exactCount: 0 },
+    { mode: "name", term: "P", read: "ok", rawCount: 5, exactCount: 1 },
+    { mode: "barcode", term: "OTHER", read: "ok", rawCount: 9, exactCount: 9 }, // another candidate's lookup
+  ];
+  const t = buildRowModeTrace({ barcode: "555", sku: "mk2245", name: "P" }, emitted);
+  assert.deepEqual(t, [
+    { mode: "barcode", attempted: true, read: "ok", rawCount: 2, exactCount: 0 },
+    { mode: "sku", attempted: true, read: "unauthorized", rawCount: 0, exactCount: 0 },
+    { mode: "name", attempted: true, read: "ok", rawCount: 5, exactCount: 1 },
+  ]);
+  // no barcode on the product → attempted:false; engine short-circuit (no name emit) → attempted:false
+  const t2 = buildRowModeTrace({ barcode: null, sku: "mk2245", name: "P" }, emitted.slice(1, 2));
+  assert.deepEqual(t2.map((m) => [m.mode, m.attempted, m.read]), [
+    ["barcode", false, "skipped"],
+    ["sku", true, "unauthorized"],
+    ["name", false, "skipped"],
+  ]);
+});
+
+test("mode trace is exposed on the row and summarized in the visible reason", () => {
+  const trace = buildRowModeTrace({ barcode: "555", sku: "mk2245", name: "P" }, [
+    { mode: "barcode", term: "555", read: "ok", rawCount: 2, exactCount: 0 },
+    { mode: "sku", term: "mk2245", read: "ok", rawCount: 3, exactCount: 0 },
+    { mode: "name", term: "P", read: "ok", rawCount: 5, exactCount: 1 },
+  ]);
+  const row = discoveryResultToPreviewRow(product, result({ classification: "NEEDS_REVIEW", matchReason: "exact_name" }), trace);
+  assert.deepEqual(row.modeTrace, trace, "structured per-mode evidence on the row");
+  const suffix = formatModeTraceReason(trace);
+  assert.ok(row.reason.endsWith(suffix), "reason carries the compact per-mode summary");
+  assert.ok(/باركود: نجح خام 2 تام 0/.test(suffix) && /SKU: نجح خام 3 تام 0/.test(suffix) && /اسم: نجح خام 5 تام 1/.test(suffix));
+  // classification is still the engine's combined 3-mode outcome, not per-mode
+  assert.equal(row.matchStatus, "NEEDS_REVIEW");
+});
+
 // ── source guard: the dead CH.6B SPI port is out of the Media Center path ─────
 test("batch scan runs the LIVE pipeline — never the hardcoded CH.6B session port", () => {
   const raw = read(SCAN);
   assert.ok(/import\s+["']server-only["']/.test(raw), "server-only");
-  assert.ok(/createConfiguredSnoonuDiscoveryProvider\(key\)/.test(raw), "uses the configured live provider (same resolver as Test Connection)");
+  assert.ok(/createConfiguredSnoonuDiscoveryProvider\(key,/.test(raw), "uses the configured live provider (same resolver as Test Connection), with the trace hook");
+  assert.ok(/buildRowModeTrace\(/.test(raw), "rows carry per-mode evidence (attempted/transport/raw/exact)");
   assert.ok(/runSnoonuDiscovery\(provider/.test(raw), "invokes the untouched MEDIA.1B engine per candidate");
   const s = strip(raw);
   assert.equal(/createSnoonuMerchantSession|findListingBySpi|image-recovery\.server/.test(s), false, "legacy SPI port not used");

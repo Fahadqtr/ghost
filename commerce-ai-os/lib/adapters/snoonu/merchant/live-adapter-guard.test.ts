@@ -61,8 +61,8 @@ test("live adapter: server-only, no URL/searchTermType of its own, no automation
 test("all three search modes are wired through their VERIFIED pure builders + exact filters", () => {
   const raw = read(ADAPTER);
   // barcode + SKU go through the verified identity search (searchTermType=1)…
-  assert.ok(/findByBarcode:\s*\(barcode\)\s*=>\s*identityLookup\(barcode,\s*filterExactBarcode\)/.test(raw), "barcode wired via identity lookup + exact barcode filter");
-  assert.ok(/findBySku:\s*\(sku\)\s*=>\s*identityLookup\(sku,\s*filterExactSku\)/.test(raw), "SKU wired via identity lookup + exact SKU filter");
+  assert.ok(/findByBarcode:\s*\(barcode\)\s*=>\s*identityLookup\("barcode",\s*barcode,\s*filterExactBarcode\)/.test(raw), "barcode wired via identity lookup + exact barcode filter");
+  assert.ok(/findBySku:\s*\(sku\)\s*=>\s*identityLookup\("sku",\s*sku,\s*filterExactSku\)/.test(raw), "SKU wired via identity lookup + exact SKU filter");
   assert.ok(/identityLookup[\s\S]{0,300}buildIdentitySearchBody\(config\.businessUnitId/.test(raw), "identity lookup builds its body ONLY via buildIdentitySearchBody");
   // …and name searches go through the verified name search (searchTermType=2)
   assert.ok(/nameLookup[\s\S]{0,120}buildNameSearchBody\(config\.businessUnitId/.test(raw), "name lookup builds its body ONLY via buildNameSearchBody");
