@@ -10,6 +10,8 @@ import {
   filterExactBarcode,
   filterExactName,
   filterExactSku,
+  mapIdentityLookupState,
+  mapProbeState,
   parseSnoonuProductsResponse,
   parseSnoonuSessionConfig,
   type SnoonuProductsSearchBody,
@@ -55,6 +57,11 @@ function readSessionConfig(storefrontKey: SnoonuStorefrontKey): ConfigState {
   if (typeof raw !== "string" || raw.trim() === "") return { kind: "absent" };
   const config = parseSnoonuSessionConfig(raw);
   return config ? { kind: "ok", config } : { kind: "invalid" };
+}
+
+/** Config KIND only ("ok"|"absent"|"invalid") for dev tracing/tests — never the value. */
+export function getSnoonuSessionConfigState(storefrontKey: SnoonuStorefrontKey): "ok" | "absent" | "invalid" {
+  return readSessionConfig(storefrontKey).kind;
 }
 
 type PortalRead =
@@ -104,6 +111,17 @@ export function createLiveSnoonuDiscoveryProvider(
     return p;
   };
 
+  // MEDIA.1C-HOTFIX: ONE session probe per provider instance — the SAME
+  // name-mode request the Connection Manager's Test Connection performs, so
+  // discovery and Test Connection prove the session identically (single
+  // resolver, single env source). Memoized: at most one probe per scan.
+  let probePromise: Promise<PortalRead> | null = null;
+  const probe = (): Promise<PortalRead> => {
+    if (!probePromise) probePromise = postProductsSearch(config, buildNameSearchBody(config.businessUnitId, "a"));
+    return probePromise;
+  };
+  const sessionAlive = async (): Promise<boolean> => (await probe()).kind === "ok";
+
   const lookup = async (body: SnoonuProductsSearchBody): Promise<DiscoveryLookup> => {
     const read = await search(body);
     if (read.kind === "unauthorized") return { state: "session_required", candidates: [] };
@@ -113,14 +131,20 @@ export function createLiveSnoonuDiscoveryProvider(
 
   // VERIFIED identity search (searchTermType=1, SKU and barcode alike). Only
   // rows whose OWN field equals the searched term survive — exactness is what
-  // lets the engine treat a single row as SAFE_MATCH.
+  // lets the engine treat a single row as SAFE_MATCH. MEDIA.1C-HOTFIX: a
+  // 401/403 on THIS mode is judged against the probe — while the session is
+  // provably alive it means "no candidates via this mode" (the engine falls
+  // through to the verified name search), never a fabricated dead session.
   const identityLookup = async (
     term: string,
     exact: (candidates: DiscoveryCandidate[], term: string) => DiscoveryCandidate[],
   ): Promise<DiscoveryLookup> => {
-    const lk = await lookup(buildIdentitySearchBody(config.businessUnitId, term));
-    if (lk.state !== "authenticated") return lk;
-    return { state: "authenticated", candidates: exact(lk.candidates, term) };
+    const read = await search(buildIdentitySearchBody(config.businessUnitId, term));
+    const state = mapIdentityLookupState(read.kind, read.kind === "unauthorized" ? await sessionAlive() : true);
+    if (state === "error") return { state: "error", candidates: [], error: "Snoonu portal read failed." };
+    if (state !== "authenticated") return { state, candidates: [] };
+    const candidates = read.kind === "ok" ? parseSnoonuProductsResponse(read.json, storefrontKey) : [];
+    return { state: "authenticated", candidates: exact(candidates, term) };
   };
 
   const nameLookup = (name: string): Promise<DiscoveryLookup> =>
@@ -128,9 +152,9 @@ export function createLiveSnoonuDiscoveryProvider(
 
   return {
     storefrontKey,
-    // Configured ⇒ eligible to search; the truthful auth proof is each read's
-    // own outcome (a dead session surfaces as SESSION_REQUIRED per lookup).
-    state: async () => "authenticated",
+    // MEDIA.1C-HOTFIX: state() is a REAL probe (same request as Test
+    // Connection) — never a hardcoded "authenticated".
+    state: async () => mapProbeState((await probe()).kind),
     findByBarcode: (barcode) => identityLookup(barcode, filterExactBarcode),
     findBySku: (sku) => identityLookup(sku, filterExactSku),
     searchExactName: async (name) => {
