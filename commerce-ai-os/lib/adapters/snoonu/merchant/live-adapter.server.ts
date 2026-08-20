@@ -206,3 +206,85 @@ export function createConfiguredLiveSessionReader(storefrontKey: SnoonuStorefron
     return { outcome: "error" };
   };
 }
+
+// ── MEDIA.1C-HOTFIX3 — identity-search diagnostic (owner tooling, READ-ONLY) ──
+// Answers, with RUNTIME evidence from the deployed session, why an identity
+// search did not SAFE_MATCH: per mode it reports the transport outcome, how
+// many rows the portal returned (raw, BEFORE exact filtering), how many survive
+// the exact-equality filter, and the portal's OWN identifier values on the
+// first row. Product/listing data only — never a header, config, or secret.
+
+export type DiagnosticReadKind = "ok" | "unauthorized" | "timeout" | "error" | "skipped";
+
+export interface SearchModeDiagnostic {
+  mode: "barcode" | "sku" | "name";
+  /** The searched term (internal product data — not secret). Null = nothing to search. */
+  term: string | null;
+  read: DiagnosticReadKind;
+  /** Rows parsed from the portal response BEFORE any exact filter. */
+  rawCount: number;
+  /** Rows surviving the exact-equality filter (name mode: exact-name matches). */
+  exactCount: number;
+  /** The FIRST raw row's identifiers as the portal returned them. */
+  sample: { spi: string | null; sku: string | null; barcode: string | null; name: string | null } | null;
+}
+
+export interface SnoonuSearchDiagnostic {
+  storefrontKey: SnoonuStorefrontKey;
+  configState: "ok" | "absent" | "invalid";
+  probe: DiagnosticReadKind;
+  modes: SearchModeDiagnostic[];
+}
+
+export async function diagnoseSnoonuSearchModes(
+  storefrontKey: SnoonuStorefrontKey,
+  q: { barcode: string | null; sku: string | null; name: string | null },
+): Promise<SnoonuSearchDiagnostic> {
+  const cfg = readSessionConfig(storefrontKey);
+  const skippedAll = (probe: DiagnosticReadKind): SnoonuSearchDiagnostic => ({
+    storefrontKey,
+    configState: cfg.kind,
+    probe,
+    modes: (["barcode", "sku", "name"] as const).map((mode) => ({
+      mode, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null,
+    })),
+  });
+  if (cfg.kind !== "ok") return skippedAll("skipped");
+  const config = cfg.config;
+
+  const probeRead = await postProductsSearch(config, buildNameSearchBody(config.businessUnitId, "a"));
+
+  const runMode = async (
+    mode: SearchModeDiagnostic["mode"],
+    term: string | null,
+    body: (t: string) => SnoonuProductsSearchBody,
+    exact: (c: DiscoveryCandidate[], t: string) => DiscoveryCandidate[],
+  ): Promise<SearchModeDiagnostic> => {
+    if (!term || term.trim() === "") return { mode, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null };
+    const read = await postProductsSearch(config, body(term));
+    if (read.kind !== "ok") return { mode, term, read: read.kind, rawCount: 0, exactCount: 0, sample: null };
+    const raw = parseSnoonuProductsResponse(read.json, storefrontKey);
+    const first = raw[0] ?? null;
+    return {
+      mode,
+      term,
+      read: "ok",
+      rawCount: raw.length,
+      exactCount: exact(raw, term).length,
+      sample: first ? { spi: first.spi, sku: first.sku, barcode: first.barcode, name: first.name } : null,
+    };
+  };
+
+  const b = (t: string) => buildIdentitySearchBody(config.businessUnitId, t);
+  const n = (t: string) => buildNameSearchBody(config.businessUnitId, t);
+  return {
+    storefrontKey,
+    configState: cfg.kind,
+    probe: probeRead.kind,
+    modes: [
+      await runMode("barcode", q.barcode, b, filterExactBarcode),
+      await runMode("sku", q.sku, b, filterExactSku),
+      await runMode("name", q.name, n, filterExactName),
+    ],
+  };
+}

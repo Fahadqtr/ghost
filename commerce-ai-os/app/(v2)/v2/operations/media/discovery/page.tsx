@@ -10,6 +10,7 @@ import { loadSnoonuConnectionStatuses } from "@/lib/adapters/snoonu/merchant/ses
 import { isOwner } from "@/lib/malak/authz";
 import SnoonuDiscovery from "@/components/v2/operations/SnoonuDiscovery";
 import SnoonuConnectionManager from "@/components/v2/operations/SnoonuConnectionManager";
+import SnoonuSearchDiagnostics from "@/components/v2/operations/SnoonuSearchDiagnostics";
 import type { SnoonuSessionStatus } from "@/lib/adapters/snoonu/merchant/session-status";
 import Link from "next/link";
 
@@ -57,6 +58,8 @@ export default async function SnoonuDiscoveryPage({ searchParams }: { searchPara
         </div>
       </div>
       {statuses.length > 0 ? <SnoonuConnectionManager statuses={statuses} /> : null}
+      {/* MEDIA.1C-HOTFIX3: owner-only runtime evidence for identity searches. */}
+      {owner && view?.query?.productId ? <SnoonuSearchDiagnostics productId={view.query.productId} /> : null}
       {view === null ? (
         <div className="card border-rose-200 bg-rose-50 text-sm text-rose-700" role="alert">{LOAD_ERROR}</div>
       ) : (
