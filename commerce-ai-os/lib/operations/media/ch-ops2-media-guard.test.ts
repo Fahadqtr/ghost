@@ -53,9 +53,12 @@ test("no AI generation anywhere in OPS.2 (media only)", () => {
   }
 });
 
-test("recovery DELEGATES to the CH.6B orchestrator — OPS.2 re-implements no recovery logic", () => {
+test("recovery DELEGATES to the LIVE pipeline — OPS.2 re-implements no recovery logic", () => {
   const s = strip(read(ACTIONS));
-  assert.ok(/scanSnoonuMissingImages\(/.test(s) && /applySnoonuImageImports\(/.test(s), "delegates to CH.6B scan + apply");
+  // MEDIA.1C-HOTFIX2: scan = live discovery batch; apply = MEDIA.1C recovery per
+  // item. The legacy CH.6B SPI-port scan (hardcoded session_required) is gone.
+  assert.ok(/scanSnoonuMissingImagesLive\(/.test(s) && /recoverSnoonuImage\(/.test(s), "delegates to the live scan + MEDIA.1C recovery");
+  assert.equal(/scanSnoonuMissingImages\(|applySnoonuImageImports\(|image-recovery\.server/.test(s), false, "legacy CH.6B delegation removed");
   // the delegating action holds no DB/admin client and issues no queries of its own
   assert.equal(/createAdminClient\(|createClient\(|\.from\(/.test(s), false, "actions hold no DB client / issue no queries");
   // apply is writer-gated inside CH.6B (asserted by CH.6B's own guard); OPS.2 must
