@@ -64,6 +64,7 @@ test("links are grouped by section, in declaration order", () => {
   // NAV.MEDIA added «الصور والوسائط» after «العمليات» (media moved into it).
   assert.deepEqual(sections.map((s) => s.title), [
     "الرئيسية",
+    "المخزون",
     "الكتالوج",
     "العمليات",
     "الصور والوسائط",
@@ -73,7 +74,8 @@ test("links are grouped by section, in declaration order", () => {
     "أدوات إضافية ↗",
   ]);
   assert.deepEqual(sections[0]!.links.map((l) => l.href), ["/v2"]);
-  assert.deepEqual(sections[2]!.links.map((l) => l.href), [
+  assert.deepEqual(sections[1]!.links.map((l) => l.href), ["/v2/inventory"]);
+  assert.deepEqual(sections[3]!.links.map((l) => l.href), [
     "/v2/operations",
     "/v2/operations/channels",
     "/v2/operations/ai",
@@ -81,14 +83,14 @@ test("links are grouped by section, in declaration order", () => {
     "/v2/export",
     "/v2/tasks",
   ]);
-  assert.deepEqual(sections[3]!.links.map((l) => l.href), [
+  assert.deepEqual(sections[4]!.links.map((l) => l.href), [
     "/v2/operations/media",
     "/v2/operations/media/discovery",
     "/v2/operations/media?storefront=snoonu:malikas",
     "/v2/settings/connections/snoonu/session-helper",
   ]);
-  assert.deepEqual(sections[4]!.links.map((l) => l.href), ["/v2/analytics", "/v2/actions"]);
-  assert.deepEqual(sections[5]!.links.map((l) => l.href), LOYALTY_HREFS);
+  assert.deepEqual(sections[5]!.links.map((l) => l.href), ["/v2/analytics", "/v2/actions"]);
+  assert.deepEqual(sections[6]!.links.map((l) => l.href), LOYALTY_HREFS);
   const flat = sections.flatMap((s) => s.links.map((l) => l.href));
   assert.equal(flat.length, V2_NAV_LINKS.length);
   assert.equal(new Set(flat).size, flat.length, "no duplicate hrefs");

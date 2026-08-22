@@ -45,6 +45,10 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // composes the certified read models. First link so it heads the sidebar.
   { href: "/v2", label: "الرئيسية", icon: "home", section: "الرئيسية" },
 
+  // INV.V2.1 — unified entry point only. The hub delegates to the existing
+  // authenticated inventory pages; no inventory data or business logic moves.
+  { href: "/v2/inventory", label: "مركز المخزون", icon: "operations", section: "المخزون" },
+
   { href: "/v2/catalog", label: "كتالوج ماليكاس", icon: "catalog", section: "الكتالوج" },
   { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify", section: "الكتالوج" },
   // WAVE.1A — Launch Campaign Workspace (read-only operational screen). UX.NAV.2
