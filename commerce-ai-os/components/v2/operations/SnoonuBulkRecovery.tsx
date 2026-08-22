@@ -26,12 +26,14 @@ import {
   buildProgressLine,
   buildScanSummaryLine,
   estimateRemainingMs,
+  filterRecoveryRows,
   formatDurationAr,
   reviewQueueRows,
   safeRecoveryRows,
   stripModeTraceSuffix,
   summarizeBulk,
   type BulkItemResult,
+  type RecoveryViewFilter,
 } from "@/lib/adapters/snoonu/merchant/bulk-recovery";
 import { RECOVERY_STATUS_LABEL } from "@/lib/adapters/snoonu/merchant/recovery-model";
 import type { ImagePreviewRow } from "@/lib/adapters/snoonu/merchant/merchant-contract";
@@ -44,6 +46,14 @@ const SNOONU_STOREFRONTS = [
 
 type Progress = { done: number; total: number; currentSku: string | null; remainingMs: number | null };
 type Msg = { ok: boolean; text: string } | null;
+
+const FILTER_LABEL: Record<RecoveryViewFilter, string> = {
+  ALL: "الكل",
+  SAFE_MATCH: "SAFE_MATCH",
+  NEEDS_REVIEW: "NEEDS_REVIEW",
+  NOT_FOUND: "غير موجود",
+  SESSION_REQUIRED: "بحاجة جلسة",
+};
 
 const REPORT_TONE: Record<string, string> = {
   recovered: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -65,6 +75,7 @@ export default function SnoonuBulkRecovery({
   const [storefront, setStorefront] = useState<string>(initialStorefront ?? "snoonu:malikas");
   const [scan, setScan] = useState<MissingImageScanResult | null>(null);
   const [tab, setTab] = useState<"safe" | "review">("safe");
+  const [viewFilter, setViewFilter] = useState<RecoveryViewFilter>("ALL");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<Progress | null>(null);
   const [results, setResults] = useState<BulkItemResult[] | null>(null);
@@ -80,6 +91,12 @@ export default function SnoonuBulkRecovery({
   const safeRows = useMemo(() => (scan ? safeRecoveryRows(scan.rows) : []), [scan]);
   const reviewRows = useMemo(() => (scan ? reviewQueueRows(scan.rows) : []), [scan]);
   const selectedRows = useMemo(() => safeRows.filter((r) => selected.has(r.productId)), [safeRows, selected]);
+  const visibleRows = useMemo(() => {
+    if (!scan) return [];
+    const filtered = filterRecoveryRows(scan.rows, viewFilter);
+    return tab === "safe" ? filtered.filter((r) => r.matchStatus !== "NEEDS_REVIEW") : filtered;
+  }, [scan, viewFilter, tab]);
+  const visibleSafeRows = useMemo(() => safeRecoveryRows(visibleRows), [visibleRows]);
   const allSafeSelected = safeRows.length > 0 && safeRows.every((r) => selected.has(r.productId));
   const running = progress !== null;
   const busy = running || isScanning || busyReviewId !== null;
@@ -87,7 +104,7 @@ export default function SnoonuBulkRecovery({
 
   function runScan() {
     if (busy) return;
-    setScan(null); setSelected(new Set()); setResults(null); setReviewMarks({}); setMsg(null); setTab("safe");
+    setScan(null); setSelected(new Set()); setResults(null); setReviewMarks({}); setMsg(null); setTab("safe"); setViewFilter("ALL");
     startScan(async () => {
       const res = await scanSnoonuImageRecoveryAction(storefront);
       if ("error" in res) { setMsg({ ok: false, text: res.error }); return; }
@@ -198,7 +215,19 @@ export default function SnoonuBulkRecovery({
 
       {/* primary actions + tabs */}
       {scan && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-1.5" aria-label="مرشحات نتائج الاسترجاع">
+            {(Object.keys(FILTER_LABEL) as RecoveryViewFilter[]).map((filter) => {
+              const count = filterRecoveryRows(scan.rows, filter).length;
+              return (
+                <button key={filter} type="button" onClick={() => { setViewFilter(filter); setTab(filter === "NEEDS_REVIEW" ? "review" : "safe"); }} disabled={busy}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50 ${viewFilter === filter ? "border-slate-800 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+                  {FILTER_LABEL[filter]} ({count})
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => runBulk(safeRows)}
@@ -216,6 +245,7 @@ export default function SnoonuBulkRecovery({
           >
             قائمة المراجعة ({reviewRows.length})
           </button>
+          </div>
         </div>
       )}
 
@@ -267,12 +297,15 @@ export default function SnoonuBulkRecovery({
       )}
 
       {/* SAFE tab: selection + Recover Selected */}
-      {scan && tab === "safe" && safeRows.length > 0 && (
+      {scan && tab === "safe" && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <span className="text-xs text-muted">محدد {selectedRows.length} / {safeRows.length} آمن</span>
-            <button type="button" disabled={busy} onClick={() => setSelected(allSafeSelected ? new Set() : new Set(safeRows.map((r) => r.productId)))} className="rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-white disabled:opacity-50">
-              تحديد الكل الآمن
+            <button type="button" disabled={busy || visibleSafeRows.length === 0} onClick={() => setSelected((prev) => new Set([...prev, ...visibleSafeRows.map((r) => r.productId)]))} className="rounded-lg border border-slate-200 px-2 py-1 text-xs hover:bg-white disabled:opacity-50">
+              تحديد الكل
+            </button>
+            <button type="button" disabled={busy} onClick={() => setSelected(allSafeSelected ? new Set() : new Set(safeRows.map((r) => r.productId)))} className="rounded-lg border border-emerald-200 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
+              تحديد SAFE_MATCH
             </button>
             <button
               type="button"
@@ -281,24 +314,35 @@ export default function SnoonuBulkRecovery({
               title={canWrite ? undefined : "للقراءة فقط"}
               className="rounded-lg bg-slate-800 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
             >
-              {canWrite ? "استرجاع المحدد" : "🔒 استرجاع المحدد"}
+              {canWrite ? `اعتماد المحدد (${selectedRows.length})` : "🔒 اعتماد المحدد"}
             </button>
           </div>
-          <div className="space-y-1">
-            {safeRows.slice(0, 300).map((r) => (
-              <label key={r.productId} className="flex items-center gap-2 rounded-lg border border-slate-100 bg-white px-3 py-1.5 text-xs">
-                <input type="checkbox" disabled={!canWrite || busy} checked={selected.has(r.productId)} onChange={() => toggle(r.productId)} />
-                <span className="font-medium text-slate-700">{r.sku}</span>
-                <span className="text-emerald-600">مطابق (SPI {r.spi})</span>
-                {/* diagnostic per-mode suffix lives in the tooltip, not the row */}
-                <span className="ms-auto text-muted" title={r.reason}>{stripModeTraceSuffix(r.reason)}</span>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleRows.slice(0, 300).map((r) => {
+              const eligible = r.matchStatus === "MATCHED" && r.selectable && Boolean(r.spi && r.merchantImageUrl);
+              const badge = eligible ? "SAFE_MATCH" : r.matchStatus === "NOT_FOUND" ? "غير موجود" : "بحاجة جلسة";
+              return (
+              <label key={r.productId} className={`rounded-xl border bg-white p-3 text-xs transition ${selected.has(r.productId) ? "border-emerald-400 ring-1 ring-emerald-200" : "border-slate-200 hover:border-slate-300"}`}>
+                <div className="flex items-start gap-2">
+                  {eligible ? <input type="checkbox" className="mt-1" disabled={!canWrite || busy} checked={selected.has(r.productId)} onChange={() => toggle(r.productId)} /> : <span className="mt-1 h-3.5 w-3.5 rounded border border-slate-200 bg-slate-100" aria-hidden="true" />}
+                  {r.merchantImageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={r.merchantImageUrl} alt="" className="h-16 w-16 rounded-lg border border-slate-100 object-cover" loading="lazy" />
+                  ) : <span className="h-16 w-16 rounded-lg bg-slate-100 text-center text-[9px] leading-[4rem] text-slate-400">لا صورة</span>}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-bold text-slate-700">{r.sku ?? r.productId}</div>
+                    <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${eligible ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{badge}</div>
+                    {r.spi && <div className="mt-1 text-[10px] text-muted">SPI {r.spi}</div>}
+                  </div>
+                </div>
+                {/* PR #656: keep per-mode diagnostics in the tooltip, not the visible card copy. */}
+                <p className="mt-2 line-clamp-2 text-[11px] text-muted" title={r.reason}>{stripModeTraceSuffix(r.reason)}</p>
               </label>
-            ))}
+              );
+            })}
           </div>
+          {visibleRows.length === 0 && <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-muted">لا توجد نتائج ضمن المرشح الحالي.</p>}
         </div>
-      )}
-      {scan && tab === "safe" && safeRows.length === 0 && (
-        <p className="text-xs text-muted">لا توجد مطابقات آمنة قابلة للاسترجاع في هذا الفحص.</p>
       )}
 
       {/* REVIEW tab: preview + explicit per-product approve / skip */}
@@ -306,12 +350,13 @@ export default function SnoonuBulkRecovery({
         reviewRows.length === 0 ? (
           <p className="text-xs text-muted">قائمة المراجعة فارغة.</p>
         ) : (
-          <div className="space-y-1">
-            <p className="text-[11px] text-muted">هذه المطابقات غير مؤكدة — لا تُسترجع ضمن الدفعة أبدًا. الاعتماد يسترجع المرشّح المعروض فقط بعد إعادة التحقق (جلسة + منتج + نتيجة حديثة).</p>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <p className="text-[11px] text-muted sm:col-span-2 xl:col-span-3">هذه المطابقات غير مؤكدة — لا تُسترجع ضمن الدفعة أبدًا. الاعتماد يسترجع المرشّح المعروض فقط بعد إعادة التحقق (جلسة + منتج + نتيجة حديثة).</p>
             {reviewRows.slice(0, 300).map((r) => {
               const mark = reviewMarks[r.productId];
               return (
-                <div key={r.productId} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-100 bg-amber-50/40 px-3 py-1.5 text-xs">
+                <div key={r.productId} className="rounded-xl border border-amber-200 bg-amber-50/40 p-3 text-xs">
+                  <div className="flex items-start gap-2">
                   {r.merchantImageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={r.merchantImageUrl} alt="" className="h-10 w-10 rounded object-cover" loading="lazy" />
@@ -322,7 +367,8 @@ export default function SnoonuBulkRecovery({
                     <div className="font-medium text-slate-700">{r.sku ?? r.productId}{r.spi && <span className="ms-1 text-muted">SPI {r.spi}</span>}</div>
                     <div className="truncate text-[11px] text-muted" title={r.reason}>{stripModeTraceSuffix(r.reason)}</div>
                   </div>
-                  <div className="ms-auto flex items-center gap-1.5">
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     {mark ? (
                       <span className="text-[11px] font-semibold text-slate-600">{mark}</span>
                     ) : (
@@ -341,7 +387,7 @@ export default function SnoonuBulkRecovery({
                         </button>
                       </>
                     )}
-                    <Link href={`/v2/operations/media/discovery?productId=${r.productId}`} className="text-[11px] text-brand hover:underline">
+                    <Link href={`/v2/operations/media/discovery?productId=${r.productId}`} className="ms-auto text-[11px] text-brand hover:underline">
                       كل المرشّحات ↗
                     </Link>
                   </div>

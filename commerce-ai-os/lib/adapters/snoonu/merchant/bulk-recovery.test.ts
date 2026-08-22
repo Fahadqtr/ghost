@@ -11,6 +11,7 @@ import {
   buildScanSummaryLine,
   bulkReportKey,
   estimateRemainingMs,
+  filterRecoveryRows,
   formatDurationAr,
   reviewQueueRows,
   safeRecoveryRows,
@@ -62,6 +63,20 @@ test("reviewQueueRows: exactly the NEEDS_REVIEW rows (never NOT_FOUND / SESSION_
     row({ productId: "p4", matchStatus: "SESSION_REQUIRED", selectable: false }),
   ];
   assert.deepEqual(reviewQueueRows(rows).map((r) => r.productId), ["p2"]);
+});
+
+test("filterRecoveryRows: clear UI filters never make non-safe rows eligible", () => {
+  const rows = [
+    row(),
+    row({ productId: "p2", matchStatus: "NEEDS_REVIEW", selectable: false }),
+    row({ productId: "p3", matchStatus: "NOT_FOUND", selectable: false }),
+    row({ productId: "p4", matchStatus: "SESSION_REQUIRED", selectable: false }),
+  ];
+  assert.deepEqual(filterRecoveryRows(rows, "ALL").map((r) => r.productId), ["p1", "p2", "p3", "p4"]);
+  assert.deepEqual(filterRecoveryRows(rows, "SAFE_MATCH").map((r) => r.productId), ["p1"]);
+  assert.deepEqual(filterRecoveryRows(rows, "NEEDS_REVIEW").map((r) => r.productId), ["p2"]);
+  assert.deepEqual(filterRecoveryRows(rows, "NOT_FOUND").map((r) => r.productId), ["p3"]);
+  assert.deepEqual(filterRecoveryRows(rows, "SESSION_REQUIRED").map((r) => r.productId), ["p4"]);
 });
 
 // ── final report aggregation ──────────────────────────────────────────────────

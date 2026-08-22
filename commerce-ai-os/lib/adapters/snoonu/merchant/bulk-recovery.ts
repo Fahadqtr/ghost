@@ -98,6 +98,16 @@ export function reviewQueueRows(rows: readonly ImagePreviewRow[]): ImagePreviewR
   return (Array.isArray(rows) ? rows : []).filter((r) => r.matchStatus === "NEEDS_REVIEW");
 }
 
+export type RecoveryViewFilter = "ALL" | "SAFE_MATCH" | "NEEDS_REVIEW" | "NOT_FOUND" | "SESSION_REQUIRED";
+
+/** Presentation-only filtering. It never changes recovery eligibility. */
+export function filterRecoveryRows(rows: readonly ImagePreviewRow[], filter: RecoveryViewFilter): ImagePreviewRow[] {
+  const list = Array.isArray(rows) ? rows : [];
+  if (filter === "ALL") return [...list];
+  if (filter === "SAFE_MATCH") return safeRecoveryRows(list);
+  return list.filter((r) => r.matchStatus === filter);
+}
+
 /** Arabic-first top summary, e.g. «58 ناقصة · 34 آمنة · 18 مراجعة · 6 غير موجود». */
 export function buildScanSummaryLine(summary: ImagePreviewSummary): string {
   const parts = [
