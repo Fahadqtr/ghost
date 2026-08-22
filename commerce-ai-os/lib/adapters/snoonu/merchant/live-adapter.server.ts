@@ -14,7 +14,9 @@ import {
   mapProbeState,
   parseSnoonuProductsResponse,
   parseSnoonuSessionConfig,
+  summarizeSnoonuResponseShape,
   type SnoonuProductsSearchBody,
+  type SnoonuResponseShape,
   type SnoonuSessionConfig,
 } from "./live-contract";
 import { createDefaultSnoonuDiscoveryProvider } from "./discovery-provider.server";
@@ -260,6 +262,8 @@ export interface SearchModeDiagnostic {
   exactCount: number;
   /** The FIRST raw row's identifiers as the portal returned them. */
   sample: { spi: string | null; sku: string | null; barcode: string | null; name: string | null } | null;
+  /** Structural metadata only: paths, field names and array counts; no values. */
+  responseShape: SnoonuResponseShape | null;
 }
 
 export interface SnoonuSearchDiagnostic {
@@ -279,7 +283,7 @@ export async function diagnoseSnoonuSearchModes(
     configState: cfg.kind,
     probe,
     modes: (["barcode", "sku", "name"] as const).map((mode) => ({
-      mode, attempted: false, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null,
+      mode, attempted: false, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null, responseShape: null,
     })),
   });
   if (cfg.kind !== "ok") return skippedAll("skipped");
@@ -293,9 +297,9 @@ export async function diagnoseSnoonuSearchModes(
     body: (t: string) => SnoonuProductsSearchBody,
     exact: (c: DiscoveryCandidate[], t: string) => DiscoveryCandidate[],
   ): Promise<SearchModeDiagnostic> => {
-    if (!term || term.trim() === "") return { mode, attempted: false, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null };
+    if (!term || term.trim() === "") return { mode, attempted: false, term: null, read: "skipped", rawCount: 0, exactCount: 0, sample: null, responseShape: null };
     const read = await postProductsSearch(config, body(term));
-    if (read.kind !== "ok") return { mode, attempted: true, term, read: read.kind, rawCount: 0, exactCount: 0, sample: null };
+    if (read.kind !== "ok") return { mode, attempted: true, term, read: read.kind, rawCount: 0, exactCount: 0, sample: null, responseShape: null };
     const raw = parseSnoonuProductsResponse(read.json, storefrontKey);
     const first = raw[0] ?? null;
     return {
@@ -306,6 +310,7 @@ export async function diagnoseSnoonuSearchModes(
       rawCount: raw.length,
       exactCount: exact(raw, term).length,
       sample: first ? { spi: first.spi, sku: first.sku, barcode: first.barcode, name: first.name } : null,
+      responseShape: summarizeSnoonuResponseShape(read.json),
     };
   };
 

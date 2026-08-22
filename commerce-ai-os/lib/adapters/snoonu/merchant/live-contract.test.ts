@@ -14,10 +14,23 @@ import {
   buildNameSearchBody,
   parseSnoonuSessionConfig,
   parseSnoonuProductsResponse,
+  summarizeSnoonuResponseShape,
   filterExactBarcode,
   filterExactName,
   filterExactSku,
 } from "./live-contract.ts";
+
+test("response-shape diagnostic exposes paths/keys/counts but never scalar values", () => {
+  const shape = summarizeSnoonuResponseShape({
+    status: "SECRET-STATUS",
+    payload: { items: [{ id: "SECRET-ID", sku: "SECRET-SKU", nested: { value: "SECRET" } }] },
+  });
+  assert.deepEqual(shape.arrays, [{ path: "$.payload.items", length: 1, itemKeys: ["id", "nested", "sku"] }]);
+  assert.ok(shape.objects.some((o) => o.path === "$" && o.keys.includes("payload")));
+  assert.ok(shape.objects.some((o) => o.path === "$.payload.items[0].nested" && o.keys.includes("value")));
+  const serialized = JSON.stringify(shape);
+  for (const secret of ["SECRET-STATUS", "SECRET-ID", "SECRET-SKU", '"SECRET"']) assert.equal(serialized.includes(secret), false);
+});
 
 test("constants match the VERIFIED captures exactly", () => {
   assert.equal(SNOONU_PORTAL_ORIGIN, "https://api-portal.snoonu.com");

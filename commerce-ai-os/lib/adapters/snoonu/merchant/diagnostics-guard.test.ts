@@ -37,6 +37,8 @@ test("adapter diagnostic: verified builders only; the sample exposes ONLY produc
     ["barcode", "name", "sku", "spi"],
     "sample fields are exactly spi/sku/barcode/name",
   );
+  assert.ok(/summarizeSnoonuResponseShape\(read\.json\)/.test(raw), "response diagnostics expose structural metadata only");
+  assert.equal(/responseShape:\s*read\.json/.test(raw), false, "raw response is never returned");
 });
 
 test("diagnostics server: OWNER-ONLY, read-only, no secret in the return path", () => {
@@ -77,4 +79,5 @@ test("diagnostic panel: presentational — no direct IO, whitelisted imports onl
       `unexpected import in diagnostics panel: ${i}`,
     );
   }
+  assert.ok(/Response structure \(keys\/counts only\)/.test(raw), "panel labels the safe structural diagnostic explicitly");
 });
