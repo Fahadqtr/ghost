@@ -132,10 +132,10 @@ test("batch scan runs the LIVE pipeline — never the hardcoded CH.6B session po
   assert.ok(/\.eq\("storefront_key", storefrontKey\)/.test(raw), "identity scope is the exact Snoonu storefront");
   assert.ok(/\.eq\("mapping_status", "active"\)/.test(raw), "only active mappings are eligible");
   assert.ok(/\.not\("external_product_id", "is", null\)/.test(raw), "an actual SPI is required");
-  assert.ok(/barcode:\s*linked\s*\?\s*c\.barcode\s*:\s*null/.test(raw), "unlinked rows never use barcode identity search");
-  assert.ok(/sku:\s*linked\s*\?\s*c\.sku\s*:\s*null/.test(raw), "unlinked rows never use SKU identity search");
-  assert.ok(/name:\s*c\.name/.test(raw), "unlinked rows still use name discovery");
-  assert.ok(/result\?\.classification\s*===\s*"NEEDS_REVIEW"/.test(raw), "name discovery is review-only");
+  assert.ok(/barcode:\s*c\.barcode/.test(raw), "every row keeps barcode as the first search identity");
+  assert.ok(/sku:\s*c\.sku/.test(raw), "every row keeps SKU as the second search identity");
+  assert.ok(/name:\s*c\.name/.test(raw), "every row falls through to name discovery");
+  assert.ok(/"SAFE_MATCH"\s*\|\|\s*result\?\.classification\s*===\s*"NEEDS_REVIEW"/.test(raw), "positive barcode/SKU/name evidence is surfaced");
   assert.ok(/unlinkedProductToPreviewRow/.test(raw), "unlinked misses remain reported separately");
   const s = strip(raw);
   assert.equal(/createSnoonuMerchantSession|findListingBySpi|image-recovery\.server/.test(s), false, "legacy SPI port not used");

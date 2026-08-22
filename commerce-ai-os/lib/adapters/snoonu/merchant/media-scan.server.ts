@@ -107,14 +107,13 @@ export async function scanSnoonuMissingImagesLive(
     const chunk = candidates.slice(i, i + SCAN_CONCURRENCY);
     const settled = await Promise.all(
       chunk.map((c) => {
-        const linked = linkedProductIds.has(c.id);
         return runSnoonuDiscovery(provider, {
           storefrontKey: key,
-          // Durable storefront identity may use deterministic barcode/SKU.
-          // Unlinked rows are discovery-only: name results always remain
-          // NEEDS_REVIEW and can never become a bulk-safe match.
-          barcode: linked ? c.barcode : null,
-          sku: linked ? c.sku : null,
+          // Preserve the certified engine order for every missing-image row:
+          // barcode → SKU → exact name → contains name. Name outcomes remain
+          // NEEDS_REVIEW by the engine and are never auto-approved.
+          barcode: c.barcode,
+          sku: c.sku,
           name: c.name,
         })
           .catch((): DiscoveryResult => ({
@@ -135,10 +134,11 @@ export async function scanSnoonuMissingImagesLive(
   const rows = candidates.map((c) => {
     const result = results.get(c.id);
     if (!linkedProductIds.has(c.id)) {
-      // A name hit is useful discovery evidence, but never durable identity.
-      // Keep misses/errors explicitly UNLINKED instead of misreporting NOT_FOUND.
-      return result?.classification === "NEEDS_REVIEW"
-        ? discoveryResultToPreviewRow(c, result, buildRowModeTrace({ barcode: null, sku: null, name: c.name }, emitted))
+      // Surface positive live evidence even before ECL is linked. Name matches
+      // remain review-only; exact barcode/SKU keeps the engine's SAFE_MATCH.
+      // A complete miss remains explicitly UNLINKED instead of NOT_FOUND.
+      return result?.classification === "SAFE_MATCH" || result?.classification === "NEEDS_REVIEW"
+        ? discoveryResultToPreviewRow(c, result, buildRowModeTrace(c, emitted))
         : unlinkedProductToPreviewRow(c, key);
     }
     return result
