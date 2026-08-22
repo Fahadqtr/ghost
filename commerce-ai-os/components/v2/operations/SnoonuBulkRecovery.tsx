@@ -52,6 +52,7 @@ const FILTER_LABEL: Record<RecoveryViewFilter, string> = {
   SAFE_MATCH: "SAFE_MATCH",
   NEEDS_REVIEW: "NEEDS_REVIEW",
   NOT_FOUND: "غير موجود",
+  UNLINKED: "غير مرتبط بسنونو",
   SESSION_REQUIRED: "بحاجة جلسة",
 };
 
@@ -320,7 +321,7 @@ export default function SnoonuBulkRecovery({
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {visibleRows.slice(0, 300).map((r) => {
               const eligible = r.matchStatus === "MATCHED" && r.selectable && Boolean(r.spi && r.merchantImageUrl);
-              const badge = eligible ? "SAFE_MATCH" : r.matchStatus === "NOT_FOUND" ? "غير موجود" : "بحاجة جلسة";
+              const badge = eligible ? "SAFE_MATCH" : r.matchStatus === "NOT_FOUND" ? "غير موجود" : r.matchStatus === "UNLINKED" ? "غير مرتبط بسنونو" : "بحاجة جلسة";
               return (
               <label key={r.productId} className={`rounded-xl border bg-white p-3 text-xs transition ${selected.has(r.productId) ? "border-emerald-400 ring-1 ring-emerald-200" : "border-slate-200 hover:border-slate-300"}`}>
                 <div className="flex items-start gap-2">

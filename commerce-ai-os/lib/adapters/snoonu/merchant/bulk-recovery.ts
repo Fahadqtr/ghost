@@ -98,7 +98,7 @@ export function reviewQueueRows(rows: readonly ImagePreviewRow[]): ImagePreviewR
   return (Array.isArray(rows) ? rows : []).filter((r) => r.matchStatus === "NEEDS_REVIEW");
 }
 
-export type RecoveryViewFilter = "ALL" | "SAFE_MATCH" | "NEEDS_REVIEW" | "NOT_FOUND" | "SESSION_REQUIRED";
+export type RecoveryViewFilter = "ALL" | "SAFE_MATCH" | "NEEDS_REVIEW" | "NOT_FOUND" | "UNLINKED" | "SESSION_REQUIRED";
 
 /** Presentation-only filtering. It never changes recovery eligibility. */
 export function filterRecoveryRows(rows: readonly ImagePreviewRow[], filter: RecoveryViewFilter): ImagePreviewRow[] {
@@ -115,6 +115,7 @@ export function buildScanSummaryLine(summary: ImagePreviewSummary): string {
     `${summary.matched} آمنة`,
     `${summary.needsReview} مراجعة`,
     `${summary.notFound} غير موجود`,
+    `${summary.unlinked} غير مرتبط`,
   ];
   if (summary.sessionRequired > 0) parts.push(`${summary.sessionRequired} بحاجة جلسة`);
   return parts.join(" · ");

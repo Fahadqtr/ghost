@@ -65,6 +65,7 @@ export function scanMissingImages(input: MissingImageScanInput): MissingImageSca
     matched: rows.filter((r) => r.matchStatus === "MATCHED").length,
     needsReview: rows.filter((r) => r.matchStatus === "NEEDS_REVIEW").length,
     notFound: rows.filter((r) => r.matchStatus === "NOT_FOUND").length,
+    unlinked: rows.filter((r) => r.matchStatus === "UNLINKED").length,
     sessionRequired: rows.filter((r) => r.matchStatus === "SESSION_REQUIRED").length,
   };
   return { storefrontKey: input.storefrontKey, rows, summary };

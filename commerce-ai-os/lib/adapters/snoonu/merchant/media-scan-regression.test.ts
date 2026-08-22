@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { buildRowModeTrace, discoveryResultToPreviewRow, formatModeTraceReason, recoveryOutcomeToApplyResult } from "./recovery-model.ts";
+import { buildRowModeTrace, discoveryResultToPreviewRow, formatModeTraceReason, recoveryOutcomeToApplyResult, unlinkedProductToPreviewRow } from "./recovery-model.ts";
 import type { EmittedLookupTrace } from "./recovery-model.ts";
 import type { DiscoveryCandidate, DiscoveryResult } from "./discovery-contract.ts";
 
@@ -63,6 +63,14 @@ test("NO_MATCH → NOT_FOUND; SESSION_REQUIRED stays truthful", () => {
   assert.equal(none.matchStatus, "NOT_FOUND");
   const sess = discoveryResultToPreviewRow(product, result({ classification: "SESSION_REQUIRED", matchReason: "session_required", sessionState: "session_required", candidates: [] }));
   assert.equal(sess.matchStatus, "SESSION_REQUIRED");
+});
+
+test("no active storefront SPI → UNLINKED and never selectable or searched", () => {
+  const row = unlinkedProductToPreviewRow(product, "snoonu:malikas");
+  assert.equal(row.matchStatus, "UNLINKED");
+  assert.equal(row.selectable, false);
+  assert.equal(row.spi, null);
+  assert.match(row.reason, /غير مرتبط/);
 });
 
 test("recovery outcomes map onto the Media Center apply statuses", () => {
@@ -120,6 +128,11 @@ test("batch scan runs the LIVE pipeline — never the hardcoded CH.6B session po
   assert.ok(/createConfiguredSnoonuDiscoveryProvider\(key,/.test(raw), "uses the configured live provider (same resolver as Test Connection), with the trace hook");
   assert.ok(/buildRowModeTrace\(/.test(raw), "rows carry per-mode evidence (attempted/transport/raw/exact)");
   assert.ok(/runSnoonuDiscovery\(provider/.test(raw), "invokes the untouched MEDIA.1B engine per candidate");
+  assert.ok(/\.from\("external_channel_listings"\)/.test(raw), "reads the certified identity table before portal discovery");
+  assert.ok(/\.eq\("storefront_key", storefrontKey\)/.test(raw), "identity scope is the exact Snoonu storefront");
+  assert.ok(/\.eq\("mapping_status", "active"\)/.test(raw), "only active mappings are eligible");
+  assert.ok(/\.not\("external_product_id", "is", null\)/.test(raw), "an actual SPI is required");
+  assert.ok(/linkedCandidates/.test(raw) && /unlinkedProductToPreviewRow/.test(raw), "unlinked catalog rows are reported separately and never searched");
   const s = strip(raw);
   assert.equal(/createSnoonuMerchantSession|findListingBySpi|image-recovery\.server/.test(s), false, "legacy SPI port not used");
   for (const bad of [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /\.rpc\(/, /\bfetch\(/, /storePrimaryProductImage/, /console\./, /process\.env/]) {
