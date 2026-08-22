@@ -39,12 +39,12 @@ test("Snoonu session helper (MEDIA.1A-P4) stays reachable — NAV.MEDIA moved it
   assert.equal(sh!.external, undefined, "session helper is a V2 route — not external");
 });
 
-test("Import/Export is an external «أدوات إضافية ↗» link to /import-export", () => {
+test("legacy hub is an external «أدوات إضافية ↗» link, clearly labelled as legacy (UX.NAV.2)", () => {
   const ie = V2_NAV_LINKS.find((l) => l.href === "/import-export");
-  assert.ok(ie, "Import/Export link exists");
-  assert.equal(ie!.label, "الاستيراد والتصدير");
+  assert.ok(ie, "legacy hub link exists");
+  assert.equal(ie!.label, "الاستيراد والمزامنة (قديم)", "label marks the hub as legacy import/sync tools");
   assert.equal(ie!.section, "أدوات إضافية ↗");
-  assert.equal(ie!.external, true, "Import/Export leaves the V2 shell — external (↗ badge)");
+  assert.equal(ie!.external, true, "the hub leaves the V2 shell — external (↗ badge)");
 });
 
 test("only Import/Export is added under extra tools this PR (no Studio/CRM/Social/Inbox)", () => {
@@ -154,35 +154,39 @@ test("NAV.1/INT.2A/NAV.MEDIA «العمليات» group order: center, channels,
   );
 });
 
-// ── NAV.MEDIA: one «الصور والوسائط» group collects the media/Snoonu tools ─────
-test("NAV.MEDIA pins the five media shortcuts (existing routes only, exact hrefs/labels/icons, in order)", () => {
+// ── NAV.MEDIA/UX.NAV.2: «الصور والوسائط» collects the media/Snoonu tools ──────
+test("media group pins the four media shortcuts (existing routes only, exact hrefs/labels/icons, in order)", () => {
   const group = groupNavLinks().find((s) => s.title === "الصور والوسائط");
   assert.ok(group, "«الصور والوسائط» group exists");
+  // UX.NAV.2: حملة الإطلاق moved to its ONE canonical home (الكتالوج); the
+  // media group keeps the four media surfaces in operator order.
   assert.deepEqual(
     group!.links.map((l) => [l.href, l.label, l.icon]),
     [
       ["/v2/operations/media", "مركز الصور", "media"],
       ["/v2/operations/media/discovery", "اكتشاف وسائط Snoonu", "media"],
-      ["/v2/settings/connections/snoonu/session-helper", "جلسة Snoonu", "channels"],
-      ["/v2/catalog/launch", "حملة الإطلاق", "operations"],
       ["/v2/operations/media?storefront=snoonu:malikas", "استرجاع الصور الناقصة", "media"],
+      ["/v2/settings/connections/snoonu/session-helper", "جلسة Snoonu", "channels"],
     ],
-    "the five shortcuts, hrefs pinned exactly",
+    "the four shortcuts, hrefs pinned exactly",
   );
   for (const l of group!.links) assert.equal(l.external, undefined, `${l.href} is a V2 route — not external`);
 });
 
-test("NAV.MEDIA moves (never duplicates) — each media route appears once, and only in the media group", () => {
+test("every feature has ONE sidebar home — media routes in the media group, launch in the catalog (UX.NAV.2)", () => {
   for (const href of [
     "/v2/operations/media",
     "/v2/operations/media/discovery",
     "/v2/settings/connections/snoonu/session-helper",
-    "/v2/catalog/launch",
   ]) {
     const hits = V2_NAV_LINKS.filter((l) => l.href === href);
     assert.equal(hits.length, 1, `${href} appears exactly once (no confusing duplicate entries)`);
     assert.equal(hits[0]!.section, "الصور والوسائط", `${href} lives in the media group only`);
   }
+  // Launch Campaign: one canonical entry, under the catalog it belongs to.
+  const launch = V2_NAV_LINKS.filter((l) => l.href === "/v2/catalog/launch");
+  assert.equal(launch.length, 1, "حملة الإطلاق appears exactly once");
+  assert.equal(launch[0]!.section, "الكتالوج", "حملة الإطلاق lives under الكتالوج (canonical)");
   // The recovery shortcut is a deep link into the EXISTING Media Center bulk
   // recovery (validated `storefront` param) — no new page is minted and no
   // legacy media/recovery route is reintroduced anywhere in the nav.

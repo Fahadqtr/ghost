@@ -29,6 +29,7 @@ import {
   formatDurationAr,
   reviewQueueRows,
   safeRecoveryRows,
+  stripModeTraceSuffix,
   summarizeBulk,
   type BulkItemResult,
 } from "@/lib/adapters/snoonu/merchant/bulk-recovery";
@@ -289,7 +290,8 @@ export default function SnoonuBulkRecovery({
                 <input type="checkbox" disabled={!canWrite || busy} checked={selected.has(r.productId)} onChange={() => toggle(r.productId)} />
                 <span className="font-medium text-slate-700">{r.sku}</span>
                 <span className="text-emerald-600">مطابق (SPI {r.spi})</span>
-                <span className="ms-auto text-muted">{r.reason}</span>
+                {/* diagnostic per-mode suffix lives in the tooltip, not the row */}
+                <span className="ms-auto text-muted" title={r.reason}>{stripModeTraceSuffix(r.reason)}</span>
               </label>
             ))}
           </div>
@@ -318,7 +320,7 @@ export default function SnoonuBulkRecovery({
                   )}
                   <div className="min-w-0">
                     <div className="font-medium text-slate-700">{r.sku ?? r.productId}{r.spi && <span className="ms-1 text-muted">SPI {r.spi}</span>}</div>
-                    <div className="truncate text-[11px] text-muted" title={r.reason}>{r.reason}</div>
+                    <div className="truncate text-[11px] text-muted" title={r.reason}>{stripModeTraceSuffix(r.reason)}</div>
                   </div>
                   <div className="ms-auto flex items-center gap-1.5">
                     {mark ? (

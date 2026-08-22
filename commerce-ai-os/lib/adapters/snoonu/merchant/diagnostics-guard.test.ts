@@ -55,7 +55,12 @@ test("action + page: diagnostic reachable only through the gated action, rendere
   assert.ok(/diagnoseSnoonuIdentityAction/.test(action), "action exists");
   assert.ok(/runSnoonuIdentityDiagnostic\(/.test(action), "delegates to the owner-gated server module");
   const page = read(PAGE);
-  assert.ok(/\{owner && view\?\.query\?\.productId \? <SnoonuSearchDiagnostics/.test(page), "panel renders for the owner only");
+  // UX.NAV.2 tucked the panel behind a collapsed «تشخيص متقدم» disclosure; the
+  // owner gate is unchanged and the panel renders ONLY inside that gate.
+  assert.ok(/\{owner && view\?\.query\?\.productId \? \(/.test(page), "panel renders for the owner only");
+  const gated = /\{owner && view\?\.query\?\.productId \? \(([\s\S]*?)\) : null\}/.exec(page)?.[1] ?? "";
+  assert.ok(/<SnoonuSearchDiagnostics/.test(gated), "the diagnostics panel is inside the owner gate");
+  assert.ok(/تشخيص متقدم/.test(gated), "and behind the advanced-diagnostics disclosure");
 });
 
 test("diagnostic panel: presentational — no direct IO, whitelisted imports only", () => {
