@@ -148,6 +148,43 @@ export function parseSnoonuProductsResponse(
   return out;
 }
 
+export interface SnoonuResponseShape {
+  objects: Array<{ path: string; keys: string[] }>;
+  arrays: Array<{ path: string; length: number; itemKeys: string[] }>;
+}
+
+/**
+ * Safe structural summary for owner-only diagnostics. It exposes field names,
+ * array paths/counts and first-item field names only — never scalar values.
+ * Traversal is bounded so an unexpected portal response cannot bloat the UI.
+ */
+export function summarizeSnoonuResponseShape(json: unknown): SnoonuResponseShape {
+  const objects: SnoonuResponseShape["objects"] = [];
+  const arrays: SnoonuResponseShape["arrays"] = [];
+  const visit = (value: unknown, path: string, depth: number): void => {
+    if (depth > 4 || objects.length + arrays.length >= 40) return;
+    if (Array.isArray(value)) {
+      const first = value[0];
+      arrays.push({
+        path,
+        length: value.length,
+        itemKeys: isRecord(first) ? Object.keys(first).sort().slice(0, 30) : [],
+      });
+      if (first !== undefined) visit(first, `${path}[0]`, depth + 1);
+      return;
+    }
+    if (!isRecord(value)) return;
+    const keys = Object.keys(value).sort().slice(0, 30);
+    objects.push({ path, keys });
+    for (const key of keys) {
+      const child = value[key];
+      if (Array.isArray(child) || isRecord(child)) visit(child, `${path}.${key}`, depth + 1);
+    }
+  };
+  visit(json, "$", 0);
+  return { objects, arrays };
+}
+
 /** Case-insensitive, trimmed exact-name filter over already-parsed candidates. */
 export function filterExactName(candidates: DiscoveryCandidate[], name: string): DiscoveryCandidate[] {
   const target = name.trim().toLowerCase();

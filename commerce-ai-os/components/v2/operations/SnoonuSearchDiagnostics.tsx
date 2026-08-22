@@ -87,6 +87,20 @@ export default function SnoonuSearchDiagnostics({ productId }: { productId: stri
               </tbody>
             </table>
           </div>
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2" dir="ltr">
+            <p className="font-semibold text-slate-600">Response structure (keys/counts only)</p>
+            {report.diagnostic.modes.map((m) => (
+              <div key={`shape-${m.mode}`} className="space-y-0.5 font-mono text-[10px] text-slate-500">
+                <p className="font-bold">{m.mode}</p>
+                {m.responseShape ? (
+                  <>
+                    {m.responseShape.objects.map((o) => <p key={`${m.mode}:o:${o.path}`}>{o.path} object keys=[{o.keys.join(", ")}]</p>)}
+                    {m.responseShape.arrays.map((a) => <p key={`${m.mode}:a:${a.path}`}>{a.path} array length={a.length} itemKeys=[{a.itemKeys.join(", ")}]</p>)}
+                  </>
+                ) : <p>—</p>}
+              </div>
+            ))}
+          </div>
           <p className="text-[11px] text-slate-400">
             قراءة النتيجة: «مرفوض» في barcode/sku مع probe ناجح = المنصة لا تقبل بحث الهوية؛ «نجح» مع صفوف خام صفر =
             لا نتيجة لهذا المصطلح؛ صفوف خام أكبر من صفر مع مطابقة تامة صفر = معرّفات المنصة تختلف عن الداخلية (انظر العينة).
