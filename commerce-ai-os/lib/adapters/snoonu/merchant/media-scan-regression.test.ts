@@ -65,7 +65,7 @@ test("NO_MATCH → NOT_FOUND; SESSION_REQUIRED stays truthful", () => {
   assert.equal(sess.matchStatus, "SESSION_REQUIRED");
 });
 
-test("no active storefront SPI → UNLINKED and never selectable or searched", () => {
+test("no active storefront SPI → UNLINKED and never selectable", () => {
   const row = unlinkedProductToPreviewRow(product, "snoonu:malikas");
   assert.equal(row.matchStatus, "UNLINKED");
   assert.equal(row.selectable, false);
@@ -132,7 +132,11 @@ test("batch scan runs the LIVE pipeline — never the hardcoded CH.6B session po
   assert.ok(/\.eq\("storefront_key", storefrontKey\)/.test(raw), "identity scope is the exact Snoonu storefront");
   assert.ok(/\.eq\("mapping_status", "active"\)/.test(raw), "only active mappings are eligible");
   assert.ok(/\.not\("external_product_id", "is", null\)/.test(raw), "an actual SPI is required");
-  assert.ok(/linkedCandidates/.test(raw) && /unlinkedProductToPreviewRow/.test(raw), "unlinked catalog rows are reported separately and never searched");
+  assert.ok(/barcode:\s*linked\s*\?\s*c\.barcode\s*:\s*null/.test(raw), "unlinked rows never use barcode identity search");
+  assert.ok(/sku:\s*linked\s*\?\s*c\.sku\s*:\s*null/.test(raw), "unlinked rows never use SKU identity search");
+  assert.ok(/name:\s*c\.name/.test(raw), "unlinked rows still use name discovery");
+  assert.ok(/result\?\.classification\s*===\s*"NEEDS_REVIEW"/.test(raw), "name discovery is review-only");
+  assert.ok(/unlinkedProductToPreviewRow/.test(raw), "unlinked misses remain reported separately");
   const s = strip(raw);
   assert.equal(/createSnoonuMerchantSession|findListingBySpi|image-recovery\.server/.test(s), false, "legacy SPI port not used");
   for (const bad of [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /\.rpc\(/, /\bfetch\(/, /storePrimaryProductImage/, /console\./, /process\.env/]) {

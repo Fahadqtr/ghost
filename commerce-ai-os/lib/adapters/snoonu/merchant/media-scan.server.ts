@@ -94,8 +94,6 @@ export async function scanSnoonuMissingImagesLive(
   if (!candidates) return { error: "تعذّر قراءة المنتجات." };
   const linkedProductIds = await readLinkedProductIds(key);
   if (!linkedProductIds) return { error: "تعذّر قراءة روابط Snoonu." };
-  const linkedCandidates = candidates.filter((c) => linkedProductIds.has(c.id));
-
   // ONE provider per scan: its session probe runs at most once, and repeated
   // terms reuse the same portal read. MEDIA.1C-HOTFIX3: every lookup emits a
   // trace (memo hits included) so each row can carry per-mode evidence —
@@ -105,11 +103,20 @@ export async function scanSnoonuMissingImagesLive(
   const provider = createConfiguredSnoonuDiscoveryProvider(key, (t) => { emitted.push(t); });
 
   const results = new Map<string, DiscoveryResult>();
-  for (let i = 0; i < linkedCandidates.length; i += SCAN_CONCURRENCY) {
-    const chunk = linkedCandidates.slice(i, i + SCAN_CONCURRENCY);
+  for (let i = 0; i < candidates.length; i += SCAN_CONCURRENCY) {
+    const chunk = candidates.slice(i, i + SCAN_CONCURRENCY);
     const settled = await Promise.all(
-      chunk.map((c) =>
-        runSnoonuDiscovery(provider, { storefrontKey: key, barcode: c.barcode, sku: c.sku, name: c.name })
+      chunk.map((c) => {
+        const linked = linkedProductIds.has(c.id);
+        return runSnoonuDiscovery(provider, {
+          storefrontKey: key,
+          // Durable storefront identity may use deterministic barcode/SKU.
+          // Unlinked rows are discovery-only: name results always remain
+          // NEEDS_REVIEW and can never become a bulk-safe match.
+          barcode: linked ? c.barcode : null,
+          sku: linked ? c.sku : null,
+          name: c.name,
+        })
           .catch((): DiscoveryResult => ({
             storefrontKey: key,
             sessionState: "error",
@@ -119,15 +126,21 @@ export async function scanSnoonuMissingImagesLive(
             candidates: [],
             candidateCount: 0,
             error: "discovery failed",
-          })),
-      ),
+          }));
+      }),
     );
     settled.forEach((r, j) => { const candidate = chunk[j]; if (candidate) results.set(candidate.id, r); });
   }
 
   const rows = candidates.map((c) => {
-    if (!linkedProductIds.has(c.id)) return unlinkedProductToPreviewRow(c, key);
     const result = results.get(c.id);
+    if (!linkedProductIds.has(c.id)) {
+      // A name hit is useful discovery evidence, but never durable identity.
+      // Keep misses/errors explicitly UNLINKED instead of misreporting NOT_FOUND.
+      return result?.classification === "NEEDS_REVIEW"
+        ? discoveryResultToPreviewRow(c, result, buildRowModeTrace({ barcode: null, sku: null, name: c.name }, emitted))
+        : unlinkedProductToPreviewRow(c, key);
+    }
     return result
       ? discoveryResultToPreviewRow(c, result, buildRowModeTrace(c, emitted))
       : unlinkedProductToPreviewRow(c, key);
