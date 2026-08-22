@@ -171,23 +171,48 @@ export default function V2Sidebar({
     >
       {groupNavLinks().map((section) => {
         const sectionActive = activeSection === section.title;
-        return (
-          <div key={section.title} className="flex w-full flex-col gap-1">
-            {collapsed ? (
-              // Icon-only mode: a thin divider stands in for the heading so the
-              // groups stay visually separated without the text label.
+        // UX.NAV.2 — expanded mode renders each group as a native <details> so
+        // sections are collapsible with zero state/JS of our own (RTL-safe,
+        // keyboard-accessible, DOM state survives client-side navigation). All
+        // groups start open; the active group's heading keeps the brand tint.
+        if (collapsed) {
+          return (
+            <div key={section.title} className="flex w-full flex-col gap-1">
+              {/* Icon-only mode: a thin divider stands in for the heading so the
+                  groups stay visually separated without the text label. */}
               <div className="my-1 h-px w-6 self-center bg-[#efe3d6]" aria-hidden="true" />
-            ) : (
-              <div
-                className={
-                  "px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider " +
-                  (sectionActive ? "text-brand" : "text-muted")
-                }
-              >
-                {section.title}
-              </div>
-            )}
-            {section.links.map((link) => {
+              {renderLinks(section.links, activeHref, onNavigate, true)}
+            </div>
+          );
+        }
+        return (
+          <details key={section.title} open className="group/nav flex w-full flex-col gap-1">
+            <summary
+              className={
+                "flex cursor-pointer select-none list-none items-center justify-between rounded-lg px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider [&::-webkit-details-marker]:hidden " +
+                (sectionActive ? "text-brand" : "text-muted hover:text-ink")
+              }
+            >
+              <span>{section.title}</span>
+              <span aria-hidden="true" className="text-[9px] opacity-60 transition-transform group-open/nav:rotate-180">▾</span>
+            </summary>
+            {renderLinks(section.links, activeHref, onNavigate, false)}
+          </details>
+        );
+      })}
+    </nav>
+  );
+}
+
+function renderLinks(
+  links: ReturnType<typeof groupNavLinks>[number]["links"],
+  activeHref: string | null,
+  onNavigate: (() => void) | undefined,
+  collapsed: boolean,
+) {
+  return (
+    <>
+      {links.map((link) => {
               const active = activeHref === link.href;
               return (
                 <Link
@@ -226,9 +251,6 @@ export default function V2Sidebar({
                 </Link>
               );
             })}
-          </div>
-        );
-      })}
-    </nav>
+    </>
   );
 }

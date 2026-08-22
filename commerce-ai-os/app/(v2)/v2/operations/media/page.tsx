@@ -6,6 +6,7 @@
 // recovery is writer-gated inside the CH.6B orchestrator the client calls; here
 // we only compute a canWrite affordance. Nothing is written on render.
 
+import Link from "next/link";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { loadMediaCenter } from "@/lib/operations/media/media-center.server";
 import { resolveStorefront } from "@/lib/operations/channels/deep-link";
@@ -37,13 +38,27 @@ export default async function MediaCenterPage({ searchParams }: { searchParams?:
 
   return (
     <div className="space-y-4">
-      <header className="space-y-1">
+      <header className="space-y-2">
         <h1 className="text-lg font-bold text-slate-800">مركز الوسائط</h1>
         <p className="text-sm text-muted">
           إدارة صور المنتجات من مكان واحد: نظرة عامة، قائمة الصور الناقصة، الصور المكررة، وصحّة الوسائط. الاسترجاع من
           سنونو والرفع اليدوي يمرّان عبر مسارات الصور المعتمدة فقط — لا تُعدَّل الكميات أو التوفّر أو القنوات، ولا تُحذف
           صورة تلقائيًا. المعاينة للقراءة، والتنفيذ يتطلب صلاحية تعديل.
         </p>
+        {/* UX.NAV.2 — quick actions: the Media Center is the canonical media
+            overview; these contextual links reach the related certified surfaces
+            (existing routes only — استرجاع الصور الناقصة is the bulk card below). */}
+        <div className="flex flex-wrap gap-2">
+          <Link href="/v2/operations/media/discovery" className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+            🔍 اكتشاف وسائط Snoonu
+          </Link>
+          <Link href="/v2/catalog/launch" className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+            🚀 حملة الإطلاق
+          </Link>
+          <Link href="/v2/settings/connections/snoonu/session-helper" className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+            🔐 جلسة Snoonu
+          </Link>
+        </div>
       </header>
       <MediaCenter
         canWrite={canWrite}

@@ -47,6 +47,11 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
 
   { href: "/v2/catalog", label: "كتالوج ماليكاس", icon: "catalog", section: "الكتالوج" },
   { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify", section: "الكتالوج" },
+  // WAVE.1A — Launch Campaign Workspace (read-only operational screen). UX.NAV.2
+  // settled its ONE canonical home: it is a /v2/catalog route and a catalog
+  // concern (launch blockers span price/content/media), so it lives here; the
+  // media group reaches it via contextual links, never a duplicate sidebar entry.
+  { href: "/v2/catalog/launch", label: "حملة الإطلاق", icon: "operations", section: "الكتالوج" },
 
   // Operations Center (Phase UI.7.2/7.3) — reads lib/operations/* engines.
   // Label matches the page's own H1 «مركز العمليات» (UX.1 discoverability).
@@ -64,21 +69,19 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   { href: "/v2/export", label: "مركز التصدير", icon: "export", section: "العمليات" },
   { href: "/v2/tasks", label: "المهام", icon: "operations", section: "العمليات" },
 
-  // Media & Snoonu tools (Phase NAV.MEDIA) — one group that collects every
-  // existing media/Snoonu surface so operators reach them in one click.
-  // Navigation ONLY: every href points at a page that already ships (nothing is
-  // minted, renamed, or duplicated — the Media Center, session helper, and
-  // Launch Campaign entries MOVED here from their old groups). The recovery
-  // shortcut is a deep link into the EXISTING Media Center bulk-recovery
-  // workspace with the Malikas storefront preselected via the OPS.4-validated
-  // `storefront` param — not a new page. The session helper page keeps its own
-  // requireOwner() gate; permissions are unchanged by navigation.
+  // Media & Snoonu tools (NAV.MEDIA, ordered by UX.NAV.2) — one group that
+  // collects every existing media/Snoonu surface so operators reach them in one
+  // click. Navigation ONLY: every href points at a page that already ships
+  // (nothing is minted, renamed, or duplicated). The recovery shortcut is a
+  // deep link into the EXISTING Media Center bulk-recovery workspace with the
+  // Malikas storefront preselected via the OPS.4-validated `storefront` param —
+  // not a new page. The session helper page keeps its own requireOwner() gate;
+  // permissions are unchanged by navigation. UX.NAV.2 moved حملة الإطلاق back
+  // to its canonical catalog home (contextual links keep the media↔launch flow).
   { href: "/v2/operations/media", label: "مركز الصور", icon: "media", section: "الصور والوسائط" },
   { href: "/v2/operations/media/discovery", label: "اكتشاف وسائط Snoonu", icon: "media", section: "الصور والوسائط" },
-  { href: "/v2/settings/connections/snoonu/session-helper", label: "جلسة Snoonu", icon: "channels", section: "الصور والوسائط" },
-  // WAVE.1A — Launch Campaign Workspace (read-only operational screen).
-  { href: "/v2/catalog/launch", label: "حملة الإطلاق", icon: "operations", section: "الصور والوسائط" },
   { href: "/v2/operations/media?storefront=snoonu:malikas", label: "استرجاع الصور الناقصة", icon: "media", section: "الصور والوسائط" },
+  { href: "/v2/settings/connections/snoonu/session-helper", label: "جلسة Snoonu", icon: "channels", section: "الصور والوسائط" },
 
   // Analytics (Phase NAV.1) — the BI.2 Executive Dashboard. New group; the page
   // ships already (merged in BI.2) and simply had no menu entry.
@@ -106,11 +109,13 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // connection-style icon preserved) into «الصور والوسائط» above.
   { href: "/v2/settings/integrations/ticktick", label: "تكاملات TickTick", icon: "operations", section: "الإعدادات" },
 
-  // Extra tools (UX.1) — still-used pages that live in the PREVIOUS interface and
-  // are NOT in the legacy-redirect list. Linked (not reimplemented) and marked
-  // `external` so the shell change is not a surprise; the ↗ badge is rendered by
-  // the sidebar exactly like «صفحة العميل». Only Import/Export this PR.
-  { href: "/import-export", label: "الاستيراد والتصدير", icon: "catalog", section: "أدوات إضافية ↗", external: true },
+  // Extra tools (UX.1, relabelled by UX.NAV.2) — still-used pages that live in
+  // the PREVIOUS interface and are NOT in the legacy-redirect list. Linked (not
+  // reimplemented) and marked `external` so the shell change is not a surprise.
+  // The label says «قديم» explicitly: this hub holds only the legacy import/sync
+  // tools that still lack a certified V2 replacement — its export card redirects
+  // to the certified Export Center, so no old export UI poses as current.
+  { href: "/import-export", label: "الاستيراد والمزامنة (قديم)", icon: "catalog", section: "أدوات إضافية ↗", external: true },
 ];
 
 export interface V2NavSection {

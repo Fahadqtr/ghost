@@ -69,7 +69,9 @@ test("catalog-sync introduces no legacy ids, no fuzzy matching, no inventory/ava
 test("Export Center is the sole Talabat export path — legacy CSV UI deleted, page redirects", () => {
   assert.equal(exists("components/TalabatExport.tsx"), false, "legacy TalabatExport.tsx deleted");
   const page = read(EXPORT_PAGE);
-  assert.ok(/redirect\(/.test(page) && /\/v2\/export\/talabat:malikas/.test(page), "export page redirects to the Export Center");
+  // UX.NAV.2 canonicalised the redirect target: the hub card promises every
+  // channel, so the Export Center DASHBOARD is the landing (Talabat included).
+  assert.ok(/redirect\("\/v2\/export"\)/.test(page), "export page redirects to the Export Center");
   assert.equal(/TalabatExport/.test(page), false, "no legacy CSV trigger rendered");
   assert.ok(exists(PACKAGE_ROUTE), "the certified package route remains");
 });

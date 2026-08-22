@@ -15,6 +15,7 @@ import {
   formatDurationAr,
   reviewQueueRows,
   safeRecoveryRows,
+  stripModeTraceSuffix,
   summarizeBulk,
   type BulkItemResult,
 } from "./bulk-recovery.ts";
@@ -143,6 +144,17 @@ test("duration formatting", () => {
   assert.equal(formatDurationAr(45_000), "~45 ث");
   assert.equal(formatDurationAr(200_000), "~3 د 20 ث");
   assert.equal(formatDurationAr(0), "~0 ث");
+});
+
+// ── display-only diagnostic stripping (UX.NAV.2) ──────────────────────────────
+test("stripModeTraceSuffix removes ONLY the trailing per-mode evidence suffix (display; data untouched)", () => {
+  assert.equal(
+    stripModeTraceSuffix("تحتاج مراجعة (اسم مطابق تمامًا). [باركود: نجح خام 0 تام 0 · SKU: مرفوض · اسم: نجح خام 5 تام 1]"),
+    "تحتاج مراجعة (اسم مطابق تمامًا).",
+  );
+  assert.equal(stripModeTraceSuffix("لا توجد نتيجة مطابقة في هذا المتجر."), "لا توجد نتيجة مطابقة في هذا المتجر.", "no suffix → unchanged");
+  assert.equal(stripModeTraceSuffix("سبب [داخلي] مهم"), "سبب [داخلي] مهم", "only a TRAILING bracket segment is stripped");
+  assert.equal(stripModeTraceSuffix(""), "");
 });
 
 // ── CSV export ────────────────────────────────────────────────────────────────

@@ -49,10 +49,10 @@ test("the entries use the canonical label and sit under العملاء", () => {
 
 test("the catalog section is unchanged", () => {
   const catalog = V2_NAV_LINKS.filter((l) => l.section === "الكتالوج");
-  // WAVE.1A added «حملة الإطلاق» (/v2/catalog/launch) here; NAV.MEDIA moved it
-  // (not duplicated) into «الصور والوسائط» — nav.test.ts pins its new home.
-  assert.deepEqual(catalog.map((l) => l.href), ["/v2/catalog", "/v2/catalog/shopify"]);
-  assert.deepEqual(catalog.map((l) => l.label), ["كتالوج ماليكاس", "كتالوج Shopify"]);
+  // WAVE.1A added «حملة الإطلاق» (/v2/catalog/launch); UX.NAV.2 settled it here
+  // as its ONE canonical home (it is a catalog route and a catalog concern).
+  assert.deepEqual(catalog.map((l) => l.href), ["/v2/catalog", "/v2/catalog/shopify", "/v2/catalog/launch"]);
+  assert.deepEqual(catalog.map((l) => l.label), ["كتالوج ماليكاس", "كتالوج Shopify", "حملة الإطلاق"]);
   for (const l of catalog) assert.equal(l.external, undefined, "V2 pages are not external");
 });
 
@@ -84,9 +84,8 @@ test("links are grouped by section, in declaration order", () => {
   assert.deepEqual(sections[3]!.links.map((l) => l.href), [
     "/v2/operations/media",
     "/v2/operations/media/discovery",
-    "/v2/settings/connections/snoonu/session-helper",
-    "/v2/catalog/launch",
     "/v2/operations/media?storefront=snoonu:malikas",
+    "/v2/settings/connections/snoonu/session-helper",
   ]);
   assert.deepEqual(sections[4]!.links.map((l) => l.href), ["/v2/analytics", "/v2/actions"]);
   assert.deepEqual(sections[5]!.links.map((l) => l.href), LOYALTY_HREFS);

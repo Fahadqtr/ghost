@@ -30,6 +30,7 @@ import {
   formatDurationAr,
   reviewQueueRows,
   safeRecoveryRows,
+  stripModeTraceSuffix,
   summarizeBulk,
   type BulkItemResult,
   type RecoveryViewFilter,
@@ -334,7 +335,8 @@ export default function SnoonuBulkRecovery({
                     {r.spi && <div className="mt-1 text-[10px] text-muted">SPI {r.spi}</div>}
                   </div>
                 </div>
-                <p className="mt-2 line-clamp-2 text-[11px] text-muted" title={r.reason}>{r.reason}</p>
+                {/* PR #656: keep per-mode diagnostics in the tooltip, not the visible card copy. */}
+                <p className="mt-2 line-clamp-2 text-[11px] text-muted" title={r.reason}>{stripModeTraceSuffix(r.reason)}</p>
               </label>
               );
             })}
@@ -363,7 +365,7 @@ export default function SnoonuBulkRecovery({
                   )}
                   <div className="min-w-0">
                     <div className="font-medium text-slate-700">{r.sku ?? r.productId}{r.spi && <span className="ms-1 text-muted">SPI {r.spi}</span>}</div>
-                    <div className="truncate text-[11px] text-muted" title={r.reason}>{r.reason}</div>
+                    <div className="truncate text-[11px] text-muted" title={r.reason}>{stripModeTraceSuffix(r.reason)}</div>
                   </div>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
