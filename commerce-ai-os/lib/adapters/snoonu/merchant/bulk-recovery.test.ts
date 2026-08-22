@@ -46,6 +46,7 @@ test("safeRecoveryRows: only selectable MATCHED rows with SPI + source image", (
     row({ productId: "p2", matchStatus: "NEEDS_REVIEW", selectable: false }),
     row({ productId: "p3", matchStatus: "NOT_FOUND", selectable: false, spi: null, merchantImageUrl: null }),
     row({ productId: "p4", matchStatus: "SESSION_REQUIRED", selectable: false }),
+    row({ productId: "p8", matchStatus: "UNLINKED", selectable: false, spi: null, merchantImageUrl: null }),
     // defensive: a MATCHED row can never lack an SPI/image, but if it did it is excluded
     row({ productId: "p5", spi: null }),
     row({ productId: "p6", merchantImageUrl: null }),
@@ -61,6 +62,7 @@ test("reviewQueueRows: exactly the NEEDS_REVIEW rows (never NOT_FOUND / SESSION_
     row({ productId: "p2", matchStatus: "NEEDS_REVIEW", selectable: false }),
     row({ productId: "p3", matchStatus: "NOT_FOUND", selectable: false }),
     row({ productId: "p4", matchStatus: "SESSION_REQUIRED", selectable: false }),
+    row({ productId: "p5", matchStatus: "UNLINKED", selectable: false }),
   ];
   assert.deepEqual(reviewQueueRows(rows).map((r) => r.productId), ["p2"]);
 });
@@ -71,12 +73,14 @@ test("filterRecoveryRows: clear UI filters never make non-safe rows eligible", (
     row({ productId: "p2", matchStatus: "NEEDS_REVIEW", selectable: false }),
     row({ productId: "p3", matchStatus: "NOT_FOUND", selectable: false }),
     row({ productId: "p4", matchStatus: "SESSION_REQUIRED", selectable: false }),
+    row({ productId: "p5", matchStatus: "UNLINKED", selectable: false }),
   ];
-  assert.deepEqual(filterRecoveryRows(rows, "ALL").map((r) => r.productId), ["p1", "p2", "p3", "p4"]);
+  assert.deepEqual(filterRecoveryRows(rows, "ALL").map((r) => r.productId), ["p1", "p2", "p3", "p4", "p5"]);
   assert.deepEqual(filterRecoveryRows(rows, "SAFE_MATCH").map((r) => r.productId), ["p1"]);
   assert.deepEqual(filterRecoveryRows(rows, "NEEDS_REVIEW").map((r) => r.productId), ["p2"]);
   assert.deepEqual(filterRecoveryRows(rows, "NOT_FOUND").map((r) => r.productId), ["p3"]);
   assert.deepEqual(filterRecoveryRows(rows, "SESSION_REQUIRED").map((r) => r.productId), ["p4"]);
+  assert.deepEqual(filterRecoveryRows(rows, "UNLINKED").map((r) => r.productId), ["p5"]);
 });
 
 // ── final report aggregation ──────────────────────────────────────────────────
@@ -119,12 +123,12 @@ test("every report bucket has an Arabic label", () => {
 // ── operator-facing lines ─────────────────────────────────────────────────────
 test("scan summary line matches the spec shape («58 ناقصة · 34 آمنة · 18 مراجعة · 6 غير موجود»)", () => {
   assert.equal(
-    buildScanSummaryLine({ missing: 58, matched: 34, needsReview: 18, notFound: 6, sessionRequired: 0 }),
-    "58 ناقصة · 34 آمنة · 18 مراجعة · 6 غير موجود",
+    buildScanSummaryLine({ missing: 58, matched: 30, needsReview: 12, notFound: 6, unlinked: 10, sessionRequired: 0 }),
+    "58 ناقصة · 30 آمنة · 12 مراجعة · 6 غير موجود · 10 غير مرتبط",
   );
   assert.equal(
-    buildScanSummaryLine({ missing: 59, matched: 0, needsReview: 0, notFound: 0, sessionRequired: 59 }),
-    "59 ناقصة · 0 آمنة · 0 مراجعة · 0 غير موجود · 59 بحاجة جلسة",
+    buildScanSummaryLine({ missing: 59, matched: 0, needsReview: 0, notFound: 0, unlinked: 0, sessionRequired: 59 }),
+    "59 ناقصة · 0 آمنة · 0 مراجعة · 0 غير موجود · 0 غير مرتبط · 59 بحاجة جلسة",
   );
 });
 

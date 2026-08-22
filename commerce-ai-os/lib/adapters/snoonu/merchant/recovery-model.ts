@@ -232,6 +232,34 @@ export function discoveryResultToPreviewRow(
   };
 }
 
+/** SNOONU.IDENTITY.1 — a catalog item with no active storefront SPI is not a portal search miss. */
+export function unlinkedProductToPreviewRow(
+  product: { id: string; sku: string | null; barcode: string | null },
+  storefrontKey: ImagePreviewRow["storefrontKey"],
+): ImagePreviewRow {
+  return {
+    productId: product.id,
+    sku: product.sku,
+    barcode: product.barcode,
+    storefrontKey,
+    spi: null,
+    currentImage: false,
+    merchantImageUrl: null,
+    matchStatus: "UNLINKED",
+    reason: "المنتج غير مرتبط بهذا المتجر في Snoonu — لم يُرسل للبحث أو الاسترجاع.",
+    provenance: {
+      storefrontKey,
+      spi: null,
+      merchantSku: null,
+      merchantBarcode: null,
+      merchantTitle: null,
+      internalProductId: product.id,
+      confidence: "none",
+    },
+    selectable: false,
+  };
+}
+
 /** MEDIA.1C-HOTFIX2 — map one recovery outcome to the Media Center's apply-result shape (pure). */
 export function recoveryOutcomeToApplyResult(productId: string, o: RecoveryOutcome): ApplyItemResult {
   if (o.status === "RECOVERED") return { productId, status: "IMPORTED", url: o.url };

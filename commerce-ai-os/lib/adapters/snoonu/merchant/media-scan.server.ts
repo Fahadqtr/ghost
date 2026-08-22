@@ -8,7 +8,7 @@ import type { DiscoveryResult } from "./discovery-contract";
 import { runSnoonuDiscovery } from "./discovery-engine";
 import { createConfiguredSnoonuDiscoveryProvider } from "./live-adapter.server";
 import type { LiveLookupTrace } from "./live-adapter.server";
-import { buildRowModeTrace, discoveryResultToPreviewRow } from "./recovery-model";
+import { buildRowModeTrace, discoveryResultToPreviewRow, unlinkedProductToPreviewRow } from "./recovery-model";
 
 // MEDIA.1C-HOTFIX2 — LIVE missing-image batch scan (SERVER, READ-ONLY).
 //
@@ -30,6 +30,29 @@ interface Candidate {
   sku: string | null;
   barcode: string | null;
   name: string | null;
+}
+
+async function readLinkedProductIds(storefrontKey: SnoonuStorefrontKey): Promise<Set<string> | null> {
+  const sb = createClient();
+  const ids = new Set<string>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb
+      .from("external_channel_listings")
+      .select("product_id, external_product_id")
+      .eq("storefront_key", storefrontKey)
+      .eq("mapping_status", "active")
+      .not("external_product_id", "is", null)
+      .range(from, from + 999);
+    if (error) return null;
+    const rows = (data ?? []) as Record<string, unknown>[];
+    for (const row of rows) {
+      const productId = str(row.product_id);
+      const spi = str(row.external_product_id);
+      if (productId && spi) ids.add(productId);
+    }
+    if (rows.length < 1000) break;
+  }
+  return ids;
 }
 
 async function readMissingImageCandidates(): Promise<Candidate[] | null> {
@@ -69,6 +92,9 @@ export async function scanSnoonuMissingImagesLive(
 
   const candidates = await readMissingImageCandidates();
   if (!candidates) return { error: "تعذّر قراءة المنتجات." };
+  const linkedProductIds = await readLinkedProductIds(key);
+  if (!linkedProductIds) return { error: "تعذّر قراءة روابط Snoonu." };
+  const linkedCandidates = candidates.filter((c) => linkedProductIds.has(c.id));
 
   // ONE provider per scan: its session probe runs at most once, and repeated
   // terms reuse the same portal read. MEDIA.1C-HOTFIX3: every lookup emits a
@@ -78,9 +104,9 @@ export async function scanSnoonuMissingImagesLive(
   const emitted: LiveLookupTrace[] = [];
   const provider = createConfiguredSnoonuDiscoveryProvider(key, (t) => { emitted.push(t); });
 
-  const results = new Array<DiscoveryResult>(candidates.length);
-  for (let i = 0; i < candidates.length; i += SCAN_CONCURRENCY) {
-    const chunk = candidates.slice(i, i + SCAN_CONCURRENCY);
+  const results = new Map<string, DiscoveryResult>();
+  for (let i = 0; i < linkedCandidates.length; i += SCAN_CONCURRENCY) {
+    const chunk = linkedCandidates.slice(i, i + SCAN_CONCURRENCY);
     const settled = await Promise.all(
       chunk.map((c) =>
         runSnoonuDiscovery(provider, { storefrontKey: key, barcode: c.barcode, sku: c.sku, name: c.name })
@@ -96,15 +122,22 @@ export async function scanSnoonuMissingImagesLive(
           })),
       ),
     );
-    settled.forEach((r, j) => { results[i + j] = r; });
+    settled.forEach((r, j) => { const candidate = chunk[j]; if (candidate) results.set(candidate.id, r); });
   }
 
-  const rows = candidates.map((c, i) => discoveryResultToPreviewRow(c, results[i], buildRowModeTrace(c, emitted)));
+  const rows = candidates.map((c) => {
+    if (!linkedProductIds.has(c.id)) return unlinkedProductToPreviewRow(c, key);
+    const result = results.get(c.id);
+    return result
+      ? discoveryResultToPreviewRow(c, result, buildRowModeTrace(c, emitted))
+      : unlinkedProductToPreviewRow(c, key);
+  });
   const summary: ImagePreviewSummary = {
     missing: rows.length,
     matched: rows.filter((r) => r.matchStatus === "MATCHED").length,
     needsReview: rows.filter((r) => r.matchStatus === "NEEDS_REVIEW").length,
     notFound: rows.filter((r) => r.matchStatus === "NOT_FOUND").length,
+    unlinked: rows.filter((r) => r.matchStatus === "UNLINKED").length,
     sessionRequired: rows.filter((r) => r.matchStatus === "SESSION_REQUIRED").length,
   };
   return { storefrontKey: key, rows, summary };

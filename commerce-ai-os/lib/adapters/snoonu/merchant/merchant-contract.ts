@@ -46,7 +46,7 @@ export interface SnoonuMerchantSession {
 }
 
 /** Deterministic match outcome for an image-import candidate. */
-export type ImageMatchStatus = "MATCHED" | "NEEDS_REVIEW" | "NOT_FOUND" | "SESSION_REQUIRED";
+export type ImageMatchStatus = "MATCHED" | "NEEDS_REVIEW" | "NOT_FOUND" | "UNLINKED" | "SESSION_REQUIRED";
 
 /** Full provenance for a candidate — shown before any apply. */
 export interface MatchProvenance {
@@ -103,6 +103,7 @@ export interface ImagePreviewSummary {
   matched: number;
   needsReview: number;
   notFound: number;
+  unlinked: number;
   sessionRequired: number;
 }
 
