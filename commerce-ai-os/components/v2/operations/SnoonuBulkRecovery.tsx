@@ -8,8 +8,8 @@
 //   • one failure never aborts the batch;
 //   • cancel takes effect after the current product — never mid-recovery;
 //   • the SPI seen in the preview is pinned per item (stale protection);
-//   • NEEDS_REVIEW rows are structurally excluded from bulk — they live in the
-//     review queue and recover only on an explicit per-product approval.
+//   • NEEDS_REVIEW rows are never auto-selected; an operator must explicitly
+//     tick reviewed cards, then confirm before the same per-product flow runs.
 // This component holds no DB client, performs no fetch of its own, and
 // duplicates no matching/eligibility/write logic (all pure helpers come from
 // lib/adapters/snoonu/merchant/bulk-recovery).
@@ -78,6 +78,7 @@ export default function SnoonuBulkRecovery({
   const [tab, setTab] = useState<"safe" | "review">("safe");
   const [viewFilter, setViewFilter] = useState<RecoveryViewFilter>("ALL");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [reviewSelected, setReviewSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<Progress | null>(null);
   const [results, setResults] = useState<BulkItemResult[] | null>(null);
   const [reviewMarks, setReviewMarks] = useState<Record<string, string>>({});
@@ -98,6 +99,15 @@ export default function SnoonuBulkRecovery({
     return tab === "safe" ? filtered.filter((r) => r.matchStatus !== "NEEDS_REVIEW") : filtered;
   }, [scan, viewFilter, tab]);
   const visibleSafeRows = useMemo(() => safeRecoveryRows(visibleRows), [visibleRows]);
+  const visibleReviewRows = useMemo(() => reviewQueueRows(visibleRows), [visibleRows]);
+  const reviewSelectedRows = useMemo(
+    () => reviewRows.filter((r) => reviewSelected.has(r.productId) && !reviewMarks[r.productId] && Boolean(r.spi && r.merchantImageUrl)),
+    [reviewRows, reviewSelected, reviewMarks],
+  );
+  const visibleReviewEligibleRows = useMemo(
+    () => visibleReviewRows.filter((r) => !reviewMarks[r.productId] && Boolean(r.spi && r.merchantImageUrl)),
+    [visibleReviewRows, reviewMarks],
+  );
   const allSafeSelected = safeRows.length > 0 && safeRows.every((r) => selected.has(r.productId));
   const running = progress !== null;
   const busy = running || isScanning || busyReviewId !== null;
@@ -105,7 +115,7 @@ export default function SnoonuBulkRecovery({
 
   function runScan() {
     if (busy) return;
-    setScan(null); setSelected(new Set()); setResults(null); setReviewMarks({}); setMsg(null); setTab("safe"); setViewFilter("ALL");
+    setScan(null); setSelected(new Set()); setReviewSelected(new Set()); setResults(null); setReviewMarks({}); setMsg(null); setTab("safe"); setViewFilter("ALL");
     startScan(async () => {
       const res = await scanSnoonuImageRecoveryAction(storefront);
       if ("error" in res) { setMsg({ ok: false, text: res.error }); return; }
@@ -119,6 +129,10 @@ export default function SnoonuBulkRecovery({
 
   function toggle(id: string) {
     setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+
+  function toggleReview(id: string) {
+    setReviewSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }
 
   // One product through the certified MEDIA.1C flow. The previewed SPI is
@@ -174,11 +188,23 @@ export default function SnoonuBulkRecovery({
     setBusyReviewId(row.productId);
     const item = await recoverOne(row);
     setReviewMarks((p) => ({ ...p, [row.productId]: `${RECOVERY_STATUS_LABEL[item.status]} — ${item.reason}` }));
+    setReviewSelected((p) => { const n = new Set(p); n.delete(row.productId); return n; });
     setBusyReviewId(null);
+  }
+
+  async function approveSelectedReviews() {
+    if (!canWrite || busy || reviewSelectedRows.length === 0) return;
+    const confirmed = window.confirm(
+      `ستعتمد ${reviewSelectedRows.length} صورة من نتائج مطابقة بالاسم فقط. هل راجعت كل صورة ومنتج بصريًا وتريد المتابعة؟`,
+    );
+    if (!confirmed) return;
+    await runBulk(reviewSelectedRows);
+    setReviewSelected(new Set());
   }
 
   function skipReview(row: ImagePreviewRow) {
     setReviewMarks((p) => ({ ...p, [row.productId]: "تم التخطي — لم يُكتب شيء." }));
+    setReviewSelected((p) => { const n = new Set(p); n.delete(row.productId); return n; });
   }
 
   function downloadCsv() {
@@ -352,12 +378,26 @@ export default function SnoonuBulkRecovery({
           <p className="text-xs text-muted">قائمة المراجعة فارغة.</p>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            <p className="text-[11px] text-muted sm:col-span-2 xl:col-span-3">هذه المطابقات غير مؤكدة — لا تُسترجع ضمن الدفعة أبدًا. الاعتماد يسترجع المرشّح المعروض فقط بعد إعادة التحقق (جلسة + منتج + نتيجة حديثة).</p>
-            {reviewRows.slice(0, 300).map((r) => {
+            <p className="text-[11px] text-muted sm:col-span-2 xl:col-span-3">هذه المطابقات غير مؤكدة. راجع الصورة والمنتج بصريًا، ثم حدّد البطاقات التي وافقت عليها فقط. كل اعتماد يعيد التحقق من الجلسة والمنتج والنتيجة الحديثة.</p>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 sm:col-span-2 xl:col-span-3">
+              <span className="text-xs font-semibold text-amber-800">محدد للمراجعة {reviewSelectedRows.length} / {reviewRows.length}</span>
+              <button type="button" disabled={busy || visibleReviewEligibleRows.length === 0} onClick={() => setReviewSelected((prev) => new Set([...prev, ...visibleReviewEligibleRows.map((r) => r.productId)]))} className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-semibold text-amber-800 disabled:opacity-50">
+                تحديد المعروض بعد المراجعة
+              </button>
+              <button type="button" disabled={busy || reviewSelected.size === 0} onClick={() => setReviewSelected(new Set())} className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 disabled:opacity-50">
+                إلغاء التحديد
+              </button>
+              <button type="button" disabled={!canWrite || busy || reviewSelectedRows.length === 0} onClick={approveSelectedReviews} className="rounded-lg bg-amber-700 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50">
+                اعتماد المحدد ({reviewSelectedRows.length})
+              </button>
+            </div>
+            {visibleReviewRows.slice(0, 300).map((r) => {
               const mark = reviewMarks[r.productId];
+              const eligible = !mark && Boolean(r.spi && r.merchantImageUrl);
               return (
-                <div key={r.productId} className="rounded-xl border border-amber-200 bg-amber-50/40 p-3 text-xs">
+                <div key={r.productId} className={`rounded-xl border bg-amber-50/40 p-3 text-xs ${reviewSelected.has(r.productId) ? "border-amber-500 ring-1 ring-amber-300" : "border-amber-200"}`}>
                   <div className="flex items-start gap-2">
+                  <input type="checkbox" className="mt-1" aria-label={`تحديد ${r.sku ?? r.productId} بعد المراجعة`} disabled={!canWrite || busy || !eligible} checked={reviewSelected.has(r.productId)} onChange={() => toggleReview(r.productId)} />
                   {r.merchantImageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={r.merchantImageUrl} alt="" className="h-10 w-10 rounded object-cover" loading="lazy" />

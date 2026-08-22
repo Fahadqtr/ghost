@@ -4,9 +4,8 @@
 //     recovers ONLY through the per-item server action (MEDIA.1C inside);
 //   • the bulk loop is sequential, records failures without aborting, and
 //     cancel is checked at the top of the loop (after the current product);
-//   • bulk selection is structurally SAFE-only (safeRecoveryRows) and every
-//     call pins the previewed SPI; NEEDS_REVIEW recovers only via an explicit
-//     per-row approval — never inside runBulk;
+//   • SAFE rows may be preselected; NEEDS_REVIEW is never auto-selected and
+//     requires explicit card selection plus a confirmation before runBulk;
 //   • no inventory / price / lifecycle / ECL / channel-publish tokens anywhere;
 //   • the action recovers exactly ONE product per call (no second bulk write
 //     path server-side) and adds no DB/media logic of its own.
@@ -71,14 +70,17 @@ test("bulk loop: sequential, failure-isolated, cancel checked at the top of the 
   assert.ok(/catch \{\s*return \{ productId: row\.productId[\s\S]{0,120}status: "FAILED"/.test(s), "a thrown item is recorded as FAILED and the loop continues");
 });
 
-test("bulk selection is structurally SAFE-only; review approval is explicit per-row", () => {
+test("review bulk requires explicit manual selection plus confirmation", () => {
   const s = strip(read(COMPONENT));
   assert.ok(/safeRecoveryRows\(/.test(s), "eligible rows come from the pure SAFE filter");
   assert.ok(/reviewQueueRows\(/.test(s), "review queue uses the pure NEEDS_REVIEW filter");
-  // runBulk is invoked with safeRows / selectedRows only — never with reviewRows
+  // reviewRows are never passed wholesale: only the operator's selected subset.
   assert.ok(/runBulk\(safeRows\)/.test(s) && /runBulk\(selectedRows\)/.test(s), "bulk runs on SAFE rows only");
   assert.equal(/runBulk\(reviewRows\)/.test(s), false, "review rows are NEVER bulk-recovered");
   assert.ok(/approveReview\(/.test(s), "review recovery requires the explicit per-row approve handler");
+  assert.ok(/reviewSelectedRows/.test(s) && /runBulk\(reviewSelectedRows\)/.test(s), "review bulk uses only explicitly selected rows");
+  assert.ok(/window\.confirm\(/.test(s), "selected review rows require a final operator confirmation");
+  assert.ok(/تحديد المعروض بعد المراجعة/.test(read(COMPONENT)), "UI labels selection as post-review, never automatic");
 });
 
 test("final report + CSV come from the pure model (BOM prepended at save time)", () => {
