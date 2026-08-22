@@ -98,11 +98,20 @@ test("existing catalog / operations / customers links are unchanged", () => {
   assert.equal(byHref("/rewards")?.external, true);
 });
 
-test("section order (HOME.1/NAV.1/NAV.MEDIA): الرئيسية, الكتالوج, العمليات, الصور والوسائط, التحليلات, العملاء, الإعدادات, أدوات إضافية ↗", () => {
+test("section order includes the Inventory Hub immediately after Home", () => {
   assert.deepEqual(
     groupNavLinks().map((s) => s.title),
-    ["الرئيسية", "الكتالوج", "العمليات", "الصور والوسائط", "التحليلات", "العملاء", "الإعدادات", "أدوات إضافية ↗"],
+    ["الرئيسية", "المخزون", "الكتالوج", "العمليات", "الصور والوسائط", "التحليلات", "العملاء", "الإعدادات", "أدوات إضافية ↗"],
   );
+});
+
+test("INV.V2.1 adds one in-shell inventory home", () => {
+  const inventory = V2_NAV_LINKS.filter((l) => l.href === "/v2/inventory");
+  assert.equal(inventory.length, 1);
+  assert.equal(inventory[0]!.label, "مركز المخزون");
+  assert.equal(inventory[0]!.section, "المخزون");
+  assert.equal(inventory[0]!.external, undefined);
+  assert.equal(activeNavHref("/v2/inventory"), "/v2/inventory");
 });
 
 test("HOME.1 adds «الرئيسية» → the Executive Home (/v2, home icon, in-shell) as the first link", () => {
