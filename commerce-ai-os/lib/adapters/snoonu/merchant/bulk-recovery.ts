@@ -133,6 +133,18 @@ export function formatDurationAr(ms: number): string {
   return minutes > 0 ? `~${minutes} د ${seconds} ث` : `~${seconds} ث`;
 }
 
+/**
+ * UX.NAV.2 — presentation only: the compact per-mode evidence suffix
+ * (`[باركود: … · SKU: … · اسم: …]`, MEDIA.1C-HOTFIX3) is diagnostic detail.
+ * The normal operator row shows the plain reason; the full string (suffix
+ * included) stays available in the tooltip and the CSV export. The underlying
+ * model is untouched — this strips for DISPLAY, never from the data.
+ */
+export function stripModeTraceSuffix(reason: string): string {
+  if (typeof reason !== "string") return "";
+  return reason.replace(/\s*\[[^\][]*\]\s*$/, "").trim();
+}
+
 const csvCell = (v: string): string => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
 /**

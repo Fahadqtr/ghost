@@ -39,6 +39,7 @@ test("hub ships no client bundle of its own", () => {
 test("hub links to every tool (existing URLs unchanged) + the new sub-routes", () => {
   const links = [
     "/v2/catalog/import", // new importer (replaces legacy Excel Import card)
+    "/v2/operations/media", // UX.NAV.2 — canonical media overview pointer
     "/import-export/availability",
     "/import-export/shopify-sync",
     "/import-export/talabat-sync",
@@ -64,13 +65,13 @@ test("images workspace renders the three image components unchanged", () => {
   assert.ok(IMAGES.includes("limit(1000)"), "product-list read now lives on the images page");
 });
 
-test("exports workspace is retired and redirects to the Export Center (INT.2F.2)", () => {
+test("exports workspace is retired and redirects to the Export Center (INT.2F.2 / UX.NAV.2)", () => {
   // INT.2F.2 — the legacy Talabat CSV trigger (TalabatExport) is deleted and this
-  // page now permanently redirects to the certified Export Center. The Export
-  // Center is the only operator-facing Talabat export path.
+  // page permanently redirects to the certified Export Center. UX.NAV.2
+  // canonicalised the target: the hub card promises every channel, so the
+  // Export Center DASHBOARD (channel picker) is the landing, not one channel.
   assert.equal(/TalabatExport/.test(EXPORTS), false, "no legacy TalabatExport trigger remains");
-  assert.ok(/redirect\(/.test(EXPORTS), "the page redirects");
-  assert.ok(EXPORTS.includes("/v2/export/talabat:malikas"), "redirects to the Export Center Talabat destination");
+  assert.ok(/redirect\("\/v2\/export"\)/.test(EXPORTS), "redirects to the Export Center dashboard");
 });
 
 // ── Nothing deleted / no broken routes ──────────────────────────────────────

@@ -93,14 +93,30 @@ export default async function ImportExportPage() {
         />
       </section>
 
-      {/* الصور والجودة — moved to its own workspace */}
+      {/* الصور والجودة — the V2 Media Center is the canonical overview (UX.NAV.2);
+          only the legacy upload/attach helpers still live here. */}
       <section className="space-y-2">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">{L("الصور والجودة", "Images & quality")}</h2>
+        <Link
+          href="/v2/operations/media"
+          className="card flex items-center justify-between border-brand/30 bg-brand/5 hover:bg-brand/10"
+        >
+          <div>
+            <h3 className="text-sm font-semibold text-ink">🖼️ {L("مركز الصور (الواجهة الجديدة)", "Media Center (new interface)")}</h3>
+            <p className="text-xs text-muted">
+              {L(
+                "النظرة العامة المعتمدة للصور: الناقص، المكرر، صحّة الوسائط، والاسترجاع من سنونو.",
+                "The canonical media overview: missing, duplicates, media health, and Snoonu recovery."
+              )}
+            </p>
+          </div>
+          <span className="shrink-0 text-brand" title={L("يفتح في واجهة V2", "Opens in the V2 interface")}>↗</span>
+        </Link>
         <HubCard
           href="/import-export/images"
-          icon="🖼️"
-          title={L("الصور والجودة", "Images & quality")}
-          desc={L("فحص جودة الصور، رفع الصور، وربط صورة بالـ SKU.", "Image-quality check, image upload, and attach an image by SKU.")}
+          icon="🧰"
+          title={L("أدوات الصور القديمة", "Legacy image tools")}
+          desc={L("رفع الصور وربط صورة بالـ SKU (أدوات قديمة ما زالت مستخدمة).", "Image upload and attach-by-SKU (legacy tools still in use).")}
         />
       </section>
 

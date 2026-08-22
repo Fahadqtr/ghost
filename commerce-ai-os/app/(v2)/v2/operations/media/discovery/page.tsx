@@ -58,8 +58,19 @@ export default async function SnoonuDiscoveryPage({ searchParams }: { searchPara
         </div>
       </div>
       {statuses.length > 0 ? <SnoonuConnectionManager statuses={statuses} /> : null}
-      {/* MEDIA.1C-HOTFIX3: owner-only runtime evidence for identity searches. */}
-      {owner && view?.query?.productId ? <SnoonuSearchDiagnostics productId={view.query.productId} /> : null}
+      {/* MEDIA.1C-HOTFIX3: owner-only runtime evidence for identity searches.
+          UX.NAV.2 tucks it behind a collapsed «تشخيص متقدم» disclosure so the
+          developer panel never dominates the normal operator view. */}
+      {owner && view?.query?.productId ? (
+        <details className="rounded-xl border border-dashed border-slate-300 px-3 py-2">
+          <summary className="cursor-pointer select-none text-xs font-semibold text-muted hover:text-ink">
+            تشخيص متقدم (للمالك)
+          </summary>
+          <div className="pt-2">
+            <SnoonuSearchDiagnostics productId={view.query.productId} />
+          </div>
+        </details>
+      ) : null}
       {view === null ? (
         <div className="card border-rose-200 bg-rose-50 text-sm text-rose-700" role="alert">{LOAD_ERROR}</div>
       ) : (

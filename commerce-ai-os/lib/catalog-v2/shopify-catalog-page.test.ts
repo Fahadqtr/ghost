@@ -486,17 +486,16 @@ test("the catalog section contains exactly the Malikas and Shopify catalog links
   // The sidebar now carries a Beauty Rewards section too, so this pins the
   // CATALOG SECTION specifically rather than the whole list.
   const catalog = V2_NAV_LINKS.filter((l) => l.section === "الكتالوج");
-  // WAVE.1A added the read-only «حملة الإطلاق» (/v2/catalog/launch) workspace
-  // here; NAV.MEDIA moved it (not duplicated) into «الصور والوسائط» — its new
-  // home is pinned by nav.test.ts.
+  // WAVE.1A added the read-only «حملة الإطلاق» (/v2/catalog/launch) workspace;
+  // UX.NAV.2 settled it here as its ONE canonical sidebar home.
   assert.deepEqual(
     catalog.map((l) => l.href),
-    ["/v2/catalog", "/v2/catalog/shopify"],
+    ["/v2/catalog", "/v2/catalog/shopify", "/v2/catalog/launch"],
     "catalog links, in order",
   );
   assert.deepEqual(
     catalog.map((l) => l.label),
-    ["كتالوج ماليكاس", "كتالوج Shopify"],
+    ["كتالوج ماليكاس", "كتالوج Shopify", "حملة الإطلاق"],
   );
   // No sales platform beyond Shopify is introduced in the CATALOG section.
   // MEDIA.1A-P4 legitimately added the owner-only Snoonu session helper under
