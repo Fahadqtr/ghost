@@ -49,9 +49,10 @@ test("the entries use the canonical label and sit under العملاء", () => {
 
 test("the catalog section is unchanged", () => {
   const catalog = V2_NAV_LINKS.filter((l) => l.section === "الكتالوج");
-  // WAVE.1A added «حملة الإطلاق» (/v2/catalog/launch) under the catalog section.
-  assert.deepEqual(catalog.map((l) => l.href), ["/v2/catalog", "/v2/catalog/shopify", "/v2/catalog/launch"]);
-  assert.deepEqual(catalog.map((l) => l.label), ["كتالوج ماليكاس", "كتالوج Shopify", "حملة الإطلاق"]);
+  // WAVE.1A added «حملة الإطلاق» (/v2/catalog/launch) here; NAV.MEDIA moved it
+  // (not duplicated) into «الصور والوسائط» — nav.test.ts pins its new home.
+  assert.deepEqual(catalog.map((l) => l.href), ["/v2/catalog", "/v2/catalog/shopify"]);
+  assert.deepEqual(catalog.map((l) => l.label), ["كتالوج ماليكاس", "كتالوج Shopify"]);
   for (const l of catalog) assert.equal(l.external, undefined, "V2 pages are not external");
 });
 
@@ -60,10 +61,12 @@ test("links are grouped by section, in declaration order", () => {
   // UX.1 added «الإعدادات» and «أدوات إضافية ↗» after «العملاء».
   // NAV.1 surfaced the OPS sub-centers under «العمليات» and added «التحليلات».
   // HOME.1 added «الرئيسية» (/v2 — the Executive Home Dashboard) as the first group.
+  // NAV.MEDIA added «الصور والوسائط» after «العمليات» (media moved into it).
   assert.deepEqual(sections.map((s) => s.title), [
     "الرئيسية",
     "الكتالوج",
     "العمليات",
+    "الصور والوسائط",
     "التحليلات",
     "العملاء",
     "الإعدادات",
@@ -72,15 +75,21 @@ test("links are grouped by section, in declaration order", () => {
   assert.deepEqual(sections[0]!.links.map((l) => l.href), ["/v2"]);
   assert.deepEqual(sections[2]!.links.map((l) => l.href), [
     "/v2/operations",
-    "/v2/operations/media",
     "/v2/operations/channels",
     "/v2/operations/ai",
     "/v2/operations/health",
     "/v2/export",
     "/v2/tasks",
   ]);
-  assert.deepEqual(sections[3]!.links.map((l) => l.href), ["/v2/analytics", "/v2/actions"]);
-  assert.deepEqual(sections[4]!.links.map((l) => l.href), LOYALTY_HREFS);
+  assert.deepEqual(sections[3]!.links.map((l) => l.href), [
+    "/v2/operations/media",
+    "/v2/operations/media/discovery",
+    "/v2/settings/connections/snoonu/session-helper",
+    "/v2/catalog/launch",
+    "/v2/operations/media?storefront=snoonu:malikas",
+  ]);
+  assert.deepEqual(sections[4]!.links.map((l) => l.href), ["/v2/analytics", "/v2/actions"]);
+  assert.deepEqual(sections[5]!.links.map((l) => l.href), LOYALTY_HREFS);
   const flat = sections.flatMap((s) => s.links.map((l) => l.href));
   assert.equal(flat.length, V2_NAV_LINKS.length);
   assert.equal(new Set(flat).size, flat.length, "no duplicate hrefs");

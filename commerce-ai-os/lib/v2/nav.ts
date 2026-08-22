@@ -47,17 +47,15 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
 
   { href: "/v2/catalog", label: "كتالوج ماليكاس", icon: "catalog", section: "الكتالوج" },
   { href: "/v2/catalog/shopify", label: "كتالوج Shopify", icon: "shopify", section: "الكتالوج" },
-  // WAVE.1A — Launch Campaign Workspace (read-only operational screen).
-  { href: "/v2/catalog/launch", label: "حملة الإطلاق", icon: "operations", section: "الكتالوج" },
 
   // Operations Center (Phase UI.7.2/7.3) — reads lib/operations/* engines.
   // Label matches the page's own H1 «مركز العمليات» (UX.1 discoverability).
   { href: "/v2/operations", label: "مركز العمليات", icon: "operations", section: "العمليات" },
   // NAV.1 — surface the OPS sub-centers so every completed operations platform
   // is discoverable from the shell (they previously had no top-level entry and
-  // were reachable only via deep-links from the Operations Center). All four are
-  // existing V2 pages; nothing is renamed.
-  { href: "/v2/operations/media", label: "مركز الصور", icon: "media", section: "العمليات" },
+  // were reachable only via deep-links from the Operations Center). All are
+  // existing V2 pages; nothing is renamed. NAV.MEDIA moved the Media Center
+  // into the dedicated «الصور والوسائط» group below.
   { href: "/v2/operations/channels", label: "مركز القنوات", icon: "channels", section: "العمليات" },
   { href: "/v2/operations/ai", label: "مركز الذكاء الاصطناعي", icon: "ai", section: "العمليات" },
   { href: "/v2/operations/health", label: "صحة المنصة", icon: "health", section: "العمليات" },
@@ -65,6 +63,22 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // point. Read-only foundation; a new V2 page (legacy /import-export stays).
   { href: "/v2/export", label: "مركز التصدير", icon: "export", section: "العمليات" },
   { href: "/v2/tasks", label: "المهام", icon: "operations", section: "العمليات" },
+
+  // Media & Snoonu tools (Phase NAV.MEDIA) — one group that collects every
+  // existing media/Snoonu surface so operators reach them in one click.
+  // Navigation ONLY: every href points at a page that already ships (nothing is
+  // minted, renamed, or duplicated — the Media Center, session helper, and
+  // Launch Campaign entries MOVED here from their old groups). The recovery
+  // shortcut is a deep link into the EXISTING Media Center bulk-recovery
+  // workspace with the Malikas storefront preselected via the OPS.4-validated
+  // `storefront` param — not a new page. The session helper page keeps its own
+  // requireOwner() gate; permissions are unchanged by navigation.
+  { href: "/v2/operations/media", label: "مركز الصور", icon: "media", section: "الصور والوسائط" },
+  { href: "/v2/operations/media/discovery", label: "اكتشاف وسائط Snoonu", icon: "media", section: "الصور والوسائط" },
+  { href: "/v2/settings/connections/snoonu/session-helper", label: "جلسة Snoonu", icon: "channels", section: "الصور والوسائط" },
+  // WAVE.1A — Launch Campaign Workspace (read-only operational screen).
+  { href: "/v2/catalog/launch", label: "حملة الإطلاق", icon: "operations", section: "الصور والوسائط" },
+  { href: "/v2/operations/media?storefront=snoonu:malikas", label: "استرجاع الصور الناقصة", icon: "media", section: "الصور والوسائط" },
 
   // Analytics (Phase NAV.1) — the BI.2 Executive Dashboard. New group; the page
   // ships already (merged in BI.2) and simply had no menu entry.
@@ -88,13 +102,9 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
 
   // Settings (UX.1) — the TickTick integration browser is a real V2 page that
   // had no menu entry; surface it so it is discoverable. In-shell (not external).
+  // NAV.MEDIA moved the Snoonu session helper («جلسة Snoonu», owner-only page,
+  // connection-style icon preserved) into «الصور والوسائط» above.
   { href: "/v2/settings/integrations/ticktick", label: "تكاملات TickTick", icon: "operations", section: "الإعدادات" },
-  // Settings (MEDIA.1A-P4) — the Snoonu session capture helper. The page itself
-  // is requireOwner()-gated (non-owners get a fixed denial), so surfacing the
-  // link is safe; without it the page was reachable only by typing the URL.
-  // NAV-HOTFIX: connection-style icon so the session shortcut reads as a
-  // connections/status entry at a glance (the page itself stays owner-only).
-  { href: "/v2/settings/connections/snoonu/session-helper", label: "جلسة Snoonu", icon: "channels", section: "الإعدادات" },
 
   // Extra tools (UX.1) — still-used pages that live in the PREVIOUS interface and
   // are NOT in the legacy-redirect list. Linked (not reimplemented) and marked
@@ -135,6 +145,10 @@ export function groupNavLinks(links: readonly V2NavLink[] = V2_NAV_LINKS): V2Nav
  * superseded by any more specific link — including platform links added to
  * V2_NAV_LINKS later, which will claim their own subtree without ever
  * re-lighting the Malikas link above them.
+ *
+ * A deep-link entry whose href carries a query string (NAV.MEDIA's recovery
+ * shortcut) never matches a pathname, so its page's canonical entry highlights
+ * instead — exactly one link ever lights up.
  *
  * Returns the winning href, or null when nothing matches.
  */

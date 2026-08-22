@@ -28,11 +28,11 @@ test("TickTick integrations lives under «الإعدادات» (in-shell, not ex
   assert.equal(tt!.external, undefined, "TickTick is a V2 route — not external");
 });
 
-test("Snoonu session helper (MEDIA.1A-P4) lives under «الإعدادات» (in-shell, not external)", () => {
+test("Snoonu session helper (MEDIA.1A-P4) stays reachable — NAV.MEDIA moved it under «الصور والوسائط»", () => {
   const sh = V2_NAV_LINKS.find((l) => l.href === "/v2/settings/connections/snoonu/session-helper");
   assert.ok(sh, "session-helper link exists — the owner page must be reachable from the menu");
   assert.equal(sh!.label, "جلسة Snoonu");
-  assert.equal(sh!.section, "الإعدادات");
+  assert.equal(sh!.section, "الصور والوسائط");
   // NAV-HOTFIX: connection-style icon pinned so the shortcut can't silently
   // lose its identity (and, via the checks above, can't disappear at all).
   assert.equal(sh!.icon, "channels", "connection/status icon");
@@ -62,9 +62,10 @@ test("no duplicate hrefs", () => {
 
 test("no dead V2 href introduced — every /v2 link points at a real page.tsx", () => {
   // Import/Export (/import-export) is a legacy route (external) and lives in the
-  // (app) tree, so it is checked separately below.
+  // (app) tree, so it is checked separately below. NAV.MEDIA's recovery shortcut
+  // deep-links with a query string — the route is the path before the `?`.
   const routeToFile = (href: string): string => {
-    const rel = href.replace(/^\/v2/, "");
+    const rel = href.split("?")[0]!.replace(/^\/v2/, "");
     return `../../app/(v2)/v2${rel}/page.tsx`;
   };
   for (const link of V2_NAV_LINKS) {
@@ -97,10 +98,10 @@ test("existing catalog / operations / customers links are unchanged", () => {
   assert.equal(byHref("/rewards")?.external, true);
 });
 
-test("section order (HOME.1/NAV.1): الرئيسية, الكتالوج, العمليات, التحليلات, العملاء, الإعدادات, أدوات إضافية ↗", () => {
+test("section order (HOME.1/NAV.1/NAV.MEDIA): الرئيسية, الكتالوج, العمليات, الصور والوسائط, التحليلات, العملاء, الإعدادات, أدوات إضافية ↗", () => {
   assert.deepEqual(
     groupNavLinks().map((s) => s.title),
-    ["الرئيسية", "الكتالوج", "العمليات", "التحليلات", "العملاء", "الإعدادات", "أدوات إضافية ↗"],
+    ["الرئيسية", "الكتالوج", "العمليات", "الصور والوسائط", "التحليلات", "العملاء", "الإعدادات", "أدوات إضافية ↗"],
   );
 });
 
@@ -118,33 +119,32 @@ test("HOME.1 adds «الرئيسية» → the Executive Home (/v2, home icon, i
   assert.equal(activeNavSection("/v2"), "الرئيسية");
 });
 
-// ── NAV.1: the OPS sub-centers are now discoverable under «العمليات» ──────────
-test("NAV.1 surfaces the four OPS sub-centers under «العمليات» (existing routes, in-shell)", () => {
+// ── NAV.1: the OPS sub-centers are discoverable (NAV.MEDIA moved media out) ───
+test("NAV.1 keeps the OPS sub-centers reachable — media now lives under «الصور والوسائط»", () => {
   const byHref = (h: string) => V2_NAV_LINKS.find((l) => l.href === h);
-  const expected: ReadonlyArray<readonly [string, string, string]> = [
-    ["/v2/operations/media", "مركز الصور", "media"],
-    ["/v2/operations/channels", "مركز القنوات", "channels"],
-    ["/v2/operations/ai", "مركز الذكاء الاصطناعي", "ai"],
-    ["/v2/operations/health", "صحة المنصة", "health"],
+  const expected: ReadonlyArray<readonly [string, string, string, string]> = [
+    ["/v2/operations/media", "مركز الصور", "media", "الصور والوسائط"],
+    ["/v2/operations/channels", "مركز القنوات", "channels", "العمليات"],
+    ["/v2/operations/ai", "مركز الذكاء الاصطناعي", "ai", "العمليات"],
+    ["/v2/operations/health", "صحة المنصة", "health", "العمليات"],
   ];
-  for (const [href, label, icon] of expected) {
+  for (const [href, label, icon, section] of expected) {
     const link = byHref(href);
     assert.ok(link, `${href} is in the nav`);
     assert.equal(link!.label, label, `${href} label`);
-    assert.equal(link!.section, "العمليات", `${href} sits under العمليات`);
+    assert.equal(link!.section, section, `${href} section`);
     assert.equal(link!.icon, icon, `${href} icon`);
     assert.equal(link!.external, undefined, `${href} is a V2 route — not external`);
   }
 });
 
-test("NAV.1/INT.2A «العمليات» group order: center, media, channels, ai, health, export, then tasks", () => {
+test("NAV.1/INT.2A/NAV.MEDIA «العمليات» group order: center, channels, ai, health, export, then tasks", () => {
   const ops = groupNavLinks().find((s) => s.title === "العمليات");
   assert.ok(ops, "العمليات group exists");
   assert.deepEqual(
     ops!.links.map((l) => l.href),
     [
       "/v2/operations",
-      "/v2/operations/media",
       "/v2/operations/channels",
       "/v2/operations/ai",
       "/v2/operations/health",
@@ -152,6 +152,50 @@ test("NAV.1/INT.2A «العمليات» group order: center, media, channels, ai
       "/v2/tasks",
     ],
   );
+});
+
+// ── NAV.MEDIA: one «الصور والوسائط» group collects the media/Snoonu tools ─────
+test("NAV.MEDIA pins the five media shortcuts (existing routes only, exact hrefs/labels/icons, in order)", () => {
+  const group = groupNavLinks().find((s) => s.title === "الصور والوسائط");
+  assert.ok(group, "«الصور والوسائط» group exists");
+  assert.deepEqual(
+    group!.links.map((l) => [l.href, l.label, l.icon]),
+    [
+      ["/v2/operations/media", "مركز الصور", "media"],
+      ["/v2/operations/media/discovery", "اكتشاف وسائط Snoonu", "media"],
+      ["/v2/settings/connections/snoonu/session-helper", "جلسة Snoonu", "channels"],
+      ["/v2/catalog/launch", "حملة الإطلاق", "operations"],
+      ["/v2/operations/media?storefront=snoonu:malikas", "استرجاع الصور الناقصة", "media"],
+    ],
+    "the five shortcuts, hrefs pinned exactly",
+  );
+  for (const l of group!.links) assert.equal(l.external, undefined, `${l.href} is a V2 route — not external`);
+});
+
+test("NAV.MEDIA moves (never duplicates) — each media route appears once, and only in the media group", () => {
+  for (const href of [
+    "/v2/operations/media",
+    "/v2/operations/media/discovery",
+    "/v2/settings/connections/snoonu/session-helper",
+    "/v2/catalog/launch",
+  ]) {
+    const hits = V2_NAV_LINKS.filter((l) => l.href === href);
+    assert.equal(hits.length, 1, `${href} appears exactly once (no confusing duplicate entries)`);
+    assert.equal(hits[0]!.section, "الصور والوسائط", `${href} lives in the media group only`);
+  }
+  // The recovery shortcut is a deep link into the EXISTING Media Center bulk
+  // recovery (validated `storefront` param) — no new page is minted and no
+  // legacy media/recovery route is reintroduced anywhere in the nav.
+  const recovery = V2_NAV_LINKS.find((l) => l.label === "استرجاع الصور الناقصة");
+  assert.ok(recovery, "recovery shortcut exists");
+  assert.equal(recovery!.href.split("?")[0], "/v2/operations/media", "recovery points at the existing Media Center");
+  for (const l of V2_NAV_LINKS) {
+    assert.equal(
+      /image-recovery|media-recovery|\/recovery\b|\/media\/import|\/media\/upload/.test(l.href),
+      false,
+      `no legacy/new media route in the nav: ${l.href}`,
+    );
+  }
 });
 
 test("INT.2A adds «العمليات» → «مركز التصدير» (/v2/export, export icon, in-shell)", () => {
@@ -194,6 +238,9 @@ test("activeNavHref behavior unchanged — longest-match still wins", () => {
   // OPS sub-centers claim their own subtree — the Operations Center above them
   // does NOT re-light (longest-match wins), incl. on their deep sub-pages
   assert.equal(activeNavHref("/v2/operations/media"), "/v2/operations/media");
+  // NAV.MEDIA: the discovery link claims its own subtree; the query-string
+  // recovery deep link never matches a pathname, so exactly one link lights up.
+  assert.equal(activeNavHref("/v2/operations/media/discovery"), "/v2/operations/media/discovery");
   assert.equal(activeNavHref("/v2/operations/channels"), "/v2/operations/channels");
   assert.equal(activeNavHref("/v2/operations/ai"), "/v2/operations/ai");
   assert.equal(activeNavHref("/v2/operations/health"), "/v2/operations/health");
@@ -211,7 +258,7 @@ test("activeNavHref behavior unchanged — longest-match still wins", () => {
 test("activeNavSection returns the active link's group (for current-group highlight)", () => {
   assert.equal(activeNavSection("/v2/catalog/12345"), "الكتالوج");
   assert.equal(activeNavSection("/v2/operations"), "العمليات");
-  assert.equal(activeNavSection("/v2/operations/media"), "العمليات");
+  assert.equal(activeNavSection("/v2/operations/media"), "الصور والوسائط");
   assert.equal(activeNavSection("/v2/analytics"), "التحليلات");
   assert.equal(activeNavSection("/v2/loyalty/qr"), "العملاء");
   assert.equal(activeNavSection("/v2/settings/integrations/ticktick"), "الإعدادات");

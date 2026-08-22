@@ -83,7 +83,9 @@ test("navigation imports no business-logic engines, read models or data loaders"
 test("no new routes — every /v2 nav href resolves to an existing page.tsx", () => {
   for (const link of V2_NAV_LINKS) {
     if (!link.href.startsWith("/v2")) continue; // external legacy routes checked below
-    const rel = link.href.replace(/^\/v2/, "");
+    // NAV.MEDIA's recovery shortcut deep-links with a query string — the route
+    // is the path before the `?` (still an EXISTING page, nothing minted).
+    const rel = link.href.split("?")[0]!.replace(/^\/v2/, "");
     const page = join(ROOT, `app/(v2)/v2${rel}/page.tsx`);
     assert.ok(existsSync(page), `${link.href} must resolve to a real page: ${page}`);
   }
