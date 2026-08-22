@@ -11,7 +11,7 @@ export interface InventoryHubLink {
 // INV.V2.1 is deliberately navigation-only. Every destination below is an
 // existing, authenticated inventory surface and keeps its current data/actions.
 export const INVENTORY_HUB_LINKS: readonly InventoryHubLink[] = [
-  { key: "overview", label: "الكميات والتوفّر", description: "عرض الكميات، الحدود، الاستيراد والتصدير والمزامنة الحالية.", href: "/inventory", status: "REUSE" },
+  { key: "overview", label: "الكميات والتوفّر", description: "عرض الكميات، الحدود، الاستيراد والتصدير والمزامنة الحالية.", href: "/v2/inventory", status: "REUSE" },
   { key: "shelves", label: "الرفوف والمواقع", description: "إدارة الرفوف وتوزيع مخزون المنتجات والخيارات.", href: "/inventory/shelves", status: "REUSE" },
   { key: "stocktake", label: "الجرد", description: "تسجيل العدّ الفعلي للمنتجات والخيارات حسب الموقع.", href: "/inventory/stocktake", status: "REUSE" },
   { key: "movements", label: "الحركات", description: "إدخال حركات الوارد والصادر ومراجعة سجل الحركة.", href: "/inventory/movements", status: "REUSE" },
