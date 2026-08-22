@@ -102,17 +102,12 @@ test("grouping tolerates malformed input without throwing", () => {
 
 // ── These pages really are still reachable ───────────────────────────────────
 
-test("the legacy admin block is unchanged", () => {
-  // The whole approach depends on these pages still working. Only /dashboard,
-  // /products, /inventory and /platforms are redirected to V2.
-  assert.ok(
-    /LEGACY_PREFIXES: readonly string\[\] = \["\/dashboard", "\/products", "\/inventory", "\/platforms"\]/.test(
-      REDIRECT_SRC,
-    ),
-    "the redirect list is exactly the four legacy admin prefixes",
-  );
+test("the loyalty routes remain outside every admin redirect", () => {
+  // UX.CONVERGE.1 replaces the old catch-all list with precise canonical
+  // mappings, but neither mapping family may claim the loyalty namespace.
+  assert.ok(/LEGACY_PREFIXES: readonly string\[\] = \["\/products"\]/.test(REDIRECT_SRC));
   for (const href of LOYALTY_HREFS) {
-    for (const prefix of ["/dashboard", "/products", "/inventory", "/platforms"]) {
+    for (const prefix of ["/dashboard", "/products", "/inventory", "/platforms", "/channels", "/catalog"]) {
       assert.ok(!href.startsWith(prefix), `${href} is not caught by the legacy block`);
     }
   }

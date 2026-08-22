@@ -3,15 +3,70 @@
 // the proxy/middleware. This round only BLOCKS access to the legacy admin entry
 // points (it deletes no legacy code); requests to them are redirected to V2.
 
-/** The single V2 destination every blocked/legacy entry point resolves to. */
-export const V2_HOME = "/v2/catalog";
+/** The Executive Home built by HOME.1/HOME.2. */
+export const V2_HOME = "/v2";
+
+/** The V2 catalog remains the precise replacement for legacy product routes. */
+export const V2_CATALOG = "/v2/catalog";
 
 // Legacy admin entry points that V2 replaces. A path matches when it equals one
 // of these or is a sub-path (prefix + "/"). Root "/" is handled explicitly.
 // NOTE: deliberately scoped to these entries (not a blanket block of every old
 // route) so still-used public/back-office paths — /login, /api/**, /auth/**,
 // /staff, /rewards, webhooks, /v2/** — keep working.
-const LEGACY_PREFIXES: readonly string[] = ["/dashboard", "/products", "/inventory", "/platforms"];
+const LEGACY_PREFIXES: readonly string[] = ["/products"];
+
+/**
+ * Legacy tools that have no equivalent V2 workflow yet. They stay reachable
+ * until their own migration phase; in particular, inventory must never be
+ * guessed to be a catalog concern merely because both pages list products.
+ */
+export const NEEDS_MIGRATION_PREFIXES: readonly string[] = ["/inventory"];
+
+export function legacyMigrationStatus(pathname: unknown): "NEEDS_MIGRATION" | null {
+  if (typeof pathname !== "string" || pathname.length === 0) return null;
+  return NEEDS_MIGRATION_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+    ? "NEEDS_MIGRATION"
+    : null;
+}
+
+export interface CanonicalRedirectTarget {
+  pathname: string;
+  /** Context inferred from a legacy path; existing query values win. */
+  query?: Readonly<Record<string, string>>;
+}
+
+const PLATFORM_CONTEXT: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  shopify: { channel: "shopify" },
+  talabat: { channel: "talabat" },
+  rafeeq: { channel: "rafeeq" },
+  pure_seoul: { storefront: "snoonu:pure_seoul" },
+};
+
+/** Canonical replacements for critical legacy entry points (UX.CONVERGE.1). */
+export function canonicalRedirectTarget(pathname: unknown): CanonicalRedirectTarget | null {
+  if (typeof pathname !== "string" || pathname.length === 0 || pathname.startsWith("/v2")) return null;
+
+  if (pathname === "/dashboard" || pathname.startsWith("/dashboard/")) return { pathname: V2_HOME };
+
+  if (pathname === "/platforms") return { pathname: "/v2/operations/channels" };
+  const platform = /^\/platforms\/([^/]+)\/?$/.exec(pathname)?.[1];
+  if (platform) {
+    return {
+      pathname: "/v2/operations/channels",
+      ...(PLATFORM_CONTEXT[platform] ? { query: PLATFORM_CONTEXT[platform] } : {}),
+    };
+  }
+
+  if (pathname === "/channels" || pathname.startsWith("/channels/")) {
+    return { pathname: "/v2/operations/channels" };
+  }
+  if (pathname === "/catalog/health") return { pathname: "/v2/operations/health" };
+  if (pathname === "/catalog/enrich") return { pathname: "/v2/operations/ai" };
+  if (pathname === "/import-export/export") return { pathname: "/v2/export" };
+
+  return null;
+}
 
 /** Paths that must NEVER be redirected by the legacy block. */
 function isExcludedFromLegacyBlock(pathname: string): boolean {
@@ -38,9 +93,9 @@ function isExcludedFromLegacyBlock(pathname: string): boolean {
 const PRODUCT_ID_SEGMENT_RE = /^[A-Za-z0-9-]+$/;
 
 function productEditingRedirect(pathname: string): string | null {
-  if (pathname === "/products/new") return `${V2_HOME}/new`;
+  if (pathname === "/products/new") return `${V2_CATALOG}/new`;
   const m = /^\/products\/([^/]+)\/edit$/.exec(pathname);
-  if (m && PRODUCT_ID_SEGMENT_RE.test(m[1])) return `${V2_HOME}/${m[1]}/edit`;
+  if (m && PRODUCT_ID_SEGMENT_RE.test(m[1])) return `${V2_CATALOG}/${m[1]}/edit`;
   return null;
 }
 
@@ -59,7 +114,7 @@ export function legacyRedirectPath(pathname: unknown): string | null {
   const productTarget = productEditingRedirect(pathname);
   if (productTarget) return productTarget;
   for (const p of LEGACY_PREFIXES) {
-    if (pathname === p || pathname.startsWith(p + "/")) return V2_HOME;
+    if (pathname === p || pathname.startsWith(p + "/")) return V2_CATALOG;
   }
   return null;
 }

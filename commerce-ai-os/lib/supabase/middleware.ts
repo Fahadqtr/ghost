@@ -5,7 +5,7 @@ import {
   type CookieOptions,
 } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { legacyRedirectPath, movedRoutePath, V2_HOME } from "@/lib/v2/legacy-redirect";
+import { canonicalRedirectTarget, legacyRedirectPath, movedRoutePath, V2_HOME } from "@/lib/v2/legacy-redirect";
 
 // Paths that are reachable WITHOUT being logged in. `/staff` is the employees'
 // stock IN/OUT page — it has its own shared-PIN gate (no Supabase account).
@@ -93,6 +93,18 @@ export async function updateSession(request: NextRequest) {
   // removed; excluded paths — /login, /api/**, /auth/**, /v2/**, webhooks,
   // /staff, /rewards, static — are never matched here.)
   if (user) {
+    // UX.CONVERGE.1 canonical destinations. Keep the caller's query string and
+    // add path-derived channel context only when the caller did not provide it.
+    const canonical = canonicalRedirectTarget(path);
+    if (canonical) {
+      const canonicalUrl = request.nextUrl.clone();
+      canonicalUrl.pathname = canonical.pathname;
+      for (const [key, value] of Object.entries(canonical.query ?? {})) {
+        if (!canonicalUrl.searchParams.has(key)) canonicalUrl.searchParams.set(key, value);
+      }
+      return NextResponse.redirect(canonicalUrl);
+    }
+
     // Relocated pages keep their sub-path AND their query string — these pages
     // use it for search/filters, so an old bookmark must land on the same view.
     const moved = movedRoutePath(path);
