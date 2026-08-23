@@ -22,6 +22,7 @@
 // Framework-free and dependency-light — node:test loads it directly (no @/ paths).
 
 import { normalizeExportedSku, normalizeBarcode } from "../../talabat/export.ts";
+import { canonicalUnitPricing } from "./pricing.ts";
 import { storefrontByKey } from "../../channels/storefronts.ts";
 import { resolveLifecycleState, type LifecycleState } from "../../lifecycle/state.ts";
 import {
@@ -229,9 +230,6 @@ export interface ShopifyPreviewResult {
 function clean(v: string | null | undefined): string {
   return typeof v === "string" ? v.trim() : "";
 }
-function positive(v: number | null | undefined): number | null {
-  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
-}
 function parseMoney(v: string | null | undefined): number | null {
   if (v === null || v === undefined) return null;
   const n = Number(String(v).trim());
@@ -266,27 +264,36 @@ interface Unit {
   sku: string;
   barcode: string | null;
   name: string | null;
+  /** canonical sell price (SHOPIFY.PRICE.1): variant ?? parent discount ?? parent price */
   price: number | null;
+  /** canonical compare-at: parent price only on a REAL sale (compareAt > sell), else null */
+  compareAt: number | null;
   synthetic: boolean; // true ⇒ the product's own row (simple product)
 }
 function unitsOf(p: ShopifyInternalProduct): Unit[] {
   const vs = Array.isArray(p.variants) ? p.variants : [];
   if (vs.length > 0) {
-    return vs.map((v) => ({
-      id: v.id,
-      sku: normalizeExportedSku(v.sku),
-      barcode: normalizeBarcode(v.barcode),
-      name: clean(v.variantName) || null,
-      price: positive(v.price),
-      synthetic: false,
-    }));
+    return vs.map((v) => {
+      const pricing = canonicalUnitPricing(v.price, p.discountPrice, p.price);
+      return {
+        id: v.id,
+        sku: normalizeExportedSku(v.sku),
+        barcode: normalizeBarcode(v.barcode),
+        name: clean(v.variantName) || null,
+        price: pricing.sellPrice,
+        compareAt: pricing.compareAtPrice,
+        synthetic: false,
+      };
+    });
   }
+  const pricing = canonicalUnitPricing(null, p.discountPrice, p.price);
   return [{
     id: p.id,
     sku: normalizeExportedSku(p.sku),
     barcode: normalizeBarcode(p.barcode),
     name: null,
-    price: positive(p.discountPrice) ?? positive(p.price),
+    price: pricing.sellPrice,
+    compareAt: pricing.compareAtPrice,
     synthetic: true,
   }];
 }
@@ -422,8 +429,11 @@ function buildRow(p: ShopifyInternalProduct, ctx: RowCtx): ShopifyPreviewRow {
   const title = clean(p.nameEn) || clean(p.nameAr);
   const barcode = normalizeBarcode(p.barcode);
   const productSku = hasVariants ? "" : units[0]?.sku ?? "";
-  const price = positive(p.discountPrice) ?? positive(p.price);
-  const compareAtPrice = positive(p.discountPrice) !== null ? positive(p.price) : null;
+  // Product-grain pricing (SHOPIFY.PRICE.1): sell = discount ?? price; a
+  // compare-at survives ONLY when it is a real sale (parent price > sell).
+  const rowPricing = canonicalUnitPricing(null, p.discountPrice, p.price);
+  const price = rowPricing.sellPrice;
+  const compareAtPrice = rowPricing.compareAtPrice;
   const hasImage = p.imageCount > 0 || clean(p.imageUrl) !== "" || clean(p.imageFilename) !== "";
   const state = resolveLifecycleState({ lifecycle_state: p.lifecycleState, platform_status: p.platformStatus });
 
@@ -545,7 +555,10 @@ function buildRow(p: ShopifyInternalProduct, ctx: RowCtx): ShopifyPreviewRow {
         variantMatchedCount++;
         usedLiveGids.add(match.variant.id);
         const desiredPrice = u.price;
-        const desiredCompareAt = compareAtPrice; // product-level compare-at semantics
+        // SHOPIFY.PRICE.1 — per-UNIT compare-at (a real sale only); the old
+        // product-level compare-at planned degenerate compareAt == sell updates
+        // for explicit-price variants under a parent discount.
+        const desiredCompareAt = u.compareAt;
         const livePrice = parseMoney(match.variant.price);
         const liveCompareAt = parseMoney(match.variant.compareAtPrice);
         variantDiffs.push({
