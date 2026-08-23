@@ -193,6 +193,25 @@ export function evaluateRow(
   };
 }
 
+/**
+ * The identity fields an UPDATE_VARIANT op would actually send, resolved from
+ * the target (PURE — the executor uses exactly this). Only the PLANNED fields,
+ * and only when the catalog value is a real non-empty string — Shopify is
+ * never blanked out. Returns {} when the op's unit is absent from the target;
+ * the mk2237 incident was exactly that miss (simple product, synthetic unit
+ * not in target.variants) silently degrading the run to UNCHANGED.
+ */
+export function variantIdentityFields(
+  op: Pick<ShopifyPlanOp, "fields" | "variantId">,
+  target: PublishTarget,
+): { sku?: string; barcode?: string } {
+  const tv = target.variants.find((v) => v.variantId === op.variantId);
+  const fields: { sku?: string; barcode?: string } = {};
+  if (op.fields.includes("sku") && typeof tv?.sku === "string" && tv.sku !== "") fields.sku = tv.sku;
+  if (op.fields.includes("barcode") && typeof tv?.barcode === "string" && tv.barcode !== "") fields.barcode = tv.barcode;
+  return fields;
+}
+
 /** Confirm an operator-submitted fingerprint against the fresh one (§5). */
 export function isStale(freshFingerprint: string, confirmedFingerprint: string | null | undefined): boolean {
   return !confirmedFingerprint || freshFingerprint !== confirmedFingerprint;

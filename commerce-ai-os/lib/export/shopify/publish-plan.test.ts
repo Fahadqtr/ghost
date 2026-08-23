@@ -12,6 +12,7 @@ import {
   emptyCounts,
   runStatusFromCounts,
   SUPPORTED_EXECUTION_OPS,
+  variantIdentityFields,
   type PublishTarget,
 } from "./publish-plan.ts";
 import type { ShopifyPlanOp, ShopifyPreviewStatus } from "./preview.ts";
@@ -242,4 +243,39 @@ test("supported execution ops: conservative set + UPDATE_VARIANT identity fix (n
     ["CREATE_PRODUCT", "NOOP", "UPDATE_MEDIA", "UPDATE_PRICE", "UPDATE_PRODUCT", "UPDATE_VARIANT"],
   );
   assert.equal(SUPPORTED_EXECUTION_OPS.includes("BLOCKED" as never), false);
+});
+
+// ── mk2237 NO_CHANGE regression: simple-product synthetic unit ────────────────
+//
+// Production incident: the run confirmed «تحديث 1» but finished UNCHANGED and
+// the barcode diff survived. deriveTarget built target.variants from REAL
+// variant rows only, so a simple product's plan (whose unit id is the PRODUCT
+// id) missed the target lookup and the executor silently skipped the op.
+
+test("variantIdentityFields: resolves the simple-product SYNTHETIC unit (the mk2237 payload)", () => {
+  // Target as deriveTarget now builds it for a simple product.
+  const t = target({
+    variants: [{ variantId: "p-mk2237", variantGid: "gid://shopify/ProductVariant/49", sku: "mk2237", barcode: "2351027651606", price: 55 }],
+  });
+  const fields = variantIdentityFields(
+    { fields: ["barcode"], variantId: "p-mk2237" },
+    t,
+  );
+  assert.deepEqual(fields, { barcode: "2351027651606" }, "exactly the catalog barcode — nothing else");
+});
+
+test("variantIdentityFields: the OLD empty-variants target reproduces the silent no-op (documented defect)", () => {
+  const fields = variantIdentityFields({ fields: ["barcode"], variantId: "p-mk2237" }, target({ variants: [] }));
+  assert.deepEqual(fields, {}, "unit missing from target → nothing sent (this WAS the bug's shape)");
+});
+
+test("variantIdentityFields: only PLANNED fields, and empty catalog values are never sent", () => {
+  const t = target({
+    variants: [{ variantId: "v1", variantGid: "gid://x/1", sku: "SKU1", barcode: "", price: 10 }],
+  });
+  // barcode planned but catalog value empty → never blank out Shopify.
+  assert.deepEqual(variantIdentityFields({ fields: ["barcode"], variantId: "v1" }, t), {});
+  // sku NOT planned → not sent even though present.
+  assert.deepEqual(variantIdentityFields({ fields: ["barcode"], variantId: "v1" }, t), {});
+  assert.deepEqual(variantIdentityFields({ fields: ["sku"], variantId: "v1" }, t), { sku: "SKU1" });
 });
