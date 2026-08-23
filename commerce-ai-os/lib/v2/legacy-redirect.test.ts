@@ -10,6 +10,7 @@ import {
   canonicalRedirectTarget,
   legacyMigrationStatus,
   legacyRedirectPath,
+  movedRoutePath,
   safeInternalPath,
   V2_HOME,
 } from "./legacy-redirect.ts";
@@ -49,11 +50,18 @@ test("platform detail routes preserve canonical context when possible", () => {
   });
 });
 
-test("inventory remains reachable and explicitly classified NEEDS_MIGRATION", () => {
-  for (const p of ["/inventory", "/inventory/stocktake", "/inventory/movements/123"]) {
+test("inventory is RELOCATED to /v2/inventory/* (INV.V2.3) — sub-path kept, never the catalog funnel", () => {
+  // Every daily destination now has a V2 wrapper, so /inventory moved out of
+  // NEEDS_MIGRATION and into the moved-prefix map (middleware keeps the query).
+  for (const [p, to] of [
+    ["/inventory", "/v2/inventory"],
+    ["/inventory/stocktake", "/v2/inventory/stocktake"],
+    ["/inventory/movements/123", "/v2/inventory/movements/123"],
+  ] as const) {
     assert.equal(canonicalRedirectTarget(p), null, p);
     assert.equal(legacyRedirectPath(p), null, p);
-    assert.equal(legacyMigrationStatus(p), "NEEDS_MIGRATION", p);
+    assert.equal(legacyMigrationStatus(p), null, p);
+    assert.equal(movedRoutePath(p), to, p);
   }
 });
 

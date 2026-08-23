@@ -18,10 +18,12 @@ const LEGACY_PREFIXES: readonly string[] = ["/products"];
 
 /**
  * Legacy tools that have no equivalent V2 workflow yet. They stay reachable
- * until their own migration phase; in particular, inventory must never be
- * guessed to be a catalog concern merely because both pages list products.
+ * until their own migration phase. INV.V2.3 removed `/inventory`: every daily
+ * inventory surface now has a canonical /v2/inventory/* wrapper, so the legacy
+ * URLs are RELOCATED (see MOVED_PREFIXES below — sub-path and query preserved),
+ * never funneled to the catalog.
  */
-export const NEEDS_MIGRATION_PREFIXES: readonly string[] = ["/inventory"];
+export const NEEDS_MIGRATION_PREFIXES: readonly string[] = [];
 
 export function legacyMigrationStatus(pathname: unknown): "NEEDS_MIGRATION" | null {
   if (typeof pathname !== "string" || pathname.length === 0) return null;
@@ -129,7 +131,14 @@ export function legacyRedirectPath(pathname: unknown): string | null {
 // `/rewards` is deliberately NOT here: it is the public customer card opened
 // from the printed QR (listed in the middleware PUBLIC_PATHS), and moving it
 // behind the V2 auth gate would break it for people with no account.
-const MOVED_PREFIXES: readonly { from: string; to: string }[] = [{ from: "/loyalty", to: "/v2/loyalty" }];
+const MOVED_PREFIXES: readonly { from: string; to: string }[] = [
+  { from: "/loyalty", to: "/v2/loyalty" },
+  // INV.V2.3 — /v2/inventory/* is the canonical inventory URL space. Every
+  // sub-route has a thin V2 wrapper around the SAME legacy component, so the
+  // sub-path is preserved verbatim (movements → movements, …) and the caller
+  // keeps the query string (reports?days=… must land on the same view).
+  { from: "/inventory", to: "/v2/inventory" },
+];
 
 /**
  * Resolve a relocated path, preserving the rest of the sub-path. Returns null

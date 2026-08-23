@@ -82,7 +82,7 @@ export default async function OutOfStockPage() {
             قائمة المنتجات اللي مخزونها صفر، مع صورة لكل منتج. صدّرها Excel أو PDF، أو علّم قائمة منتجات نافدة بلصق أسمائها.
           </p>
         </div>
-        <Link href="/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">← Back to inventory</Link>
+        <Link href="/v2/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">← Back to inventory</Link>
       </div>
 
       {errMsg ? (
