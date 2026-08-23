@@ -35,13 +35,20 @@ export type PublishRunStatus = "STARTED" | "SUCCEEDED" | "PARTIAL" | "FAILED" | 
 //  • CREATE_PRODUCT — create a new (DRAFT) product; never auto-activates.
 //  • UPDATE_PRODUCT — title / description only (never status/publish, §6).
 //  • UPDATE_PRICE   — variant price / compare-at at the variant GID.
+//  • UPDATE_VARIANT — sku/barcode of a GID-MATCHED variant (catalog is the
+//    identity source of truth; the row's classification already proved the
+//    match). Added after the mk2237 incident: create() left the barcode
+//    blank, the re-read planned a barcode-only UPDATE_VARIANT, and the row
+//    became permanently unselectable (SKIPPED_UNSUPPORTED) with no path to
+//    convergence. An op without a variantGid still hard-stops in the executor.
 //  • UPDATE_MEDIA   — ADD a proven-missing image only (never delete/reorder, §11).
 //  • NOOP           — nothing to do → UNCHANGED.
-// UPDATE_VARIANT (sku/barcode rewrite) and any "variants" (add-missing-variant)
-// op are intentionally NOT executed here — they are reported SKIPPED_UNSUPPORTED.
+// Any "variants" (add-missing-variant) op is intentionally NOT executed here —
+// it is reported SKIPPED_UNSUPPORTED.
 export const SUPPORTED_EXECUTION_OPS: readonly ShopifyPlanOpType[] = [
   "CREATE_PRODUCT",
   "UPDATE_PRODUCT",
+  "UPDATE_VARIANT",
   "UPDATE_PRICE",
   "UPDATE_MEDIA",
   "NOOP",
@@ -170,7 +177,7 @@ export function evaluateRow(
     } else if (isExecutableOp(op.type)) {
       executableOps.push(op);
     } else {
-      unsupportedOps.push(op); // UPDATE_VARIANT (sku/barcode) etc.
+      unsupportedOps.push(op); // anything outside the supported execution set
     }
   }
 
