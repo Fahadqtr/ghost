@@ -42,6 +42,8 @@ export interface RepairLiveVariant {
 
 export interface RepairLiveProduct {
   id: string; // gid://shopify/Product/…
+  /** Shopify's own flag — the standalone-default gate never trusts the title alone */
+  hasOnlyDefaultVariant: boolean;
   variants: RepairLiveVariant[];
 }
 
@@ -59,8 +61,19 @@ export type RepairReason =
   | "missing_price"
   | "duplicate_sku"
   | "duplicate_barcode"
+  /** two internal variants share one option-value name — a single Shopify
+   *  "Title" option cannot represent both; the catalog must be fixed first */
+  | "duplicate_name"
   | "partial_live_state"
-  | "unexpected_live_state";
+  | "unexpected_live_state"
+  /** the live product is not verifiably a standalone-default product: the
+   *  title says "Default Title" but Shopify's hasOnlyDefaultVariant flag
+   *  disagrees (or vice versa) — never mutate on contradictory evidence */
+  | "not_standalone_default"
+  /** live SKUs match the plan but a barcode differs — NOT the same variants */
+  | "live_barcode_mismatch"
+  /** live SKUs match the plan but a variant name/title differs */
+  | "live_name_mismatch";
 
 export interface PlannedCreate {
   internalVariantId: string;
@@ -158,18 +171,24 @@ export function planVariantRepair(
     skuSeen.add(s);
     if (barcodeSeen.has(c.barcode) && !reasons.includes("duplicate_barcode")) reasons.push("duplicate_barcode");
     barcodeSeen.add(c.barcode);
-    // Shopify option values must be unique too — a repeated name is ambiguous.
-    if (nameSeen.has(c.name) && !reasons.includes("duplicate_sku")) reasons.push("duplicate_sku");
-    nameSeen.add(c.name);
+    // Shopify option values must be unique — two internal variants with the
+    // same name (trim + case-insensitive) cannot share one "Title" option.
+    const nm = c.name.toLowerCase();
+    if (nameSeen.has(nm) && !reasons.includes("duplicate_name")) reasons.push("duplicate_name");
+    nameSeen.add(nm);
   }
   if (reasons.length > 0) return blocked();
 
-  // Live state gate. The ONLY repairable shape is the standalone default.
+  // Live state gate. The ONLY repairable shape is the standalone default —
+  // and the destructive REMOVE_STANDALONE_VARIANT strategy requires BOTH
+  // pieces of evidence: Shopify's own hasOnlyDefaultVariant flag AND exactly
+  // one live variant titled "Default Title". If the two disagree in either
+  // direction the state is contradictory and we never mutate.
   const liveVariants = live.variants;
   const plannedSkus = new Set(creates.map((c) => c.sku.toLowerCase()));
-  const isDefaultOnly = liveVariants.length === 1 && text(liveVariants[0]!.title) === DEFAULT_TITLE;
+  const titleSaysDefaultOnly = liveVariants.length === 1 && text(liveVariants[0]!.title) === DEFAULT_TITLE;
 
-  if (isDefaultOnly) {
+  if (live.hasOnlyDefaultVariant && titleSaysDefaultOnly) {
     return {
       ...base,
       status: "READY",
@@ -178,20 +197,33 @@ export function planVariantRepair(
       creates,
     };
   }
+  if (live.hasOnlyDefaultVariant !== titleSaysDefaultOnly) {
+    reasons.push("not_standalone_default");
+    return blocked();
+  }
 
-  // Idempotency: EXACTLY the planned set already live (matched by unique SKU,
-  // no default, no extras) ⇒ nothing to mutate; identity may still be persisted.
+  // Idempotency: EXACTLY the planned set already live ⇒ nothing to mutate;
+  // identity may still be persisted. A live variant counts as a match ONLY
+  // when ALL identity fields equal the planned internal variant — normalized
+  // SKU (unique hit), exact barcode, exact name/title. A SKU-only match with
+  // a differing barcode or name is NOT done — it is a different variant.
   const liveBySku = new Map<string, RepairLiveVariant[]>();
   for (const lv of liveVariants) {
     const s = text(lv.sku).toLowerCase();
     liveBySku.set(s, [...(liveBySku.get(s) ?? []), lv]);
   }
   const hasDefault = liveVariants.some((lv) => text(lv.title) === DEFAULT_TITLE);
-  const exact =
+  const skuExact =
     !hasDefault &&
     liveVariants.length === creates.length &&
     creates.every((c) => (liveBySku.get(c.sku.toLowerCase()) ?? []).length === 1);
-  if (exact) {
+  if (skuExact) {
+    for (const c of creates) {
+      const lv = liveBySku.get(c.sku.toLowerCase())![0]!;
+      if (text(lv.barcode) !== c.barcode && !reasons.includes("live_barcode_mismatch")) reasons.push("live_barcode_mismatch");
+      if (text(lv.title) !== c.name && !reasons.includes("live_name_mismatch")) reasons.push("live_name_mismatch");
+    }
+    if (reasons.length > 0) return blocked();
     return {
       ...base,
       status: "ALREADY_DONE",
@@ -219,9 +251,11 @@ export type VerifyResult =
   | { status: "NEEDS_RECONCILIATION"; reasons: string[] };
 
 /**
- * Verify the re-read against the plan: every planned SKU present exactly once,
- * no standalone default left, no extra variants. Any deviation ⇒
- * NEEDS_RECONCILIATION (identity is NEVER persisted from an ambiguous state).
+ * Verify the re-read against the plan. Every planned variant must be matched
+ * by EXACTLY ONE live variant on ALL identity fields — normalized SKU, exact
+ * barcode, exact name/title — with no standalone default left and no extra
+ * variants. Any deviation ⇒ NEEDS_RECONCILIATION and ZERO ECL writes
+ * (identity is NEVER persisted from an ambiguous or mismatched state).
  */
 export function verifyRepairResult(plan: VariantRepairPlan, reread: readonly RepairLiveVariant[]): VerifyResult {
   const reasons: string[] = [];
@@ -234,9 +268,27 @@ export function verifyRepairResult(plan: VariantRepairPlan, reread: readonly Rep
   const eclWrites: EclWrite[] = [];
   for (const c of plan.creates) {
     const hits = bySku.get(c.sku.toLowerCase()) ?? [];
-    if (hits.length === 0) reasons.push(`missing:${c.sku}`);
-    else if (hits.length > 1) reasons.push(`ambiguous:${c.sku}`);
-    else eclWrites.push({ internalVariantId: c.internalVariantId, variantGid: hits[0]!.id, sku: c.sku, barcode: c.barcode });
+    if (hits.length === 0) {
+      reasons.push(`missing:${c.sku}`);
+      continue;
+    }
+    if (hits.length > 1) {
+      reasons.push(`ambiguous:${c.sku}`);
+      continue;
+    }
+    const lv = hits[0]!;
+    let mismatched = false;
+    if (text(lv.barcode) !== c.barcode) {
+      reasons.push(`barcode_mismatch:${c.sku}`);
+      mismatched = true;
+    }
+    if (text(lv.title) !== c.name) {
+      reasons.push(`name_mismatch:${c.sku}`);
+      mismatched = true;
+    }
+    if (!mismatched) {
+      eclWrites.push({ internalVariantId: c.internalVariantId, variantGid: lv.id, sku: c.sku, barcode: c.barcode });
+    }
   }
   if (reread.length !== plan.creates.length) reasons.push("unexpected_variant_count");
   if (reasons.length > 0) return { status: "NEEDS_RECONCILIATION", reasons };

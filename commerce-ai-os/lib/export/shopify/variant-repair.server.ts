@@ -103,7 +103,9 @@ export async function repairMissingShopifyVariants(
     loadProductGid: (id) => loadProductGid(admin, id),
     readLive: async (gid) => {
       const r = await fetchShopifyProductVariants(gid);
-      return r.variants ? { id: gid, variants: r.variants } : null;
+      // The flag must be an explicit boolean from Shopify — an absent flag is
+      // treated as NOT standalone-default (fail closed, never mutate).
+      return r.variants ? { id: gid, hasOnlyDefaultVariant: r.hasOnlyDefaultVariant === true, variants: r.variants } : null;
     },
     createVariants: async (gid, creates) => {
       const r = await createProductVariantsBulk(

@@ -204,15 +204,25 @@ export async function createProductVariantsBulk(
   return { ok: true, created };
 }
 
-/** Targeted re-read of ONE product's variants (verification after a repair). */
+/** Targeted re-read of ONE product's variants (verification after a repair).
+ *  Also returns Shopify's own `hasOnlyDefaultVariant` flag — the standalone-
+ *  default gate must NOT rely on the variant title alone. */
 export async function fetchShopifyProductVariants(
   productGid: string,
-): Promise<{ variants?: { id: string; sku: string; barcode: string; title: string }[]; error?: string }> {
+): Promise<{
+  variants?: { id: string; sku: string; barcode: string; title: string }[];
+  hasOnlyDefaultVariant?: boolean;
+  error?: string;
+}> {
   const { data, error } = await shopifyGraphQL<{
-    product: { variants: { nodes: { id: string; sku: string | null; barcode: string | null; title: string | null }[] } } | null;
+    product: {
+      hasOnlyDefaultVariant: boolean;
+      variants: { nodes: { id: string; sku: string | null; barcode: string | null; title: string | null }[] };
+    } | null;
   }>(
     `query($id: ID!) {
       product(id: $id) {
+        hasOnlyDefaultVariant
         variants(first: 100) { nodes { id sku barcode title } }
       }
     }`,
@@ -221,6 +231,7 @@ export async function fetchShopifyProductVariants(
   if (error) return { error };
   if (!data?.product) return { error: "المنتج غير موجود في شوبي فاي." };
   return {
+    hasOnlyDefaultVariant: data.product.hasOnlyDefaultVariant === true,
     variants: (data.product.variants?.nodes ?? []).map((v) => ({
       id: v.id,
       sku: String(v.sku ?? "").trim(),
