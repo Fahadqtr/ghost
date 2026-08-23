@@ -43,6 +43,7 @@ import {
   evaluateRow,
   isStale,
   rowFingerprint,
+  variantIdentityFields,
   dedupeSelections,
   emptyCounts,
   tallyResult,
@@ -71,13 +72,27 @@ function htmlFromPlain(text: string): string {
 /** Derive the exact target values a row would write (also feeds the fingerprint). */
 export function deriveTarget(internal: ShopifyInternalProduct, row: ShopifyPreviewRow, ctx: ShopifyPreviewContext): PublishTarget {
   const gidByVariant = ctx.mappingByProductId[internal.id]?.variantGidByVariantId ?? {};
-  const variants = (Array.isArray(internal.variants) ? internal.variants : []).map((v) => ({
-    variantId: v.id,
-    variantGid: gidByVariant[v.id] ?? null,
-    sku: v.sku,
-    barcode: v.barcode,
-    price: typeof v.price === "number" && Number.isFinite(v.price) ? v.price : null,
-  }));
+  const realVariants = Array.isArray(internal.variants) ? internal.variants : [];
+  const variants = realVariants.length > 0
+    ? realVariants.map((v) => ({
+        variantId: v.id,
+        variantGid: gidByVariant[v.id] ?? null,
+        sku: v.sku,
+        barcode: v.barcode,
+        price: typeof v.price === "number" && Number.isFinite(v.price) ? v.price : null,
+      }))
+    // mk2237 fix: a SIMPLE product's plan targets the preview's SYNTHETIC unit
+    // (unit id = the PRODUCT id, identity from the product row). Without this
+    // entry the executor's target lookup missed, the planned UPDATE_VARIANT
+    // silently no-opped, and the run reported UNCHANGED while the barcode diff
+    // survived every re-read.
+    : [{
+        variantId: internal.id,
+        variantGid: gidByVariant[internal.id] ?? null,
+        sku: row.sku || null,
+        barcode: row.barcode ?? null,
+        price: row.price,
+      }];
   return {
     title: row.title,
     descriptionText: clean(internal.descriptionEn),
@@ -401,10 +416,9 @@ async function executeRow(
   for (const op of ops.filter((o) => o.type === "UPDATE_VARIANT")) {
     const vGid = op.variantGid ?? null;
     if (!vGid) { return { result: "CONFLICT", gid, ops: applied, error: "هوية المتغيّر غير محددة للتحديث.", imageAdded, systemic: false }; } // ambiguous → stop
-    const tv = target.variants.find((v) => v.variantId === op.variantId);
-    const fields: { sku?: string; barcode?: string } = {};
-    if (op.fields.includes("sku") && typeof tv?.sku === "string" && tv.sku !== "") fields.sku = tv.sku;
-    if (op.fields.includes("barcode") && typeof tv?.barcode === "string" && tv.barcode !== "") fields.barcode = tv.barcode;
+    // Pure, unit-tested resolution (mk2237 regression): the target now always
+    // carries the plan's unit — real variants AND the simple-product synthetic.
+    const fields = variantIdentityFields({ fields: op.fields, variantId: op.variantId ?? null }, target);
     if (!fields.sku && !fields.barcode) continue;
     const r = await updateVariantIdentity(gid, vGid, fields);
     if (!r.ok) return { result: "FAILED", gid, ops: applied, error: safeErr(r.error), imageAdded, systemic: looksSystemic(r.error) };
