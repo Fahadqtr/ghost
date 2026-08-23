@@ -39,6 +39,7 @@ import {
   type ShopifyPreviewRow,
   type ShopifyPreviewStatus,
 } from "./preview.ts";
+import { canonicalUnitPricing, normalizeCompareAt } from "./pricing.ts";
 import {
   evaluateRow,
   isStale,
@@ -74,13 +75,20 @@ export function deriveTarget(internal: ShopifyInternalProduct, row: ShopifyPrevi
   const gidByVariant = ctx.mappingByProductId[internal.id]?.variantGidByVariantId ?? {};
   const realVariants = Array.isArray(internal.variants) ? internal.variants : [];
   const variants = realVariants.length > 0
-    ? realVariants.map((v) => ({
-        variantId: v.id,
-        variantGid: gidByVariant[v.id] ?? null,
-        sku: v.sku,
-        barcode: v.barcode,
-        price: typeof v.price === "number" && Number.isFinite(v.price) ? v.price : null,
-      }))
+    ? realVariants.map((v) => {
+        // SHOPIFY.PRICE.1 — the SAME canonical rule as the preview planner:
+        // sell = variant ?? parent discount ?? parent price; compare-at only
+        // when it is a real sale (compareAt > sell).
+        const pricing = canonicalUnitPricing(v.price, internal.discountPrice, internal.price);
+        return {
+          variantId: v.id,
+          variantGid: gidByVariant[v.id] ?? null,
+          sku: v.sku,
+          barcode: v.barcode,
+          price: pricing.sellPrice,
+          compareAtPrice: pricing.compareAtPrice,
+        };
+      })
     // mk2237 fix: a SIMPLE product's plan targets the preview's SYNTHETIC unit
     // (unit id = the PRODUCT id, identity from the product row). Without this
     // entry the executor's target lookup missed, the planned UPDATE_VARIANT
@@ -92,6 +100,7 @@ export function deriveTarget(internal: ShopifyInternalProduct, row: ShopifyPrevi
         sku: row.sku || null,
         barcode: row.barcode ?? null,
         price: row.price,
+        compareAtPrice: row.compareAtPrice,
       }];
   return {
     title: row.title,
@@ -405,7 +414,10 @@ async function executeRow(
     const tv = target.variants.find((v) => v.variantId === op.variantId);
     const price = tv?.price ?? target.price;
     if (price === null) continue;
-    const r = await updateVariantPrice(gid, vGid, String(price), target.compareAtPrice !== null ? String(target.compareAtPrice) : null);
+    // SHOPIFY.PRICE.1 — per-unit compare-at, re-normalized against the exact
+    // price being sent: only a REAL sale (compareAt > price) is ever written.
+    const compareAt = normalizeCompareAt(price, tv ? tv.compareAtPrice : target.compareAtPrice);
+    const r = await updateVariantPrice(gid, vGid, String(price), compareAt !== null ? String(compareAt) : null);
     if (!r.ok) return { result: "FAILED", gid, ops: applied, error: safeErr(r.error), imageAdded, systemic: looksSystemic(r.error) };
     applied.push("UPDATE_PRICE");
   }

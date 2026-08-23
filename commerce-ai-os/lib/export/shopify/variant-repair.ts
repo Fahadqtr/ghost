@@ -14,6 +14,8 @@
 // all stop the product — nothing is guessed and ECL is only written from a
 // VERIFIED re-read.
 
+import { canonicalUnitPricing } from "./pricing.ts";
+
 // ── inputs ───────────────────────────────────────────────────────────────────
 
 export interface RepairInternalVariant {
@@ -105,15 +107,13 @@ export interface VariantRepairPlan {
   eclWrites: EclWrite[];
 }
 
-const positive = (v: number | null | undefined): number | null =>
-  typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
-
 const text = (v: string | null | undefined): string => (typeof v === "string" ? v.trim() : "");
 
-/** Effective sell price — the SAME certified semantics as the channel previews:
+/** Effective sell price — delegates to the ONE canonical pricing rule
+ *  (SHOPIFY.PRICE.1, shared with preview + publish):
  *  variant.price ?? parent.discountPrice ?? parent.price (positive only). */
 export function effectiveVariantPrice(v: RepairInternalVariant, p: RepairInternalProduct): number | null {
-  return positive(v.price) ?? positive(p.discountPrice) ?? positive(p.price);
+  return canonicalUnitPricing(v.price, p.discountPrice, p.price).sellPrice;
 }
 
 function money(n: number): string {

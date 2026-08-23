@@ -66,7 +66,10 @@ export interface PublishTargetVariant {
   variantGid: string | null;
   sku: string | null;
   barcode: string | null;
+  /** canonical sell price (SHOPIFY.PRICE.1): variant ?? parent discount ?? parent price */
   price: number | null;
+  /** canonical compare-at: only a REAL sale (compareAt > sell) survives, else null */
+  compareAtPrice: number | null;
 }
 export interface PublishTarget {
   title: string;
@@ -142,7 +145,7 @@ export function rowFingerprint(
       compareAt: target.compareAtPrice,
       img: target.hasImage ? target.imageUrl : null,
       variants: [...target.variants]
-        .map((v) => ({ id: v.variantId, gid: v.variantGid, sku: v.sku, barcode: v.barcode, price: v.price }))
+        .map((v) => ({ id: v.variantId, gid: v.variantGid, sku: v.sku, barcode: v.barcode, price: v.price, cmp: v.compareAtPrice }))
         .sort((a, b) => a.id.localeCompare(b.id)),
     },
   };
