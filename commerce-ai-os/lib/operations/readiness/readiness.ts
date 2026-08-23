@@ -34,6 +34,10 @@ export const READINESS_MESSAGES: Record<ReadinessReasonCode, string> = {
   missing_barcode: "لا يوجد باركود.",
   invalid_barcode: "صيغة الباركود غير صالحة.",
   missing_price: "لا يوجد سعر صالح.",
+  // CATALOG.GOLIVE.2 — verified on the Snoonu portal by the owner: choice-group
+  // products (variants attached) legitimately show parent price 0 while every
+  // choice carries its own price (e.g. mk1122/mk1161/mk995). Informational only.
+  parent_price_zero_with_variants: "سعر الأصل 0 — منتج بخيارات (حالة صالحة عندما تكون الخيارات مسعّرة).",
   missing_category: "لا توجد فئة.",
   missing_variants: "المنتج يتطلب خيارات ولا توجد خيارات.",
   missing_description: "لا يوجد وصف.",
@@ -84,6 +88,17 @@ export function computeProductReadiness(p: OperationsProduct): ProductReadiness 
   const barcodePresent = barcode !== "";
   const barcodeValid = BARCODE_RE.test(barcode);
 
+  // CATALOG.GOLIVE.2 — owner-verified on the Snoonu portal: choice-group
+  // products (variants attached) legitimately carry PARENT price 0 while every
+  // choice is priced (mk1122 / mk1161 / mk995 evidence). For variant-carrying
+  // products the parent price is therefore NOT a required blocker; a zero
+  // parent surfaces as the informational parent_price_zero_with_variants
+  // reason instead of missing_price, so operators are never told to invent a
+  // synthetic parent price. Simple products keep the strict required rule.
+  // Variant PRICE completeness stays a variant-grain concern (Talabat/Shopify
+  // previews + the variant editor) — never derived or checked here.
+  const carriesVariants = p.expectsVariants === true || p.variantCount > 0;
+
   const checks: ReadinessCheck[] = [
     { code: "name", required: true, passed: hasText(p.nameAr) || hasText(p.nameEn) },
     { code: "image", required: true, passed: hasText(p.imageUrl) },
@@ -91,7 +106,7 @@ export function computeProductReadiness(p: OperationsProduct): ProductReadiness 
     { code: "barcode", required: true, passed: barcodeValid },
     {
       code: "price",
-      required: true,
+      required: !carriesVariants,
       passed: typeof p.price === "number" && Number.isFinite(p.price) && p.price > 0,
     },
     { code: "category", required: true, passed: hasText(p.category) },
@@ -113,7 +128,7 @@ export function computeProductReadiness(p: OperationsProduct): ProductReadiness 
     else if (c.code === "image") push("missing_image");
     else if (c.code === "sku") push(skuPresent ? "invalid_sku" : "missing_sku");
     else if (c.code === "barcode") push(barcodePresent ? "invalid_barcode" : "missing_barcode");
-    else if (c.code === "price") push("missing_price");
+    else if (c.code === "price") push(carriesVariants ? "parent_price_zero_with_variants" : "missing_price");
     else if (c.code === "category") push("missing_category");
     else if (c.code === "variants") push("missing_variants");
     else if (c.code === "description") push("missing_description");

@@ -50,6 +50,38 @@ test("barcode: missing vs malformed; 6–14 digits accepted", () => {
   assert.equal(computeProductReadiness(makeProduct({ barcode: "123456" })).status, "ready");
 });
 
+// CATALOG.GOLIVE.2 — owner-verified Snoonu evidence (mk1122/mk1161/mk995):
+// a choice-group product legitimately carries parent price 0 while every
+// choice is priced. Variant-carrying products must NOT be blocked on parent
+// price, and must NEVER be told to invent one (missing_price must not fire).
+test("choice-group parent (variants attached) with price 0 is NOT a missing_price blocker", () => {
+  for (const price of [null, 0]) {
+    const r = computeProductReadiness(makeProduct({ price, variantCount: 3 }));
+    assert.equal(r.reasons.some((x) => x.code === "missing_price"), false, `no blocker for price=${price}`);
+    assert.ok(
+      r.reasons.some((x) => x.code === "parent_price_zero_with_variants"),
+      "informational reason surfaces instead",
+    );
+    assert.equal(r.status, "ready", "parent=0 with variants stays ready (owner-verified Snoonu state)");
+  }
+  // expectsVariants=true (trusted signal) behaves identically even before rows load
+  const expecting = computeProductReadiness(makeProduct({ price: 0, variantCount: 1, expectsVariants: true }));
+  assert.equal(expecting.reasons.some((x) => x.code === "missing_price"), false);
+});
+
+test("choice-group parent WITH a real parent price gets no informational reason (mk1597-style after fix)", () => {
+  const r = computeProductReadiness(makeProduct({ price: 18, variantCount: 2 }));
+  assert.equal(r.reasons.some((x) => x.code === "parent_price_zero_with_variants"), false);
+  assert.equal(r.reasons.some((x) => x.code === "missing_price"), false);
+});
+
+test("SIMPLE product (no variants) keeps the strict required parent-price rule", () => {
+  const r = computeProductReadiness(makeProduct({ price: 0, variantCount: 0 }));
+  assert.ok(r.reasons.some((x) => x.code === "missing_price"), "simple products still block on price");
+  assert.equal(r.reasons.some((x) => x.code === "parent_price_zero_with_variants"), false);
+  assert.notEqual(r.status, "ready");
+});
+
 test("price: null, zero and negative all fail; positive passes", () => {
   for (const price of [null, 0, -5]) {
     const r = computeProductReadiness(makeProduct({ price }));

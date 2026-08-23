@@ -104,6 +104,11 @@ export type ReadinessReasonCode =
   | "missing_barcode"
   | "invalid_barcode"
   | "missing_price"
+  // CATALOG.GOLIVE.2 — owner-verified Snoonu evidence: a choice-group product
+  // legitimately carries parent price 0 while its choices are priced. For
+  // variant-carrying products a zero parent price is therefore INFORMATIONAL
+  // (this code), never the required `missing_price` blocker.
+  | "parent_price_zero_with_variants"
   | "missing_category"
   | "missing_variants"
   | "missing_description"

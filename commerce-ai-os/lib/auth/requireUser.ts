@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { requireMalakWriter, requireOwner } from "@/lib/malak/authz";
 
 // Defense-in-depth auth gate for "use server" actions. Middleware already
 // redirects unauthenticated page requests, but server actions are independently
@@ -11,6 +12,23 @@ export async function requireUser(): Promise<{ error: string } | null> {
   } = await createClient().auth.getUser();
   if (!user) return { error: "غير مسجّل الدخول." };
   return null;
+}
+
+// SEC.INV.1 — role gates with requireUser's EXACT return contract ({error}|null),
+// so a hardened action keeps its original result shapes verbatim: only the gate
+// call changes, never the denial plumbing. The decisions themselves stay in the
+// canonical authz module (requireMalakWriter / requireOwner) — no new roles.
+
+/** Writer gate: signed in AND on the Malak writer allow-list. */
+export async function requireWriterGate(): Promise<{ error: string } | null> {
+  const writer = await requireMalakWriter();
+  return writer.ok ? null : { error: writer.error };
+}
+
+/** Owner gate: the owner account only (MALAK_WRITER_EMAILS does not grant it). */
+export async function requireOwnerGate(): Promise<{ error: string } | null> {
+  const owner = await requireOwner();
+  return owner.ok ? null : { error: owner.error };
 }
 
 // Boolean form of the same gate, for actions whose "not signed in" branch needs

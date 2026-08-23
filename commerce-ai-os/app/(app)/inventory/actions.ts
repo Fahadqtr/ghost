@@ -14,7 +14,9 @@ import {
 import {
   logStockTransition, logAuthoritativeVariantTransition, logAuthoritativeStockTransition,
 } from "@/lib/inventory/transition";
-import { requireUser } from "@/lib/auth/requireUser";
+// SEC.INV.1 — mutations are writer/owner-gated; requireUser remains only for
+// non-mutating helpers (recognizeProduct). Gates keep requireUser's contract.
+import { requireUser, requireWriterGate, requireOwnerGate } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
 import { pushInventoryStockToShopify } from "@/lib/shopify/admin";
@@ -201,7 +203,7 @@ export async function updateInventory(
   id: string,
   values: { stock_quantity: string; low_stock_threshold: string }
 ) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   if (!id) return { error: "Missing inventory row." };
   const admin = writableClient();
@@ -243,7 +245,7 @@ export type BulkUpdate = {
 
 /** Apply many inventory edits in one call (bulk save / set-selected). */
 export async function bulkUpdateInventory(updates: BulkUpdate[]) {
-  const unauth = await requireUser();
+  const unauth = await requireOwnerGate();
   if (unauth) return { ok: 0, failed: updates.length, errors: [unauth.error] };
   const admin = writableClient();
   const now = new Date().toISOString();
@@ -286,7 +288,7 @@ export type StocktakeCount = {
  * variance (old → new). Service-role client so it works under preview too.
  */
 export async function applyStocktake(counts: StocktakeCount[]) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return { ok: 0, failed: counts.length, errors: [unauth.error] };
   const admin = writableClient();
   let ok = 0;
@@ -371,7 +373,7 @@ export type VariantCount = {
  * — used when scanning per-variant barcodes on the shelf.
  */
 export async function applyVariantStocktake(counts: VariantCount[]) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return { ok: 0, failed: counts.length, errors: [unauth.error] };
   const admin = writableClient();
   let ok = 0;
@@ -443,7 +445,7 @@ export async function applyVariantStocktake(counts: VariantCount[]) {
 
 /** Set (or clear) a product's physical shelf location, e.g. "A1". */
 export async function setLocation(inventoryId: string, location: string) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   if (!inventoryId) return { error: "Missing inventory row." };
   const admin = writableClient();
@@ -483,7 +485,7 @@ export async function applyShelfCounts(
   location: string,
   counts: { inventoryId: string; counted: number }[]
 ) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return { ok: 0, failed: counts.length, errors: [unauth.error] };
   const admin = writableClient();
   const slot = (location ?? "").trim().toUpperCase();
@@ -520,7 +522,7 @@ export async function saveVariantShelfStock(
   variantId: string,
   rows: { location: string; quantity: number }[]
 ) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   if (!variantId) return { error: "Missing variant." };
   const admin = writableClient();
@@ -564,7 +566,7 @@ export async function saveShelfStock(
   inventoryId: string,
   rows: { location: string; quantity: number }[]
 ) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   if (!inventoryId) return { error: "Missing inventory row." };
   const admin = writableClient();
@@ -604,7 +606,7 @@ export async function saveShelfStock(
  *  rest of the app only ever inserts/deletes variants, never updates them from
  *  the browser, so a client-side update would silently affect 0 rows). */
 export async function setVariantBarcodes(updates: { id: string; barcode: string | null }[]) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   if (!updates?.length) return { ok: true };
   const admin = writableClient();
@@ -626,7 +628,7 @@ export async function upsertVariants(
   parentProductId: string,
   rows: { id?: string | null; variant_name: string | null; barcode: string | null }[]
 ) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   if (!parentProductId) return { error: "Missing product." };
   const admin = writableClient();
@@ -658,7 +660,7 @@ export async function upsertVariants(
 
 /** Remove a product from a single shelf slot (type A distribution edit). */
 export async function removeFromShelf(inventoryId: string, location: string): Promise<{ error: string } | { ok: true }> {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const slot = (location ?? "").trim().toUpperCase();
   if (!inventoryId || !slot) return { error: "Missing inventory row or slot." };
@@ -694,7 +696,7 @@ export async function removeFromShelf(inventoryId: string, location: string): Pr
 /** Move a product's placement from one slot to another (merges if the target
  *  already holds units of the same product). Total stock is invariant. */
 export async function moveShelfStock(inventoryId: string, fromLocation: string, toLocation: string): Promise<{ error: string } | { ok: true }> {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const from = (fromLocation ?? "").trim().toUpperCase();
   const to = (toLocation ?? "").trim().toUpperCase();
@@ -729,7 +731,7 @@ export async function moveShelfStock(inventoryId: string, fromLocation: string, 
  * logs every assignment to the movement history.
  */
 export async function bulkAssignShelf(inventoryIds: string[], location: string, setQty?: number) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const slot = (location ?? "").trim().toUpperCase();
   const ids = (inventoryIds ?? []).filter(Boolean);
@@ -787,7 +789,7 @@ export async function bulkAssignShelf(inventoryIds: string[], location: string, 
  * inventory total is re-synced, and every assignment is logged to history.
  */
 export async function bulkAssignVariantShelf(variantIds: string[], location: string, setQty?: number) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const slot = (location ?? "").trim().toUpperCase();
   const ids = (variantIds ?? []).filter(Boolean);
@@ -852,7 +854,7 @@ export async function bulkAssignVariantShelf(variantIds: string[], location: str
  * A1..A5. Existing slots are left untouched (idempotent upsert).
  */
 export async function createShelf(shelf: string, count: number) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const letter = shelf.trim().toUpperCase().replace(/[^A-Z]/g, "");
   const n = Math.max(1, Math.min(200, Math.floor(count)));
@@ -873,7 +875,7 @@ export async function createShelf(shelf: string, count: number) {
 
 /** Add a single slot by code, e.g. "C7". */
 export async function addSlot(code: string) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const c = code.trim().toUpperCase().replace(/\s+/g, "");
   if (!/^[A-Z]+[0-9]+$/.test(c)) return { error: "Use a code like A1, B12." };
@@ -894,7 +896,7 @@ export async function addSlot(code: string) {
  * the products first. No quantity mutation happens here.
  */
 export async function deleteSlot(code: string) {
-  const unauth = await requireUser();
+  const unauth = await requireOwnerGate();
   if (unauth) return unauth;
   const admin = writableClient();
   const slot = code.trim().toUpperCase();
@@ -924,7 +926,7 @@ export async function deleteSlot(code: string) {
  * partial delete, no auto-unplacement). Clear the shelf first.
  */
 export async function deleteShelf(shelf: string) {
-  const unauth = await requireUser();
+  const unauth = await requireOwnerGate();
   if (unauth) return unauth;
   const admin = writableClient();
   const sh = shelf.trim().toUpperCase();
@@ -955,7 +957,7 @@ export type CsvRow = { sku: string; stock_quantity?: string | number; low_stock_
 
 /** Import stock by SKU: maps each SKU → inventory row, then bulk-updates. */
 export async function importInventoryBySku(rows: CsvRow[]) {
-  const unauth = await requireUser();
+  const unauth = await requireOwnerGate();
   if (unauth) return { updated: 0, notFound: 0, failed: 0, missing: [] as string[], error: unauth.error };
   const admin = writableClient();
   const clean = rows
@@ -1033,7 +1035,7 @@ export async function importInventoryBySku(rows: CsvRow[]) {
 export async function pushStockToShopify(
   items: { sku: string; quantity: number }[],
 ): Promise<ShopifyStockSyncStatus & { message?: string }> {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) {
     return { configured: false, synced: false, pushed: 0, failed: 0, missing: 0, reason: "not_configured", message: unauth.error };
   }
@@ -1057,7 +1059,7 @@ export type MovementInput = {
  * read-modify-write via the service-role client (server-only).
  */
 export async function recordMovement(input: MovementInput) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   // Stock mutation + audit ledger live in the shared engine so the admin and
   // staff (/staff) entry points can never diverge.
@@ -1081,7 +1083,7 @@ export type VariantMovementInput = {
  * keeping the parent pool consistent with the variants' independent stock.
  */
 export async function recordVariantMovement(input: VariantMovementInput) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const admin = writableClient();
   const qty = Math.floor(Math.abs(Number(input.quantity)));
@@ -1296,7 +1298,7 @@ export async function markOutOfStockByNames(text: string, apply = false): Promis
   unmatched: string[];
   shopify?: ShopifyStockSyncStatus & { message?: string };
 }> {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return { error: (unauth as any).error ?? "Not signed in.", applied: false, matched: 0, products: [], unmatched: [] };
 
   const lines = [...new Set((text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean))];
@@ -1477,7 +1479,7 @@ export async function matchChannelsToMalika(apply = false): Promise<{
   channelRows: number;
   shopify?: ShopifyStockSyncStatus & { message?: string };
 }> {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return { error: (unauth as any).error ?? "Not signed in.", applied: false, products: [], channelRows: 0 };
 
   const admin = writableClient();
@@ -1562,7 +1564,7 @@ export async function readInventoryMode(): Promise<InventoryMode> {
 
 /** Flip the whole system between quantity tracking and simple availability. */
 export async function switchInventoryMode(mode: InventoryMode): Promise<{ ok: boolean; error?: string }> {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return { ok: false, error: unauth.error };
   const res = await setInventoryMode(mode === "simple" ? "simple" : "quantities");
   if (!res.ok) return res;
@@ -1583,7 +1585,7 @@ export async function setProductAvailability(
   productId: string,
   inStock: boolean
 ): Promise<{ ok: boolean; error?: string }> {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return { ok: false, error: unauth.error };
   const admin = writableClient();
   const res = await setProductAvailabilityState(admin, String(productId), inStock);
@@ -1605,7 +1607,7 @@ export async function setManyAvailability(
   productIds: string[],
   inStock: boolean
 ): Promise<{ ok: boolean; count: number; error?: string }> {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return { ok: false, count: 0, error: unauth.error };
   const admin = writableClient();
   const res = await writeProductAvailability(admin, productIds ?? [], availabilityFromInStock(inStock));
@@ -1628,7 +1630,7 @@ export async function setVariantAvailability(
   variantId: string,
   inStock: boolean
 ): Promise<{ ok: boolean; error?: string }> {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return { ok: false, error: unauth.error };
   const admin = writableClient();
   const res = await setVariantAvailabilityState(admin, String(variantId), inStock);

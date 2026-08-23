@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireUser } from "@/lib/auth/requireUser";
+// SEC.INV.1 — approving/reversing/editing/deleting staff movements is a
+// back-office correction boundary: writer allow-list only. Reading the staff
+// movement log stays login-gated (read-only review surface).
+import { requireUser, requireWriterGate } from "@/lib/auth/requireUser";
 import { editMovementQty, deleteMovement as deleteMovementCore, reverseMovement as reverseMovementCore, isChannelSaleAudit } from "@/lib/inventory/movements";
 
 export type StaffMove = {
@@ -89,7 +92,7 @@ export async function getStaffMovements(limit = 100): Promise<{ rows: StaffMove[
 
 // Mark a movement as reviewed/approved (no stock change — it already applied).
 export async function approveMovements(ids: number[]) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   if (!ids?.length) return { ok: true as const, updated: 0 };
   const admin = adminClient();
@@ -114,7 +117,7 @@ export async function approveMovements(ids: number[]) {
 // audit row and mark the original reversed — one atomic RPC (INV.6A). Use when an
 // employee logged a wrong in/out. The RPC enforces channel-sale immutability.
 export async function reverseMovement(id: number) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
@@ -128,7 +131,7 @@ export async function reverseMovement(id: number) {
 
 // Manager: change a movement's quantity (adjusts stock by the delta).
 export async function editMovement(id: number, newQty: number) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
@@ -138,7 +141,7 @@ export async function editMovement(id: number, newQty: number) {
 
 // Manager: delete a movement (undo its stock effect + mark it deleted).
 export async function deleteMovement(id: number) {
-  const unauth = await requireUser();
+  const unauth = await requireWriterGate();
   if (unauth) return unauth;
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
