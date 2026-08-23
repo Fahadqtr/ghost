@@ -10,7 +10,7 @@
 // redirected to /login before this page ever runs.
 
 import { createClient } from "@/lib/supabase/server";
-import { loadShopifyCatalog } from "@/lib/catalog-v2/shopify-catalog-read";
+import { loadShopifyCatalog, type ShopifyUnavailableReason } from "@/lib/catalog-v2/shopify-catalog-read";
 import {
   filterShopifyCatalogRows,
   paginateShopifyCatalog,
@@ -40,6 +40,7 @@ export default async function ShopifyCatalogPage({ searchParams }: { searchParam
     orphanVariants: ShopifyOrphanVariant[];
     partial: boolean;
     shopifyAvailable: boolean;
+    unavailableReason: ShopifyUnavailableReason | null;
   } | null = null;
 
   try {
@@ -63,6 +64,9 @@ export default async function ShopifyCatalogPage({ searchParams }: { searchParam
         orphanVariants: result.shopifyAvailable ? result.orphanVariants : [],
         partial: result.partial,
         shopifyAvailable: result.shopifyAvailable,
+        // Classified category only (fixed Arabic hint in the component) — the
+        // raw Shopify error never reaches the page or the browser.
+        unavailableReason: result.status === "shopify_unavailable" ? result.reason : null,
       };
     }
   } catch {
@@ -88,6 +92,7 @@ export default async function ShopifyCatalogPage({ searchParams }: { searchParam
       orphanVariants={loaded.orphanVariants}
       partial={loaded.partial}
       shopifyAvailable={loaded.shopifyAvailable}
+      unavailableReason={loaded.unavailableReason}
     />
   );
 }
