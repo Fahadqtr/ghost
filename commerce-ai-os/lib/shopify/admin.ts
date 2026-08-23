@@ -149,6 +149,36 @@ export async function updateVariantPrice(
   return { ok: true };
 }
 
+/**
+ * Update one matched variant's IDENTITY fields (sku / barcode) at its GID —
+ * the catalog is the source of truth. Only the provided fields are sent; an
+ * empty request is a no-op success. Same central mutation as the price path.
+ */
+export async function updateVariantIdentity(
+  productId: string,
+  variantId: string,
+  fields: { sku?: string; barcode?: string },
+): Promise<{ ok: boolean; error?: string }> {
+  const variant: Record<string, unknown> = { id: variantId };
+  if (typeof fields.barcode === "string" && fields.barcode !== "") variant.barcode = fields.barcode;
+  if (typeof fields.sku === "string" && fields.sku !== "") variant.inventoryItem = { sku: fields.sku };
+  if (!("barcode" in variant) && !("inventoryItem" in variant)) return { ok: true };
+  const { data, error } = await shopifyGraphQL<{
+    productVariantsBulkUpdate: { userErrors: { message: string }[] };
+  }>(
+    `mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        userErrors { message }
+      }
+    }`,
+    { productId, variants: [variant] },
+  );
+  if (error) return { ok: false, error };
+  const ue = data?.productVariantsBulkUpdate?.userErrors ?? [];
+  if (ue.length) return { ok: false, error: ue.map((u) => u.message).join("; ").slice(0, 300) };
+  return { ok: true };
+}
+
 /** Update a product's title and/or status (name/status sync — catalog wins). */
 export async function updateShopifyProductContent(
   productId: string,
@@ -359,6 +389,10 @@ export interface CreateProductOpts {
   price: string;
   compareAtPrice: string | null;
   sku: string | null;
+  /** default-variant barcode; null → leave Shopify's barcode empty.
+   *  (Omitting this was the mk2237 defect: create left the barcode blank, so
+   *  the very next preview re-read diffed barcodeChanged → UPDATE_REQUIRED.) */
+  barcode: string | null;
   quantity: number;
   locationId: string | null; // null → skip the stock step
   imageUrl: string | null;
@@ -402,6 +436,7 @@ export async function createShopifyProduct(opts: CreateProductOpts): Promise<{ o
         id: variant.id,
         price: opts.price,
         compareAtPrice: opts.compareAtPrice,
+        ...(opts.barcode ? { barcode: opts.barcode } : {}),
         inventoryItem: { ...(opts.sku ? { sku: opts.sku } : {}), tracked: true },
       }],
     },

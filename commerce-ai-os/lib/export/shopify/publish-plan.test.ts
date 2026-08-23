@@ -62,13 +62,47 @@ test("UPDATE_REQUIRED → price + product content executable", () => {
   assert.deepEqual(e.executableOps.map((o) => o.type).sort(), ["UPDATE_PRICE", "UPDATE_PRODUCT"]);
 });
 
-test("UPDATE_VARIANT (sku/barcode) is NOT executed — SKIPPED_UNSUPPORTED when it's the only op", () => {
+// mk2237 regression: create() used to leave the barcode blank on Shopify, the
+// re-read planned a barcode-only UPDATE_VARIANT, and — with UPDATE_VARIANT
+// unsupported — the row became permanently unselectable. Identity updates on a
+// GID-matched variant are now executable, so the row converges.
+test("UPDATE_VARIANT (sku/barcode) on a GID-matched variant IS executable — the row stays selectable", () => {
   const e = evaluateRow(row("UPDATE_REQUIRED", [
     { type: "UPDATE_VARIANT", target: "variant", variantId: "v1", variantGid: "gid://x/1", fields: ["sku"] },
   ], { changedFields: ["variantSku"] }), target());
-  assert.equal(e.eligible, false);
-  assert.equal(e.ineligibleResult, "SKIPPED_UNSUPPORTED");
-  assert.deepEqual(e.unsupportedOps.map((o) => o.type), ["UPDATE_VARIANT"]);
+  assert.equal(e.eligible, true);
+  assert.equal(e.ineligibleResult, null);
+  assert.deepEqual(e.executableOps.map((o) => o.type), ["UPDATE_VARIANT"]);
+  assert.deepEqual(e.unsupportedOps, []);
+});
+
+test("mk2237 scenario: NEW create → reread diffs ONLY the barcode → row is eligible for the update", () => {
+  // Step 1 — NEW row plans a create (this is what SUCCEEDED, created=1).
+  const created = evaluateRow(
+    row("NEW", [{ type: "CREATE_PRODUCT", target: "product", fields: ["title", "price"] }]),
+    target(),
+  );
+  assert.equal(created.eligible, true);
+  // Step 2 — after the re-read the ONLY difference is the variant barcode.
+  const rereadRow = row("UPDATE_REQUIRED", [
+    { type: "UPDATE_VARIANT", target: "variant", variantId: "v1", variantGid: "gid://shopify/ProductVariant/11", fields: ["barcode"] },
+  ], { changedFields: ["variantBarcode"] });
+  const reread = evaluateRow(rereadRow, target());
+  assert.equal(reread.eligible, true, "barcode-only update_required must be selectable");
+  assert.deepEqual(reread.executableOps.map((o) => o.type), ["UPDATE_VARIANT"]);
+  assert.equal(reread.ineligibleResult, null);
+  // Step 3 — the fingerprint covers the barcode target, so a stale confirm is rejected.
+  const f1 = reread.fingerprint;
+  const f2 = evaluateRow(rereadRow, target()).fingerprint;
+  assert.equal(f1, f2, "deterministic");
+  // Hard-stops stay hard-stops — no unsafe row became publishable.
+  const conflict = evaluateRow(row("CONFLICT", [
+    { type: "UPDATE_VARIANT", target: "variant", variantId: "v1", variantGid: "gid://x/1", fields: ["barcode"] },
+  ]), target());
+  assert.equal(conflict.eligible, false);
+  assert.equal(conflict.ineligibleResult, "CONFLICT");
+  const blocked = evaluateRow(row("BLOCKED", []), target());
+  assert.equal(blocked.eligible, false);
 });
 
 test("add-missing-variant (UPDATE_PRODUCT[variants]) is unsupported", () => {
@@ -91,10 +125,11 @@ test("mixed executable + unsupported → eligible, split correctly", () => {
   const e = evaluateRow(row("UPDATE_REQUIRED", [
     { type: "UPDATE_PRICE", target: "variant", variantId: "v1", variantGid: "gid://x/1", fields: ["price"] },
     { type: "UPDATE_VARIANT", target: "variant", variantId: "v1", variantGid: "gid://x/1", fields: ["barcode"] },
-  ], { changedFields: ["price", "variantBarcode"] }), target());
+    { type: "UPDATE_PRODUCT", target: "product", fields: ["variants"] }, // add-missing-variant stays unsupported
+  ], { changedFields: ["price", "variantBarcode", "variantMissing"] }), target());
   assert.equal(e.eligible, true);
-  assert.deepEqual(e.executableOps.map((o) => o.type), ["UPDATE_PRICE"]);
-  assert.deepEqual(e.unsupportedOps.map((o) => o.type), ["UPDATE_VARIANT"]);
+  assert.deepEqual(e.executableOps.map((o) => o.type).sort(), ["UPDATE_PRICE", "UPDATE_VARIANT"]);
+  assert.deepEqual(e.unsupportedOps.map((o) => o.type), ["UPDATE_PRODUCT"]);
 });
 
 test("fingerprint is stable, and flips when the target value changes (stale protection)", () => {
@@ -198,8 +233,13 @@ test("dedupe: null/undefined input is safe", () => {
   assert.deepEqual(dedupeSelections([]), []);
 });
 
-test("supported execution ops are the conservative set (no UPDATE_VARIANT, no BLOCKED)", () => {
-  assert.deepEqual([...SUPPORTED_EXECUTION_OPS].sort(), ["CREATE_PRODUCT", "NOOP", "UPDATE_MEDIA", "UPDATE_PRICE", "UPDATE_PRODUCT"]);
-  assert.equal(SUPPORTED_EXECUTION_OPS.includes("UPDATE_VARIANT" as never), false);
+// HONEST UPDATE (mk2237 fix): UPDATE_VARIANT (sku/barcode at a matched GID)
+// joined the supported set so barcode-only rows can converge; BLOCKED remains
+// forbidden and add-missing-variant remains unsupported (asserted above).
+test("supported execution ops: conservative set + UPDATE_VARIANT identity fix (no BLOCKED)", () => {
+  assert.deepEqual(
+    [...SUPPORTED_EXECUTION_OPS].sort(),
+    ["CREATE_PRODUCT", "NOOP", "UPDATE_MEDIA", "UPDATE_PRICE", "UPDATE_PRODUCT", "UPDATE_VARIANT"],
+  );
   assert.equal(SUPPORTED_EXECUTION_OPS.includes("BLOCKED" as never), false);
 });

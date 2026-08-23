@@ -25,6 +25,7 @@ import {
   fetchAllShopifyProducts,
   createShopifyProduct,
   updateVariantPrice,
+  updateVariantIdentity,
   updateShopifyProductContent,
   addProductImage,
 } from "@/lib/shopify/admin";
@@ -325,6 +326,9 @@ async function executeRow(
       price: target.price !== null ? String(target.price) : "0.00",
       compareAtPrice: target.compareAtPrice !== null ? String(target.compareAtPrice) : null,
       sku: row.sku || null,
+      // mk2237 fix: write the catalog barcode at CREATE time so the very next
+      // preview re-read matches instead of diffing barcodeChanged.
+      barcode: row.barcode || null,
       quantity: 0, // §12 — no inventory write from the publisher
       locationId: null, // §12 — skip the stock step entirely
       imageUrl: target.hasImage ? safeImageUrlOrNull(target.imageUrl) : null,
@@ -389,6 +393,22 @@ async function executeRow(
     const r = await updateVariantPrice(gid, vGid, String(price), target.compareAtPrice !== null ? String(target.compareAtPrice) : null);
     if (!r.ok) return { result: "FAILED", gid, ops: applied, error: safeErr(r.error), imageAdded, systemic: looksSystemic(r.error) };
     applied.push("UPDATE_PRICE");
+  }
+
+  // Variant identity ops (sku/barcode) — GID-matched variants only; the catalog
+  // is the identity source of truth. Only the PLANNED fields are sent, and only
+  // when the target value is a real non-empty string (never blank out Shopify).
+  for (const op of ops.filter((o) => o.type === "UPDATE_VARIANT")) {
+    const vGid = op.variantGid ?? null;
+    if (!vGid) { return { result: "CONFLICT", gid, ops: applied, error: "هوية المتغيّر غير محددة للتحديث.", imageAdded, systemic: false }; } // ambiguous → stop
+    const tv = target.variants.find((v) => v.variantId === op.variantId);
+    const fields: { sku?: string; barcode?: string } = {};
+    if (op.fields.includes("sku") && typeof tv?.sku === "string" && tv.sku !== "") fields.sku = tv.sku;
+    if (op.fields.includes("barcode") && typeof tv?.barcode === "string" && tv.barcode !== "") fields.barcode = tv.barcode;
+    if (!fields.sku && !fields.barcode) continue;
+    const r = await updateVariantIdentity(gid, vGid, fields);
+    if (!r.ok) return { result: "FAILED", gid, ops: applied, error: safeErr(r.error), imageAdded, systemic: looksSystemic(r.error) };
+    applied.push("UPDATE_VARIANT");
   }
 
   // Media — ADD a proven-missing image only (§11). Never delete/reorder.
