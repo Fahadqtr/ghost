@@ -72,6 +72,25 @@ export function exportDestinationByKey(key: string): ExportDestination | null {
   return BY_KEY.get(key) ?? null;
 }
 
+/**
+ * Resolve the RAW /v2/export/[destination] route param. The Export Center
+ * builds hrefs with encodeURIComponent (":" → "%3A") and Next.js delivers the
+ * dynamic param still percent-encoded, so the raw value must be DECODED before
+ * the registry lookup — otherwise every colon key ("shopify:malikas", …) shows
+ * destination-not-found when reached from a card link. Accepts both the
+ * encoded and the plain form; a malformed percent-sequence never throws.
+ */
+export function resolveExportDestinationParam(raw: string): ExportDestination | null {
+  const value = String(raw ?? "");
+  let decoded = value;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    /* malformed encoding → fall back to the raw value */
+  }
+  return exportDestinationByKey(decoded) ?? exportDestinationByKey(value);
+}
+
 /** Does a destination declare a capability? (metadata check, never execution) */
 export function destinationHasCapability(key: string, cap: ExportCapability): boolean {
   return (BY_KEY.get(key)?.capabilities ?? []).includes(cap);

@@ -6,7 +6,7 @@
 
 import Link from "next/link";
 import InPageNav from "@/components/v2/InPageNav";
-import { exportDestinationByKey } from "@/lib/export/destinations";
+import { exportDestinationByKey, resolveExportDestinationParam } from "@/lib/export/destinations";
 import { EMPTY_VALIDATION_SUMMARY } from "@/lib/export/validation";
 import { emptyPreview } from "@/lib/export/preview";
 import { unavailableHistory } from "@/lib/export/history";
@@ -36,7 +36,9 @@ const GRAIN_LABEL: Record<string, string> = { product: "منتج", variant: "م�
 
 export default async function ExportDestinationPage({ params }: { params: Params }) {
   const { destination } = await params;
-  const dest = exportDestinationByKey(destination);
+  // SHOPIFY.EXPORT.ROUTE.FIX — the param arrives percent-encoded from the card
+  // links ("shopify%3Amalikas"); resolve through the decoding-aware resolver.
+  const dest = resolveExportDestinationParam(destination);
 
   if (!dest) {
     return (
