@@ -21,6 +21,9 @@ import type { ProductLifecycleView } from "@/lib/lifecycle/lifecycle-read.server
 import type { TransitionInput, TransitionResult } from "@/lib/lifecycle/transition.server";
 
 type ActionFn = (input: TransitionInput) => Promise<TransitionResult>;
+// PRODUCT.APPROVAL.UX.1 — thin server action delegating to the canonical
+// approval writer (setProductApproval). Approval NEVER activates the product.
+type ApproveFn = (productId: string) => Promise<{ ok: true } | { error: string }>;
 
 const BADGE_TONE: Record<LifecycleDisplay, string> = {
   DRAFT: "border-slate-200 bg-slate-50 text-slate-700",
@@ -63,10 +66,13 @@ const OUTCOME_MESSAGE: Record<TransitionResult["outcome"], string> = {
 export default function LifecyclePanel({
   view,
   action,
+  approveAction,
   highlight = false,
 }: {
   view: ProductLifecycleView;
   action: ActionFn;
+  /** PRODUCT.APPROVAL.UX.1 — optional approve delegate; button renders only when the product is NOT approved. */
+  approveAction?: ApproveFn;
   /** OPS.8C — set when deep-linked via ?panel=lifecycle: draws attention to the panel. */
   highlight?: boolean;
 }) {
@@ -74,6 +80,28 @@ export default function LifecyclePanel({
   const [pending, startTransition] = useTransition();
   const [confirming, setConfirming] = useState<AvailableTransition | null>(null);
   const [result, setResult] = useState<TransitionResult | null>(null);
+  const [confirmingApprove, setConfirmingApprove] = useState(false);
+  const [approveMessage, setApproveMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // PRODUCT.APPROVAL.UX.1 — explicit two-step approval. The server action
+  // (canonical setProductApproval) is the security boundary; this only asks
+  // for confirmation, reports the exact result, and refreshes the page so
+  // readiness/lifecycle (and the existing تفعيل button) recompute.
+  const runApprove = () => {
+    if (!approveAction) return;
+    setApproveMessage(null);
+    setResult(null);
+    startTransition(async () => {
+      const r = await approveAction(view.productId);
+      setConfirmingApprove(false);
+      if ("error" in r) {
+        setApproveMessage({ ok: false, text: r.error });
+        return;
+      }
+      setApproveMessage({ ok: true, text: "تم اعتماد المنتج. التفعيل يبقى خطوة منفصلة." });
+      router.refresh();
+    });
+  };
 
   const run = (target: AvailableTransition) => {
     setResult(null);
@@ -114,12 +142,62 @@ export default function LifecyclePanel({
         </div>
         <div className="rounded-lg border border-slate-200 p-3 text-sm">
           <span className="text-muted">الاعتماد</span>
-          <div className="mt-1 font-medium">
-            {view.approved ? "معتمد" : "غير معتمد"}
-            {view.display === "READY" ? " — جاهز للتفعيل" : ""}
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <span className="font-medium">
+              {view.approved ? "معتمد" : "غير معتمد"}
+              {view.display === "READY" ? " — جاهز للتفعيل" : ""}
+            </span>
+            {/* PRODUCT.APPROVAL.UX.1 — visible ONLY when not approved. The
+                workflow reads right-to-left as: اعتماد المنتج ← تفعيل. */}
+            {!view.approved && approveAction ? (
+              <button
+                type="button"
+                className="btn-primary px-3 py-1 text-xs"
+                disabled={pending}
+                onClick={() => {
+                  setApproveMessage(null);
+                  setResult(null);
+                  setConfirming(null);
+                  setConfirmingApprove(true);
+                }}
+              >
+                اعتماد المنتج
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
+
+      {/* approval confirmation + result (PRODUCT.APPROVAL.UX.1) */}
+      {confirmingApprove ? (
+        <div className="rounded-lg border border-slate-300 bg-slate-50 p-3 text-sm">
+          <div className="mb-2 font-medium">تأكيد اعتماد المنتج</div>
+          <ul className="mb-3 list-disc space-y-0.5 pr-5 text-muted">
+            <li>يتغيّر وضع المراجعة إلى «معتمد» عبر مسار الاعتماد المعتمد نفسه (بسجل المهام وطابور طلبات).</li>
+            <li>الاعتماد لا يفعّل المنتج ولا ينشره على أي منصة — «تفعيل» يبقى إجراءً منفصلاً.</li>
+          </ul>
+          <div className="flex gap-2">
+            <button type="button" className="btn-primary" disabled={pending} onClick={runApprove}>
+              {pending ? "جارٍ التنفيذ…" : "تأكيد الاعتماد"}
+            </button>
+            <button type="button" className="btn-ghost" disabled={pending} onClick={() => setConfirmingApprove(false)}>
+              إلغاء
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {approveMessage ? (
+        <div
+          className={`rounded-lg border p-3 text-sm ${
+            approveMessage.ok
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
+          role="status"
+        >
+          {approveMessage.text}
+        </div>
+      ) : null}
 
       {/* blocking reasons (why not READY) */}
       {!view.ready && view.blockingReasons.length > 0 ? (
