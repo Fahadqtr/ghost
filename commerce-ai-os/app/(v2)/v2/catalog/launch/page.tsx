@@ -36,7 +36,13 @@ export default async function LaunchCampaignPage() {
           <Link href="/v2" className="text-xs text-brand hover:underline">← الرئيسية</Link>
           <h1 className="text-lg font-bold text-ink">مساحة عمل حملة الإطلاق</h1>
         </div>
-        <Link href="/v2/export" className="text-xs font-semibold text-brand hover:underline" dir="ltr">مركز التصدير →</Link>
+        <div className="flex items-center gap-3">
+          {/* CATALOG.GOLIVE.3A — Wave 2 bulk review lives under the campaign. */}
+          <Link href="/v2/catalog/launch/wave2" className="text-xs font-semibold text-brand hover:underline">
+            مراجعة دفعة الإدخال (الموجة 2) ←
+          </Link>
+          <Link href="/v2/export" className="text-xs font-semibold text-brand hover:underline" dir="ltr">مركز التصدير →</Link>
+        </div>
       </div>
       <LaunchWorkspace model={model} />
     </div>
