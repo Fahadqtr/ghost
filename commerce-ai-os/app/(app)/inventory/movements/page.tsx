@@ -113,7 +113,7 @@ export default async function MovementsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted">Record stock entering (IN) or leaving (OUT) the warehouse. Each movement updates the live stock and is logged below.</p>
-        <Link href="/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">← Back to inventory</Link>
+        <Link href="/v2/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">← Back to inventory</Link>
       </div>
 
       <MovementForm items={items} />

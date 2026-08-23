@@ -214,7 +214,7 @@ export default async function InventoryPage() {
             only a one-tap alert when staff movements are awaiting approval. */}
         {pendingApprovals > 0 ? (
           <Link
-            href="/inventory/approvals"
+            href="/v2/inventory/approvals"
             className="inline-flex items-center gap-1.5 self-start rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 whitespace-nowrap hover:bg-amber-100"
           >
             ✅ {pendingApprovals} {L("بانتظار الاعتماد", "pending approval")}

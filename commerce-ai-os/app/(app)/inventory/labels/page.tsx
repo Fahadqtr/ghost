@@ -83,7 +83,7 @@ export default async function LabelsPage() {
         <p className="text-sm text-muted">
           Generate printable barcode labels (Code 128). Add products, set how many copies, then Print.
         </p>
-        <Link href="/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+        <Link href="/v2/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
           ← Back to inventory
         </Link>
       </div>

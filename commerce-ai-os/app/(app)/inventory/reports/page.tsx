@@ -30,7 +30,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
           <h2 className="text-base font-semibold text-ink">{L("التقارير", "Reports")}</h2>
           <p className="text-sm text-muted">{L("المبيعات + الهوامش + المخزون الميت + قيمة المخزون + الفاقد.", "Sales + margins + dead stock + valuation + shrinkage.")}</p>
         </div>
-        <Link href="/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">{L("← المخزون", "Inventory →")}</Link>
+        <Link href="/v2/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">{L("← المخزون", "Inventory →")}</Link>
       </div>
 
       {/* ── Sales & best-sellers ─────────────────────────────────────────── */}

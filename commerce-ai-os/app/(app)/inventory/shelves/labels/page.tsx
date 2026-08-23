@@ -147,7 +147,7 @@ export default async function ShelfLabelsPage() {
           Printable shelf labels — product image, name and a scannable barcode, grouped by shelf. Each shelf
           starts on a new page so you can cut and stick them.
         </p>
-        <Link href="/inventory/shelves" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+        <Link href="/v2/inventory/shelves" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
           ← Back to shelves
         </Link>
       </div>

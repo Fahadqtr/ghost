@@ -104,7 +104,7 @@ export default async function StocktakePage() {
           Shelf stocktake — scan each piece with your barcode scanner to count what’s physically on the
           shelf, then review the variance and apply it to inventory.
         </p>
-        <Link href="/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
+        <Link href="/v2/inventory" className="btn-ghost px-3 py-1 text-xs whitespace-nowrap">
           ← Back to inventory
         </Link>
       </div>
