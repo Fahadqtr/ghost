@@ -41,7 +41,7 @@ import type { EvidenceResult } from "@/lib/catalog/evidence/evidence-engine";
 import { buildRecommendations } from "@/lib/catalog/recommendations/recommendation-engine";
 import { buildProductIntelligence } from "@/lib/catalog/intelligence/product-intelligence";
 import ProductIntelligencePanel from "@/components/v2/catalog/ProductIntelligencePanel";
-import { runLifecycleTransition } from "./actions";
+import { approveProductFromDetail, runLifecycleTransition } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -270,7 +270,12 @@ export default async function ProductDetailPage({
       ) : null}
       {lifecycle ? (
         <section id="lifecycle" className="scroll-mt-28">
-          <LifecyclePanel view={lifecycle} action={runLifecycleTransition} highlight={highlightLifecycle} />
+          <LifecyclePanel
+            view={lifecycle}
+            action={runLifecycleTransition}
+            approveAction={approveProductFromDetail}
+            highlight={highlightLifecycle}
+          />
         </section>
       ) : null}
       {platformMatrix ? (
