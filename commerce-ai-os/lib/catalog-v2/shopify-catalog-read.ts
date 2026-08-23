@@ -86,6 +86,31 @@ const VARIANT_CAP = 20000;
 const PRODUCT_ORDER: readonly [string, string] = ["sku", "id"];
 const VARIANT_ORDER: readonly [string, string] = ["parent_product_id", "id"];
 
+// Why the Shopify read was unavailable — a CLASSIFIED, PII-safe category the
+// UI maps to a fixed Arabic hint. Never the raw error / token / domain.
+// Diagnosed in production 2026-08-23: the store was frozen by Shopify billing
+// (authenticated Admin API rejected, storefront HTTP 402) and the operator saw
+// only the generic banner — the reason was swallowed here. Classification keeps
+// the fail-safe fallback while making the cause visible and actionable.
+export type ShopifyUnavailableReason =
+  | "not_configured" // SHOPIFY_STORE_DOMAIN missing on the server
+  | "not_connected" // no OAuth token yet — install flow not completed
+  | "store_unavailable" // Shopify refuses API access (frozen/paused store, billing)
+  | "auth_rejected" // token present but rejected (revoked/expired)
+  | "error"; // network/timeout/unexpected response
+
+/** Pure classifier over the central client's FIXED error strings (admin.ts). */
+export function classifyShopifyUnavailable(error: unknown): ShopifyUnavailableReason {
+  const msg = typeof error === "string" ? error : "";
+  if (msg.includes("SHOPIFY_STORE_DOMAIN")) return "not_configured";
+  if (msg.includes("غير مربوط")) return "not_connected";
+  if (/Shopify HTTP (402|403|423)/.test(msg) || /unavailable for API access|payment required/i.test(msg)) {
+    return "store_unavailable";
+  }
+  if (/Shopify HTTP 401/.test(msg) || /invalid api key or access token/i.test(msg)) return "auth_rejected";
+  return "error";
+}
+
 export type ShopifyCatalogReadResult =
   | {
       status: "ok";
@@ -100,6 +125,8 @@ export type ShopifyCatalogReadResult =
       orphanVariants: [];
       partial: boolean;
       shopifyAvailable: false;
+      /** classified cause — fixed category only, never raw error text */
+      reason: ShopifyUnavailableReason;
     }
   | {
       status: "master_error";
@@ -177,15 +204,18 @@ async function readAllPages(
  * "unknown" read model rather than falsely marking the whole catalog missing.
  * The raw error / token / domain is never surfaced.
  */
-async function readShopifyProducts(reader: ShopifyReader): Promise<readonly ShopifyProductInput[] | null> {
+async function readShopifyProducts(
+  reader: ShopifyReader,
+): Promise<{ products: readonly ShopifyProductInput[] } | { reason: ShopifyUnavailableReason }> {
   try {
     const res = await reader.fetchAllShopifyProducts();
     if (isPlainObject(res) && res.error === undefined && Array.isArray(res.products)) {
-      return res.products;
+      return { products: res.products };
     }
-    return null;
+    // The raw error string never leaves this module — only its category does.
+    return { reason: classifyShopifyUnavailable(isPlainObject(res) ? res.error : undefined) };
   } catch {
-    return null; // never re-surface the raw Shopify error
+    return { reason: "error" }; // never re-surface the raw Shopify error
   }
 }
 
@@ -217,7 +247,8 @@ export async function loadShopifyCatalog(
   const partial = productRead.capped || !variantRead.ok || variantRead.capped;
 
   const reader = options?.shopify ?? (await defaultShopifyReader());
-  const shopifyProducts = await readShopifyProducts(reader);
+  const shopifyRead = await readShopifyProducts(reader);
+  const shopifyProducts = "products" in shopifyRead ? shopifyRead.products : null;
 
   const projection = projector.projectShopifyCatalog(productRead.rows, variantRows, shopifyProducts);
 
@@ -228,6 +259,7 @@ export async function loadShopifyCatalog(
       orphanVariants: [],
       partial,
       shopifyAvailable: false,
+      reason: "reason" in shopifyRead ? shopifyRead.reason : "error",
     };
   }
 

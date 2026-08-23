@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  classifyShopifyUnavailable,
   loadShopifyCatalog,
   type CatalogReadClient,
   type CatalogQueryResult,
@@ -270,4 +271,48 @@ test("empty Shopify store (available) → status ok, rows missing, no orphans", 
   assert.equal(res.shopifyAvailable, true);
   assert.equal(res.rows[0]!.presenceStatus, "missing");
   assert.deepEqual(res.orphanVariants, []);
+});
+
+// ── Classified unavailability reason (production incident 2026-08-23) ────────
+//
+// The store was frozen by Shopify billing and every authenticated Admin call
+// was rejected, but the operator only saw the generic banner — the cause was
+// swallowed. These tests pin the classification and its propagation. The RAW
+// error string must never appear anywhere in the result.
+
+test("classifyShopifyUnavailable maps the central client's fixed errors to categories", () => {
+  assert.equal(classifyShopifyUnavailable("شوبي فاي غير مهيأ (SHOPIFY_STORE_DOMAIN)."), "not_configured");
+  assert.equal(classifyShopifyUnavailable("شوبي فاي غير مربوط بعد — افتح /api/shopify/install لإتمام الربط."), "not_connected");
+  assert.equal(classifyShopifyUnavailable("Shopify HTTP 402: Payment Required"), "store_unavailable");
+  assert.equal(classifyShopifyUnavailable("Shopify HTTP 403: forbidden"), "store_unavailable");
+  assert.equal(classifyShopifyUnavailable("This shop is unavailable for API access."), "store_unavailable");
+  assert.equal(classifyShopifyUnavailable("Shopify HTTP 401: [API] Invalid API key or access token"), "auth_rejected");
+  assert.equal(classifyShopifyUnavailable("fetch failed"), "error");
+  assert.equal(classifyShopifyUnavailable(undefined), "error");
+});
+
+test("shopify_unavailable carries the CLASSIFIED reason — never the raw error text", async () => {
+  const { client } = fakePagedClient({ products: { rows: [rawProduct()] }, product_variants: { rows: [] } });
+  const res = await loadShopifyCatalog(client, {
+    project: PROJECTOR,
+    shopify: fakeShopify({ error: "Shopify HTTP 402: SECRET DETAIL tok_abc" }).reader,
+  });
+  assert.equal(res.status, "shopify_unavailable");
+  assert.ok(res.status === "shopify_unavailable");
+  assert.equal(res.reason, "store_unavailable");
+  assert.ok(!JSON.stringify(res).includes("SECRET"), "raw error text never leaves the reader");
+  assert.ok(!JSON.stringify(res).includes("tok_abc"), "no token fragment ever leaves the reader");
+});
+
+test("a throwing Shopify reader classifies as the generic 'error' reason", async () => {
+  const { client } = fakePagedClient({ products: { rows: [rawProduct()] }, product_variants: { rows: [] } });
+  const res = await loadShopifyCatalog(client, {
+    project: PROJECTOR,
+    shopify: fakeShopify(() => {
+      throw new Error("BOOM");
+    }).reader,
+  });
+  assert.equal(res.status, "shopify_unavailable");
+  assert.ok(res.status === "shopify_unavailable");
+  assert.equal(res.reason, "error");
 });

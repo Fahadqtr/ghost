@@ -30,6 +30,18 @@ const SHOPIFY_UNAVAILABLE =
   "تعذر تحميل بيانات Shopify حاليًا. تم عرض كتالوج ماليكاس دون تحديد حالة الوجود.";
 const PARTIAL_WARNING = "تم تحميل جزء من البيانات فقط.";
 
+// Fixed Arabic hint per CLASSIFIED unavailability cause — never raw error text,
+// never a token or domain. Diagnosed 2026-08-23: a Shopify-side billing freeze
+// (store_unavailable) was invisible to the operator behind the generic banner.
+const UNAVAILABLE_REASON_HINT: Record<string, string> = {
+  store_unavailable:
+    "متجر Shopify نفسه يرفض وصول واجهة البرمجة حاليًا (تجميد فوترة/خطة من جهة Shopify). الحل من إعدادات الفوترة داخل Shopify، ولا علاقة له بالكتالوج.",
+  not_configured: "إعداد Shopify غير مكتمل على الخادم (نطاق المتجر غير مضبوط).",
+  not_connected: "الربط مع Shopify غير مكتمل — أكمل التثبيت من مسار الربط.",
+  auth_rejected: "رمز الوصول مرفوض من Shopify — أعد ربط المتجر.",
+  error: "تعذّر الاتصال بـ Shopify (خطأ شبكة أو استجابة غير متوقعة) — حاول التحديث لاحقًا.",
+};
+
 function hasText(v: string | null): boolean {
   return typeof v === "string" && v.trim().length > 0;
 }
@@ -53,6 +65,7 @@ export default function ShopifyCatalog({
   orphanVariants,
   partial,
   shopifyAvailable,
+  unavailableReason = null,
 }: {
   pageResult: ShopifyCatalogPage;
   allCount: number;
@@ -62,6 +75,8 @@ export default function ShopifyCatalog({
   orphanVariants: ShopifyOrphanVariant[];
   partial: boolean;
   shopifyAvailable: boolean;
+  /** classified cause when Shopify is unavailable (fixed hint) — optional. */
+  unavailableReason?: string | null;
 }) {
   const { items, page, totalPages, startIndex } = pageResult;
   const firstOnPage = matchCount === 0 ? 0 : startIndex + 1;
@@ -83,7 +98,12 @@ export default function ShopifyCatalog({
       </div>
 
       {!shopifyAvailable ? (
-        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">{SHOPIFY_UNAVAILABLE}</div>
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          <div>{SHOPIFY_UNAVAILABLE}</div>
+          {unavailableReason && UNAVAILABLE_REASON_HINT[unavailableReason] ? (
+            <div className="mt-1 text-xs font-medium">{UNAVAILABLE_REASON_HINT[unavailableReason]}</div>
+          ) : null}
+        </div>
       ) : null}
 
       {partial ? (
