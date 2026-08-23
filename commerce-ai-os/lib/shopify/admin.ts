@@ -149,6 +149,98 @@ export async function updateVariantPrice(
   return { ok: true };
 }
 
+// ── Variant repair (missing real variants on a mapped product) ────────────────
+
+export interface BulkCreateVariantInput {
+  name: string; // becomes the "Title" option value (must be unique per product)
+  sku: string;
+  barcode: string;
+  price: string; // money string
+}
+
+/**
+ * Create the REAL variants on a product that currently has only the standalone
+ * "Default Title" variant. Uses Shopify's canonical strategy for exactly this
+ * migration: `productVariantsBulkCreate(strategy: REMOVE_STANDALONE_VARIANT)` —
+ * ONE atomic mutation that creates the new variants and removes the standalone
+ * default together. Product images/status/title/description are untouched and
+ * NO inventory quantity is written (inventoryItem carries sku + tracked only).
+ * Validated against the Admin schema (write_products).
+ */
+export async function createProductVariantsBulk(
+  productId: string,
+  variants: readonly BulkCreateVariantInput[],
+): Promise<{ ok: boolean; created?: { id: string; sku: string }[]; error?: string }> {
+  if (!variants.length) return { ok: true, created: [] };
+  const { data, error } = await shopifyGraphQL<{
+    productVariantsBulkCreate: {
+      productVariants: { id: string; sku: string | null }[] | null;
+      userErrors: { message: string }[];
+    };
+  }>(
+    `mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: REMOVE_STANDALONE_VARIANT) {
+        productVariants { id sku }
+        userErrors { field message }
+      }
+    }`,
+    {
+      productId,
+      variants: variants.map((v) => ({
+        optionValues: [{ optionName: "Title", name: v.name }],
+        price: v.price,
+        barcode: v.barcode,
+        inventoryItem: { sku: v.sku, tracked: true },
+      })),
+    },
+  );
+  if (error) return { ok: false, error };
+  const ue = data?.productVariantsBulkCreate?.userErrors ?? [];
+  if (ue.length) return { ok: false, error: ue.map((u) => u.message).join("; ").slice(0, 300) };
+  const created = (data?.productVariantsBulkCreate?.productVariants ?? []).map((v) => ({
+    id: v.id,
+    sku: String(v.sku ?? "").trim(),
+  }));
+  return { ok: true, created };
+}
+
+/** Targeted re-read of ONE product's variants (verification after a repair).
+ *  Also returns Shopify's own `hasOnlyDefaultVariant` flag — the standalone-
+ *  default gate must NOT rely on the variant title alone. */
+export async function fetchShopifyProductVariants(
+  productGid: string,
+): Promise<{
+  variants?: { id: string; sku: string; barcode: string; title: string }[];
+  hasOnlyDefaultVariant?: boolean;
+  error?: string;
+}> {
+  const { data, error } = await shopifyGraphQL<{
+    product: {
+      hasOnlyDefaultVariant: boolean;
+      variants: { nodes: { id: string; sku: string | null; barcode: string | null; title: string | null }[] };
+    } | null;
+  }>(
+    `query($id: ID!) {
+      product(id: $id) {
+        hasOnlyDefaultVariant
+        variants(first: 100) { nodes { id sku barcode title } }
+      }
+    }`,
+    { id: productGid },
+  );
+  if (error) return { error };
+  if (!data?.product) return { error: "المنتج غير موجود في شوبي فاي." };
+  return {
+    hasOnlyDefaultVariant: data.product.hasOnlyDefaultVariant === true,
+    variants: (data.product.variants?.nodes ?? []).map((v) => ({
+      id: v.id,
+      sku: String(v.sku ?? "").trim(),
+      barcode: String(v.barcode ?? "").trim(),
+      title: String(v.title ?? "").trim(),
+    })),
+  };
+}
+
 /**
  * Update one matched variant's IDENTITY fields (sku / barcode) at its GID —
  * the catalog is the source of truth. Only the provided fields are sent; an
