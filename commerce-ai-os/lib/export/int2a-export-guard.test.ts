@@ -37,6 +37,12 @@ function walk(dir: string, out: string[] = []): string[] {
 const WRITE_BOUNDARY = new Set([
   "lib/export/shopify/publish.server.ts",
   "lib/export/shopify/run-store.server.ts",
+  // SHOPIFY.VARIANT.REPAIR — the variant-repair server binder is a second
+  // sanctioned, writer-gated write boundary (one validated Shopify mutation +
+  // ECL identity write-back via the certified ecl-repair-write module). Its own
+  // dedicated guard lives in variant-repair.test.ts (gate-before-client, single
+  // mutation port, no inventory/content/price writes).
+  "lib/export/shopify/variant-repair.server.ts",
 ]);
 
 // The full INT.2A foundation surface (pure lib + routes + component), minus the
