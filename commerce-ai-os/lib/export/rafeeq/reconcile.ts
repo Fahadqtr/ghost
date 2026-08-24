@@ -6,9 +6,13 @@
 // module) into a PREVIEW + APPLY PLAN:
 //
 //   • matching is by certified SKU (derived from the IMAGE NAME column — the
-//     packaged filename IS the sanitized SKU, `<sku>.<ext>`) with the BARCODE
-//     column as corroboration, and by unique barcode as the only fallback.
-//     Titles are NEVER read and NEVER matched — no fuzzy matching of any kind.
+//     packaged filename IS the sanitized SELLABLE sku, `<sku>.<ext>`) with the
+//     BARCODE column as corroboration, and by unique barcode as the only
+//     fallback. The catalog evidence is SELLABLE-grain (RAFEEQ.FULLSYNC.2): a
+//     simple product matches at product level (variantId null) and a variant
+//     row matches its own variant sku/barcode — variant identities are never
+//     collapsed back onto the parent. Titles are NEVER read and NEVER matched —
+//     no fuzzy matching of any kind.
 //   • nothing is auto-resolved: duplicate returned ids, ids already bound to a
 //     different product, and rows conflicting with an existing resolved mapping
 //     are surfaced for the owner and EXCLUDED from the apply plan.
@@ -90,13 +94,17 @@ const RETURNED_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 export interface ReconcileCatalogProduct {
   productId: string;
+  /** null = the product's simple sellable row; set = one variant row. */
+  variantId?: string | null;
   sku: string;
   barcode: string | null;
 }
 
-/** Current storefront-scoped Rafeeq mapping evidence for one product/SKU. */
+/** Current storefront-scoped Rafeeq mapping evidence for one SELLABLE row. */
 export interface ReconcileMappingEvidence {
   productId: string | null;
+  /** variant-grain identity (null = product-level mapping). */
+  variantId?: string | null;
   sku: string;
   externalId: string | null;
   status: "resolved" | "needs_review";
@@ -133,6 +141,8 @@ export interface ReconcileEntry {
   returnedId: string | null;
   status: ReconcileEntryStatus;
   productId: string | null;
+  /** the matched sellable variant (null = simple-product match). */
+  variantId: string | null;
   matchedSku: string | null;
   matchedBy: "sku" | "barcode" | null;
   detail: string | null;
@@ -141,6 +151,8 @@ export interface ReconcileEntry {
 export interface ReconcileApplyAction {
   action: "insert" | "update" | "resolve_needs_review";
   productId: string;
+  /** the sellable variant this identity belongs to (null = simple product). */
+  variantId: string | null;
   sku: string;
   barcode: string | null;
   externalId: string;
@@ -189,6 +201,11 @@ export function buildReconcilePlan(input: ReconcileInput): ReconcilePlan {
   const mappings = Array.isArray(input?.mappings) ? input.mappings : [];
   const returned = Array.isArray(input?.returned) ? input.returned : [];
 
+  // Sellable key (product / product::variant) — variant identities never
+  // collapse onto the parent.
+  const keyOf = (productId: string, variantId: string | null | undefined): string =>
+    variantId ? `${productId}::${variantId}` : productId;
+
   // Catalog lookups: sanitized-SKU token (the packaged filename base) + barcode.
   const bySkuToken = new Map<string, ReconcileCatalogProduct[]>();
   const byBarcode = new Map<string, ReconcileCatalogProduct[]>();
@@ -207,13 +224,13 @@ export function buildReconcilePlan(input: ReconcileInput): ReconcilePlan {
     }
   }
 
-  // Mapping lookups: by product id, and existing external id → owning product.
-  const mappingByProduct = new Map<string, ReconcileMappingEvidence>();
-  const productByExternalId = new Map<string, string>();
+  // Mapping lookups: by SELLABLE key, and existing external id → owning row.
+  const mappingBySellable = new Map<string, ReconcileMappingEvidence>();
+  const ownerByExternalId = new Map<string, string>();
   for (const m of mappings) {
-    if (m.productId) mappingByProduct.set(m.productId, m);
+    if (m.productId) mappingBySellable.set(keyOf(m.productId, m.variantId ?? null), m);
     if (m.externalId && m.productId && m.status === "resolved") {
-      productByExternalId.set(m.externalId, m.productId);
+      ownerByExternalId.set(m.externalId, keyOf(m.productId, m.variantId ?? null));
     }
   }
 
@@ -237,6 +254,7 @@ export function buildReconcilePlan(input: ReconcileInput): ReconcilePlan {
       skuToken,
       returnedId,
       productId: null as string | null,
+      variantId: null as string | null,
       matchedSku: null as string | null,
       matchedBy: null as ReconcileEntry["matchedBy"],
       detail: null as string | null,
@@ -273,20 +291,24 @@ export function buildReconcilePlan(input: ReconcileInput): ReconcilePlan {
       }
     }
 
+    const matchedVariantId = matched.variantId ?? null;
+    const matchedBase = { ...base, productId: matched.productId, variantId: matchedVariantId, matchedSku: matched.sku, matchedBy };
+
     // Corroboration: when BOTH sides carry a barcode, they must agree.
     const rowBarcode = normalizeBarcode(r.barcode);
     const productBarcode = normalizeBarcode(matched.barcode);
     if (matchedBy === "sku" && rowBarcode !== null && productBarcode !== null && rowBarcode !== productBarcode) {
-      return { ...base, productId: matched.productId, matchedSku: matched.sku, matchedBy, status: "barcode_mismatch" as const };
+      return { ...matchedBase, status: "barcode_mismatch" as const };
     }
 
-    // The returned id must not already belong to a DIFFERENT product.
-    const owner = productByExternalId.get(returnedId);
-    if (owner && owner !== matched.productId) {
-      return { ...base, productId: matched.productId, matchedSku: matched.sku, matchedBy, status: "conflict_external_id" as const };
+    // The returned id must not already belong to a DIFFERENT sellable row.
+    const matchedKey = keyOf(matched.productId, matchedVariantId);
+    const owner = ownerByExternalId.get(returnedId);
+    if (owner && owner !== matchedKey) {
+      return { ...matchedBase, status: "conflict_external_id" as const };
     }
 
-    const existing = mappingByProduct.get(matched.productId) ?? null;
+    const existing = mappingBySellable.get(matchedKey) ?? null;
     let status: ReconcileEntryStatus;
     if (!existing) status = "matched_insert";
     else if (existing.status === "needs_review") status = "resolve_needs_review";
@@ -294,19 +316,20 @@ export function buildReconcilePlan(input: ReconcileInput): ReconcilePlan {
     else if (existing.externalId === returnedId) status = "already_mapped";
     else status = "conflict_existing_mapping";
 
-    return { ...base, productId: matched.productId, matchedSku: matched.sku, matchedBy, status };
+    return { ...matchedBase, status };
   });
 
   const apply: ReconcileApplyAction[] = [];
   for (const e of entries) {
     const action = APPLY_STATUS[e.status];
     if (!action || !e.productId || !e.returnedId || !e.matchedSku) continue;
-    const product = catalog.find((p) => p.productId === e.productId) ?? null;
+    const entry = catalog.find((p) => p.productId === e.productId && (p.variantId ?? null) === e.variantId) ?? null;
     apply.push({
       action,
       productId: e.productId,
+      variantId: e.variantId,
       sku: e.matchedSku,
-      barcode: product ? normalizeBarcode(product.barcode) : null,
+      barcode: entry ? normalizeBarcode(entry.barcode) : null,
       externalId: e.returnedId,
     });
   }

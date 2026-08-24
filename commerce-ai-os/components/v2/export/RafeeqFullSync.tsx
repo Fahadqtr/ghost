@@ -33,6 +33,8 @@ export interface RafeeqFullSyncPackageVM {
   generatedBy: string | null;
   sentAt: string | null;
   sentBy: string | null;
+  /** set when a later FULL package replaced this (still unsent) one. */
+  supersededAt: string | null;
 }
 
 export interface RafeeqFullSyncVM {
@@ -40,6 +42,14 @@ export interface RafeeqFullSyncVM {
   isOwner: boolean;
   deliveryAvailable: boolean;
   hasBaseline: boolean;
+  /** sellable flattening stats — Rafeeq receives each choice as its own row. */
+  stats: {
+    canonicalProducts: number;
+    sellableRows: number;
+    simpleRows: number;
+    variantRows: number;
+    productsWithVariants: number;
+  };
   full: { includable: number; trueBlockers: number; needsReviewIncluded: number };
   pending: { count: number; rows: { id: string; sku: string; title: string }[]; truncated: boolean };
   packages: RafeeqFullSyncPackageVM[];
@@ -174,7 +184,20 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
     <div className="space-y-4">
       <p className="text-[11px] text-muted">
         الكتالوج الرئيسي هو مصدر الحقيقة الوحيد لرفيق — الملفات تُولَّد دائماً منه مباشرة.
-        «جديد» يعني: لم يُضمَّن بعد في حزمة عُلِّمت صراحة «تم الإرسال إلى رفيق» — لا علاقة له بوجود مُعرّف رفيق أو تاريخ الإنشاء.
+        «جديد» يعني: صفّ البيع لم يُضمَّن بعد في حزمة عُلِّمت صراحة «تم الإرسال إلى رفيق» — لا علاقة له بوجود مُعرّف رفيق أو تاريخ الإنشاء.
+      </p>
+
+      {/* Sellable flattening stats — each product CHOICE is its own Rafeeq row */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <StatCard value={vm.stats.canonicalProducts} label="منتجات الكتالوج" />
+        <StatCard value={vm.stats.sellableRows} label="صفوف رفيق القابلة للبيع" emphasize />
+        <StatCard value={vm.stats.simpleRows} label="منتجات بسيطة" />
+        <StatCard value={vm.stats.variantRows} label="صفوف الخيارات (متغيّرات)" />
+        <StatCard value={vm.stats.productsWithVariants} label="منتجات لها خيارات" />
+      </div>
+      <p className="text-[11px] text-muted">
+        رفيق يستقبل كل خيار (متغيّر) كصفّ بيع مستقل بسعره و<span dir="ltr">SKU</span> وباركوده الخاص —
+        والمنتج الأب ذو الخيارات لا يُصدَّر كصفّ إضافي أبداً.
       </p>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">{error}</div>}
@@ -281,6 +304,10 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
                         <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700">
                           أُرسل · {fmtDate(p.sentAt)}
                         </span>
+                      ) : p.supersededAt ? (
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500" title={fmtDate(p.supersededAt)}>
+                          تم تجاوزها بحزمة أحدث
+                        </span>
                       ) : (
                         <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">
                           مُولّد — لم يُرسل
@@ -290,6 +317,8 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
                     <td className="px-3 py-2">
                       {p.sentAt ? (
                         <span className="text-[10px] text-muted" dir="ltr">{p.sentBy ?? ""}</span>
+                      ) : p.supersededAt ? (
+                        <span className="text-[10px] text-muted">—</span>
                       ) : vm.isOwner ? (
                         <button type="button" onClick={() => markSent(p.id)} disabled={busy !== null} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] text-emerald-800 hover:bg-emerald-100 disabled:opacity-50">
                           {busy === p.id ? "جارٍ…" : "تم الإرسال إلى رفيق"}
@@ -375,6 +404,15 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function StatCard({ value, label, emphasize }: { value: number; label: string; emphasize?: boolean }) {
+  return (
+    <div className={`rounded-lg border p-3 text-center ${emphasize ? "border-brand bg-brand-light" : "border-slate-200"}`}>
+      <div className={`text-xl font-bold tabular-nums ${emphasize ? "text-brand" : "text-ink"}`}>{value}</div>
+      <div className="mt-0.5 text-[10px] text-muted">{label}</div>
     </div>
   );
 }

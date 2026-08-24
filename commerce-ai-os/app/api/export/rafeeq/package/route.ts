@@ -78,7 +78,7 @@ export async function POST(req: Request) {
 
     const result = await generateRafeeqFullSyncPackage({
       mode: fullSyncMode,
-      sentProductIds: delivery.sentProductIds,
+      sentSellableKeys: delivery.sentSellableKeys,
       actor: writer.email,
     });
     if (!result.ok) {
@@ -115,6 +115,8 @@ export async function POST(req: Request) {
         "X-Rafeeq-Image-Count": String(s.imageCount),
         "X-Rafeeq-Package-Id": recorded.packageId ?? "",
         "X-Rafeeq-Package-Recorded": recorded.persisted ? "1" : "0",
+        "X-Rafeeq-Items-Recorded": String(recorded.itemsPersisted),
+        "X-Rafeeq-Superseded-Count": String(recorded.supersededCount),
         "X-Rafeeq-Generated-At": s.generatedAt,
         "X-Rafeeq-Generated-By": s.actor ?? "",
       },

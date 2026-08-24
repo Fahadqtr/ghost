@@ -292,14 +292,16 @@ async function recordAudit(summary: RafeeqPackageSummary, status: "done" | "erro
 
 export interface FullSyncGenerateOptions {
   mode: RafeeqFullSyncMode;
-  /** Product ids contained in any SENT package (the durable baseline). */
-  sentProductIds: ReadonlySet<string>;
+  /** Sellable keys (product / product::variant) in any SENT package (the durable baseline). */
+  sentSellableKeys: ReadonlySet<string>;
   actor: string | null;
   now?: Date;
 }
 
 export interface FullSyncItemOut {
   productId: string;
+  /** the sellable variant behind the row (null = simple-product row). */
+  variantId: string | null;
   sku: string;
   fingerprint: string;
   rafeeqIdSent: string;
@@ -340,7 +342,7 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
   const preview = await loadRafeeqPreview();
   if (!preview) return { ok: false, error: "preview_unavailable" };
 
-  const set = resolveFullSyncSet(preview.rows, opts.mode, opts.sentProductIds);
+  const set = resolveFullSyncSet(preview.rows, opts.mode, opts.sentSellableKeys);
   const capped = set.included.slice(0, PACKAGE_LIMITS.maxRows);
   const cappedExcludedCount = set.included.length - capped.length;
   if (capped.length === 0) return { ok: false, error: "no_exportable_rows" };
@@ -374,6 +376,7 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
 
     const items: FullSyncItemOut[] = survivors.map((sv, i) => ({
       productId: sv.row.internalProductId,
+      variantId: sv.row.variantId,
       sku: sv.row.sku,
       fingerprint: rowFingerprint(sv.row),
       rafeeqIdSent: packageRows[i].rafeeqId,

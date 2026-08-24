@@ -29,7 +29,7 @@ import { insertAuditRow } from "@/lib/audit";
 import { storefrontByKey } from "@/lib/channels/storefronts";
 import { RAFEEQ_STOREFRONT_KEY } from "@/lib/export/rafeeq/preview";
 import {
-  sentProductIdSet,
+  sentSellableKeySet,
   type RafeeqFullSyncMode,
   type RafeeqPackageRecord,
   type RafeeqPackageItemRecord,
@@ -56,16 +56,20 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
 
 export interface RafeeqDeliveryState {
   availability: "AVAILABLE" | "UNAVAILABLE";
+  /** false while the FULLSYNC.2 variant-grain migration is not applied. */
+  variantGrain: boolean;
   packages: RafeeqPackageRecord[];
   items: RafeeqPackageItemRecord[];
-  sentProductIds: Set<string>;
+  /** sellable keys (product / product::variant) contained in SENT packages. */
+  sentSellableKeys: Set<string>;
 }
 
 const EMPTY_DELIVERY: RafeeqDeliveryState = {
   availability: "UNAVAILABLE",
+  variantGrain: false,
   packages: [],
   items: [],
-  sentProductIds: new Set(),
+  sentSellableKeys: new Set(),
 };
 
 function toPackageRecord(r: Record<string, unknown>): RafeeqPackageRecord {
@@ -79,6 +83,7 @@ function toPackageRecord(r: Record<string, unknown>): RafeeqPackageRecord {
     generatedBy: s(r.generated_by),
     sentAt: s(r.sent_at),
     sentBy: s(r.sent_by),
+    supersededAt: "superseded_at" in r ? s(r.superseded_at) : null,
   };
 }
 
@@ -91,30 +96,42 @@ function toPackageRecord(r: Record<string, unknown>): RafeeqPackageRecord {
 export async function loadRafeeqDeliveryState(): Promise<RafeeqDeliveryState> {
   try {
     const client = createClient();
-    const { data: pkgData, error: pkgError } = await client
-      .from("rafeeq_packages")
-      .select("id, mode, output_filename, product_count, image_count, generated_at, generated_by, sent_at, sent_by")
-      .order("generated_at", { ascending: false })
-      .limit(100);
-    if (pkgError || !Array.isArray(pkgData)) return EMPTY_DELIVERY;
-    const packages = (pkgData as Record<string, unknown>[]).map(toPackageRecord);
+    // Prefer the FULLSYNC.2 columns; fall back to the FULLSYNC.1 shape on an
+    // unmigrated database (42703 undefined_column) — variant grain then reads
+    // as unavailable, never faked.
+    let variantGrain = true;
+    const readPackages = (columns: string) =>
+      client
+        .from("rafeeq_packages")
+        .select(columns)
+        .order("generated_at", { ascending: false })
+        .limit(100) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: { code?: string } | null }>;
+    let pkgRes = await readPackages("id, mode, output_filename, product_count, image_count, generated_at, generated_by, sent_at, sent_by, superseded_at");
+    if (pkgRes.error) {
+      variantGrain = false;
+      pkgRes = await readPackages("id, mode, output_filename, product_count, image_count, generated_at, generated_by, sent_at, sent_by");
+    }
+    if (pkgRes.error || !Array.isArray(pkgRes.data)) return EMPTY_DELIVERY;
+    const packages = (pkgRes.data as Record<string, unknown>[]).map(toPackageRecord);
 
     // Items are needed only for SENT packages (the pending-NEW baseline).
     const sentIds = packages.filter((p) => p.sentAt !== null).map((p) => p.id);
     const items: RafeeqPackageItemRecord[] = [];
     if (sentIds.length > 0) {
+      const itemColumns = variantGrain ? "package_id, product_id, variant_id, sku" : "package_id, product_id, sku";
       for (let from = 0; from < MAX_ROWS; from += PAGE) {
         const { data, error } = await client
           .from("rafeeq_package_items")
-          .select("package_id, product_id, sku")
+          .select(itemColumns)
           .in("package_id", sentIds)
           .order("id", { ascending: true })
           .range(from, from + PAGE - 1);
         if (error || !Array.isArray(data)) return EMPTY_DELIVERY;
-        for (const r of data as Record<string, unknown>[]) {
+        for (const r of data as unknown as Record<string, unknown>[]) {
           items.push({
             packageId: String(r.package_id ?? ""),
             productId: String(r.product_id ?? ""),
+            variantId: variantGrain ? s(r.variant_id) : null,
             sku: s(r.sku) ?? "",
           });
         }
@@ -122,7 +139,7 @@ export async function loadRafeeqDeliveryState(): Promise<RafeeqDeliveryState> {
       }
     }
 
-    return { availability: "AVAILABLE", packages, items, sentProductIds: sentProductIdSet(packages, items) };
+    return { availability: "AVAILABLE", variantGrain, packages, items, sentSellableKeys: sentSellableKeySet(packages, items) };
   } catch {
     return EMPTY_DELIVERY;
   }
@@ -138,7 +155,7 @@ export interface RecordPackageInput {
   imageCount: number;
   generatedAt: string;
   actor: string | null;
-  items: { productId: string; sku: string; fingerprint: string; rafeeqIdSent: string }[];
+  items: { productId: string; variantId: string | null; sku: string; fingerprint: string; rafeeqIdSent: string }[];
 }
 
 export interface RecordPackageResult {
@@ -146,11 +163,17 @@ export interface RecordPackageResult {
   packageId: string | null;
   itemsPersisted: number;
   tableMissing: boolean;
+  /** true when the FULLSYNC.2 variant-grain migration is missing (items not recorded). */
+  schemaOutdated: boolean;
+  /** prior UNSENT FULL packages marked superseded by this recording. */
+  supersededCount: number;
 }
 
 /**
- * Persist the generated package + its item snapshot (sent_at stays NULL —
- * "Generated, not sent"). Best-effort: an unmigrated database degrades to the
+ * Persist the generated package + its SELLABLE item snapshot (sent_at stays
+ * NULL — "Generated, not sent"). Recording a FULL package also marks prior
+ * UNSENT FULL packages as superseded (history is never deleted; SENT packages
+ * are never touched). Best-effort: an unmigrated database degrades to the
  * malak_audit floor; the download itself is never blocked by recording.
  */
 export async function recordRafeeqPackage(input: RecordPackageInput): Promise<RecordPackageResult> {
@@ -158,6 +181,8 @@ export async function recordRafeeqPackage(input: RecordPackageInput): Promise<Re
   let packageId: string | null = null;
   let itemsPersisted = 0;
   let tableMissing = false;
+  let schemaOutdated = false;
+  let supersededCount = 0;
 
   try {
     const admin = createAdminClient();
@@ -185,13 +210,37 @@ export async function recordRafeeqPackage(input: RecordPackageInput): Promise<Re
         const chunk = input.items.slice(i, i + ITEM_INSERT_CHUNK).map((it) => ({
           package_id: packageId,
           product_id: it.productId,
+          variant_id: it.variantId,
           sku: it.sku,
           row_fingerprint: it.fingerprint,
           rafeeq_id_sent: it.rafeeqIdSent,
         }));
         const { error: itemError } = await admin.from("rafeeq_package_items").insert(chunk);
-        if (itemError) break;
+        if (itemError) {
+          // 42703 = variant_id column absent (FULLSYNC.2 migration not applied).
+          // The sellable snapshot CANNOT be represented at product grain without
+          // lying (variant siblings would collide) — record nothing and surface it.
+          if (String((itemError as { code?: string }).code ?? "") === "42703") schemaOutdated = true;
+          break;
+        }
         itemsPersisted += chunk.length;
+      }
+
+      // Supersede prior UNSENT FULL packages (never a sent one, never delete).
+      if (input.mode === "FULL") {
+        try {
+          const { data: superseded } = await admin
+            .from("rafeeq_packages")
+            .update({ superseded_at: new Date().toISOString(), superseded_by: packageId })
+            .eq("mode", "FULL")
+            .is("sent_at", null)
+            .is("superseded_at", null)
+            .neq("id", packageId)
+            .select("id");
+          supersededCount = Array.isArray(superseded) ? superseded.length : 0;
+        } catch {
+          /* superseded columns absent (unmigrated) — surfacing degrades gracefully */
+        }
       }
     }
   } catch {
@@ -216,6 +265,8 @@ export async function recordRafeeqPackage(input: RecordPackageInput): Promise<Re
         manifest_fingerprint: input.manifestFingerprint,
         durable_package_persisted: persisted,
         items_persisted: itemsPersisted,
+        schema_outdated: schemaOutdated,
+        superseded_count: supersededCount,
       },
       status: "done",
     });
@@ -223,7 +274,7 @@ export async function recordRafeeqPackage(input: RecordPackageInput): Promise<Re
     /* never block the package on audit */
   }
 
-  return { persisted, packageId, itemsPersisted, tableMissing };
+  return { persisted, packageId, itemsPersisted, tableMissing, schemaOutdated, supersededCount };
 }
 
 // ── explicit owner sent-state ─────────────────────────────────────────────────
@@ -322,19 +373,33 @@ interface ReconcileEvidence {
 
 async function loadReconcileEvidence(): Promise<ReconcileEvidence | null> {
   const client = createClient();
-  const [productRows, eclRows] = await Promise.all([
+  const [productRows, variantRows, eclRows] = await Promise.all([
     readAllRows(client, "products", "id, sku, barcode", "id"),
-    readAllRows(client, "external_channel_listings", "product_id, storefront_key, exported_sku, external_product_id, mapping_status", "id",
+    readAllRows(client, "product_variants", "id, parent_product_id, sku, barcode", "parent_product_id"),
+    readAllRows(client, "external_channel_listings", "product_id, variant_id, variant_sku, exported_sku, external_product_id, mapping_status", "id",
       (q) => q.eq("storefront_key", RAFEEQ_STOREFRONT_KEY)),
   ]);
-  if (!productRows || !eclRows) return null;
+  if (!productRows || !variantRows || !eclRows) return null;
 
-  const catalog: ReconcileCatalogProduct[] = [];
+  // SELLABLE catalog evidence (mirrors the export flattening): a product with
+  // variants contributes ONE entry per variant (its own sku/barcode) and NO
+  // parent entry; a simple product contributes its product-level entry.
+  const productsWithVariants = new Set<string>();
+  const variantEntries: ReconcileCatalogProduct[] = [];
+  for (const v of variantRows) {
+    const pid = s(v.parent_product_id);
+    const vid = s(v.id);
+    const sku = s(v.sku);
+    if (!pid || !vid || !sku) continue;
+    productsWithVariants.add(pid);
+    variantEntries.push({ productId: pid, variantId: vid, sku, barcode: s(v.barcode) });
+  }
+  const catalog: ReconcileCatalogProduct[] = [...variantEntries];
   for (const p of productRows) {
     const id = s(p.id);
     const sku = s(p.sku);
-    if (!id || !sku) continue;
-    catalog.push({ productId: id, sku, barcode: s(p.barcode) });
+    if (!id || !sku || productsWithVariants.has(id)) continue;
+    catalog.push({ productId: id, variantId: null, sku, barcode: s(p.barcode) });
   }
 
   const mappings: ReconcileMappingEvidence[] = [];
@@ -343,7 +408,8 @@ async function loadReconcileEvidence(): Promise<ReconcileEvidence | null> {
     if (status === "archived") continue;
     mappings.push({
       productId: s(e.product_id),
-      sku: s(e.exported_sku) ?? "",
+      variantId: s(e.variant_id),
+      sku: s(e.exported_sku) ?? s(e.variant_sku) ?? "",
       externalId: s(e.external_product_id),
       status: status === "needs_review" ? "needs_review" : "resolved",
     });
@@ -380,10 +446,13 @@ export type ApplyReturnedIdsResult =
 /**
  * OWNER-APPROVED apply of a returned Rafeeq file. The plan is re-derived FRESH
  * from the uploaded bytes + current production evidence server-side (a client
- * can never send a hand-crafted plan). Only clean matches are applied:
+ * can never send a hand-crafted plan). Only clean matches are applied, at the
+ * SELLABLE grain (variant identities are written with variant_id + variant_sku
+ * on the certified ECL contract — never collapsed onto the parent):
  *   • insert  → new active rafeeq:malikas ECL identity row
  *   • update / resolve_needs_review → external_product_id + mapping_status
- *     "active" on the EXISTING storefront-scoped row
+ *     "active" on the EXISTING storefront-scoped row (variant-scoped when the
+ *     match is a variant row)
  * Conflict/duplicate/unknown rows are never touched. Caller MUST have enforced
  * the OWNER boundary; the verified owner email is recorded in the audit trail.
  */
@@ -408,8 +477,8 @@ export async function applyRafeeqReturnedIds(bytes: Uint8Array, ownerEmail: stri
       if (a.action === "insert") {
         const { error } = await admin.from("external_channel_listings").insert({
           product_id: a.productId,
-          variant_id: null,
-          variant_sku: null,
+          variant_id: a.variantId,
+          variant_sku: a.variantId ? a.sku : null,
           channel_key: "rafeeq",
           storefront_key: RAFEEQ_STOREFRONT_KEY,
           external_product_id: a.externalId,
@@ -423,12 +492,15 @@ export async function applyRafeeqReturnedIds(bytes: Uint8Array, ownerEmail: stri
         if (error) failed++;
         else inserted++;
       } else {
-        const { data, error } = await admin
+        let q = admin
           .from("external_channel_listings")
           .update({ external_product_id: a.externalId, mapping_status: "active", updated_at: nowIso })
           .eq("storefront_key", RAFEEQ_STOREFRONT_KEY)
-          .eq("product_id", a.productId)
-          .select("id");
+          .eq("product_id", a.productId);
+        // Sellable scope: a variant identity updates ONLY its variant row; a
+        // simple product updates ONLY the product-level (variant_id NULL) row.
+        q = a.variantId ? q.eq("variant_id", a.variantId) : q.is("variant_id", null);
+        const { data, error } = await q.select("id");
         if (error || !Array.isArray(data) || data.length === 0) failed++;
         else if (a.action === "resolve_needs_review") needsReviewResolved++;
         else updated++;

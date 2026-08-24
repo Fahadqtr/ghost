@@ -21,11 +21,13 @@ function product(over: Partial<RafeeqPreviewProduct> = {}): RafeeqPreviewProduct
 const resolved = (id: string, productId = "p1"): RafeeqMappingEvidence => ({ status: "resolved", externalId: id, exportedSku: "MK1", productId });
 const codes = (r: { reasons: { code: string }[] }) => r.reasons.map((x) => x.code);
 
-test("canonical rafeeq:malikas destination, product grain", () => {
+test("canonical rafeeq:malikas destination; sellable-listing dataset, simple rows keep PRODUCT grain", () => {
   const res = buildRafeeqPreview({ products: [product()] });
   assert.equal(res.storefrontKey, RAFEEQ_STOREFRONT_KEY);
-  assert.equal(res.preview.grain, "PRODUCT");
+  assert.equal(res.preview.grain, "SELLABLE_LISTING");
   assert.equal(res.rows[0].grain, "PRODUCT");
+  assert.equal(res.rows[0].isVariant, false);
+  assert.equal(res.rows[0].rowKey, "p1");
 });
 
 test("ECL-first identity: Rafeeq ID comes from the mapping, never fabricated", () => {
