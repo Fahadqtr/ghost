@@ -277,19 +277,26 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
   ]);
   const canWrite = writer.ok;
 
-  // RAFEEQ.FULLSYNC.1 — derive (never store) the file-sync overview: FULL
-  // eligibility, the pending-NEW queue (exportable AND not in any SENT
-  // package), and the durable package history.
+  // RAFEEQ.FULLSYNC.2 — derive (never store) the file-sync overview at SELLABLE
+  // grain: FULL eligibility, the pending-NEW queue (exportable sellable rows not
+  // in any SENT package), and the durable package history.
   const MAX_PENDING_LIST = 100;
   let fullSyncVm: RafeeqFullSyncVM | null = null;
   if (result !== null) {
     const includable = result.rows.filter(isFullIncludable);
-    const pending = pendingNewRows(result.rows, delivery.sentProductIds);
+    const pending = pendingNewRows(result.rows, delivery.sentSellableKeys);
     fullSyncVm = {
       canWrite,
       isOwner: owner,
       deliveryAvailable: delivery.availability === "AVAILABLE",
       hasBaseline: hasSentBaseline(delivery.packages),
+      stats: {
+        canonicalProducts: result.counts.productCount,
+        sellableRows: result.counts.sellableRowCount,
+        simpleRows: result.counts.simpleRowCount,
+        variantRows: result.counts.variantRowCount,
+        productsWithVariants: result.counts.productsWithVariants,
+      },
       full: {
         includable: includable.length,
         trueBlockers: result.rows.filter((r) => r.status === "BLOCKED" && !isFullIncludable(r)).length,
@@ -297,7 +304,7 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
       },
       pending: {
         count: pending.length,
-        rows: pending.slice(0, MAX_PENDING_LIST).map((r) => ({ id: r.internalProductId, sku: r.sku, title: r.title })),
+        rows: pending.slice(0, MAX_PENDING_LIST).map((r) => ({ id: r.rowKey, sku: r.sku, title: r.title })),
         truncated: pending.length > MAX_PENDING_LIST,
       },
       packages: delivery.packages.slice(0, 20).map((p) => ({
@@ -310,6 +317,7 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
         generatedBy: p.generatedBy,
         sentAt: p.sentAt,
         sentBy: p.sentBy,
+        supersededAt: p.supersededAt ?? null,
       })),
       recon: { activeMappings: result.counts.mappedCount, needsReview: result.counts.needsReviewCount },
     };
@@ -336,7 +344,8 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
             canWrite,
             counts: result.counts,
             rows: result.rows.map<RafeeqRowVM>((r) => ({
-              id: r.internalProductId,
+              id: r.rowKey,
+              isVariant: r.isVariant,
               sku: r.sku,
               barcode: r.barcode,
               title: r.title,

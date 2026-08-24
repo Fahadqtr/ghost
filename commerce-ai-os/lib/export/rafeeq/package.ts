@@ -46,8 +46,10 @@ export { PACKAGE_LIMITS };
 export type RafeeqGenerationMode = "all" | "new" | "selected";
 export const RAFEEQ_UPDATES_SUPPORTED = false;
 
-export function previewRowKey(r: Pick<RafeeqPreviewRow, "internalProductId">): string {
-  return r.internalProductId;
+/** Row key of a sellable row (product id for simple rows; product::variant for
+ *  variant rows) — the selection + identity key across the flattened dataset. */
+export function previewRowKey(r: Pick<RafeeqPreviewRow, "rowKey">): string {
+  return r.rowKey;
 }
 export function isExportableRow(r: Pick<RafeeqPreviewRow, "status">): boolean {
   return r.status === "READY" || r.status === "WARNING";

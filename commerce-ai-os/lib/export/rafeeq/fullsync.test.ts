@@ -11,7 +11,8 @@ import {
   isNeedsReviewIncluded,
   resolveFullSyncSet,
   pendingNewRows,
-  sentProductIdSet,
+  sentSellableKeySet,
+  sellableKeyOfRow,
   hasSentBaseline,
   fullSyncRafeeqId,
   applyFullSyncRafeeqId,
@@ -66,7 +67,7 @@ function pkg(id: string, over: Partial<RafeeqPackageRecord> = {}): RafeeqPackage
     ...over,
   };
 }
-const item = (packageId: string, productId: string, sku = ""): RafeeqPackageItemRecord => ({ packageId, productId, sku });
+const item = (packageId: string, productId: string, variantId: string | null = null, sku = ""): RafeeqPackageItemRecord => ({ packageId, productId, variantId, sku });
 
 function previewOf(products: RafeeqPreviewProduct[], mappingBySku: Record<string, RafeeqMappingEvidence> = {}) {
   return buildRafeeqPreview({ products, mappingBySku });
@@ -152,7 +153,7 @@ test("4: true blockers (missing image / missing SKU / duplicate barcode / stoppe
 test("5: an unsent (generated-only) package contributes nothing to the sent baseline", () => {
   const packages = [pkg("pk1", { sentAt: null })];
   const items = [item("pk1", "p1"), item("pk1", "p2")];
-  assert.equal(sentProductIdSet(packages, items).size, 0);
+  assert.equal(sentSellableKeySet(packages, items).size, 0);
   assert.equal(hasSentBaseline(packages), false);
 });
 
@@ -160,7 +161,7 @@ test("5: an unsent (generated-only) package contributes nothing to the sent base
 test("6: marking the package sent establishes the durable baseline", () => {
   const packages = [pkg("pk1", { sentAt: "2026-08-24T10:00:00.000Z", sentBy: "clanqtr@gmail.com" })];
   const items = [item("pk1", "p1"), item("pk1", "p2")];
-  const sent = sentProductIdSet(packages, items);
+  const sent = sentSellableKeySet(packages, items);
   assert.deepEqual([...sent].sort(), ["p1", "p2"]);
   assert.equal(hasSentBaseline(packages), true);
 });
@@ -170,17 +171,17 @@ test("7: after a sent FULL package covering all exportable products, the pending
   const pv = mixedPreview();
   const set = resolveFullSyncSet(pv.rows, "FULL", new Set());
   const packages = [pkg("pk1", { sentAt: "2026-08-24T10:00:00.000Z" })];
-  const items = set.included.map((r) => item("pk1", r.internalProductId, r.sku));
-  const sent = sentProductIdSet(packages, items);
+  const items = set.included.map((r) => item("pk1", r.internalProductId, r.variantId, r.sku));
+  const sent = sentSellableKeySet(packages, items);
   assert.equal(pendingNewRows(pv.rows, sent).length, 0);
 });
 
 // ── 8) a newly eligible product becomes pending ───────────────────────────────
 test("8: adding one new exportable product makes pending = exactly that product", () => {
   const pv1 = mixedPreview();
-  const sent = sentProductIdSet(
+  const sent = sentSellableKeySet(
     [pkg("pk1", { sentAt: "2026-08-24T10:00:00.000Z" })],
-    resolveFullSyncSet(pv1.rows, "FULL", new Set()).included.map((r) => item("pk1", r.internalProductId)),
+    resolveFullSyncSet(pv1.rows, "FULL", new Set()).included.map((r) => item("pk1", r.internalProductId, r.variantId)),
   );
   // the catalog grows by one product after the baseline
   const pv2 = previewOf([
@@ -223,12 +224,12 @@ test("9b: NEW mode forces the new-product marker even for a mapped row", () => {
 // ── 10) generating the NEW package does not clear the pending queue ───────────
 test("10: recording a generated (unsent) NEW package leaves the pending queue unchanged", () => {
   const pv = previewOf([product("p5", "mk1005")]);
-  const before = pendingNewRows(pv.rows, sentProductIdSet([], []));
+  const before = pendingNewRows(pv.rows, sentSellableKeySet([], []));
   assert.equal(before.length, 1);
   // NEW package generated + recorded but NOT sent
   const packages = [pkg("pkN", { mode: "NEW", sentAt: null })];
-  const items = [item("pkN", "p5", "mk1005")];
-  const after = pendingNewRows(pv.rows, sentProductIdSet(packages, items));
+  const items = [item("pkN", "p5", null, "mk1005")];
+  const after = pendingNewRows(pv.rows, sentSellableKeySet(packages, items));
   assert.equal(after.length, 1, "generation/download never clears the queue");
 });
 
@@ -236,8 +237,8 @@ test("10: recording a generated (unsent) NEW package leaves the pending queue un
 test("11: marking the NEW package sent removes its products from pending", () => {
   const pv = previewOf([product("p5", "mk1005"), product("p6", "mk1006")]);
   const packages = [pkg("pkN", { mode: "NEW", sentAt: "2026-08-25T08:00:00.000Z", sentBy: "clanqtr@gmail.com" })];
-  const items = [item("pkN", "p5", "mk1005")];
-  const pending = pendingNewRows(pv.rows, sentProductIdSet(packages, items));
+  const items = [item("pkN", "p5", null, "mk1005")];
+  const pending = pendingNewRows(pv.rows, sentSellableKeySet(packages, items));
   assert.deepEqual(pending.map((r) => r.internalProductId), ["p6"]);
 });
 
@@ -249,8 +250,8 @@ test("12: pending is delivery-derived — a mapped product can be pending, a sen
   );
   // u1 (UNMAPPED) was sent; m1 (MAPPED) was never sent.
   const packages = [pkg("pk1", { sentAt: "2026-08-24T10:00:00.000Z" })];
-  const items = [item("pk1", "u1", "mk4002")];
-  const pending = pendingNewRows(pv.rows, sentProductIdSet(packages, items));
+  const items = [item("pk1", "u1", null, "mk4002")];
+  const pending = pendingNewRows(pv.rows, sentSellableKeySet(packages, items));
   assert.deepEqual(pending.map((r) => r.internalProductId), ["m1"], "mapped-but-unsent IS pending; unmapped-but-sent is NOT");
 });
 
@@ -260,9 +261,9 @@ test("13: a product that was blocked at baseline time becomes pending once it tu
   const pv1 = previewOf([product("p1", "mk1001"), blocked]);
   const set = resolveFullSyncSet(pv1.rows, "FULL", new Set());
   assert.deepEqual(set.included.map((r) => r.internalProductId), ["p1"], "blocked row not in the baseline package");
-  const sent = sentProductIdSet(
+  const sent = sentSellableKeySet(
     [pkg("pk1", { sentAt: "2026-08-24T10:00:00.000Z" })],
-    set.included.map((r) => item("pk1", r.internalProductId)),
+    set.included.map((r) => item("pk1", r.internalProductId, r.variantId)),
   );
   assert.equal(pendingNewRows(pv1.rows, sent).length, 0, "still blocked ⇒ not pending");
   // the product later gets its image → exportable → pending
@@ -328,4 +329,60 @@ test("fullsync manifest carries the exact counts + fingerprint", () => {
   assert.equal(m.new_marker_count, 3);
   assert.equal(m.xlsx_filename, "rafeeq_new_products.xlsx");
   assert.equal(m.package_fingerprint, "deadbeef00000000");
+});
+
+// ── RAFEEQ.FULLSYNC.2 — variant-grain pending (spec scenarios 14 + 15) ────────
+
+function variantProduct(id: string, sku: string, variants: { id: string; sku: string; barcode?: string; price?: number | null }[]): RafeeqPreviewProduct {
+  return product(id, sku, {
+    variants: variants.map((v) => ({
+      id: v.id,
+      sku: v.sku,
+      barcode: v.barcode ?? String((barcodeSeq += 1)),
+      nameEn: `Option ${v.sku}`,
+      nameAr: `خيار ${v.sku}`,
+      price: v.price ?? null,
+    })),
+  });
+}
+
+test("14: a variant added AFTER the baseline becomes pending on its own", () => {
+  // baseline: product P sent with variants v1 + v2
+  const pv1 = previewOf([variantProduct("P", "mk500", [{ id: "v1", sku: "mk500-1" }, { id: "v2", sku: "mk500-2" }])]);
+  const baselineItems = resolveFullSyncSet(pv1.rows, "FULL", new Set()).included
+    .map((r) => item("pkF", r.internalProductId, r.variantId, r.sku));
+  assert.equal(baselineItems.length, 2, "two variant rows, no parent row");
+  const sent = sentSellableKeySet([pkg("pkF", { sentAt: "2026-08-25T08:00:00.000Z" })], baselineItems);
+
+  // later: a THIRD variant is created on the already-sent product
+  const pv2 = previewOf([variantProduct("P", "mk500", [{ id: "v1", sku: "mk500-1" }, { id: "v2", sku: "mk500-2" }, { id: "v3", sku: "mk500-3" }])]);
+  const pending = pendingNewRows(pv2.rows, sent);
+  assert.deepEqual(pending.map((r) => r.sku), ["mk500-3"], "ONLY the new variant is pending");
+  const set = resolveFullSyncSet(pv2.rows, "NEW", sent);
+  assert.deepEqual(set.included.map((r) => r.sku), ["mk500-3"], "the NEW package contains only the new variant");
+  assert.equal(set.excludedAlreadySent.length, 2);
+});
+
+test("15: already-sent sibling variants stay non-pending (never re-queued by the new sibling)", () => {
+  const pv1 = previewOf([variantProduct("P", "mk500", [{ id: "v1", sku: "mk500-1" }, { id: "v2", sku: "mk500-2" }])]);
+  const sent = sentSellableKeySet(
+    [pkg("pkF", { sentAt: "2026-08-25T08:00:00.000Z" })],
+    resolveFullSyncSet(pv1.rows, "FULL", new Set()).included.map((r) => item("pkF", r.internalProductId, r.variantId, r.sku)),
+  );
+  const pv2 = previewOf([variantProduct("P", "mk500", [{ id: "v1", sku: "mk500-1" }, { id: "v2", sku: "mk500-2" }, { id: "v3", sku: "mk500-3" }])]);
+  const pendingKeys = pendingNewRows(pv2.rows, sent).map((r) => sellableKeyOfRow(r));
+  assert.equal(pendingKeys.includes("P::v1"), false, "sent sibling v1 stays cleared");
+  assert.equal(pendingKeys.includes("P::v2"), false, "sent sibling v2 stays cleared");
+  assert.deepEqual(pendingKeys, ["P::v3"]);
+});
+
+test("a legacy product-grain sent item is NEVER reinterpreted as covering the product's variants", () => {
+  // the FULLSYNC.1 package recorded product P at product grain (variantId null)
+  const sent = sentSellableKeySet(
+    [pkg("pkOld", { sentAt: "2026-08-25T08:00:00.000Z" })],
+    [item("pkOld", "P", null, "mk500")],
+  );
+  // the product NOW flattens to variant rows — every variant row is pending
+  const pv = previewOf([variantProduct("P", "mk500", [{ id: "v1", sku: "mk500-1" }, { id: "v2", sku: "mk500-2" }])]);
+  assert.deepEqual(pendingNewRows(pv.rows, sent).map((r) => r.sku), ["mk500-1", "mk500-2"]);
 });

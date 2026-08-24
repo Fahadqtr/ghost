@@ -18,7 +18,9 @@ import SelectionToolbar from "@/components/v2/ui/SelectionToolbar";
 import EmptyState from "@/components/v2/ui/EmptyState";
 
 export interface RafeeqRowVM {
+  /** stable sellable row key (product id, or product::variant for a variant row). */
   id: string;
+  isVariant: boolean;
   sku: string;
   barcode: string | null;
   title: string;
@@ -35,7 +37,16 @@ export interface RafeeqRowVM {
 export interface RafeeqExportVM {
   canWrite: boolean;
   rows: RafeeqRowVM[];
-  counts: { productCount: number; mappedCount: number; unmappedCount: number; needsReviewCount: number };
+  counts: {
+    productCount: number;
+    sellableRowCount: number;
+    simpleRowCount: number;
+    variantRowCount: number;
+    productsWithVariants: number;
+    mappedCount: number;
+    unmappedCount: number;
+    needsReviewCount: number;
+  };
 }
 
 type Mode = "all" | "new" | "selected";
@@ -141,14 +152,15 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-muted">
-        حبيبة التصدير: منتج — صف واحد لكل منتج. مُعرّف رفيق مقروء من ECL
+        حبيبة التصدير: صفّ بيع — منتج بسيط = صف واحد، ومنتج له خيارات = صف مستقل لكل خيار
+        بسعره و<span dir="ltr">SKU</span> وباركوده الخاص (بدون صفّ للأب). مُعرّف رفيق مقروء من ECL
         (<span dir="ltr">rafeeq:malikas</span>) فقط — لا يُخمَّن، ولا يُطابَق بالاسم، ولا تُحلّ التعارضات تلقائياً.
         صفوف «بحاجة لمراجعة المالك» محظورة.
       </p>
 
       {/* Summary */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <Card value={vm.counts.productCount} label="إجمالي" tone="ink" />
+        <Card value={vm.counts.sellableRowCount} label={`صفوف بيع (${vm.counts.productCount} منتج)`} tone="ink" />
         <Card value={plan.ready} label="جاهز" tone="emerald" />
         <Card value={plan.warn} label="تحذير" tone="amber" />
         <Card value={plan.blocked} label="محظور" tone="rose" />

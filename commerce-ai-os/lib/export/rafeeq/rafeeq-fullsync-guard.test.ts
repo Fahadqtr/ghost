@@ -34,6 +34,7 @@ const ROUTE = "app/api/export/rafeeq/package/route.ts";
 const ACTIONS = "app/(v2)/v2/export/rafeeq-fullsync-actions.ts";
 const COMPONENT = "components/v2/export/RafeeqFullSync.tsx";
 const MIGRATION = "supabase/migrations/20260824100000_rafeeq_fullsync_packages.sql";
+const MIGRATION2 = "supabase/migrations/20260824130000_rafeeq_fullsync_variant_grain.sql";
 const ALL = [FULLSYNC, RECONCILE, SERVER, GEN, ROUTE, ACTIONS, COMPONENT];
 
 // ── pending is delivery-derived, never identity/created_at ────────────────────
@@ -43,8 +44,8 @@ test("pending-NEW never reads products.created_at or the legacy per-store id col
   }
   const fullsync = code(FULLSYNC);
   assert.equal(/created_at/.test(fullsync), false, "pending logic must not consult created_at");
-  // the derivation is the sent baseline, not the identity evidence
-  assert.ok(/isFullIncludable\(r\) && !sentProductIds\.has\(r\.internalProductId\)/.test(fullsync), "pending = includable AND not sent");
+  // the derivation is the sent baseline at SELLABLE grain, not identity evidence
+  assert.ok(/isFullIncludable\(r\) && !sentSellableKeys\.has\(sellableKeyOfRow\(r\)\)/.test(fullsync), "pending = includable AND not sent (sellable key)");
   assert.equal(/rafeeqId\s*[!=]==?\s*null/.test(fullsync.match(/export function pendingNewRows[\s\S]*?\n}/)?.[0] ?? ""), false,
     "pendingNewRows must not branch on ECL identity");
 });
@@ -153,4 +154,31 @@ test("the migration defines the durable package/sent-state model (additive, not 
   assert.ok(/ENABLE ROW LEVEL SECURITY/.test(m));
   assert.ok(/NOT APPLIED AUTOMATICALLY/.test(m));
   assert.equal(/DROP TABLE|ALTER TABLE public\.products|DELETE FROM/i.test(m), false, "purely additive");
+});
+
+// ── FULLSYNC.2 — sellable (variant-aware) durable grain ───────────────────────
+test("the variant-grain migration adds sellable item identity + superseded surfacing (additive)", () => {
+  const m = read(MIGRATION2);
+  assert.ok(/ALTER TABLE public\.rafeeq_package_items\s+ADD COLUMN IF NOT EXISTS variant_id uuid/.test(m), "items gain nullable variant_id");
+  assert.ok(/rafeeq_package_items_sellable_uk[\s\S]*COALESCE\(variant_id::text, ''\)/.test(m), "sellable uniqueness (package, product, variant)");
+  assert.ok(/ADD COLUMN IF NOT EXISTS superseded_at timestamptz/.test(m), "packages gain superseded_at");
+  assert.ok(/NOT APPLIED AUTOMATICALLY/.test(m));
+  assert.equal(/DROP TABLE|ALTER TABLE public\.products|DELETE FROM/i.test(m), false, "no destructive change beyond the replaced unique index");
+});
+
+test("recording is sellable-grain and supersedes only prior UNSENT FULL packages", () => {
+  const server = read(SERVER);
+  assert.ok(/variant_id: it\.variantId/.test(server), "item rows record the variant identity");
+  const sup = server.slice(server.indexOf("// Supersede prior UNSENT FULL packages"));
+  assert.ok(/\.is\("sent_at", null\)/.test(sup), "supersede never touches a SENT package");
+  assert.ok(/\.is\("superseded_at", null\)/.test(sup), "supersede stamps once");
+  assert.equal(/\.delete\(/.test(server), false, "history is never deleted");
+});
+
+test("returned-id apply is sellable-scoped (variant rows never collapse onto the parent)", () => {
+  const server = read(SERVER);
+  const apply = server.slice(server.indexOf("export async function applyRafeeqReturnedIds"));
+  assert.ok(/q\.eq\("variant_id", a\.variantId\) : q\.is\("variant_id", null\)/.test(apply), "updates scope by variant / product-level row");
+  assert.ok(/variant_id: a\.variantId/.test(apply), "inserts carry the variant identity");
+  assert.ok(/variant_sku: a\.variantId \? a\.sku : null/.test(apply), "variant inserts carry variant_sku");
 });

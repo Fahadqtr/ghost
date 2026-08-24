@@ -10,18 +10,21 @@
 //     never surfaced, never guessed) — every true blocker (missing/duplicate
 //     SKU, blocking barcode duplicate, missing image/title, stopped lifecycle,
 //     filename collision, cross-product identity conflict) still excludes.
-//   • NEW   — the PENDING products only (pendingNewRows): exportable for Rafeeq
-//     AND not contained in any package the owner explicitly marked SENT — the
-//     durable delivery baseline, not an identity proxy. Identity does NOT define
-//     newness: a mapped-but-never-sent product is pending, an unmapped product
-//     that was sent is not. products.created_at is NEVER consulted.
+//   • NEW   — the PENDING sellable rows only (pendingNewRows): exportable for
+//     Rafeeq AND not contained in any package the owner explicitly marked SENT —
+//     the durable delivery baseline, not an identity proxy. Sent-state is
+//     tracked at SELLABLE grain (product_id + nullable variant_id), so a new
+//     variant added to an already-sent product becomes pending on its own while
+//     its already-sent siblings stay non-pending. Identity does NOT define
+//     newness: a mapped-but-never-sent row is pending, an unmapped row that was
+//     sent is not. products.created_at is NEVER consulted.
 //
 // Sent state is durable + explicit: only a package row with sent_at != null
 // counts. Generating or downloading a package NEVER changes the pending queue.
 // No I/O — node:test loads this directly.
 
 import { RAFEEQ_NEW_MARKER, type RafeeqPackageRow } from "./package.ts";
-import type { RafeeqPreviewRow } from "./preview.ts";
+import { sellableRowKey, type RafeeqPreviewRow } from "./preview.ts";
 
 /** File-sync package modes (durable, uppercase — matches rafeeq_packages.mode). */
 export type RafeeqFullSyncMode = "FULL" | "NEW";
@@ -40,28 +43,40 @@ export interface RafeeqPackageRecord {
   generatedBy: string | null;
   sentAt: string | null;
   sentBy: string | null;
+  /** set when a later FULL package replaced this (still unsent) one. */
+  supersededAt?: string | null;
 }
 
-/** A durable package item (normalized from rafeeq_package_items). */
+/** A durable package item (normalized from rafeeq_package_items) — SELLABLE grain. */
 export interface RafeeqPackageItemRecord {
   packageId: string;
   productId: string;
+  /** null for a simple-product row; the variant id for a variant row. */
+  variantId: string | null;
   sku: string;
 }
 
+/** The durable sellable identity of a preview row (product / product::variant). */
+export function sellableKeyOfRow(r: Pick<RafeeqPreviewRow, "internalProductId" | "variantId">): string {
+  return sellableRowKey(r.internalProductId, r.variantId);
+}
+
 /**
- * The set of product ids contained in any package the owner explicitly marked
- * SENT (sent_at != null). This — and ONLY this — clears a product from the
- * pending-NEW queue. Unsent packages contribute nothing.
+ * The set of SELLABLE keys (product / product::variant) contained in any package
+ * the owner explicitly marked SENT (sent_at != null). This — and ONLY this —
+ * clears a sellable row from the pending-NEW queue. Unsent packages contribute
+ * nothing. A legacy product-grain item (variant_id null) clears only the
+ * product's SIMPLE row — it is never reinterpreted as covering that product's
+ * variants.
  */
-export function sentProductIdSet(
+export function sentSellableKeySet(
   packages: readonly RafeeqPackageRecord[],
   items: readonly RafeeqPackageItemRecord[],
 ): Set<string> {
   const sentPackageIds = new Set<string>();
   for (const p of packages) if (p.sentAt !== null) sentPackageIds.add(p.id);
   const out = new Set<string>();
-  for (const it of items) if (sentPackageIds.has(it.packageId)) out.add(it.productId);
+  for (const it of items) if (sentPackageIds.has(it.packageId)) out.add(sellableRowKey(it.productId, it.variantId));
   return out;
 }
 
@@ -96,15 +111,17 @@ export function isNeedsReviewIncluded(r: Pick<RafeeqPreviewRow, "status" | "reas
 // ── pending-NEW derivation ────────────────────────────────────────────────────
 
 /**
- * PENDING NEW PRODUCT = currently exportable for Rafeeq (FULL-includable) AND
- * not contained in any SENT package. Derived only — never stored, never based
- * on ECL identity presence, never based on products.created_at.
+ * PENDING NEW SELLABLE ROW = currently exportable for Rafeeq (FULL-includable)
+ * AND its sellable key is not contained in any SENT package. Derived only —
+ * never stored, never based on ECL identity presence, never based on
+ * products.created_at. Because the key is sellable-grain, a new variant of an
+ * already-sent product is pending on its own; sent siblings stay cleared.
  */
 export function pendingNewRows(
   rows: readonly RafeeqPreviewRow[],
-  sentProductIds: ReadonlySet<string>,
+  sentSellableKeys: ReadonlySet<string>,
 ): RafeeqPreviewRow[] {
-  return rows.filter((r) => isFullIncludable(r) && !sentProductIds.has(r.internalProductId));
+  return rows.filter((r) => isFullIncludable(r) && !sentSellableKeys.has(sellableKeyOfRow(r)));
 }
 
 // ── generation set ────────────────────────────────────────────────────────────
@@ -128,7 +145,7 @@ export interface FullSyncGenerationSet {
 export function resolveFullSyncSet(
   rows: readonly RafeeqPreviewRow[],
   mode: RafeeqFullSyncMode,
-  sentProductIds: ReadonlySet<string>,
+  sentSellableKeys: ReadonlySet<string>,
 ): FullSyncGenerationSet {
   const included: RafeeqPreviewRow[] = [];
   const excludedBlocked: RafeeqPreviewRow[] = [];
@@ -143,7 +160,7 @@ export function resolveFullSyncSet(
     }
     includable++;
     if (isNeedsReviewIncluded(r)) needsReviewIncluded++;
-    if (mode === "NEW" && sentProductIds.has(r.internalProductId)) {
+    if (mode === "NEW" && sentSellableKeys.has(sellableKeyOfRow(r))) {
       excludedAlreadySent.push(r);
       continue;
     }
@@ -206,6 +223,7 @@ function fnv1a(input: string): string {
  */
 export function rowFingerprint(r: RafeeqPreviewRow): string {
   const parts = [
+    r.variantId ?? "",
     r.sku,
     r.barcode ?? "",
     r.title,
