@@ -1,8 +1,10 @@
 // RAFEEQ.FULLSYNC.2 — sellable-listing flattening tests (spec scenarios 1–13).
 // Simple product ⇒ exactly one row; variant product ⇒ one row per legitimate
-// variant and NO parent row; variant rows carry their OWN sku/barcode/price and
+// variant and NO parent row; variant rows carry their OWN sku/price and
 // inherit the parent's category/descriptions/images (packaged under the VARIANT
-// sku filename).
+// sku filename). Under the RAFEEQ TEMPLATE BARCODE RULE the exported BARCODE
+// column carries the canonical PARENT product SKU on every row (never the EAN,
+// never the variant sku/barcode) — see rafeeq-barcode-rule.test.ts.
 // node --conditions=react-server --experimental-strip-types --test lib/export/rafeeq/variant-flatten.test.ts
 
 import test from "node:test";
@@ -59,16 +61,16 @@ test("2/11: a 2-variant product exports exactly TWO rows and never a parent row"
   assert.equal(res.counts.productsWithVariants, 1);
 });
 
-// ── 3 + 4) variant sku/barcode are the VARIANT's own ──────────────────────────
-test("3/4: variant rows export the variant's OWN sku and barcode (never the parent's)", () => {
+// ── 3 + 4) variant sku is the VARIANT's own; barcode is the PARENT sku ────────
+test("3/4: variant rows keep the variant's OWN sellable sku while the BARCODE column carries the PARENT sku", () => {
   const res = buildRafeeqPreview({
     products: [product("p1", "mk10", { barcode: "111111", variants: [variant("v1", "mk10-1", { barcode: "222333" })] })],
   });
   const r = res.rows[0];
   assert.equal(r.sku, "mk10-1");
-  assert.equal(r.barcode, "222333");
+  assert.equal(r.barcode, "mk10", "Rafeeq barcode = the canonical PARENT sku, never the variant EAN");
   const aoa = buildRafeeqXlsxAoa([toPackageRow(r, "mk10-1.jpg")]);
-  assert.equal(aoa[1][8], "222333", "BARCODE column carries the variant barcode");
+  assert.equal(aoa[1][8], "mk10", "BARCODE column carries the parent SKU (owner template rule)");
   // a variant WITHOUT its own sku is blocked — no parent fallback
   const missing = rowsOf([product("p2", "mk20", { variants: [variant("v9", "", {})] })])[0];
   assert.equal(missing.status, "BLOCKED");
@@ -144,17 +146,19 @@ test("12: a variant SKU colliding with ANOTHER product's sellable SKU blocks bot
   assert.ok(res.rows.every((r) => r.status === "BLOCKED" && r.reasons.some((x) => x.code === "DUPLICATE_SKU")));
 });
 
-// ── 13) duplicate barcode detection across the FINAL flattened dataset ────────
-test("13: a variant barcode colliding with ANOTHER sellable row's barcode blocks both rows", () => {
+// ── 13) barcode (parent-SKU grouping key) duplicate detection ─────────────────
+test("13: the parent-SKU barcode blocks only when TWO different products claim it — sibling repetition is by design", () => {
+  // two DIFFERENT products claiming the same parent SKU ⇒ corrupted grouping key
   const res = buildRafeeqPreview({
     products: [
-      product("p1", "mk10", { variants: [variant("v1", "mk10-1", { barcode: "999888" })] }),
-      product("p2", "mk20", { barcode: "999888" }),
+      product("p1", "mk10", { variants: [variant("v1", "mk10-1")] }),
+      product("p2", "mk10"), // distinct sellable skus, same parent-SKU barcode
     ],
   });
   assert.ok(res.rows.every((r) => r.status === "BLOCKED" && r.reasons.some((x) => x.code === "DUPLICATE_BARCODE")));
-  // sibling variants with distinct barcodes stay clean
+  // sibling option rows deliberately REPEAT the parent SKU — never flagged
   const ok = buildRafeeqPreview({ products: [product("p3", "mk30", { variants: [variant("v1", "mk30-1"), variant("v2", "mk30-2")] })] });
+  assert.ok(ok.rows.every((r) => r.barcode === "mk30"));
   assert.ok(ok.rows.every((r) => !r.reasons.some((x) => x.code === "DUPLICATE_BARCODE")));
 });
 

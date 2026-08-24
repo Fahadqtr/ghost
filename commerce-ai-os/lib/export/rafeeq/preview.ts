@@ -6,11 +6,21 @@
 //     VARIANT) and NO parent row — the parent is never exported as an extra
 //     sellable listing (the P0 no-double-export invariant, mirrored from the
 //     certified Talabat flattening).
-// Variant rows use the variant's OWN sku/barcode (never the parent's), the
-// certified flattened title (buildFlattenedName — the proven Talabat
-// projection, reused not reinvented), the parent's category/descriptions/
-// canonical images, and the canonical variant sell price:
+// Variant rows use the variant's OWN sku as the sellable identity (image
+// naming, ECL keying, dedup), the certified flattened title (buildFlattenedName
+// — the proven Talabat projection, reused not reinvented), the parent's
+// category/descriptions/canonical images, and the canonical variant sell price:
 //   positive(variant.price) ?? positive(parent.discountPrice) ?? positive(parent.price)
+//
+// RAFEEQ TEMPLATE BARCODE RULE (owner decision, 2026-08-24): the Rafeeq BARCODE
+// column carries the canonical PARENT product SKU for EVERY row — the real
+// EAN/product barcode is NEVER exported to Rafeeq, and a variant's own
+// sku/barcode is NEVER written to the BARCODE column (they stay internal).
+// Option rows deliberately REPEAT the parent SKU so Rafeeq groups them as ONE
+// product with options — never as separate products. The only blocking
+// duplicate is the same barcode value claimed by MORE THAN ONE internal
+// product (a corrupted grouping key). Canonical DB sku/barcode data is
+// untouched — this is an export projection only.
 //
 // Identity is ECL-first and storefront-scoped: the Rafeeq Product ID is the ECL
 // external_product_id read for storefront_key = "rafeeq:malikas" only, keyed by
@@ -23,7 +33,7 @@
 // Duplicate SKU/barcode/image-filename are checked across the FINAL flattened
 // dataset. No I/O — node:test loads it.
 
-import { buildFlattenedName, normalizeExportedSku, normalizeBarcode } from "../../talabat/export.ts";
+import { buildFlattenedName, normalizeExportedSku } from "../../talabat/export.ts";
 import { storefrontByKey } from "../../channels/storefronts.ts";
 import { resolveLifecycleState, type LifecycleState } from "../../lifecycle/state.ts";
 import { primaryImageName, extensionFromUrl } from "../image-naming.ts";
@@ -38,9 +48,8 @@ export type RafeeqStorefrontKey = typeof RAFEEQ_STOREFRONT_KEY;
 // products column.
 const RAFEEQ_IDENTITY_TYPE = storefrontByKey(RAFEEQ_STOREFRONT_KEY)?.identityType ?? null;
 
-const BARCODE_RE = /^[0-9]{6,14}$/;
-
-/** One legitimate product option/variant (from product_variants). */
+/** One legitimate product option/variant (from product_variants). The variant
+ *  barcode is canonical INTERNAL data — it is never exported to Rafeeq. */
 export interface RafeeqPreviewVariant {
   id: string | null;
   sku: string | null;
@@ -103,6 +112,8 @@ export interface RafeeqPreviewRow {
   grain: "PRODUCT" | "VARIANT";
   isVariant: boolean;
   sku: string;
+  /** Rafeeq BARCODE column value = the canonical PARENT product SKU (owner
+   *  template rule) — never the real EAN, never the variant's sku/barcode. */
   barcode: string | null;
   title: string;
   titleAr: string;
@@ -191,18 +202,25 @@ export function buildRafeeqPreview(input: RafeeqPreviewInput): RafeeqPreviewResu
 
   // First pass — resolve every SELLABLE identity for dataset-wide duplicate checks.
   const skuLower: string[] = [];
-  const barcodes: string[] = [];
   const imageNames: string[] = [];
+  // Rafeeq BARCODE column = canonical PARENT product SKU (owner template rule).
+  // Sibling option rows deliberately REPEAT it, so the only duplicate that can
+  // block is the same value claimed by MORE THAN ONE distinct internal product.
+  const barcodeOwners = new Map<string, Set<string>>();
   for (const s of staged) {
     const sku = normalizeExportedSku(s.variant ? s.variant.sku : s.product.sku);
     skuLower.push(sku.toLowerCase());
-    barcodes.push(normalizeBarcode(s.variant ? s.variant.barcode : s.product.barcode) ?? "");
+    const parentSku = normalizeExportedSku(s.product.sku);
+    if (parentSku !== "") {
+      const owners = barcodeOwners.get(parentSku.toLowerCase()) ?? new Set<string>();
+      owners.add(s.product.id);
+      barcodeOwners.set(parentSku.toLowerCase(), owners);
+    }
     // sanitized primary filename base (SELLABLE sku) for collision detection
     const p = s.product;
     imageNames.push(sku ? primaryImageName(sku, extensionFromUrl(p.imageFilename || p.imageUrl)).toLowerCase() : "");
   }
   const skuCounts = tally(skuLower);
-  const barcodeCounts = tally(barcodes);
   const imageNameCounts = tally(imageNames);
 
   let variantRowCount = 0;
@@ -212,7 +230,7 @@ export function buildRafeeqPreview(input: RafeeqPreviewInput): RafeeqPreviewResu
       variantRowCount++;
       withVariants.add(s.product.id);
     }
-    return buildRow(s, skuCounts, barcodeCounts, imageNameCounts, imageNames[i], mappingBySku);
+    return buildRow(s, skuCounts, barcodeOwners, imageNameCounts, imageNames[i], mappingBySku);
   });
 
   const items: ExportValidationItem[] = rows.map((r) => ({ entityId: r.variantId ?? r.internalProductId, destination: RAFEEQ_STOREFRONT_KEY, status: r.status, reasons: r.reasons }));
@@ -264,16 +282,20 @@ export function buildRafeeqPreview(input: RafeeqPreviewInput): RafeeqPreviewResu
 function buildRow(
   s: StagedRow,
   skuCounts: Map<string, number>,
-  barcodeCounts: Map<string, number>,
+  barcodeOwners: Map<string, Set<string>>,
   imageNameCounts: Map<string, number>,
   imageNameLower: string,
   mappingBySku: Readonly<Record<string, RafeeqMappingEvidence>>,
 ): RafeeqPreviewRow {
   const { product: p, variant: v } = s;
   const isVariant = v !== null;
-  // Sellable identity: the variant's OWN sku/barcode — NEVER the parent's.
+  // Sellable identity: the variant's OWN sku — NEVER the parent's.
   const sku = normalizeExportedSku(isVariant ? v!.sku : p.sku);
-  const barcode = normalizeBarcode(isVariant ? v!.barcode : p.barcode);
+  // Rafeeq BARCODE column (owner template rule): the canonical PARENT product
+  // SKU for EVERY row. The real EAN and the variant's own sku/barcode are
+  // NEVER written here — option rows REPEAT the parent SKU so Rafeeq groups
+  // them as ONE product with options, never as separate products.
+  const barcode = normalizeExportedSku(p.sku) || null;
   // Certified flattened listing names ("{parent} — {option}", no repeat) — the
   // proven Talabat projection, reused for both languages.
   const title = isVariant
@@ -319,9 +341,16 @@ function buildRow(
     block("DUPLICATE_SKU");
   }
 
-  if (barcode === null) warn("MISSING_BARCODE");
-  else if ((barcodeCounts.get(barcode) ?? 0) > 1) block("DUPLICATE_BARCODE");
-  else if (!BARCODE_RE.test(barcode)) warn("INVALID_BARCODE", "صيغة الباركود غير قياسية.");
+  // BARCODE column (P0) — the parent product SKU is the Rafeeq grouping key:
+  // missing means the column cannot be filled; the same value claimed by MORE
+  // THAN ONE internal product is a corrupted grouping key. Sibling option rows
+  // repeating it is BY DESIGN and never flagged. The real EAN is not exported,
+  // so its format/absence plays no part in Rafeeq validation.
+  if (barcode === null) {
+    block("MISSING_BARCODE", "عمود الباركود في رفيق يتطلب SKU المنتج الأب — وهو مفقود.");
+  } else if ((barcodeOwners.get(barcode.toLowerCase())?.size ?? 0) > 1) {
+    block("DUPLICATE_BARCODE", "نفس SKU الأب مستخدم من أكثر من منتج — مفتاح تجميع رفيق متعارض.");
+  }
 
   if (!hasImage) block("MISSING_IMAGE");
   // Disclosed, never blocking: the variant ships the product-level image until a

@@ -147,6 +147,8 @@ export interface RafeeqPackageRow {
   descriptionEn: string;
   descriptionAr: string;
   imageName: string;   // packaged primary filename (SKU-based) — the IMAGE NAME column
+  /** BARCODE column = canonical PARENT product SKU (owner template rule) —
+   *  never the real EAN, never a variant sku/barcode. Option rows repeat it. */
   barcode: string;
   rafeeqId: string;    // ECL external_product_id, or the "new product" marker
 }

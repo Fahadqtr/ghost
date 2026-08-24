@@ -70,15 +70,28 @@ test("post-sanitization filename collision between distinct SKUs blocks both row
   assert.ok(res.rows.every((r) => r.status === "BLOCKED" && codes(r).includes("IDENTITY_CONFLICT")));
 });
 
-test("validation matrix: sku/title/image block; barcode-missing/price/category warn; dup barcode blocks", () => {
+test("validation matrix: sku/title/image block; price/category warn; the barcode column is the parent SKU", () => {
   assert.ok(buildRafeeqPreview({ products: [product({ sku: null })] }).rows[0].status === "BLOCKED");
   assert.ok(buildRafeeqPreview({ products: [product({ nameEn: null, nameAr: null })] }).rows[0].status === "BLOCKED");
   assert.ok(buildRafeeqPreview({ products: [product({ imageUrl: null, imageFilename: null, imageCount: 0, galleryImageUrls: [] })] }).rows[0].status === "BLOCKED");
+  // a missing EAN is irrelevant to Rafeeq — the barcode column is the parent SKU
   const warns = buildRafeeqPreview({ products: [product({ barcode: null, price: null, discountPrice: null, category: null })] }).rows[0];
   assert.equal(warns.status, "WARNING");
-  for (const c of ["MISSING_BARCODE", "MISSING_PRICE", "MISSING_CATEGORY"]) assert.ok(codes(warns).includes(c));
-  const dupBc = buildRafeeqPreview({ products: [product({ id: "a", sku: "A", barcode: "6291041500213" }), product({ id: "b", sku: "B", barcode: "6291041500213" })] });
+  for (const c of ["MISSING_PRICE", "MISSING_CATEGORY"]) assert.ok(codes(warns).includes(c));
+  assert.equal(codes(warns).includes("MISSING_BARCODE"), false, "no EAN needed — barcode = parent SKU");
+  assert.equal(warns.barcode, "MK1");
+  // a missing product SKU means the barcode column cannot be filled → blocking
+  const noSku = buildRafeeqPreview({ products: [product({ sku: null })] }).rows[0];
+  assert.ok(codes(noSku).includes("MISSING_SKU") && codes(noSku).includes("MISSING_BARCODE"));
+  // two DIFFERENT products claiming the same parent-SKU barcode ⇒ blocked;
+  // identical EANs alone no longer matter (the EAN is not exported)
+  const dupBc = buildRafeeqPreview({ products: [
+    product({ id: "a", sku: "A", barcode: "6291041500213", variants: [{ id: "av1", sku: "A-1", barcode: "6291041500301", nameEn: "Red", nameAr: "أحمر", price: null }] }),
+    product({ id: "b", sku: "A", barcode: "6291041500214" }),
+  ] });
   assert.ok(dupBc.rows.every((r) => r.status === "BLOCKED" && codes(r).includes("DUPLICATE_BARCODE")));
+  const sameEan = buildRafeeqPreview({ products: [product({ id: "a", sku: "A", barcode: "6291041500213" }), product({ id: "b", sku: "B", barcode: "6291041500213" })] });
+  assert.ok(sameEan.rows.every((r) => !codes(r).includes("DUPLICATE_BARCODE")), "shared EANs never block — the EAN is not exported");
   const dupSku = buildRafeeqPreview({ products: [product({ id: "a", sku: "DUP", barcode: "6291041500001" }), product({ id: "b", sku: "DUP", barcode: "6291041500002" })] });
   assert.ok(dupSku.rows.every((r) => r.status === "BLOCKED" && codes(r).includes("DUPLICATE_SKU")));
 });

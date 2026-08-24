@@ -153,7 +153,10 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
     <div className="space-y-4">
       <p className="text-[11px] text-muted">
         حبيبة التصدير: صفّ بيع — منتج بسيط = صف واحد، ومنتج له خيارات = صف مستقل لكل خيار
-        بسعره و<span dir="ltr">SKU</span> وباركوده الخاص (بدون صفّ للأب). مُعرّف رفيق مقروء من ECL
+        بسعره و<span dir="ltr">SKU</span> الخاص (بدون صفّ للأب). عمود باركود رفيق يحمل
+        <span dir="ltr"> SKU </span>المنتج الأب لكل الصفوف — لا يُصدَّر الباركود الحقيقي
+        (<span dir="ltr">EAN</span>) ولا <span dir="ltr">SKU</span>/باركود الخيار إلى رفيق أبداً.
+        مُعرّف رفيق مقروء من ECL
         (<span dir="ltr">rafeeq:malikas</span>) فقط — لا يُخمَّن، ولا يُطابَق بالاسم، ولا تُحلّ التعارضات تلقائياً.
         صفوف «بحاجة لمراجعة المالك» محظورة.
       </p>
@@ -260,7 +263,7 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
                   )}
                   <th className="px-3 py-2 font-medium">SKU</th>
                   <th className="px-3 py-2 font-medium">المنتج</th>
-                  <th className="px-3 py-2 font-medium">الباركود</th>
+                  <th className="px-3 py-2 font-medium">باركود رفيق (SKU الأب)</th>
                   <th className="px-3 py-2 font-medium">السعر</th>
                   <th className="px-3 py-2 font-medium">مُعرّف رفيق / جديد</th>
                   <th className="px-3 py-2 font-medium">الصورة</th>

@@ -382,8 +382,16 @@ async function loadReconcileEvidence(): Promise<ReconcileEvidence | null> {
   if (!productRows || !variantRows || !eclRows) return null;
 
   // SELLABLE catalog evidence (mirrors the export flattening): a product with
-  // variants contributes ONE entry per variant (its own sku/barcode) and NO
-  // parent entry; a simple product contributes its product-level entry.
+  // variants contributes ONE entry per variant (its own sku) and NO parent
+  // entry; a simple product contributes its product-level entry. Every entry
+  // carries the canonical PARENT product sku — the value the exported BARCODE
+  // column holds under the owner template rule (corroboration evidence).
+  const parentSkuById = new Map<string, string>();
+  for (const p of productRows) {
+    const id = s(p.id);
+    const sku = s(p.sku);
+    if (id && sku) parentSkuById.set(id, sku);
+  }
   const productsWithVariants = new Set<string>();
   const variantEntries: ReconcileCatalogProduct[] = [];
   for (const v of variantRows) {
@@ -392,14 +400,14 @@ async function loadReconcileEvidence(): Promise<ReconcileEvidence | null> {
     const sku = s(v.sku);
     if (!pid || !vid || !sku) continue;
     productsWithVariants.add(pid);
-    variantEntries.push({ productId: pid, variantId: vid, sku, barcode: s(v.barcode) });
+    variantEntries.push({ productId: pid, variantId: vid, sku, parentSku: parentSkuById.get(pid) ?? null, barcode: s(v.barcode) });
   }
   const catalog: ReconcileCatalogProduct[] = [...variantEntries];
   for (const p of productRows) {
     const id = s(p.id);
     const sku = s(p.sku);
     if (!id || !sku || productsWithVariants.has(id)) continue;
-    catalog.push({ productId: id, variantId: null, sku, barcode: s(p.barcode) });
+    catalog.push({ productId: id, variantId: null, sku, parentSku: sku, barcode: s(p.barcode) });
   }
 
   const mappings: ReconcileMappingEvidence[] = [];

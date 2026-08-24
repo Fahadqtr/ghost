@@ -220,6 +220,62 @@ test("16c: a needs_review VARIANT mapping is retired only by the exact variant m
   assert.deepEqual(plan.apply[0], { action: "resolve_needs_review", productId: "P", variantId: "v1", sku: "mk10-1", barcode: "334455", externalId: "88010" });
 });
 
+// ── RAFEEQ TEMPLATE BARCODE RULE — the returned BARCODE column = parent SKU ───
+
+test("owner rule: a returned BARCODE carrying the parent SKU corroborates a simple-product match", () => {
+  const plan = buildReconcilePlan({
+    returned: [ret("mk175.jpg", "9600", "mk175")],
+    catalog: [{ productId: "p1", variantId: null, sku: "mk175", parentSku: "mk175", barcode: "6291041500213" }],
+    mappings: [],
+  });
+  assert.equal(plan.entries[0].status, "matched_insert");
+  assert.equal(plan.entries[0].matchedBy, "sku");
+});
+
+test("owner rule: an option row corroborates by the PARENT sku (its own sku/EAN never appear in the barcode)", () => {
+  const plan = buildReconcilePlan({
+    returned: [ret("mk1822-1-iphone-15-pro.jpg", "9601", "mk1822")],
+    catalog: [
+      { productId: "P", variantId: "v1", sku: "mk1822-1-iphone-15-pro", parentSku: "mk1822", barcode: "6291041500301" },
+      { productId: "P", variantId: "v2", sku: "mk1822-2-iphone-16", parentSku: "mk1822", barcode: "6291041500302" },
+    ],
+    mappings: [],
+  });
+  assert.equal(plan.entries[0].status, "matched_insert");
+  assert.equal(plan.entries[0].variantId, "v1", "still resolves at variant grain via the IMAGE NAME sku");
+});
+
+test("owner rule: a parent-SKU barcode fallback matches only a SIMPLE product uniquely — option siblings never disambiguate", () => {
+  const unique = buildReconcilePlan({
+    returned: [ret("renamed-photo.jpg", "9602", "mk175")],
+    catalog: [{ productId: "p1", variantId: null, sku: "mk175", parentSku: "mk175", barcode: null }],
+    mappings: [],
+  });
+  assert.equal(unique.entries[0].status, "matched_insert");
+  assert.equal(unique.entries[0].matchedBy, "barcode");
+  // siblings share the parent SKU → the barcode alone can never pick one
+  const siblings = buildReconcilePlan({
+    returned: [ret("renamed-photo.jpg", "9603", "mk1822")],
+    catalog: [
+      { productId: "P", variantId: "v1", sku: "mk1822-1", parentSku: "mk1822", barcode: null },
+      { productId: "P", variantId: "v2", sku: "mk1822-2", parentSku: "mk1822", barcode: null },
+    ],
+    mappings: [],
+  });
+  assert.equal(siblings.entries[0].status, "unknown_sku", "refused — the shared parent SKU cannot pick a sibling");
+  assert.equal(siblings.apply.length, 0);
+});
+
+test("owner rule: a barcode matching NEITHER the parent sku NOR the legacy EAN is still refused", () => {
+  const plan = buildReconcilePlan({
+    returned: [ret("mk175.jpg", "9604", "some-other-value")],
+    catalog: [{ productId: "p1", variantId: null, sku: "mk175", parentSku: "mk175", barcode: "6291041500213" }],
+    mappings: [],
+  });
+  assert.equal(plan.entries[0].status, "barcode_mismatch");
+  assert.equal(plan.apply.length, 0);
+});
+
 test("16d: variant barcode fallback matches only a UNIQUE variant barcode", () => {
   const plan = buildReconcilePlan({
     returned: [ret("renamed.jpg", "88030", "556677")],

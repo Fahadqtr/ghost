@@ -8,11 +8,18 @@
 //   • matching is by certified SKU (derived from the IMAGE NAME column — the
 //     packaged filename IS the sanitized SELLABLE sku, `<sku>.<ext>`) with the
 //     BARCODE column as corroboration, and by unique barcode as the only
-//     fallback. The catalog evidence is SELLABLE-grain (RAFEEQ.FULLSYNC.2): a
-//     simple product matches at product level (variantId null) and a variant
-//     row matches its own variant sku/barcode — variant identities are never
-//     collapsed back onto the parent. Titles are NEVER read and NEVER matched —
-//     no fuzzy matching of any kind.
+//     fallback. Under the RAFEEQ TEMPLATE BARCODE RULE the exported BARCODE
+//     column carries the canonical PARENT product SKU, so corroboration accepts
+//     the parent SKU (case-insensitive); the legacy real-EAN value is still
+//     accepted for sheets returned from pre-rule packages. Anything else is a
+//     barcode_mismatch — never auto-resolved. The barcode fallback tries the
+//     parent SKU first (it can only uniquely name a SIMPLE product — option
+//     siblings share it and never disambiguate), then the legacy unique EAN.
+//     The catalog evidence is SELLABLE-grain (RAFEEQ.FULLSYNC.2): a simple
+//     product matches at product level (variantId null) and a variant row
+//     matches its own variant sku — variant identities are never collapsed
+//     back onto the parent. Titles are NEVER read and NEVER matched — no fuzzy
+//     matching of any kind.
 //   • nothing is auto-resolved: duplicate returned ids, ids already bound to a
 //     different product, and rows conflicting with an existing resolved mapping
 //     are surfaced for the owner and EXCLUDED from the apply plan.
@@ -97,6 +104,10 @@ export interface ReconcileCatalogProduct {
   /** null = the product's simple sellable row; set = one variant row. */
   variantId?: string | null;
   sku: string;
+  /** canonical PARENT product SKU — what the exported BARCODE column carries
+   *  under the owner template rule. Falls back to `sku` when absent (a simple
+   *  product's own sku IS the parent sku). */
+  parentSku?: string | null;
   barcode: string | null;
 }
 
@@ -206,9 +217,13 @@ export function buildReconcilePlan(input: ReconcileInput): ReconcilePlan {
   const keyOf = (productId: string, variantId: string | null | undefined): string =>
     variantId ? `${productId}::${variantId}` : productId;
 
-  // Catalog lookups: sanitized-SKU token (the packaged filename base) + barcode.
+  // Catalog lookups: sanitized-SKU token (the packaged filename base), the
+  // parent SKU (the exported BARCODE column under the owner template rule), and
+  // the legacy real EAN (pre-rule returned sheets).
   const bySkuToken = new Map<string, ReconcileCatalogProduct[]>();
-  const byBarcode = new Map<string, ReconcileCatalogProduct[]>();
+  const byParentSku = new Map<string, ReconcileCatalogProduct[]>();
+  const byLegacyBarcode = new Map<string, ReconcileCatalogProduct[]>();
+  const parentSkuOf = (p: ReconcileCatalogProduct): string => String(p.parentSku ?? p.sku ?? "").trim();
   for (const p of catalog) {
     const token = sanitizeSkuForFilename(p.sku).toLowerCase();
     if (token !== "") {
@@ -216,11 +231,17 @@ export function buildReconcilePlan(input: ReconcileInput): ReconcilePlan {
       list.push(p);
       bySkuToken.set(token, list);
     }
+    const parent = parentSkuOf(p).toLowerCase();
+    if (parent !== "") {
+      const list = byParentSku.get(parent) ?? [];
+      list.push(p);
+      byParentSku.set(parent, list);
+    }
     const bc = normalizeBarcode(p.barcode);
     if (bc !== null) {
-      const list = byBarcode.get(bc) ?? [];
+      const list = byLegacyBarcode.get(bc) ?? [];
       list.push(p);
-      byBarcode.set(bc, list);
+      byLegacyBarcode.set(bc, list);
     }
   }
 
@@ -277,10 +298,14 @@ export function buildReconcilePlan(input: ReconcileInput): ReconcilePlan {
         matchedBy = "sku";
       }
     }
-    // Only fallback: a barcode that uniquely identifies one catalog product.
+    // Only fallback: a BARCODE value that uniquely identifies one sellable row.
+    // Under the owner template rule the column carries the PARENT sku — it can
+    // only uniquely name a SIMPLE product (option siblings share it and never
+    // disambiguate). Legacy sheets carrying the real EAN still match uniquely.
     if (!matched) {
       const bc = normalizeBarcode(r.barcode);
-      const candidates = bc !== null ? byBarcode.get(bc) ?? [] : [];
+      let candidates = bc !== null ? byParentSku.get(bc.toLowerCase()) ?? [] : [];
+      if (candidates.length !== 1 && bc !== null) candidates = byLegacyBarcode.get(bc) ?? [];
       if (candidates.length === 1) {
         matched = candidates[0];
         matchedBy = "barcode";
@@ -294,10 +319,17 @@ export function buildReconcilePlan(input: ReconcileInput): ReconcilePlan {
     const matchedVariantId = matched.variantId ?? null;
     const matchedBase = { ...base, productId: matched.productId, variantId: matchedVariantId, matchedSku: matched.sku, matchedBy };
 
-    // Corroboration: when BOTH sides carry a barcode, they must agree.
+    // Corroboration: a returned BARCODE must agree with a canonical value —
+    // the PARENT sku (owner template rule, case-insensitive) or the legacy
+    // real EAN (pre-rule sheets). Anything else is a refused mismatch.
     const rowBarcode = normalizeBarcode(r.barcode);
-    const productBarcode = normalizeBarcode(matched.barcode);
-    if (matchedBy === "sku" && rowBarcode !== null && productBarcode !== null && rowBarcode !== productBarcode) {
+    const matchedParentSku = parentSkuOf(matched);
+    const legacyBarcode = normalizeBarcode(matched.barcode);
+    const corroborated =
+      rowBarcode === null ||
+      (matchedParentSku !== "" && rowBarcode.toLowerCase() === matchedParentSku.toLowerCase()) ||
+      (legacyBarcode !== null && rowBarcode === legacyBarcode);
+    if (matchedBy === "sku" && !corroborated) {
       return { ...matchedBase, status: "barcode_mismatch" as const };
     }
 

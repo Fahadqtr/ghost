@@ -62,7 +62,7 @@ test("AoA: category AR from RAFEEQ_CATEGORIES, price numeric, IMAGE NAME = packa
   assert.equal(typeof m[4], "number");                // PRICE numeric
   assert.equal(m[4], 65);
   assert.equal(m[7], "MK1.jpg");                       // IMAGE NAME = packaged file
-  assert.equal(m[8], "6291041500213");                // BARCODE (text)
+  assert.equal(m[8], "MK1");                           // BARCODE (text) = parent SKU, never the EAN
   assert.equal(m[9], "RFQ-55");                        // RAFEEQ ID from ECL
 
   const unmapped = rows({ products: [product()] })[0];

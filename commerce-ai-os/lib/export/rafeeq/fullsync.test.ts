@@ -74,12 +74,12 @@ function previewOf(products: RafeeqPreviewProduct[], mappingBySku: Record<string
 }
 
 // A standard mixed dataset:
-//   p1 READY unmapped · p2 WARNING (missing barcode) mapped id=777 ·
+//   p1 READY unmapped · p2 WARNING (missing category) mapped id=777 ·
 //   p3 BLOCKED (missing image) · p4 BLOCKED only by IDENTITY_NEEDS_REVIEW
 function mixedPreview() {
   const products = [
     product("p1", "mk1001"),
-    product("p2", "mk1002", { barcode: null }),
+    product("p2", "mk1002", { category: null }),
     product("p3", "mk1003", { imageUrl: null, imageFilename: null, imageCount: 0 }),
     product("p4", "mk1004"),
   ];
@@ -127,12 +127,13 @@ test("3: FULL preserves an existing resolved Rafeeq id (never overwritten with t
 
 // ── 4) genuine blockers stay excluded from FULL ───────────────────────────────
 test("4: true blockers (missing image / missing SKU / duplicate barcode / stopped) are excluded from FULL", () => {
-  const dupBarcode = "222333";
   const pv = previewOf([
     product("b1", "mk2001", { imageUrl: null, imageFilename: null, imageCount: 0 }), // MISSING_IMAGE
     product("b2", "", {}),                                                           // MISSING_SKU
-    product("b3", "mk2003", { barcode: dupBarcode }),                                // DUPLICATE_BARCODE
-    product("b4", "mk2004", { barcode: dupBarcode }),                                // DUPLICATE_BARCODE
+    // the parent-SKU barcode "mk2003" claimed by TWO different products ⇒
+    // corrupted grouping key ⇒ DUPLICATE_BARCODE on both rows
+    variantProduct("b3", "mk2003", [{ id: "b3v", sku: "mk2003-1" }]),                // DUPLICATE_BARCODE
+    product("b4", "mk2003"),                                                          // DUPLICATE_BARCODE
     product("b5", "mk2005", { lifecycleState: "STOPPED" }),                          // LIFECYCLE
     product("ok", "mk2006"),
   ]);
@@ -186,7 +187,7 @@ test("8: adding one new exportable product makes pending = exactly that product"
   // the catalog grows by one product after the baseline
   const pv2 = previewOf([
     product("p1", "mk1001"),
-    product("p2", "mk1002", { barcode: null }),
+    product("p2", "mk1002", { category: null }),
     product("p4", "mk1004"),
     product("p5", "mk1005"),
   ]);
