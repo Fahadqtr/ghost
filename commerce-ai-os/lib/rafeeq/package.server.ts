@@ -30,12 +30,25 @@ import {
   buildManifest,
   primaryFilenameFor,
   detectFilenameCollisions,
+  RAFEEQ_NEW_MARKER,
   PACKAGE_LIMITS,
   type RafeeqGenerationMode,
   type RafeeqPackageRow,
   type PackagedFile,
 } from "@/lib/export/rafeeq/package";
 import { sniffImageExtension, mimeToExt } from "@/lib/export/package-core";
+import {
+  resolveFullSyncSet,
+  applyFullSyncRafeeqId,
+  rowFingerprint,
+  packageFingerprint,
+  fullSyncZipName,
+  fullSyncXlsxName,
+  fullSyncImageEntryName,
+  buildFullSyncManifest,
+  FULLSYNC_MANIFEST_NAME,
+  type RafeeqFullSyncMode,
+} from "@/lib/export/rafeeq/fullsync";
 
 const IMAGE_FETCH_CONCURRENCY = 6;
 const FOLDER = "Rafeeq-Malikas";
@@ -106,6 +119,30 @@ async function mapPool<T, R>(items: readonly T[], limit: number, fn: (item: T, i
   return out;
 }
 
+/** Shared image-resolution core: fetch + validate every row's images through
+ *  the certified SSRF-safe boundary; a row without a valid primary drops out. */
+async function resolveRowImages(rows: readonly RafeeqPreviewRow[]): Promise<ResolvedRow[]> {
+  const resolvedRows = await mapPool(rows, IMAGE_FETCH_CONCURRENCY, async (row): Promise<ResolvedRow | null> => {
+    const plan = planRowImages(row);
+    if (!plan.primary) return null;
+    const primaryFetch = await fetchValidatedImage(plan.primary.sourceUrl);
+    if (!primaryFetch) return null;
+    const primaryFilename = primaryFilenameFor(row.sku, primaryFetch.ext);
+    const primary: ResolvedImage = { bytes: primaryFetch.bytes, filename: primaryFilename, kind: "primary" };
+    const gallery: ResolvedImage[] = [];
+    let position = 2;
+    for (const g of plan.gallery) {
+      const got = await fetchValidatedImage(g.sourceUrl);
+      if (!got) continue;
+      const name = primaryFilenameFor(row.sku, got.ext).replace(/(\.[^.]+)$/, `_${position}$1`);
+      gallery.push({ bytes: got.bytes, filename: name, kind: "gallery", ownerPrimary: primaryFilename });
+      position++;
+    }
+    return { row, primary, gallery };
+  });
+  return resolvedRows.filter((r): r is ResolvedRow => r !== null);
+}
+
 /**
  * Generate the Rafeeq package. Caller MUST have enforced the writer boundary.
  * Read-only against the catalog; the only write is a best-effort audit row.
@@ -123,26 +160,7 @@ export async function generateRafeeqPackage(opts: GeneratePackageOptions): Promi
   if (capped.length === 0) return { ok: false, error: "no_exportable_rows" };
 
   try {
-    const resolvedRows = await mapPool(capped, IMAGE_FETCH_CONCURRENCY, async (row): Promise<ResolvedRow | null> => {
-      const plan = planRowImages(row);
-      if (!plan.primary) return null;
-      const primaryFetch = await fetchValidatedImage(plan.primary.sourceUrl);
-      if (!primaryFetch) return null;
-      const primaryFilename = primaryFilenameFor(row.sku, primaryFetch.ext);
-      const primary: ResolvedImage = { bytes: primaryFetch.bytes, filename: primaryFilename, kind: "primary" };
-      const gallery: ResolvedImage[] = [];
-      let position = 2;
-      for (const g of plan.gallery) {
-        const got = await fetchValidatedImage(g.sourceUrl);
-        if (!got) continue;
-        const name = primaryFilenameFor(row.sku, got.ext).replace(/(\.[^.]+)$/, `_${position}$1`);
-        gallery.push({ bytes: got.bytes, filename: name, kind: "gallery", ownerPrimary: primaryFilename });
-        position++;
-      }
-      return { row, primary, gallery };
-    });
-
-    const survivors = resolvedRows.filter((r): r is ResolvedRow => r !== null);
+    const survivors = await resolveRowImages(capped);
     const excludedNoImageCount = capped.length - survivors.length;
     if (survivors.length === 0) return { ok: false, error: "no_exportable_rows" };
 
@@ -251,6 +269,213 @@ async function recordAudit(summary: RafeeqPackageSummary, status: "done" | "erro
         output_filename: summary.outputFilename,
         excluded_blocked_count: summary.excludedBlockedCount,
         excluded_no_image_count: summary.excludedNoImageCount,
+      },
+      status,
+    });
+  } catch {
+    /* best-effort audit — never block the package */
+  }
+}
+
+// ── RAFEEQ.FULLSYNC.1 — canonical FULL / NEW file-sync packages ────────────────
+//
+// Same certified pipeline (preview → image boundary → collision → integrity →
+// xlsx → zip), different SELECTION + LAYOUT:
+//   • FULL: every FULL-includable row (a row blocked ONLY by the identity
+//     review ships with the "new product" marker — contested ids never used);
+//   • NEW:  the pending rows (includable AND not in any SENT package) — every
+//     row forced to the "new product" marker;
+//   • layout: /<rafeeq_catalog|rafeeq_new_products>.xlsx + /images/ +
+//     /manifest.json at the ZIP ROOT (rafeeq-full-YYYY-MM-DD.zip naming).
+// Recording the durable package row is the ROUTE's job (lib/rafeeq/
+// fullsync.server) — this generator stays write-free (audit floor only).
+
+export interface FullSyncGenerateOptions {
+  mode: RafeeqFullSyncMode;
+  /** Product ids contained in any SENT package (the durable baseline). */
+  sentProductIds: ReadonlySet<string>;
+  actor: string | null;
+  now?: Date;
+}
+
+export interface FullSyncItemOut {
+  productId: string;
+  sku: string;
+  fingerprint: string;
+  rafeeqIdSent: string;
+}
+
+export interface FullSyncPackageSummary {
+  mode: RafeeqFullSyncMode;
+  generatedAt: string;
+  actor: string | null;
+  outputFilename: string;
+  xlsxFilename: string;
+  productRowCount: number;
+  mappedIdCount: number;
+  newMarkerCount: number;
+  needsReviewIncluded: number;
+  trueBlockersExcluded: number;
+  alreadySentExcluded: number;
+  excludedNoImageCount: number;
+  cappedExcludedCount: number;
+  imageCount: number;
+  manifestFingerprint: string;
+  integrityOk: boolean;
+}
+
+export type GenerateFullSyncResult =
+  | { ok: true; filename: string; bytes: Uint8Array; summary: FullSyncPackageSummary; items: FullSyncItemOut[] }
+  | { ok: false; error: GeneratePackageError };
+
+/**
+ * Generate the FULL-catalog or NEW-products Rafeeq package. Caller MUST have
+ * enforced the writer boundary and supplied the durable sent baseline. Reads
+ * the certified preview only; the sole write is the best-effort audit row.
+ */
+export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOptions): Promise<GenerateFullSyncResult> {
+  const now = opts.now ?? new Date();
+  const startedAt = now.toISOString();
+
+  const preview = await loadRafeeqPreview();
+  if (!preview) return { ok: false, error: "preview_unavailable" };
+
+  const set = resolveFullSyncSet(preview.rows, opts.mode, opts.sentProductIds);
+  const capped = set.included.slice(0, PACKAGE_LIMITS.maxRows);
+  const cappedExcludedCount = set.included.length - capped.length;
+  if (capped.length === 0) return { ok: false, error: "no_exportable_rows" };
+
+  try {
+    const survivors = await resolveRowImages(capped);
+    const excludedNoImageCount = capped.length - survivors.length;
+    if (survivors.length === 0) return { ok: false, error: "no_exportable_rows" };
+
+    // §15 — a post-sanitization primary filename collision aborts generation.
+    const collisions = detectFilenameCollisions(survivors.map((sv) => sv.primary.filename));
+    if (collisions.length > 0) return { ok: false, error: "filename_collision" };
+
+    // Mode projection of the RAFEEQ ID column (FULL preserves resolved ids;
+    // NEW forces the marker; contested ids are already null in the preview).
+    const packageRows: RafeeqPackageRow[] = survivors.map((sv) =>
+      applyFullSyncRafeeqId(toPackageRow(sv.row, sv.primary.filename), sv.row, opts.mode),
+    );
+    const rowImageRefs = packageRows.map((r) => r.imageName);
+
+    const packaged: PackagedFile[] = [];
+    for (const sv of survivors) {
+      packaged.push({ name: sv.primary.filename, kind: "primary" });
+      for (const g of sv.gallery) packaged.push({ name: g.filename, kind: "gallery", ownerPrimary: g.ownerPrimary });
+    }
+
+    const integrity = checkReferentialIntegrity(rowImageRefs, packaged);
+    if (!integrity.ok) return { ok: false, error: "integrity_failed" };
+
+    const xlsxBytes = buildRafeeqXlsxBuffer(packageRows);
+
+    const items: FullSyncItemOut[] = survivors.map((sv, i) => ({
+      productId: sv.row.internalProductId,
+      sku: sv.row.sku,
+      fingerprint: rowFingerprint(sv.row),
+      rafeeqIdSent: packageRows[i].rafeeqId,
+    }));
+    const manifestFingerprint = packageFingerprint(opts.mode, items.map((it) => it.fingerprint));
+
+    const newMarkerCount = packageRows.filter((r) => r.rafeeqId === RAFEEQ_NEW_MARKER).length;
+    const mappedIdCount = packageRows.length - newMarkerCount;
+    const needsReviewIncluded = survivors.filter((sv) => sv.row.needsOwnerReview).length;
+    const imageCount = packaged.length;
+    const outputFilename = fullSyncZipName(opts.mode, now);
+    const xlsxFilename = fullSyncXlsxName(opts.mode);
+
+    const manifest = buildFullSyncManifest({
+      storefrontKey: "rafeeq:malikas",
+      mode: opts.mode,
+      generatedAt: startedAt,
+      actor: opts.actor,
+      productRowCount: packageRows.length,
+      imageCount,
+      mappedIdCount,
+      newMarkerCount,
+      needsReviewIncluded,
+      trueBlockersExcluded: set.counts.trueBlockers,
+      outputFilename,
+      xlsxFilename,
+      packageFingerprint: manifestFingerprint,
+    });
+
+    // ZIP layout at the ROOT: /<xlsx> + /images/<file> + /manifest.json.
+    const entries: ZipEntry[] = [{ name: xlsxFilename, data: xlsxBytes }];
+    for (const sv of survivors) {
+      entries.push({ name: fullSyncImageEntryName(sv.primary.filename), data: sv.primary.bytes });
+      for (const g of sv.gallery) entries.push({ name: fullSyncImageEntryName(g.filename), data: g.bytes });
+    }
+    entries.push({ name: FULLSYNC_MANIFEST_NAME, data: new TextEncoder().encode(JSON.stringify(manifest, null, 2)) });
+
+    const bytes = buildZip(entries);
+
+    const summary: FullSyncPackageSummary = {
+      mode: opts.mode,
+      generatedAt: startedAt,
+      actor: opts.actor,
+      outputFilename,
+      xlsxFilename,
+      productRowCount: packageRows.length,
+      mappedIdCount,
+      newMarkerCount,
+      needsReviewIncluded,
+      trueBlockersExcluded: set.counts.trueBlockers,
+      alreadySentExcluded: set.excludedAlreadySent.length,
+      excludedNoImageCount,
+      cappedExcludedCount,
+      imageCount,
+      manifestFingerprint,
+      integrityOk: true,
+    };
+
+    await recordFullSyncAudit(summary, "done", new Date());
+    return { ok: true, filename: outputFilename, bytes, summary, items };
+  } catch {
+    await recordFullSyncAudit(
+      {
+        mode: opts.mode, generatedAt: startedAt, actor: opts.actor, outputFilename: "", xlsxFilename: fullSyncXlsxName(opts.mode),
+        productRowCount: 0, mappedIdCount: 0, newMarkerCount: 0, needsReviewIncluded: 0,
+        trueBlockersExcluded: set.counts.trueBlockers, alreadySentExcluded: set.excludedAlreadySent.length,
+        excludedNoImageCount: 0, cappedExcludedCount, imageCount: 0, manifestFingerprint: "", integrityOk: false,
+      },
+      "error",
+      new Date(),
+    ).catch(() => {});
+    return { ok: false, error: "generation_failed" };
+  }
+}
+
+/** Audit floor for a FULL/NEW generation via the shared helper (never a direct write). */
+async function recordFullSyncAudit(summary: FullSyncPackageSummary, status: "done" | "error", finishedAt: Date): Promise<void> {
+  try {
+    const admin = createAdminClient() as never;
+    await insertAuditRow(admin, {
+      action_type: "rafeeq_fullsync_package_export",
+      agent: summary.actor ?? "unknown",
+      product_id: null,
+      field: "export_package",
+      old_value: null,
+      new_value: summary.outputFilename || null,
+      details: {
+        destination: "rafeeq:malikas",
+        actor: summary.actor,
+        mode: summary.mode,
+        started_at: summary.generatedAt,
+        finished_at: finishedAt.toISOString(),
+        status,
+        product_row_count: summary.productRowCount,
+        mapped_id_count: summary.mappedIdCount,
+        new_marker_count: summary.newMarkerCount,
+        needs_review_included: summary.needsReviewIncluded,
+        true_blockers_excluded: summary.trueBlockersExcluded,
+        already_sent_excluded: summary.alreadySentExcluded,
+        image_count: summary.imageCount,
+        manifest_fingerprint: summary.manifestFingerprint,
+        output_filename: summary.outputFilename,
       },
       status,
     });
