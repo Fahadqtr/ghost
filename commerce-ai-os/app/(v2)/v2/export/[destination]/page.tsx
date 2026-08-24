@@ -19,6 +19,10 @@ import type { SnoonuStorefrontKey } from "@/lib/export/snoonu/preview";
 import SnoonuExport, { type SnoonuRowVM } from "@/components/v2/export/SnoonuExport";
 import { loadRafeeqPreview } from "@/lib/export/rafeeq/preview.server";
 import RafeeqExport, { type RafeeqRowVM } from "@/components/v2/export/RafeeqExport";
+import RafeeqFullSync, { type RafeeqFullSyncVM } from "@/components/v2/export/RafeeqFullSync";
+import { loadRafeeqDeliveryState } from "@/lib/rafeeq/fullsync.server";
+import { isFullIncludable, isNeedsReviewIncluded, pendingNewRows, hasSentBaseline } from "@/lib/export/rafeeq/fullsync";
+import { isOwner } from "@/lib/malak/authz";
 import { loadShopifyPreviewContext } from "@/lib/export/shopify/preview.server";
 import { buildPublishRows } from "@/lib/export/shopify/publish.server";
 import { loadRecentExportRuns } from "@/lib/export/shopify/run-store.server";
@@ -265,8 +269,51 @@ async function SnoonuDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
 // It generates no file and mutates nothing; the API route (writer-gated) produces
 // the package on demand. Rafeeq publish stays unavailable.
 async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof exportDestinationByKey>> }) {
-  const [result, writer] = await Promise.all([loadRafeeqPreview(), requireMalakWriter()]);
+  const [result, writer, owner, delivery] = await Promise.all([
+    loadRafeeqPreview(),
+    requireMalakWriter(),
+    isOwner(),
+    loadRafeeqDeliveryState(),
+  ]);
   const canWrite = writer.ok;
+
+  // RAFEEQ.FULLSYNC.1 — derive (never store) the file-sync overview: FULL
+  // eligibility, the pending-NEW queue (exportable AND not in any SENT
+  // package), and the durable package history.
+  const MAX_PENDING_LIST = 100;
+  let fullSyncVm: RafeeqFullSyncVM | null = null;
+  if (result !== null) {
+    const includable = result.rows.filter(isFullIncludable);
+    const pending = pendingNewRows(result.rows, delivery.sentProductIds);
+    fullSyncVm = {
+      canWrite,
+      isOwner: owner,
+      deliveryAvailable: delivery.availability === "AVAILABLE",
+      hasBaseline: hasSentBaseline(delivery.packages),
+      full: {
+        includable: includable.length,
+        trueBlockers: result.rows.filter((r) => r.status === "BLOCKED" && !isFullIncludable(r)).length,
+        needsReviewIncluded: result.rows.filter(isNeedsReviewIncluded).length,
+      },
+      pending: {
+        count: pending.length,
+        rows: pending.slice(0, MAX_PENDING_LIST).map((r) => ({ id: r.internalProductId, sku: r.sku, title: r.title })),
+        truncated: pending.length > MAX_PENDING_LIST,
+      },
+      packages: delivery.packages.slice(0, 20).map((p) => ({
+        id: p.id,
+        mode: p.mode,
+        outputFilename: p.outputFilename,
+        productCount: p.productCount,
+        imageCount: p.imageCount,
+        generatedAt: p.generatedAt,
+        generatedBy: p.generatedBy,
+        sentAt: p.sentAt,
+        sentBy: p.sentBy,
+      })),
+      recon: { activeMappings: result.counts.mappedCount, needsReview: result.counts.needsReviewCount },
+    };
+  }
 
   return (
     <div className="space-y-4">
@@ -276,6 +323,8 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
         <h1 className="font-serif text-2xl font-semibold text-ink">{dest.label}</h1>
         <p className="text-sm text-muted" dir="ltr">{dest.key}</p>
       </div>
+
+      {fullSyncVm !== null && <RafeeqFullSync vm={fullSyncVm} />}
 
       {result === null ? (
         <div className="card text-center text-sm text-muted">
