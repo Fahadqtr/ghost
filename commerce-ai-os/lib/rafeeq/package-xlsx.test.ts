@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { buildRafeeqXlsxBuffer } from "./package-xlsx.ts";
 import { RAFEEQ_NATIVE_HEADERS, RAFEEQ_NATIVE_SHEET, NATIVE_COL } from "../export/rafeeq/native-template.ts";
+import { MALIKAS_REFERENCE_SHEET, MALIKAS_REFERENCE_HEADERS, REFERENCE_COL } from "../export/rafeeq/reference.ts";
 import type { RafeeqPackageRow } from "../export/rafeeq/package.ts";
 
 const require = createRequire(import.meta.url);
@@ -30,6 +31,23 @@ test("worksheet is named 'data' and the header equals the audited 40-column temp
   const { ws, sheetName } = readBack([pkgRow()]);
   assert.equal(sheetName, RAFEEQ_NATIVE_SHEET);
   assert.deepEqual(XLSX.utils.sheet_to_json(ws, { header: 1 })[0], [...RAFEEQ_NATIVE_HEADERS]);
+});
+
+test("two-sheet workbook: 'data' stays the FIRST (import) sheet; 'Malikas Reference' follows with TEXT barcode", () => {
+  const referenceAoa = [
+    [...MALIKAS_REFERENCE_HEADERS],
+    ["mk175", "6291041500213", "Serum", "سيروم", "Makeup", "Makeup", "mk175.jpg", "100", "NO", "", "", "", "", "", "", "NEW PRODUCT"],
+  ];
+  const wb = XLSX.read(buildRafeeqXlsxBuffer([pkgRow()], referenceAoa), { type: "buffer" });
+  assert.deepEqual(wb.SheetNames, [RAFEEQ_NATIVE_SHEET, MALIKAS_REFERENCE_SHEET], "data first — the machine-import contract");
+  const ref = wb.Sheets[MALIKAS_REFERENCE_SHEET];
+  assert.deepEqual(XLSX.utils.sheet_to_json(ref, { header: 1 })[0], [...MALIKAS_REFERENCE_HEADERS]);
+  const ean = ref[XLSX.utils.encode_cell({ r: 1, c: REFERENCE_COL.realBarcode })];
+  assert.equal(ean.t, "s");
+  assert.equal(ean.v, "6291041500213", "REAL BARCODE preserved as TEXT (no scientific notation)");
+  // the data sheet is unchanged by the reference sheet's presence
+  const data = wb.Sheets[RAFEEQ_NATIVE_SHEET];
+  assert.equal(data[XLSX.utils.encode_cell({ r: 1, c: NATIVE_COL.barcode })].v, "MK1", "data.barcode = parent SKU contract untouched");
 });
 
 test("product_id / barcode / product_price are TEXT — leading zeros + no scientific notation; price text per audit", () => {

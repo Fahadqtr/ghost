@@ -335,13 +335,16 @@ export async function markRafeeqPackageSent(packageId: string, ownerEmail: strin
 
 // ── returned-file reconciliation ──────────────────────────────────────────────
 
-/** SheetJS parse of the returned workbook's FIRST sheet into an AoA. */
+/** SheetJS parse of the returned workbook into an AoA — the "data" sheet when
+ *  present (our packages ship two sheets; the reference sheet is never the
+ *  import contract), else the first sheet. */
 function returnedWorkbookToAoa(bytes: Uint8Array): unknown[][] | null {
   try {
     const require = createRequire(import.meta.url);
     const XLSX = require("xlsx");
     const wb = XLSX.read(bytes, { type: "buffer" });
-    const first = wb.SheetNames?.[0];
+    const names: string[] = Array.isArray(wb.SheetNames) ? wb.SheetNames : [];
+    const first = names.find((n) => n === "data") ?? names[0];
     if (!first) return null;
     const ws = wb.Sheets[first];
     const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
