@@ -29,7 +29,7 @@ import { insertAuditRow } from "@/lib/audit";
 import { storefrontByKey } from "@/lib/channels/storefronts";
 import { RAFEEQ_STOREFRONT_KEY } from "@/lib/export/rafeeq/preview";
 import {
-  sentSellableKeySet,
+  sentProductBaseline,
   type RafeeqFullSyncMode,
   type RafeeqPackageRecord,
   type RafeeqPackageItemRecord,
@@ -60,8 +60,9 @@ export interface RafeeqDeliveryState {
   variantGrain: boolean;
   packages: RafeeqPackageRecord[];
   items: RafeeqPackageItemRecord[];
-  /** sellable keys (product / product::variant) contained in SENT packages. */
-  sentSellableKeys: Set<string>;
+  /** SENT baseline at PRODUCT grain: product id → last-sent delivery
+   *  fingerprint (null = sent at an unknown fingerprint — legacy records). */
+  sentBaseline: Map<string, string | null>;
 }
 
 const EMPTY_DELIVERY: RafeeqDeliveryState = {
@@ -69,7 +70,7 @@ const EMPTY_DELIVERY: RafeeqDeliveryState = {
   variantGrain: false,
   packages: [],
   items: [],
-  sentSellableKeys: new Set(),
+  sentBaseline: new Map(),
 };
 
 function toPackageRecord(r: Record<string, unknown>): RafeeqPackageRecord {
@@ -114,11 +115,15 @@ export async function loadRafeeqDeliveryState(): Promise<RafeeqDeliveryState> {
     if (pkgRes.error || !Array.isArray(pkgRes.data)) return EMPTY_DELIVERY;
     const packages = (pkgRes.data as Record<string, unknown>[]).map(toPackageRecord);
 
-    // Items are needed only for SENT packages (the pending-NEW baseline).
+    // Items are needed only for SENT packages (the pending baseline). The
+    // recorded delivery fingerprint drives OPTION_UPDATE detection; legacy
+    // variant-grain records surface as unknown-fingerprint (safe re-baseline).
     const sentIds = packages.filter((p) => p.sentAt !== null).map((p) => p.id);
     const items: RafeeqPackageItemRecord[] = [];
     if (sentIds.length > 0) {
-      const itemColumns = variantGrain ? "package_id, product_id, variant_id, sku" : "package_id, product_id, sku";
+      const itemColumns = variantGrain
+        ? "package_id, product_id, variant_id, sku, row_fingerprint"
+        : "package_id, product_id, sku, row_fingerprint";
       for (let from = 0; from < MAX_ROWS; from += PAGE) {
         const { data, error } = await client
           .from("rafeeq_package_items")
@@ -133,13 +138,14 @@ export async function loadRafeeqDeliveryState(): Promise<RafeeqDeliveryState> {
             productId: String(r.product_id ?? ""),
             variantId: variantGrain ? s(r.variant_id) : null,
             sku: s(r.sku) ?? "",
+            fingerprint: s(r.row_fingerprint),
           });
         }
         if (data.length < PAGE) break;
       }
     }
 
-    return { availability: "AVAILABLE", variantGrain, packages, items, sentSellableKeys: sentSellableKeySet(packages, items) };
+    return { availability: "AVAILABLE", variantGrain, packages, items, sentBaseline: sentProductBaseline(packages, items) };
   } catch {
     return EMPTY_DELIVERY;
   }
@@ -170,11 +176,13 @@ export interface RecordPackageResult {
 }
 
 /**
- * Persist the generated package + its SELLABLE item snapshot (sent_at stays
- * NULL — "Generated, not sent"). Recording a FULL package also marks prior
- * UNSENT FULL packages as superseded (history is never deleted; SENT packages
- * are never touched). Best-effort: an unmigrated database degrades to the
- * malak_audit floor; the download itself is never blocked by recording.
+ * Persist the generated package + its PRODUCT-grain item snapshot (sent_at
+ * stays NULL — "Generated, not sent"). Each item carries the product delivery
+ * fingerprint (full option set included) that drives OPTION_UPDATE detection.
+ * Recording a FULL package also marks prior UNSENT FULL packages as superseded
+ * (history is never deleted; SENT packages are never touched). Best-effort: an
+ * unmigrated database degrades to the malak_audit floor; the download itself
+ * is never blocked by recording.
  */
 export async function recordRafeeqPackage(input: RecordPackageInput): Promise<RecordPackageResult> {
   let persisted = false;
@@ -373,51 +381,35 @@ interface ReconcileEvidence {
 
 async function loadReconcileEvidence(): Promise<ReconcileEvidence | null> {
   const client = createClient();
-  const [productRows, variantRows, eclRows] = await Promise.all([
+  const [productRows, eclRows] = await Promise.all([
     readAllRows(client, "products", "id, sku, barcode", "id"),
-    readAllRows(client, "product_variants", "id, parent_product_id, sku, barcode", "parent_product_id"),
-    readAllRows(client, "external_channel_listings", "product_id, variant_id, variant_sku, exported_sku, external_product_id, mapping_status", "id",
+    readAllRows(client, "external_channel_listings", "product_id, variant_id, exported_sku, external_product_id, mapping_status", "id",
       (q) => q.eq("storefront_key", RAFEEQ_STOREFRONT_KEY)),
   ]);
-  if (!productRows || !variantRows || !eclRows) return null;
+  if (!productRows || !eclRows) return null;
 
-  // SELLABLE catalog evidence (mirrors the export flattening): a product with
-  // variants contributes ONE entry per variant (its own sku) and NO parent
-  // entry; a simple product contributes its product-level entry. Every entry
-  // carries the canonical PARENT product sku — the value the exported BARCODE
-  // column holds under the owner template rule (corroboration evidence).
-  const parentSkuById = new Map<string, string>();
+  // PARENT-PRODUCT catalog evidence (native-option model): ONE entry per
+  // canonical product — its parent sku IS the exported BARCODE value; the real
+  // EAN rides along only as legacy corroboration. Variants are options of the
+  // parent and never separate reconciliation identities.
+  const catalog: ReconcileCatalogProduct[] = [];
   for (const p of productRows) {
     const id = s(p.id);
     const sku = s(p.sku);
-    if (id && sku) parentSkuById.set(id, sku);
-  }
-  const productsWithVariants = new Set<string>();
-  const variantEntries: ReconcileCatalogProduct[] = [];
-  for (const v of variantRows) {
-    const pid = s(v.parent_product_id);
-    const vid = s(v.id);
-    const sku = s(v.sku);
-    if (!pid || !vid || !sku) continue;
-    productsWithVariants.add(pid);
-    variantEntries.push({ productId: pid, variantId: vid, sku, parentSku: parentSkuById.get(pid) ?? null, barcode: s(v.barcode) });
-  }
-  const catalog: ReconcileCatalogProduct[] = [...variantEntries];
-  for (const p of productRows) {
-    const id = s(p.id);
-    const sku = s(p.sku);
-    if (!id || !sku || productsWithVariants.has(id)) continue;
-    catalog.push({ productId: id, variantId: null, sku, parentSku: sku, barcode: s(p.barcode) });
+    if (!id || !sku) continue;
+    catalog.push({ productId: id, sku, barcode: s(p.barcode) });
   }
 
+  // PRODUCT-grain mapping evidence only — retired variant-grain ECL rows (a
+  // non-null variant_id) are ignored here, never collapsed onto the parent.
   const mappings: ReconcileMappingEvidence[] = [];
   for (const e of eclRows) {
     const status = s(e.mapping_status);
     if (status === "archived") continue;
+    if (s(e.variant_id) !== null) continue;
     mappings.push({
       productId: s(e.product_id),
-      variantId: s(e.variant_id),
-      sku: s(e.exported_sku) ?? s(e.variant_sku) ?? "",
+      sku: s(e.exported_sku) ?? "",
       externalId: s(e.external_product_id),
       status: status === "needs_review" ? "needs_review" : "resolved",
     });
@@ -444,7 +436,7 @@ export async function previewRafeeqReturnedIds(bytes: Uint8Array): Promise<Retur
   if (!parsed.ok) return { ok: false, error: parsed.error === "missing_columns" ? "missing_columns" : "empty_file" };
   const evidence = await loadReconcileEvidence();
   if (!evidence) return { ok: false, error: "evidence_unavailable" };
-  return { ok: true, plan: buildReconcilePlan({ returned: parsed.rows, catalog: evidence.catalog, mappings: evidence.mappings }) };
+  return { ok: true, plan: buildReconcilePlan({ returned: parsed.products, catalog: evidence.catalog, mappings: evidence.mappings }) };
 }
 
 export type ApplyReturnedIdsResult =
@@ -454,13 +446,13 @@ export type ApplyReturnedIdsResult =
 /**
  * OWNER-APPROVED apply of a returned Rafeeq file. The plan is re-derived FRESH
  * from the uploaded bytes + current production evidence server-side (a client
- * can never send a hand-crafted plan). Only clean matches are applied, at the
- * SELLABLE grain (variant identities are written with variant_id + variant_sku
- * on the certified ECL contract — never collapsed onto the parent):
- *   • insert  → new active rafeeq:malikas ECL identity row
+ * can never send a hand-crafted plan). Only clean matches are applied, at
+ * PARENT-PRODUCT grain (variants are native options of the product — no
+ * per-variant external_product_id is ever written; returned group_id/option_id
+ * values are not stored):
+ *   • insert  → new active rafeeq:malikas ECL identity row (variant_id NULL)
  *   • update / resolve_needs_review → external_product_id + mapping_status
- *     "active" on the EXISTING storefront-scoped row (variant-scoped when the
- *     match is a variant row)
+ *     "active" on the EXISTING product-level storefront-scoped row
  * Conflict/duplicate/unknown rows are never touched. Caller MUST have enforced
  * the OWNER boundary; the verified owner email is recorded in the audit trail.
  */
@@ -485,8 +477,8 @@ export async function applyRafeeqReturnedIds(bytes: Uint8Array, ownerEmail: stri
       if (a.action === "insert") {
         const { error } = await admin.from("external_channel_listings").insert({
           product_id: a.productId,
-          variant_id: a.variantId,
-          variant_sku: a.variantId ? a.sku : null,
+          variant_id: null, // parent-product grain — options are never identities
+          variant_sku: null,
           channel_key: "rafeeq",
           storefront_key: RAFEEQ_STOREFRONT_KEY,
           external_product_id: a.externalId,
@@ -500,15 +492,14 @@ export async function applyRafeeqReturnedIds(bytes: Uint8Array, ownerEmail: stri
         if (error) failed++;
         else inserted++;
       } else {
-        let q = admin
+        // Product-level scope only: never touches a retired variant-grain row.
+        const { data, error } = await admin
           .from("external_channel_listings")
           .update({ external_product_id: a.externalId, mapping_status: "active", updated_at: nowIso })
           .eq("storefront_key", RAFEEQ_STOREFRONT_KEY)
-          .eq("product_id", a.productId);
-        // Sellable scope: a variant identity updates ONLY its variant row; a
-        // simple product updates ONLY the product-level (variant_id NULL) row.
-        q = a.variantId ? q.eq("variant_id", a.variantId) : q.is("variant_id", null);
-        const { data, error } = await q.select("id");
+          .eq("product_id", a.productId)
+          .is("variant_id", null)
+          .select("id");
         if (error || !Array.isArray(data) || data.length === 0) failed++;
         else if (a.action === "resolve_needs_review") needsReviewResolved++;
         else updated++;

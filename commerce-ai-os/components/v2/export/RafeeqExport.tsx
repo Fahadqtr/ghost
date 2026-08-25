@@ -18,13 +18,14 @@ import SelectionToolbar from "@/components/v2/ui/SelectionToolbar";
 import EmptyState from "@/components/v2/ui/EmptyState";
 
 export interface RafeeqRowVM {
-  /** stable sellable row key (product id, or product::variant for a variant row). */
+  /** stable product row key (product-grain — one row per canonical product). */
   id: string;
-  isVariant: boolean;
   sku: string;
   barcode: string | null;
   title: string;
   price: number | null;
+  /** native options of this ONE product (0 = simple). */
+  optionCount: number;
   rafeeqId: string | null;
   needsOwnerReview: boolean;
   hasImage: boolean;
@@ -38,14 +39,16 @@ export interface RafeeqExportVM {
   canWrite: boolean;
   rows: RafeeqRowVM[];
   counts: {
+    /** canonical Rafeeq PRODUCT identities — the business count. */
     productCount: number;
-    sellableRowCount: number;
-    simpleRowCount: number;
-    variantRowCount: number;
-    productsWithVariants: number;
+    productsWithOptions: number;
+    optionCount: number;
+    /** physical spreadsheet rows (a parent repeats once per option). */
+    physicalRowCount: number;
     mappedCount: number;
     unmappedCount: number;
     needsReviewCount: number;
+    optionPriceUnresolvedCount: number;
   };
 }
 
@@ -58,7 +61,8 @@ const REASON_LABEL: Record<string, string> = {
   MISSING_TITLE: "عنوان مفقود", MISSING_PRICE: "سعر مفقود", MISSING_CATEGORY: "فئة مفقودة",
   LIFECYCLE_NOT_ELIGIBLE: "غير مؤهّل (دورة الحياة)", IDENTITY_MISSING: "هوية مفقودة",
   IDENTITY_CONFLICT: "تعارض هوية", IDENTITY_NEEDS_REVIEW: "بحاجة لمراجعة المالك",
-  VARIANT_NOT_READY: "متغيّر غير جاهز", UNSUPPORTED: "غير مدعوم",
+  VARIANT_NOT_READY: "خيار غير جاهز", OPTION_PRICE_UNRESOLVED: "أسعار خيارات غير محسومة",
+  UNSUPPORTED: "غير مدعوم",
 };
 const STATUS_LABEL: Record<ExportItemStatus, string> = { READY: "جاهز", WARNING: "تحذير", BLOCKED: "محظور", UNKNOWN: "غير معروف" };
 const MODE_LABEL: Record<Mode, string> = { all: "الكل", new: "جديد (غير مربوط)", selected: "المحدد" };
@@ -152,22 +156,25 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-muted">
-        حبيبة التصدير: صفّ بيع — منتج بسيط = صف واحد، ومنتج له خيارات = صف مستقل لكل خيار
-        بسعره و<span dir="ltr">SKU</span> الخاص (بدون صفّ للأب). عمود باركود رفيق يحمل
-        <span dir="ltr"> SKU </span>المنتج الأب لكل الصفوف — لا يُصدَّر الباركود الحقيقي
+        النموذج الأصلي لرفيق (القالب الحقيقي المدقَّق): منتج واحد = هوية منتج واحدة في رفيق.
+        المتغيّرات = «خيارات» داخل مجموعة خيارات واحدة للمنتج الأب — لا تُصدَّر كمنتجات مستقلة.
+        الملف يكرّر صفّ الأب مرة لكل خيار (نفس الاسم والسعر والصورة) وتتغيّر خلايا الخيار فقط.
+        عمود باركود رفيق يحمل <span dir="ltr">SKU</span> المنتج الأب — لا يُصدَّر الباركود الحقيقي
         (<span dir="ltr">EAN</span>) ولا <span dir="ltr">SKU</span>/باركود الخيار إلى رفيق أبداً.
         مُعرّف رفيق مقروء من ECL
         (<span dir="ltr">rafeeq:malikas</span>) فقط — لا يُخمَّن، ولا يُطابَق بالاسم، ولا تُحلّ التعارضات تلقائياً.
         صفوف «بحاجة لمراجعة المالك» محظورة.
       </p>
 
-      {/* Summary */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <Card value={vm.counts.sellableRowCount} label={`صفوف بيع (${vm.counts.productCount} منتج)`} tone="ink" />
+      {/* Summary — canonical PRODUCT identities are the business count; the
+          physical spreadsheet rows are shown separately. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
+        <Card value={vm.counts.productCount} label="منتجات رفيق (هويات)" tone="ink" />
+        <Card value={vm.counts.productsWithOptions} label="منتجات بخيارات" tone="ink" />
+        <Card value={vm.counts.optionCount} label="خيارات" tone="ink" />
+        <Card value={vm.counts.physicalRowCount} label="صفوف الملف الفعلية" tone="ink" />
         <Card value={plan.ready} label="جاهز" tone="emerald" />
-        <Card value={plan.warn} label="تحذير" tone="amber" />
         <Card value={plan.blocked} label="محظور" tone="rose" />
-        <Card value={plan.needsReview} label="بحاجة لمراجعة" tone="rose" />
       </div>
 
       {/* Mode selector */}
@@ -263,6 +270,7 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
                   )}
                   <th className="px-3 py-2 font-medium">SKU</th>
                   <th className="px-3 py-2 font-medium">المنتج</th>
+                  <th className="px-3 py-2 font-medium">الخيارات</th>
                   <th className="px-3 py-2 font-medium">باركود رفيق (SKU الأب)</th>
                   <th className="px-3 py-2 font-medium">السعر</th>
                   <th className="px-3 py-2 font-medium">مُعرّف رفيق / جديد</th>
@@ -285,6 +293,7 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
                       )}
                       <td className="px-3 py-2 font-mono text-[11px]" dir="ltr">{r.sku || <span className="text-rose-600">—</span>}</td>
                       <td className="px-3 py-2 text-ink">{r.title || <span className="text-rose-600">بدون عنوان</span>}</td>
+                      <td className="px-3 py-2 tabular-nums">{r.optionCount > 0 ? r.optionCount : "—"}</td>
                       <td className="px-3 py-2 font-mono text-[11px]" dir="ltr">{r.barcode ?? "—"}</td>
                       <td className="px-3 py-2" dir="ltr">{r.price ?? <span className="text-amber-600">—</span>}</td>
                       <td className="px-3 py-2 font-mono text-[11px]" dir="ltr">

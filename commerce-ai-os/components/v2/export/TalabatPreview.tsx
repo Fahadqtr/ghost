@@ -39,6 +39,7 @@ export interface TalabatPreviewVM {
 }
 
 const REASON_LABEL: Record<ExportReasonCode, string> = {
+  OPTION_PRICE_UNRESOLVED: "أسعار خيارات غير محسومة",
   MISSING_SKU: "SKU مفقود",
   DUPLICATE_SKU: "SKU مكرّر",
   MISSING_BARCODE: "باركود مفقود",

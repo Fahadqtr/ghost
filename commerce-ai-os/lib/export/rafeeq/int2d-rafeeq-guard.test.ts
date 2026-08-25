@@ -63,7 +63,8 @@ test("image filenames are SKU-based and the package reuses shared infrastructure
   const gen = read(GEN);
   assert.ok(/from "@\/lib\/net\/zip"/.test(gen), "reuses the shared ZIP writer");
   assert.ok(/from "@\/lib\/export\/package-core"/.test(gen), "reuses shared package-core");
-  assert.ok(/import \{ RAFEEQ_HEADERS/.test(pkg) && /RAFEEQ_PACKAGE_COLUMNS = RAFEEQ_HEADERS/.test(pkg), "reuses the canonical Rafeeq template");
+  assert.ok(/RAFEEQ_NATIVE_HEADERS/.test(pkg) && /RAFEEQ_PACKAGE_COLUMNS = RAFEEQ_NATIVE_HEADERS/.test(pkg),
+    "reuses the AUDITED native Rafeeq template (never a second/invented template)");
 });
 
 // ── package derives from the same validated preview dataset ────────────────────

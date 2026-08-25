@@ -67,7 +67,8 @@ export async function loadRafeeqPreview(): Promise<RafeeqPreviewResult | null> {
         a.sortOrder - b.sortOrder ||
         String(a.url ?? "").localeCompare(String(b.url ?? "")));
 
-    // Variants grouped under their parent (sellable-listing flattening input).
+    // Variants grouped under their parent — projected as NATIVE OPTIONS of the
+    // one parent product (never separate sellable listings).
     const variantsByProduct = new Map<string, RafeeqPreviewVariant[]>();
     for (const v of variantRows) {
       const pid = typeof v.parent_product_id === "string" ? v.parent_product_id : "";
@@ -84,16 +85,20 @@ export async function loadRafeeqPreview(): Promise<RafeeqPreviewResult | null> {
       variantsByProduct.set(pid, list);
     }
 
-    // ECL evidence for rafeeq:malikas only, keyed by lower(exported_sku).
+    // ECL evidence for rafeeq:malikas only, keyed by lower(exported_sku) at
+    // PRODUCT grain — Rafeeq identity is the parent product (variants are
+    // native options). Retired variant-grain rows (non-null variant_id) are
+    // ignored here, never collapsed onto the parent identity.
     const mappingBySku: Record<string, RafeeqMappingEvidence> = {};
     for (const e of eclRows) {
       if (s(e.storefront_key) !== RAFEEQ_STOREFRONT_KEY) continue; // hard storefront scope
+      if (s(e.variant_id) !== null) continue; // product-grain identity only
       const sku = s(e.exported_sku);
       if (!sku) continue;
       const ms = s(e.mapping_status);
       const status: RafeeqMappingEvidence["status"] =
         ms === "needs_review" ? "needs_review" : ms === "archived" ? "unmapped" : "resolved";
-      mappingBySku[sku.toLowerCase()] = { status, externalId: s(e.external_product_id), exportedSku: sku, productId: s(e.product_id), variantId: s(e.variant_id) };
+      mappingBySku[sku.toLowerCase()] = { status, externalId: s(e.external_product_id), exportedSku: sku, productId: s(e.product_id) };
     }
 
     const products: RafeeqPreviewProduct[] = productRows.map((p) => {

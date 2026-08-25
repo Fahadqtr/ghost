@@ -80,7 +80,7 @@ export interface ReturnedPreviewVM {
     conflicts: number;
     invalid: number;
   };
-  entries: Pick<ReconcileEntry, "rowNumber" | "imageName" | "skuToken" | "returnedId" | "status" | "matchedSku" | "matchedBy">[];
+  entries: Pick<ReconcileEntry, "rowNumber" | "barcode" | "skuToken" | "returnedId" | "status" | "matchedSku" | "matchedBy">[];
   entriesTruncated: boolean;
 }
 
@@ -103,7 +103,7 @@ export async function previewReturnedFileAction(formData: FormData): Promise<Pre
       counts: r.plan.counts,
       entries: r.plan.entries.slice(0, MAX_PREVIEW_ENTRIES).map((e) => ({
         rowNumber: e.rowNumber,
-        imageName: e.imageName,
+        barcode: e.barcode,
         skuToken: e.skuToken,
         returnedId: e.returnedId,
         status: e.status,
