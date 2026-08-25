@@ -154,15 +154,37 @@ export const RAFEEQ_NATIVE_CATEGORIES: Record<string, RafeeqNativeCategory> = {
 };
 
 /**
- * Registry lookup by canonical category name. Deterministic normalization
- * ONLY: trim + the typographic apostrophe (U+2019) folded to ASCII (canonical
- * data stores "Women’s Essentials"; the audited workbook spells it
- * "Women's Essentials" — the same live category, id 4415761). No fuzzy
+ * OWNER-APPROVED explicit aliases: canonical catalog category names that map
+ * to a DIFFERENTLY-NAMED existing live Rafeeq category. Exact-key lookup only
+ * — never fuzzy. Rafeeq-export-specific: the canonical catalog name itself is
+ * never renamed by this table.
+ */
+export const RAFEEQ_CATEGORY_ALIASES: Record<string, string> = {
+  // pool/swim/beach merchandise → live "Summer Essentials" (id 3708645, sub ALL 260180)
+  "Summer And Camping Supplies": "Summer Essentials",
+};
+
+/**
+ * Resolve a canonical category name to its audited registry KEY — the exact
+ * live Rafeeq category name that export cells must carry. Deterministic
+ * normalization ONLY: trim + the typographic apostrophe (U+2019) folded to
+ * ASCII (canonical data stores "Women’s Essentials"; the audited workbook
+ * spells it "Women's Essentials" — the same live category, id 4415761), then
+ * an exact registry hit or an exact owner-approved alias hit. No fuzzy
  * matching — any other difference is an unknown category.
  */
-export function rafeeqCategoryByName(name: string | null | undefined): RafeeqNativeCategory | undefined {
+export function rafeeqCategoryKeyByName(name: string | null | undefined): string | undefined {
   const key = String(name ?? "").trim().replace(/’/g, "'");
-  return key === "" ? undefined : RAFEEQ_NATIVE_CATEGORIES[key];
+  if (key === "") return undefined;
+  if (RAFEEQ_NATIVE_CATEGORIES[key]) return key;
+  const alias = RAFEEQ_CATEGORY_ALIASES[key];
+  return alias !== undefined && RAFEEQ_NATIVE_CATEGORIES[alias] ? alias : undefined;
+}
+
+/** Registry lookup by canonical category name (exact key or exact alias). */
+export function rafeeqCategoryByName(name: string | null | undefined): RafeeqNativeCategory | undefined {
+  const key = rafeeqCategoryKeyByName(name);
+  return key === undefined ? undefined : RAFEEQ_NATIVE_CATEGORIES[key];
 }
 
 /**

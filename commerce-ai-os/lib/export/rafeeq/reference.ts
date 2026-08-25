@@ -18,7 +18,7 @@
 // OPTION UPDATE / CATEGORY REVIEW. No I/O — node:test loads this directly.
 
 import { sanitizeSpreadsheetText, type AoaCell } from "../package-core.ts";
-import { RAFEEQ_PRICE_ON_SELECTION, rafeeqCategoryByName } from "./native-template.ts";
+import { RAFEEQ_PRICE_ON_SELECTION, rafeeqCategoryKeyByName } from "./native-template.ts";
 import type { RafeeqPreviewRow } from "./preview.ts";
 import type { RafeeqPendingKind } from "./fullsync.ts";
 
@@ -74,10 +74,11 @@ export interface ReferenceItem {
   kind?: RafeeqPendingKind;
 }
 
-/** The mapped live Rafeeq category name for a canonical category (or null). */
+/** The mapped live Rafeeq category name for a canonical category (or null) —
+ *  the resolved registry key, so an approved alias shows its LIVE Rafeeq name
+ *  (e.g. "Summer And Camping Supplies" → "Summer Essentials"). */
 export function mappedRafeeqCategoryName(category: string | null): string | null {
-  if (!rafeeqCategoryByName(category)) return null;
-  return String(category ?? "").trim().replace(/’/g, "'");
+  return rafeeqCategoryKeyByName(category) ?? null;
 }
 
 /** Human note flags for one product. */

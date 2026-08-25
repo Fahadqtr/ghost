@@ -21,6 +21,7 @@ import {
   RAFEEQ_PRICE_ON_SELECTION,
   NATIVE_COL,
   rafeeqCategoryByName,
+  rafeeqCategoryKeyByName,
 } from "./native-template.ts";
 import { primaryImageName, additionalImageName, normalizeExtension } from "../image-naming.ts";
 import {
@@ -203,10 +204,15 @@ const priceText = (v: number | null): AoaCell => (typeof v === "number" && Numbe
 
 /** The shared parent cells of one product (identical on every repeated row). */
 function parentCells(r: RafeeqPackageRow): AoaCell[] {
-  const cat = rafeeqCategoryByName(r.categoryKey);
+  // The resolved registry KEY is the live Rafeeq category name — for exact
+  // matches it equals the (apostrophe-folded) canonical name; for an approved
+  // alias (e.g. "Summer And Camping Supplies") it is the live name
+  // ("Summer Essentials") that the export must carry.
+  const catKey = rafeeqCategoryKeyByName(r.categoryKey);
+  const cat = catKey === undefined ? undefined : rafeeqCategoryByName(catKey);
   const cells: AoaCell[] = new Array(RAFEEQ_NATIVE_HEADERS.length).fill("");
   cells[NATIVE_COL.categoryId] = cat ? cat.id : "";
-  cells[NATIVE_COL.categoryNameEn] = cat ? txt(String(r.categoryKey ?? "").trim().replace(/’/g, "'")) : "";
+  cells[NATIVE_COL.categoryNameEn] = cat && catKey !== undefined ? txt(catKey) : "";
   cells[NATIVE_COL.categoryNameAr] = cat ? txt(cat.ar) : "";
   cells[NATIVE_COL.categoryStatus] = cat ? cat.status : "";
   cells[NATIVE_COL.subcategoryId] = cat?.sub ? cat.sub.id : "";
