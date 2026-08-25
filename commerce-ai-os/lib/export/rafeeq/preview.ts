@@ -126,6 +126,9 @@ export interface RafeeqPreviewRow {
   /** Rafeeq BARCODE cell = the canonical PARENT product SKU (owner template
    *  rule) — never the real EAN, never a variant sku/barcode. */
   barcode: string | null;
+  /** canonical REAL EAN/barcode — REFERENCE-ONLY (the human "Malikas
+   *  Reference" sheet). NEVER written to any `data`-sheet cell. */
+  internalBarcode: string | null;
   /** PARENT title only — never flattened with an option label. */
   title: string;
   titleAr: string;
@@ -404,6 +407,7 @@ function buildRow(
     rowKey: productRowKey(p.id),
     sku,
     barcode,
+    internalBarcode: clean(p.barcode) || null,
     title,
     titleAr,
     category,
