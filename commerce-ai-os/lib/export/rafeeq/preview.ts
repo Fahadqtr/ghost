@@ -17,14 +17,15 @@
 // row. The real EAN and the variant's own sku/barcode are NEVER exported —
 // they stay internal to Malikas AI.
 //
-// PRICING (audited contract limit): every numeric-priced workbook product has
-// option_price = 0 — options included in the parent price. Our encoding:
-//   • options all at ONE effective price → product_price = that price,
-//     option_price = 0 (the parent's own stale price column is NOT trusted over
-//     the uniform option price);
-//   • options at DIFFERING effective prices → the workbook does not prove the
-//     encoding for a numeric parent price ⇒ OPTION_PRICE_UNRESOLVED (blocking,
-//     surfaced to the owner — never guessed).
+// PRICING (owner-approved rule, matching the live workbook convention):
+//   • options all at ONE identical effective price → product_price = that
+//     uniform price, option_price = 0 for every option (the parent's own stale
+//     price column is NOT trusted over the uniform option price);
+//   • options at DIFFERING effective prices → product_price = the literal text
+//     "PRICE ON SELECTION" and option_price = each option's FULL effective
+//     canonical price — NEVER a delta;
+//   • an option with NO valid effective price alongside priced siblings is the
+//     only pricing blocker (its full price cannot be emitted).
 // Effective option price = positive(variant.price) ?? parent sell price
 // (positive(discount) ?? positive(price)).
 //
@@ -40,7 +41,7 @@ import { resolveLifecycleState, type LifecycleState } from "../../lifecycle/stat
 import { primaryImageName, extensionFromUrl } from "../image-naming.ts";
 import { summarizeValidation, type ExportItemStatus, type ExportReason, type ExportValidationItem, type ExportValidationSummary } from "../validation.ts";
 import { type ExportPreview, type ExportPreviewItem } from "../preview.ts";
-import { RAFEEQ_DEFAULT_GROUP_NAME_AR, RAFEEQ_DEFAULT_GROUP_NAME_EN, RAFEEQ_NATIVE_CATEGORIES } from "./native-template.ts";
+import { RAFEEQ_DEFAULT_GROUP_NAME_AR, RAFEEQ_DEFAULT_GROUP_NAME_EN, rafeeqCategoryByName } from "./native-template.ts";
 
 export const RAFEEQ_STOREFRONT_KEY = "rafeeq:malikas" as const;
 export type RafeeqStorefrontKey = typeof RAFEEQ_STOREFRONT_KEY;
@@ -129,8 +130,13 @@ export interface RafeeqPreviewRow {
   title: string;
   titleAr: string;
   category: string | null;
-  /** the product_price cell value (uniform option price, or parent sell price). */
+  /** the numeric product price (uniform option price, or parent sell price);
+   *  null when priceOnSelection is true (the cell carries the text sentinel). */
   price: number | null;
+  /** true ⇒ options carry DIFFERING effective prices: the product_price cell
+   *  is the literal "PRICE ON SELECTION" and each option_price is the FULL
+   *  effective canonical price (owner-approved encoding — never deltas). */
+  priceOnSelection: boolean;
   descriptionEn: string;
   descriptionAr: string;
   hasImage: boolean;
@@ -147,9 +153,6 @@ export interface RafeeqPreviewRow {
   physicalRowCount: number;
   groupNameEn: string;
   groupNameAr: string;
-  /** true when options carry DIFFERING effective prices — encoding unproven by
-   *  the audited workbook ⇒ blocked until the owner resolves the contract. */
-  optionPriceUnresolved: boolean;
   /** Rafeeq product_id from ECL (null ⇒ new/unmapped — never invented). */
   rafeeqId: string | null;
   mapping: RafeeqMappingEvidence;
@@ -175,7 +178,8 @@ export interface RafeeqPreviewResult {
     mappedCount: number;
     unmappedCount: number;
     needsReviewCount: number;
-    optionPriceUnresolvedCount: number;
+    /** differing-price parents encoded as PRICE ON SELECTION + full prices. */
+    priceOnSelectionCount: number;
   };
 }
 
@@ -255,7 +259,7 @@ export function buildRafeeqPreview(input: RafeeqPreviewInput): RafeeqPreviewResu
     imageCount: r.imageCount,
     primaryImage: r.imageExportName,
     externalIdentity: { storefrontKey: RAFEEQ_STOREFRONT_KEY, externalProductId: r.rafeeqId, externalVariantId: null, exportedSku: r.mapping.exportedSku ?? (r.sku || null), identityType: RAFEEQ_IDENTITY_TYPE },
-    metadata: { mappingStatus: r.mapping.status, needsOwnerReview: r.needsOwnerReview, optionCount: r.optionCount, optionPriceUnresolved: r.optionPriceUnresolved },
+    metadata: { mappingStatus: r.mapping.status, needsOwnerReview: r.needsOwnerReview, optionCount: r.optionCount, priceOnSelection: r.priceOnSelection },
   }));
 
   let mappedCount = 0;
@@ -263,14 +267,14 @@ export function buildRafeeqPreview(input: RafeeqPreviewInput): RafeeqPreviewResu
   let productsWithOptions = 0;
   let optionCount = 0;
   let physicalRowCount = 0;
-  let optionPriceUnresolvedCount = 0;
+  let priceOnSelectionCount = 0;
   for (const r of rows) {
     if (r.rafeeqId !== null) mappedCount++;
     if (r.needsOwnerReview) needsReviewCount++;
     if (r.hasOptions) productsWithOptions++;
     optionCount += r.optionCount;
     physicalRowCount += r.physicalRowCount;
-    if (r.optionPriceUnresolved) optionPriceUnresolvedCount++;
+    if (r.priceOnSelection) priceOnSelectionCount++;
   }
 
   return {
@@ -287,7 +291,7 @@ export function buildRafeeqPreview(input: RafeeqPreviewInput): RafeeqPreviewResu
       mappedCount,
       unmappedCount: rows.length - mappedCount,
       needsReviewCount,
-      optionPriceUnresolvedCount,
+      priceOnSelectionCount,
     },
   };
 }
@@ -314,17 +318,23 @@ function buildRow(
   const options = orderOptions(variants, parentSell);
   const hasOptions = options.length > 0;
 
-  // Audited pricing: a uniform effective option price IS the product price
-  // (option_price 0). Differing effective prices are an unproven encoding for a
-  // numeric parent price ⇒ surfaced, never guessed.
+  // OWNER-APPROVED pricing: a uniform effective option price IS the product
+  // price (option_price 0 — the stale parent price column is never trusted
+  // over it). DIFFERING effective prices use the live-store encoding:
+  // product_price = "PRICE ON SELECTION" + FULL effective option prices
+  // (never deltas). An option with NO effective price alongside priced
+  // siblings is the only pricing blocker (its full price cannot be emitted).
   let price = parentSell;
-  let optionPriceUnresolved = false;
+  let priceOnSelection = false;
+  let optionMissingPrice = false;
   if (hasOptions) {
-    const prices = new Set(options.map((o) => o.effectivePrice ?? -1));
+    const prices = new Set(options.map((o) => o.effectivePrice));
     if (prices.size === 1) {
-      price = options[0].effectivePrice ?? parentSell;
+      price = options[0].effectivePrice ?? parentSell; // may be null ⇒ MISSING_PRICE warning below
     } else {
-      optionPriceUnresolved = true;
+      priceOnSelection = true;
+      price = null; // the cell carries the text sentinel
+      optionMissingPrice = options.some((o) => o.effectivePrice === null);
     }
   }
 
@@ -359,7 +369,7 @@ function buildRow(
   // A category outside the audited live Rafeeq registry exports blank category
   // cells (a Rafeeq category id is never invented) — disclosed as a warning.
   if (category === null) warn("MISSING_CATEGORY");
-  else if (!RAFEEQ_NATIVE_CATEGORIES[category]) warn("MISSING_CATEGORY", "الفئة غير موجودة في سجلّ فئات رفيق المدقَّق — ستُصدَّر خلايا الفئة فارغة.");
+  else if (!rafeeqCategoryByName(category)) warn("MISSING_CATEGORY", "الفئة غير موجودة في سجلّ فئات رفيق المدقَّق — ستُصدَّر خلايا الفئة فارغة.");
 
   // Options: an option needs a display name (its labels are the ONLY thing that
   // distinguishes the repeated rows); missing names make the group unbuildable.
@@ -367,10 +377,11 @@ function buildRow(
     block("VARIANT_NOT_READY", "خيار بدون اسم — لا يمكن بناء مجموعة الخيارات.");
   }
 
-  if (optionPriceUnresolved) {
-    block("OPTION_PRICE_UNRESOLVED",
-      "أسعار الخيارات مختلفة — ترميز option_price غير مثبت في قالب رفيق؛ بانتظار قرار المالك.");
-  } else if (price === null) {
+  // Pricing validation: differing prices are VALID (sentinel + full prices);
+  // the only pricing blocker is an option whose full price cannot be emitted.
+  if (optionMissingPrice) {
+    block("MISSING_PRICE", "خيار بدون سعر فعّال بجانب خيارات مسعّرة — لا يمكن إصدار سعره الكامل.");
+  } else if (!priceOnSelection && price === null) {
     warn("MISSING_PRICE");
   }
 
@@ -397,6 +408,7 @@ function buildRow(
     titleAr,
     category,
     price,
+    priceOnSelection,
     descriptionEn: clean(p.descriptionEn),
     descriptionAr: clean(p.descriptionAr),
     hasImage,
@@ -410,7 +422,6 @@ function buildRow(
     physicalRowCount: Math.max(1, options.length),
     groupNameEn: RAFEEQ_DEFAULT_GROUP_NAME_EN,
     groupNameAr: RAFEEQ_DEFAULT_GROUP_NAME_AR,
-    optionPriceUnresolved,
     rafeeqId,
     mapping,
     needsOwnerReview,

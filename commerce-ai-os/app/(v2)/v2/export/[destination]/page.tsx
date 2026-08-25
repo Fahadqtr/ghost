@@ -295,7 +295,7 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
         productsWithOptions: result.counts.productsWithOptions,
         optionCount: result.counts.optionCount,
         physicalRows: result.counts.physicalRowCount,
-        optionPriceUnresolved: result.counts.optionPriceUnresolvedCount,
+        priceOnSelection: result.counts.priceOnSelectionCount,
       },
       full: {
         includable: includable.length,
@@ -349,6 +349,7 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
               barcode: r.barcode,
               title: r.title,
               price: r.price,
+              priceOnSelection: r.priceOnSelection,
               optionCount: r.optionCount,
               rafeeqId: r.rafeeqId,
               needsOwnerReview: r.needsOwnerReview,

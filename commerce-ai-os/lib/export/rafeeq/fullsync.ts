@@ -107,8 +107,8 @@ export function hasSentBaseline(packages: readonly RafeeqPackageRecord[]): boole
  * blocking reasons is IDENTITY_NEEDS_REVIEW — the contested identity does not
  * block the FULL file (the product ships with a blank product_id; the contested
  * id is never used). Any other blocker (missing/duplicate SKU, missing
- * image/title, stopped lifecycle, unresolved option pricing, cross-product
- * identity conflict, filename collision) keeps the product out.
+ * image/title, stopped lifecycle, an option missing its effective price,
+ * cross-product identity conflict, filename collision) keeps the product out.
  */
 export function isFullIncludable(r: Pick<RafeeqPreviewRow, "status" | "reasons">): boolean {
   if (r.status === "READY" || r.status === "WARNING") return true;
@@ -288,7 +288,7 @@ export function rowFingerprint(r: RafeeqPreviewRow): string {
     r.title,
     r.titleAr,
     r.category ?? "",
-    r.price === null ? "" : String(r.price),
+    r.priceOnSelection ? "PRICE_ON_SELECTION" : r.price === null ? "" : String(r.price),
     r.descriptionEn,
     r.descriptionAr,
     r.imageExportName ?? "",

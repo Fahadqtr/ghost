@@ -24,7 +24,6 @@ export type ExportReasonCode =
   | "IDENTITY_CONFLICT"
   | "IDENTITY_NEEDS_REVIEW"
   | "VARIANT_NOT_READY"
-  | "OPTION_PRICE_UNRESOLVED"
   | "UNSUPPORTED";
 
 export const EXPORT_REASON_CODES: readonly ExportReasonCode[] = [
@@ -43,7 +42,6 @@ export const EXPORT_REASON_CODES: readonly ExportReasonCode[] = [
   "IDENTITY_CONFLICT",
   "IDENTITY_NEEDS_REVIEW",
   "VARIANT_NOT_READY",
-  "OPTION_PRICE_UNRESOLVED",
   "UNSUPPORTED",
 ];
 

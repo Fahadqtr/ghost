@@ -16,10 +16,11 @@
 
 import {
   RAFEEQ_NATIVE_HEADERS,
-  RAFEEQ_NATIVE_CATEGORIES,
   RAFEEQ_PRODUCT_DEFAULTS,
   RAFEEQ_GROUP_DEFAULTS,
+  RAFEEQ_PRICE_ON_SELECTION,
   NATIVE_COL,
+  rafeeqCategoryByName,
 } from "./native-template.ts";
 import { primaryImageName, additionalImageName, normalizeExtension } from "../image-naming.ts";
 import {
@@ -144,7 +145,8 @@ export function detectFilenameCollisions(primaryFilenames: readonly string[]): s
 export interface RafeeqPackageOption {
   nameEn: string;
   nameAr: string;
-  /** option_price cell — 0 under the audited included-in-parent-price contract. */
+  /** option_price cell: 0 when the parent price covers every option; the FULL
+   *  effective canonical price under PRICE ON SELECTION (never a delta). */
   price: number;
   sortOrder: number;
 }
@@ -154,8 +156,10 @@ export interface RafeeqPackageRow {
   categoryKey: string | null;    // canonical category name (registry lookup key)
   nameEn: string;
   nameAr: string;
-  /** product_price cell — emitted as TEXT (the audited workbook stores it so). */
+  /** product_price cell — emitted as TEXT (the audited workbook stores it so);
+   *  null + priceOnSelection ⇒ the literal "PRICE ON SELECTION" sentinel. */
   price: number | null;
+  priceOnSelection: boolean;
   descriptionEn: string;
   descriptionAr: string;
   imageName: string;   // packaged parent-image filename — shared by option rows
@@ -175,6 +179,7 @@ export function toPackageRow(r: RafeeqPreviewRow, imageFilename: string): Rafeeq
     nameEn: r.title,               // PARENT title — never "{parent} — {option}"
     nameAr: r.titleAr,
     price: r.price,
+    priceOnSelection: r.priceOnSelection,
     descriptionEn: r.descriptionEn,
     descriptionAr: r.descriptionAr,
     imageName: imageFilename,      // ONE packaged file per product
@@ -185,7 +190,9 @@ export function toPackageRow(r: RafeeqPreviewRow, imageFilename: string): Rafeeq
     options: r.options.map((o: RafeeqPreviewOption) => ({
       nameEn: o.nameEn,
       nameAr: o.nameAr,
-      price: 0, // audited contract: options included in the parent price
+      // Owner rule: uniform price ⇒ 0 (covered by product_price); differing
+      // prices ⇒ the FULL effective canonical price (never a delta).
+      price: r.priceOnSelection ? (o.effectivePrice ?? 0) : 0,
       sortOrder: o.sortOrder,
     })),
   };
@@ -196,10 +203,10 @@ const priceText = (v: number | null): AoaCell => (typeof v === "number" && Numbe
 
 /** The shared parent cells of one product (identical on every repeated row). */
 function parentCells(r: RafeeqPackageRow): AoaCell[] {
-  const cat = r.categoryKey ? RAFEEQ_NATIVE_CATEGORIES[r.categoryKey] : undefined;
+  const cat = rafeeqCategoryByName(r.categoryKey);
   const cells: AoaCell[] = new Array(RAFEEQ_NATIVE_HEADERS.length).fill("");
   cells[NATIVE_COL.categoryId] = cat ? cat.id : "";
-  cells[NATIVE_COL.categoryNameEn] = cat ? txt(r.categoryKey ?? "") : "";
+  cells[NATIVE_COL.categoryNameEn] = cat ? txt(String(r.categoryKey ?? "").trim().replace(/’/g, "'")) : "";
   cells[NATIVE_COL.categoryNameAr] = cat ? txt(cat.ar) : "";
   cells[NATIVE_COL.categoryStatus] = cat ? cat.status : "";
   cells[NATIVE_COL.subcategoryId] = cat?.sub ? cat.sub.id : "";
@@ -215,7 +222,7 @@ function parentCells(r: RafeeqPackageRow): AoaCell[] {
   cells[NATIVE_COL.productStatus] = RAFEEQ_PRODUCT_DEFAULTS.productStatus;
   cells[NATIVE_COL.productAvailability] = RAFEEQ_PRODUCT_DEFAULTS.productAvailability;
   cells[NATIVE_COL.active] = RAFEEQ_PRODUCT_DEFAULTS.active;
-  cells[NATIVE_COL.productPrice] = priceText(r.price); // TEXT — audited workbook convention
+  cells[NATIVE_COL.productPrice] = r.priceOnSelection ? RAFEEQ_PRICE_ON_SELECTION : priceText(r.price); // TEXT — audited convention
   cells[NATIVE_COL.barcode] = r.barcode;               // canonical PARENT SKU
   cells[NATIVE_COL.posId] = "";                         // blank across the audited workbook
   cells[NATIVE_COL.preparationTime] = RAFEEQ_PRODUCT_DEFAULTS.preparationTime;

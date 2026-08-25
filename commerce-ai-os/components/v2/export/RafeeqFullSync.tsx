@@ -48,7 +48,8 @@ export interface RafeeqFullSyncVM {
     productsWithOptions: number;
     optionCount: number;
     physicalRows: number;
-    optionPriceUnresolved: number;
+    /** differing-price parents encoded as PRICE ON SELECTION + full prices. */
+    priceOnSelection: number;
   };
   full: { includable: number; trueBlockers: number; needsReviewIncluded: number };
   pending: { count: number; rows: { id: string; sku: string; title: string; kind: "NEW" | "OPTION_UPDATE" }[]; truncated: boolean };
@@ -193,7 +194,7 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
         <StatCard value={vm.stats.productsWithOptions} label="منتجات بخيارات" />
         <StatCard value={vm.stats.optionCount} label="خيارات" />
         <StatCard value={vm.stats.physicalRows} label="صفوف الملف الفعلية" />
-        <StatCard value={vm.stats.optionPriceUnresolved} label="أسعار خيارات غير محسومة" />
+        <StatCard value={vm.stats.priceOnSelection} label="سعر عند الاختيار (PRICE ON SELECTION)" />
       </div>
       <p className="text-[11px] text-muted">
         رفيق يستقبل المنتج ذا الخيارات كمنتج واحد بمجموعة خيارات أصلية — الملف يكرّر صفّ الأب

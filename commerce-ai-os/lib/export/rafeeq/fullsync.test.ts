@@ -48,8 +48,14 @@ function product(id: string, sku: string, over: Partial<RafeeqPreviewProduct> = 
   };
 }
 
-function variantProduct(id: string, sku: string, variants: { id: string; sku: string; price?: number | null; nameEn?: string }[]): RafeeqPreviewProduct {
+function variantProduct(
+  id: string,
+  sku: string,
+  variants: { id: string; sku: string; price?: number | null; nameEn?: string }[],
+  over: Partial<RafeeqPreviewProduct> = {},
+): RafeeqPreviewProduct {
   return product(id, sku, {
+    ...over,
     variants: variants.map((v) => ({
       id: v.id,
       sku: v.sku,
@@ -136,20 +142,25 @@ test("3: FULL preserves an existing resolved Rafeeq id", () => {
 });
 
 // ── 4) genuine blockers stay excluded from FULL ───────────────────────────────
-test("4: true blockers (missing image / missing SKU / duplicate parent SKU / stopped / unresolved option pricing) are excluded", () => {
+test("4: true blockers (missing image / missing SKU / duplicate parent SKU / stopped / option missing its price) are excluded", () => {
   const pv = previewOf([
     product("b1", "mk2001", { imageUrl: null, imageFilename: null, imageCount: 0 }), // MISSING_IMAGE
     product("b2", "", {}),                                                           // MISSING_SKU + MISSING_BARCODE
     variantProduct("b3", "mk2003", [{ id: "b3v", sku: "mk2003-1" }]),                // DUPLICATE (parent sku claimed twice)
     product("b4", "mk2003"),                                                          // DUPLICATE
     product("b5", "mk2005", { lifecycleState: "STOPPED" }),                          // LIFECYCLE
-    variantProduct("b6", "mk2006", [{ id: "x1", sku: "mk2006-1", price: 10 }, { id: "x2", sku: "mk2006-2", price: 20 }]), // OPTION_PRICE_UNRESOLVED
+    // one option priced, one without ANY effective price (no parent price either)
+    variantProduct("b6", "mk2006", [{ id: "x1", sku: "mk2006-1", price: 10 }, { id: "x2", sku: "mk2006-2" }], { price: null }), // MISSING_PRICE (blocking)
+    // differing VALID prices are NOT a blocker any more (PRICE ON SELECTION)
+    variantProduct("ok2", "mk2008", [{ id: "y1", sku: "mk2008-1", price: 10 }, { id: "y2", sku: "mk2008-2", price: 20 }]),
     product("ok", "mk2007"),
   ]);
   const set = resolveFullSyncSet(pv.rows, "FULL", EMPTY);
-  assert.deepEqual(set.included.map((r) => r.internalProductId), ["ok"]);
+  assert.deepEqual(set.included.map((r) => r.internalProductId).sort(), ["ok", "ok2"]);
   assert.equal(set.counts.trueBlockers, 6);
   for (const r of set.excludedBlocked) assert.equal(isFullIncludable(r), false);
+  const okDiffering = set.included.find((r) => r.internalProductId === "ok2")!;
+  assert.equal(okDiffering.priceOnSelection, true, "differing-price product ships with the sentinel encoding");
 });
 
 // ── 5) generating a package does NOT mark anything sent ───────────────────────

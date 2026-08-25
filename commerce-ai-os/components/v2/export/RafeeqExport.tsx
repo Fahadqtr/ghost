@@ -24,6 +24,8 @@ export interface RafeeqRowVM {
   barcode: string | null;
   title: string;
   price: number | null;
+  /** differing option prices ⇒ the product_price cell is "PRICE ON SELECTION". */
+  priceOnSelection: boolean;
   /** native options of this ONE product (0 = simple). */
   optionCount: number;
   rafeeqId: string | null;
@@ -48,7 +50,8 @@ export interface RafeeqExportVM {
     mappedCount: number;
     unmappedCount: number;
     needsReviewCount: number;
-    optionPriceUnresolvedCount: number;
+    /** differing-price parents encoded as PRICE ON SELECTION + full prices. */
+    priceOnSelectionCount: number;
   };
 }
 
@@ -61,7 +64,7 @@ const REASON_LABEL: Record<string, string> = {
   MISSING_TITLE: "عنوان مفقود", MISSING_PRICE: "سعر مفقود", MISSING_CATEGORY: "فئة مفقودة",
   LIFECYCLE_NOT_ELIGIBLE: "غير مؤهّل (دورة الحياة)", IDENTITY_MISSING: "هوية مفقودة",
   IDENTITY_CONFLICT: "تعارض هوية", IDENTITY_NEEDS_REVIEW: "بحاجة لمراجعة المالك",
-  VARIANT_NOT_READY: "خيار غير جاهز", OPTION_PRICE_UNRESOLVED: "أسعار خيارات غير محسومة",
+  VARIANT_NOT_READY: "خيار غير جاهز",
   UNSUPPORTED: "غير مدعوم",
 };
 const STATUS_LABEL: Record<ExportItemStatus, string> = { READY: "جاهز", WARNING: "تحذير", BLOCKED: "محظور", UNKNOWN: "غير معروف" };
@@ -295,7 +298,7 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
                       <td className="px-3 py-2 text-ink">{r.title || <span className="text-rose-600">بدون عنوان</span>}</td>
                       <td className="px-3 py-2 tabular-nums">{r.optionCount > 0 ? r.optionCount : "—"}</td>
                       <td className="px-3 py-2 font-mono text-[11px]" dir="ltr">{r.barcode ?? "—"}</td>
-                      <td className="px-3 py-2" dir="ltr">{r.price ?? <span className="text-amber-600">—</span>}</td>
+                      <td className="px-3 py-2" dir="ltr">{r.priceOnSelection ? <span className="text-[10px] font-mono">PRICE ON SELECTION</span> : r.price ?? <span className="text-amber-600">—</span>}</td>
                       <td className="px-3 py-2 font-mono text-[11px]" dir="ltr">
                         {r.needsOwnerReview ? <span className="text-rose-600">تعارض — مراجعة</span> : r.rafeeqId ?? <span className="text-amber-600">جديد</span>}
                       </td>

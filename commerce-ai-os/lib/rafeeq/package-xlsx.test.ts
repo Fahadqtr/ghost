@@ -13,7 +13,7 @@ const XLSX = require("xlsx");
 
 function pkgRow(over: Partial<RafeeqPackageRow> = {}): RafeeqPackageRow {
   return {
-    categoryKey: "Makeup", nameEn: "Serum", nameAr: "سيروم", price: 65,
+    categoryKey: "Makeup", nameEn: "Serum", nameAr: "سيروم", price: 65, priceOnSelection: false,
     descriptionEn: "Bright.", descriptionAr: "مشرق.", imageName: "MK1.jpg", barcode: "MK1", rafeeqId: "691300001",
     groupNameEn: "Options", groupNameAr: "الخيارات", options: [],
     ...over,
@@ -48,6 +48,22 @@ test("Arabic preserved; formula injection neutralized; numeric flags stay numeri
   assert.equal(cell(ws, NATIVE_COL.productNameEn, 1).v, "'=danger()");
   assert.equal(cell(ws, NATIVE_COL.productStatus, 1).t, "n");
   assert.equal(cell(ws, NATIVE_COL.groups, 1).v, 0);
+});
+
+test("PRICE ON SELECTION serializes as TEXT with FULL numeric option prices", () => {
+  const { ws } = readBack([pkgRow({
+    price: null,
+    priceOnSelection: true,
+    options: [
+      { nameEn: "Silver", nameAr: "فضي", price: 158, sortOrder: 1 },
+      { nameEn: "Gold", nameAr: "ذهبي", price: 178, sortOrder: 2 },
+    ],
+  })]);
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as unknown[][];
+  assert.equal(aoa[1][NATIVE_COL.productPrice], "PRICE ON SELECTION");
+  assert.equal(aoa[2][NATIVE_COL.productPrice], "PRICE ON SELECTION");
+  assert.equal(cell(ws, NATIVE_COL.optionPrice, 1).t, "n");
+  assert.deepEqual([aoa[1][NATIVE_COL.optionPrice], aoa[2][NATIVE_COL.optionPrice]], [158, 178]);
 });
 
 test("a new record keeps a BLANK product_id and an option product expands to repeated rows", () => {

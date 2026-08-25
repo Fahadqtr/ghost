@@ -20,13 +20,13 @@
 //     Rafeeq-generated integers; the dump proves no blank-ID convention for new
 //     records. New records are emitted with BLANK ids (never invented numbers);
 //     an existing resolved ECL identity fills product_id.
-//   • option_price: every numeric-priced product in the workbook carries
-//     option_price = 0 (option included in the parent price). The ONLY product
-//     with non-zero option_price has product_price = "PRICE ON SELECTION" (a
-//     text sentinel) and FULL effective prices in option_price. The workbook
-//     does NOT prove the encoding for a numeric parent price + differing option
-//     prices — that contract question is surfaced, never guessed
-//     (OPTION_PRICE_UNRESOLVED blocks the affected products).
+//   • option_price (OWNER-APPROVED rule, matching the live-store convention):
+//     options at ONE identical effective price ⇒ product_price = that uniform
+//     price and option_price = 0; options at DIFFERING effective prices ⇒
+//     product_price = the literal "PRICE ON SELECTION" and option_price = the
+//     FULL effective canonical price of each option — NEVER a delta. The only
+//     pricing blocker is an option with no valid effective price alongside
+//     priced siblings (its full price cannot be emitted).
 //
 // DO NOT add, remove, rename, or reorder headers — the workbook is the contract.
 // No I/O — node:test loads this directly.
@@ -154,6 +154,18 @@ export const RAFEEQ_NATIVE_CATEGORIES: Record<string, RafeeqNativeCategory> = {
 };
 
 /**
+ * Registry lookup by canonical category name. Deterministic normalization
+ * ONLY: trim + the typographic apostrophe (U+2019) folded to ASCII (canonical
+ * data stores "Women’s Essentials"; the audited workbook spells it
+ * "Women's Essentials" — the same live category, id 4415761). No fuzzy
+ * matching — any other difference is an unknown category.
+ */
+export function rafeeqCategoryByName(name: string | null | undefined): RafeeqNativeCategory | undefined {
+  const key = String(name ?? "").trim().replace(/’/g, "'");
+  return key === "" ? undefined : RAFEEQ_NATIVE_CATEGORIES[key];
+}
+
+/**
  * Audited product-level constants (workbook distributions): product_status = 1
  * and active = 1 on every row; product_availability = 1 for purchasable rows;
  * pos_id always blank; product_preparation_time overwhelmingly 15.
@@ -190,6 +202,14 @@ export const RAFEEQ_GROUP_DEFAULTS = {
  */
 export const RAFEEQ_DEFAULT_GROUP_NAME_EN = "Options";
 export const RAFEEQ_DEFAULT_GROUP_NAME_AR = "الخيارات";
+
+/**
+ * OWNER-APPROVED differing-price encoding (observed live in the workbook on
+ * the Smeg product): when a product's options carry DIFFERING effective
+ * prices, product_price is this literal text sentinel and option_price holds
+ * each option's FULL effective canonical price — never a delta.
+ */
+export const RAFEEQ_PRICE_ON_SELECTION = "PRICE ON SELECTION";
 
 /** Column widths (chars) for a tidy native sheet (serializer hint only). */
 export const RAFEEQ_NATIVE_COL_WIDTHS = [

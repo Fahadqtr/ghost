@@ -206,26 +206,71 @@ test("14/15/16: N canonical products stay N identities; variants project as opti
   assert.equal(physicalRowCount(rows), 13);
 });
 
-// ── pricing: uniform option price becomes the product price ───────────────────
-test("a uniform effective option price becomes product_price with option_price 0; differing prices block (unresolved contract)", () => {
-  // uniform: variants explicitly at 110 while the stale parent price says 33
-  const uniform = buildRafeeqPreview({ products: [product("p1", "mk1158", { price: 33, variants: [
+// ── pricing (OWNER-APPROVED rule) ─────────────────────────────────────────────
+test("pricing 1: uniform option pricing → product_price = the uniform price, option_price = 0", () => {
+  const r = buildRafeeqPreview({ products: [product("p1", "mk10", { price: 100, variants: [
+    variant("v1", "mk10-1"), variant("v2", "mk10-2"),
+  ] })] }).rows[0];
+  assert.equal(r.price, 100);
+  assert.equal(r.priceOnSelection, false);
+  const aoa = buildRafeeqXlsxAoa([toPackageRow(r, "mk10.jpg")]);
+  assert.equal(aoa[1][NATIVE_COL.productPrice], "100");
+  assert.deepEqual(aoa.slice(1).map((x) => x[NATIVE_COL.optionPrice]), [0, 0]);
+});
+
+test("pricing 2: stale parent price + uniform explicit option price → the uniform option price wins", () => {
+  const r = buildRafeeqPreview({ products: [product("p1", "mk1158", { price: 33, variants: [
     variant("v1", "mk1158-1", { price: 110 }), variant("v2", "mk1158-2", { price: 110 }),
   ] })] }).rows[0];
-  assert.equal(uniform.price, 110, "uniform option price wins over the stale parent price");
-  assert.equal(uniform.optionPriceUnresolved, false);
-  assert.ok(uniform.status !== "BLOCKED");
-  const aoa = buildRafeeqXlsxAoa([toPackageRow(uniform, "mk1158.jpg")]);
+  assert.equal(r.price, 110, "uniform option price wins over the stale parent price");
+  assert.equal(r.priceOnSelection, false);
+  assert.ok(r.status !== "BLOCKED");
+  const aoa = buildRafeeqXlsxAoa([toPackageRow(r, "mk1158.jpg")]);
   assert.equal(aoa[1][NATIVE_COL.productPrice], "110", "product_price emitted as TEXT (audited)");
-  assert.deepEqual(aoa.slice(1).map((r) => r[NATIVE_COL.optionPrice]), [0, 0]);
+  assert.deepEqual(aoa.slice(1).map((x) => x[NATIVE_COL.optionPrice]), [0, 0]);
+});
 
-  // differing: encoding unproven by the workbook ⇒ blocked, surfaced
-  const differing = buildRafeeqPreview({ products: [product("p2", "mk995", { variants: [
+test("pricing 3: differing prices → product_price = 'PRICE ON SELECTION' + FULL option prices (never deltas)", () => {
+  const r = buildRafeeqPreview({ products: [product("p2", "mk995", { variants: [
     variant("w1", "mk995-1", { price: 158 }), variant("w2", "mk995-2", { price: 178 }),
   ] })] }).rows[0];
-  assert.equal(differing.optionPriceUnresolved, true);
-  assert.equal(differing.status, "BLOCKED");
-  assert.ok(differing.reasons.some((x) => x.code === "OPTION_PRICE_UNRESOLVED" && x.blocking));
+  assert.equal(r.priceOnSelection, true);
+  assert.ok(r.status !== "BLOCKED", "valid differing prices are NOT a blocker");
+  const aoa = buildRafeeqXlsxAoa([toPackageRow(r, "mk995.jpg")]);
+  assert.equal(aoa[1][NATIVE_COL.productPrice], "PRICE ON SELECTION");
+  assert.equal(aoa[2][NATIVE_COL.productPrice], "PRICE ON SELECTION", "sentinel repeats on every option row");
+  assert.deepEqual(aoa.slice(1).map((x) => x[NATIVE_COL.optionPrice]), [158, 178], "FULL prices — 158/178, never 0/20 deltas");
+  // the close-price case: 68/69 stays FULL, never 0/1
+  const close = buildRafeeqPreview({ products: [product("p3", "mk1121", { variants: [
+    variant("c1", "mk1121-1", { price: 68 }), variant("c2", "mk1121-2", { price: 69 }),
+  ] })] }).rows[0];
+  const closeAoa = buildRafeeqXlsxAoa([toPackageRow(close, "mk1121.jpg")]);
+  assert.deepEqual(closeAoa.slice(1).map((x) => x[NATIVE_COL.optionPrice]), [68, 69]);
+});
+
+test("pricing 4: decimal option prices survive exactly under PRICE ON SELECTION", () => {
+  const r = buildRafeeqPreview({ products: [product("p4", "mk1122", { variants: [
+    variant("d1", "mk1122-1", { price: 65 }), variant("d2", "mk1122-2", { price: 69.5 }), variant("d3", "mk1122-3", { price: 69.75 }),
+  ] })] }).rows[0];
+  assert.equal(r.priceOnSelection, true);
+  const aoa = buildRafeeqXlsxAoa([toPackageRow(r, "mk1122.jpg")]);
+  assert.equal(aoa[1][NATIVE_COL.productPrice], "PRICE ON SELECTION");
+  assert.deepEqual(aoa.slice(1).map((x) => x[NATIVE_COL.optionPrice]), [65, 69.5, 69.75]);
+});
+
+test("pricing 5: an option with NO valid effective price alongside priced siblings still BLOCKS", () => {
+  // parent has no sell price, one variant priced, one not ⇒ differing with a hole
+  const r = buildRafeeqPreview({ products: [product("p5", "mk1597", { price: null, discountPrice: null, variants: [
+    variant("m1", "mk1597-1", { price: 48 }), variant("m2", "mk1597-2", { price: null }),
+  ] })] }).rows[0];
+  assert.equal(r.status, "BLOCKED");
+  assert.ok(r.reasons.some((x) => x.code === "MISSING_PRICE" && x.blocking), "missing effective option price is the only pricing blocker");
+  // whereas ALL options unpriced (and no parent price) is the ordinary warning, not a block
+  const allUnpriced = buildRafeeqPreview({ products: [product("p6", "mk9999", { price: null, discountPrice: null, variants: [
+    variant("n1", "mk9999-1"), variant("n2", "mk9999-2"),
+  ] })] }).rows[0];
+  assert.equal(allUnpriced.status, "WARNING");
+  assert.ok(allUnpriced.reasons.some((x) => x.code === "MISSING_PRICE" && !x.blocking));
 });
 
 // ── unknown category ⇒ blank category cells + warning (no invented ids) ───────
@@ -239,6 +284,10 @@ test("an unknown canonical category emits blank category cells and warns — a R
   assert.equal(known[1][NATIVE_COL.categoryId], 3708643);
   assert.equal(known[1][NATIVE_COL.categoryNameAr], "المكياج");
   assert.equal(known[1][NATIVE_COL.subcategoryId], 260178, "the category's audited ALL subcategory");
+  // the typographic apostrophe variant folds to the audited registry entry
+  const curly = aoaOf([product("p3", "mk3", { category: "Women’s Essentials" })]);
+  assert.equal(curly[1][NATIVE_COL.categoryId], 4415761, "U+2019 apostrophe matches the audited 'Women's Essentials'");
+  assert.equal(curly[1][NATIVE_COL.categoryNameEn], "Women's Essentials");
 });
 
 // ── STOPPED parent blocks the whole product (options included) ────────────────
