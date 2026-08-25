@@ -37,9 +37,11 @@ import {
   type PackagedFile,
 } from "@/lib/export/rafeeq/package";
 import { sniffImageExtension, mimeToExt } from "@/lib/export/package-core";
+import { physicalRowCount as countPhysicalRows } from "@/lib/export/rafeeq/package";
 import {
   resolveFullSyncSet,
   applyFullSyncRafeeqId,
+  deliveryKeyOfRow,
   rowFingerprint,
   packageFingerprint,
   fullSyncZipName,
@@ -277,31 +279,33 @@ async function recordAudit(summary: RafeeqPackageSummary, status: "done" | "erro
   }
 }
 
-// ── RAFEEQ.FULLSYNC.1 — canonical FULL / NEW file-sync packages ────────────────
+// ── RAFEEQ FULLSYNC — canonical FULL / NEW file-sync packages ─────────────────
 //
 // Same certified pipeline (preview → image boundary → collision → integrity →
-// xlsx → zip), different SELECTION + LAYOUT:
-//   • FULL: every FULL-includable row (a row blocked ONLY by the identity
-//     review ships with the "new product" marker — contested ids never used);
-//   • NEW:  the pending rows (includable AND not in any SENT package) — every
-//     row forced to the "new product" marker;
+// xlsx → zip) on the AUDITED native template, different SELECTION + LAYOUT:
+//   • FULL: every FULL-includable PRODUCT (a product blocked ONLY by the
+//     identity review ships with a BLANK product_id — contested ids never used);
+//   • NEW:  the pending products — kind NEW ships with a blank product_id,
+//     kind OPTION_UPDATE preserves its resolved id so Rafeeq updates the
+//     existing product (a new option is never a separate new product);
 //   • layout: /<rafeeq_catalog|rafeeq_new_products>.xlsx + /images/ +
 //     /manifest.json at the ZIP ROOT (rafeeq-full-YYYY-MM-DD.zip naming).
+//     Images ship ONCE per product (parent-SKU filenames) — never per option.
 // Recording the durable package row is the ROUTE's job (lib/rafeeq/
 // fullsync.server) — this generator stays write-free (audit floor only).
 
 export interface FullSyncGenerateOptions {
   mode: RafeeqFullSyncMode;
-  /** Sellable keys (product / product::variant) in any SENT package (the durable baseline). */
-  sentSellableKeys: ReadonlySet<string>;
+  /** SENT baseline at PRODUCT grain: product id → last-sent delivery fingerprint. */
+  sentBaseline: ReadonlyMap<string, string | null>;
   actor: string | null;
   now?: Date;
 }
 
 export interface FullSyncItemOut {
   productId: string;
-  /** the sellable variant behind the row (null = simple-product row). */
-  variantId: string | null;
+  /** always null — delivery identity is the parent product (options inside). */
+  variantId: null;
   sku: string;
   fingerprint: string;
   rafeeqIdSent: string;
@@ -313,7 +317,13 @@ export interface FullSyncPackageSummary {
   actor: string | null;
   outputFilename: string;
   xlsxFilename: string;
+  /** canonical Rafeeq PRODUCT identities in the file. */
   productRowCount: number;
+  /** physical spreadsheet data rows (parents repeated once per option). */
+  physicalRowCount: number;
+  productsWithOptions: number;
+  optionCount: number;
+  optionUpdateCount: number;
   mappedIdCount: number;
   newMarkerCount: number;
   needsReviewIncluded: number;
@@ -342,7 +352,7 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
   const preview = await loadRafeeqPreview();
   if (!preview) return { ok: false, error: "preview_unavailable" };
 
-  const set = resolveFullSyncSet(preview.rows, opts.mode, opts.sentSellableKeys);
+  const set = resolveFullSyncSet(preview.rows, opts.mode, opts.sentBaseline);
   const capped = set.included.slice(0, PACKAGE_LIMITS.maxRows);
   const cappedExcludedCount = set.included.length - capped.length;
   if (capped.length === 0) return { ok: false, error: "no_exportable_rows" };
@@ -356,10 +366,17 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
     const collisions = detectFilenameCollisions(survivors.map((sv) => sv.primary.filename));
     if (collisions.length > 0) return { ok: false, error: "filename_collision" };
 
-    // Mode projection of the RAFEEQ ID column (FULL preserves resolved ids;
-    // NEW forces the marker; contested ids are already null in the preview).
+    // product_id projection: FULL preserves resolved ids (blank for new); NEW
+    // emits blank for NEW-kind products and preserves the resolved id for an
+    // OPTION_UPDATE. Contested ids are already null in the preview. One image
+    // set per PRODUCT — every repeated option row references the same file.
     const packageRows: RafeeqPackageRow[] = survivors.map((sv) =>
-      applyFullSyncRafeeqId(toPackageRow(sv.row, sv.primary.filename), sv.row, opts.mode),
+      applyFullSyncRafeeqId(
+        toPackageRow(sv.row, sv.primary.filename),
+        sv.row,
+        opts.mode,
+        set.includedKinds.get(deliveryKeyOfRow(sv.row)),
+      ),
     );
     const rowImageRefs = packageRows.map((r) => r.imageName);
 
@@ -374,19 +391,24 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
 
     const xlsxBytes = buildRafeeqXlsxBuffer(packageRows);
 
+    // Durable item snapshot at PRODUCT grain — one record per Rafeeq product
+    // identity, carrying the delivery fingerprint (full option set included).
     const items: FullSyncItemOut[] = survivors.map((sv, i) => ({
       productId: sv.row.internalProductId,
-      variantId: sv.row.variantId,
+      variantId: null,
       sku: sv.row.sku,
       fingerprint: rowFingerprint(sv.row),
-      rafeeqIdSent: packageRows[i].rafeeqId,
+      rafeeqIdSent: packageRows[i].rafeeqId || RAFEEQ_NEW_MARKER,
     }));
     const manifestFingerprint = packageFingerprint(opts.mode, items.map((it) => it.fingerprint));
 
-    const newMarkerCount = packageRows.filter((r) => r.rafeeqId === RAFEEQ_NEW_MARKER).length;
+    const newMarkerCount = packageRows.filter((r) => r.rafeeqId === "").length;
     const mappedIdCount = packageRows.length - newMarkerCount;
     const needsReviewIncluded = survivors.filter((sv) => sv.row.needsOwnerReview).length;
     const imageCount = packaged.length;
+    const physicalRows = countPhysicalRows(packageRows);
+    const productsWithOptions = survivors.filter((sv) => sv.row.hasOptions).length;
+    const optionCount = survivors.reduce((acc, sv) => acc + sv.row.optionCount, 0);
     const outputFilename = fullSyncZipName(opts.mode, now);
     const xlsxFilename = fullSyncXlsxName(opts.mode);
 
@@ -396,6 +418,10 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
       generatedAt: startedAt,
       actor: opts.actor,
       productRowCount: packageRows.length,
+      physicalRowCount: physicalRows,
+      productsWithOptions,
+      optionCount,
+      optionUpdateCount: set.counts.optionUpdates,
       imageCount,
       mappedIdCount,
       newMarkerCount,
@@ -423,6 +449,10 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
       outputFilename,
       xlsxFilename,
       productRowCount: packageRows.length,
+      physicalRowCount: physicalRows,
+      productsWithOptions,
+      optionCount,
+      optionUpdateCount: set.counts.optionUpdates,
       mappedIdCount,
       newMarkerCount,
       needsReviewIncluded,
@@ -441,7 +471,8 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
     await recordFullSyncAudit(
       {
         mode: opts.mode, generatedAt: startedAt, actor: opts.actor, outputFilename: "", xlsxFilename: fullSyncXlsxName(opts.mode),
-        productRowCount: 0, mappedIdCount: 0, newMarkerCount: 0, needsReviewIncluded: 0,
+        productRowCount: 0, physicalRowCount: 0, productsWithOptions: 0, optionCount: 0, optionUpdateCount: 0,
+        mappedIdCount: 0, newMarkerCount: 0, needsReviewIncluded: 0,
         trueBlockersExcluded: set.counts.trueBlockers, alreadySentExcluded: set.excludedAlreadySent.length,
         excludedNoImageCount: 0, cappedExcludedCount, imageCount: 0, manifestFingerprint: "", integrityOk: false,
       },
@@ -470,7 +501,11 @@ async function recordFullSyncAudit(summary: FullSyncPackageSummary, status: "don
         started_at: summary.generatedAt,
         finished_at: finishedAt.toISOString(),
         status,
-        product_row_count: summary.productRowCount,
+        product_identity_count: summary.productRowCount,
+        physical_row_count: summary.physicalRowCount,
+        products_with_options: summary.productsWithOptions,
+        option_count: summary.optionCount,
+        option_update_count: summary.optionUpdateCount,
         mapped_id_count: summary.mappedIdCount,
         new_marker_count: summary.newMarkerCount,
         needs_review_included: summary.needsReviewIncluded,

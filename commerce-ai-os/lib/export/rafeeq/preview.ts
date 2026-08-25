@@ -1,34 +1,47 @@
-// INT.2D + RAFEEQ.FULLSYNC.2 — Rafeeq export preview (PURE).
+// RAFEEQ NATIVE-OPTION PREVIEW (PURE) — the audited real Rafeeq model.
 //
-// Rafeeq lists at SELLABLE-LISTING flattening (RAFEEQ.FULLSYNC.2):
-//   • a SIMPLE product (no variants)   → exactly ONE row (grain PRODUCT);
-//   • a product WITH variants          → ONE row PER legitimate variant (grain
-//     VARIANT) and NO parent row — the parent is never exported as an extra
-//     sellable listing (the P0 no-double-export invariant, mirrored from the
-//     certified Talabat flattening).
-// Variant rows use the variant's OWN sku/barcode (never the parent's), the
-// certified flattened title (buildFlattenedName — the proven Talabat
-// projection, reused not reinvented), the parent's category/descriptions/
-// canonical images, and the canonical variant sell price:
-//   positive(variant.price) ?? positive(parent.discountPrice) ?? positive(parent.price)
+// Rafeeq does NOT model our variants as separate products. The audited real
+// workbook (native-template.ts) proves:
+//   • a SIMPLE product        → ONE product identity, one physical row;
+//   • a product WITH variants → ONE product identity whose variants are OPTIONS
+//     inside ONE native option group. The physical file repeats the parent row
+//     once per option (identical parent fields; only option cells vary), but
+//     those repeated rows are ONE Rafeeq product — never separate listings.
 //
-// Identity is ECL-first and storefront-scoped: the Rafeeq Product ID is the ECL
-// external_product_id read for storefront_key = "rafeeq:malikas" only, keyed by
-// the EXPORTED (sellable) sku. This module NEVER reads the legacy per-store id
-// column on products, never invents an id, and never guesses identity by product name.
-// A row with no active ECL row is UNMAPPED (new). A contested mapping (ECL
-// mapping_status = needs_review) is a P0 BLOCK — displayed as "Rafeeq Identity
-// Conflict — Needs Owner Review" and NEVER auto-resolved. Certified SKU/barcode
-// normalizers + the INT.2A image-naming + validation contracts are REUSED.
-// Duplicate SKU/barcode/image-filename are checked across the FINAL flattened
-// dataset. No I/O — node:test loads it.
+// This preview is PRODUCT-grain: one row per canonical product, carrying its
+// full ordered option set. The parent title is NEVER flattened with the option
+// label — option labels live ONLY in the option name fields.
+//
+// RAFEEQ TEMPLATE BARCODE RULE (owner decision, kept from PR #677): the
+// exported BARCODE carries the canonical PARENT product SKU on every physical
+// row. The real EAN and the variant's own sku/barcode are NEVER exported —
+// they stay internal to Malikas AI.
+//
+// PRICING (owner-approved rule, matching the live workbook convention):
+//   • options all at ONE identical effective price → product_price = that
+//     uniform price, option_price = 0 for every option (the parent's own stale
+//     price column is NOT trusted over the uniform option price);
+//   • options at DIFFERING effective prices → product_price = the literal text
+//     "PRICE ON SELECTION" and option_price = each option's FULL effective
+//     canonical price — NEVER a delta;
+//   • an option with NO valid effective price alongside priced siblings is the
+//     only pricing blocker (its full price cannot be emitted).
+// Effective option price = positive(variant.price) ?? parent sell price
+// (positive(discount) ?? positive(price)).
+//
+// Identity is ECL-first at PRODUCT grain, storefront-scoped (rafeeq:malikas),
+// keyed by the parent exported sku. Contested mappings (needs_review) BLOCK and
+// are never auto-resolved. Images are PRODUCT-level only (the audited template
+// has no option-image column): one packaged image set per product, named by the
+// parent SKU, shared by every repeated option row. No I/O — node:test loads it.
 
-import { buildFlattenedName, normalizeExportedSku, normalizeBarcode } from "../../talabat/export.ts";
+import { normalizeExportedSku } from "../../talabat/export.ts";
 import { storefrontByKey } from "../../channels/storefronts.ts";
 import { resolveLifecycleState, type LifecycleState } from "../../lifecycle/state.ts";
 import { primaryImageName, extensionFromUrl } from "../image-naming.ts";
 import { summarizeValidation, type ExportItemStatus, type ExportReason, type ExportValidationItem, type ExportValidationSummary } from "../validation.ts";
 import { type ExportPreview, type ExportPreviewItem } from "../preview.ts";
+import { RAFEEQ_DEFAULT_GROUP_NAME_AR, RAFEEQ_DEFAULT_GROUP_NAME_EN, rafeeqCategoryByName } from "./native-template.ts";
 
 export const RAFEEQ_STOREFRONT_KEY = "rafeeq:malikas" as const;
 export type RafeeqStorefrontKey = typeof RAFEEQ_STOREFRONT_KEY;
@@ -38,9 +51,8 @@ export type RafeeqStorefrontKey = typeof RAFEEQ_STOREFRONT_KEY;
 // products column.
 const RAFEEQ_IDENTITY_TYPE = storefrontByKey(RAFEEQ_STOREFRONT_KEY)?.identityType ?? null;
 
-const BARCODE_RE = /^[0-9]{6,14}$/;
-
-/** One legitimate product option/variant (from product_variants). */
+/** One legitimate product option/variant (from product_variants). The variant
+ *  sku/barcode are canonical INTERNAL data — never exported to Rafeeq. */
 export interface RafeeqPreviewVariant {
   id: string | null;
   sku: string | null;
@@ -68,60 +80,82 @@ export interface RafeeqPreviewProduct {
   imageCount: number;
   lifecycleState?: unknown;
   platformStatus?: unknown;
-  /** Legitimate variants — a non-empty list flattens this product to variant rows. */
+  /** Legitimate variants — projected as native OPTIONS of this one product. */
   variants?: readonly RafeeqPreviewVariant[];
 }
 
 /**
- * Storefront-scoped ECL identity evidence for rafeeq:malikas, keyed by the
- * EXPORTED (sellable) sku. `productId` is the ECL row's internal product (to
- * detect a cross-product conflict); `variantId` is the variant-grain identity
- * when present. `status` mirrors ECL mapping_status. A missing entry ⇒ unmapped.
+ * Storefront-scoped ECL identity evidence for rafeeq:malikas at PRODUCT grain,
+ * keyed by lower(parent exported sku). A missing entry ⇒ unmapped.
  */
 export interface RafeeqMappingEvidence {
   status: "resolved" | "needs_review" | "unmapped";
-  externalId: string | null; // Rafeeq Product ID (ECL external_product_id)
+  externalId: string | null; // Rafeeq product_id (ECL external_product_id)
   exportedSku: string | null;
   productId: string | null;
-  variantId?: string | null;
 }
-const UNMAPPED: RafeeqMappingEvidence = { status: "unmapped", externalId: null, exportedSku: null, productId: null, variantId: null };
+const UNMAPPED: RafeeqMappingEvidence = { status: "unmapped", externalId: null, exportedSku: null, productId: null };
 
 export interface RafeeqPreviewInput {
   products: readonly RafeeqPreviewProduct[];
-  /** ECL evidence for rafeeq:malikas only, keyed by lower(exported sku). */
+  /** ECL evidence for rafeeq:malikas only, keyed by lower(parent exported sku). */
   mappingBySku?: Readonly<Record<string, RafeeqMappingEvidence>>;
 }
 
+/** One native option of a product (deterministically ordered). */
+export interface RafeeqPreviewOption {
+  variantId: string | null;
+  /** canonical internal variant sku — internal only, NEVER exported. */
+  internalSku: string | null;
+  nameEn: string;
+  nameAr: string;
+  /** canonical effective price (variant price ?? parent sell price). */
+  effectivePrice: number | null;
+  /** deterministic 1..N ordering (internal sku natural order, then name). */
+  sortOrder: number;
+}
+
+/** ONE canonical product = ONE Rafeeq product identity. */
 export interface RafeeqPreviewRow {
   storefrontKey: RafeeqStorefrontKey;
   internalProductId: string;
-  /** the sellable variant behind this row; null for a simple product row. */
-  variantId: string | null;
-  /** stable per-row key: product id for simple rows, product::variant for variant rows. */
+  /** stable row key = the product id (product-grain). */
   rowKey: string;
-  grain: "PRODUCT" | "VARIANT";
-  isVariant: boolean;
+  /** canonical parent product SKU. */
   sku: string;
+  /** Rafeeq BARCODE cell = the canonical PARENT product SKU (owner template
+   *  rule) — never the real EAN, never a variant sku/barcode. */
   barcode: string | null;
+  /** PARENT title only — never flattened with an option label. */
   title: string;
   titleAr: string;
   category: string | null;
-  /** Rafeeq's own Arabic category name (from RAFEEQ_CATEGORIES) — filled by caller projection. */
+  /** the numeric product price (uniform option price, or parent sell price);
+   *  null when priceOnSelection is true (the cell carries the text sentinel). */
   price: number | null;
+  /** true ⇒ options carry DIFFERING effective prices: the product_price cell
+   *  is the literal "PRICE ON SELECTION" and each option_price is the FULL
+   *  effective canonical price (owner-approved encoding — never deltas). */
+  priceOnSelection: boolean;
   descriptionEn: string;
   descriptionAr: string;
   hasImage: boolean;
   imageCount: number;
-  imageExportName: string | null; // SKU-based (the SELLABLE sku)
+  /** packaged parent image filename (parent-SKU-based), shared by option rows. */
+  imageExportName: string | null;
   primaryImageUrl: string | null;
   galleryImageUrls: readonly string[];
-  /** true when a variant row ships the parent's canonical image (no variant media model yet). */
-  inheritedParentImage: boolean;
-  /** Rafeeq Product ID from ECL (null ⇒ new/unmapped — never invented). */
+  /** deterministic native option set (empty = simple product). */
+  options: RafeeqPreviewOption[];
+  hasOptions: boolean;
+  optionCount: number;
+  /** physical spreadsheet rows this product occupies (1 or optionCount). */
+  physicalRowCount: number;
+  groupNameEn: string;
+  groupNameAr: string;
+  /** Rafeeq product_id from ECL (null ⇒ new/unmapped — never invented). */
   rafeeqId: string | null;
   mapping: RafeeqMappingEvidence;
-  /** true when this row is a contested ECL mapping (needs_review) — blocked. */
   needsOwnerReview: boolean;
   lifecycleState: LifecycleState;
   status: ExportItemStatus;
@@ -135,15 +169,17 @@ export interface RafeeqPreviewResult {
   summary: ExportValidationSummary;
   preview: ExportPreview;
   counts: {
+    /** canonical Rafeeq PRODUCT identities (the business count — never rows). */
     productCount: number;
-    /** total sellable rows (simple + variant). */
-    sellableRowCount: number;
-    simpleRowCount: number;
-    variantRowCount: number;
-    productsWithVariants: number;
+    productsWithOptions: number;
+    optionCount: number;
+    /** physical spreadsheet data rows (a product repeats once per option). */
+    physicalRowCount: number;
     mappedCount: number;
     unmappedCount: number;
     needsReviewCount: number;
+    /** differing-price parents encoded as PRICE ON SELECTION + full prices. */
+    priceOnSelectionCount: number;
   };
 }
 
@@ -153,93 +189,92 @@ function clean(v: string | null | undefined): string {
 function positive(v: number | null | undefined): number | null {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 }
-function tally(values: readonly string[]): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const v of values) if (v !== "") m.set(v, (m.get(v) ?? 0) + 1);
-  return m;
+
+/** product-grain delivery/row key. */
+export function productRowKey(productId: string): string {
+  return productId;
 }
 
-interface StagedRow {
-  product: RafeeqPreviewProduct;
-  variant: RafeeqPreviewVariant | null;
+/** Deterministic option ordering: internal sku natural order, then name, then id. */
+function orderOptions(variants: readonly RafeeqPreviewVariant[], parentSell: number | null): RafeeqPreviewOption[] {
+  const opts = variants.map((v) => ({
+    variantId: v.id ?? null,
+    internalSku: clean(v.sku) || null,
+    nameEn: clean(v.nameEn) || clean(v.nameAr),
+    nameAr: clean(v.nameAr) || clean(v.nameEn),
+    effectivePrice: positive(v.price) ?? parentSell,
+    sortOrder: 0,
+  }));
+  opts.sort((a, b) =>
+    (a.internalSku ?? "").localeCompare(b.internalSku ?? "", "en", { numeric: true, sensitivity: "base" }) ||
+    a.nameEn.localeCompare(b.nameEn, "en", { sensitivity: "base" }) ||
+    (a.variantId ?? "").localeCompare(b.variantId ?? ""));
+  opts.forEach((o, i) => { o.sortOrder = i + 1; });
+  return opts;
 }
 
-/** Flatten products → sellable rows: variants ⇒ one row each, NO parent row. */
-function stage(products: readonly RafeeqPreviewProduct[]): StagedRow[] {
-  const staged: StagedRow[] = [];
-  for (const p of products) {
-    const variants = Array.isArray(p.variants) ? p.variants : [];
-    if (variants.length === 0) {
-      staged.push({ product: p, variant: null });
-    } else {
-      for (const v of variants) staged.push({ product: p, variant: v }); // no parent row
-    }
-  }
-  return staged;
-}
-
-/** Stable per-row key (simple ⇒ product id; variant ⇒ product::variant). */
-export function sellableRowKey(productId: string, variantId: string | null | undefined): string {
-  return variantId ? `${productId}::${variantId}` : productId;
-}
-
-/** Build the validated Rafeeq preview. Pure + deterministic. */
+/** Build the validated PRODUCT-grain Rafeeq preview. Pure + deterministic. */
 export function buildRafeeqPreview(input: RafeeqPreviewInput): RafeeqPreviewResult {
   const products = Array.isArray(input?.products) ? input.products : [];
   const mappingBySku = input?.mappingBySku ?? {};
-  const staged = stage(products);
 
-  // First pass — resolve every SELLABLE identity for dataset-wide duplicate checks.
-  const skuLower: string[] = [];
-  const barcodes: string[] = [];
+  // Dataset-wide duplicate checks at PRODUCT grain: the parent SKU is both the
+  // sku identity and the exported BARCODE (Rafeeq's grouping key), and the
+  // parent image filename base must be unique post-sanitization.
+  const skuOwners = new Map<string, Set<string>>();
+  const imageNameOwners = new Map<string, Set<string>>();
   const imageNames: string[] = [];
-  for (const s of staged) {
-    const sku = normalizeExportedSku(s.variant ? s.variant.sku : s.product.sku);
-    skuLower.push(sku.toLowerCase());
-    barcodes.push(normalizeBarcode(s.variant ? s.variant.barcode : s.product.barcode) ?? "");
-    // sanitized primary filename base (SELLABLE sku) for collision detection
-    const p = s.product;
-    imageNames.push(sku ? primaryImageName(sku, extensionFromUrl(p.imageFilename || p.imageUrl)).toLowerCase() : "");
-  }
-  const skuCounts = tally(skuLower);
-  const barcodeCounts = tally(barcodes);
-  const imageNameCounts = tally(imageNames);
-
-  let variantRowCount = 0;
-  const withVariants = new Set<string>();
-  const rows: RafeeqPreviewRow[] = staged.map((s, i) => {
-    if (s.variant) {
-      variantRowCount++;
-      withVariants.add(s.product.id);
+  for (const p of products) {
+    const sku = normalizeExportedSku(p.sku);
+    if (sku !== "") {
+      const owners = skuOwners.get(sku.toLowerCase()) ?? new Set<string>();
+      owners.add(p.id);
+      skuOwners.set(sku.toLowerCase(), owners);
     }
-    return buildRow(s, skuCounts, barcodeCounts, imageNameCounts, imageNames[i], mappingBySku);
-  });
+    const name = sku ? primaryImageName(sku, extensionFromUrl(p.imageFilename || p.imageUrl)).toLowerCase() : "";
+    imageNames.push(name);
+    if (name !== "") {
+      const owners = imageNameOwners.get(name) ?? new Set<string>();
+      owners.add(p.id);
+      imageNameOwners.set(name, owners);
+    }
+  }
 
-  const items: ExportValidationItem[] = rows.map((r) => ({ entityId: r.variantId ?? r.internalProductId, destination: RAFEEQ_STOREFRONT_KEY, status: r.status, reasons: r.reasons }));
+  const rows: RafeeqPreviewRow[] = products.map((p, i) => buildRow(p, skuOwners, imageNameOwners, imageNames[i], mappingBySku));
+
+  const items: ExportValidationItem[] = rows.map((r) => ({ entityId: r.internalProductId, destination: RAFEEQ_STOREFRONT_KEY, status: r.status, reasons: r.reasons }));
   const summary = summarizeValidation(items);
   const previewItems: ExportPreviewItem[] = rows.map((r) => ({
     internalProductId: r.internalProductId,
-    variantId: r.variantId,
+    variantId: null,
     sku: r.sku || null,
     barcode: r.barcode,
     title: r.title,
     destination: RAFEEQ_STOREFRONT_KEY,
     storefront: RAFEEQ_STOREFRONT_KEY,
-    grain: r.grain,
+    grain: "PRODUCT",
     status: r.status,
     warnings: r.reasons.filter((x) => !x.blocking),
     blockingReasons: r.reasons.filter((x) => x.blocking),
     imageCount: r.imageCount,
     primaryImage: r.imageExportName,
     externalIdentity: { storefrontKey: RAFEEQ_STOREFRONT_KEY, externalProductId: r.rafeeqId, externalVariantId: null, exportedSku: r.mapping.exportedSku ?? (r.sku || null), identityType: RAFEEQ_IDENTITY_TYPE },
-    metadata: { mappingStatus: r.mapping.status, needsOwnerReview: r.needsOwnerReview, inheritedParentImage: r.inheritedParentImage },
+    metadata: { mappingStatus: r.mapping.status, needsOwnerReview: r.needsOwnerReview, optionCount: r.optionCount, priceOnSelection: r.priceOnSelection },
   }));
 
   let mappedCount = 0;
   let needsReviewCount = 0;
+  let productsWithOptions = 0;
+  let optionCount = 0;
+  let physicalRowCount = 0;
+  let priceOnSelectionCount = 0;
   for (const r of rows) {
     if (r.rafeeqId !== null) mappedCount++;
     if (r.needsOwnerReview) needsReviewCount++;
+    if (r.hasOptions) productsWithOptions++;
+    optionCount += r.optionCount;
+    physicalRowCount += r.physicalRowCount;
+    if (r.priceOnSelection) priceOnSelectionCount++;
   }
 
   return {
@@ -247,62 +282,71 @@ export function buildRafeeqPreview(input: RafeeqPreviewInput): RafeeqPreviewResu
     rows,
     items,
     summary,
-    preview: { destination: RAFEEQ_STOREFRONT_KEY, grain: "SELLABLE_LISTING", items: previewItems, placeholder: false },
+    preview: { destination: RAFEEQ_STOREFRONT_KEY, grain: "PRODUCT", items: previewItems, placeholder: false },
     counts: {
       productCount: products.length,
-      sellableRowCount: rows.length,
-      simpleRowCount: rows.length - variantRowCount,
-      variantRowCount,
-      productsWithVariants: withVariants.size,
+      productsWithOptions,
+      optionCount,
+      physicalRowCount,
       mappedCount,
       unmappedCount: rows.length - mappedCount,
       needsReviewCount,
+      priceOnSelectionCount,
     },
   };
 }
 
 function buildRow(
-  s: StagedRow,
-  skuCounts: Map<string, number>,
-  barcodeCounts: Map<string, number>,
-  imageNameCounts: Map<string, number>,
+  p: RafeeqPreviewProduct,
+  skuOwners: Map<string, Set<string>>,
+  imageNameOwners: Map<string, Set<string>>,
   imageNameLower: string,
   mappingBySku: Readonly<Record<string, RafeeqMappingEvidence>>,
 ): RafeeqPreviewRow {
-  const { product: p, variant: v } = s;
-  const isVariant = v !== null;
-  // Sellable identity: the variant's OWN sku/barcode — NEVER the parent's.
-  const sku = normalizeExportedSku(isVariant ? v!.sku : p.sku);
-  const barcode = normalizeBarcode(isVariant ? v!.barcode : p.barcode);
-  // Certified flattened listing names ("{parent} — {option}", no repeat) — the
-  // proven Talabat projection, reused for both languages.
-  const title = isVariant
-    ? buildFlattenedName(clean(p.nameEn) || clean(p.nameAr), clean(v!.nameEn) || clean(v!.nameAr))
-    : clean(p.nameEn) || clean(p.nameAr);
-  const titleAr = isVariant
-    ? buildFlattenedName(clean(p.nameAr) || clean(p.nameEn), clean(v!.nameAr) || clean(v!.nameEn))
-    : clean(p.nameAr) || clean(p.nameEn);
+  const sku = normalizeExportedSku(p.sku);
+  // Rafeeq BARCODE cell (owner template rule): the canonical PARENT product SKU
+  // on EVERY physical row. The real EAN and any variant sku/barcode are NEVER
+  // written here; repeated option rows share it as Rafeeq's grouping key.
+  const barcode = sku || null;
+  // PARENT titles only — option labels live ONLY in the option name cells.
+  const title = clean(p.nameEn) || clean(p.nameAr);
+  const titleAr = clean(p.nameAr) || clean(p.nameEn);
   const category = clean(p.category) || null;
-  // Canonical sell price: an explicit positive variant price ALWAYS beats the
-  // parent's; otherwise the variant inherits parent discount → parent price.
-  const price = isVariant
-    ? positive(v!.price) ?? positive(p.discountPrice) ?? positive(p.price)
-    : positive(p.discountPrice) ?? positive(p.price);
+  const parentSell = positive(p.discountPrice) ?? positive(p.price);
+
+  const variants = Array.isArray(p.variants) ? p.variants : [];
+  const options = orderOptions(variants, parentSell);
+  const hasOptions = options.length > 0;
+
+  // OWNER-APPROVED pricing: a uniform effective option price IS the product
+  // price (option_price 0 — the stale parent price column is never trusted
+  // over it). DIFFERING effective prices use the live-store encoding:
+  // product_price = "PRICE ON SELECTION" + FULL effective option prices
+  // (never deltas). An option with NO effective price alongside priced
+  // siblings is the only pricing blocker (its full price cannot be emitted).
+  let price = parentSell;
+  let priceOnSelection = false;
+  let optionMissingPrice = false;
+  if (hasOptions) {
+    const prices = new Set(options.map((o) => o.effectivePrice));
+    if (prices.size === 1) {
+      price = options[0].effectivePrice ?? parentSell; // may be null ⇒ MISSING_PRICE warning below
+    } else {
+      priceOnSelection = true;
+      price = null; // the cell carries the text sentinel
+      optionMissingPrice = options.some((o) => o.effectivePrice === null);
+    }
+  }
+
   const hasImage = p.imageCount > 0 || clean(p.imageUrl) !== "" || clean(p.imageFilename) !== "";
-  const inheritedParentImage = isVariant && hasImage; // no variant media model yet
   const ext = extensionFromUrl(p.imageFilename || p.imageUrl);
   const imageExportName = sku ? primaryImageName(sku, ext) : null;
-  // Variants inherit the parent's canonical primary + gallery sources; the
-  // package repackages them under the VARIANT sku filename so every Excel row
-  // has a direct matching image (deliberate byte duplication across siblings).
   const primaryImageUrl = clean(p.imageUrl) !== "" ? p.imageUrl : null;
   const galleryImageUrls = Array.isArray(p.galleryImageUrls) ? p.galleryImageUrls.filter((u) => clean(u) !== "") : [];
   const state = resolveLifecycleState({ lifecycle_state: p.lifecycleState, platform_status: p.platformStatus });
   const mapping = sku ? (mappingBySku[sku.toLowerCase()] ?? UNMAPPED) : UNMAPPED;
   // needs_review is a P0 contested mapping — it blocks (never auto-resolved).
   const needsOwnerReview = mapping.status === "needs_review";
-  // A needs_review row has an unstable identity, so its Rafeeq ID is NOT surfaced
-  // as a usable id (it is blocked below and shown as "Needs Owner Review").
   const rafeeqId = mapping.status === "resolved" ? mapping.externalId : null;
 
   const reasons: ExportReason[] = [];
@@ -311,62 +355,60 @@ function buildRow(
 
   if (state === "STOPPED") block("LIFECYCLE_NOT_ELIGIBLE", "المنتج موقوف — غير مؤهّل للتصدير.");
 
-  // SKU (P0) — a variant with no OWN sku is not sellable (no parent fallback).
+  // Parent SKU (P0): it is the sku identity AND the exported barcode grouping key.
   if (sku === "") {
     block("MISSING_SKU");
-    if (isVariant) block("VARIANT_NOT_READY", "المتغيّر بدون SKU خاص — لا يورَّث SKU المنتج الأب.");
-  } else if ((skuCounts.get(sku.toLowerCase()) ?? 0) > 1) {
+    block("MISSING_BARCODE", "عمود الباركود في رفيق يتطلب SKU المنتج الأب — وهو مفقود.");
+  } else if ((skuOwners.get(sku.toLowerCase())?.size ?? 0) > 1) {
     block("DUPLICATE_SKU");
+    block("DUPLICATE_BARCODE", "نفس SKU الأب مستخدم من أكثر من منتج — مفتاح تجميع رفيق متعارض.");
   }
 
-  if (barcode === null) warn("MISSING_BARCODE");
-  else if ((barcodeCounts.get(barcode) ?? 0) > 1) block("DUPLICATE_BARCODE");
-  else if (!BARCODE_RE.test(barcode)) warn("INVALID_BARCODE", "صيغة الباركود غير قياسية.");
-
   if (!hasImage) block("MISSING_IMAGE");
-  // Disclosed, never blocking: the variant ships the product-level image until a
-  // variant media model exists (mirrors the certified Talabat disclosure).
-  else if (inheritedParentImage) warn("IMAGE_SHARED_FROM_PRODUCT", "الصورة مشتركة من المنتج (لا يوجد نموذج صور للمتغيّرات بعد).");
-
   if (title === "") block("MISSING_TITLE");
-  if (price === null) warn("MISSING_PRICE");
+  // A category outside the audited live Rafeeq registry exports blank category
+  // cells (a Rafeeq category id is never invented) — disclosed as a warning.
   if (category === null) warn("MISSING_CATEGORY");
+  else if (!rafeeqCategoryByName(category)) warn("MISSING_CATEGORY", "الفئة غير موجودة في سجلّ فئات رفيق المدقَّق — ستُصدَّر خلايا الفئة فارغة.");
+
+  // Options: an option needs a display name (its labels are the ONLY thing that
+  // distinguishes the repeated rows); missing names make the group unbuildable.
+  if (hasOptions && options.some((o) => o.nameEn === "" && o.nameAr === "")) {
+    block("VARIANT_NOT_READY", "خيار بدون اسم — لا يمكن بناء مجموعة الخيارات.");
+  }
+
+  // Pricing validation: differing prices are VALID (sentinel + full prices);
+  // the only pricing blocker is an option whose full price cannot be emitted.
+  if (optionMissingPrice) {
+    block("MISSING_PRICE", "خيار بدون سعر فعّال بجانب خيارات مسعّرة — لا يمكن إصدار سعره الكامل.");
+  } else if (!priceOnSelection && price === null) {
+    warn("MISSING_PRICE");
+  }
 
   // Identity — P0. A cross-product ECL mapping blocks; a needs_review mapping is a
-  // contested identity that MUST be blocked and sent for owner review (no
-  // auto-resolution, no id fabrication).
+  // contested identity that MUST be blocked and sent for owner review.
   if (mapping.productId && mapping.productId !== p.id) block("IDENTITY_CONFLICT", "تعارض هوية: نفس الـ SKU مربوط بمنتج آخر في رفيق.");
   if (needsOwnerReview) block("IDENTITY_NEEDS_REVIEW", "تعارض هوية رفيق — بحاجة لمراجعة المالك.");
 
-  // Deterministic filename collision across the FINAL dataset (two distinct
-  // sellable SKUs whose sanitized primary filename is identical) — blocked
-  // BEFORE package generation.
-  if (sku !== "" && hasImage && imageNameLower !== "" && (imageNameCounts.get(imageNameLower) ?? 0) > 1) {
-    block("IDENTITY_CONFLICT", "تعارض اسم ملف الصورة بعد التنقية — تصادم بين صفّين.");
+  // Deterministic post-sanitization image filename collision across products.
+  if (sku !== "" && hasImage && imageNameLower !== "" && (imageNameOwners.get(imageNameLower)?.size ?? 0) > 1) {
+    block("IDENTITY_CONFLICT", "تعارض اسم ملف الصورة بعد التنقية — تصادم بين منتجين.");
   }
 
   const blocking = reasons.some((r) => r.blocking);
   const status: ExportItemStatus = blocking ? "BLOCKED" : reasons.length > 0 ? "WARNING" : "READY";
 
-  const variantId = isVariant ? v!.id : null;
-  // A variant row without a DB id still needs a UNIQUE row key — fall back to
-  // the sellable sku (never silently collapse onto the parent's key).
-  const rowKey = isVariant
-    ? sellableRowKey(p.id, variantId ?? `sku:${sku || "missing"}`)
-    : sellableRowKey(p.id, null);
   return {
     storefrontKey: RAFEEQ_STOREFRONT_KEY,
     internalProductId: p.id,
-    variantId,
-    rowKey,
-    grain: isVariant ? "VARIANT" : "PRODUCT",
-    isVariant,
+    rowKey: productRowKey(p.id),
     sku,
     barcode,
     title,
     titleAr,
     category,
     price,
+    priceOnSelection,
     descriptionEn: clean(p.descriptionEn),
     descriptionAr: clean(p.descriptionAr),
     hasImage,
@@ -374,7 +416,12 @@ function buildRow(
     imageExportName,
     primaryImageUrl,
     galleryImageUrls,
-    inheritedParentImage,
+    options,
+    hasOptions,
+    optionCount: options.length,
+    physicalRowCount: Math.max(1, options.length),
+    groupNameEn: RAFEEQ_DEFAULT_GROUP_NAME_EN,
+    groupNameAr: RAFEEQ_DEFAULT_GROUP_NAME_AR,
     rafeeqId,
     mapping,
     needsOwnerReview,

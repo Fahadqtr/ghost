@@ -44,10 +44,13 @@ test("pending-NEW never reads products.created_at or the legacy per-store id col
   }
   const fullsync = code(FULLSYNC);
   assert.equal(/created_at/.test(fullsync), false, "pending logic must not consult created_at");
-  // the derivation is the sent baseline at SELLABLE grain, not identity evidence
-  assert.ok(/isFullIncludable\(r\) && !sentSellableKeys\.has\(sellableKeyOfRow\(r\)\)/.test(fullsync), "pending = includable AND not sent (sellable key)");
-  assert.equal(/rafeeqId\s*[!=]==?\s*null/.test(fullsync.match(/export function pendingNewRows[\s\S]*?\n}/)?.[0] ?? ""), false,
-    "pendingNewRows must not branch on ECL identity");
+  // the derivation is the SENT PRODUCT baseline (fingerprints), not identity evidence
+  assert.ok(/if \(!isFullIncludable\(r\)\) continue;/.test(fullsync), "pending filters on FULL-includability");
+  assert.ok(/pendingKindOf\(r, baseline\)/.test(fullsync), "pending kind derives from the sent baseline");
+  assert.equal(/rafeeqId\s*[!=]==?\s*null/.test(fullsync.match(/export function pendingRows[\s\S]*?\n}/)?.[0] ?? ""), false,
+    "pendingRows must not branch on ECL identity");
+  assert.equal(/rafeeqId/.test(fullsync.match(/export function pendingKindOf[\s\S]*?\n}/)?.[0] ?? ""), false,
+    "pendingKindOf must not branch on ECL identity");
 });
 
 // ── explicit sent state ───────────────────────────────────────────────────────
@@ -166,19 +169,20 @@ test("the variant-grain migration adds sellable item identity + superseded surfa
   assert.equal(/DROP TABLE|ALTER TABLE public\.products|DELETE FROM/i.test(m), false, "no destructive change beyond the replaced unique index");
 });
 
-test("recording is sellable-grain and supersedes only prior UNSENT FULL packages", () => {
+test("recording carries the delivery fingerprint and supersedes only prior UNSENT FULL packages", () => {
   const server = read(SERVER);
-  assert.ok(/variant_id: it\.variantId/.test(server), "item rows record the variant identity");
+  assert.ok(/row_fingerprint: it\.fingerprint/.test(server), "item rows record the delivery fingerprint");
+  assert.ok(/row_fingerprint/.test(server.match(/const itemColumns[\s\S]*?;/)?.[0] ?? ""), "the baseline reader loads the recorded fingerprint");
   const sup = server.slice(server.indexOf("// Supersede prior UNSENT FULL packages"));
   assert.ok(/\.is\("sent_at", null\)/.test(sup), "supersede never touches a SENT package");
   assert.ok(/\.is\("superseded_at", null\)/.test(sup), "supersede stamps once");
   assert.equal(/\.delete\(/.test(server), false, "history is never deleted");
 });
 
-test("returned-id apply is sellable-scoped (variant rows never collapse onto the parent)", () => {
+test("returned-id apply is PARENT-PRODUCT-scoped (options never get their own external identity)", () => {
   const server = read(SERVER);
   const apply = server.slice(server.indexOf("export async function applyRafeeqReturnedIds"));
-  assert.ok(/q\.eq\("variant_id", a\.variantId\) : q\.is\("variant_id", null\)/.test(apply), "updates scope by variant / product-level row");
-  assert.ok(/variant_id: a\.variantId/.test(apply), "inserts carry the variant identity");
-  assert.ok(/variant_sku: a\.variantId \? a\.sku : null/.test(apply), "variant inserts carry variant_sku");
+  assert.ok(/variant_id: null/.test(apply), "inserts are product-level (variant_id NULL)");
+  assert.ok(/\.is\("variant_id", null\)/.test(apply), "updates touch only the product-level row");
+  assert.equal(/\.eq\("variant_id", a\.variantId\)/.test(apply), false, "no per-variant identity writes remain");
 });

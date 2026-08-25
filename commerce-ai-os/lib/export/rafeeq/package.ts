@@ -1,14 +1,27 @@
-// INT.2D — Rafeeq outbound package PLAN (PURE).
+// RAFEEQ NATIVE-OPTION PACKAGE PLAN (PURE).
 //
-// Transforms the certified Rafeeq preview rows (buildRafeeqPreview) into the plan
-// for the downloadable package: the XLSX rows (AoA), the SKU-named image entries,
-// referential integrity, filename-collision detection, and the manifest. It
-// REUSES the existing Rafeeq contract (RAFEEQ_HEADERS + RAFEEQ_CATEGORIES) — no
-// second template — and the INT.2A image-naming + shared package-core helpers.
-// The Rafeeq Product ID column is sourced from ECL (blank sentinel "new product"
-// for unmapped) — the legacy per-store id column is never read here. No I/O.
+// Transforms the certified PRODUCT-grain Rafeeq preview (buildRafeeqPreview)
+// into the plan for the downloadable package on the AUDITED native template
+// (native-template.ts — worksheet "data", exactly 40 headers):
+//   • a SIMPLE product   → ONE physical row, groups = 0, group/option cells blank;
+//   • a product w/ options → ONE physical row PER option, IDENTICAL parent
+//     fields on every repeated row (same name/price/barcode/image), groups = 1,
+//     only the option cells varying. The repeated rows are ONE Rafeeq product.
+// The BARCODE cell = canonical parent SKU (owner rule). product_id is the
+// resolved ECL id, or BLANK for a new record — numeric Rafeeq ids are NEVER
+// invented (the audited workbook only shows Rafeeq-generated ids). group_id /
+// option_id are always blank for the same reason. Images are packaged ONCE per
+// product under the parent-SKU filename; every repeated row references that one
+// file — never duplicated per option. No I/O.
 
-import { RAFEEQ_HEADERS, RAFEEQ_CATEGORIES } from "../../exporters.ts";
+import {
+  RAFEEQ_NATIVE_HEADERS,
+  RAFEEQ_PRODUCT_DEFAULTS,
+  RAFEEQ_GROUP_DEFAULTS,
+  RAFEEQ_PRICE_ON_SELECTION,
+  NATIVE_COL,
+  rafeeqCategoryByName,
+} from "./native-template.ts";
 import { primaryImageName, additionalImageName, normalizeExtension } from "../image-naming.ts";
 import {
   sanitizeSpreadsheetText,
@@ -18,36 +31,29 @@ import {
   type AoaCell,
   type PackagedFile,
 } from "../package-core.ts";
-import type { RafeeqPreviewRow } from "./preview.ts";
+import type { RafeeqPreviewRow, RafeeqPreviewOption } from "./preview.ts";
 import type { ExportReasonCode } from "../validation.ts";
 
-/** The canonical Rafeeq columns (REUSED — the single Rafeeq template). */
-export const RAFEEQ_PACKAGE_COLUMNS = RAFEEQ_HEADERS;
+/** The canonical native Rafeeq columns (the audited template — the contract). */
+export const RAFEEQ_PACKAGE_COLUMNS = RAFEEQ_NATIVE_HEADERS;
 
-/** Column indexes stored as spreadsheet TEXT. */
-export const RAFEEQ_TEXT_COLUMNS = [
-  7, // IMAGE NAME (packaged filename)
-  8, // BARCODE
-  9, // RAFEEQ ID
-] as const;
-export const RAFEEQ_PRICE_COLUMN = 4;
-
-/** The literal Rafeeq new-product marker (the existing template convention). */
+/** The legacy 10-column template's "new product" marker — retained ONLY for the
+ *  durable rafeeq_package_items.rafeeq_id_sent history records. The native
+ *  product_id CELL for a new record is BLANK (ids are never invented). */
 export const RAFEEQ_NEW_MARKER = "new product";
 
 export { PACKAGE_LIMITS };
 
 /**
  * Rafeeq export modes. UPDATES is intentionally NOT here: there is no durable
- * per-listing export snapshot for Rafeeq, so a changed-listing diff cannot be
- * proven — offering it would be inventing diffs (§7). It is surfaced as
- * UNSUPPORTED, never as a silent all/mapped resend.
+ * per-listing export snapshot for the legacy modes, so a changed-listing diff
+ * cannot be proven. (The FULLSYNC pending model has its own proven
+ * OPTION-UPDATE detection via delivery fingerprints — see fullsync.ts.)
  */
 export type RafeeqGenerationMode = "all" | "new" | "selected";
 export const RAFEEQ_UPDATES_SUPPORTED = false;
 
-/** Row key of a sellable row (product id for simple rows; product::variant for
- *  variant rows) — the selection + identity key across the flattened dataset. */
+/** Row key of a product row (the product id — product grain). */
 export function previewRowKey(r: Pick<RafeeqPreviewRow, "rowKey">): string {
   return r.rowKey;
 }
@@ -67,11 +73,8 @@ export interface GenerationSet {
 }
 
 /**
- * Resolve which product rows enter the package. BLOCKED rows (incl. needs_review
- * conflicts) are ALWAYS excluded.
- *   • all      — every exportable row
- *   • new      — exportable rows with NO active Rafeeq identity (unmapped)
- *   • selected — exportable rows whose key is in selectedKeys
+ * Resolve which PRODUCTS enter the package. BLOCKED products (incl. needs_review
+ * conflicts and unresolved option pricing) are ALWAYS excluded.
  */
 export function resolveRafeeqGenerationSet(rows: readonly RafeeqPreviewRow[], selection: GenerationSelection): GenerationSet {
   const wanted = selection.mode === "selected" ? new Set(selection.selectedKeys ?? []) : null;
@@ -98,7 +101,7 @@ export function resolveRafeeqGenerationSet(rows: readonly RafeeqPreviewRow[], se
   return { included, excludedBlocked, excludedByMode, counts: { total: rows.length, ready, warnings, blocked, includedRows: included.length } };
 }
 
-// ── image plan (SKU-named) ────────────────────────────────────────────────────
+// ── image plan (ONE set per PRODUCT, parent-SKU-named) ────────────────────────
 export interface PlannedImage { filename: string; sourceUrl: string; kind: "primary" | "gallery" }
 export interface RowImagePlan { rowKey: string; sku: string; primary: PlannedImage | null; gallery: PlannedImage[] }
 
@@ -127,9 +130,9 @@ export function primaryFilenameFor(sku: string, ext: string): string {
 }
 
 /**
- * Deterministic post-sanitization filename collision detection (§15). Returns the
- * set of primary filenames shared by more than one row — the generator BLOCKS
- * package generation if any exist, so the archive never ships colliding files.
+ * Deterministic post-sanitization filename collision detection. Returns the
+ * set of primary filenames shared by more than one PRODUCT — the generator
+ * BLOCKS package generation if any exist.
  */
 export function detectFilenameCollisions(primaryFilenames: readonly string[]): string[] {
   const counts = new Map<string, number>();
@@ -137,56 +140,134 @@ export function detectFilenameCollisions(primaryFilenames: readonly string[]): s
   return [...counts.entries()].filter(([, n]) => n > 1).map(([f]) => f).sort();
 }
 
-// ── XLSX rows (AoA) — reuse the Rafeeq column contract exactly ─────────────────
-export interface RafeeqPackageRow {
-  categoryEn: string;
-  categoryAr: string;
+// ── native package rows (ONE logical product → 1..N physical rows) ────────────
+
+export interface RafeeqPackageOption {
   nameEn: string;
   nameAr: string;
-  price: number | null;
-  descriptionEn: string;
-  descriptionAr: string;
-  imageName: string;   // packaged primary filename (SKU-based) — the IMAGE NAME column
-  barcode: string;
-  rafeeqId: string;    // ECL external_product_id, or the "new product" marker
+  /** option_price cell: 0 when the parent price covers every option; the FULL
+   *  effective canonical price under PRICE ON SELECTION (never a delta). */
+  price: number;
+  sortOrder: number;
 }
 
-/** Project one exportable preview row → its outbound package row. */
+/** One PRODUCT of the outbound file (expands to its physical rows in the AoA). */
+export interface RafeeqPackageRow {
+  categoryKey: string | null;    // canonical category name (registry lookup key)
+  nameEn: string;
+  nameAr: string;
+  /** product_price cell — emitted as TEXT (the audited workbook stores it so);
+   *  null + priceOnSelection ⇒ the literal "PRICE ON SELECTION" sentinel. */
+  price: number | null;
+  priceOnSelection: boolean;
+  descriptionEn: string;
+  descriptionAr: string;
+  imageName: string;   // packaged parent-image filename — shared by option rows
+  /** BARCODE cell = canonical PARENT product SKU (owner rule). */
+  barcode: string;
+  /** product_id cell: resolved ECL id, or "" for a new record (never invented). */
+  rafeeqId: string;
+  groupNameEn: string;
+  groupNameAr: string;
+  options: RafeeqPackageOption[];
+}
+
+/** Project one exportable preview product → its outbound package product. */
 export function toPackageRow(r: RafeeqPreviewRow, imageFilename: string): RafeeqPackageRow {
-  const cat = r.category ? RAFEEQ_CATEGORIES[r.category] : undefined;
   return {
-    categoryEn: r.category ?? "",
-    categoryAr: cat?.ar ?? "",
-    nameEn: r.title,
+    categoryKey: r.category,
+    nameEn: r.title,               // PARENT title — never "{parent} — {option}"
     nameAr: r.titleAr,
     price: r.price,
+    priceOnSelection: r.priceOnSelection,
     descriptionEn: r.descriptionEn,
     descriptionAr: r.descriptionAr,
-    imageName: imageFilename,           // consistent with the packaged file (§10)
+    imageName: imageFilename,      // ONE packaged file per product
     barcode: r.barcode ?? "",
-    rafeeqId: r.rafeeqId ?? RAFEEQ_NEW_MARKER, // never fabricated — literal marker for new
+    rafeeqId: r.rafeeqId ?? "",    // blank ⇒ new record (ids never invented)
+    groupNameEn: r.groupNameEn,
+    groupNameAr: r.groupNameAr,
+    options: r.options.map((o: RafeeqPreviewOption) => ({
+      nameEn: o.nameEn,
+      nameAr: o.nameAr,
+      // Owner rule: uniform price ⇒ 0 (covered by product_price); differing
+      // prices ⇒ the FULL effective canonical price (never a delta).
+      price: r.priceOnSelection ? (o.effectivePrice ?? 0) : 0,
+      sortOrder: o.sortOrder,
+    })),
   };
 }
 
-const num = (v: number | null): AoaCell => (typeof v === "number" && Number.isFinite(v) ? v : "");
+const txt = (v: string): AoaCell => sanitizeSpreadsheetText(v);
+const priceText = (v: number | null): AoaCell => (typeof v === "number" && Number.isFinite(v) ? String(v) : "");
 
+/** The shared parent cells of one product (identical on every repeated row). */
+function parentCells(r: RafeeqPackageRow): AoaCell[] {
+  const cat = rafeeqCategoryByName(r.categoryKey);
+  const cells: AoaCell[] = new Array(RAFEEQ_NATIVE_HEADERS.length).fill("");
+  cells[NATIVE_COL.categoryId] = cat ? cat.id : "";
+  cells[NATIVE_COL.categoryNameEn] = cat ? txt(String(r.categoryKey ?? "").trim().replace(/’/g, "'")) : "";
+  cells[NATIVE_COL.categoryNameAr] = cat ? txt(cat.ar) : "";
+  cells[NATIVE_COL.categoryStatus] = cat ? cat.status : "";
+  cells[NATIVE_COL.subcategoryId] = cat?.sub ? cat.sub.id : "";
+  cells[NATIVE_COL.subcategoryNameEn] = cat?.sub ? txt(cat.sub.en) : "";
+  cells[NATIVE_COL.subcategoryNameAr] = cat?.sub ? txt(cat.sub.ar) : "";
+  cells[NATIVE_COL.subcategoryStatus] = cat?.sub ? cat.sub.status : "";
+  // subsubcategory columns 8–11 stay blank (blank across the entire audited workbook)
+  cells[NATIVE_COL.productId] = r.rafeeqId; // "" ⇒ new record
+  cells[NATIVE_COL.productNameEn] = txt(r.nameEn);
+  cells[NATIVE_COL.productNameAr] = txt(r.nameAr);
+  cells[NATIVE_COL.productDescriptionEn] = txt(r.descriptionEn);
+  cells[NATIVE_COL.productDescriptionAr] = txt(r.descriptionAr);
+  cells[NATIVE_COL.productStatus] = RAFEEQ_PRODUCT_DEFAULTS.productStatus;
+  cells[NATIVE_COL.productAvailability] = RAFEEQ_PRODUCT_DEFAULTS.productAvailability;
+  cells[NATIVE_COL.active] = RAFEEQ_PRODUCT_DEFAULTS.active;
+  cells[NATIVE_COL.productPrice] = r.priceOnSelection ? RAFEEQ_PRICE_ON_SELECTION : priceText(r.price); // TEXT — audited convention
+  cells[NATIVE_COL.barcode] = r.barcode;               // canonical PARENT SKU
+  cells[NATIVE_COL.posId] = "";                         // blank across the audited workbook
+  cells[NATIVE_COL.preparationTime] = RAFEEQ_PRODUCT_DEFAULTS.preparationTime;
+  cells[NATIVE_COL.productImage] = r.imageName;         // one packaged parent file
+  cells[NATIVE_COL.groups] = r.options.length > 0 ? 1 : 0;
+  return cells;
+}
+
+/**
+ * Expand the package products into the physical AoA on the audited template:
+ * header row + 1 row per simple product + 1 row PER OPTION for option products.
+ */
 export function buildRafeeqXlsxAoa(rows: readonly RafeeqPackageRow[]): AoaCell[][] {
-  const out: AoaCell[][] = [RAFEEQ_PACKAGE_COLUMNS.slice()];
+  const out: AoaCell[][] = [RAFEEQ_NATIVE_HEADERS.slice()];
   for (const r of rows) {
-    out.push([
-      sanitizeSpreadsheetText(r.categoryEn),     // 0 CATEGORY - ENGLISH
-      sanitizeSpreadsheetText(r.categoryAr),     // 1 CATEGORY - ARABIC
-      sanitizeSpreadsheetText(r.nameEn),         // 2 PRODUCT NAME - ENGLISH
-      sanitizeSpreadsheetText(r.nameAr),         // 3 PRODUCT NAME - ARABIC
-      num(r.price),                              // 4 PRICE (NUMBER)
-      sanitizeSpreadsheetText(r.descriptionEn),  // 5 DESCRIPTION - ENGLISH
-      sanitizeSpreadsheetText(r.descriptionAr),  // 6 DESCRIPTION - ARABIC
-      r.imageName,                               // 7 IMAGE NAME (TEXT)
-      r.barcode,                                 // 8 BARCODE (TEXT)
-      r.rafeeqId,                                // 9 RAFEEQ ID (TEXT)
-    ]);
+    const base = parentCells(r);
+    if (r.options.length === 0) {
+      out.push(base);
+      continue;
+    }
+    for (const o of r.options) {
+      const cells = base.slice();
+      cells[NATIVE_COL.groupId] = "";                       // never invented
+      cells[NATIVE_COL.groupNameEn] = txt(r.groupNameEn);
+      cells[NATIVE_COL.groupNameAr] = txt(r.groupNameAr);
+      cells[NATIVE_COL.maxSelection] = RAFEEQ_GROUP_DEFAULTS.maxSelection;
+      cells[NATIVE_COL.minSelection] = RAFEEQ_GROUP_DEFAULTS.minSelection;
+      cells[NATIVE_COL.freeSelection] = RAFEEQ_GROUP_DEFAULTS.freeSelection;
+      cells[NATIVE_COL.groupStatus] = RAFEEQ_GROUP_DEFAULTS.groupStatus;
+      cells[NATIVE_COL.groupSortOrder] = RAFEEQ_GROUP_DEFAULTS.groupSortOrder;
+      cells[NATIVE_COL.groupDesignType] = RAFEEQ_GROUP_DEFAULTS.groupDesignType;
+      cells[NATIVE_COL.optionId] = "";                      // never invented
+      cells[NATIVE_COL.optionNameEn] = txt(o.nameEn);
+      cells[NATIVE_COL.optionNameAr] = txt(o.nameAr);
+      cells[NATIVE_COL.optionPrice] = o.price;
+      cells[NATIVE_COL.optionSortOrder] = o.sortOrder;
+      out.push(cells);
+    }
   }
   return out;
+}
+
+/** Physical spreadsheet rows a set of package products occupies. */
+export function physicalRowCount(rows: readonly RafeeqPackageRow[]): number {
+  return rows.reduce((acc, r) => acc + Math.max(1, r.options.length), 0);
 }
 
 export { checkReferentialIntegrity, type PackagedFile };

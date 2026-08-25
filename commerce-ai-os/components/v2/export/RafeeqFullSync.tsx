@@ -42,16 +42,17 @@ export interface RafeeqFullSyncVM {
   isOwner: boolean;
   deliveryAvailable: boolean;
   hasBaseline: boolean;
-  /** sellable flattening stats — Rafeeq receives each choice as its own row. */
+  /** native-option stats — one Rafeeq product identity per canonical product. */
   stats: {
     canonicalProducts: number;
-    sellableRows: number;
-    simpleRows: number;
-    variantRows: number;
-    productsWithVariants: number;
+    productsWithOptions: number;
+    optionCount: number;
+    physicalRows: number;
+    /** differing-price parents encoded as PRICE ON SELECTION + full prices. */
+    priceOnSelection: number;
   };
   full: { includable: number; trueBlockers: number; needsReviewIncluded: number };
-  pending: { count: number; rows: { id: string; sku: string; title: string }[]; truncated: boolean };
+  pending: { count: number; rows: { id: string; sku: string; title: string; kind: "NEW" | "OPTION_UPDATE" }[]; truncated: boolean };
   packages: RafeeqFullSyncPackageVM[];
   recon: { activeMappings: number; needsReview: number };
 }
@@ -189,15 +190,16 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
 
       {/* Sellable flattening stats — each product CHOICE is its own Rafeeq row */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <StatCard value={vm.stats.canonicalProducts} label="منتجات الكتالوج" />
-        <StatCard value={vm.stats.sellableRows} label="صفوف رفيق القابلة للبيع" emphasize />
-        <StatCard value={vm.stats.simpleRows} label="منتجات بسيطة" />
-        <StatCard value={vm.stats.variantRows} label="صفوف الخيارات (متغيّرات)" />
-        <StatCard value={vm.stats.productsWithVariants} label="منتجات لها خيارات" />
+        <StatCard value={vm.stats.canonicalProducts} label="منتجات رفيق (هويات)" emphasize />
+        <StatCard value={vm.stats.productsWithOptions} label="منتجات بخيارات" />
+        <StatCard value={vm.stats.optionCount} label="خيارات" />
+        <StatCard value={vm.stats.physicalRows} label="صفوف الملف الفعلية" />
+        <StatCard value={vm.stats.priceOnSelection} label="سعر عند الاختيار (PRICE ON SELECTION)" />
       </div>
       <p className="text-[11px] text-muted">
-        رفيق يستقبل كل خيار (متغيّر) كصفّ بيع مستقل بسعره و<span dir="ltr">SKU</span> وباركوده الخاص —
-        والمنتج الأب ذو الخيارات لا يُصدَّر كصفّ إضافي أبداً.
+        رفيق يستقبل المنتج ذا الخيارات كمنتج واحد بمجموعة خيارات أصلية — الملف يكرّر صفّ الأب
+        مرة لكل خيار (نفس الاسم والسعر والباركود والصورة) وتتغيّر خلايا الخيار فقط.
+        الخيار ليس منتجاً مستقلاً أبداً، وإضافة خيار لمنتج مُرسَل تُعيده كـ«تحديث خيارات» لا كمنتج جديد.
       </p>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">{error}</div>}
@@ -252,6 +254,11 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
                         <tr key={r.id} className="border-b border-slate-100 last:border-0">
                           <td className="px-2 py-1 font-mono" dir="ltr">{r.sku}</td>
                           <td className="px-2 py-1 text-ink">{r.title}</td>
+                          <td className="px-2 py-1">
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] ${r.kind === "OPTION_UPDATE" ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
+                              {r.kind === "OPTION_UPDATE" ? "تحديث خيارات" : "جديد"}
+                            </span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -377,7 +384,7 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
                 <thead className="border-b border-slate-200 bg-slate-50 text-muted">
                   <tr>
                     <th className="px-2 py-1 font-medium">صف</th>
-                    <th className="px-2 py-1 font-medium">IMAGE NAME</th>
+                    <th className="px-2 py-1 font-medium">barcode (SKU الأب)</th>
                     <th className="px-2 py-1 font-medium">SKU</th>
                     <th className="px-2 py-1 font-medium">المُعرّف المرتجع</th>
                     <th className="px-2 py-1 font-medium">النتيجة</th>
@@ -387,7 +394,7 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
                   {preview.entries.map((e) => (
                     <tr key={e.rowNumber} className="border-b border-slate-100 last:border-0">
                       <td className="px-2 py-1 tabular-nums">{e.rowNumber}</td>
-                      <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{e.imageName || "—"}</td>
+                      <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{e.barcode ?? "—"}</td>
                       <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{e.matchedSku ?? e.skuToken ?? "—"}</td>
                       <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{e.returnedId ?? "—"}</td>
                       <td className="px-2 py-1">

@@ -21,7 +21,7 @@ import { loadRafeeqPreview } from "@/lib/export/rafeeq/preview.server";
 import RafeeqExport, { type RafeeqRowVM } from "@/components/v2/export/RafeeqExport";
 import RafeeqFullSync, { type RafeeqFullSyncVM } from "@/components/v2/export/RafeeqFullSync";
 import { loadRafeeqDeliveryState } from "@/lib/rafeeq/fullsync.server";
-import { isFullIncludable, isNeedsReviewIncluded, pendingNewRows, hasSentBaseline } from "@/lib/export/rafeeq/fullsync";
+import { isFullIncludable, isNeedsReviewIncluded, pendingRows, hasSentBaseline } from "@/lib/export/rafeeq/fullsync";
 import { isOwner } from "@/lib/malak/authz";
 import { loadShopifyPreviewContext } from "@/lib/export/shopify/preview.server";
 import { buildPublishRows } from "@/lib/export/shopify/publish.server";
@@ -277,14 +277,14 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
   ]);
   const canWrite = writer.ok;
 
-  // RAFEEQ.FULLSYNC.2 — derive (never store) the file-sync overview at SELLABLE
-  // grain: FULL eligibility, the pending-NEW queue (exportable sellable rows not
-  // in any SENT package), and the durable package history.
+  // Native-option model — derive (never store) the file-sync overview at
+  // PRODUCT grain: FULL eligibility, the pending queue (NEW products + OPTION
+  // UPDATE re-queues against the sent baseline), and the durable history.
   const MAX_PENDING_LIST = 100;
   let fullSyncVm: RafeeqFullSyncVM | null = null;
   if (result !== null) {
     const includable = result.rows.filter(isFullIncludable);
-    const pending = pendingNewRows(result.rows, delivery.sentSellableKeys);
+    const pending = pendingRows(result.rows, delivery.sentBaseline);
     fullSyncVm = {
       canWrite,
       isOwner: owner,
@@ -292,10 +292,10 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
       hasBaseline: hasSentBaseline(delivery.packages),
       stats: {
         canonicalProducts: result.counts.productCount,
-        sellableRows: result.counts.sellableRowCount,
-        simpleRows: result.counts.simpleRowCount,
-        variantRows: result.counts.variantRowCount,
-        productsWithVariants: result.counts.productsWithVariants,
+        productsWithOptions: result.counts.productsWithOptions,
+        optionCount: result.counts.optionCount,
+        physicalRows: result.counts.physicalRowCount,
+        priceOnSelection: result.counts.priceOnSelectionCount,
       },
       full: {
         includable: includable.length,
@@ -304,7 +304,7 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
       },
       pending: {
         count: pending.length,
-        rows: pending.slice(0, MAX_PENDING_LIST).map((r) => ({ id: r.rowKey, sku: r.sku, title: r.title })),
+        rows: pending.slice(0, MAX_PENDING_LIST).map((p) => ({ id: p.row.rowKey, sku: p.row.sku, title: p.row.title, kind: p.kind })),
         truncated: pending.length > MAX_PENDING_LIST,
       },
       packages: delivery.packages.slice(0, 20).map((p) => ({
@@ -345,11 +345,12 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
             counts: result.counts,
             rows: result.rows.map<RafeeqRowVM>((r) => ({
               id: r.rowKey,
-              isVariant: r.isVariant,
               sku: r.sku,
               barcode: r.barcode,
               title: r.title,
               price: r.price,
+              priceOnSelection: r.priceOnSelection,
+              optionCount: r.optionCount,
               rafeeqId: r.rafeeqId,
               needsOwnerReview: r.needsOwnerReview,
               hasImage: r.hasImage,

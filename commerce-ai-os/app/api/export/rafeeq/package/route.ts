@@ -6,13 +6,15 @@
 //
 // Modes:
 //   • "all" | "new" | "selected" — the original INT.2D package (unchanged);
-//   • "full"        — RAFEEQ.FULLSYNC.1 FULL catalog (rafeeq-full-YYYY-MM-DD.zip,
-//     /rafeeq_catalog.xlsx + /images/ + /manifest.json). Rows blocked ONLY by
-//     the identity review are included with the "new product" marker;
-//   • "new_pending" — the pending-NEW package (rafeeq-new-products-YYYY-MM-DD.zip,
-//     /rafeeq_new_products.xlsx). Pending = exportable AND not in any package
-//     the owner marked SENT — it REQUIRES the durable sent-state to be readable
-//     (503 otherwise; never a guessed baseline).
+//   • "full"        — FULL native catalog (rafeeq-full-YYYY-MM-DD.zip,
+//     /rafeeq_catalog.xlsx + /images/ + /manifest.json) on the audited Rafeeq
+//     template. Products blocked ONLY by the identity review are included with
+//     a BLANK product_id (ids never invented);
+//   • "new_pending" — the pending package (rafeeq-new-products-YYYY-MM-DD.zip,
+//     /rafeeq_new_products.xlsx): NEW products (blank product_id) + OPTION
+//     UPDATES (option-set changed since the sent baseline; resolved id kept).
+//     It REQUIRES the durable sent-state to be readable (503 otherwise; never
+//     a guessed baseline).
 //
 // After a successful fullsync generation the durable package row + item
 // snapshot are recorded (sent_at NULL = "Generated — not sent"); recording is
@@ -78,7 +80,7 @@ export async function POST(req: Request) {
 
     const result = await generateRafeeqFullSyncPackage({
       mode: fullSyncMode,
-      sentSellableKeys: delivery.sentSellableKeys,
+      sentBaseline: delivery.sentBaseline,
       actor: writer.email,
     });
     if (!result.ok) {
@@ -108,6 +110,10 @@ export async function POST(req: Request) {
         "X-Rafeeq-FullSync-Mode": s.mode,
         "X-Rafeeq-Output-Filename": result.filename,
         "X-Rafeeq-Product-Rows": String(s.productRowCount),
+        "X-Rafeeq-Physical-Rows": String(s.physicalRowCount),
+        "X-Rafeeq-Products-With-Options": String(s.productsWithOptions),
+        "X-Rafeeq-Options": String(s.optionCount),
+        "X-Rafeeq-Option-Updates": String(s.optionUpdateCount),
         "X-Rafeeq-Mapped-Ids": String(s.mappedIdCount),
         "X-Rafeeq-New-Marker": String(s.newMarkerCount),
         "X-Rafeeq-Needs-Review-Included": String(s.needsReviewIncluded),
