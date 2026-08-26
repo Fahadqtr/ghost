@@ -58,7 +58,7 @@ import { buildOptionsOverviewSheet } from "./options-overview.ts";
 
 // ── tuning ────────────────────────────────────────────────────────────────────
 
-/** Bounded work per step: at most this many PRODUCTS (primary + gallery). */
+/** Bounded work per step: at most this many PRODUCTS (one primary image each). */
 export const JOB_STEP_MAX_PRODUCTS = 24;
 /** Soft cap on one part's bytes (Supabase Storage default object limit 50 MB). */
 export const JOB_STEP_MAX_PART_BYTES = 40 * 1024 * 1024;
@@ -99,8 +99,8 @@ interface JobEntryRecord extends ZipSegmentEntry {
 interface JobSurvivor {
   /** index into plan.products. */
   index: number;
+  /** the ONE packaged image (owner contract: primary only, parent-SKU name). */
   primaryFilename: string;
-  galleryFilenames: string[];
 }
 
 export interface RafeeqPackageJobSummary {
@@ -325,26 +325,16 @@ async function imageStep(
       continue;
     }
     state.attempts = 0;
+    // OWNER CONTRACT (PRIMARY ONLY): exactly ONE image per product — the
+    // canonical primary, bytes preserved EXACTLY as downloaded (STORE entry,
+    // never resized/recompressed). Gallery/variant images are never fetched.
     const primaryFilename = primaryFilenameFor(row.sku, primaryFetch.ext);
-    const survivor: JobSurvivor = { index: state.cursor, primaryFilename, galleryFilenames: [] };
-    const files: { name: string; bytes: Uint8Array }[] = [
-      { name: fullSyncImageEntryName(primaryFilename), bytes: primaryFetch.bytes },
-    ];
-    let position = 2;
-    for (const g of imagePlan.gallery) {
-      const got = await deps.ports.fetchImage(g.sourceUrl);
-      if (!got) continue; // gallery images are optional — a failure skips the file
-      const name = primaryFilenameFor(row.sku, got.ext).replace(/(\.[^.]+)$/, `_${position}$1`);
-      survivor.galleryFilenames.push(name);
-      files.push({ name: fullSyncImageEntryName(name), bytes: got.bytes });
-      position += 1;
-    }
-    for (const f of files) {
-      const seg = zipEntrySegment(f.name, f.bytes);
-      newEntries.push({ name: f.name, crc: seg.crc, size: seg.size, offset: state.offset + chunkBytes, part: partIndex });
-      chunks.push(seg.bytes);
-      chunkBytes += seg.bytes.length;
-    }
+    const survivor: JobSurvivor = { index: state.cursor, primaryFilename };
+    const entryName = fullSyncImageEntryName(primaryFilename);
+    const seg = zipEntrySegment(entryName, primaryFetch.bytes);
+    newEntries.push({ name: entryName, crc: seg.crc, size: seg.size, offset: state.offset + chunkBytes, part: partIndex });
+    chunks.push(seg.bytes);
+    chunkBytes += seg.bytes.length;
     state.survivors.push(survivor);
     state.cursor += 1;
     productsInChunk += 1;
@@ -387,11 +377,8 @@ async function finalizeStep(
   const packageRows: RafeeqPackageRow[] = survivorsWith.map(({ sv, product }) =>
     applyFullSyncRafeeqId(toPackageRow(product.row, sv.primaryFilename), product.row, plan.mode, product.kind),
   );
-  const packaged: PackagedFile[] = [];
-  for (const { sv } of survivorsWith) {
-    packaged.push({ name: sv.primaryFilename, kind: "primary" });
-    for (const g of sv.galleryFilenames) packaged.push({ name: g, kind: "gallery", ownerPrimary: sv.primaryFilename });
-  }
+  // primary-only: exactly one packaged file per included parent product.
+  const packaged: PackagedFile[] = survivorsWith.map(({ sv }) => ({ name: sv.primaryFilename, kind: "primary" as const }));
   const integrity = checkReferentialIntegrity(packageRows.map((r) => r.imageName), packaged);
   if (!integrity.ok) return fail("integrity_failed");
 

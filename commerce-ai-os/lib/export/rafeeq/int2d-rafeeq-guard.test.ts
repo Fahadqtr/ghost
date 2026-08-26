@@ -58,7 +58,8 @@ test("no fuzzy/name matching and needs_review is never auto-resolved", () => {
 // ── SKU-based image filenames; shared infra reused ────────────────────────────
 test("image filenames are SKU-based and the package reuses shared infrastructure", () => {
   const pkg = read(PKG);
-  assert.ok(/primaryImageName\(sku/.test(pkg) && /additionalImageName\(sku/.test(pkg), "primary + gallery from sku");
+  assert.ok(/primaryImageName\(sku/.test(pkg), "the ONE primary image is named from the parent sku");
+  assert.equal(/additionalImageName\(/.test(pkg), false, "PRIMARY ONLY (owner contract): gallery image names are never produced for Rafeeq");
   assert.equal(/(primaryImageName|additionalImageName)\([^)]*(title|nameEn|nameAr)/.test(pkg), false, "never name an image from a title");
   const gen = read(GEN);
   assert.ok(/from "@\/lib\/net\/zip"/.test(gen), "reuses the shared ZIP writer");

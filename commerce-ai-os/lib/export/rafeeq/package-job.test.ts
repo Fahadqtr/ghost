@@ -174,7 +174,7 @@ test("full lifecycle: bounded steps produce a structurally valid ZIP with the au
   assert.equal(state.status, "complete");
   assert.ok(state.artifact);
   assert.equal(state.summary?.productRowCount, 5);
-  assert.equal(state.summary?.imageCount, 6, "5 primaries + 1 gallery");
+  assert.equal(state.summary?.imageCount, 5, "PRIMARY ONLY: one image per included product");
   assert.equal(state.summary?.integrityOk, true);
 
   const zip = assembled(state, world);
@@ -183,8 +183,8 @@ test("full lifecycle: bounded steps produce a structurally valid ZIP with the au
   const names = entries.map((e) => e.name);
   assert.ok(names.includes("rafeeq_catalog.xlsx"), "audited xlsx at the ZIP root");
   assert.ok(names.includes(FULLSYNC_MANIFEST_NAME), "manifest at the ZIP root");
-  assert.equal(names.filter((n) => n.startsWith("images/")).length, 6, "one file per packaged image");
-  assert.ok(names.includes("images/mk2_2.jpg"), "gallery keeps the parent-SKU _position name");
+  assert.equal(names.filter((n) => n.startsWith("images/")).length, 5, "exactly ONE image file per included product");
+  assert.ok(!names.some((n) => /_\d+\.[a-z]+$/.test(n)), "no gallery (_position) file exists in the ZIP");
   // the durable history record happened exactly once, after the artifact
   assert.equal(recorded.length, 1);
   assert.equal(state.packageRecorded?.persisted, true);

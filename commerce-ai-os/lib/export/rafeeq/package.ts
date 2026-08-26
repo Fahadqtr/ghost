@@ -23,7 +23,7 @@ import {
   rafeeqCategoryByName,
   rafeeqCategoryKeyByName,
 } from "./native-template.ts";
-import { primaryImageName, additionalImageName, normalizeExtension } from "../image-naming.ts";
+import { primaryImageName, normalizeExtension } from "../image-naming.ts";
 import {
   sanitizeSpreadsheetText,
   extensionFromUrl,
@@ -102,7 +102,16 @@ export function resolveRafeeqGenerationSet(rows: readonly RafeeqPreviewRow[], se
   return { included, excludedBlocked, excludedByMode, counts: { total: rows.length, ready, warnings, blocked, includedRows: included.length } };
 }
 
-// ── image plan (ONE set per PRODUCT, parent-SKU-named) ────────────────────────
+// ── image plan (PRIMARY ONLY, parent-SKU-named) ───────────────────────────────
+//
+// OWNER CONTRACT (RAFEEQ IMAGES — PRIMARY ONLY): Rafeeq supports exactly ONE
+// image per product. Every package carries ONLY the canonical PRIMARY image of
+// each included parent product — gallery images and variant images are NEVER
+// planned, fetched or packaged for Rafeeq. Option products share the one
+// parent primary; options never add images. The canonical primary URL is used
+// VERBATIM (no thumbnail/resize variants) and its bytes are packaged exactly
+// as downloaded (STORE — no recompression), so the maximum available quality
+// is preserved.
 export interface PlannedImage { filename: string; sourceUrl: string; kind: "primary" | "gallery" }
 export interface RowImagePlan { rowKey: string; sku: string; primary: PlannedImage | null; gallery: PlannedImage[] }
 
@@ -112,18 +121,9 @@ export function planRowImages(r: RafeeqPreviewRow): RowImagePlan {
   const primaryUrl = typeof r.primaryImageUrl === "string" ? r.primaryImageUrl.trim() : "";
   const ext = extensionFromUrl(primaryUrl || null);
   const primary: PlannedImage | null = sku && primaryUrl ? { filename: primaryImageName(sku, ext), sourceUrl: primaryUrl, kind: "primary" } : null;
-  const gallery: PlannedImage[] = [];
-  if (sku && Array.isArray(r.galleryImageUrls)) {
-    let position = 2;
-    for (const raw of r.galleryImageUrls) {
-      if (gallery.length >= PACKAGE_LIMITS.maxGalleryPerRow) break;
-      const url = typeof raw === "string" ? raw.trim() : "";
-      if (!url) continue;
-      gallery.push({ filename: additionalImageName(sku, position, extensionFromUrl(url)), sourceUrl: url, kind: "gallery" });
-      position++;
-    }
-  }
-  return { rowKey, sku, primary, gallery };
+  // gallery stays an EMPTY plan by contract — the type is kept so the shared
+  // integrity checker still compiles, but nothing ever populates it.
+  return { rowKey, sku, primary, gallery: [] };
 }
 
 export function primaryFilenameFor(sku: string, ext: string): string {
