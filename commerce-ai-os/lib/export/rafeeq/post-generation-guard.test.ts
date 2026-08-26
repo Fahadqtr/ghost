@@ -78,13 +78,20 @@ test("23: the email endpoint is GET-only, writer-gated, JSON-only — and no sen
   assert.ok(route.includes("requireMalakWriter"), "writer boundary enforced");
   assert.ok(route.includes('"Content-Type": "application/json"'), "structured JSON only");
   const server = read(SERVER);
-  for (const rel of [EMAIL_ROUTE, EMAIL_MODULE, SELECTION_MODULE, UI]) {
+  // the draft pipeline itself stays send-free: transmission exists ONLY in the
+  // owner-gated direct-send layer behind the explicit «إرسال الآن» confirmation
+  // (direct-send-guard.test.ts owns those invariants).
+  for (const rel of [EMAIL_ROUTE, EMAIL_MODULE, SELECTION_MODULE]) {
     const s = read(rel).toLowerCase();
     for (const bad of ["nodemailer", "sendgrid", "createtransport", "smtp", "mailto:", "gmail.send", "sendemail", "send_message"]) {
       assert.ok(!s.includes(bad), `${rel} contains no send path (${bad})`);
     }
   }
-  assert.ok(!server.toLowerCase().includes("nodemailer") && !server.toLowerCase().includes("createtransport"), "server layer has no mailer");
+  const ui = read(UI);
+  assert.ok(!ui.toLowerCase().includes("nodemailer") && !ui.includes("mailto:"), "the UI holds no mailer of its own");
+  const uiSendCalls = ui.match(/jobs\/\$\{jobId\}\/send/g) ?? [];
+  assert.equal(uiSendCalls.length, 2, "the UI reaches the send endpoint exactly twice — modal preflight GET + confirmed POST");
+  assert.ok(!server.toLowerCase().includes("nodemailer") && !server.toLowerCase().includes("createtransport"), "the job server layer has no mailer");
 });
 
 test("14: clipboard copy is the stated fallback (no Gmail integration) and the preview iframe is fully sandboxed", () => {
@@ -92,7 +99,10 @@ test("14: clipboard copy is the stated fallback (no Gmail integration) and the p
   assert.ok(ui.includes("navigator.clipboard.writeText"), "copy actions use the clipboard");
   const section = slice(ui, "function RafeeqEmailSection");
   assert.ok(section.includes("لن يُرسل أي إيميل تلقائياً"), "the no-auto-send statement is on screen");
-  assert.ok(section.includes("إنشاء مسودة Gmail غير"), "Gmail-draft unavailability is stated, with copy as the fallback");
+  // the copy workflow is the primary path; direct send exists ONLY behind the
+  // owner's explicit «إرسال الآن» confirmation (direct-send-guard covers it).
+  assert.ok(section.includes("نسخ للإيميل"), "the mobile-safe copy action is the primary workflow");
+  assert.ok(section.includes("تأكيداً صريحاً"), "direct send is stated as explicit-confirmation-only");
   assert.ok(section.includes('sandbox=""') && section.includes("srcDoc={draft.html}"), "HTML preview = sandboxed iframe via srcDoc");
   assert.ok(!ui.includes("dangerouslySetInnerHTML={"), "draft HTML is never injected into the page DOM");
 });

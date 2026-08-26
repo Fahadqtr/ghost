@@ -14,7 +14,7 @@
 // derivation, no conflict resolution, and it never fabricates history (an
 // unmigrated store is shown as غير متاح).
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   markPackageSentAction,
@@ -28,6 +28,8 @@ import { rafeeqJobErrorMessageAr } from "@/lib/export/rafeeq/package-job-errors"
 // are read as structured JSON only — raw bodies never reach the page.
 import { driveRafeeqPackageJob, rafeeqJobDownloadUrl } from "@/lib/export/rafeeq/package-job-client";
 import { RAFEEQ_GUIDE_PNG } from "@/lib/export/rafeeq/email-draft";
+import { rafeeqSendErrorMessageAr } from "@/lib/export/rafeeq/email-send";
+import { validateRecipients } from "@/lib/mail/config";
 
 export interface RafeeqFullSyncPackageVM {
   id: string;
@@ -85,9 +87,28 @@ interface RafeeqEmailDraftVM {
   to: string;
   subject: string;
   html: string;
+  /** MOBILE-SAFE plain text — the «نسخ للإيميل» copy target (never raw HTML). */
+  textEmail: string;
   textAr: string;
   attachments: string[];
   zipTooLargeForEmail: boolean;
+}
+
+/** Preflight JSON for the owner-only direct send (GET …/jobs/<id>/send). */
+interface RafeeqSendPreflightVM {
+  configured: boolean;
+  from: string | null;
+  attachmentMaxBytes: number;
+  subject: string;
+  zipFilename: string;
+  zipTotalBytes: number;
+  zipAttachable: boolean;
+  attachments: { filename: string; bytes: number; kind: "xlsx" | "manifest" | "zip" }[];
+  generatedAt: string;
+  productCount: number;
+  imageCount: number;
+  packageId: string | null;
+  savedRecipient: string;
 }
 
 function fmtBytes(bytes: number): string {
@@ -134,12 +155,15 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   // "إيميل رفيق" — draft loaded READ-ONLY from a completed job; never auto-sent.
   const [emailDraft, setEmailDraft] = useState<RafeeqEmailDraftVM | null>(null);
+  const [emailJobId, setEmailJobId] = useState<string | null>(null);
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailTo, setEmailTo] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  // owner-only direct-send confirmation modal (nothing sends without «إرسال الآن»).
+  const [sendOpen, setSendOpen] = useState(false);
 
   async function openEmailDraft(jobId: string) {
-    setEmailLoading(true); setEmailDraft(null); setCopied(null);
+    setEmailLoading(true); setEmailDraft(null); setCopied(null); setEmailJobId(jobId);
     try {
       const res = await fetch(`/api/export/rafeeq/package/jobs/${jobId}/email`);
       const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
@@ -315,13 +339,17 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
         <RafeeqEmailSection
           draft={emailDraft}
           loading={emailLoading}
+          jobId={emailJobId}
+          isOwner={vm.isOwner}
           to={emailTo}
           onTo={setEmailTo}
           copied={copied}
           onCopy={copyText}
+          onSend={() => setSendOpen(true)}
           onClose={() => setEmailDraft(null)}
         />
       )}
+      {sendOpen && emailJobId && <RafeeqSendModal jobId={emailJobId} onClose={() => setSendOpen(false)} />}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* 1 — FULL CATALOG */}
@@ -675,31 +703,39 @@ function DownloadLast({
 }
 
 /**
- * «إيميل رفيق» — a READY-TO-USE draft built from the ACTUAL completed job
- * (counts and examples are real, never hardcoded). This section only shows
- * the draft and copies it to the clipboard — the app has no Gmail/email
- * integration, so NOTHING is ever sent automatically; the human pastes the
- * draft into their mail client and attaches the listed files themselves.
- * The HTML preview is rendered inside a fully sandboxed iframe via srcDoc —
- * never dangerouslySetInnerHTML.
+ * «إيميل رفيق» — the completed-package email panel. Primary mobile workflow:
+ * «نسخ للإيميل» copies the MOBILE-SAFE plain-text draft (never raw HTML
+ * source) so it pastes cleanly into Outlook/Titan/Gmail mobile. The rendered
+ * HTML preview stays available behind «فتح المعاينة» (fully sandboxed iframe
+ * via srcDoc — never dangerouslySetInnerHTML), and the raw-HTML copy is a
+ * clearly-labeled developer action hidden under an advanced menu. Direct
+ * sending exists ONLY behind the owner-only «إرسال إلى رفيق» confirmation
+ * modal — nothing is ever sent automatically from this panel.
  */
 function RafeeqEmailSection({
   draft,
   loading,
+  jobId,
+  isOwner,
   to,
   onTo,
   copied,
   onCopy,
+  onSend,
   onClose,
 }: {
   draft: RafeeqEmailDraftVM | null;
   loading: boolean;
+  jobId: string | null;
+  isOwner: boolean;
   to: string;
   onTo: (v: string) => void;
   copied: string | null;
   onCopy: (label: string, text: string) => void | Promise<void>;
+  onSend: () => void;
   onClose: () => void;
 }) {
+  const [showPreview, setShowPreview] = useState(false);
   if (loading) {
     return (
       <section className="card space-y-2">
@@ -709,8 +745,8 @@ function RafeeqEmailSection({
     );
   }
   if (!draft) return null;
-  const copyBtn = (label: string, text: string, title: string) => (
-    <button type="button" className="btn-ghost text-xs" onClick={() => void onCopy(label, text)}>
+  const copyBtn = (label: string, text: string, title: string, primary = false) => (
+    <button type="button" className={`${primary ? "btn-primary" : "btn-ghost"} text-xs`} onClick={() => void onCopy(label, text)}>
       {copied === label ? "✓ تم النسخ" : title}
     </button>
   );
@@ -721,9 +757,23 @@ function RafeeqEmailSection({
         <button type="button" aria-label="إغلاق" className="text-sm text-muted hover:text-ink" onClick={onClose}>✕</button>
       </div>
       <p className="text-[11px] text-amber-800">
-        لن يُرسل أي إيميل تلقائياً — انسخ المسودة إلى بريدك وأرفق الملفات بنفسك. إنشاء مسودة Gmail غير
-        متاح (لا يوجد ربط بريد في التطبيق)، لذا النسخ هو الطريقة المعتمدة.
+        لن يُرسل أي إيميل تلقائياً — «نسخ للإيميل» ينسخ نصاً نظيفاً يلصق مباشرة في تطبيق البريد على
+        الجوال، و«إرسال إلى رفيق» (للمالك فقط) يتطلب تأكيداً صريحاً قبل أي إرسال.
       </p>
+      {/* primary actions — the mobile workflow first, never raw HTML */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {copyBtn("textEmail", draft.textEmail, "نسخ للإيميل", true)}
+        {copyBtn("subject", draft.subject, "نسخ الموضوع")}
+        <button type="button" className="btn-ghost text-xs" onClick={() => setShowPreview((v) => !v)}>
+          {showPreview ? "إغلاق المعاينة" : "فتح المعاينة"}
+        </button>
+        {jobId && (
+          <a href={rafeeqJobDownloadUrl(jobId)} download className="btn-ghost text-xs">تنزيل الملفات</a>
+        )}
+        {isOwner && jobId && (
+          <button type="button" className="btn-primary text-xs" onClick={onSend}>إرسال إلى رفيق</button>
+        )}
+      </div>
       <div className="grid gap-2 text-xs sm:grid-cols-[auto_1fr]">
         <label className="pt-1.5 text-muted" htmlFor="rafeeq-email-to">إلى</label>
         <input
@@ -736,25 +786,19 @@ function RafeeqEmailSection({
           className="input font-mono text-xs"
         />
         <span className="pt-1.5 text-muted">الموضوع</span>
-        <div className="flex items-center gap-2">
-          <input readOnly dir="ltr" value={draft.subject} className="input flex-1 font-mono text-[11px]" />
-          {copyBtn("subject", draft.subject, "نسخ الموضوع")}
-        </div>
+        <input readOnly dir="ltr" value={draft.subject} className="input font-mono text-[11px]" />
       </div>
-      <div className="space-y-1">
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] font-medium text-muted">معاينة نص الإيميل (EN)</span>
-          <div className="flex gap-1.5">
-            {copyBtn("html", draft.html, "نسخ HTML")}
-          </div>
+      {showPreview && (
+        <div className="space-y-1">
+          <span className="text-[11px] font-medium text-muted">معاينة الإيميل (HTML مُصيَّر — كما سيظهر لدى رفيق)</span>
+          <iframe
+            title="Rafeeq email preview"
+            sandbox=""
+            srcDoc={draft.html}
+            className="h-96 w-full rounded-lg border border-slate-200 bg-white"
+          />
         </div>
-        <iframe
-          title="Rafeeq email preview"
-          sandbox=""
-          srcDoc={draft.html}
-          className="h-96 w-full rounded-lg border border-slate-200 bg-white"
-        />
-      </div>
+      )}
       <div className="space-y-1">
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-medium text-muted">الملخص بالعربية</span>
@@ -781,6 +825,163 @@ function RafeeqEmailSection({
           <p className="text-[11px] text-amber-800">ملف ZIP كبير — سيُشارَك بشكل منفصل (المسودة تتضمن هذه الملاحظة).</p>
         )}
       </div>
+      {/* developer/debug action — clearly labeled, never the normal user path */}
+      <details>
+        <summary className="cursor-pointer text-[10px] text-muted">خيارات متقدمة</summary>
+        <div className="pt-1.5">{copyBtn("html", draft.html, "نسخ HTML للمطور")}</div>
+      </details>
     </section>
+  );
+}
+
+/**
+ * Owner-only direct-send confirmation modal. Shows the EXACT From/To/CC/
+ * Subject/attachment list + sizes/limits/counts from the send preflight, and
+ * transmits ONLY after the explicit «إرسال الآن» click. An unconfigured mail
+ * provider or an over-limit package disables sending with a clear reason —
+ * copy and download stay available either way. Sending never regenerates the
+ * package and never marks the Rafeeq SENT baseline.
+ */
+function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => void }) {
+  const [pf, setPf] = useState<RafeeqSendPreflightVM | null>(null);
+  const [pfError, setPfError] = useState<string | null>(null);
+  const [to, setTo] = useState("");
+  const [cc, setCc] = useState("");
+  const [includeZip, setIncludeZip] = useState(false);
+  const [saveRecipient, setSaveRecipient] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sentResult, setSentResult] = useState<{ messageId: string | null; auditRecorded: boolean; attachmentFilenames: string[] } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/export/rafeeq/package/jobs/${jobId}/send`);
+        const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+        if (!isJson) { if (!cancelled) setPfError(rafeeqSendErrorMessageAr("send_failed")); return; }
+        const body = await res.json();
+        if (cancelled) return;
+        if (!res.ok) { setPfError(typeof body?.message_ar === "string" ? body.message_ar : rafeeqSendErrorMessageAr(body?.error)); return; }
+        setPf(body as RafeeqSendPreflightVM);
+        setTo((body as RafeeqSendPreflightVM).savedRecipient ?? "");
+      } catch {
+        if (!cancelled) setPfError(rafeeqSendErrorMessageAr("send_failed"));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [jobId]);
+
+  const recipients = validateRecipients(to, cc);
+  const canSend = !!pf && pf.configured && recipients.ok && !sending && !sentResult;
+
+  async function confirmSend() {
+    if (!canSend) return;
+    setSending(true); setSendError(null);
+    try {
+      const res = await fetch(`/api/export/rafeeq/package/jobs/${jobId}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to, cc, includeZip: includeZip && !!pf?.zipAttachable, saveRecipient }),
+      });
+      const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+      if (!isJson) { setSendError(rafeeqSendErrorMessageAr("send_failed")); return; }
+      const body = await res.json();
+      if (!res.ok) { setSendError(typeof body?.message_ar === "string" ? body.message_ar : rafeeqSendErrorMessageAr(body?.error)); return; }
+      setSentResult(body as { messageId: string | null; auditRecorded: boolean; attachmentFilenames: string[] });
+    } catch {
+      setSendError(rafeeqSendErrorMessageAr("send_failed"));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+      <div className="card max-h-[90vh] w-full max-w-lg space-y-3 overflow-y-auto">
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="text-sm font-semibold text-ink">إرسال إلى رفيق — تأكيد</h3>
+          <button type="button" aria-label="إغلاق" className="text-sm text-muted hover:text-ink" onClick={onClose}>✕</button>
+        </div>
+        {pfError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{pfError}</p>}
+        {!pf && !pfError && <p className="text-xs text-muted">جارٍ تجهيز تفاصيل الإرسال…</p>}
+        {pf && (
+          <>
+            {!pf.configured && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+                لم يتم إعداد مزود البريد بعد — أضف إعدادات SMTP (متغيرات البيئة MAIL_HOST / MAIL_PORT /
+                MAIL_SECURE / MAIL_USERNAME / MAIL_PASSWORD / MAIL_FROM_NAME / MAIL_FROM_ADDRESS) ثم أعد المحاولة.
+                الإرسال معطّل حتى ذلك الحين، والنسخ والتنزيل متاحان.
+              </p>
+            )}
+            <div className="grid gap-2 text-xs sm:grid-cols-[auto_1fr]">
+              <span className="pt-1.5 text-muted">من</span>
+              <input readOnly dir="ltr" value={pf.from ?? "— غير مُعد —"} className="input font-mono text-[11px]" />
+              <label className="pt-1.5 text-muted" htmlFor="rafeeq-send-to">إلى</label>
+              <input id="rafeeq-send-to" type="text" dir="ltr" value={to} onChange={(e) => setTo(e.target.value)} placeholder="rafeeq@example.com" className="input font-mono text-xs" />
+              <label className="pt-1.5 text-muted" htmlFor="rafeeq-send-cc">نسخة (CC)</label>
+              <input id="rafeeq-send-cc" type="text" dir="ltr" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="اختياري" className="input font-mono text-xs" />
+              <span className="pt-1.5 text-muted">الموضوع</span>
+              <input readOnly dir="ltr" value={pf.subject} className="input font-mono text-[11px]" />
+            </div>
+            {!recipients.ok && to.trim() !== "" && (
+              <p className="text-[11px] text-rose-700">عنوان البريد غير صالح — تحقق من حقل المستلمين.</p>
+            )}
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px]" dir="rtl">
+              <div>الحزمة: <span className="font-mono text-[10px]" dir="ltr">{pf.zipFilename}</span> ({fmtBytes(pf.zipTotalBytes)})</div>
+              <div>توليد: {fmtDate(pf.generatedAt)} · {pf.productCount} منتج · {pf.imageCount} صورة</div>
+              <div className="pt-1 font-medium">المرفقات:</div>
+              <ul className="list-inside list-disc">
+                {pf.attachments.filter((a) => a.kind !== "zip" || includeZip).map((a) => (
+                  <li key={a.filename}><span className="font-mono text-[10px]" dir="ltr">{a.filename}</span> — {fmtBytes(a.bytes)}</li>
+                ))}
+              </ul>
+              <div className="pt-1">
+                إجمالي المرفقات: {fmtBytes(pf.attachments.filter((a) => a.kind !== "zip" || includeZip).reduce((s, a) => s + a.bytes, 0))}
+                {" "}(الحد: {fmtBytes(pf.attachmentMaxBytes)})
+              </div>
+            </div>
+            {pf.zipAttachable ? (
+              <label className="flex items-center gap-2 text-[11px] text-ink">
+                <input type="checkbox" checked={includeZip} onChange={(e) => setIncludeZip(e.target.checked)} />
+                إرفاق ملف ZIP الكامل أيضاً
+              </label>
+            ) : (
+              <p className="text-[11px] text-amber-800">
+                الحزمة أكبر من الحد المسموح للإرسال عبر البريد. سيُرسل الإيميل مع ملف الإكسل والفهرس فقط،
+                ونص الإيميل يوضح أن الحزمة الكاملة ستُشارك بشكل منفصل (تنزيل الملفات يبقى متاحاً).
+              </p>
+            )}
+            <label className="flex items-center gap-2 text-[11px] text-muted">
+              <input type="checkbox" checked={saveRecipient} onChange={(e) => setSaveRecipient(e.target.checked)} />
+              حفظ هذا العنوان كمستلم رفيق الافتراضي (إعداد صريح للمالك)
+            </label>
+            {sendError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{sendError}</p>}
+            {sentResult ? (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                ✓ تم الإرسال عبر مزود البريد.
+                {sentResult.messageId && <> معرف الرسالة: <span className="font-mono text-[10px]" dir="ltr">{sentResult.messageId}</span></>}
+                {!sentResult.auditRecorded && <div className="pt-1 text-amber-800">تنبيه: لم يُسجَّل سجل التدقيق (جدول rafeeq_email_deliveries غير مهيأ).</div>}
+                <div className="pt-1 text-[10px] text-emerald-800">
+                  ملاحظة: هذا الإرسال لا يغيّر حالة «تم الإرسال إلى رفيق» — تعليم الحزمة كمُرسلة يبقى إجراءً منفصلاً.
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" className="btn-ghost text-xs" onClick={onClose}>إلغاء</button>
+                <button type="button" className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-50" disabled={!canSend} onClick={() => void confirmSend()}>
+                  {sending ? "جارٍ الإرسال…" : "إرسال الآن"}
+                </button>
+              </div>
+            )}
+            {sentResult && (
+              <div className="flex items-center justify-end">
+                <button type="button" className="btn-ghost text-xs" onClick={onClose}>إغلاق</button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }

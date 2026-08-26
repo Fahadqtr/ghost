@@ -207,3 +207,50 @@ test("15: nothing is hardcoded — different metadata produces a fully different
   assert.ok(!b.html.includes("Example B"), "missing example is simply omitted, never faked");
   assert.ok(!a.html.includes("1418") && !a.html.includes("1,418"), "no production count baked into the template");
 });
+
+// ── MOBILE-SAFE COPY (owner request: direct-send + mobile copy, proofs 1–4, 13) ──
+
+test("mobile 1: «نسخ للإيميل» text contains NO HTML tags and no broken markdown markers", () => {
+  const d = buildRafeeqEmailDraft(ctx());
+  assert.ok(!/<[a-z/!][^>]*>/i.test(d.textEmail), "no HTML tag anywhere in the mobile copy text");
+  assert.ok(!d.textEmail.includes("&lt;") && !d.textEmail.includes("&amp;"), "no HTML entities either");
+  for (const bad of ["**", "```", "](", "​"]) assert.ok(!d.textEmail.includes(bad), `no markdown-ish marker (${bad})`);
+  assert.ok(!/^#/m.test(d.textEmail) && !/^\|/m.test(d.textEmail), "no # headings or | table rows");
+});
+
+test("mobile 2: the plain text preserves the package facts and structure (summary block, blank-line spacing)", () => {
+  const d = buildRafeeqEmailDraft(ctx());
+  const t = d.textEmail;
+  assert.ok(t.startsWith("Dear Rafeeq team,"), "greeting first");
+  assert.ok(t.includes("PACKAGE SUMMARY"), "summary header");
+  assert.ok(t.includes("File: rafeeq-full-2026-08-26.zip"), "real filename");
+  assert.ok(t.includes("Products (product identities): 137"), "real product count");
+  assert.ok(t.includes("Physical Excel rows: 151"), "real row count");
+  assert.ok(t.includes("Products with options: 9") && t.includes("Options: 23") && t.includes("Images: 137"), "option/image facts");
+  assert.ok(t.includes("Attachments:") && t.includes("- rafeeq_catalog.xlsx"), "attachment checklist");
+  assert.ok(t.includes("\n\n"), "readable blank-line spacing");
+  assert.ok(t.trimEnd().endsWith("Regards,\nMalikas Universe"), "sign-off");
+});
+
+test("mobile 13: plain text and HTML carry the SAME package facts and required sentences", () => {
+  const d = buildRafeeqEmailDraft(ctx({ correction: { previousFilename: "rafeeq-full-2026-08-20.zip" } }));
+  const facts = ["rafeeq-full-2026-08-26.zip", "137", "151", "mk9001", "mk9002", "PRICE ON SELECTION"];
+  for (const f of facts) {
+    assert.ok(d.html.includes(f), `HTML carries ${f}`);
+    assert.ok(d.textEmail.includes(f), `plain text carries ${f}`);
+  }
+  for (const sentence of [
+    "These repeated rows represent ONE product with multiple options — not separate products.",
+    "Please disregard the previous package and use this corrected package instead.",
+    "This package represents the full current Malikas Universe catalog.",
+  ]) {
+    assert.ok(d.html.includes(sentence), `HTML: ${sentence.slice(0, 30)}…`);
+    assert.ok(d.textEmail.includes(sentence), `text: ${sentence.slice(0, 30)}…`);
+  }
+  assert.ok(d.textEmail.includes("option_price is the FULL selling price of that selected option, not an additional charge."), "pricing sentence in text (tag-free form)");
+});
+
+test("mobile 4: the subject stays derived from the completed metadata (unchanged by the mobile text)", () => {
+  const d = buildRafeeqEmailDraft(ctx());
+  assert.equal(d.subject, "Malikas Universe — Full Catalog Package (137 products) — rafeeq-full-2026-08-26.zip");
+});
