@@ -21,6 +21,7 @@ import { loadRafeeqPreview } from "@/lib/export/rafeeq/preview.server";
 import RafeeqExport, { type RafeeqRowVM } from "@/components/v2/export/RafeeqExport";
 import RafeeqFullSync, { type RafeeqFullSyncVM } from "@/components/v2/export/RafeeqFullSync";
 import { loadRafeeqDeliveryState } from "@/lib/rafeeq/fullsync.server";
+import { getLatestCompletedRafeeqArtifact, listRecentCompletedRafeeqArtifacts } from "@/lib/rafeeq/package-job.server";
 import { isFullIncludable, isNeedsReviewIncluded, pendingRows, hasSentBaseline } from "@/lib/export/rafeeq/fullsync";
 import { isOwner } from "@/lib/malak/authz";
 import { loadShopifyPreviewContext } from "@/lib/export/shopify/preview.server";
@@ -285,6 +286,13 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
   if (result !== null) {
     const includable = result.rows.filter(isFullIncludable);
     const pending = pendingRows(result.rows, delivery.sentBaseline);
+    // DOWNLOAD LAST COMPLETED PACKAGE (read-only lookups; running/failed jobs
+    // and missing-artifact records are ignored by the server layer).
+    const [lastFull, lastNew, artifactHistory] = await Promise.all([
+      getLatestCompletedRafeeqArtifact("FULL"),
+      getLatestCompletedRafeeqArtifact("NEW"),
+      listRecentCompletedRafeeqArtifacts(8),
+    ]);
     fullSyncVm = {
       canWrite,
       isOwner: owner,
@@ -320,6 +328,8 @@ async function RafeeqDetail({ dest }: { dest: NonNullable<ReturnType<typeof expo
         supersededAt: p.supersededAt ?? null,
       })),
       recon: { activeMappings: result.counts.mappedCount, needsReview: result.counts.needsReviewCount },
+      lastCompleted: { full: lastFull, newPending: lastNew },
+      artifactHistory,
     };
   }
 

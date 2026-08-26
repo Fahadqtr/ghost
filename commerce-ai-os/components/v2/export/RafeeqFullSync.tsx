@@ -27,6 +27,7 @@ import { rafeeqJobErrorMessageAr } from "@/lib/export/rafeeq/package-job-errors"
 // surface): idempotent start → bounded steps → streamed download. Responses
 // are read as structured JSON only — raw bodies never reach the page.
 import { driveRafeeqPackageJob, rafeeqJobDownloadUrl } from "@/lib/export/rafeeq/package-job-client";
+import { RAFEEQ_GUIDE_PNG } from "@/lib/export/rafeeq/email-draft";
 
 export interface RafeeqFullSyncPackageVM {
   id: string;
@@ -40,6 +41,19 @@ export interface RafeeqFullSyncPackageVM {
   sentBy: string | null;
   /** set when a later FULL package replaced this (still unsent) one. */
   supersededAt: string | null;
+}
+
+/** One downloadable completed artifact (no regeneration — direct download). */
+export interface RafeeqArtifactVM {
+  jobId: string;
+  mode: "FULL" | "NEW";
+  filename: string;
+  totalBytes: number;
+  generatedAt: string;
+  productCount: number;
+  imageCount: number;
+  packageId: string | null;
+  sentAt: string | null;
 }
 
 export interface RafeeqFullSyncVM {
@@ -60,6 +74,26 @@ export interface RafeeqFullSyncVM {
   pending: { count: number; rows: { id: string; sku: string; title: string; kind: "NEW" | "OPTION_UPDATE" }[]; truncated: boolean };
   packages: RafeeqFullSyncPackageVM[];
   recon: { activeMappings: number; needsReview: number };
+  /** latest COMPLETE storage-verified artifacts (download-only, never regenerates). */
+  lastCompleted: { full: RafeeqArtifactVM | null; newPending: RafeeqArtifactVM | null };
+  /** recent downloadable artifacts (both modes), newest first. */
+  artifactHistory: RafeeqArtifactVM[];
+}
+
+/** The email draft JSON served by /api/export/rafeeq/package/jobs/<id>/email. */
+interface RafeeqEmailDraftVM {
+  to: string;
+  subject: string;
+  html: string;
+  textAr: string;
+  attachments: string[];
+  zipTooLargeForEmail: boolean;
+}
+
+function fmtBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 const RECON_STATUS_LABEL: Record<string, string> = {
@@ -98,6 +132,36 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReturnedPreviewVM | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // "إيميل رفيق" — draft loaded READ-ONLY from a completed job; never auto-sent.
+  const [emailDraft, setEmailDraft] = useState<RafeeqEmailDraftVM | null>(null);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailTo, setEmailTo] = useState("");
+  const [copied, setCopied] = useState<string | null>(null);
+
+  async function openEmailDraft(jobId: string) {
+    setEmailLoading(true); setEmailDraft(null); setCopied(null);
+    try {
+      const res = await fetch(`/api/export/rafeeq/package/jobs/${jobId}/email`);
+      const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+      if (!res.ok || !isJson) { setError(rafeeqJobErrorMessageAr("network")); return; }
+      const draft = (await res.json()) as RafeeqEmailDraftVM;
+      setEmailDraft(draft);
+      setEmailTo(draft.to);
+    } catch {
+      setError(rafeeqJobErrorMessageAr("network"));
+    } finally {
+      setEmailLoading(false);
+    }
+  }
+
+  async function copyText(label: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+    } catch {
+      setCopied(null);
+    }
+  }
 
   const latestGenerated = vm.packages[0] ?? null;
   const latestSent = vm.packages.find((p) => p.sentAt !== null) ?? null;
@@ -135,6 +199,8 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
           : `تم توليد ${filename} (${status.productsTotal} منتج). تعذّر تسجيل الحزمة في السجل الدائم (الترحيل غير مُطبَّق؟).`,
       );
       router.refresh();
+      // post-generation UX: prepare the Rafeeq email draft for THIS package.
+      void openEmailDraft(status.jobId);
     } catch {
       failGenerate(kind, "network", null);
     } finally {
@@ -245,6 +311,17 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
         </div>
       )}
       {notice && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900" dir="auto">{notice}</div>}
+      {(emailLoading || emailDraft) && (
+        <RafeeqEmailSection
+          draft={emailDraft}
+          loading={emailLoading}
+          to={emailTo}
+          onTo={setEmailTo}
+          copied={copied}
+          onCopy={copyText}
+          onClose={() => setEmailDraft(null)}
+        />
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* 1 — FULL CATALOG */}
@@ -270,6 +347,12 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
             <span>آخر توليد: {latestGenerated ? `${fmtDate(latestGenerated.generatedAt)} (${latestGenerated.productCount} منتج)` : "—"}</span>
             <span>آخر إرسال: {latestSent ? `${fmtDate(latestSent.sentAt)} — ${latestSent.outputFilename}` : "لم يُرسل شيء بعد"}</span>
           </div>
+          <DownloadLast
+            label="تنزيل آخر حزمة مكتملة"
+            artifact={vm.lastCompleted.full}
+            onEmail={vm.canWrite ? openEmailDraft : null}
+            emailBusy={emailLoading}
+          />
         </section>
 
         {/* 2 — NEW PRODUCTS PENDING */}
@@ -311,6 +394,15 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
                 <button type="button" onClick={() => generate("new")} disabled={busy !== null || vm.pending.count === 0} className="btn-primary disabled:cursor-not-allowed disabled:opacity-50">
                   {busy === "new" ? "جارٍ التوليد…" : `تحميل ملف المنتجات الجديدة (${vm.pending.count})`}
                 </button>
+              ) : null}
+              <DownloadLast
+                label="تنزيل آخر ملف مكتمل"
+                artifact={vm.lastCompleted.newPending}
+                onEmail={vm.canWrite ? openEmailDraft : null}
+                emailBusy={emailLoading}
+              />
+              {vm.canWrite ? (
+                <span className="hidden" />
               ) : (
                 <span className="text-[11px] text-muted">🔒 التوليد متاح لأصحاب صلاحية التعديل فقط.</span>
               )}
@@ -319,6 +411,41 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
           )}
         </section>
       </div>
+
+      {/* الحزم السابقة — download-only history (no regeneration ever) */}
+      {vm.artifactHistory.length > 0 && (
+        <details className="card">
+          <summary className="cursor-pointer text-sm font-semibold text-ink">الحزم السابقة ({vm.artifactHistory.length})</summary>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full min-w-[640px] text-right text-[11px]">
+              <thead className="text-muted">
+                <tr>
+                  <th className="px-2 py-1 font-medium">الملف</th>
+                  <th className="px-2 py-1 font-medium">النوع</th>
+                  <th className="px-2 py-1 font-medium">التاريخ</th>
+                  <th className="px-2 py-1 font-medium">منتجات</th>
+                  <th className="px-2 py-1 font-medium">الحالة</th>
+                  <th className="px-2 py-1 font-medium">تنزيل</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vm.artifactHistory.map((a) => (
+                  <tr key={a.jobId} className="border-t border-slate-100">
+                    <td className="px-2 py-1 font-mono" dir="ltr">{a.filename}</td>
+                    <td className="px-2 py-1">{a.mode === "FULL" ? "كامل" : "جديد"}</td>
+                    <td className="px-2 py-1">{fmtDate(a.generatedAt)}</td>
+                    <td className="px-2 py-1 tabular-nums">{a.productCount}</td>
+                    <td className="px-2 py-1">{a.sentAt ? "أُرسلت" : "لم تُرسل"}</td>
+                    <td className="px-2 py-1">
+                      <a href={rafeeqJobDownloadUrl(a.jobId)} download={a.filename} className="btn-ghost px-2 py-0.5 text-[11px]">تنزيل</a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
 
       {/* 3 — PACKAGE HISTORY */}
       <section className="card space-y-2">
@@ -482,4 +609,178 @@ function Chip({ tone, label }: { tone: "emerald" | "amber" | "rose" | "slate"; l
     slate: "border-slate-200 bg-slate-50 text-slate-600",
   };
   return <span className={`rounded-full border px-2 py-0.5 ${cls[tone]}`}>{label}</span>;
+}
+
+/**
+ * Direct download of the latest COMPLETED artifact of a mode. Owner rule:
+ * this NEVER creates a job and never regenerates — it is a plain link to the
+ * existing streamed-download route for a job that already finished, and it
+ * keeps working while a NEW job is running. When no completed artifact
+ * exists (running/failed/incomplete/missing files were all skipped) it shows
+ * a disabled action with the exact required message.
+ */
+function DownloadLast({
+  label,
+  artifact,
+  onEmail,
+  emailBusy,
+}: {
+  label: string;
+  artifact: RafeeqArtifactVM | null;
+  onEmail: ((jobId: string) => void | Promise<void>) | null;
+  emailBusy: boolean;
+}) {
+  if (!artifact) {
+    return (
+      <div className="space-y-1 border-t border-slate-100 pt-2">
+        <button type="button" disabled className="btn-ghost w-full cursor-not-allowed text-xs opacity-50">
+          {label}
+        </button>
+        <p className="text-[10px] text-muted">لا توجد حزمة مكتملة جاهزة للتنزيل</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1 border-t border-slate-100 pt-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <a
+          href={rafeeqJobDownloadUrl(artifact.jobId)}
+          download={artifact.filename}
+          className="btn-ghost flex-1 text-center text-xs"
+        >
+          {label}
+        </a>
+        {onEmail && (
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            disabled={emailBusy}
+            onClick={() => void onEmail(artifact.jobId)}
+          >
+            تحضير إيميل رفيق
+          </button>
+        )}
+      </div>
+      <p className="text-[10px] text-muted" dir="rtl">
+        <span className="font-mono text-[10px]" dir="ltr">{artifact.filename}</span>
+        {" · "}{artifact.productCount} منتج · {artifact.imageCount} صورة · {fmtBytes(artifact.totalBytes)} · {fmtDate(artifact.generatedAt)} ·{" "}
+        {artifact.sentAt ? (
+          <span className="text-emerald-700">أُرسلت {fmtDate(artifact.sentAt)}</span>
+        ) : (
+          <span className="text-amber-700">لم تُرسل</span>
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * «إيميل رفيق» — a READY-TO-USE draft built from the ACTUAL completed job
+ * (counts and examples are real, never hardcoded). This section only shows
+ * the draft and copies it to the clipboard — the app has no Gmail/email
+ * integration, so NOTHING is ever sent automatically; the human pastes the
+ * draft into their mail client and attaches the listed files themselves.
+ * The HTML preview is rendered inside a fully sandboxed iframe via srcDoc —
+ * never dangerouslySetInnerHTML.
+ */
+function RafeeqEmailSection({
+  draft,
+  loading,
+  to,
+  onTo,
+  copied,
+  onCopy,
+  onClose,
+}: {
+  draft: RafeeqEmailDraftVM | null;
+  loading: boolean;
+  to: string;
+  onTo: (v: string) => void;
+  copied: string | null;
+  onCopy: (label: string, text: string) => void | Promise<void>;
+  onClose: () => void;
+}) {
+  if (loading) {
+    return (
+      <section className="card space-y-2">
+        <h3 className="text-sm font-semibold text-ink">إيميل رفيق</h3>
+        <p className="text-xs text-muted">جارٍ تجهيز مسودة الإيميل من بيانات الحزمة الفعلية…</p>
+      </section>
+    );
+  }
+  if (!draft) return null;
+  const copyBtn = (label: string, text: string, title: string) => (
+    <button type="button" className="btn-ghost text-xs" onClick={() => void onCopy(label, text)}>
+      {copied === label ? "✓ تم النسخ" : title}
+    </button>
+  );
+  return (
+    <section className="card space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="text-sm font-semibold text-ink">إيميل رفيق — مسودة جاهزة</h3>
+        <button type="button" aria-label="إغلاق" className="text-sm text-muted hover:text-ink" onClick={onClose}>✕</button>
+      </div>
+      <p className="text-[11px] text-amber-800">
+        لن يُرسل أي إيميل تلقائياً — انسخ المسودة إلى بريدك وأرفق الملفات بنفسك. إنشاء مسودة Gmail غير
+        متاح (لا يوجد ربط بريد في التطبيق)، لذا النسخ هو الطريقة المعتمدة.
+      </p>
+      <div className="grid gap-2 text-xs sm:grid-cols-[auto_1fr]">
+        <label className="pt-1.5 text-muted" htmlFor="rafeeq-email-to">إلى</label>
+        <input
+          id="rafeeq-email-to"
+          type="email"
+          dir="ltr"
+          value={to}
+          onChange={(e) => onTo(e.target.value)}
+          placeholder="rafeeq@example.com"
+          className="input font-mono text-xs"
+        />
+        <span className="pt-1.5 text-muted">الموضوع</span>
+        <div className="flex items-center gap-2">
+          <input readOnly dir="ltr" value={draft.subject} className="input flex-1 font-mono text-[11px]" />
+          {copyBtn("subject", draft.subject, "نسخ الموضوع")}
+        </div>
+      </div>
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-medium text-muted">معاينة نص الإيميل (EN)</span>
+          <div className="flex gap-1.5">
+            {copyBtn("html", draft.html, "نسخ HTML")}
+          </div>
+        </div>
+        <iframe
+          title="Rafeeq email preview"
+          sandbox=""
+          srcDoc={draft.html}
+          className="h-96 w-full rounded-lg border border-slate-200 bg-white"
+        />
+      </div>
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-medium text-muted">الملخص بالعربية</span>
+          {copyBtn("text", draft.textAr, "نسخ النص")}
+        </div>
+        <pre dir="rtl" className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] leading-relaxed text-ink">{draft.textAr}</pre>
+      </div>
+      <div className="space-y-1">
+        <span className="text-[11px] font-medium text-muted">قائمة المرفقات المطلوبة</span>
+        <ul className="list-inside list-disc text-[11px] text-ink">
+          {draft.attachments.map((a) => (
+            <li key={a}>
+              <span className="font-mono text-[10px]" dir="ltr">{a}</span>
+              {a === RAFEEQ_GUIDE_PNG && (
+                <>
+                  {" — "}
+                  <a href={`/${RAFEEQ_GUIDE_PNG}`} download className="text-brand underline">تنزيل الدليل المصوّر</a>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+        {draft.zipTooLargeForEmail && (
+          <p className="text-[11px] text-amber-800">ملف ZIP كبير — سيُشارَك بشكل منفصل (المسودة تتضمن هذه الملاحظة).</p>
+        )}
+      </div>
+    </section>
+  );
 }

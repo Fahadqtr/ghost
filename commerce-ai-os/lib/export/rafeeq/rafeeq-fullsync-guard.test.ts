@@ -68,7 +68,10 @@ test("generation/recording never writes sent state; only the owner action does, 
   // the legacy route and the job layer still never mark anything sent.
   const jobServer = code(JOB_SERVER);
   assert.ok(/recordRafeeqPackage\(/.test(jobServer), "the job layer records the generated package");
-  assert.equal(/markRafeeqPackageSent|sent_at/.test(jobServer), false, "the job layer never writes sent state");
+  // the post-generation lookups READ sent_at (download-last metadata display);
+  // the job layer still never WRITES sent state.
+  assert.equal(/markRafeeqPackageSent/.test(jobServer), false, "the job layer never calls the owner mark-as-sent");
+  assert.equal(/\.(update|insert|upsert)\(\s*\{[\s\S]{0,300}?sent_at/.test(jobServer), false, "the job layer never writes sent state");
   const route = code(ROUTE);
   assert.equal(/markRafeeqPackageSent|sent_at/.test(route), false, "route never writes sent state");
 });
