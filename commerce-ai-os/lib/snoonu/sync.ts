@@ -349,6 +349,36 @@ export interface SnoonuIdentityCollision {
   colliding: { productId: string; sku: string; barcode: string | null; name: string };
 }
 
+/**
+ * RECONCILE_EXISTING — «ربط منتج موجود»: a row unmatched by SPI whose imported
+ * SKU AND barcode both resolve EXACTLY to the SAME canonical product (which
+ * has no active snoonu:malikas mapping yet). Never fuzzy: exact normalized
+ * equality of BOTH identifiers, fail-closed on ambiguity, on split ownership
+ * (SKU→A, barcode→B) and on an already-mapped target. Apply links ONLY the
+ * SPI (no product creation, no rename, no merge) and the row's safe field
+ * updates then flow through the normal diff path against the same product.
+ */
+export interface SnoonuReconcilePlan {
+  rowNum: number;
+  spi: string;
+  importedSku: string;
+  importedBarcode: string;
+  productId: string;
+  canonicalSku: string;
+  canonicalBarcode: string | null;
+  displayName: string;
+  /** the product's current snoonu:malikas mapping shown to the owner —
+   *  null (none) or the legacy placeholder external id being upgraded. */
+  currentSnoonuMapping: string | null;
+  /** active LEGACY placeholder external ids (non-SPI-shaped) that apply
+   *  archives when the real SPI listing is written (identity upgrade —
+   *  never a delete, and only ever on this product's own listings). */
+  placeholderMappings: string[];
+  /** safe owner-approved field updates from the same row (normal diff path). */
+  changes: SnoonuFieldChange[];
+  warnings: string[];
+}
+
 export interface SnoonuSyncCounts {
   totalExcelRows: number;
   matchedExisting: number;
@@ -361,6 +391,7 @@ export interface SnoonuSyncCounts {
   barcodeChanges: number;
   zeroPriceReviews: number;
   identityCollisions: number;
+  reconcileExisting: number;
   newProducts: number;
   newMissingSku: number;
   newMissingBarcode: number;
@@ -377,6 +408,7 @@ export interface SnoonuSyncPlan {
   unchanged: SnoonuMatchedPlan[];
   news: SnoonuNewPlan[];
   removals: SnoonuRemovalPlan[];
+  reconciles: SnoonuReconcilePlan[];
   zeroPriceReviews: SnoonuZeroPriceReview[];
   identityCollisions: SnoonuIdentityCollision[];
   conflicts: SnoonuProblemRow[];
@@ -445,6 +477,12 @@ export function planSnoonuSync(input: {
   const matched: SnoonuMatchedPlan[] = [];
   const unchanged: SnoonuMatchedPlan[] = [];
   const news: SnoonuNewPlan[] = [];
+  const reconciles: SnoonuReconcilePlan[] = [];
+
+  // active snoonu:malikas listings per product — a reconcile target must have
+  // NONE (an already-mapped product never reconciles to a second SPI).
+  const activeByProduct = new Map<string, SnoonuListingRecord[]>();
+  for (const l of active) activeByProduct.set(l.productId, [...(activeByProduct.get(l.productId) ?? []), l]);
 
   for (const r of input.rows) {
     const key = r.spi.toLowerCase();
@@ -459,10 +497,58 @@ export function planSnoonuSync(input: {
       conflicts.push({ rowNum: r.rowNum, spi: r.spi, productSku: null, message: "SPI مربوط بأكثر من منتج — يحتاج مراجعة" });
       continue;
     }
-    const product = productIds.length === 1 ? canonicalById.get(productIds[0]) : undefined;
+    let product = productIds.length === 1 ? canonicalById.get(productIds[0]) : undefined;
     if (productIds.length === 1 && !product) {
       conflicts.push({ rowNum: r.rowNum, spi: r.spi, productSku: null, message: "ربط SPI يشير إلى منتج غير موجود" });
       continue;
+    }
+
+    // RECONCILE_EXISTING — attempted BEFORE the NEW/collision branch, and only
+    // by EXACT identity: BOTH identifiers present, BOTH owned by the SAME
+    // canonical product, target not already actively snoonu-mapped. Anything
+    // less fails closed below (split ownership → collision; single identifier
+    // → the ordinary NEW/collision rules; already-mapped target → conflict).
+    let reconcile: { importedSku: string; importedBarcode: string; placeholders: string[] } | null = null;
+    if (!product) {
+      const impSku = safeIdentifier(r.sku);
+      const impBarcode = safeIdentifier(r.barcode);
+      if (impSku && impBarcode && !isPendingSku(impSku)) {
+        const skuOwned = skuOwner.get(impSku.toLowerCase());
+        const barcodeOwned = barcodeOwner.get(impBarcode);
+        if (skuOwned && barcodeOwned && skuOwned.id !== barcodeOwned.id) {
+          // SKU→A + barcode→B — ambiguous identity, FAIL CLOSED as collision.
+          identityCollisions.push({
+            rowNum: r.rowNum, spi: r.spi, identifier: "sku", source: null,
+            proposed: { sku: impSku, barcode: impBarcode },
+            colliding: { productId: skuOwned.id, sku: skuOwned.sku, barcode: skuOwned.barcode, name: skuOwned.nameEn ?? skuOwned.nameAr ?? skuOwned.sku },
+          });
+          identityCollisions.push({
+            rowNum: r.rowNum, spi: r.spi, identifier: "barcode", source: null,
+            proposed: { sku: impSku, barcode: impBarcode },
+            colliding: { productId: barcodeOwned.id, sku: barcodeOwned.sku, barcode: barcodeOwned.barcode, name: barcodeOwned.nameEn ?? barcodeOwned.nameAr ?? barcodeOwned.sku },
+          });
+          conflicts.push({ rowNum: r.rowNum, spi: r.spi, productSku: null, message: "هوية غامضة: SKU يشير لمنتج والباركود لمنتج آخر — يحتاج مراجعة" });
+          continue;
+        }
+        if (skuOwned && barcodeOwned && skuOwned.id === barcodeOwned.id) {
+          // an existing active SPI-SHAPED mapping blocks (another SPI already
+          // owns this product); LEGACY placeholder mappings (external id not
+          // SPI-shaped, e.g. the product's own SKU) do NOT block — they are
+          // the very identity gap reconciliation upgrades, and apply archives
+          // them alongside writing the real SPI listing.
+          const existing = activeByProduct.get(skuOwned.id) ?? [];
+          if (existing.some((l) => spiLike(l.externalId))) {
+            conflicts.push({ rowNum: r.rowNum, spi: r.spi, productSku: skuOwned.sku, message: "المنتج مرتبط بالفعل بـ SPI سنونو نشط آخر — لا ربط تلقائي" });
+            continue;
+          }
+          reconcile = {
+            importedSku: impSku,
+            importedBarcode: impBarcode,
+            placeholders: existing.map((l) => l.externalId),
+          };
+          product = skuOwned;
+        }
+      }
     }
 
     if (!product) {
@@ -578,6 +664,25 @@ export function planSnoonuSync(input: {
       }
     }
 
+    if (reconcile) {
+      // reconciled rows carry their safe field diffs but are NOT counted as
+      // matched — apply links the SPI first, then applies these changes.
+      reconciles.push({
+        rowNum: r.rowNum,
+        spi: r.spi,
+        importedSku: reconcile.importedSku,
+        importedBarcode: reconcile.importedBarcode,
+        productId: product.id,
+        canonicalSku: product.sku,
+        canonicalBarcode: product.barcode,
+        displayName: product.nameEn ?? product.nameAr ?? product.sku,
+        currentSnoonuMapping: reconcile.placeholders[0] ?? null,
+        placeholderMappings: reconcile.placeholders,
+        changes,
+        warnings: r.warnings,
+      });
+      continue;
+    }
     const item: SnoonuMatchedPlan = {
       rowNum: r.rowNum,
       spi: r.spi,
@@ -633,6 +738,7 @@ export function planSnoonuSync(input: {
     barcodeChanges: matched.filter((m) => m.changes.some((c) => c.field === "barcode")).length,
     zeroPriceReviews: zeroPriceReviews.length,
     identityCollisions: identityCollisions.length,
+    reconcileExisting: reconciles.length,
     newProducts: news.length,
     newMissingSku: news.filter((n) => n.klass === "NEW_WAITING_SKU" || n.klass === "NEW_WAITING_SKU_BARCODE").length,
     newMissingBarcode: news.filter((n) => n.klass === "NEW_WAITING_BARCODE" || n.klass === "NEW_WAITING_SKU_BARCODE").length,
@@ -650,6 +756,7 @@ export function planSnoonuSync(input: {
     matched: matched.map((m) => [m.spi, m.productId, m.changes]),
     news: news.map((n) => [n.spi, n.klass, n.sku, n.barcode, n.price, n.availability]),
     removals: removals.map((x) => [x.spi, x.productId]),
+    reconciles: reconciles.map((x) => [x.spi, x.productId, x.changes]),
     zeroPriceReviews: zeroPriceReviews.map((z) => [z.spi, z.currentPrice]),
     identityCollisions: identityCollisions.map((i) => [i.spi, i.identifier, i.colliding.productId]),
     duplicateSpis,
@@ -663,6 +770,7 @@ export function planSnoonuSync(input: {
     unchanged,
     news,
     removals,
+    reconciles,
     zeroPriceReviews,
     identityCollisions,
     conflicts,

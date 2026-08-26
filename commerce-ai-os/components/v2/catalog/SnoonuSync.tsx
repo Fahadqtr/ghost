@@ -228,6 +228,7 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
                 ["تغييرات باركود", plan.counts.barcodeChanges],
                 ["مراجعات سعر صفر", plan.counts.zeroPriceReviews],
                 ["تعارضات هوية", plan.counts.identityCollisions],
+                ["ربط منتجات موجودة", plan.counts.reconcileExisting],
                 ["منتجات جديدة", plan.counts.newProducts],
                 ["جديد بلا SKU", plan.counts.newMissingSku],
                 ["جديد بلا باركود", plan.counts.newMissingBarcode],
@@ -340,6 +341,44 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
                         <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{r.spi}</td>
                         <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{r.productSku}</td>
                         <td className="px-2 py-1">{r.displayName}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {plan.reconciles.length > 0 && (
+            <section className="card space-y-2">
+              <h3 className="text-sm font-semibold text-sky-800">ربط منتجات موجودة ({plan.reconciles.length})</h3>
+              <p className="text-[10px] text-muted">
+                صفوف بلا SPI مطابق، لكن SKU والباركود المستوردين يطابقان معاً نفس المنتج الموجود بالضبط —
+                سيُربط SPI بالمنتج الموجود فقط: لا إنشاء منتج جديد، لا تغيير SKU/باركود، لا دمج.
+              </p>
+              <div className="max-h-72 overflow-auto rounded-lg border border-sky-200">
+                <table className="w-full min-w-[860px] text-right text-[11px]">
+                  <thead className="bg-sky-50 text-sky-800"><tr>
+                    <th className="px-2 py-1 font-medium">SPI</th>
+                    <th className="px-2 py-1 font-medium">المستورد (SKU/باركود)</th>
+                    <th className="px-2 py-1 font-medium">المنتج الموجود (SKU/باركود)</th>
+                    <th className="px-2 py-1 font-medium">الاسم</th>
+                    <th className="px-2 py-1 font-medium">ربط سنونو الحالي</th>
+                    <th className="px-2 py-1 font-medium">الإجراء المخطط</th>
+                  </tr></thead>
+                  <tbody>
+                    {plan.reconciles.map((rec) => (
+                      <tr key={rec.spi} className="border-t border-sky-100">
+                        <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{rec.spi}</td>
+                        <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{rec.importedSku} / {rec.importedBarcode}</td>
+                        <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{rec.canonicalSku} / {rec.canonicalBarcode ?? "—"}</td>
+                        <td className="px-2 py-1">{rec.displayName}</td>
+                        <td className="px-2 py-1 text-muted">
+                          {rec.currentSnoonuMapping
+                            ? <>معرّف قديم: <span className="font-mono text-[10px]" dir="ltr">{rec.currentSnoonuMapping}</span> (سيُؤرشف)</>
+                            : "لا يوجد"}
+                        </td>
+                        <td className="px-2 py-1 text-sky-800">ربط SPI بمنتج موجود — بدون إنشاء منتج جديد</td>
                       </tr>
                     ))}
                   </tbody>
@@ -498,8 +537,9 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
                 </p>
                 <p className="text-xs text-ink">
                   تأكيد نهائي: سيُطبَّق ما في المعاينة أعلاه حرفياً ({plan.counts.matchedExisting - plan.counts.unchanged} تحديث ·{" "}
-                  {plan.counts.newProducts} جديد · {plan.counts.removedFromSnoonu} إيقاف · اعتماد سعر صفر: {zeroAccepted.size} من{" "}
-                  {plan.counts.zeroPriceReviews} · تعارضات هوية محجوبة: {plan.counts.identityCollisions}). لا شيء آخر سيتغير.
+                  {plan.counts.newProducts} جديد · ربط منتجات موجودة: {plan.counts.reconcileExisting} · {plan.counts.removedFromSnoonu} إيقاف ·
+                  اعتماد سعر صفر: {zeroAccepted.size} من {plan.counts.zeroPriceReviews} · تعارضات هوية محجوبة: {plan.counts.identityCollisions}).
+                  لا شيء آخر سيتغير.
                 </p>
                 <div className="flex items-center gap-2">
                   <button type="button" className="btn-ghost text-xs" onClick={() => setConfirming(false)}>إلغاء</button>

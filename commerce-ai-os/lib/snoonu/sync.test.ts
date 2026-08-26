@@ -241,6 +241,7 @@ test("counts: the exact owner-required census over a mixed workbook", () => {
     barcodeChanges: 0,
     zeroPriceReviews: 0,
     identityCollisions: 0,
+    reconcileExisting: 0,
     newProducts: 1,
     newMissingSku: 1,
     newMissingBarcode: 1,
@@ -377,4 +378,141 @@ test("collisions on NEW rows: a supplied identifier owned by an existing product
   assert.equal(n.blocked, "تعارض هوية المنتج — المعرّف مملوك لمنتج آخر");
   assert.equal(plan.identityCollisions[0].source, null, "new-row collision has no source product");
   assert.equal(plan.identityCollisions[0].colliding.sku, "mk10");
+});
+
+// ── RECONCILE_EXISTING «ربط منتج موجود» (owner request, real fixtures) ───────
+
+test("reconcile 1+4+5: unmatched SPI + exact SKU+barcode to the SAME product → RECONCILE_EXISTING (not NEW, not collision); canonical id/SKU/barcode unchanged", () => {
+  const existing = product("px", "mk2231", { barcode: "9597068053198", nameEn: "Rhode Ribbon Set" }); // no snoonu listing
+  const plan = planSnoonuSync({
+    mode: "FULL",
+    canonical: [...base().canonical, existing],
+    listings: base().listings,
+    emptySpiRows: [],
+    rows: [row(SPI_A), row(SPI_B), row(SPI_C), row(SPI_NEW, { sku: "mk2231", barcode: "9597068053198", price: 239, availability: true })],
+  });
+  assert.equal(plan.counts.reconcileExisting, 1);
+  assert.equal(plan.counts.newProducts, 0, "not classified NEW");
+  assert.equal(plan.counts.identityCollisions, 0, "not classified IDENTITY_COLLISION");
+  const rec = plan.reconciles[0];
+  assert.deepEqual(
+    { spi: rec.spi, productId: rec.productId, sku: rec.canonicalSku, barcode: rec.canonicalBarcode, mapping: rec.currentSnoonuMapping },
+    { spi: SPI_NEW, productId: "px", sku: "mk2231", barcode: "9597068053198", mapping: null },
+    "the existing canonical identity is preserved exactly",
+  );
+  assert.ok(!rec.changes.some((c) => c.field === "sku" || c.field === "barcode"), "no rename ever rides along");
+  assert.ok(rec.changes.some((c) => c.field === "price" && c.to === "239"), "safe field updates flow through the normal diff path");
+});
+
+test("reconcile 6: a target already holding ANY active snoonu mapping blocks reconciliation (fail closed as conflict)", () => {
+  const existing = product("px", "mk2231", { barcode: "9597068053198" });
+  const plan = planSnoonuSync({
+    mode: "FULL",
+    canonical: [...base().canonical, existing],
+    listings: [...base().listings, listing("px", "69aaaaaaaaaaaaaaaaaaaaaa")], // already SPI-mapped
+    emptySpiRows: [],
+    rows: [row(SPI_A), row(SPI_B), row(SPI_C), row(SPI_NEW, { sku: "mk2231", barcode: "9597068053198" })],
+  });
+  assert.equal(plan.counts.reconcileExisting, 0);
+  assert.ok(plan.conflicts.some((c) => c.spi === SPI_NEW && c.message.includes("مرتبط بالفعل")), "surfaced as a conflict, never auto-linked");
+});
+
+test("reconcile 7: SKU→product A + barcode→product B fails closed as ambiguous identity", () => {
+  const plan = planSnoonuSync({ ...base(), rows: [row(SPI_A), row(SPI_B), row(SPI_C),
+    row(SPI_NEW, { sku: "mk10", barcode: product("p2", "mk20").barcode })] }); // sku owned by p1, barcode by p2
+  assert.equal(plan.counts.reconcileExisting, 0);
+  assert.equal(plan.counts.identityCollisions, 2, "both split owners are surfaced");
+  assert.ok(plan.conflicts.some((c) => c.spi === SPI_NEW && c.message.includes("هوية غامضة")), "explicit ambiguous-identity conflict");
+  assert.equal(plan.news.length, 0, "never classified NEW");
+});
+
+test("reconcile 8: a single identifier (or blank) NEVER reconciles — the ordinary NEW/collision rules apply", () => {
+  const existing = product("px", "mk2231", { barcode: "9597068053198" });
+  const skuOnly = planSnoonuSync({
+    mode: "FULL",
+    canonical: [...base().canonical, existing],
+    listings: base().listings,
+    emptySpiRows: [],
+    rows: [row(SPI_A), row(SPI_B), row(SPI_C), row(SPI_NEW, { sku: "mk2231" })], // barcode blank
+  });
+  assert.equal(skuOnly.counts.reconcileExisting, 0, "sku alone does not reconcile");
+  assert.equal(skuOnly.counts.identityCollisions, 1, "owned single identifier stays a fail-closed collision");
+  const blank = planSnoonuSync({
+    mode: "FULL",
+    canonical: [...base().canonical, existing],
+    listings: base().listings,
+    emptySpiRows: [],
+    rows: [row(SPI_A), row(SPI_B), row(SPI_C), row(SPI_NEW, { nameEn: "Blanks" })],
+  });
+  assert.equal(blank.counts.reconcileExisting, 0, "blank identifiers never reconcile");
+  assert.equal(blank.news[0]?.klass, "NEW_WAITING_SKU_BARCODE");
+});
+
+test("reconcile 9: a MATCHED SPI proposing identifiers owned by another product stays IDENTITY_COLLISION (mk2225→mk1983 unchanged)", () => {
+  const K18A = product("pa", "mk2225", { barcode: "2900000002302" });
+  const K18B = product("pb", "mk1983", { barcode: "8996415005988" });
+  const plan = planSnoonuSync({
+    mode: "FULL",
+    canonical: [K18A, K18B],
+    listings: [listing("pa", SPI_A)],
+    emptySpiRows: [],
+    rows: [row(SPI_A, { sku: "mk1983", barcode: "8996415005988" })],
+  });
+  assert.equal(plan.counts.reconcileExisting, 0, "matched rows never reconcile");
+  assert.equal(plan.counts.identityCollisions, 2);
+});
+
+test("reconcile 10: reconciliation in PARTIAL mode still yields EXACTLY ZERO removals", () => {
+  const existing = product("px", "mk2231", { barcode: "9597068053198" });
+  const plan = planSnoonuSync({
+    mode: "PARTIAL",
+    canonical: [...base().canonical, existing],
+    listings: base().listings, // SPI_B, SPI_C mapped but absent from rows
+    emptySpiRows: [],
+    rows: [row(SPI_A), row(SPI_NEW, { sku: "mk2231", barcode: "9597068053198" })],
+  });
+  assert.equal(plan.counts.reconcileExisting, 1);
+  assert.equal(plan.removals.length, 0, "linking an SPI triggers no absence-based lifecycle logic");
+  assert.equal(plan.counts.removedFromSnoonu, 0);
+});
+
+test("reconcile 12+13 (real fixtures): mk2227/mk2229/mk2230/mk2231 reconcile; true-new stays with the identifier-less rows", () => {
+  // regression fixture mirroring the real FULL workbook finding: four rows,
+  // unmatched by SPI, whose SKU+barcode exactly match existing products.
+  const fixtures = [
+    ["mk2227", "3547671371161", "69e40de66040178fae1cc801"],
+    ["mk2229", "1703105568343", "69e40de66040178fae1cc802"],
+    ["mk2230", "8950737884720", "69e40de66040178fae1cc803"],
+    ["mk2231", "9597068053198", "69e40de66040178fae1cc804"],
+  ] as const;
+  const canonical = [...base().canonical, ...fixtures.map(([sku, barcode], i) => product(`fx${i}`, sku, { barcode }))];
+  const rows = [
+    row(SPI_A), row(SPI_B), row(SPI_C),
+    ...fixtures.map(([sku, barcode, spi]) => row(spi, { sku, barcode, nameEn: sku })),
+    row(SPI_NEW, { nameAr: "منتج جديد فعلاً" }), // a TRUE new row (missing both ids)
+  ];
+  // mirror production exactly: each fixture already carries an active LEGACY
+  // placeholder listing (external id = its own SKU — not SPI-shaped).
+  const listings = [...base().listings, ...fixtures.map(([sku], i) => listing(`fx${i}`, sku))];
+  const plan = planSnoonuSync({ mode: "FULL", canonical, listings, emptySpiRows: [], rows });
+  assert.equal(plan.counts.reconcileExisting, 4, "all four fixtures reconcile — a legacy placeholder mapping never blocks the upgrade");
+  assert.deepEqual(plan.reconciles.map((x) => x.placeholderMappings).flat().sort(), ["mk2227", "mk2229", "mk2230", "mk2231"],
+    "each placeholder is recorded for archive alongside the SPI link");
+  assert.deepEqual(plan.reconciles.map((x) => x.canonicalSku).sort(), ["mk2227", "mk2229", "mk2230", "mk2231"]);
+  assert.equal(plan.counts.newProducts, 1, "TRUE NEW = only the identifier-less row");
+  assert.equal(plan.counts.identityCollisions, 0, "the fixtures no longer classify as collisions");
+});
+
+test("reconcile placeholder upgrade: a legacy non-SPI mapping does NOT block; an SPI-shaped mapping DOES", () => {
+  const existing = product("px", "mk2231", { barcode: "9597068053198" });
+  const viaPlaceholder = planSnoonuSync({
+    mode: "FULL",
+    canonical: [...base().canonical, existing],
+    listings: [...base().listings, listing("px", "mk2231")], // legacy placeholder
+    emptySpiRows: [],
+    rows: [row(SPI_A), row(SPI_B), row(SPI_C), row(SPI_NEW, { sku: "mk2231", barcode: "9597068053198" })],
+  });
+  assert.equal(viaPlaceholder.counts.reconcileExisting, 1, "placeholder-mapped target reconciles (identity upgrade)");
+  assert.deepEqual(viaPlaceholder.reconciles[0].placeholderMappings, ["mk2231"]);
+  assert.equal(viaPlaceholder.reconciles[0].currentSnoonuMapping, "mk2231");
 });

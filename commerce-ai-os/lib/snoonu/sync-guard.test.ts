@@ -113,6 +113,18 @@ test("duplicate resolution is SEPARATE and read-only: Snoonu Sync never merges c
   assert.ok(/previewDuplicatePairAction[\s\S]*?requireOwner/.test(actions), "the pair audit is OWNER-gated");
 });
 
+test("reconcile 2+3+11: RECONCILE_EXISTING writes ONLY the certified snoonu listing — no product insert, target revalidated by the rebuilt plan", () => {
+  const server = read(SERVER);
+  const recSlice = server.slice(server.indexOf("RECONCILE_EXISTING — link the SPI"), server.indexOf("NEW Snoonu products"));
+  assert.ok(recSlice.includes('from("external_channel_listings").insert'), "the SPI link goes through the certified ECL boundary");
+  assert.ok(recSlice.includes('identity_type: "snoonu_spi"'), "typed snoonu identity");
+  assert.ok(!recSlice.includes("createProductCore"), "reconciliation NEVER creates a product");
+  assert.ok(!/from\("products"\)\s*\.insert\(/.test(recSlice), "no product insert of any kind");
+  assert.ok(!/update\(\s*\{[\s\S]{0,120}?(sku|barcode)/.test(recSlice), "canonical SKU/barcode are never renamed by reconciliation");
+  assert.ok(recSlice.includes("plan.reconciles"), "targets come EXCLUSIVELY from the server-rebuilt plan — no client product id is trusted");
+  assert.ok(server.includes("reconciled_existing_count"), "the audit payload records the reconciled count + row detail");
+});
+
 test("the audit migration is additive-only", () => {
   const m = read("supabase/migrations/20260828000000_snoonu_sync_audits.sql").replace(/--[^\n]*/g, "").toLowerCase();
   assert.ok(m.includes("create table if not exists public.snoonu_sync_audits"));

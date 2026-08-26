@@ -113,7 +113,7 @@ export async function previewSnoonuSyncPlan(
 
 export interface SnoonuApplyRowResult {
   spi: string;
-  action: "updated" | "availability" | "created" | "removed" | "failed";
+  action: "updated" | "availability" | "created" | "reconciled" | "removed" | "failed";
   productId: string | null;
   message: string | null;
 }
@@ -190,7 +190,8 @@ export async function applySnoonuSyncPlan(input: {
     [toAvailable, "In Stock"],
     [toUnavailable, "Out of Stock"],
   ] as const) {
-    if (ids.length > 0) await writeProductAvailability(admin as unknown as AvailabilityWriteClient, ids, state as AvailabilityState);
+    const fresh = ids.splice(0);
+    if (fresh.length > 0) await writeProductAvailability(admin as unknown as AvailabilityWriteClient, fresh, state as AvailabilityState);
   }
 
   // ── PRICE_REVIEW_ZERO — only EXPLICIT per-row owner resolutions write 0 ──
@@ -205,6 +206,60 @@ export async function applySnoonuSyncPlan(input: {
       productId: review.productId,
       message: error ? "تعذّر اعتماد السعر صفر" : "اعتماد السعر صفر (قرار صريح من المالك)",
     });
+  }
+
+  // ── RECONCILE_EXISTING — link the SPI to the existing product, NOTHING else ──
+  // The rebuilt plan (fresh canonical + listings, exact SKU+barcode ownership,
+  // no-existing-active-mapping rule) IS the server-side revalidation — no
+  // client-provided target id is ever trusted. The product row keeps its id,
+  // SKU and barcode untouched; only the certified external-channel listing is
+  // written, then the row's safe field diffs flow through the normal path.
+  for (const rec of plan.reconciles) {
+    const { error: linkErr } = await admin.from("external_channel_listings").insert({
+      product_id: rec.productId,
+      channel_key: "snoonu",
+      storefront_key: SNOONU_STOREFRONT_KEY,
+      external_product_id: rec.spi,
+      identity_type: "snoonu_spi",
+      mapping_status: "active",
+      exported_sku: rec.importedSku,
+      exported_barcode: rec.importedBarcode,
+    });
+    if (linkErr) {
+      results.push({ spi: rec.spi, action: "failed", productId: rec.productId, message: "تعذّر ربط SPI بالمنتج الموجود" });
+      continue;
+    }
+    // identity UPGRADE: the product's own legacy placeholder listings (never
+    // SPI-shaped, verified by the plan) are archived — not deleted — now that
+    // the real SPI listing exists.
+    if (rec.placeholderMappings.length > 0) {
+      await admin
+        .from("external_channel_listings")
+        .update({ mapping_status: "archived", updated_at: appliedAt })
+        .eq("storefront_key", SNOONU_STOREFRONT_KEY)
+        .eq("product_id", rec.productId)
+        .eq("mapping_status", "active")
+        .in("external_product_id", rec.placeholderMappings as string[]);
+    }
+    const payload: Record<string, unknown> = {};
+    for (const c of rec.changes) {
+      if (c.field === "availability") {
+        (c.to === "In Stock" ? toAvailable : toUnavailable).push(rec.productId);
+        continue;
+      }
+      payload[c.field] = c.field === "price" ? Number(c.to) : c.to;
+    }
+    if (Object.keys(payload).length > 0) {
+      await admin.from("products").update(payload).eq("id", rec.productId);
+    }
+    results.push({ spi: rec.spi, action: "reconciled", productId: rec.productId, message: null });
+  }
+  for (const [ids, state] of [
+    [toAvailable, "In Stock"],
+    [toUnavailable, "Out of Stock"],
+  ] as const) {
+    const fresh = ids.splice(0);
+    if (fresh.length > 0) await writeProductAvailability(admin as unknown as AvailabilityWriteClient, fresh, state as AvailabilityState);
   }
 
   // ── NEW Snoonu products — canonical create path; identifiers never invented ──
@@ -304,6 +359,8 @@ export async function applySnoonuSyncPlan(input: {
         matched: plan.matched.map((m) => ({ spi: m.spi, productId: m.productId, changes: m.changes })),
         created: plan.news.map((n) => ({ spi: n.spi, klass: n.klass, sku: n.sku, barcode: n.barcode })),
         removed: plan.removals.map((r) => ({ spi: r.spi, productId: r.productId, sku: r.productSku })),
+        reconciled: plan.reconciles.map((x) => ({ spi: x.spi, canonical_product_id: x.productId, sku: x.canonicalSku, barcode: x.canonicalBarcode })),
+        reconciled_existing_count: plan.reconciles.length,
         zeroPriceReviews: plan.zeroPriceReviews.map((z) => ({ spi: z.spi, sku: z.productSku, kept: !input.zeroPriceOverrides.some((o) => o.toLowerCase() === z.spi.toLowerCase()) })),
         identityCollisions: plan.identityCollisions.map((i) => ({ spi: i.spi, identifier: i.identifier, collidingSku: i.colliding.sku })),
       },
