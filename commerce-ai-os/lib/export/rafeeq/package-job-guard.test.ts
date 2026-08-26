@@ -98,37 +98,42 @@ test("the migration is additive and never fabricates package history", () => {
   assert.ok(!m.includes("rafeeq_packages ("), "package-history tables are untouched");
 });
 
-// ── INT.2D surface routed through the job flow (owner-approved fix) ──────────
+// ── owner rule: the Rafeeq page exposes EXACTLY TWO generation actions ───────
+// (both on the FullSync card, both job-based; the INT.2D surface is
+// preview/review-only and the legacy "توليد الحزمة" button no longer exists).
 
 const CLIENT = "lib/export/rafeeq/package-job-client.ts";
 
-test("the legacy INT.2D surface generates the FULL catalog through the job flow", () => {
+test("the Rafeeq page exposes exactly TWO visible generation actions, both on the FullSync card", () => {
+  const fullsync = read(UI);
+  assert.ok(fullsync.includes("توليد كتالوج رفيق الكامل"), "action 1: the FULL catalog job");
+  assert.ok(fullsync.includes("تحميل ملف المنتجات الجديدة"), "action 2: the NEW/pending products file");
+  const generateCalls = fullsync.match(/generate\("(full|new)"\)/g) ?? [];
+  assert.deepEqual([...new Set(generateCalls)].sort(), ['generate("full")', 'generate("new")'],
+    "the FullSync card drives exactly the two generation kinds");
+});
+
+test("the legacy INT.2D surface is preview/review-only — no generate button, no generation fetch", () => {
   const s = read(UI_LEGACY);
-  assert.ok(s.includes("driveRafeeqPackageJob"), "the shared job client drives generation");
-  assert.ok(s.includes('LEGACY_MODE_TO_JOB_MODE["all"]'), "the mode mapping is explicit and deterministic");
-  assert.ok(s.includes("rafeeqJobDownloadUrl"), "the download streams from the stored job artifact");
-  assert.ok(s.includes("إعادة المحاولة"), "a retry button is offered on failure (resumes the SAME job)");
-  assert.ok(s.includes("errorRef"), "the short reference id is shown");
-  const genBody = s.slice(s.indexOf("async function generate()"));
-  assert.ok(/if \(mode === "all"\) \{\s*await generateFullViaJob\(\);\s*return;/.test(genBody),
-    "mode all returns before the legacy fetch — the buffered route is unreachable from the button");
+  assert.ok(!s.includes("توليد الحزمة ("), "the legacy generate button is gone");
+  assert.ok(!s.includes("fetch("), "the surface performs NO generation request at all");
+  assert.ok(!s.includes("driveRafeeqPackageJob"), "no duplicate FULL-generation entry point");
+  assert.ok(!s.includes("/api/export/rafeeq/package"), "no reference to any generation route");
+  assert.ok(s.includes("خطة التصدير"), "the read-only export-plan overview remains");
+  assert.ok(s.includes("REASON_LABEL"), "the blocked-reason review chips remain");
 });
 
 test("the legacy route refuses mode all toward the job flow (buffered full-catalog path unreachable)", () => {
   const s = read(LEGACY_ROUTE);
   assert.ok(/if \(mode === "all"\) \{/.test(s), "mode all (also the bodyless default) is refused");
   assert.ok((s.match(/"use_jobs"/g) ?? []).length >= 2, "fullsync modes AND mode all both answer use_jobs");
-  assert.ok(s.includes("generateRafeeqPackage"), "bounded subset modes (new/selected) keep their existing behavior");
 });
 
-test("both surfaces share ONE job client — no duplicated job-driving logic", () => {
+test("generation drives ONE shared job client — no duplicated job-driving logic", () => {
   const fullsync = read(UI);
-  const legacy = read(UI_LEGACY);
-  for (const src of [fullsync, legacy]) {
-    assert.ok(src.includes('from "@/lib/export/rafeeq/package-job-client"'), "imports the shared client");
-    assert.ok(!/async function readJobResponse/.test(src), "no per-surface response reader");
-    assert.ok(!/while \(status\.status === "running"\)/.test(src), "no per-surface step loop");
-  }
+  assert.ok(fullsync.includes('from "@/lib/export/rafeeq/package-job-client"'), "the FullSync card imports the shared client");
+  assert.ok(!/async function readJobResponse/.test(fullsync), "no per-surface response reader");
+  assert.ok(!/while \(status\.status === "running"\)/.test(fullsync), "no per-surface step loop");
   const client = read(CLIENT);
   assert.ok(/while \(status\.status === "running"\)/.test(client), "the step loop lives only in the shared client");
   assert.ok(/\/api\/export\/rafeeq\/package\/jobs/.test(client), "the client drives the job endpoints");

@@ -1,23 +1,20 @@
 "use client";
 
-// INT.2D — Rafeeq export surface (presentational + client state).
+// INT.2D — Rafeeq export PREVIEW surface (presentational + client state).
 //
-// Renders the certified Rafeeq preview (product grain) with the supported export
-// modes (All / New / Selected — Updates is UNSUPPORTED and shown disabled because
-// there is no reliable change evidence), a pre-generation plan + grouped blocked
-// reasons, and a writer-gated "Generate Package" that streams the ZIP and shows
-// the post-generation summary. It holds only view state — no I/O, no mutation, no
-// identity re-derivation, no conflict resolution. needs_review rows are BLOCKED
-// and clearly labelled "Rafeeq Identity Conflict — Needs Owner Review".
+// Renders the certified Rafeeq preview (product grain): the export plan +
+// grouped blocked reasons and the full row table with filters/search. This
+// surface is REVIEW-ONLY — the owner-approved rule is that the Rafeeq page
+// exposes exactly TWO generation actions, both on the FullSync card
+// ("توليد كتالوج رفيق الكامل" and "تحميل ملف المنتجات الجديدة"), so no generate
+// button exists here and no UI action can reach the retired buffered route.
+// It holds only view state — no I/O, no mutation, no identity re-derivation,
+// no conflict resolution. needs_review rows are BLOCKED and clearly labelled.
 
 import { useMemo, useState } from "react";
 import type { ExportItemStatus, ExportReasonCode } from "@/lib/export/validation";
 import { paginate, DEFAULT_PAGE_SIZE } from "@/lib/ui/pagination";
-import { toggleKey, selectKeys, clearSelection, allSelected, countSelectedWithin } from "@/lib/ui/selection";
-import SelectionToolbar from "@/components/v2/ui/SelectionToolbar";
 import EmptyState from "@/components/v2/ui/EmptyState";
-import { rafeeqJobErrorMessageAr } from "@/lib/export/rafeeq/package-job-errors";
-import { driveRafeeqPackageJob, rafeeqJobDownloadUrl, LEGACY_MODE_TO_JOB_MODE } from "@/lib/export/rafeeq/package-job-client";
 
 export interface RafeeqRowVM {
   /** stable product row key (product-grain — one row per canonical product). */
@@ -57,7 +54,6 @@ export interface RafeeqExportVM {
   };
 }
 
-type Mode = "all" | "new" | "selected";
 type RowFilter = "ALL" | ExportItemStatus | "NEW" | "MAPPED" | "NEEDS_REVIEW";
 
 const REASON_LABEL: Record<string, string> = {
@@ -70,27 +66,11 @@ const REASON_LABEL: Record<string, string> = {
   UNSUPPORTED: "غير مدعوم",
 };
 const STATUS_LABEL: Record<ExportItemStatus, string> = { READY: "جاهز", WARNING: "تحذير", BLOCKED: "محظور", UNKNOWN: "غير معروف" };
-const MODE_LABEL: Record<Mode, string> = { all: "الكل", new: "جديد (غير مربوط)", selected: "المحدد" };
-
-function inMode(r: RafeeqRowVM, mode: Mode, selected: ReadonlySet<string>): boolean {
-  if (r.status === "BLOCKED") return false;
-  if (mode === "all") return true;
-  if (mode === "new") return r.rafeeqId === null;
-  return selected.has(r.id);
-}
 
 export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
-  const [mode, setMode] = useState<Mode>("all");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<RowFilter>("ALL");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [errorRef, setErrorRef] = useState<string | null>(null);
-  const [canRetry, setCanRetry] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number; phase: string } | null>(null);
-  const [result, setResult] = useState<Record<string, string> | null>(null);
 
   const plan = useMemo(() => {
     let ready = 0, warn = 0, blocked = 0, unknown = 0, mapped = 0, unmapped = 0, needsReview = 0, included = 0, images = 0;
@@ -100,10 +80,10 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
       if (r.rafeeqId !== null) mapped++; else unmapped++;
       if (r.needsOwnerReview) needsReview++;
       if (r.status === "BLOCKED") { for (const x of r.reasons) if (x.blocking) blockers[x.code] = (blockers[x.code] ?? 0) + 1; continue; }
-      if (inMode(r, mode, selected)) { included++; images += r.hasImage ? Math.max(1, r.imageCount) : 0; }
+      included++; images += r.hasImage ? Math.max(1, r.imageCount) : 0;
     }
     return { ready, warn, blocked, unknown, mapped, unmapped, needsReview, included, images, blockers };
-  }, [vm.rows, mode, selected]);
+  }, [vm.rows]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -121,90 +101,6 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
   }, [vm.rows, filter, q]);
 
   const pageView = useMemo(() => paginate(filtered, page, DEFAULT_PAGE_SIZE), [filtered, page]);
-  const selectableAllKeys = useMemo(() => vm.rows.filter((r) => r.status !== "BLOCKED").map((r) => r.id), [vm.rows]);
-  const selectablePageKeys = useMemo(() => pageView.pageItems.filter((r) => r.status !== "BLOCKED").map((r) => r.id), [pageView]);
-  const selectedCount = countSelectedWithin(selected, selectableAllKeys);
-
-  // RAFEEQ.PKGJOB — the FULL catalog ("all") generates through the SHARED
-  // chunked job flow (idempotent start → bounded steps → streamed download):
-  // one buffered request for ~1418 products + ~2534 images OOM-killed the
-  // serverless instance (proven in the runtime logs), so the legacy route now
-  // refuses mode "all" and this surface drives the same job architecture as
-  // the FullSync card. A retry resumes the SAME job — never a duplicate.
-  async function generateFullViaJob() {
-    const jobMode = LEGACY_MODE_TO_JOB_MODE["all"];
-    if (!jobMode) return;
-    const done = await driveRafeeqPackageJob(jobMode, (s) =>
-      setProgress({ done: s.productsDone, total: s.productsTotal, phase: s.phase }),
-    );
-    if (!done.ok) {
-      setError(rafeeqJobErrorMessageAr(done.code));
-      setErrorRef(done.refId);
-      setCanRetry(true);
-      return;
-    }
-    const status = done.value;
-    setProgress(null);
-    const filename = status.artifact?.filename ?? "rafeeq-export.zip";
-    const a = document.createElement("a");
-    a.href = rafeeqJobDownloadUrl(status.jobId);
-    a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setResult({
-      filename,
-      rows: String(status.productsTotal),
-      images: String(status.imagesDone),
-      mapped: "—", unmapped: "—", needsReview: "—", excludedBlocked: "—",
-      generatedBy: "",
-    });
-  }
-
-  async function generate() {
-    if (busy) return;
-    setBusy(true); setError(null); setErrorRef(null); setCanRetry(false); setProgress(null);
-    try {
-      if (mode === "all") {
-        await generateFullViaJob();
-        return;
-      }
-      const res = await fetch(`/api/export/rafeeq/package`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(mode === "selected" ? { mode, selectedKeys: [...selected] } : { mode }),
-      });
-      // Failures render a FIXED Arabic message only — a raw response body may
-      // be an upstream HTML error page and must never reach the page.
-      if (!res.ok) {
-        const isText = (res.headers.get("content-type") ?? "").startsWith("text/plain");
-        const short = isText ? await res.text().then((t) => (t.length <= 200 && !t.includes("<") ? t : "")).catch(() => "") : "";
-        setError(short || "تعذّر توليد الحزمة الآن — أعد المحاولة.");
-        return;
-      }
-      const h = res.headers;
-      const summary: Record<string, string> = {
-        filename: h.get("X-Rafeeq-Output-Filename") ?? "rafeeq-export.zip",
-        rows: h.get("X-Rafeeq-Product-Rows") ?? "0",
-        mapped: h.get("X-Rafeeq-Mapped") ?? "0",
-        unmapped: h.get("X-Rafeeq-Unmapped") ?? "0",
-        needsReview: h.get("X-Rafeeq-Needs-Review-Excluded") ?? "0",
-        images: h.get("X-Rafeeq-Image-Count") ?? "0",
-        warnings: h.get("X-Rafeeq-Warning-Count") ?? "0",
-        excludedBlocked: h.get("X-Rafeeq-Excluded-Blocked") ?? "0",
-        generatedBy: h.get("X-Rafeeq-Generated-By") ?? "",
-      };
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = summary.filename;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
-      setResult(summary);
-    } catch {
-      setError("تعذّر الاتصال بالخادم — الرجاء المحاولة لاحقاً.");
-      if (mode === "all") setCanRetry(true); // resuming the same job is always safe
-    }
-    finally { setBusy(false); setProgress(null); }
-  }
 
   const chip = (active: boolean) => `rounded-full border px-3 py-1 text-xs transition-colors ${active ? "border-brand bg-brand-light text-brand" : "border-slate-200 bg-white text-muted hover:bg-slate-50"}`;
   const blockerEntries = Object.entries(plan.blockers).filter(([, n]) => (n ?? 0) > 0);
@@ -233,17 +129,10 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
         <Card value={plan.blocked} label="محظور" tone="rose" />
       </div>
 
-      {/* Mode selector */}
+      {/* Export plan — READ-ONLY overview. Generation lives on the FullSync
+          card (exactly two actions: full catalog + new-products file). */}
       <div className="card space-y-2">
-        <div className="text-sm font-semibold text-ink">وضع التصدير</div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {(["all", "new", "selected"] as Mode[]).map((m) => (
-            <button key={m} type="button" onClick={() => setMode(m)} className={chip(mode === m)}>{MODE_LABEL[m]}</button>
-          ))}
-          <button type="button" disabled className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-400 cursor-not-allowed" title="غير مدعوم — لا يوجد دليل تغيير موثوق لرفيق">
-            تحديثات (غير مدعوم)
-          </button>
-        </div>
+        <div className="text-sm font-semibold text-ink">خطة التصدير (معاينة فقط)</div>
         <div className="grid grid-cols-2 gap-2 text-[11px] text-muted sm:grid-cols-4">
           <Stat label="سيُضمَّن" value={plan.included} />
           <Stat label="صور متوقّعة" value={plan.images} />
@@ -257,69 +146,11 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
             ))}
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          {vm.canWrite ? (
-            <button type="button" onClick={generate} disabled={busy || plan.included === 0} className="btn-primary disabled:cursor-not-allowed disabled:opacity-50">
-              {busy ? "جارٍ التوليد…" : `توليد الحزمة (${plan.included})`}
-            </button>
-          ) : (
-            <span className="text-[11px] text-muted">🔒 توليد الحزمة متاح لأصحاب صلاحية التعديل فقط.</span>
-          )}
-          <button type="button" disabled className="btn-ghost cursor-not-allowed opacity-50" title="غير متاح في هذه المرحلة">نشر إلى رفيق (غير متاح)</button>
-        </div>
-        {error && (
-          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">
-            <span>{error}</span>
-            {errorRef && (
-              <span className="ms-2 text-[10px] text-rose-400" dir="ltr">
-                (مرجع: {errorRef})
-              </span>
-            )}
-            {canRetry && (
-              <button
-                type="button"
-                onClick={() => generate()}
-                disabled={busy}
-                className="ms-3 rounded border border-rose-300 px-2 py-0.5 text-[11px] hover:bg-rose-100 disabled:opacity-50"
-              >
-                إعادة المحاولة
-              </button>
-            )}
-          </div>
-        )}
-        {progress && (
-          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800" dir="auto">
-            جارٍ توليد الحزمة… {progress.phase === "finalize" ? "إنهاء الملف والفهرس" : `${progress.done} / ${progress.total} منتج`}
-          </div>
-        )}
-        {result && (
-          <div className="space-y-1 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-900">
-            <div className="text-xs font-semibold text-emerald-800">تم توليد الحزمة وتنزيلها</div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
-              <Row label="الملف" value={result.filename} ltr />
-              <Row label="الصفوف" value={result.rows} />
-              <Row label="مربوط" value={result.mapped} />
-              <Row label="جديد" value={result.unmapped} />
-              <Row label="الصور" value={result.images} />
-              <Row label="محظور مُستبعَد" value={result.excludedBlocked} />
-              <Row label="بحاجة لمراجعة (مُستبعَد)" value={result.needsReview} />
-              <Row label="بواسطة" value={result.generatedBy} ltr />
-            </div>
-          </div>
-        )}
+        <p className="text-[11px] text-muted">
+          توليد الملفات يتم من بطاقة «مزامنة ملفات رفيق» أدناه:
+          «توليد كتالوج رفيق الكامل» أو «تحميل ملف المنتجات الجديدة».
+        </p>
       </div>
-
-      {mode === "selected" && (
-        <SelectionToolbar
-          selectedCount={selectedCount}
-          total={selectableAllKeys.length}
-          pageCount={selectablePageKeys.length}
-          pageAllSelected={allSelected(selected, selectablePageKeys)}
-          onSelectPage={() => setSelected((prev) => selectKeys(prev, selectablePageKeys))}
-          onSelectAllFiltered={() => setSelected((prev) => selectKeys(prev, selectableAllKeys))}
-          onClear={() => setSelected(clearSelection())}
-        />
-      )}
 
       {/* Filters */}
       <div className="card flex flex-wrap items-center gap-2">
@@ -341,13 +172,6 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
             <table className="w-full min-w-[860px] text-right text-xs">
               <thead className="border-b border-slate-200 bg-slate-50 text-[11px] text-muted">
                 <tr>
-                  {mode === "selected" && (
-                    <th className="px-3 py-2 text-center">
-                      <input type="checkbox" checked={selectablePageKeys.length > 0 && allSelected(selected, selectablePageKeys)}
-                        onChange={() => setSelected((prev) => allSelected(prev, selectablePageKeys) ? new Set([...prev].filter((k) => !selectablePageKeys.includes(k))) : selectKeys(prev, selectablePageKeys))}
-                        disabled={!vm.canWrite} aria-label="تحديد الصفحة" />
-                    </th>
-                  )}
                   <th className="px-3 py-2 font-medium">SKU</th>
                   <th className="px-3 py-2 font-medium">المنتج</th>
                   <th className="px-3 py-2 font-medium">الخيارات</th>
@@ -361,16 +185,11 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
               </thead>
               <tbody>
                 {pageView.pageItems.map((r) => {
-                  const isSel = mode === "selected" && selected.has(r.id);
-                  const accent = isSel ? "bg-blue-50 border-s-4 border-s-blue-400"
-                    : r.status === "BLOCKED" ? "border-s-4 border-s-rose-400"
+                  const accent = r.status === "BLOCKED" ? "border-s-4 border-s-rose-400"
                     : r.status === "WARNING" ? "border-s-4 border-s-amber-400"
                     : "border-s-4 border-s-emerald-400";
                   return (
                     <tr key={r.id} className={`border-b border-slate-100 last:border-0 ${accent}`}>
-                      {mode === "selected" && (
-                        <td className="px-3 py-2 text-center">{r.status !== "BLOCKED" ? <input type="checkbox" checked={selected.has(r.id)} onChange={() => setSelected((prev) => toggleKey(prev, r.id))} disabled={!vm.canWrite} aria-label={`تحديد ${r.sku}`} /> : null}</td>
-                      )}
                       <td className="px-3 py-2 font-mono text-[11px]" dir="ltr">{r.sku || <span className="text-rose-600">—</span>}</td>
                       <td className="px-3 py-2 text-ink">{r.title || <span className="text-rose-600">بدون عنوان</span>}</td>
                       <td className="px-3 py-2 tabular-nums">{r.optionCount > 0 ? r.optionCount : "—"}</td>
@@ -410,7 +229,4 @@ function Card({ value, label, tone }: { value: number; label: string; tone: "ink
 }
 function Stat({ label, value }: { label: string; value: number }) {
   return <div className="rounded-lg border border-slate-200 px-2 py-1.5 text-center"><div className="text-sm font-semibold text-ink">{value}</div><div className="text-[10px] text-muted">{label}</div></div>;
-}
-function Row({ label, value, ltr }: { label: string; value: string; ltr?: boolean }) {
-  return <div className="flex items-center justify-between gap-2"><span className="text-emerald-700">{label}</span><span className="font-mono" dir={ltr ? "ltr" : undefined}>{value || "—"}</span></div>;
 }
