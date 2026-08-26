@@ -24,9 +24,14 @@ import type { RafeeqPendingKind } from "./fullsync.ts";
 
 export const MALIKAS_REFERENCE_SHEET = "Malikas Reference";
 
-/** The exact reference columns (owner-specified). */
+/** The exact reference columns (owner-specified; ROW TYPE / PARENT SKU /
+ *  TOTAL OPTIONS added by the FINAL OPTIONS CLARITY decision — clarity only,
+ *  the authoritative data-sheet semantics are unchanged). */
 export const MALIKAS_REFERENCE_HEADERS = [
+  "ROW TYPE",
   "SKU",
+  "PARENT SKU",
+  "TOTAL OPTIONS",
   "REAL BARCODE",
   "PRODUCT NAME EN",
   "PRODUCT NAME AR",
@@ -45,23 +50,31 @@ export const MALIKAS_REFERENCE_HEADERS = [
 ] as const;
 
 export const REFERENCE_COL = {
-  sku: 0,
-  realBarcode: 1,
-  nameEn: 2,
-  nameAr: 3,
-  category: 4,
-  rafeeqCategory: 5,
-  imageFilename: 6,
-  productPrice: 7,
-  hasOptions: 8,
-  groupEn: 9,
-  groupAr: 10,
-  optionEn: 11,
-  optionAr: 12,
-  optionPrice: 13,
-  rafeeqProductId: 14,
-  notes: 15,
+  rowType: 0,
+  sku: 1,
+  parentSku: 2,
+  totalOptions: 3,
+  realBarcode: 4,
+  nameEn: 5,
+  nameAr: 6,
+  category: 7,
+  rafeeqCategory: 8,
+  imageFilename: 9,
+  productPrice: 10,
+  hasOptions: 11,
+  groupEn: 12,
+  groupAr: 13,
+  optionEn: 14,
+  optionAr: 15,
+  optionPrice: 16,
+  rafeeqProductId: 17,
+  notes: 18,
 } as const;
+
+/** Human ROW TYPE label: "SIMPLE PRODUCT" or "OPTION i OF n" (1-based). */
+export function referenceRowType(optionIndex: number | null, totalOptions: number): string {
+  return optionIndex === null || totalOptions === 0 ? "SIMPLE PRODUCT" : `OPTION ${optionIndex} OF ${totalOptions}`;
+}
 
 /** One product entering the reference sheet. */
 export interface ReferenceItem {
@@ -103,8 +116,12 @@ export function buildMalikasReferenceAoa(items: readonly ReferenceItem[]): AoaCe
       ? RAFEEQ_PRICE_ON_SELECTION
       : r.price === null ? "" : String(r.price);
     const notes = referenceNotes(item);
+    const totalOptions = r.hasOptions ? r.options.length : 0;
     const base: AoaCell[] = new Array(MALIKAS_REFERENCE_HEADERS.length).fill("");
+    base[REFERENCE_COL.rowType] = referenceRowType(null, 0); // option rows overwrite below
     base[REFERENCE_COL.sku] = txt(r.sku);
+    base[REFERENCE_COL.parentSku] = txt(r.sku);               // options belong to this parent
+    base[REFERENCE_COL.totalOptions] = totalOptions;
     base[REFERENCE_COL.realBarcode] = txt(r.internalBarcode);   // reference-only EAN
     base[REFERENCE_COL.nameEn] = txt(r.title);
     base[REFERENCE_COL.nameAr] = txt(r.titleAr);
@@ -120,8 +137,9 @@ export function buildMalikasReferenceAoa(items: readonly ReferenceItem[]): AoaCe
       out.push(base);
       continue;
     }
-    for (const o of r.options) {
+    r.options.forEach((o, i) => {
       const cells = base.slice();
+      cells[REFERENCE_COL.rowType] = referenceRowType(i + 1, totalOptions);
       cells[REFERENCE_COL.groupEn] = txt(r.groupNameEn);
       cells[REFERENCE_COL.groupAr] = txt(r.groupNameAr);
       cells[REFERENCE_COL.optionEn] = txt(o.nameEn);
@@ -129,7 +147,7 @@ export function buildMalikasReferenceAoa(items: readonly ReferenceItem[]): AoaCe
       // FULL effective canonical price — what the customer pays for this option.
       cells[REFERENCE_COL.optionPrice] = o.effectivePrice ?? "";
       out.push(cells);
-    }
+    });
   }
   return out;
 }

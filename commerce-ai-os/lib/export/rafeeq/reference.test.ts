@@ -41,14 +41,31 @@ function itemsOf(products: RafeeqPreviewProduct[], kinds: Record<string, "NEW" |
   }));
 }
 
-test("the reference sheet carries EXACTLY the owner-specified 16 headers in order", () => {
+test("the reference sheet carries EXACTLY the owner-specified 19 headers in order", () => {
   assert.deepEqual([...MALIKAS_REFERENCE_HEADERS], [
-    "SKU", "REAL BARCODE", "PRODUCT NAME EN", "PRODUCT NAME AR", "CATEGORY", "RAFEEQ CATEGORY",
+    "ROW TYPE", "SKU", "PARENT SKU", "TOTAL OPTIONS",
+    "REAL BARCODE", "PRODUCT NAME EN", "PRODUCT NAME AR", "CATEGORY", "RAFEEQ CATEGORY",
     "IMAGE FILENAME", "PRODUCT PRICE", "HAS OPTIONS", "OPTION GROUP EN", "OPTION GROUP AR",
     "OPTION NAME EN", "OPTION NAME AR", "OPTION PRICE", "RAFEEQ PRODUCT ID", "NOTES",
   ]);
   const aoa = buildMalikasReferenceAoa(itemsOf([product("p1", "mk175")]));
   assert.deepEqual(aoa[0], [...MALIKAS_REFERENCE_HEADERS]);
+});
+
+test("ROW TYPE / PARENT SKU / TOTAL OPTIONS follow the owner rules exactly", () => {
+  const simple = buildMalikasReferenceAoa(itemsOf([product("p1", "mk175")]))[1];
+  assert.equal(simple[REFERENCE_COL.rowType], "SIMPLE PRODUCT");
+  assert.equal(simple[REFERENCE_COL.parentSku], "mk175");
+  assert.equal(simple[REFERENCE_COL.totalOptions], 0);
+
+  const p = product("p1", "mk175", { variants: [
+    variant("v1", "mk175-1-red", { nameEn: "Red" }),
+    variant("v2", "mk175-2-gold", { nameEn: "Gold" }),
+  ] });
+  const rows = buildMalikasReferenceAoa(itemsOf([p])).slice(1);
+  assert.deepEqual(rows.map((r) => r[REFERENCE_COL.rowType]), ["OPTION 1 OF 2", "OPTION 2 OF 2"]);
+  assert.ok(rows.every((r) => r[REFERENCE_COL.parentSku] === "mk175"), "every option row names its parent SKU");
+  assert.ok(rows.every((r) => r[REFERENCE_COL.totalOptions] === 2), "TOTAL OPTIONS = N on every option row");
 });
 
 test("a simple product is ONE reference row: HAS OPTIONS = NO, option cells blank, real EAN + image + category mapped", () => {

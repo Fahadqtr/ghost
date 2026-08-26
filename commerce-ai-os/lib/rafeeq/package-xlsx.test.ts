@@ -33,10 +33,10 @@ test("worksheet is named 'data' and the header equals the audited 40-column temp
   assert.deepEqual(XLSX.utils.sheet_to_json(ws, { header: 1 })[0], [...RAFEEQ_NATIVE_HEADERS]);
 });
 
-test("two-sheet workbook: 'data' stays the FIRST (import) sheet; 'Malikas Reference' follows with TEXT barcode", () => {
+test("workbook sheets: 'data' stays the FIRST (import) sheet; 'Malikas Reference' follows with TEXT barcode", () => {
   const referenceAoa = [
     [...MALIKAS_REFERENCE_HEADERS],
-    ["mk175", "6291041500213", "Serum", "سيروم", "Makeup", "Makeup", "mk175.jpg", "100", "NO", "", "", "", "", "", "", "NEW PRODUCT"],
+    ["SIMPLE PRODUCT", "mk175", "mk175", 0, "6291041500213", "Serum", "سيروم", "Makeup", "Makeup", "mk175.jpg", "100", "NO", "", "", "", "", "", "", "NEW PRODUCT"],
   ];
   const wb = XLSX.read(buildRafeeqXlsxBuffer([pkgRow()], referenceAoa), { type: "buffer" });
   assert.deepEqual(wb.SheetNames, [RAFEEQ_NATIVE_SHEET, MALIKAS_REFERENCE_SHEET], "data first — the machine-import contract");

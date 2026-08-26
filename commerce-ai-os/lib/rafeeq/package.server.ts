@@ -39,6 +39,7 @@ import {
 import { sniffImageExtension, mimeToExt } from "@/lib/export/package-core";
 import { physicalRowCount as countPhysicalRows } from "@/lib/export/rafeeq/package";
 import { buildMalikasReferenceAoa } from "@/lib/export/rafeeq/reference";
+import { buildOptionsOverviewSheet } from "@/lib/export/rafeeq/options-overview";
 import {
   resolveFullSyncSet,
   applyFullSyncRafeeqId,
@@ -190,7 +191,8 @@ export async function generateRafeeqPackage(opts: GeneratePackageOptions): Promi
       imageFilename: s.primary.filename,
       productIdCell: packageRows[i].rafeeqId,
     })));
-    const xlsxBytes = buildRafeeqXlsxBuffer(packageRows, referenceAoa);
+    const optionsOverview = buildOptionsOverviewSheet(survivors.map((s) => ({ row: s.row, imageFilename: s.primary.filename })));
+    const xlsxBytes = buildRafeeqXlsxBuffer(packageRows, referenceAoa, optionsOverview);
 
     const mappedCount = survivors.filter((s) => s.row.rafeeqId !== null).length;
     const unmappedCount = survivors.length - mappedCount;
@@ -406,7 +408,8 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
       productIdCell: packageRows[i].rafeeqId,
       kind: set.includedKinds.get(deliveryKeyOfRow(sv.row)),
     })));
-    const xlsxBytes = buildRafeeqXlsxBuffer(packageRows, referenceAoa);
+    const optionsOverview = buildOptionsOverviewSheet(survivors.map((sv) => ({ row: sv.row, imageFilename: sv.primary.filename })));
+    const xlsxBytes = buildRafeeqXlsxBuffer(packageRows, referenceAoa, optionsOverview);
 
     // Durable item snapshot at PRODUCT grain — one record per Rafeeq product
     // identity, carrying the delivery fingerprint (full option set included).

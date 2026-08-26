@@ -54,6 +54,7 @@ import {
   type PackagedFile,
 } from "./package.ts";
 import { buildMalikasReferenceAoa } from "./reference.ts";
+import { buildOptionsOverviewSheet } from "./options-overview.ts";
 
 // ── tuning ────────────────────────────────────────────────────────────────────
 
@@ -400,7 +401,11 @@ async function finalizeStep(
     productIdCell: packageRows[i].rafeeqId,
     kind: product.kind,
   })));
-  const xlsxBytes = buildRafeeqXlsxBuffer(packageRows, referenceAoa);
+  // Third sheet — ONLY the option parents, one visual block each (clarity only).
+  const optionsOverview = buildOptionsOverviewSheet(
+    survivorsWith.map(({ sv, product }) => ({ row: product.row, imageFilename: sv.primaryFilename })),
+  );
+  const xlsxBytes = buildRafeeqXlsxBuffer(packageRows, referenceAoa, optionsOverview);
 
   const items: RafeeqPackageJobItem[] = survivorsWith.map(({ product }, i) => ({
     productId: product.row.internalProductId,
