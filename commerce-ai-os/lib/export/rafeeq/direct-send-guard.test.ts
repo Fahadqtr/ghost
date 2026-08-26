@@ -131,6 +131,51 @@ test("the runtime mail diagnostic lives ONLY behind the owner-gated preflight an
   assert.ok(!modal.includes("MAIL_PASSWORD"), "the UI hardcodes no secret-bearing lookups");
 });
 
+const LINK_SERVER = "lib/rafeeq/artifact-object.server.ts";
+const LINK_ROUTE = "app/api/export/rafeeq/package/jobs/[jobId]/link/route.ts";
+
+test("FAST LINK: the certified ZIP is NEVER attached to SMTP — delivery is the signed direct link, and a failed link blocks the send", () => {
+  const s = read(SEND_SERVER);
+  assert.ok(!s.includes("includeZip"), "the ZIP-attach pathway no longer exists");
+  assert.ok(!s.includes('"application/zip"'), "no zip attachment part is ever constructed for SMTP");
+  const send = slice(s, "export async function sendRafeeqPackageEmail");
+  const linkAt = send.indexOf("createRafeeqPackageSignedLink");
+  assert.ok(linkAt >= 0, "sending requires the signed link");
+  assert.ok(linkAt < send.indexOf("buildRafeeqEmailDraftForJob"), "link is secured BEFORE the draft is built");
+  assert.ok(linkAt < send.indexOf("runRafeeqEmailSend"), "…and before anything is transmitted");
+  assert.ok(send.includes('sendErr("package_link_unavailable"'), "a missing/unverified stored object blocks the email outright");
+  assert.ok(send.includes("downloadLink: { url: link.value.url"), "the sent email carries the signed URL");
+});
+
+test("FAST LINK: link generation is owner-only, reuses the certified stored artifact, and can never regenerate", () => {
+  const route = read(LINK_ROUTE);
+  assert.ok(/export async function POST[\s\S]*?requireOwner\(\)/.test(route), "the link route is OWNER-gated — non-owners cannot generate links");
+  assert.ok(!/export async function (GET|PUT|PATCH|DELETE)/.test(route), "one deliberate endpoint");
+  for (const rel of [LINK_SERVER, LINK_ROUTE]) {
+    const s = read(rel);
+    for (const bad of ["createRafeeqPackageJob", "advanceRafeeqPackageJob", "startRafeeqPackageJob", "stepRafeeqPackageJob", "generateRafeeq", "buildRafeeqPreview"]) {
+      assert.ok(!s.includes(bad), `${rel} cannot reach generation (${bad})`);
+    }
+  }
+  const server = read(LINK_SERVER);
+  assert.ok(server.includes("readRafeeqPackagePart") && server.includes("getRafeeqPackageArtifact"), "assembly reads the SAME certified stored parts the download route serves");
+  assert.ok(server.includes("createSignedUrl") && !server.includes("getPublicUrl"), "scoped SIGNED urls only — the private bucket is never exposed publicly");
+  assert.ok(server.includes("download: meta.filename"), "Content-Disposition carries the certified filename");
+  assert.ok(!server.includes('from("rafeeq_packages")') && !server.includes("sent_at"), "the link layer never touches package history / sent state");
+  assert.ok(server.includes("artifactMetaMatches") && server.includes("statObject"), "existing metadata is reused only after size verification (idempotent, refresh-safe)");
+});
+
+test("FAST LINK: the direct download bypasses Vercel — the UI opens the signed storage URL, the streamed route stays for compatibility", () => {
+  const ui = read(UI);
+  assert.ok(ui.includes('window.open(body.url, "_blank", "noopener")'), "«تنزيل الحزمة» opens the signed URL straight from object storage");
+  assert.ok(ui.includes("rafeeqJobDownloadUrl"), "the existing streamed download stays untouched for compatibility");
+  for (const label of ["نسخ الرابط", "تحديث الرابط", "تنزيل الحزمة"]) assert.ok(ui.includes(label), `history action ${label}`);
+  const modal = slice(ui, "function RafeeqSendModal");
+  assert.ok(modal.includes("يُرسل عبر رابط تنزيل آمن"), "modal states the ZIP is link-delivered");
+  assert.ok(modal.includes("pf.zipLink.sha256") && modal.includes("صلاحية رابط التنزيل"), "modal shows SHA-256 + link expiry");
+  assert.ok(modal.includes("!!pf.zipLink"), "sending is disabled without a verified link");
+});
+
 test("the audit migration is additive-only and audits exactly one table", () => {
   const m = read(MIGRATION).replace(/--[^\n]*/g, "").toLowerCase();
   assert.ok(m.includes("create table if not exists public.rafeeq_email_deliveries"));

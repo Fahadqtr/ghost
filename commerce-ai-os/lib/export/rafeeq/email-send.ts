@@ -134,7 +134,9 @@ export async function runRafeeqEmailSend(
 }
 
 /** Fixed Arabic UI messages for send blocks — raw provider text never renders. */
-export const RAFEEQ_SEND_ERROR_AR: Record<RafeeqEmailSendBlock | "forbidden" | "job_not_found", string> = {
+export const RAFEEQ_SEND_ERROR_AR: Record<RafeeqEmailSendBlock | "forbidden" | "job_not_found" | "package_link_unavailable", string> = {
+  package_link_unavailable:
+    "تعذّر تجهيز رابط التنزيل الآمن للحزمة (فشل الرفع أو التحقق من الحجم) — لن يُرسل أي إيميل بدون رابط مُتحقق. حاول مرة أخرى أو راجع حد رفع الملفات في Supabase.",
   mail_not_configured: "لم يتم إعداد مزود البريد بعد — أضف إعدادات SMTP (متغيرات البيئة) أولاً.",
   invalid_recipient: "عنوان البريد غير صالح — تحقق من حقل المستلمين.",
   no_attachments: "لا توجد مرفقات جاهزة من الحزمة المكتملة.",

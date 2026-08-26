@@ -471,7 +471,10 @@ function pickEmailExamples(plan: RafeeqPackageJobPlan): {
  * actual state/plan metadata (counts and examples are never hardcoded).
  * READ-ONLY: nothing is sent, package history and sent state are untouched.
  */
-export async function buildRafeeqEmailDraftForJob(jobId: string): Promise<RafeeqJobApiResult<RafeeqEmailDraft>> {
+export async function buildRafeeqEmailDraftForJob(
+  jobId: string,
+  opts?: { downloadLink?: { url: string; expiresAtIso: string } | null },
+): Promise<RafeeqJobApiResult<RafeeqEmailDraft>> {
   const admin = createAdminClient();
   const row = await admin.from("rafeeq_package_jobs").select(CANDIDATE_SELECT).eq("id", jobId).maybeSingle();
   if (row.error) {
@@ -521,6 +524,7 @@ export async function buildRafeeqEmailDraftForJob(jobId: string): Promise<Rafeeq
     newPackage: c.mode === "NEW" ? { hasSentBaseline: baseline, equalsWholeCatalog: !baseline } : null,
     samePriceExample: samePrice,
     differingPriceExample: differing,
+    downloadLink: opts?.downloadLink ?? null,
   });
   return { ok: true, value: draft };
 }
