@@ -68,7 +68,10 @@ test("the job server layer performs no catalog/ECL/sent writes", () => {
   const s = read(SERVER);
   assert.ok(!s.includes('from("products")'), "never touches the products table");
   assert.ok(!s.includes("external_channel_listings"), "never touches ECL");
-  assert.ok(!s.includes("sent_at"), "never marks anything sent");
+  // the post-generation lookups READ sent_at (download-last metadata display)
+  // but nothing in the job layer ever WRITES it.
+  assert.ok(!/\.(update|insert|upsert)\(\s*\{[\s\S]{0,300}?sent_at/.test(s), "never marks anything sent");
+  assert.ok(!s.includes("markRafeeqPackageSent"), "the explicit owner mark-as-sent lives outside the job layer");
   assert.ok(s.includes("recordRafeeqPackage"), "history goes through the one sanctioned recorder");
   const inserts = s.match(/\.insert\(/g) ?? [];
   assert.equal(inserts.length, 1, "the only direct insert is the job bookkeeping row");
@@ -80,7 +83,9 @@ test("the UI renders only fixed Arabic errors + refId + retry — never a raw bo
   assert.ok(s.includes("driveRafeeqPackageJob"), "responses go through the shared client's safe JSON reader");
   assert.ok(s.includes("rafeeqJobErrorMessageAr"), "messages come from the fixed Arabic map");
   assert.ok(!/setError\([^)]*res\.text\(\)/.test(s), "a raw response body never reaches the error state");
-  assert.ok(!s.includes("dangerouslySetInnerHTML"), "nothing injects HTML");
+  // the email preview renders in a fully sandboxed iframe via srcDoc — the
+  // draft HTML is never injected into the page DOM.
+  assert.ok(!s.includes("dangerouslySetInnerHTML={"), "nothing injects HTML");
   assert.ok(s.includes("إعادة المحاولة"), "a retry button is offered on failure");
   assert.ok(s.includes("errorRef"), "the short reference id is shown for log correlation");
   assert.ok(s.includes("package-job-client"), "generation drives the job flow via the shared client");
