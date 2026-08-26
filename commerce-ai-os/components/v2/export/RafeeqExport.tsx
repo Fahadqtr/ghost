@@ -129,7 +129,14 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(mode === "selected" ? { mode, selectedKeys: [...selected] } : { mode }),
       });
-      if (!res.ok) { setError((await res.text().catch(() => "")) || "تعذّر توليد الحزمة الآن."); return; }
+      // Failures render a FIXED Arabic message only — a raw response body may
+      // be an upstream HTML error page and must never reach the page.
+      if (!res.ok) {
+        const isText = (res.headers.get("content-type") ?? "").startsWith("text/plain");
+        const short = isText ? await res.text().then((t) => (t.length <= 200 && !t.includes("<") ? t : "")).catch(() => "") : "";
+        setError(short || "تعذّر توليد الحزمة الآن — أعد المحاولة.");
+        return;
+      }
       const h = res.headers;
       const summary: Record<string, string> = {
         filename: h.get("X-Rafeeq-Output-Filename") ?? "rafeeq-export.zip",

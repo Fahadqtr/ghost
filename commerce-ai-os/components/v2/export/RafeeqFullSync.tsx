@@ -22,6 +22,38 @@ import {
   applyReturnedFileAction,
   type ReturnedPreviewVM,
 } from "@/app/(v2)/v2/export/rafeeq-fullsync-actions";
+import { rafeeqJobErrorMessageAr } from "@/lib/export/rafeeq/package-job-errors";
+
+// RAFEEQ.PKGJOB — job status DTO (mirror of the route's JSON; kept structural).
+interface JobStatus {
+  jobId: string;
+  status: "running" | "complete" | "failed";
+  phase: "images" | "finalize" | "done" | "failed";
+  productsDone: number;
+  productsTotal: number;
+  imagesDone: number;
+  bytesDone: number;
+  artifact: { filename: string; totalBytes: number } | null;
+  packageRecorded: boolean;
+  error: { code: string; refId: string } | null;
+}
+
+/**
+ * Read a job API response SAFELY: only structured JSON is ever interpreted.
+ * A non-JSON body (e.g. an upstream HTML error page) maps to the fixed Arabic
+ * network message — raw response text is NEVER surfaced into the page.
+ */
+async function readJobResponse(res: Response): Promise<{ ok: true; value: JobStatus } | { ok: false; code: string; refId: string | null }> {
+  const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+  if (!isJson) return { ok: false, code: "network", refId: null };
+  try {
+    const body = await res.json();
+    if (!res.ok) return { ok: false, code: typeof body?.error === "string" ? body.error : "network", refId: null };
+    return { ok: true, value: body as JobStatus };
+  } catch {
+    return { ok: false, code: "network", refId: null };
+  }
+}
 
 export interface RafeeqFullSyncPackageVM {
   id: string;
@@ -87,6 +119,9 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"full" | "new" | "preview" | "apply" | string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorRef, setErrorRef] = useState<string | null>(null);
+  const [retryKind, setRetryKind] = useState<"full" | "new" | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; phase: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReturnedPreviewVM | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -94,35 +129,59 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
   const latestGenerated = vm.packages[0] ?? null;
   const latestSent = vm.packages.find((p) => p.sentAt !== null) ?? null;
 
+  // RAFEEQ.PKGJOB — job-based generation: start (idempotent/resumable) → drive
+  // bounded steps → streamed download of the stored artifact. Retrying after a
+  // failure resumes the SAME job (no duplicate generation, no duplicate
+  // package-history rows). Errors render fixed Arabic messages + a short
+  // reference id — never a raw response body.
+  function failGenerate(kind: "full" | "new", code: string, refId: string | null) {
+    setError(rafeeqJobErrorMessageAr(code));
+    setErrorRef(refId);
+    setRetryKind(kind);
+  }
+
   async function generate(kind: "full" | "new") {
     if (busy) return;
-    setBusy(kind); setError(null); setNotice(null);
+    setBusy(kind); setError(null); setErrorRef(null); setRetryKind(null); setNotice(null); setProgress(null);
     try {
-      const res = await fetch(`/api/export/rafeeq/package`, {
+      const startRes = await fetch(`/api/export/rafeeq/package/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: kind === "full" ? "full" : "new_pending" }),
       });
-      if (!res.ok) { setError((await res.text().catch(() => "")) || "تعذّر توليد الحزمة الآن."); return; }
-      const filename = res.headers.get("X-Rafeeq-Output-Filename") ?? "rafeeq-export.zip";
-      const recorded = res.headers.get("X-Rafeeq-Package-Recorded") === "1";
-      const rows = res.headers.get("X-Rafeeq-Product-Rows") ?? "0";
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const started = await readJobResponse(startRes);
+      if (!started.ok) { failGenerate(kind, started.code, started.refId); return; }
+
+      let status = started.value;
+      while (status.status === "running") {
+        setProgress({ done: status.productsDone, total: status.productsTotal, phase: status.phase });
+        const stepRes = await fetch(`/api/export/rafeeq/package/jobs/${status.jobId}`, { method: "POST" });
+        const step = await readJobResponse(stepRes);
+        if (!step.ok) { failGenerate(kind, step.code, step.refId); return; }
+        status = step.value;
+      }
+      if (status.status === "failed") {
+        failGenerate(kind, status.error?.code ?? "generation_failed", status.error?.refId ?? null);
+        return;
+      }
+
+      setProgress(null);
+      const filename = status.artifact?.filename ?? "rafeeq-export.zip";
       const a = document.createElement("a");
-      a.href = url; a.download = filename;
+      a.href = `/api/export/rafeeq/package/jobs/${status.jobId}/download`;
+      a.download = filename;
       document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
       setNotice(
-        recorded
-          ? `تم توليد ${filename} (${rows} منتج) وتسجيله بحالة «مُولّد — لم يُرسل». التوليد لا يُغيّر قائمة الانتظار.`
-          : `تم توليد ${filename} (${rows} منتج). تعذّر تسجيل الحزمة في السجل الدائم (الترحيل غير مُطبَّق؟).`,
+        status.packageRecorded
+          ? `تم توليد ${filename} (${status.productsTotal} منتج) وتسجيله بحالة «مُولّد — لم يُرسل». التوليد لا يُغيّر قائمة الانتظار.`
+          : `تم توليد ${filename} (${status.productsTotal} منتج). تعذّر تسجيل الحزمة في السجل الدائم (الترحيل غير مُطبَّق؟).`,
       );
       router.refresh();
     } catch {
-      setError("تعذّر الاتصال بالخادم — الرجاء المحاولة لاحقاً.");
+      failGenerate(kind, "network", null);
     } finally {
       setBusy(null);
+      setProgress(null);
     }
   }
 
@@ -202,7 +261,31 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
         الخيار ليس منتجاً مستقلاً أبداً، وإضافة خيار لمنتج مُرسَل تُعيده كـ«تحديث خيارات» لا كمنتج جديد.
       </p>
 
-      {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">{error}</div>}
+      {error && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">
+          <span>{error}</span>
+          {errorRef && (
+            <span className="ms-2 text-[10px] text-rose-400" dir="ltr">
+              (مرجع: {errorRef})
+            </span>
+          )}
+          {retryKind && (
+            <button
+              type="button"
+              onClick={() => generate(retryKind)}
+              disabled={busy !== null}
+              className="ms-3 rounded border border-rose-300 px-2 py-0.5 text-[11px] hover:bg-rose-100 disabled:opacity-50"
+            >
+              إعادة المحاولة
+            </button>
+          )}
+        </div>
+      )}
+      {progress && (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800" dir="auto">
+          جارٍ توليد الحزمة… {progress.phase === "finalize" ? "إنهاء الملف والفهرس" : `${progress.done} / ${progress.total} منتج`}
+        </div>
+      )}
       {notice && <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900" dir="auto">{notice}</div>}
 
       <div className="grid gap-4 lg:grid-cols-2">

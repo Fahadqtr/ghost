@@ -92,6 +92,47 @@ export interface ZipEntry {
   data: Uint8Array;
 }
 
+// ── incremental (segmented) assembly ─────────────────────────────────────────
+//
+// A ZIP can be assembled from independently-produced SEGMENTS: each entry
+// segment is `local header + data` (STORE, CRC known upfront — no data
+// descriptor), and the archive is the ordered concatenation of entry segments
+// followed by one directory segment (central directory + EOCD) whose records
+// carry each entry's absolute byte offset. This lets a large archive be built
+// chunk-by-chunk in durable storage without ever holding all bytes in memory:
+// concat(part files) + directory === buildZip(entries) for the same input.
+
+/** Central-directory bookkeeping for one already-written entry segment. */
+export interface ZipSegmentEntry {
+  name: string;
+  crc: number;
+  size: number;
+  /** absolute offset of the entry's local header in the final archive. */
+  offset: number;
+}
+
+/** One entry as a self-contained byte segment (local header + STORE data). */
+export function zipEntrySegment(name: string, data: Uint8Array): { bytes: Uint8Array; crc: number; size: number } {
+  const nameBytes = enc.encode(name);
+  const crc = crc32(data);
+  return { bytes: concat([localHeader(nameBytes, crc, data.length), data]), crc, size: data.length };
+}
+
+/** The closing directory segment (central directory + EOCD) for entries whose
+ *  segments were written, in order, starting at archive offset 0. */
+export function zipDirectorySegment(entries: readonly ZipSegmentEntry[]): Uint8Array {
+  const cdOffset = entries.reduce((at, e) => Math.max(at, e.offset + 30 + enc.encode(e.name).length + e.size), 0);
+  const chunks: Uint8Array[] = [];
+  let cdSize = 0;
+  for (const e of entries) {
+    const ch = centralHeader({ name: enc.encode(e.name), crc: e.crc, size: e.size, offset: e.offset });
+    chunks.push(ch);
+    cdSize += ch.length;
+  }
+  chunks.push(eocd(entries.length, cdSize, cdOffset));
+  return concat(chunks);
+}
+
 function concat(chunks: Uint8Array[]): Uint8Array {
   let total = 0;
   for (const c of chunks) total += c.length;
