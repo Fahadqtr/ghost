@@ -52,6 +52,13 @@ export interface RafeeqEmailDraft {
   subject: string;
   /** English HTML body (self-contained; readable without the PNG). */
   html: string;
+  /**
+   * MOBILE-SAFE English plain text — the «نسخ للإيميل» copy target and the
+   * plain-text MIME alternative for direct sending. Same semantic content as
+   * the HTML: NO HTML tags, NO markdown-ish syntax, blank-line spacing that
+   * pastes cleanly into Outlook/Titan/Gmail mobile compose windows.
+   */
+  textEmail: string;
   /** Arabic owner-facing summary (plain text). */
   textAr: string;
   /** attachment checklist (names only — attaching is a human step). */
@@ -89,6 +96,121 @@ function exampleTableDiffering(ex: RafeeqEmailOptionExample): string {
   <p><b><code>option_price</code> is the FULL selling price of that selected option, not an additional charge.</b></p>`;
 }
 
+/**
+ * MOBILE-SAFE plain-text body. Same semantic content as the HTML body, but
+ * plain text only: no tags, no markdown markers that render broken in mail
+ * clients (no *, #, |, backticks), UPPERCASE section headers, "-" bullets and
+ * readable blank-line spacing. Everything is derived from the SAME ctx the
+ * HTML uses, so both carry identical package facts.
+ */
+function buildPlainTextEmail(
+  ctx: RafeeqEmailContext,
+  attachments: readonly string[],
+  zipTooLargeForEmail: boolean,
+): string {
+  const isFull = ctx.mode === "FULL";
+  const correction = ctx.correction ?? null;
+  const lines: (string | null)[] = [
+    "Dear Rafeeq team,",
+    "",
+    `Please find our ${isFull ? "full catalog" : "new / pending products"} package below.`,
+    "",
+  ];
+  if (correction) {
+    lines.push(
+      "Please disregard the previous package and use this corrected package instead.",
+      `Previous package: ${correction.previousFilename}`,
+      "",
+    );
+  }
+  if (isFull) {
+    lines.push("This package represents the full current Malikas Universe catalog.", "");
+  } else if (ctx.newPackage?.hasSentBaseline) {
+    lines.push(
+      "This package contains ONLY the products/updates pending since the last package that was explicitly marked SENT — it is an incremental file, not the full catalog.",
+      "",
+    );
+  } else {
+    lines.push(
+      "Note: no SENT baseline exists yet, so this new-products package effectively equals the whole current catalog. For the first upload we recommend using the FULL catalog package as a complete replacement.",
+      "",
+    );
+  }
+  lines.push(
+    "PACKAGE SUMMARY",
+    "",
+    `File: ${ctx.filename}`,
+    `Generated: ${ctx.generatedAt}`,
+    `Products (product identities): ${n(ctx.productCount)}`,
+    `Physical Excel rows: ${n(ctx.physicalRowCount)}`,
+    `Products with options: ${n(ctx.productsWithOptions)}`,
+    `Options: ${n(ctx.optionCount)}`,
+    `Images: ${n(ctx.imageCount)}`,
+    typeof ctx.warningCount === "number" ? `Rows flagged for review: ${n(ctx.warningCount)}` : null,
+    "",
+    `${n(ctx.physicalRowCount)} physical rows does NOT mean ${n(ctx.physicalRowCount)} products. A product with options repeats its row once per option (see below).`,
+    "",
+    "HOW TO READ THE WORKBOOK (3 SHEETS)",
+    "",
+    "1. data — the official Rafeeq import sheet on your audited template. Use this sheet for the actual import.",
+    "2. Malikas Reference — a human-readable row-level reference for your staff: parent SKU, real barcode, category, image filename, ROW TYPE, TOTAL OPTIONS, option names/prices and notes.",
+    "3. Options Overview — contains ONLY the products that have options. Each parent product is shown as ONE block with all of its options underneath.",
+    "",
+    "HOW OPTIONS WORK",
+    "",
+    "- One canonical product = one Rafeeq product identity.",
+    "- A product with options repeats its parent fields across several physical rows.",
+    "- These repeated rows represent ONE product with multiple options — not separate products.",
+    "- The parent SKU stays the same across all of its option rows.",
+    "- The same parent image is shared by all option rows.",
+  );
+  if (ctx.samePriceExample) {
+    const ex = ctx.samePriceExample;
+    lines.push(
+      "",
+      "EXAMPLE A — OPTIONS WITH THE SAME PRICE",
+      "",
+      `${ex.parentSku} — ${ex.title}:`,
+      ...ex.options.map((o) => `- ${o.name}: ${price(o.price)}`),
+      `These ${n(ex.options.length)} rows represent ONE product with ${n(ex.options.length)} options — not ${n(ex.options.length)} separate products.`,
+    );
+  }
+  if (ctx.differingPriceExample) {
+    const ex = ctx.differingPriceExample;
+    lines.push(
+      "",
+      "EXAMPLE B — OPTIONS WITH DIFFERENT PRICES",
+      "",
+      `${ex.parentSku} — ${ex.title} (product price = PRICE ON SELECTION):`,
+      ...ex.options.map((o) => `- ${o.name}: ${price(o.price)}`),
+      "option_price is the FULL selling price of that selected option, not an additional charge.",
+    );
+  }
+  lines.push(
+    "",
+    "OPTION PRICING",
+    "",
+    "- If all options share one price: product_price = that common price and option_price = 0.",
+    "- If options have different prices: product_price = PRICE ON SELECTION and option_price = the FULL effective selling price of that option.",
+    "- option_price is never a surcharge/delta on top of another price.",
+    "",
+    "IMAGES",
+    "",
+    "- Exactly one primary image per parent product; all option rows share it.",
+    "- The filename is based on the parent SKU (for example mk175.jpg).",
+    "- No gallery images and no option/variant-specific images are included.",
+    "- Image bytes are the original canonical source at original quality — never resized, recompressed or re-encoded.",
+    "",
+    "Attachments:",
+    ...attachments.map((a) => `- ${a}`),
+  );
+  if (zipTooLargeForEmail) {
+    lines.push("", "The full catalog package will be shared separately. (The ZIP is too large to attach to email.)");
+  }
+  lines.push("", "Regards,", "Malikas Universe");
+  return lines.filter((l): l is string => l !== null).join("\n");
+}
+
 /** Build the complete draft from actual package metadata. Pure — never sends. */
 export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft {
   const isFull = ctx.mode === "FULL";
@@ -124,7 +246,7 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
     : "";
 
   const html = `
-<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#111">
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#111111;max-width:640px;margin:0 auto;padding:0 8px">
   <p>Dear Rafeeq team,</p>
   <p>Please find our ${isFull ? "full catalog" : "new / pending products"} package below.</p>
   ${correctionHtml}
@@ -209,5 +331,6 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
     zipTooLargeForEmail ? "ملف ZIP كبير — سيُشارَك بشكل منفصل (لا يُرفَق بالإيميل)." : null,
   ].filter((l): l is string => l !== null).join("\n");
 
-  return { to: RAFEEQ_EMAIL_TO_DEFAULT, subject, html, textAr, attachments, zipTooLargeForEmail };
+  const textEmail = buildPlainTextEmail(ctx, attachments, zipTooLargeForEmail);
+  return { to: RAFEEQ_EMAIL_TO_DEFAULT, subject, html, textEmail, textAr, attachments, zipTooLargeForEmail };
 }
