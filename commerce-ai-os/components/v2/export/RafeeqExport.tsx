@@ -16,6 +16,8 @@ import { paginate, DEFAULT_PAGE_SIZE } from "@/lib/ui/pagination";
 import { toggleKey, selectKeys, clearSelection, allSelected, countSelectedWithin } from "@/lib/ui/selection";
 import SelectionToolbar from "@/components/v2/ui/SelectionToolbar";
 import EmptyState from "@/components/v2/ui/EmptyState";
+import { rafeeqJobErrorMessageAr } from "@/lib/export/rafeeq/package-job-errors";
+import { driveRafeeqPackageJob, rafeeqJobDownloadUrl, LEGACY_MODE_TO_JOB_MODE } from "@/lib/export/rafeeq/package-job-client";
 
 export interface RafeeqRowVM {
   /** stable product row key (product-grain — one row per canonical product). */
@@ -85,6 +87,9 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorRef, setErrorRef] = useState<string | null>(null);
+  const [canRetry, setCanRetry] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number; phase: string } | null>(null);
   const [result, setResult] = useState<Record<string, string> | null>(null);
 
   const plan = useMemo(() => {
@@ -120,10 +125,48 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
   const selectablePageKeys = useMemo(() => pageView.pageItems.filter((r) => r.status !== "BLOCKED").map((r) => r.id), [pageView]);
   const selectedCount = countSelectedWithin(selected, selectableAllKeys);
 
+  // RAFEEQ.PKGJOB — the FULL catalog ("all") generates through the SHARED
+  // chunked job flow (idempotent start → bounded steps → streamed download):
+  // one buffered request for ~1418 products + ~2534 images OOM-killed the
+  // serverless instance (proven in the runtime logs), so the legacy route now
+  // refuses mode "all" and this surface drives the same job architecture as
+  // the FullSync card. A retry resumes the SAME job — never a duplicate.
+  async function generateFullViaJob() {
+    const jobMode = LEGACY_MODE_TO_JOB_MODE["all"];
+    if (!jobMode) return;
+    const done = await driveRafeeqPackageJob(jobMode, (s) =>
+      setProgress({ done: s.productsDone, total: s.productsTotal, phase: s.phase }),
+    );
+    if (!done.ok) {
+      setError(rafeeqJobErrorMessageAr(done.code));
+      setErrorRef(done.refId);
+      setCanRetry(true);
+      return;
+    }
+    const status = done.value;
+    setProgress(null);
+    const filename = status.artifact?.filename ?? "rafeeq-export.zip";
+    const a = document.createElement("a");
+    a.href = rafeeqJobDownloadUrl(status.jobId);
+    a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setResult({
+      filename,
+      rows: String(status.productsTotal),
+      images: String(status.imagesDone),
+      mapped: "—", unmapped: "—", needsReview: "—", excludedBlocked: "—",
+      generatedBy: "",
+    });
+  }
+
   async function generate() {
     if (busy) return;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setErrorRef(null); setCanRetry(false); setProgress(null);
     try {
+      if (mode === "all") {
+        await generateFullViaJob();
+        return;
+      }
       const res = await fetch(`/api/export/rafeeq/package`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -156,8 +199,11 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
       setResult(summary);
-    } catch { setError("تعذّر الاتصال بالخادم — الرجاء المحاولة لاحقاً."); }
-    finally { setBusy(false); }
+    } catch {
+      setError("تعذّر الاتصال بالخادم — الرجاء المحاولة لاحقاً.");
+      if (mode === "all") setCanRetry(true); // resuming the same job is always safe
+    }
+    finally { setBusy(false); setProgress(null); }
   }
 
   const chip = (active: boolean) => `rounded-full border px-3 py-1 text-xs transition-colors ${active ? "border-brand bg-brand-light text-brand" : "border-slate-200 bg-white text-muted hover:bg-slate-50"}`;
@@ -221,7 +267,31 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
           )}
           <button type="button" disabled className="btn-ghost cursor-not-allowed opacity-50" title="غير متاح في هذه المرحلة">نشر إلى رفيق (غير متاح)</button>
         </div>
-        {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">{error}</div>}
+        {error && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">
+            <span>{error}</span>
+            {errorRef && (
+              <span className="ms-2 text-[10px] text-rose-400" dir="ltr">
+                (مرجع: {errorRef})
+              </span>
+            )}
+            {canRetry && (
+              <button
+                type="button"
+                onClick={() => generate()}
+                disabled={busy}
+                className="ms-3 rounded border border-rose-300 px-2 py-0.5 text-[11px] hover:bg-rose-100 disabled:opacity-50"
+              >
+                إعادة المحاولة
+              </button>
+            )}
+          </div>
+        )}
+        {progress && (
+          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800" dir="auto">
+            جارٍ توليد الحزمة… {progress.phase === "finalize" ? "إنهاء الملف والفهرس" : `${progress.done} / ${progress.total} منتج`}
+          </div>
+        )}
         {result && (
           <div className="space-y-1 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-900">
             <div className="text-xs font-semibold text-emerald-800">تم توليد الحزمة وتنزيلها</div>

@@ -72,6 +72,17 @@ export async function POST(req: Request) {
     );
   }
 
+  // Mode "all" (also the bodyless default) is the FULL catalog too — the same
+  // buffered single-request path that was OOM-killed. It is refused identically,
+  // so the buffered full-catalog generator is unreachable from any caller; only
+  // the bounded subset modes ("new" / "selected") remain on this endpoint.
+  if (mode === "all") {
+    return new Response(
+      JSON.stringify({ error: "use_jobs", jobs_endpoint: "/api/export/rafeeq/package/jobs", mode: "FULL" }),
+      { status: 409, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
+    );
+  }
+
   const result = await generateRafeeqPackage({ mode, selectedKeys, actor: writer.email });
   if (!result.ok) {
     const e = SAFE_ERROR[result.error];
