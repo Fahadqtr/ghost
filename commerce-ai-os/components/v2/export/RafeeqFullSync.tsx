@@ -23,37 +23,10 @@ import {
   type ReturnedPreviewVM,
 } from "@/app/(v2)/v2/export/rafeeq-fullsync-actions";
 import { rafeeqJobErrorMessageAr } from "@/lib/export/rafeeq/package-job-errors";
-
-// RAFEEQ.PKGJOB — job status DTO (mirror of the route's JSON; kept structural).
-interface JobStatus {
-  jobId: string;
-  status: "running" | "complete" | "failed";
-  phase: "images" | "finalize" | "done" | "failed";
-  productsDone: number;
-  productsTotal: number;
-  imagesDone: number;
-  bytesDone: number;
-  artifact: { filename: string; totalBytes: number } | null;
-  packageRecorded: boolean;
-  error: { code: string; refId: string } | null;
-}
-
-/**
- * Read a job API response SAFELY: only structured JSON is ever interpreted.
- * A non-JSON body (e.g. an upstream HTML error page) maps to the fixed Arabic
- * network message — raw response text is NEVER surfaced into the page.
- */
-async function readJobResponse(res: Response): Promise<{ ok: true; value: JobStatus } | { ok: false; code: string; refId: string | null }> {
-  const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
-  if (!isJson) return { ok: false, code: "network", refId: null };
-  try {
-    const body = await res.json();
-    if (!res.ok) return { ok: false, code: typeof body?.error === "string" ? body.error : "network", refId: null };
-    return { ok: true, value: body as JobStatus };
-  } catch {
-    return { ok: false, code: "network", refId: null };
-  }
-}
+// RAFEEQ.PKGJOB — the SHARED job-flow client (also used by the INT.2D export
+// surface): idempotent start → bounded steps → streamed download. Responses
+// are read as structured JSON only — raw bodies never reach the page.
+import { driveRafeeqPackageJob, rafeeqJobDownloadUrl } from "@/lib/export/rafeeq/package-job-client";
 
 export interface RafeeqFullSyncPackageVM {
   id: string;
@@ -144,31 +117,16 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
     if (busy) return;
     setBusy(kind); setError(null); setErrorRef(null); setRetryKind(null); setNotice(null); setProgress(null);
     try {
-      const startRes = await fetch(`/api/export/rafeeq/package/jobs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: kind === "full" ? "full" : "new_pending" }),
-      });
-      const started = await readJobResponse(startRes);
-      if (!started.ok) { failGenerate(kind, started.code, started.refId); return; }
-
-      let status = started.value;
-      while (status.status === "running") {
-        setProgress({ done: status.productsDone, total: status.productsTotal, phase: status.phase });
-        const stepRes = await fetch(`/api/export/rafeeq/package/jobs/${status.jobId}`, { method: "POST" });
-        const step = await readJobResponse(stepRes);
-        if (!step.ok) { failGenerate(kind, step.code, step.refId); return; }
-        status = step.value;
-      }
-      if (status.status === "failed") {
-        failGenerate(kind, status.error?.code ?? "generation_failed", status.error?.refId ?? null);
-        return;
-      }
+      const done = await driveRafeeqPackageJob(kind === "full" ? "full" : "new_pending", (s) =>
+        setProgress({ done: s.productsDone, total: s.productsTotal, phase: s.phase }),
+      );
+      if (!done.ok) { failGenerate(kind, done.code, done.refId); return; }
+      const status = done.value;
 
       setProgress(null);
       const filename = status.artifact?.filename ?? "rafeeq-export.zip";
       const a = document.createElement("a");
-      a.href = `/api/export/rafeeq/package/jobs/${status.jobId}/download`;
+      a.href = rafeeqJobDownloadUrl(status.jobId);
       a.download = filename;
       document.body.appendChild(a); a.click(); a.remove();
       setNotice(
