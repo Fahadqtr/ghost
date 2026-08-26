@@ -113,6 +113,24 @@ test("12: direct email send NEVER marks the Rafeeq SENT baseline — the send la
   assert.ok(slice(ui, "function RafeeqSendModal").includes("لا يغيّر حالة «تم الإرسال إلى رفيق»"), "the UI states the separation explicitly");
 });
 
+test("the runtime mail diagnostic lives ONLY behind the owner-gated preflight and carries booleans + variable NAMES, never values", () => {
+  const server = read(SEND_SERVER);
+  assert.ok(server.includes("diagnoseMailEnv(process.env"), "diagnostic reads the real runtime env");
+  assert.ok(server.includes("blockingMailEnvNames"), "blocking variable NAMES are derived, not values");
+  const preflight = slice(server, "getRafeeqEmailSendPreflight", "export interface RafeeqSendRequest");
+  assert.ok(preflight.includes("diagnostic"), "diagnostic ships in the preflight DTO (owner-gated route)");
+  for (const leak of ["config.host", "config.username", "config.password", "MAIL_PASSWORD"]) {
+    assert.ok(!preflight.includes(leak), `preflight never touches ${leak}`);
+  }
+  const cfg = read(MAIL_CONFIG);
+  const diag = slice(cfg, "export function diagnoseMailEnv");
+  assert.ok(!/:\s*env\./.test(diag.split("mailConfigResolved")[0]), "no env value is ever assigned into the diagnostic output");
+  const ui = read(UI);
+  const modal = slice(ui, "function RafeeqSendModal");
+  assert.ok(modal.includes("pf.blockingEnvNames") && modal.includes("pf.diagnostic"), "the modal shows names + booleans");
+  assert.ok(!modal.includes("MAIL_PASSWORD"), "the UI hardcodes no secret-bearing lookups");
+});
+
 test("the audit migration is additive-only and audits exactly one table", () => {
   const m = read(MIGRATION).replace(/--[^\n]*/g, "").toLowerCase();
   assert.ok(m.includes("create table if not exists public.rafeeq_email_deliveries"));

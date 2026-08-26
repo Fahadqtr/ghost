@@ -19,7 +19,7 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getMailConfig, sendMailViaSmtp } from "@/lib/mail/smtp.server";
-import { isValidEmailAddress } from "@/lib/mail/config";
+import { isValidEmailAddress, diagnoseMailEnv, blockingMailEnvNames, type MailEnvDiagnostic } from "@/lib/mail/config";
 import {
   planRafeeqEmailSend,
   runRafeeqEmailSend,
@@ -58,6 +58,15 @@ export interface RafeeqSendPreflightDTO {
   packageId: string | null;
   /** explicit owner-saved Rafeeq recipient (app_settings) — "" when unset. NEVER guessed. */
   savedRecipient: string;
+  /**
+   * Owner-only runtime diagnostic of the mail environment: BOOLEANS ONLY
+   * (per-variable present/valid state + mailConfigResolved) and blocking
+   * variable NAMES. No environment value, length, or fragment ever appears
+   * here — this route is owner-gated on GET and POST.
+   */
+  diagnostic: MailEnvDiagnostic;
+  /** NAMES of the variables blocking config resolution ([] when resolved). */
+  blockingEnvNames: string[];
 }
 
 interface JobRowLite {
@@ -119,6 +128,7 @@ export async function getRafeeqEmailSendPreflight(jobId: string): Promise<Rafeeq
   if (!draft.ok) return sendErr("job_not_found", draft.status);
 
   const config = getMailConfig();
+  const diagnostic = diagnoseMailEnv(process.env as Record<string, string | undefined>);
   const maxBytes = config?.attachmentMaxBytes ?? 0;
   const tailAttachments = await loadTailAttachments(artifact.value.parts);
   const base = tailAttachments.map((a) => ({
@@ -147,6 +157,8 @@ export async function getRafeeqEmailSendPreflight(jobId: string): Promise<Rafeeq
       imageCount: row.images_done,
       packageId: row.package_id,
       savedRecipient: await readSavedRecipient(),
+      diagnostic,
+      blockingEnvNames: blockingMailEnvNames(diagnostic),
     },
   };
 }
