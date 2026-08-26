@@ -1,11 +1,16 @@
-// RAFEEQ workbook SERIALIZER (SheetJS) — two sheets (owner clarity requirement):
+// RAFEEQ workbook SERIALIZER — three sheets (owner clarity requirements):
 //   • "data"              — the AUDITED native Rafeeq import sheet (exactly the
 //     40 audited headers, FIRST sheet, machine-import authoritative);
 //   • "Malikas Reference" — the human-readable explanatory sheet for Rafeeq
-//     staff (reference-only; carries the REAL barcode, never the data sheet).
-// Spreadsheet correctness enforced — identity/text cells stored as TEXT (no
-// scientific notation, no leading-zero loss; product_price is TEXT per the
-// audited workbook), numeric flag/sort cells numeric, UTF-8/Arabic preserved,
+//     staff (reference-only; carries the REAL barcode, never the data sheet);
+//   • "Options Overview"  — ONLY the products with options, one visual block
+//     per parent product (FINAL OPTIONS CLARITY UPDATE), styled for humans.
+// Written with xlsx-js-style (SheetJS-compatible API + cell styles: bold
+// block headers with a light fill, shaded alternating option rows, wrapped
+// text) — content stays fully readable by plain SheetJS. Spreadsheet
+// correctness enforced — identity/text cells stored as TEXT (no scientific
+// notation, no leading-zero loss; product_price is TEXT per the audited
+// workbook), numeric flag/sort cells numeric, UTF-8/Arabic preserved,
 // deterministic column + row order (the pure AoA order). Kept OUT of the
 // server-only module so it is directly unit-testable.
 
@@ -17,6 +22,7 @@ import {
 } from "../export/rafeeq/native-template.ts";
 import { buildRafeeqXlsxAoa, type RafeeqPackageRow } from "../export/rafeeq/package.ts";
 import { MALIKAS_REFERENCE_SHEET, REFERENCE_COL } from "../export/rafeeq/reference.ts";
+import { OPTIONS_OVERVIEW_SHEET, type OptionsOverviewSheet, type OptionsOverviewRowKind } from "../export/rafeeq/options-overview.ts";
 import type { AoaCell } from "../export/package-core.ts";
 
 /** Columns stored as spreadsheet TEXT (identity + free text + audited-text price). */
@@ -42,20 +48,38 @@ export const RAFEEQ_NATIVE_TEXT_COLUMNS: readonly number[] = [
   NATIVE_COL.optionNameAr,
 ];
 
-/** Reference-sheet columns stored as TEXT (everything except OPTION PRICE). */
+/** Reference-sheet columns stored as TEXT (everything except OPTION PRICE and
+ *  the numeric TOTAL OPTIONS count). */
 const REFERENCE_TEXT_COLUMNS = new Set<number>(
-  Object.values(REFERENCE_COL).filter((c) => c !== REFERENCE_COL.optionPrice),
+  Object.values(REFERENCE_COL).filter((c) => c !== REFERENCE_COL.optionPrice && c !== REFERENCE_COL.totalOptions),
 );
-const REFERENCE_COL_WIDTHS = [12, 16, 34, 34, 20, 20, 14, 14, 8, 14, 14, 22, 22, 10, 14, 28];
+const REFERENCE_COL_WIDTHS = [16, 12, 12, 12, 16, 34, 34, 20, 20, 14, 14, 8, 14, 14, 22, 22, 10, 14, 28];
+const OVERVIEW_COL_WIDTHS = [16, 34, 34, 14, 16, 24];
+
+/** Visual style per Options Overview row kind — clear, printable, no clutter. */
+const OVERVIEW_STYLE: Partial<Record<OptionsOverviewRowKind, object>> = {
+  title: { font: { bold: true, sz: 14 } },
+  summary: { font: { bold: true } },
+  semantics: { font: { italic: true }, alignment: { wrapText: true } },
+  blockHeader: { font: { bold: true }, fill: { patternType: "solid", fgColor: { rgb: "DDEBF7" } } },
+  blockMeta: { fill: { patternType: "solid", fgColor: { rgb: "F2F7FC" } }, alignment: { wrapText: true } },
+  tableHead: { font: { bold: true }, fill: { patternType: "solid", fgColor: { rgb: "E7E6E6" } } },
+  optionAlt: { fill: { patternType: "solid", fgColor: { rgb: "F7F7F7" } } },
+};
 
 /**
  * Serialize the Rafeeq workbook. The "data" sheet is ALWAYS first (the
- * machine-import contract); the "Malikas Reference" sheet is appended when its
- * AoA is provided (the production package always provides it — tests may not).
+ * machine-import contract); the "Malikas Reference" and "Options Overview"
+ * sheets are appended when provided (the production package always provides
+ * both — tests may not).
  */
-export function buildRafeeqXlsxBuffer(rows: readonly RafeeqPackageRow[], referenceAoa?: readonly (readonly AoaCell[])[]): Uint8Array {
+export function buildRafeeqXlsxBuffer(
+  rows: readonly RafeeqPackageRow[],
+  referenceAoa?: readonly (readonly AoaCell[])[],
+  optionsOverview?: OptionsOverviewSheet,
+): Uint8Array {
   const require = createRequire(import.meta.url);
-  const XLSX = require("xlsx");
+  const XLSX = require("xlsx-js-style");
 
   const typeCells = (ws: Record<string, { t: string; v: unknown; z?: string }> & { ["!ref"]?: string }, textCols: Set<number>) => {
     const range = XLSX.utils.decode_range(ws["!ref"]);
@@ -88,6 +112,22 @@ export function buildRafeeqXlsxBuffer(rows: readonly RafeeqPackageRow[], referen
     typeCells(ref, REFERENCE_TEXT_COLUMNS);
     ref["!cols"] = REFERENCE_COL_WIDTHS.map((wch) => ({ wch }));
     XLSX.utils.book_append_sheet(wb, ref, MALIKAS_REFERENCE_SHEET);
+  }
+
+  if (optionsOverview) {
+    const ov = XLSX.utils.aoa_to_sheet(optionsOverview.aoa as AoaCell[][]);
+    ov["!cols"] = OVERVIEW_COL_WIDTHS.map((wch) => ({ wch }));
+    // per-row visual style from the pure builder's kind tags
+    optionsOverview.rowKinds.forEach((kind, r) => {
+      const style = OVERVIEW_STYLE[kind];
+      if (!style) return;
+      for (let c = 0; c < OVERVIEW_COL_WIDTHS.length; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        const cell = ov[addr];
+        if (cell) cell.s = style;
+      }
+    });
+    XLSX.utils.book_append_sheet(wb, ov, OPTIONS_OVERVIEW_SHEET);
   }
 
   const buf: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
