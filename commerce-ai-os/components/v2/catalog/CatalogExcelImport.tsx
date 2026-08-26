@@ -358,9 +358,16 @@ export default function CatalogExcelImport() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-semibold text-ink">تحديث الكتالوج من Excel</h1>
-        <Link href="/v2/catalog" className="btn-ghost" aria-disabled={busy}>
-          رجوع للكتالوج
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* SNOONU SYNC — SPI-identity workbook flow (owner redesign): Snoonu
+              update files (SPI + availability columns) belong there, not here. */}
+          <Link href="/v2/catalog/snoonu-sync" className="btn-ghost" aria-disabled={busy}>
+            مزامنة كتالوج سنونو
+          </Link>
+          <Link href="/v2/catalog" className="btn-ghost" aria-disabled={busy}>
+            رجوع للكتالوج
+          </Link>
+        </div>
       </div>
 
       {error ? (
