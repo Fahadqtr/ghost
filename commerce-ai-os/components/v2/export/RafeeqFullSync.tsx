@@ -102,8 +102,9 @@ interface RafeeqSendPreflightVM {
   subject: string;
   zipFilename: string;
   zipTotalBytes: number;
-  zipAttachable: boolean;
-  attachments: { filename: string; bytes: number; kind: "xlsx" | "manifest" | "zip" }[];
+  /** the certified ZIP is NEVER attached — delivered by secure signed link. */
+  zipLink: { sha256: string; bytes: number; expiresAtIso: string } | null;
+  attachments: { filename: string; bytes: number; kind: "xlsx" | "manifest" }[];
   generatedAt: string;
   productCount: number;
   imageCount: number;
@@ -187,6 +188,39 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
       setCopied(label);
     } catch {
       setCopied(null);
+    }
+  }
+
+  // RAFEEQ.PKGLINK — owner-only signed direct-download link actions. Every
+  // call reuses the existing certified stored artifact (idempotent ensure +
+  // fresh stateless signed URL) — nothing is ever regenerated. "refresh" and
+  // "copy" are the same fresh-link call with different feedback; "open"
+  // downloads DIRECTLY from private object storage (never through Vercel).
+  const [linkBusy, setLinkBusy] = useState<string | null>(null);
+  async function packageLink(jobId: string, action: "copy" | "refresh" | "open") {
+    if (linkBusy) return;
+    setLinkBusy(jobId); setError(null); setNotice(null);
+    try {
+      const res = await fetch(`/api/export/rafeeq/package/jobs/${jobId}/link`, { method: "POST" });
+      const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+      if (!isJson) { setError(rafeeqSendErrorMessageAr("package_link_unavailable")); return; }
+      const body = await res.json();
+      if (!res.ok || typeof body?.url !== "string") {
+        setError(typeof body?.message_ar === "string" ? body.message_ar : rafeeqSendErrorMessageAr(body?.error));
+        return;
+      }
+      if (action === "open") {
+        window.open(body.url, "_blank", "noopener");
+        return;
+      }
+      await navigator.clipboard.writeText(body.url);
+      setNotice(
+        `${action === "refresh" ? "تم إنشاء رابط جديد ونسخه" : "تم نسخ رابط التنزيل"} — صالح حتى ${fmtDate(body.expiresAtIso ?? null)}.`,
+      );
+    } catch {
+      setError(rafeeqSendErrorMessageAr("package_link_unavailable"));
+    } finally {
+      setLinkBusy(null);
     }
   }
 
@@ -457,6 +491,7 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
                   <th className="px-2 py-1 font-medium">منتجات</th>
                   <th className="px-2 py-1 font-medium">الحالة</th>
                   <th className="px-2 py-1 font-medium">تنزيل</th>
+                  {vm.isOwner && <th className="px-2 py-1 font-medium">رابط مباشر</th>}
                 </tr>
               </thead>
               <tbody>
@@ -470,6 +505,15 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
                     <td className="px-2 py-1">
                       <a href={rafeeqJobDownloadUrl(a.jobId)} download={a.filename} className="btn-ghost px-2 py-0.5 text-[11px]">تنزيل</a>
                     </td>
+                    {vm.isOwner && (
+                      <td className="px-2 py-1">
+                        <span className="inline-flex gap-1">
+                          <button type="button" disabled={linkBusy !== null} className="btn-ghost px-2 py-0.5 text-[11px] disabled:opacity-50" onClick={() => void packageLink(a.jobId, "copy")}>نسخ الرابط</button>
+                          <button type="button" disabled={linkBusy !== null} className="btn-ghost px-2 py-0.5 text-[11px] disabled:opacity-50" onClick={() => void packageLink(a.jobId, "refresh")}>تحديث الرابط</button>
+                          <button type="button" disabled={linkBusy !== null} className="btn-ghost px-2 py-0.5 text-[11px] disabled:opacity-50" onClick={() => void packageLink(a.jobId, "open")}>تنزيل الحزمة</button>
+                        </span>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -850,7 +894,6 @@ function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => voi
   const [pfError, setPfError] = useState<string | null>(null);
   const [to, setTo] = useState("");
   const [cc, setCc] = useState("");
-  const [includeZip, setIncludeZip] = useState(false);
   const [saveRecipient, setSaveRecipient] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -876,7 +919,9 @@ function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => voi
   }, [jobId]);
 
   const recipients = validateRecipients(to, cc);
-  const canSend = !!pf && pf.configured && recipients.ok && !sending && !sentResult;
+  // a verified stored-object link is REQUIRED — a broken/missing package
+  // link can never be emailed.
+  const canSend = !!pf && pf.configured && !!pf.zipLink && recipients.ok && !sending && !sentResult;
 
   async function confirmSend() {
     if (!canSend) return;
@@ -885,7 +930,7 @@ function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => voi
       const res = await fetch(`/api/export/rafeeq/package/jobs/${jobId}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, cc, includeZip: includeZip && !!pf?.zipAttachable, saveRecipient }),
+        body: JSON.stringify({ to, cc, saveRecipient }),
       });
       const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
       if (!isJson) { setSendError(rafeeqSendErrorMessageAr("send_failed")); return; }
@@ -954,26 +999,32 @@ function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => voi
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px]" dir="rtl">
               <div>الحزمة: <span className="font-mono text-[10px]" dir="ltr">{pf.zipFilename}</span> ({fmtBytes(pf.zipTotalBytes)})</div>
               <div>توليد: {fmtDate(pf.generatedAt)} · {pf.productCount} منتج · {pf.imageCount} صورة</div>
+              {pf.zipLink && (
+                <div className="pt-0.5">
+                  SHA-256: <span className="font-mono text-[9px] break-all" dir="ltr" title={pf.zipLink.sha256}>{pf.zipLink.sha256}</span>
+                </div>
+              )}
               <div className="pt-1 font-medium">المرفقات:</div>
               <ul className="list-inside list-disc">
-                {pf.attachments.filter((a) => a.kind !== "zip" || includeZip).map((a) => (
+                {pf.attachments.map((a) => (
                   <li key={a.filename}><span className="font-mono text-[10px]" dir="ltr">{a.filename}</span> — {fmtBytes(a.bytes)}</li>
                 ))}
+                <li>
+                  <span className="font-mono text-[10px]" dir="ltr">{pf.zipFilename}</span> — ZIP: يُرسل عبر رابط تنزيل آمن (لا يُرفَق)
+                </li>
               </ul>
               <div className="pt-1">
-                إجمالي المرفقات: {fmtBytes(pf.attachments.filter((a) => a.kind !== "zip" || includeZip).reduce((s, a) => s + a.bytes, 0))}
+                إجمالي المرفقات: {fmtBytes(pf.attachments.reduce((s, a) => s + a.bytes, 0))}
                 {" "}(الحد: {fmtBytes(pf.attachmentMaxBytes)})
               </div>
+              {pf.zipLink && (
+                <div className="pt-0.5">صلاحية رابط التنزيل حتى: {fmtDate(pf.zipLink.expiresAtIso)}</div>
+              )}
             </div>
-            {pf.zipAttachable ? (
-              <label className="flex items-center gap-2 text-[11px] text-ink">
-                <input type="checkbox" checked={includeZip} onChange={(e) => setIncludeZip(e.target.checked)} />
-                إرفاق ملف ZIP الكامل أيضاً
-              </label>
-            ) : (
-              <p className="text-[11px] text-amber-800">
-                الحزمة أكبر من الحد المسموح للإرسال عبر البريد. سيُرسل الإيميل مع ملف الإكسل والفهرس فقط،
-                ونص الإيميل يوضح أن الحزمة الكاملة ستُشارك بشكل منفصل (تنزيل الملفات يبقى متاحاً).
+            {!pf.zipLink && (
+              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+                تعذّر تجهيز رابط التنزيل الآمن للحزمة (فشل الرفع أو التحقق من الحجم) — الإرسال محظور حتى
+                يتوفر رابط مُتحقق؛ لن يُرسل أي إيميل برابط مكسور. حاول مرة أخرى أو راجع حد رفع الملفات في Supabase.
               </p>
             )}
             <label className="flex items-center gap-2 text-[11px] text-muted">

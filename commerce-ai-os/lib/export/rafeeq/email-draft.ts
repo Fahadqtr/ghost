@@ -45,6 +45,11 @@ export interface RafeeqEmailContext {
   /** real representative examples picked from THIS package (never fixed SKUs). */
   samePriceExample?: RafeeqEmailOptionExample | null;
   differingPriceExample?: RafeeqEmailOptionExample | null;
+  /**
+   * scoped signed direct-download URL for the certified ZIP (served straight
+   * from private object storage — the ZIP is NEVER attached to the email).
+   */
+  downloadLink?: { url: string; expiresAtIso: string } | null;
 }
 
 export interface RafeeqEmailDraft {
@@ -204,7 +209,17 @@ function buildPlainTextEmail(
     "Attachments:",
     ...attachments.map((a) => `- ${a}`),
   );
-  if (zipTooLargeForEmail) {
+  const link = ctx.downloadLink ?? null;
+  if (link) {
+    lines.push(
+      "",
+      "DOWNLOAD FULL CATALOG PACKAGE",
+      "",
+      `The full package (${ctx.filename}, images included) is delivered through this secure direct-download link instead of an email attachment:`,
+      link.url,
+      `Link valid until: ${link.expiresAtIso}`,
+    );
+  } else if (zipTooLargeForEmail) {
     lines.push("", "The full catalog package will be shared separately. (The ZIP is too large to attach to email.)");
   }
   lines.push("", "Regards,", "Malikas Universe");
@@ -222,10 +237,15 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
     : `Malikas Universe — New / Pending Products Package (${n(ctx.productCount)} products) — ${ctx.filename}`;
   const subject = correction ? `CORRECTED PACKAGE — ${subjectBase}` : subjectBase;
 
+  const link = ctx.downloadLink ?? null;
   const attachments = [
     "rafeeq_catalog.xlsx",
     ...(isFull ? [RAFEEQ_GUIDE_PNG] : []),
-    zipTooLargeForEmail ? `${ctx.filename} (shared separately — too large for email)` : ctx.filename,
+    link
+      ? `${ctx.filename} (secure download link — not attached)`
+      : zipTooLargeForEmail
+        ? `${ctx.filename} (shared separately — too large for email)`
+        : ctx.filename,
   ];
 
   const correctionHtml = correction
@@ -310,7 +330,20 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
   </ul>
 
   ${isFull ? `<p>The attached <code>${RAFEEQ_GUIDE_PNG}</code> shows the option structure visually (one product → parent SKU → option group → options). The explanations above stand on their own if the image is not displayed.</p>` : ""}
-  ${zipTooLargeForEmail ? `<p><b>The full catalog package will be shared separately.</b> (The ZIP is too large to attach to email.)</p>` : ""}
+  ${
+    link
+      ? `
+  <h2>Package download</h2>
+  <table border="0" cellpadding="0" cellspacing="0" style="margin:12px 0"><tr><td style="background-color:#0f766e;border-radius:8px">
+    <a href="${esc(link.url)}" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none">Download Full Catalog Package</a>
+  </td></tr></table>
+  <p>The full package (<code>${esc(ctx.filename)}</code>, images included) is delivered through this secure direct-download
+  link instead of an email attachment. The link is valid until <b>${esc(link.expiresAtIso)}</b>. If the button does not work,
+  copy this address into your browser:<br/><a href="${esc(link.url)}" style="word-break:break-all">${esc(link.url)}</a></p>`
+      : zipTooLargeForEmail
+        ? `<p><b>The full catalog package will be shared separately.</b> (The ZIP is too large to attach to email.)</p>`
+        : ""
+  }
 
   <p>Thank you,<br/>Malikas Universe</p>
 </div>`.trim();
@@ -328,7 +361,11 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
     "الصفوف المكرّرة لمنتج واحد تمثّل خياراته — ليست منتجات منفصلة. سعر الخيار هو السعر الكامل للبيع، وليس فرقاً إضافياً.",
     "صورة واحدة أصلية لكل منتج (باسم SKU الأب) — بدون صور معرض أو صور خيارات، وبدون أي ضغط أو تصغير.",
     `المرفقات: ${attachments.join(" · ")}`,
-    zipTooLargeForEmail ? "ملف ZIP كبير — سيُشارَك بشكل منفصل (لا يُرفَق بالإيميل)." : null,
+    link
+      ? `رابط تنزيل الحزمة الكاملة (صالح حتى ${link.expiresAtIso}): ${link.url}`
+      : zipTooLargeForEmail
+        ? "ملف ZIP كبير — سيُشارَك بشكل منفصل (لا يُرفَق بالإيميل)."
+        : null,
   ].filter((l): l is string => l !== null).join("\n");
 
   const textEmail = buildPlainTextEmail(ctx, attachments, zipTooLargeForEmail);

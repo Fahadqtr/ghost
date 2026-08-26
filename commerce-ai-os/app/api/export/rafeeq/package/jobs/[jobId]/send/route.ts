@@ -32,7 +32,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ jobId: 
   const owner = await requireOwner();
   if (!owner.ok) return jsonRes({ error: "forbidden", message_ar: owner.error }, owner.status);
   const { jobId } = await params;
-  let body: { to?: unknown; cc?: unknown; includeZip?: unknown; saveRecipient?: unknown };
+  let body: { to?: unknown; cc?: unknown; saveRecipient?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -41,7 +41,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ jobId: 
   const result = await sendRafeeqPackageEmail(jobId, {
     toRaw: typeof body.to === "string" ? body.to : "",
     ccRaw: typeof body.cc === "string" ? body.cc : "",
-    includeZip: body.includeZip === true,
     saveRecipient: body.saveRecipient === true,
   });
   if (!result.ok) return jsonRes({ error: result.error, message_ar: rafeeqSendErrorMessageAr(result.error) }, result.status);

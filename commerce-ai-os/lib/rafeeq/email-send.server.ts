@@ -32,11 +32,12 @@ import {
   getRafeeqPackageArtifact,
   readRafeeqPackagePart,
 } from "@/lib/rafeeq/package-job.server";
+import { createRafeeqPackageSignedLink } from "@/lib/rafeeq/artifact-object.server";
 
 const RECIPIENT_SETTING_KEY = "rafeeq_email_recipient";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-export type RafeeqSendApiError = RafeeqEmailSendBlock | "job_not_found";
+export type RafeeqSendApiError = RafeeqEmailSendBlock | "job_not_found" | "package_link_unavailable";
 export type RafeeqSendApiResult<T> = { ok: true; value: T } | { ok: false; error: RafeeqSendApiError; status: number };
 const sendErr = <T,>(error: RafeeqSendApiError, status: number): RafeeqSendApiResult<T> => ({ ok: false, error, status });
 
@@ -48,10 +49,14 @@ export interface RafeeqSendPreflightDTO {
   subject: string;
   zipFilename: string;
   zipTotalBytes: number;
-  /** true ⇒ the whole ZIP fits under the cap and may be attached. */
-  zipAttachable: boolean;
-  /** the default attachment set (workbook + manifest; ZIP listed when attachable). */
-  attachments: { filename: string; bytes: number; kind: "xlsx" | "manifest" | "zip" }[];
+  /**
+   * The certified ZIP is NEVER attached — it is delivered by a scoped signed
+   * direct-download link from private object storage. null ⇒ the stored
+   * object could not be prepared/verified, and sending is blocked.
+   */
+  zipLink: { sha256: string; bytes: number; expiresAtIso: string } | null;
+  /** the attachment set (workbook + manifest only — the ZIP is link-delivered). */
+  attachments: { filename: string; bytes: number; kind: "xlsx" | "manifest" }[];
   generatedAt: string;
   productCount: number;
   imageCount: number;
@@ -136,8 +141,9 @@ export async function getRafeeqEmailSendPreflight(jobId: string): Promise<Rafeeq
     bytes: a.bytes.length,
     kind: a.filename.endsWith(".xlsx") ? ("xlsx" as const) : ("manifest" as const),
   }));
-  const baseBytes = base.reduce((s, a) => s + a.bytes, 0);
-  const zipAttachable = config !== null && artifact.value.totalBytes + baseBytes <= maxBytes;
+  // the certified ZIP is NEVER attached — ensure the stored single object +
+  // report the verified link facts the modal shows (sha256/size/expiry).
+  const link = await createRafeeqPackageSignedLink(jobId);
 
   return {
     ok: true,
@@ -148,10 +154,8 @@ export async function getRafeeqEmailSendPreflight(jobId: string): Promise<Rafeeq
       subject: draft.value.subject,
       zipFilename: artifact.value.filename,
       zipTotalBytes: artifact.value.totalBytes,
-      zipAttachable,
-      attachments: zipAttachable
-        ? [...base, { filename: artifact.value.filename, bytes: artifact.value.totalBytes, kind: "zip" as const }]
-        : base,
+      zipLink: link.ok ? { sha256: link.value.sha256, bytes: link.value.bytes, expiresAtIso: link.value.expiresAtIso } : null,
+      attachments: base,
       generatedAt: row.created_at,
       productCount: row.products_total,
       imageCount: row.images_done,
@@ -166,8 +170,6 @@ export async function getRafeeqEmailSendPreflight(jobId: string): Promise<Rafeeq
 export interface RafeeqSendRequest {
   toRaw: string;
   ccRaw: string;
-  /** attach the whole ZIP too (only honored when it fits the cap). */
-  includeZip: boolean;
   /** explicit owner choice to store toRaw as the default Rafeeq recipient. */
   saveRecipient: boolean;
 }
@@ -194,7 +196,17 @@ export async function sendRafeeqPackageEmail(
   if (!row || row.status !== "complete") return sendErr("job_not_found", 404);
   const artifact = await getRafeeqPackageArtifact(jobId);
   if (!artifact.ok) return sendErr("job_not_found", artifact.status);
-  const draft = await buildRafeeqEmailDraftForJob(jobId);
+
+  // FAST DELIVERY LINK — the certified ZIP is NEVER attached. The email is
+  // blocked outright unless the stored single object is verified and a fresh
+  // scoped signed URL was created: a broken/missing package link can never
+  // be emailed.
+  const link = await createRafeeqPackageSignedLink(jobId);
+  if (!link.ok) return sendErr("package_link_unavailable", link.status);
+
+  const draft = await buildRafeeqEmailDraftForJob(jobId, {
+    downloadLink: { url: link.value.url, expiresAtIso: link.value.expiresAtIso },
+  });
   if (!draft.ok) return sendErr("job_not_found", draft.status);
 
   const tailAttachments = await loadTailAttachments(artifact.value.parts);
@@ -205,25 +217,6 @@ export async function sendRafeeqPackageEmail(
     bytes: a.bytes.length,
     contentType: a.contentType,
   }));
-
-  if (req.includeZip) {
-    // size-gate BEFORE loading anything: an oversized ZIP is refused outright
-    // (never a silent partial attachment set).
-    const baseBytes = planned.reduce((s, a) => s + a.bytes, 0);
-    if (artifact.value.totalBytes + baseBytes > config.attachmentMaxBytes) {
-      return sendErr("attachments_too_large", 413);
-    }
-    const zip = new Uint8Array(artifact.value.totalBytes);
-    let at = 0;
-    for (const part of artifact.value.parts) {
-      const bytes = await readRafeeqPackagePart(part.path);
-      if (!bytes || bytes.length !== part.bytes) return sendErr("no_attachments", 409);
-      zip.set(bytes, at);
-      at += bytes.length;
-    }
-    attachmentsBytes.set(artifact.value.filename, zip);
-    planned.push({ filename: artifact.value.filename, bytes: zip.length, contentType: "application/zip" });
-  }
 
   const plan = planRafeeqEmailSend({
     configured: true,

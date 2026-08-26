@@ -254,3 +254,31 @@ test("mobile 4: the subject stays derived from the completed metadata (unchanged
   const d = buildRafeeqEmailDraft(ctx());
   assert.equal(d.subject, "Malikas Universe — Full Catalog Package (137 products) — rafeeq-full-2026-08-26.zip");
 });
+
+// ── FAST DELIVERY LINK (secure direct-download instead of ZIP attachment) ────
+
+test("link: HTML carries the prominent Download Full Catalog Package button + expiry, and the ZIP is marked link-delivered", () => {
+  const url = "https://storage.example.test/object/sign/rafeeq-packages/artifacts/j1/rafeeq-full-2026-08-26.zip?token=SIGNED";
+  const d = buildRafeeqEmailDraft(ctx({ downloadLink: { url, expiresAtIso: "2026-09-02T10:00:00.000Z" } }));
+  assert.ok(d.html.includes(">Download Full Catalog Package</a>"), "prominent button text");
+  assert.ok(d.html.includes(`href="${url}"`), "button links the signed URL");
+  assert.ok(d.html.includes("2026-09-02T10:00:00.000Z"), "expiry shown");
+  assert.ok(d.html.includes("secure direct-download"), "delivery method explained");
+  assert.ok(!d.html.includes("The full catalog package will be shared separately."), "shared-separately wording replaced by the link");
+  assert.ok(d.attachments.some((a) => a.includes("secure download link — not attached")), "attachment checklist marks the ZIP as link-delivered");
+});
+
+test("link: the RAW signed URL appears in the mobile-safe plain text with its validity", () => {
+  const url = "https://storage.example.test/object/sign/x.zip?token=SIGNED";
+  const d = buildRafeeqEmailDraft(ctx({ downloadLink: { url, expiresAtIso: "2026-09-02T10:00:00.000Z" } }));
+  assert.ok(d.textEmail.includes("DOWNLOAD FULL CATALOG PACKAGE"), "plain-text section header");
+  assert.ok(d.textEmail.split("\n").includes(url), "raw URL on its own line");
+  assert.ok(d.textEmail.includes("Link valid until: 2026-09-02T10:00:00.000Z"), "validity in plain text");
+  assert.ok(d.textAr.includes(url), "Arabic summary carries the link too");
+});
+
+test("link: without a downloadLink the draft is unchanged (shared-separately wording preserved)", () => {
+  const d = buildRafeeqEmailDraft(ctx({ zipBytes: RAFEEQ_EMAIL_MAX_ATTACH_BYTES + 1 }));
+  assert.ok(d.html.includes("<b>The full catalog package will be shared separately.</b>"), "no-link fallback intact");
+  assert.ok(!d.html.includes("Download Full Catalog Package"), "no phantom button without a link");
+});
