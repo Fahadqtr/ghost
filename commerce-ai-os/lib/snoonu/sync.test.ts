@@ -54,6 +54,7 @@ function row(spi: string, over: Partial<SnoonuSyncRow> = {}): SnoonuSyncRow {
   };
 }
 const base = () => ({
+  mode: "FULL" as const,
   canonical: [product("p1", "mk10"), product("p2", "mk20"), product("p3", "mk30")],
   listings: [listing("p1", SPI_A), listing("p2", SPI_B), listing("p3", SPI_C)],
   emptySpiRows: [] as number[],
@@ -112,6 +113,7 @@ test("6: the later SPI+SKU/Barcode workbook updates the SAME product (sentinel r
   // and an active SPI listing — the second workbook matches by SPI.
   const created = product("p9", pendingSkuForSpi(SPI_NEW), { barcode: null, nameEn: "New Serum", price: 55 });
   const plan = planSnoonuSync({
+    mode: "FULL",
     canonical: [...base().canonical, created],
     listings: [...base().listings, listing("p9", SPI_NEW)],
     emptySpiRows: [],
@@ -133,6 +135,7 @@ test("7: a mapped Snoonu SPI absent from the workbook → REMOVED FROM SNOONU, l
 
 test("8: an UNMAPPED canonical product absent from the workbook is NOT removed", () => {
   const plan = planSnoonuSync({
+    mode: "FULL",
     canonical: [...base().canonical, product("p4", "mk40")], // p4 has NO snoonu listing
     listings: base().listings,
     emptySpiRows: [],
@@ -143,6 +146,7 @@ test("8: an UNMAPPED canonical product absent from the workbook is NOT removed",
 
 test("8b: needs_review and non-SPI-shaped mappings never trigger removal (fail closed)", () => {
   const plan = planSnoonuSync({
+    mode: "FULL",
     canonical: base().canonical,
     listings: [
       listing("p1", SPI_A),
@@ -157,6 +161,7 @@ test("8b: needs_review and non-SPI-shaped mappings never trigger removal (fail c
 
 test("9: an SPI mapped to more than one product FAILS CLOSED as a conflict", () => {
   const plan = planSnoonuSync({
+    mode: "FULL",
     canonical: base().canonical,
     listings: [listing("p1", SPI_A), listing("p2", SPI_A), listing("p3", SPI_C)],
     emptySpiRows: [],
@@ -234,6 +239,8 @@ test("counts: the exact owner-required census over a mixed workbook", () => {
     contentChanges: 0,
     skuChanges: 0,
     barcodeChanges: 0,
+    zeroPriceReviews: 0,
+    identityCollisions: 0,
     newProducts: 1,
     newMissingSku: 1,
     newMissingBarcode: 1,
@@ -260,4 +267,114 @@ test("parsing: availability/price cells coerce safely; blank-SPI rows are surfac
   assert.equal(rows[1].price, null);
   assert.ok(rows[1].warnings.includes("سعر غير مقروء"));
   assert.equal(rows[1].sku, "mk20", "identifier cells are trimmed");
+});
+
+// ── SAFETY CORRECTIONS (owner review of the real workbooks) ──────────────────
+
+import { recommendSnoonuImportMode, SNOONU_MODE_LABEL, SNOONU_MODE_NOTICE } from "./sync.ts";
+
+const PARTIAL_HEADERS = [
+  "SPI", "SKU", "Barcode", "Product Name (En)", "Product Name (Ar)", "Price (QAR)",
+  "Stock Al Aziziyah Building 13, first floor, Apartment 3", "67d3708a1774f2d0341132f7",
+  "Stock Ali Bin Abdullah Street", "6877618dcc6ded93d3fa0e48",
+];
+
+test("modes 1+2: FULL detects absent mapped SPIs as removals; PARTIAL is STRUCTURALLY incapable of removals", () => {
+  const rows = [row(SPI_A)]; // SPI_B and SPI_C absent
+  const full = planSnoonuSync({ ...base(), mode: "FULL", rows });
+  assert.equal(full.counts.removedFromSnoonu, 2, "FULL: both absent mapped SPIs are removal candidates");
+  const partial = planSnoonuSync({ ...base(), mode: "PARTIAL", rows });
+  assert.equal(partial.removals.length, 0, "PARTIAL: zero removal candidates, always");
+  assert.equal(partial.counts.removedFromSnoonu, 0);
+  assert.equal(partial.mode, "PARTIAL");
+  assert.notEqual(full.fingerprint, partial.fingerprint, "the mode is part of the fingerprint — a mode switch is drift");
+  assert.equal(SNOONU_MODE_LABEL.FULL, "مزامنة سنونو الكاملة");
+  assert.equal(SNOONU_MODE_LABEL.PARTIAL, "تحديث جزئي — بدون حذف");
+  assert.ok(SNOONU_MODE_NOTICE.PARTIAL.includes("لن يتم حذفها أو إيقافها"));
+});
+
+test("mode 14 (real second-file shape): a partial workbook covering 987 of 1262 mapped SPIs produces EXACTLY ZERO removals", () => {
+  // synthesize the real shape: 1,262 SPI-mapped products, workbook holds 987.
+  const canonical: SnoonuCanonicalRecord[] = [];
+  const listings: SnoonuListingRecord[] = [];
+  const rows: SnoonuSyncRow[] = [];
+  for (let i = 0; i < 1262; i++) {
+    const spi = `69e40de66040178fae${String(100000 + i).slice(-6)}`;
+    canonical.push(product(`pp${i}`, `mk${5000 + i}`));
+    listings.push(listing(`pp${i}`, spi));
+    if (i < 987) rows.push(row(spi, { rowNum: i + 2 }));
+  }
+  const partial = planSnoonuSync({ mode: "PARTIAL", rows, emptySpiRows: [], canonical, listings });
+  assert.equal(partial.counts.totalExcelRows, 987);
+  assert.equal(partial.counts.matchedExisting, 987);
+  assert.equal(partial.removals.length, 0, "missing mapped SPIs generate NO removals in PARTIAL mode");
+  assert.equal(partial.counts.removedFromSnoonu, 0);
+  const full = planSnoonuSync({ mode: "FULL", rows, emptySpiRows: [], canonical, listings });
+  assert.equal(full.counts.removedFromSnoonu, 275, "the SAME file in FULL mode would remove 275 — which is why the mode gate exists");
+});
+
+test("aliases 3+4: Price Global(Update) AND the real Price (QAR) header both map to the price field", () => {
+  const upd = detectSnoonuSyncColumns(["SPI(UniqueIdentifier)", "Price Global(Update)"]);
+  assert.equal(upd[1].field, "price");
+  const qar = detectSnoonuSyncColumns(PARTIAL_HEADERS);
+  assert.equal(qar[5].field, "price", "Price (QAR) maps to price");
+  assert.equal(qar[0].field, "spi");
+  assert.equal(qar[1].field, "sku");
+  assert.equal(qar[2].field, "barcode");
+  assert.equal(qar[6].field, null, "stock-quantity columns stay unmapped");
+});
+
+test("mode recommendation: full-export schema → FULL; bulk-update schema → PARTIAL (recommendation only, never a silent switch)", () => {
+  assert.equal(recommendSnoonuImportMode(detectSnoonuSyncColumns(HEADERS)), "FULL");
+  assert.equal(recommendSnoonuImportMode(detectSnoonuSyncColumns(PARTIAL_HEADERS)), "PARTIAL");
+});
+
+test("zero-price 5+6: positive canonical + imported 0 → PRICE_REVIEW_ZERO; price fails closed, other fields still apply", () => {
+  const plan = planSnoonuSync({ ...base(), rows: [
+    row(SPI_A, { price: 0, availability: false, nameEn: "Renamed too" }), // mk10: 100 -> 0 must be reviewed
+    row(SPI_B, { price: 0 }, ), row(SPI_C)],
+    canonical: [product("p1", "mk10"), product("p2", "mk20", { price: 0 }), product("p3", "mk30")],
+  });
+  assert.equal(plan.counts.zeroPriceReviews, 1, "only positive→0 is flagged");
+  const z = plan.zeroPriceReviews[0];
+  assert.deepEqual({ sku: z.productSku, cur: z.currentPrice, prop: z.proposedPrice }, { sku: "mk10", cur: 100, prop: 0 });
+  const m = plan.matched.find((x) => x.spi === SPI_A)!;
+  assert.ok(!m.changes.some((c) => c.field === "price"), "no automatic zero-price change in the plan");
+  assert.ok(m.changes.some((c) => c.field === "availability") && m.changes.some((c) => c.field === "name_en"),
+    "unrelated safe fields on the same row still preview/apply");
+  assert.equal(plan.counts.priceChanges, 0, "a zero can never ride in as a normal price change");
+});
+
+test("collisions 9+10+11: SKU/barcode owned by ANOTHER product → IDENTITY_COLLISION in the PLAN (before any DB constraint), identifier change withheld", () => {
+  const K18A = product("pa", "mk2225", { barcode: "2900000002302", nameEn: "K18 Mask", price: 195 });
+  const K18B = product("pb", "mk1983", { barcode: "8996415005988", nameEn: "K18 Mask", price: 289 });
+  const plan = planSnoonuSync({
+    mode: "FULL",
+    canonical: [K18A, K18B],
+    listings: [listing("pa", SPI_A)], // only mk2225 is snoonu-mapped (the real case)
+    emptySpiRows: [],
+    rows: [row(SPI_A, { sku: "mk1983", barcode: "8996415005988", price: 289 })],
+  });
+  assert.equal(plan.counts.identityCollisions, 2, "both the SKU and the barcode collide with mk1983");
+  for (const ic of plan.identityCollisions) {
+    assert.equal(ic.spi, SPI_A);
+    assert.deepEqual(ic.source, { productId: "pa", sku: "mk2225", barcode: "2900000002302" });
+    assert.equal(ic.colliding.productId, "pb");
+    assert.equal(ic.colliding.sku, "mk1983");
+  }
+  const m = plan.matched.find((x) => x.spi === SPI_A)!;
+  assert.ok(!m.changes.some((c) => c.field === "sku" || c.field === "barcode"), "identity changes are withheld — no unique-constraint gamble");
+  assert.ok(m.changes.some((c) => c.field === "price" && c.to === "289"), "the safe price update on the same row survives");
+  assert.equal(plan.counts.skuChanges, 0);
+  assert.equal(plan.counts.barcodeChanges, 0);
+});
+
+test("collisions on NEW rows: a supplied identifier owned by an existing product blocks that row's creation", () => {
+  const plan = planSnoonuSync({ ...base(), rows: [row(SPI_A), row(SPI_B), row(SPI_C),
+    row(SPI_NEW, { nameEn: "Impostor", sku: "mk10" })] }); // mk10 belongs to p1
+  assert.equal(plan.counts.identityCollisions, 1);
+  const n = plan.news[0];
+  assert.equal(n.blocked, "تعارض هوية المنتج — المعرّف مملوك لمنتج آخر");
+  assert.equal(plan.identityCollisions[0].source, null, "new-row collision has no source product");
+  assert.equal(plan.identityCollisions[0].colliding.sku, "mk10");
 });

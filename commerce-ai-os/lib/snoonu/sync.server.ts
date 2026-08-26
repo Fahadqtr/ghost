@@ -33,6 +33,7 @@ import {
   pendingSkuForSpi,
   availabilityToStockStatus,
   SNOONU_STOREFRONT_KEY,
+  type SnoonuImportMode,
   type SnoonuSyncRow,
   type SnoonuSyncPlan,
   type SnoonuCanonicalRecord,
@@ -99,14 +100,15 @@ export async function loadSnoonuSyncContext(): Promise<{
   return { canonical, listings };
 }
 
-/** READ-ONLY preview: parse → plan. */
+/** READ-ONLY preview: parse → plan (mode chosen EXPLICITLY by the caller). */
 export async function previewSnoonuSyncPlan(
+  mode: SnoonuImportMode,
   rows: readonly SnoonuSyncRow[],
   emptySpiRows: readonly number[],
 ): Promise<SnoonuSyncPlan | null> {
   const ctx = await loadSnoonuSyncContext();
   if (!ctx) return null;
-  return planSnoonuSync({ rows, emptySpiRows, canonical: ctx.canonical, listings: ctx.listings });
+  return planSnoonuSync({ mode, rows, emptySpiRows, canonical: ctx.canonical, listings: ctx.listings });
 }
 
 export interface SnoonuApplyRowResult {
@@ -131,17 +133,29 @@ export type SnoonuApplyError = "context_failed" | "plan_changed" | "apply_blocke
  * closed instead of applying something the owner never saw.
  */
 export async function applySnoonuSyncPlan(input: {
+  /** verified server-side: the plan is REBUILT in this mode — client
+   *  classifications are never trusted, and FULL removal semantics are
+   *  unreachable from a PARTIAL request (planner + hard guard below). */
+  mode: SnoonuImportMode;
   rows: readonly SnoonuSyncRow[];
   emptySpiRows: readonly number[];
   expectedFingerprint: string;
+  /** SPIs whose PRICE_REVIEW_ZERO the owner EXPLICITLY resolved as
+   *  «اعتماد السعر صفر». Validated against the rebuilt plan's review list —
+   *  a zero price can never be written any other way. */
+  zeroPriceOverrides: readonly string[];
   sourceFileName: string;
   actor: string;
 }): Promise<{ ok: true; value: SnoonuApplyResult } | { ok: false; error: SnoonuApplyError }> {
   const ctx = await loadSnoonuSyncContext();
   if (!ctx) return { ok: false, error: "context_failed" };
-  const plan = planSnoonuSync({ rows: input.rows, emptySpiRows: input.emptySpiRows, canonical: ctx.canonical, listings: ctx.listings });
+  const plan = planSnoonuSync({ mode: input.mode, rows: input.rows, emptySpiRows: input.emptySpiRows, canonical: ctx.canonical, listings: ctx.listings });
   if (plan.applyBlocked) return { ok: false, error: "apply_blocked" };
   if (plan.fingerprint !== input.expectedFingerprint) return { ok: false, error: "plan_changed" };
+  // HARD SERVER-SIDE INVARIANT: absence-based removal exists ONLY in FULL
+  // mode. The planner already guarantees this structurally; a non-empty
+  // removal set outside FULL mode is treated as corruption and fails closed.
+  if (input.mode !== "FULL" && plan.removals.length > 0) return { ok: false, error: "context_failed" };
 
   const admin = createAdminClient();
   const results: SnoonuApplyRowResult[] = [];
@@ -177,6 +191,20 @@ export async function applySnoonuSyncPlan(input: {
     [toUnavailable, "Out of Stock"],
   ] as const) {
     if (ids.length > 0) await writeProductAvailability(admin as unknown as AvailabilityWriteClient, ids, state as AvailabilityState);
+  }
+
+  // ── PRICE_REVIEW_ZERO — only EXPLICIT per-row owner resolutions write 0 ──
+  const reviewBySpi = new Map(plan.zeroPriceReviews.map((z) => [z.spi.toLowerCase(), z]));
+  for (const spi of new Set(input.zeroPriceOverrides.map((s) => s.toLowerCase()))) {
+    const review = reviewBySpi.get(spi);
+    if (!review) continue; // never write a zero the plan did not flag
+    const { error } = await admin.from("products").update({ price: 0 }).eq("id", review.productId);
+    results.push({
+      spi: review.spi,
+      action: error ? "failed" : "updated",
+      productId: review.productId,
+      message: error ? "تعذّر اعتماد السعر صفر" : "اعتماد السعر صفر (قرار صريح من المالك)",
+    });
   }
 
   // ── NEW Snoonu products — canonical create path; identifiers never invented ──
@@ -238,9 +266,9 @@ export async function applySnoonuSyncPlan(input: {
     });
   }
 
-  // ── REMOVED FROM SNOONU — the CANONICAL lifecycle boundary (STOPPED) +
-  //    listing archive. NEVER a destructive DELETE.
-  for (const r of plan.removals) {
+  // ── REMOVED FROM SNOONU — FULL mode ONLY (hard invariant above) — the
+  //    CANONICAL lifecycle boundary (STOPPED) + listing archive. NEVER DELETE.
+  for (const r of plan.mode === "FULL" ? plan.removals : []) {
     const transition = await transitionProductLifecycle({
       productId: r.productId,
       targetState: "STOPPED",
@@ -270,11 +298,14 @@ export async function applySnoonuSyncPlan(input: {
       source_file: input.sourceFileName,
       applied_at: appliedAt,
       actor: input.actor,
+      import_mode: plan.mode,
       counts: plan.counts,
       changes: {
         matched: plan.matched.map((m) => ({ spi: m.spi, productId: m.productId, changes: m.changes })),
         created: plan.news.map((n) => ({ spi: n.spi, klass: n.klass, sku: n.sku, barcode: n.barcode })),
         removed: plan.removals.map((r) => ({ spi: r.spi, productId: r.productId, sku: r.productSku })),
+        zeroPriceReviews: plan.zeroPriceReviews.map((z) => ({ spi: z.spi, sku: z.productSku, kept: !input.zeroPriceOverrides.some((o) => o.toLowerCase() === z.spi.toLowerCase()) })),
+        identityCollisions: plan.identityCollisions.map((i) => ({ spi: i.spi, identifier: i.identifier, collidingSku: i.colliding.sku })),
       },
       fingerprint: plan.fingerprint,
     });

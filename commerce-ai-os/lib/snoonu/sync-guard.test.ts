@@ -77,6 +77,42 @@ test("availability goes through the certified engine; creation through the canon
   assert.ok(server.includes("pendingSkuForSpi"), "the only synthetic SKU is the explicit PENDING sentinel");
 });
 
+test("modes 15+16: apply REBUILDS the plan server-side in the EXPLICIT mode — FULL removal semantics are unreachable from a PARTIAL request", () => {
+  const server = read(SERVER);
+  assert.ok(server.includes("planSnoonuSync({ mode: input.mode,"), "the plan is rebuilt server-side in the request's explicit mode");
+  assert.ok(server.includes('input.mode !== "FULL" && plan.removals.length > 0'), "hard invariant: non-FULL removals fail closed");
+  assert.ok(server.includes('plan.mode === "FULL" ? plan.removals : []'), "the removal executor itself is FULL-gated");
+  const actions = read(ACTIONS);
+  assert.ok(actions.includes('v === "FULL" || v === "PARTIAL" ? v : null'), "mode parses fail-closed — no default, no coercion");
+  assert.ok(/applySnoonuSyncAction[\s\S]*?readMode\(formData\)/.test(actions), "apply requires the explicit mode field");
+  assert.ok(actions.includes("mode_required"), "a missing mode is a refusal, never a silent FULL");
+  assert.ok(server.includes("import_mode: plan.mode"), "the audit records import_mode");
+});
+
+test("zero-price safety: only an owner-resolved SPI that the REBUILT plan flagged can ever write a zero price", () => {
+  const server = read(SERVER);
+  assert.ok(server.includes("plan.zeroPriceReviews.map"), "the review set comes from the rebuilt plan");
+  assert.ok(server.includes("if (!review) continue;"), "an override not in the plan's review list writes nothing");
+  const zeroWrites = server.match(/update\(\{ price: 0 \}\)/g) ?? [];
+  assert.equal(zeroWrites.length, 1, "exactly ONE code path can write price 0 — the explicit per-row resolution");
+  const ui = read(UI);
+  assert.ok(ui.includes("الاحتفاظ بالسعر الحالي") && ui.includes("اعتماد السعر صفر"), "the UI offers the two explicit owner choices");
+  assert.ok(ui.includes("zeroPriceOverrides"), "overrides travel explicitly with the apply");
+});
+
+test("duplicate resolution is SEPARATE and read-only: Snoonu Sync never merges canonical products", () => {
+  const dup = read("lib/products/duplicate-resolution.server.ts");
+  for (const bad of [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("]) {
+    assert.ok(!dup.includes(bad), `duplicate-resolution audit performs no write (${bad})`);
+  }
+  const server = read(SERVER);
+  for (const bad of ["merge", "auditDuplicatePair"]) {
+    assert.ok(!server.toLowerCase().includes(bad.toLowerCase()), `the sync apply layer contains no merge/resolution path (${bad})`);
+  }
+  const actions = read(ACTIONS);
+  assert.ok(/previewDuplicatePairAction[\s\S]*?requireOwner/.test(actions), "the pair audit is OWNER-gated");
+});
+
 test("the audit migration is additive-only", () => {
   const m = read("supabase/migrations/20260828000000_snoonu_sync_audits.sql").replace(/--[^\n]*/g, "").toLowerCase();
   assert.ok(m.includes("create table if not exists public.snoonu_sync_audits"));

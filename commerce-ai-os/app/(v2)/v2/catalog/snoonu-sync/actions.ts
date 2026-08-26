@@ -17,7 +17,9 @@ import { inspectWorkbook, extractSheetRows, looksLikeXlsx, MAX_IMPORT_BYTES } fr
 import {
   detectSnoonuSyncColumns,
   parseSnoonuSyncData,
+  recommendSnoonuImportMode,
   spiLike,
+  type SnoonuImportMode,
   type SnoonuSyncColumn,
   type SnoonuSyncPlan,
 } from "@/lib/snoonu/sync";
@@ -31,6 +33,7 @@ const ERR = {
   file_unreadable: "تعذّر قراءة الملف — تأكد أنه ملف xlsx صالح.",
   sheet_required: "اختر الورقة.",
   no_spi: "لم يُعثر على عمود SPI(UniqueIdentifier) — هذا الملف ليس ملف تحديث سنونو.",
+  mode_required: "اختر وضع الاستيراد صراحةً (مزامنة كاملة أو تحديث جزئي).",
   context_failed: "تعذّر قراءة الكتالوج الحالي — حاول مرة أخرى.",
   plan_changed: "تغيّرت البيانات منذ المعاينة — أعد المعاينة ثم طبّق.",
   apply_blocked: "التطبيق محظور: يوجد SPI مكرر داخل الملف — أصلح الملف أولاً.",
@@ -62,9 +65,17 @@ async function parseSnoonuFile(formData: FormData): Promise<
   return { ok: true, columns, rows: parseSnoonuSyncData(extracted.rows, extracted.rowNums, columns), fileName: file.name };
 }
 
+/** the EXPLICIT mode field — anything else fails closed (never a default). */
+function readMode(formData: FormData): SnoonuImportMode | null {
+  const v = formData.get("mode");
+  return v === "FULL" || v === "PARTIAL" ? v : null;
+}
+
 export interface SnoonuSyncPreviewVM {
   fileName: string;
   columns: { header: string; label: string | null }[];
+  /** schema-based recommendation ONLY — the human chose `plan.mode`. */
+  recommendedMode: SnoonuImportMode;
   plan: SnoonuSyncPlan;
 }
 
@@ -73,15 +84,18 @@ export async function previewSnoonuSyncAction(
 ): Promise<{ data: SnoonuSyncPreviewVM } | { error: string }> {
   const writer = await requireMalakWriter();
   if (!writer.ok) return { error: writer.error };
+  const mode = readMode(formData);
+  if (!mode) return { error: ERR.mode_required };
   const parsed = await parseSnoonuFile(formData);
   if (!parsed.ok) return { error: parsed.error };
-  const plan = await previewSnoonuSyncPlan(parsed.rows.rows, parsed.rows.emptySpiRows);
+  const plan = await previewSnoonuSyncPlan(mode, parsed.rows.rows, parsed.rows.emptySpiRows);
   if (!plan) return { error: ERR.context_failed };
   const { SNOONU_SYNC_FIELD_LABEL } = await import("@/lib/snoonu/sync");
   return {
     data: {
       fileName: parsed.fileName,
       columns: parsed.columns.map((c) => ({ header: c.header, label: c.field ? SNOONU_SYNC_FIELD_LABEL[c.field] : null })),
+      recommendedMode: recommendSnoonuImportMode(parsed.columns),
       plan,
     },
   };
@@ -91,21 +105,54 @@ export async function applySnoonuSyncAction(
   formData: FormData,
 ): Promise<{ data: SnoonuApplyResult } | { error: string }> {
   // OWNER ONLY — the explicit apply confirmation. Nothing writes before this.
+  // The plan is REBUILT server-side in the EXPLICIT mode (client
+  // classifications are never trusted; collisions and zero-price safety are
+  // re-detected here) and drift fails closed on the fingerprint.
   const owner = await requireOwner();
   if (!owner.ok) return { error: owner.error };
+  const mode = readMode(formData);
+  if (!mode) return { error: ERR.mode_required };
   const fingerprint = formData.get("fingerprint");
   if (typeof fingerprint !== "string" || fingerprint.length !== 64) return { error: ERR.plan_changed };
+  const overridesRaw = formData.get("zeroPriceOverrides");
+  let zeroPriceOverrides: string[] = [];
+  if (typeof overridesRaw === "string" && overridesRaw !== "") {
+    try {
+      const arr = JSON.parse(overridesRaw);
+      zeroPriceOverrides = Array.isArray(arr) ? arr.filter((v): v is string => typeof v === "string").slice(0, 500) : [];
+    } catch {
+      return { error: ERR.plan_changed };
+    }
+  }
   const parsed = await parseSnoonuFile(formData);
   if (!parsed.ok) return { error: parsed.error };
   const applied = await applySnoonuSyncPlan({
+    mode,
     rows: parsed.rows.rows,
     emptySpiRows: parsed.rows.emptySpiRows,
     expectedFingerprint: fingerprint,
+    zeroPriceOverrides,
     sourceFileName: parsed.fileName,
     actor: owner.email,
   });
   if (!applied.ok) return { error: ERR[applied.error] };
   return { data: applied.value };
+}
+
+/** READ-ONLY duplicate-pair audit for IDENTITY_COLLISION cases (OWNER only).
+ *  Snoonu Sync never merges — this prepares the separate resolution decision. */
+export async function previewDuplicatePairAction(
+  formData: FormData,
+): Promise<{ data: import("@/lib/products/duplicate-resolution.server").DuplicatePairAudit } | { error: string }> {
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
+  const skuA = formData.get("skuA");
+  const skuB = formData.get("skuB");
+  if (typeof skuA !== "string" || typeof skuB !== "string" || !skuA || !skuB) return { error: ERR.not_allowed };
+  const { auditDuplicatePair } = await import("@/lib/products/duplicate-resolution.server");
+  const audit = await auditDuplicatePair(skuA.slice(0, 60), skuB.slice(0, 60));
+  if (!audit) return { error: ERR.context_failed };
+  return { data: audit };
 }
 
 /** The Snoonu-compatible update workbook (base64 xlsx) for owner re-upload. */

@@ -79,7 +79,9 @@ const FIELD_ALIASES: Record<SnoonuSyncField, string[]> = {
   description_ar: ["productdescriptionarupdate", "productdescriptionar"],
   sku: ["skuupdate", "sku"],
   barcode: ["barcodeupdate", "barcode"],
-  price: ["priceglobalupdate", "priceglobal"],
+  // "Price (QAR)" is the REAL header of the Snoonu bulk-update (barcode-fill)
+  // workbook — both spellings normalize into the same proposed-price field.
+  price: ["priceglobalupdate", "priceglobal", "priceqar"],
   availability: [],
 };
 
@@ -225,6 +227,38 @@ export interface SnoonuListingRecord {
   variantGrain: boolean;
 }
 
+// ── import mode ──────────────────────────────────────────────────────────────
+
+/**
+ * FULL    — «مزامنة سنونو الكاملة»: the workbook is the COMPLETE Snoonu
+ *           catalog; absence of a mapped SPI may classify REMOVED FROM SNOONU.
+ * PARTIAL — «تحديث جزئي — بدون حذف»: only rows physically present update;
+ *           absent products are COMPLETELY ignored — the planner is
+ *           structurally incapable of producing a removal in this mode.
+ */
+export type SnoonuImportMode = "FULL" | "PARTIAL";
+
+export const SNOONU_MODE_LABEL: Record<SnoonuImportMode, string> = {
+  FULL: "مزامنة سنونو الكاملة",
+  PARTIAL: "تحديث جزئي — بدون حذف",
+};
+
+export const SNOONU_MODE_NOTICE: Record<SnoonuImportMode, string> = {
+  FULL: "هذا ملف مزامنة كامل. المنتجات المرتبطة بسنونو وغير الموجودة في الملف قد يتم تصنيفها كمحذوفة من سنونو.",
+  PARTIAL: "هذا ملف تحديث جزئي. المنتجات غير الموجودة في الملف لن يتم حذفها أو إيقافها.",
+};
+
+/**
+ * Schema-based recommendation ONLY — the human always chooses explicitly and
+ * a partial workbook is NEVER silently promoted to FULL removal semantics.
+ * The complete Snoonu export carries the store availability column and the
+ * (Update)-suffixed description columns; the bulk-update file carries neither.
+ */
+export function recommendSnoonuImportMode(columns: readonly SnoonuSyncColumn[]): SnoonuImportMode {
+  const has = (f: SnoonuSyncField) => columns.some((c) => c.field === f);
+  return has("availability") && has("description_en") ? "FULL" : "PARTIAL";
+}
+
 // ── plan ─────────────────────────────────────────────────────────────────────
 
 export type SnoonuUpdateField =
@@ -283,6 +317,38 @@ export interface SnoonuProblemRow {
   message: string;
 }
 
+/**
+ * PRICE_REVIEW_ZERO — «مراجعة السعر — السعر صفر»: a positive canonical price
+ * with an imported price of 0 NEVER updates automatically; the row is flagged
+ * for an explicit per-row owner resolution (keep current / accept zero).
+ * Unrelated safe fields on the same row still preview and apply normally.
+ */
+export interface SnoonuZeroPriceReview {
+  rowNum: number;
+  spi: string;
+  productId: string;
+  productSku: string;
+  displayName: string;
+  currentPrice: number;
+  proposedPrice: 0;
+}
+
+/**
+ * IDENTITY_COLLISION — «تعارض هوية المنتج»: an imported non-blank SKU/barcode
+ * already owned by a DIFFERENT canonical product. Detected in the plan —
+ * BEFORE any DB unique-constraint failure. The colliding identifier update
+ * (or creation) is withheld; nothing merges, reassigns or deletes — a
+ * separate owner-controlled duplicate-resolution workflow handles it.
+ */
+export interface SnoonuIdentityCollision {
+  rowNum: number;
+  spi: string;
+  identifier: "sku" | "barcode";
+  source: { productId: string | null; sku: string | null; barcode: string | null } | null;
+  proposed: { sku: string | null; barcode: string | null };
+  colliding: { productId: string; sku: string; barcode: string | null; name: string };
+}
+
 export interface SnoonuSyncCounts {
   totalExcelRows: number;
   matchedExisting: number;
@@ -293,6 +359,8 @@ export interface SnoonuSyncCounts {
   contentChanges: number;
   skuChanges: number;
   barcodeChanges: number;
+  zeroPriceReviews: number;
+  identityCollisions: number;
   newProducts: number;
   newMissingSku: number;
   newMissingBarcode: number;
@@ -303,11 +371,14 @@ export interface SnoonuSyncCounts {
 }
 
 export interface SnoonuSyncPlan {
+  mode: SnoonuImportMode;
   counts: SnoonuSyncCounts;
   matched: SnoonuMatchedPlan[];
   unchanged: SnoonuMatchedPlan[];
   news: SnoonuNewPlan[];
   removals: SnoonuRemovalPlan[];
+  zeroPriceReviews: SnoonuZeroPriceReview[];
+  identityCollisions: SnoonuIdentityCollision[];
   conflicts: SnoonuProblemRow[];
   blockedRows: SnoonuProblemRow[];
   /** duplicate SPI inside the workbook — the WHOLE apply is blocked. */
@@ -330,12 +401,23 @@ const safeIdentifier = (v: string | null): string | null => {
 };
 
 export function planSnoonuSync(input: {
+  mode: SnoonuImportMode;
   rows: readonly SnoonuSyncRow[];
   emptySpiRows: readonly number[];
   canonical: readonly SnoonuCanonicalRecord[];
   listings: readonly SnoonuListingRecord[];
 }): SnoonuSyncPlan {
   const canonicalById = new Map(input.canonical.map((c) => [c.id, c]));
+  // identity ownership across the WHOLE canonical catalog — collisions are
+  // detected here, in the plan, before any DB unique-constraint could fire.
+  const skuOwner = new Map<string, SnoonuCanonicalRecord>();
+  const barcodeOwner = new Map<string, SnoonuCanonicalRecord>();
+  for (const c of input.canonical) {
+    if (c.sku) skuOwner.set(c.sku.toLowerCase(), c);
+    if (c.barcode) barcodeOwner.set(c.barcode, c);
+  }
+  const zeroPriceReviews: SnoonuZeroPriceReview[] = [];
+  const identityCollisions: SnoonuIdentityCollision[] = [];
 
   // ACTIVE, product-grain listings only; needs_review/archived and variant
   // grains never participate (fail closed on removal + matching).
@@ -384,9 +466,28 @@ export function planSnoonuSync(input: {
     }
 
     if (!product) {
-      // NEW Snoonu product — blank SKU/barcode MUST NOT block creation.
-      const missingSku = safeIdentifier(r.sku) === null;
-      const missingBarcode = safeIdentifier(r.barcode) === null;
+      // NEW Snoonu product — blank SKU/barcode MUST NOT block creation, but a
+      // supplied identifier already owned by another product is an IDENTITY
+      // COLLISION and blocks THIS row's creation (never worked around).
+      const newSku = safeIdentifier(r.sku);
+      const newBarcode = safeIdentifier(r.barcode);
+      let collision: SnoonuIdentityCollision | null = null;
+      const skuOwned = newSku ? skuOwner.get(newSku.toLowerCase()) : undefined;
+      const barcodeOwned = newBarcode ? barcodeOwner.get(newBarcode) : undefined;
+      if (skuOwned || barcodeOwned) {
+        const owner = (skuOwned ?? barcodeOwned)!;
+        collision = {
+          rowNum: r.rowNum,
+          spi: r.spi,
+          identifier: skuOwned ? "sku" : "barcode",
+          source: null,
+          proposed: { sku: newSku, barcode: newBarcode },
+          colliding: { productId: owner.id, sku: owner.sku, barcode: owner.barcode, name: owner.nameEn ?? owner.nameAr ?? owner.sku },
+        };
+        identityCollisions.push(collision);
+      }
+      const missingSku = newSku === null;
+      const missingBarcode = newBarcode === null;
       const klass: SnoonuNewClass = missingSku && missingBarcode
         ? "NEW_WAITING_SKU_BARCODE" : missingSku ? "NEW_WAITING_SKU" : missingBarcode ? "NEW_WAITING_BARCODE" : "NEW";
       news.push({
@@ -397,11 +498,15 @@ export function planSnoonuSync(input: {
         nameAr: r.nameAr,
         descriptionEn: r.descriptionEn,
         descriptionAr: r.descriptionAr,
-        sku: safeIdentifier(r.sku),
-        barcode: safeIdentifier(r.barcode),
+        sku: newSku,
+        barcode: newBarcode,
         price: r.price,
         availability: r.availability,
-        blocked: !r.nameEn && !r.nameAr ? "لا اسم إنجليزي أو عربي — لا يمكن الإنشاء" : null,
+        blocked: collision
+          ? "تعارض هوية المنتج — المعرّف مملوك لمنتج آخر"
+          : !r.nameEn && !r.nameAr
+            ? "لا اسم إنجليزي أو عربي — لا يمكن الإنشاء"
+            : null,
       });
       continue;
     }
@@ -416,20 +521,61 @@ export function planSnoonuSync(input: {
     text("description_en", product.descriptionEn, r.descriptionEn);
     text("description_ar", product.descriptionAr, r.descriptionAr);
     if (r.price !== null && r.price !== (product.price ?? null)) {
-      changes.push({ field: "price", from: product.price === null ? null : String(product.price), to: String(r.price) });
+      if (r.price === 0 && (product.price ?? 0) > 0) {
+        // PRICE_REVIEW_ZERO — a zero can never silently overwrite a positive
+        // price. Price fails closed for this row; other fields still apply.
+        zeroPriceReviews.push({
+          rowNum: r.rowNum,
+          spi: r.spi,
+          productId: product.id,
+          productSku: product.sku,
+          displayName: product.nameEn ?? product.nameAr ?? product.sku,
+          currentPrice: product.price as number,
+          proposedPrice: 0,
+        });
+      } else {
+        changes.push({ field: "price", from: product.price === null ? null : String(product.price), to: String(r.price) });
+      }
     }
     if (r.availability !== null) {
       const to = availabilityToStockStatus(r.availability);
       if (to !== (product.stockStatus ?? null)) changes.push({ field: "availability", from: product.stockStatus, to });
     }
-    // blank/whitespace NEVER erases a real canonical identifier
+    // blank/whitespace NEVER erases a real canonical identifier, and an
+    // identifier already OWNED by a different product is an IDENTITY
+    // COLLISION — withheld here, before any unique-constraint failure.
+    const sourceRef = { productId: product.id, sku: product.sku, barcode: product.barcode };
     const skuTo = safeIdentifier(r.sku);
     if (skuTo && skuTo !== product.sku && !isPendingSku(skuTo)) {
-      changes.push({ field: "sku", from: isPendingSku(product.sku) ? null : product.sku, to: skuTo });
+      const owner = skuOwner.get(skuTo.toLowerCase());
+      if (owner && owner.id !== product.id) {
+        identityCollisions.push({
+          rowNum: r.rowNum,
+          spi: r.spi,
+          identifier: "sku",
+          source: sourceRef,
+          proposed: { sku: skuTo, barcode: safeIdentifier(r.barcode) },
+          colliding: { productId: owner.id, sku: owner.sku, barcode: owner.barcode, name: owner.nameEn ?? owner.nameAr ?? owner.sku },
+        });
+      } else {
+        changes.push({ field: "sku", from: isPendingSku(product.sku) ? null : product.sku, to: skuTo });
+      }
     }
     const barcodeTo = safeIdentifier(r.barcode);
     if (barcodeTo && barcodeTo !== (product.barcode ?? null)) {
-      changes.push({ field: "barcode", from: product.barcode, to: barcodeTo });
+      const owner = barcodeOwner.get(barcodeTo);
+      if (owner && owner.id !== product.id) {
+        identityCollisions.push({
+          rowNum: r.rowNum,
+          spi: r.spi,
+          identifier: "barcode",
+          source: sourceRef,
+          proposed: { sku: skuTo, barcode: barcodeTo },
+          colliding: { productId: owner.id, sku: owner.sku, barcode: owner.barcode, name: owner.nameEn ?? owner.nameAr ?? owner.sku },
+        });
+      } else {
+        changes.push({ field: "barcode", from: product.barcode, to: barcodeTo });
+      }
     }
 
     const item: SnoonuMatchedPlan = {
@@ -445,13 +591,16 @@ export function planSnoonuSync(input: {
   }
 
   // REMOVED FROM SNOONU — a mapped product whose SPI is absent from the
-  // workbook. ONLY active + SPI-shaped mappings participate; a product with
-  // any non-SPI-shaped active listing is surfaced as a conflict instead.
+  // workbook. HARD INVARIANT: absence can classify a removal ONLY in FULL
+  // mode — in PARTIAL mode this loop never runs, so the removal candidate
+  // count is STRUCTURALLY zero (absent products are completely ignored).
+  // ONLY active + SPI-shaped mappings participate; a product with any
+  // non-SPI-shaped active listing is surfaced as a conflict instead.
   const workbookSpis = new Set(input.rows.map((r) => r.spi.toLowerCase()));
   const removals: SnoonuRemovalPlan[] = [];
   const byProduct = new Map<string, SnoonuListingRecord[]>();
   for (const l of active) byProduct.set(l.productId, [...(byProduct.get(l.productId) ?? []), l]);
-  for (const [productId, ls] of byProduct) {
+  for (const [productId, ls] of input.mode === "FULL" ? byProduct : new Map<string, SnoonuListingRecord[]>()) {
     const product = canonicalById.get(productId);
     if (!product) continue;
     const spiListings = ls.filter((l) => spiLike(l.externalId));
@@ -482,6 +631,8 @@ export function planSnoonuSync(input: {
     contentChanges: matched.filter((m) => m.changes.some((c) => ["name_en", "name_ar", "description_en", "description_ar"].includes(c.field))).length,
     skuChanges: matched.filter((m) => m.changes.some((c) => c.field === "sku")).length,
     barcodeChanges: matched.filter((m) => m.changes.some((c) => c.field === "barcode")).length,
+    zeroPriceReviews: zeroPriceReviews.length,
+    identityCollisions: identityCollisions.length,
     newProducts: news.length,
     newMissingSku: news.filter((n) => n.klass === "NEW_WAITING_SKU" || n.klass === "NEW_WAITING_SKU_BARCODE").length,
     newMissingBarcode: news.filter((n) => n.klass === "NEW_WAITING_BARCODE" || n.klass === "NEW_WAITING_SKU_BARCODE").length,
@@ -494,20 +645,26 @@ export function planSnoonuSync(input: {
   // Hash is a stream — write() absorbs (no DB-verb in this pure module).
   const hash = createHash("sha256");
   hash.write(JSON.stringify({
+    mode: input.mode,
     counts,
     matched: matched.map((m) => [m.spi, m.productId, m.changes]),
     news: news.map((n) => [n.spi, n.klass, n.sku, n.barcode, n.price, n.availability]),
     removals: removals.map((x) => [x.spi, x.productId]),
+    zeroPriceReviews: zeroPriceReviews.map((z) => [z.spi, z.currentPrice]),
+    identityCollisions: identityCollisions.map((i) => [i.spi, i.identifier, i.colliding.productId]),
     duplicateSpis,
   }));
   const fingerprint = hash.digest("hex");
 
   return {
+    mode: input.mode,
     counts,
     matched,
     unchanged,
     news,
     removals,
+    zeroPriceReviews,
+    identityCollisions,
     conflicts,
     blockedRows,
     duplicateSpis,
