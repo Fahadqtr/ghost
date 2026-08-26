@@ -30,6 +30,7 @@ const FULLSYNC = "lib/export/rafeeq/fullsync.ts";
 const RECONCILE = "lib/export/rafeeq/reconcile.ts";
 const SERVER = "lib/rafeeq/fullsync.server.ts";
 const GEN = "lib/rafeeq/package.server.ts";
+const JOB_SERVER = "lib/rafeeq/package-job.server.ts";
 const ROUTE = "app/api/export/rafeeq/package/route.ts";
 const ACTIONS = "app/(v2)/v2/export/rafeeq-fullsync-actions.ts";
 const COMPONENT = "components/v2/export/RafeeqFullSync.tsx";
@@ -62,9 +63,13 @@ test("generation/recording never writes sent state; only the owner action does, 
   assert.ok(/\.is\("sent_at", null\)/.test(server), "mark-as-sent only stamps a package not yet sent");
   const sentWrites = server.match(/update\(\{ sent_at/g) ?? [];
   assert.equal(sentWrites.length, 1, "exactly ONE code path writes sent_at");
-  // the route records the package but never marks it sent
+  // RAFEEQ.PKGJOB: recording moved with generation into the job layer — the
+  // finalize step records the package (once, after the artifact is committed);
+  // the legacy route and the job layer still never mark anything sent.
+  const jobServer = code(JOB_SERVER);
+  assert.ok(/recordRafeeqPackage\(/.test(jobServer), "the job layer records the generated package");
+  assert.equal(/markRafeeqPackageSent|sent_at/.test(jobServer), false, "the job layer never writes sent state");
   const route = code(ROUTE);
-  assert.ok(/recordRafeeqPackage\(/.test(route), "route records the generated package");
   assert.equal(/markRafeeqPackageSent|sent_at/.test(route), false, "route never writes sent state");
 });
 
@@ -95,10 +100,14 @@ test("the fullsync generator keeps collision+integrity before the zip and perfor
   }
   assert.ok(/loadRafeeqPreview\(\)/.test(fs), "fullsync package derives from the certified preview");
   assert.ok(/resolveFullSyncSet\(/.test(fs), "selection via the pure fullsync plan");
-  // NEW without a readable sent-state is refused, never guessed
+  // RAFEEQ.PKGJOB: FULL/NEW generation now starts through the job layer — the
+  // honest NEW refusal (no readable sent-state ⇒ refuse, never guess) lives
+  // there, and the legacy route refuses fullsync modes toward the job flow.
+  const jobServer = read(JOB_SERVER);
+  assert.ok(/input\.mode === "NEW" && delivery\.availability === "UNAVAILABLE"/.test(jobServer), "NEW requires the durable sent-state");
+  assert.ok(/503/.test(jobServer));
   const route = read(ROUTE);
-  assert.ok(/fullSyncMode === "NEW" && delivery\.availability === "UNAVAILABLE"/.test(route), "NEW requires the durable sent-state");
-  assert.ok(/503/.test(route));
+  assert.ok(/"use_jobs"/.test(route), "the legacy route routes fullsync modes to the job flow");
 });
 
 // ── reconciliation: SKU/barcode only, no fuzzy/title matching (§16) ───────────

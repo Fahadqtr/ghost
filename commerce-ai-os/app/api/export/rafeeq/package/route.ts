@@ -6,29 +6,17 @@
 //
 // Modes:
 //   • "all" | "new" | "selected" — the original INT.2D package (unchanged);
-//   • "full"        — FULL native catalog (rafeeq-full-YYYY-MM-DD.zip,
-//     /rafeeq_catalog.xlsx + /images/ + /manifest.json) on the audited Rafeeq
-//     template. Products blocked ONLY by the identity review are included with
-//     a BLANK product_id (ids never invented);
-//   • "new_pending" — the pending package (rafeeq-new-products-YYYY-MM-DD.zip,
-//     /rafeeq_new_products.xlsx): NEW products (blank product_id) + OPTION
-//     UPDATES (option-set changed since the sent baseline; resolved id kept).
-//     It REQUIRES the durable sent-state to be readable (503 otherwise; never
-//     a guessed baseline).
+//   • "full" | "new_pending"     — MOVED to the chunked job flow at
+//     /api/export/rafeeq/package/jobs (RAFEEQ.PKGJOB): the full native catalog
+//     is too large for one buffered request (proven OOM kill + 300 s timeout
+//     in the runtime logs), so this endpoint now refuses those modes with a
+//     structured JSON pointer instead of ever buffering the archive again.
 //
-// After a successful fullsync generation the durable package row + item
-// snapshot are recorded (sent_at NULL = "Generated — not sent"); recording is
-// best-effort and never blocks the download. It mutates no catalog/inventory/
-// availability/ECL data, resolves no Rafeeq conflict, and performs no Rafeeq
-// API publish. Errors are safe sentinels.
+// It mutates no catalog/inventory/availability/ECL data, resolves no Rafeeq
+// conflict, and performs no Rafeeq API publish. Errors are safe sentinels.
 
 import { requireMalakWriter } from "@/lib/malak/authz";
-import {
-  generateRafeeqPackage,
-  generateRafeeqFullSyncPackage,
-  type GeneratePackageError,
-} from "@/lib/rafeeq/package.server";
-import { loadRafeeqDeliveryState, recordRafeeqPackage } from "@/lib/rafeeq/fullsync.server";
+import { generateRafeeqPackage, type GeneratePackageError } from "@/lib/rafeeq/package.server";
 import { RAFEEQ_UPDATES_SUPPORTED, type RafeeqGenerationMode } from "@/lib/export/rafeeq/package";
 import type { RafeeqFullSyncMode } from "@/lib/export/rafeeq/fullsync";
 
@@ -69,64 +57,19 @@ export async function POST(req: Request) {
     /* no body → default: All */
   }
 
-  // ── RAFEEQ.FULLSYNC.1 — FULL catalog / NEW pending packages ─────────────────
+  // ── RAFEEQ.PKGJOB — FULL/NEW packages are JOB-BASED now ─────────────────────
+  // The full native catalog (~1419 products, ~2535 images, ~500 MiB) cannot be
+  // generated inside one request: the in-memory single-shot path was OOM-killed
+  // by the runtime ("instance was killed because it ran out of available
+  // memory", 2026-08-25) and previously hit the 300 s ceiling. FULL/NEW
+  // generation lives at /api/export/rafeeq/package/jobs (bounded steps +
+  // durable storage + streamed download); this legacy entry point refuses with
+  // structured JSON so no caller can reach the buffered path again.
   if (fullSyncMode) {
-    const delivery = await loadRafeeqDeliveryState();
-    // The NEW package is DEFINED by the sent baseline; without a readable
-    // durable state it cannot be derived honestly — refuse, never guess.
-    if (fullSyncMode === "NEW" && delivery.availability === "UNAVAILABLE") {
-      return new Response("Rafeeq sent-state is unavailable (migration not applied) — the NEW package cannot be derived", { status: 503 });
-    }
-
-    const result = await generateRafeeqFullSyncPackage({
-      mode: fullSyncMode,
-      sentBaseline: delivery.sentBaseline,
-      actor: writer.email,
-    });
-    if (!result.ok) {
-      const e = SAFE_ERROR[result.error];
-      return new Response(e.message, { status: e.status });
-    }
-
-    // Durable "Generated — not sent" record (best-effort; never blocks the file).
-    const recorded = await recordRafeeqPackage({
-      mode: fullSyncMode,
-      outputFilename: result.filename,
-      manifestFingerprint: result.summary.manifestFingerprint,
-      productCount: result.summary.productRowCount,
-      imageCount: result.summary.imageCount,
-      generatedAt: result.summary.generatedAt,
-      actor: writer.email,
-      items: result.items,
-    });
-
-    const s = result.summary;
-    return new Response(new Uint8Array(result.bytes), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="${result.filename}"`,
-        "Cache-Control": "no-store",
-        "X-Rafeeq-FullSync-Mode": s.mode,
-        "X-Rafeeq-Output-Filename": result.filename,
-        "X-Rafeeq-Product-Rows": String(s.productRowCount),
-        "X-Rafeeq-Physical-Rows": String(s.physicalRowCount),
-        "X-Rafeeq-Products-With-Options": String(s.productsWithOptions),
-        "X-Rafeeq-Options": String(s.optionCount),
-        "X-Rafeeq-Option-Updates": String(s.optionUpdateCount),
-        "X-Rafeeq-Mapped-Ids": String(s.mappedIdCount),
-        "X-Rafeeq-New-Marker": String(s.newMarkerCount),
-        "X-Rafeeq-Needs-Review-Included": String(s.needsReviewIncluded),
-        "X-Rafeeq-True-Blockers-Excluded": String(s.trueBlockersExcluded),
-        "X-Rafeeq-Image-Count": String(s.imageCount),
-        "X-Rafeeq-Package-Id": recorded.packageId ?? "",
-        "X-Rafeeq-Package-Recorded": recorded.persisted ? "1" : "0",
-        "X-Rafeeq-Items-Recorded": String(recorded.itemsPersisted),
-        "X-Rafeeq-Superseded-Count": String(recorded.supersededCount),
-        "X-Rafeeq-Generated-At": s.generatedAt,
-        "X-Rafeeq-Generated-By": s.actor ?? "",
-      },
-    });
+    return new Response(
+      JSON.stringify({ error: "use_jobs", jobs_endpoint: "/api/export/rafeeq/package/jobs", mode: fullSyncMode }),
+      { status: 409, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
+    );
   }
 
   const result = await generateRafeeqPackage({ mode, selectedKeys, actor: writer.email });
