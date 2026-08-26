@@ -71,11 +71,12 @@ test("AoA cells: audited category registry, TEXT product_price, parent-SKU barco
   assert.equal(u[NATIVE_COL.productId], "", "new record → BLANK product_id (never a fabricated id)");
 });
 
-test("image plan is PARENT-SKU based (primary + numbered gallery), one set per product", () => {
+test("image plan is PARENT-SKU based and PRIMARY ONLY — gallery is never planned (owner contract)", () => {
   const r = rows({ products: [product({ sku: "mk9" })] })[0];
   const plan = planRowImages(r);
   assert.equal(plan.primary?.filename, "mk9.jpg");
-  assert.deepEqual(plan.gallery.map((g) => g.filename), ["mk9_2.png"]);
+  assert.equal(plan.primary?.sourceUrl, r.primaryImageUrl, "the canonical primary URL is used VERBATIM — no thumbnail/resize variant");
+  assert.deepEqual(plan.gallery, [], "gallery images are never exported to Rafeeq — even when canonical gallery URLs exist");
 });
 
 test("detectFilenameCollisions flags duplicate output filenames", () => {

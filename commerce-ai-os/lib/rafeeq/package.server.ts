@@ -87,8 +87,8 @@ export type GeneratePackageResult =
 
 export type GeneratePackageError = "preview_unavailable" | "no_exportable_rows" | "filename_collision" | "integrity_failed" | "generation_failed";
 
-interface ResolvedImage { bytes: Uint8Array; filename: string; kind: "primary" | "gallery"; ownerPrimary?: string }
-interface ResolvedRow { row: RafeeqPreviewRow; primary: ResolvedImage; gallery: ResolvedImage[] }
+interface ResolvedImage { bytes: Uint8Array; filename: string; kind: "primary" }
+interface ResolvedRow { row: RafeeqPreviewRow; primary: ResolvedImage }
 
 function fileStamp(now: Date): string {
   return now.toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");
@@ -123,8 +123,10 @@ async function mapPool<T, R>(items: readonly T[], limit: number, fn: (item: T, i
   return out;
 }
 
-/** Shared image-resolution core: fetch + validate every row's images through
- *  the certified SSRF-safe boundary; a row without a valid primary drops out. */
+/** Shared image-resolution core (OWNER CONTRACT: PRIMARY ONLY): fetch +
+ *  validate each row's canonical PRIMARY image through the certified SSRF-safe
+ *  boundary — bytes preserved exactly as downloaded, gallery/variant images
+ *  never fetched. A row without a valid primary drops out. */
 async function resolveRowImages(rows: readonly RafeeqPreviewRow[]): Promise<ResolvedRow[]> {
   const resolvedRows = await mapPool(rows, IMAGE_FETCH_CONCURRENCY, async (row): Promise<ResolvedRow | null> => {
     const plan = planRowImages(row);
@@ -132,17 +134,7 @@ async function resolveRowImages(rows: readonly RafeeqPreviewRow[]): Promise<Reso
     const primaryFetch = await fetchValidatedImage(plan.primary.sourceUrl);
     if (!primaryFetch) return null;
     const primaryFilename = primaryFilenameFor(row.sku, primaryFetch.ext);
-    const primary: ResolvedImage = { bytes: primaryFetch.bytes, filename: primaryFilename, kind: "primary" };
-    const gallery: ResolvedImage[] = [];
-    let position = 2;
-    for (const g of plan.gallery) {
-      const got = await fetchValidatedImage(g.sourceUrl);
-      if (!got) continue;
-      const name = primaryFilenameFor(row.sku, got.ext).replace(/(\.[^.]+)$/, `_${position}$1`);
-      gallery.push({ bytes: got.bytes, filename: name, kind: "gallery", ownerPrimary: primaryFilename });
-      position++;
-    }
-    return { row, primary, gallery };
+    return { row, primary: { bytes: primaryFetch.bytes, filename: primaryFilename, kind: "primary" } };
   });
   return resolvedRows.filter((r): r is ResolvedRow => r !== null);
 }
@@ -175,11 +167,7 @@ export async function generateRafeeqPackage(opts: GeneratePackageOptions): Promi
     const packageRows: RafeeqPackageRow[] = survivors.map((s) => toPackageRow(s.row, s.primary.filename));
     const rowImageRefs = packageRows.map((r) => r.imageName);
 
-    const packaged: PackagedFile[] = [];
-    for (const s of survivors) {
-      packaged.push({ name: s.primary.filename, kind: "primary" });
-      for (const g of s.gallery) packaged.push({ name: g.filename, kind: "gallery", ownerPrimary: g.ownerPrimary });
-    }
+    const packaged: PackagedFile[] = survivors.map((s) => ({ name: s.primary.filename, kind: "primary" as const }));
 
     const integrity = checkReferentialIntegrity(rowImageRefs, packaged);
     if (!integrity.ok) return { ok: false, error: "integrity_failed" };
@@ -223,10 +211,7 @@ export async function generateRafeeqPackage(opts: GeneratePackageOptions): Promi
     });
 
     const entries: ZipEntry[] = [{ name: `${FOLDER}/rafeeq-products.xlsx`, data: xlsxBytes }];
-    for (const s of survivors) {
-      entries.push({ name: `${FOLDER}/images/${s.primary.filename}`, data: s.primary.bytes });
-      for (const g of s.gallery) entries.push({ name: `${FOLDER}/images/${g.filename}`, data: g.bytes });
-    }
+    for (const s of survivors) entries.push({ name: `${FOLDER}/images/${s.primary.filename}`, data: s.primary.bytes });
     entries.push({ name: `${FOLDER}/manifest.json`, data: new TextEncoder().encode(JSON.stringify(manifest, null, 2)) });
 
     const bytes = buildZip(entries);
@@ -390,11 +375,7 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
     );
     const rowImageRefs = packageRows.map((r) => r.imageName);
 
-    const packaged: PackagedFile[] = [];
-    for (const sv of survivors) {
-      packaged.push({ name: sv.primary.filename, kind: "primary" });
-      for (const g of sv.gallery) packaged.push({ name: g.filename, kind: "gallery", ownerPrimary: g.ownerPrimary });
-    }
+    const packaged: PackagedFile[] = survivors.map((sv) => ({ name: sv.primary.filename, kind: "primary" as const }));
 
     const integrity = checkReferentialIntegrity(rowImageRefs, packaged);
     if (!integrity.ok) return { ok: false, error: "integrity_failed" };
@@ -454,10 +435,7 @@ export async function generateRafeeqFullSyncPackage(opts: FullSyncGenerateOption
 
     // ZIP layout at the ROOT: /<xlsx> + /images/<file> + /manifest.json.
     const entries: ZipEntry[] = [{ name: xlsxFilename, data: xlsxBytes }];
-    for (const sv of survivors) {
-      entries.push({ name: fullSyncImageEntryName(sv.primary.filename), data: sv.primary.bytes });
-      for (const g of sv.gallery) entries.push({ name: fullSyncImageEntryName(g.filename), data: g.bytes });
-    }
+    for (const sv of survivors) entries.push({ name: fullSyncImageEntryName(sv.primary.filename), data: sv.primary.bytes });
     entries.push({ name: FULLSYNC_MANIFEST_NAME, data: new TextEncoder().encode(JSON.stringify(manifest, null, 2)) });
 
     const bytes = buildZip(entries);

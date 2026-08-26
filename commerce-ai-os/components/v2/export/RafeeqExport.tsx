@@ -80,7 +80,8 @@ export default function RafeeqExport({ vm }: { vm: RafeeqExportVM }) {
       if (r.rafeeqId !== null) mapped++; else unmapped++;
       if (r.needsOwnerReview) needsReview++;
       if (r.status === "BLOCKED") { for (const x of r.reasons) if (x.blocking) blockers[x.code] = (blockers[x.code] ?? 0) + 1; continue; }
-      included++; images += r.hasImage ? Math.max(1, r.imageCount) : 0;
+      // PRIMARY ONLY (owner contract): Rafeeq packages exactly one image per product.
+      included++; images += r.hasImage ? 1 : 0;
     }
     return { ready, warn, blocked, unknown, mapped, unmapped, needsReview, included, images, blockers };
   }, [vm.rows]);
