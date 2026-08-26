@@ -68,6 +68,66 @@ export function isValidEmailAddress(address: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(address.trim());
 }
 
+// ── owner-only runtime diagnostic (BOOLEANS ONLY — never values) ──────────────
+
+/**
+ * Non-secret validation state of the mail environment. Every leaf is a
+ * boolean: no value, no length, no fragment of any variable ever appears —
+ * safe to show the owner in production to pinpoint WHICH variable is
+ * missing/invalid (by NAME only) when mailConfigResolved is false.
+ */
+export interface MailEnvDiagnostic {
+  MAIL_HOST: { present: boolean; nonEmptyAfterTrim: boolean };
+  MAIL_PORT: { present: boolean; parsedValidPort: boolean };
+  MAIL_SECURE: { present: boolean; parsedSecure: boolean };
+  MAIL_USERNAME: { present: boolean; nonEmptyAfterTrim: boolean };
+  MAIL_PASSWORD: { present: boolean; lengthGreaterThanZero: boolean };
+  MAIL_FROM_NAME: { present: boolean };
+  MAIL_FROM_ADDRESS: { present: boolean; nonEmptyAfterTrim: boolean; validEmailSyntax: boolean };
+  EMAIL_ATTACHMENT_MAX_BYTES: { present: boolean; parsedPositiveInteger: boolean };
+  mailConfigResolved: boolean;
+}
+
+/** Pure diagnostic over an environment map. Mirrors readMailConfig exactly. */
+export function diagnoseMailEnv(env: Record<string, string | undefined>): MailEnvDiagnostic {
+  const present = (key: string) => typeof env[key] === "string";
+  const nonEmpty = (key: string) => (env[key] ?? "").trim() !== "";
+  const portRaw = Number.parseInt((env.MAIL_PORT ?? "").trim(), 10);
+  const maxRaw = Number.parseInt((env.EMAIL_ATTACHMENT_MAX_BYTES ?? "").trim(), 10);
+  return {
+    MAIL_HOST: { present: present("MAIL_HOST"), nonEmptyAfterTrim: nonEmpty("MAIL_HOST") },
+    MAIL_PORT: { present: present("MAIL_PORT"), parsedValidPort: Number.isInteger(portRaw) && portRaw > 0 && portRaw < 65536 },
+    MAIL_SECURE: { present: present("MAIL_SECURE"), parsedSecure: (env.MAIL_SECURE ?? "true").trim().toLowerCase() !== "false" },
+    MAIL_USERNAME: { present: present("MAIL_USERNAME"), nonEmptyAfterTrim: nonEmpty("MAIL_USERNAME") },
+    MAIL_PASSWORD: { present: present("MAIL_PASSWORD"), lengthGreaterThanZero: (env.MAIL_PASSWORD ?? "").length > 0 },
+    MAIL_FROM_NAME: { present: present("MAIL_FROM_NAME") },
+    MAIL_FROM_ADDRESS: {
+      present: present("MAIL_FROM_ADDRESS"),
+      nonEmptyAfterTrim: nonEmpty("MAIL_FROM_ADDRESS"),
+      validEmailSyntax: isValidEmailAddress(env.MAIL_FROM_ADDRESS ?? ""),
+    },
+    EMAIL_ATTACHMENT_MAX_BYTES: {
+      present: present("EMAIL_ATTACHMENT_MAX_BYTES"),
+      parsedPositiveInteger: Number.isInteger(maxRaw) && maxRaw > 0,
+    },
+    mailConfigResolved: readMailConfig(env) !== null,
+  };
+}
+
+/**
+ * The NAMES (only) of variables that block readMailConfig from resolving.
+ * Empty when mailConfigResolved is true. Never contains a value.
+ */
+export function blockingMailEnvNames(d: MailEnvDiagnostic): string[] {
+  if (d.mailConfigResolved) return [];
+  const out: string[] = [];
+  if (!d.MAIL_HOST.nonEmptyAfterTrim) out.push("MAIL_HOST");
+  if (!d.MAIL_USERNAME.nonEmptyAfterTrim) out.push("MAIL_USERNAME");
+  if (!d.MAIL_PASSWORD.lengthGreaterThanZero) out.push("MAIL_PASSWORD");
+  if (!d.MAIL_FROM_ADDRESS.nonEmptyAfterTrim || !d.MAIL_FROM_ADDRESS.validEmailSyntax) out.push("MAIL_FROM_ADDRESS");
+  return out;
+}
+
 /** Split a user-entered recipients string on commas/semicolons/whitespace. */
 export function parseRecipients(raw: string): string[] {
   return raw

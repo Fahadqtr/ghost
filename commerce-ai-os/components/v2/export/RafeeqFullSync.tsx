@@ -109,6 +109,9 @@ interface RafeeqSendPreflightVM {
   imageCount: number;
   packageId: string | null;
   savedRecipient: string;
+  /** owner-only env diagnostic — BOOLEANS + variable NAMES only, never values. */
+  diagnostic: Record<string, Record<string, boolean> | boolean>;
+  blockingEnvNames: string[];
 }
 
 function fmtBytes(bytes: number): string {
@@ -908,11 +911,32 @@ function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => voi
         {pf && (
           <>
             {!pf.configured && (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
-                لم يتم إعداد مزود البريد بعد — أضف إعدادات SMTP (متغيرات البيئة MAIL_HOST / MAIL_PORT /
-                MAIL_SECURE / MAIL_USERNAME / MAIL_PASSWORD / MAIL_FROM_NAME / MAIL_FROM_ADDRESS) ثم أعد المحاولة.
-                الإرسال معطّل حتى ذلك الحين، والنسخ والتنزيل متاحان.
-              </p>
+              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+                <p>
+                  لم يتم إعداد مزود البريد بعد — الإرسال معطّل حتى اكتمال متغيرات البيئة، والنسخ والتنزيل متاحان.
+                </p>
+                {pf.blockingEnvNames.length > 0 && (
+                  <p>
+                    المتغيرات الناقصة/غير الصالحة:{" "}
+                    <span className="font-mono text-[10px]" dir="ltr">{pf.blockingEnvNames.join(", ")}</span>
+                  </p>
+                )}
+                {/* runtime diagnostic — variable NAMES + booleans only, never values */}
+                <table className="w-full text-right text-[10px]" dir="rtl">
+                  <tbody>
+                    {Object.entries(pf.diagnostic).map(([name, checks]) => (
+                      <tr key={name} className="border-t border-amber-200/60">
+                        <td className="py-0.5 font-mono text-[10px]" dir="ltr">{name}</td>
+                        <td className="py-0.5" dir="ltr">
+                          {typeof checks === "boolean"
+                            ? (checks ? "✓ true" : "✗ false")
+                            : Object.entries(checks).map(([k, v]) => `${k}: ${v ? "✓" : "✗"}`).join(" · ")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
             <div className="grid gap-2 text-xs sm:grid-cols-[auto_1fr]">
               <span className="pt-1.5 text-muted">من</span>
