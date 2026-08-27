@@ -23,10 +23,19 @@ import {
   previewDuplicatePairAction,
   previewSnoonuRepairAction,
   applySnoonuRepairAction,
+  previewSnoonuCombinedAction,
   type SnoonuSyncPreviewVM,
+  type SnoonuCombinedPreviewVM,
 } from "@/app/(v2)/v2/catalog/snoonu-sync/actions";
 import type { SnoonuApplyResult } from "@/lib/snoonu/sync.server";
 import { SNOONU_MODE_LABEL, SNOONU_MODE_NOTICE, SNOONU_STOCK_RULE_NOTE, type SnoonuImportMode } from "@/lib/snoonu/sync";
+import {
+  SNOONU_COMBINED_AUTHORITY,
+  SNOONU_SOURCE_LABEL,
+  SNOONU_STOCK_SOURCE_MISMATCH,
+  SNOONU_STOCK_SOURCE_MISMATCH_AR,
+  SNOONU_STOCK_SOURCE_NOTE,
+} from "@/lib/snoonu/two-source";
 import type { DuplicatePairAudit } from "@/lib/products/duplicate-resolution.server";
 import type { SnoonuRepairPlanResult } from "@/lib/snoonu/repair";
 import type { SnoonuRepairApplyResult } from "@/lib/snoonu/repair.server";
@@ -49,6 +58,30 @@ const FIELD_LABEL: Record<string, string> = {
 };
 
 export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
+  // ── two-source combined preview (FULL catalog + BULK update) ──────────────
+  const combinedFullRef = useRef<HTMLInputElement>(null);
+  const combinedBulkRef = useRef<HTMLInputElement>(null);
+  const [combined, setCombined] = useState<SnoonuCombinedPreviewVM | null>(null);
+  const [combinedBusy, setCombinedBusy] = useState(false);
+  const [combinedError, setCombinedError] = useState<string | null>(null);
+
+  async function runCombinedPreview() {
+    setCombinedBusy(true);
+    setCombinedError(null);
+    try {
+      const fd = new FormData();
+      const f = combinedFullRef.current?.files?.[0];
+      const b = combinedBulkRef.current?.files?.[0];
+      if (f) fd.set("fullFile", f);
+      if (b) fd.set("bulkFile", b);
+      const res = await previewSnoonuCombinedAction(fd);
+      if ("error" in res) { setCombinedError(res.error); setCombined(null); }
+      else setCombined(res.data);
+    } finally {
+      setCombinedBusy(false);
+    }
+  }
+
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState<"preview" | "apply" | "return" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -197,6 +230,116 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
         </div>
         <Link href="/v2/catalog/import" className="btn-ghost text-xs">تحديث الكتالوج العام من Excel</Link>
       </div>
+
+      <section className="card space-y-3 border-2 border-sky-300">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-sky-900">معاينة مشتركة: ملف الكتالوج + ملف Bulk</h2>
+          <button type="button" className="btn-ghost text-xs disabled:opacity-50" disabled={combinedBusy} onClick={() => void runCombinedPreview()}>
+            {combinedBusy ? "جارٍ التحليل…" : "معاينة مشتركة (قراءة فقط)"}
+          </button>
+        </div>
+        <p className="text-[10px] text-muted">{SNOONU_STOCK_SOURCE_NOTE}</p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="space-y-1">
+            <span className="label">{SNOONU_SOURCE_LABEL.FULL}</span>
+            <input ref={combinedFullRef} type="file" accept=".xlsx" className="input text-xs" />
+            <span className="block text-[10px] text-muted">
+              يتحكم بوجود المنتج في الكتالوج والأسماء والأوصاف — ومصدر «محذوف من سنونو» الوحيد.
+            </span>
+          </label>
+          <label className="space-y-1">
+            <span className="label">{SNOONU_SOURCE_LABEL.BULK}</span>
+            <input ref={combinedBulkRef} type="file" accept=".xlsx" className="input text-xs" />
+            <span className="block text-[10px] text-muted">
+              يتحكم بالمخزون والسعر وSKU والباركود فقط — غياب أي صف منه لا يحذف ولا يوقف أي منتج إطلاقاً.
+            </span>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-1 text-[10px]">
+          {(Object.keys(SNOONU_COMBINED_AUTHORITY) as (keyof typeof SNOONU_COMBINED_AUTHORITY)[]).map((k) => (
+            <span key={k} className={`rounded-full px-2 py-0.5 ${SNOONU_COMBINED_AUTHORITY[k] === "BULK" ? "bg-emerald-50 text-emerald-800" : "bg-indigo-50 text-indigo-800"}`}>
+              {k} ← {SNOONU_COMBINED_AUTHORITY[k]}
+            </span>
+          ))}
+        </div>
+        {combinedError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{combinedError}</p>}
+        {combined && (
+          <>
+            <p className="text-[10px] text-muted">
+              {combined.fullFile ? `الكتالوج: ${combined.fullFile.name} — ورقة ${combined.fullFile.sheet}` : "لم يُرفع ملف كتالوج"}
+              {" · "}
+              {combined.bulkFile ? `Bulk: ${combined.bulkFile.name} — ورقة ${combined.bulkFile.sheet}` : "لم يُرفع ملف Bulk"}
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {([
+                ["صفوف الكتالوج", combined.plan.counts.fullRows],
+                ["صفوف Bulk", combined.plan.counts.bulkRows],
+                ["SPI في الملفين", combined.plan.counts.matchedInBoth],
+                ["في الكتالوج فقط", combined.plan.counts.fullOnly],
+                ["في Bulk فقط", combined.plan.counts.bulkOnly],
+                ["تطابق المخزون", combined.plan.counts.stockMatches],
+                ["اختلاف المخزون", combined.plan.counts.stockMismatches],
+                ["Bulk: غير متوفر", combined.plan.counts.bulkOutOfStock],
+                ["Bulk: متوفر", combined.plan.counts.bulkInStock],
+                ["تحويل إلى غير متوفر", combined.plan.counts.availabilityToOut],
+                ["تحويل إلى متوفر", combined.plan.counts.availabilityToIn],
+                ["تغييرات السعر", combined.plan.counts.priceChanges],
+                ["تغييرات SKU", combined.plan.counts.skuChanges],
+                ["تغييرات الباركود", combined.plan.counts.barcodeChanges],
+                ["تغييرات المحتوى", combined.plan.counts.contentChanges],
+                ["منتجات جديدة (الكتالوج)", combined.plan.counts.newProducts],
+                ["مرشّحو الحذف (الكتالوج فقط)", combined.plan.counts.removalCandidates],
+                ["مراجعة سعر صفر", combined.plan.counts.zeroPriceReviews],
+                ["تعارض هوية", combined.plan.counts.identityCollisions],
+                ["تعارضات / محظور", combined.plan.counts.conflicts + combined.plan.counts.blocked],
+              ] as [string, number][]).map(([label, n]) => (
+                <div key={label} className="rounded-lg border border-line bg-surface px-2 py-1.5">
+                  <div className="text-[10px] text-muted">{label}</div>
+                  <div className="text-sm font-semibold text-ink">{n}</div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted">{SNOONU_STOCK_RULE_NOTE}</p>
+            {combined.plan.mismatches.length > 0 && (
+              <div className="space-y-1">
+                <h3 className="text-xs font-semibold text-amber-900">
+                  {SNOONU_STOCK_SOURCE_MISMATCH_AR} — {combined.plan.mismatches.length} ({SNOONU_STOCK_SOURCE_MISMATCH})
+                </h3>
+                <p className="text-[10px] text-muted">
+                  تُعرض القيمتان جنباً إلى جنب. لا يتم اختيار أي قيمة تلقائياً دون عرض الاختلاف؛ عند التطبيق التشغيلي يُعتمد Bulk.
+                </p>
+                <div className="max-h-72 overflow-auto rounded-lg border border-line">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-surface-2 text-muted">
+                      <tr>
+                        <th className="px-2 py-1 text-right">SPI</th>
+                        <th className="px-2 py-1 text-right">SKU</th>
+                        <th className="px-2 py-1 text-right">ملف الكتالوج</th>
+                        <th className="px-2 py-1 text-right">ملف Bulk</th>
+                        <th className="px-2 py-1 text-right">المعتمد تشغيلياً</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {combined.plan.mismatches.map((m) => (
+                        <tr key={m.spi} className="border-t border-line">
+                          <td className="px-2 py-1 font-mono text-[10px]">{m.spi}</td>
+                          <td className="px-2 py-1">{m.sku ?? "—"}</td>
+                          <td className="px-2 py-1 text-indigo-800">{m.fullLabel}</td>
+                          <td className="px-2 py-1 text-emerald-800">{m.bulkLabel}</td>
+                          <td className="px-2 py-1 font-semibold">{m.operational} · {m.operationalValue === "IN" ? "متوفر" : "غير متوفر"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            <p className="text-[10px] text-muted">
+              معاينة للقراءة فقط — لا تكتب أي شيء. بصمة الخطة: <span className="font-mono">{combined.plan.fingerprint.slice(0, 16)}…</span>
+            </p>
+          </>
+        )}
+      </section>
 
       {isOwner && (
         <section className="card space-y-3 border-2 border-amber-300">

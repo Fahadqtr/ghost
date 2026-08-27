@@ -139,6 +139,79 @@ export async function applySnoonuSyncAction(
   return { data: applied.value };
 }
 
+// ── TWO-SOURCE COMBINED PREVIEW (FULL + BULK, read-only) ────────────────────
+
+interface ParsedSource {
+  sheet: string;
+  columns: SnoonuSyncColumn[];
+  fileName: string;
+  rows: ReturnType<typeof parseSnoonuSyncData>["rows"];
+  emptySpiRows: ReturnType<typeof parseSnoonuSyncData>["emptySpiRows"];
+}
+
+/** Parse ONE uploaded workbook under a field prefix ("full" / "bulk"). */
+async function parseNamedSource(
+  formData: FormData,
+  prefix: "full" | "bulk",
+): Promise<{ ok: true; value: ParsedSource } | { ok: false; error: string } | null> {
+  const file = formData.get(`${prefix}File`);
+  if (!(file instanceof File) || file.size === 0) return null;
+  if (file.size > MAX_IMPORT_BYTES) return { ok: false, error: ERR.file_too_big };
+  const bytes = Buffer.from(await file.arrayBuffer());
+  if (!looksLikeXlsx(bytes)) return { ok: false, error: ERR.file_unreadable };
+  const inspected = await inspectWorkbook(bytes);
+  if (inspected.status !== "ok" || inspected.sheets.length === 0) return { ok: false, error: ERR.file_unreadable };
+  const requested = formData.get(`${prefix}Sheet`);
+  // the BULK workbook keeps its data on a named sheet beside Instructions —
+  // pick the FIRST sheet that actually carries an SPI column, never guess.
+  const candidates = typeof requested === "string" && requested !== ""
+    ? [requested.slice(0, 200)]
+    : inspected.sheets.map((s) => s.name);
+  for (const name of candidates) {
+    const extracted = await extractSheetRows(bytes, name);
+    if (extracted.status !== "ok") continue;
+    const columns = detectSnoonuSyncColumns(extracted.headers);
+    if (!columns.some((c) => c.field === "spi")) continue;
+    const parsed = parseSnoonuSyncData(extracted.rows, extracted.rowNums, columns);
+    return { ok: true, value: { sheet: name, columns, fileName: file.name, ...parsed } };
+  }
+  return { ok: false, error: ERR.no_spi };
+}
+
+export interface SnoonuCombinedPreviewVM {
+  fullFile: { name: string; sheet: string } | null;
+  bulkFile: { name: string; sheet: string } | null;
+  plan: import("@/lib/snoonu/two-source").SnoonuCombinedPlan;
+}
+
+/** READ-ONLY combined preview of the FULL catalog + BULK update workbooks. */
+export async function previewSnoonuCombinedAction(
+  formData: FormData,
+): Promise<{ data: SnoonuCombinedPreviewVM } | { error: string }> {
+  const writer = await requireMalakWriter();
+  if (!writer.ok) return { error: writer.error };
+  const fullRes = await parseNamedSource(formData, "full");
+  const bulkRes = await parseNamedSource(formData, "bulk");
+  if (fullRes && !fullRes.ok) return { error: fullRes.error };
+  if (bulkRes && !bulkRes.ok) return { error: bulkRes.error };
+  const full = fullRes?.ok ? fullRes.value : null;
+  const bulk = bulkRes?.ok ? bulkRes.value : null;
+  if (!full && !bulk) return { error: ERR.file_required };
+  const { previewSnoonuCombined } = await import("@/lib/snoonu/two-source.server");
+  const plan = await previewSnoonuCombined({
+    full: full ? { rows: full.rows, emptySpiRows: full.emptySpiRows } : null,
+    bulk: bulk ? { rows: bulk.rows, emptySpiRows: bulk.emptySpiRows } : null,
+  });
+  if (!plan) return { error: ERR.context_failed };
+  return {
+    data: {
+      fullFile: full ? { name: full.fileName, sheet: full.sheet } : null,
+      bulkFile: bulk ? { name: bulk.fileName, sheet: bulk.sheet } : null,
+      plan,
+    },
+  };
+}
+
 // ── SCOPED REPAIR (owner-only, five authorized operations) ──────────────────
 
 /** READ-ONLY preview of the authorized repairs against live production. */
