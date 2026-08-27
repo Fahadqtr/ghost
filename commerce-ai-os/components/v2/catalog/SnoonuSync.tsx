@@ -24,7 +24,7 @@ import {
   type SnoonuSyncPreviewVM,
 } from "@/app/(v2)/v2/catalog/snoonu-sync/actions";
 import type { SnoonuApplyResult } from "@/lib/snoonu/sync.server";
-import { SNOONU_MODE_LABEL, SNOONU_MODE_NOTICE, type SnoonuImportMode } from "@/lib/snoonu/sync";
+import { SNOONU_MODE_LABEL, SNOONU_MODE_NOTICE, SNOONU_STOCK_RULE_NOTE, type SnoonuImportMode } from "@/lib/snoonu/sync";
 import type { DuplicatePairAudit } from "@/lib/products/duplicate-resolution.server";
 
 const NEW_CLASS_LABEL: Record<string, string> = {
@@ -229,6 +229,8 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
                 ["مراجعات سعر صفر", plan.counts.zeroPriceReviews],
                 ["تعارضات هوية", plan.counts.identityCollisions],
                 ["ربط منتجات موجودة", plan.counts.reconcileExisting],
+                ["غير متوفر في الملف", plan.counts.outOfStockInFile],
+                ["متوفر في الملف", plan.counts.inStockInFile],
                 ["منتجات جديدة", plan.counts.newProducts],
                 ["جديد بلا SKU", plan.counts.newMissingSku],
                 ["جديد بلا باركود", plan.counts.newMissingBarcode],
@@ -248,6 +250,9 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
                 التطبيق محظور: SPI مكرر داخل الملف ({plan.duplicateSpis.length}) — أصلح الملف ثم أعد المعاينة.
               </p>
             )}
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-ink">
+              {SNOONU_STOCK_RULE_NOTE}
+            </p>
             <input
               type="search"
               value={search}

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import {
   detectSnoonuSyncColumns,
   parseSnoonuSyncRows,
+  parseSnoonuSyncData,
   planSnoonuSync,
   buildSnoonuReturnAoa,
   pendingSkuForSpi,
@@ -129,7 +130,10 @@ test("6: the later SPI+SKU/Barcode workbook updates the SAME product (sentinel r
 test("7: a mapped Snoonu SPI absent from the workbook → REMOVED FROM SNOONU, listed explicitly", () => {
   const plan = planSnoonuSync({ ...base(), rows: [row(SPI_A), row(SPI_B)] }); // SPI_C absent
   assert.equal(plan.removals.length, 1);
-  assert.deepEqual(plan.removals[0], { productId: "p3", spi: SPI_C, productSku: "mk30", displayName: "Product mk30" });
+  assert.deepEqual(plan.removals[0], {
+    productId: "p3", spi: SPI_C, productSku: "mk30", displayName: "Product mk30",
+    lifecycleState: "ACTIVE", plannedBehavior: "stop_and_archive",
+  });
   assert.equal(plan.counts.removedFromSnoonu, 1);
 });
 
@@ -242,6 +246,8 @@ test("counts: the exact owner-required census over a mixed workbook", () => {
     zeroPriceReviews: 0,
     identityCollisions: 0,
     reconcileExisting: 0,
+    outOfStockInFile: 1,
+    inStockInFile: 0,
     newProducts: 1,
     newMissingSku: 1,
     newMissingBarcode: 1,
@@ -515,4 +521,104 @@ test("reconcile placeholder upgrade: a legacy non-SPI mapping does NOT block; an
   assert.equal(viaPlaceholder.counts.reconcileExisting, 1, "placeholder-mapped target reconciles (identity upgrade)");
   assert.deepEqual(viaPlaceholder.reconciles[0].placeholderMappings, ["mk2231"]);
   assert.equal(viaPlaceholder.reconciles[0].currentSnoonuMapping, "mk2231");
+});
+
+// ── BULK STOCK SEMANTICS + REPAIR PATCH (owner safety patch) ────────────────
+
+import { parseStockCell, selectSnoonuRepairPlan, SNOONU_STOCK_RULE_NOTE } from "./sync.ts";
+
+const BULK_HEADERS = [
+  "SPI", "SKU", "Barcode", "Product Name (En)", "Product Name (Ar)", "Price (QAR)",
+  "Stock Al Aziziyah Building 13, first floor, Apartment 3", "67d3708a1774f2d0341132f7",
+  "Stock Ali Bin Abdullah Street", "6877618dcc6ded93d3fa0e48",
+];
+
+test("stock 1+2+3: numeric 0 and literal \"unavailable\" are OUT OF STOCK; any positive quantity is IN STOCK", () => {
+  assert.equal(parseStockCell(0), "OUT");
+  assert.equal(parseStockCell("0"), "OUT");
+  assert.equal(parseStockCell("unavailable"), "OUT");
+  assert.equal(parseStockCell("UNAVAILABLE"), "OUT");
+  assert.equal(parseStockCell(1), "IN");
+  assert.equal(parseStockCell("100"), "IN");
+  assert.equal(parseStockCell(99), "IN");
+  assert.equal(parseStockCell(""), null, "blank is never guessed");
+  assert.equal(parseStockCell("n/a"), null, "unreadable is never guessed");
+  assert.ok(SNOONU_STOCK_RULE_NOTE.includes("0 أو unavailable") && SNOONU_STOCK_RULE_NOTE.includes("متوفر"));
+});
+
+test("stock: the store stock column is auto-recognized (and only that store's)", () => {
+  const cols = detectSnoonuSyncColumns(BULK_HEADERS);
+  assert.equal(cols[8].field, "stock", "Stock Ali Bin Abdullah Street → stock");
+  assert.equal(cols[6].field, null, "the other branch's stock column stays unmapped");
+  assert.equal(cols[0].field, "spi");
+  assert.equal(cols[5].field, "price");
+});
+
+test("stock 5 (fixture): 145 zero + 34 unavailable + positives ⇒ 179 rows OUT OF STOCK in the file census", () => {
+  const cols = detectSnoonuSyncColumns(BULK_HEADERS);
+  const mk = (spi: string, stock: unknown) => [spi, "", "", "", "", "", "5", "", stock, ""];
+  const data: unknown[][] = [];
+  for (let i = 0; i < 145; i++) data.push(mk(`69e40de66040178fae${String(200000 + i).slice(-6)}`, "0"));
+  for (let i = 0; i < 34; i++) data.push(mk(`69e40de66040178fae${String(300000 + i).slice(-6)}`, "unavailable"));
+  for (let i = 0; i < 500; i++) data.push(mk(`69e40de66040178fae${String(400000 + i).slice(-6)}`, "100"));
+  const { rows } = parseSnoonuSyncData(data, data.map((_, i) => i + 2), cols);
+  const out = rows.filter((r) => r.availability === false);
+  assert.equal(out.length, 179, "145 + 34 = 179 out-of-stock rows");
+  assert.equal(rows.filter((r) => r.availability === true).length, 500);
+  assert.ok(out.every((r) => r.stockState === "OUT" && r.availabilitySource === "stock_column"),
+    "availability was derived from the stock column, not a boolean column");
+  const plan = planSnoonuSync({ mode: "PARTIAL", rows, emptySpiRows: [], canonical: [], listings: [] });
+  assert.equal(plan.counts.outOfStockInFile, 179);
+  assert.equal(plan.counts.inStockInFile, 500);
+});
+
+test("stock 4: a PARTIAL bulk file with stock states can never create removals", () => {
+  const cols = detectSnoonuSyncColumns(BULK_HEADERS);
+  const data: unknown[][] = [[SPI_A, "", "", "", "", "", "5", "", "0", ""]];
+  const { rows } = parseSnoonuSyncData(data, [2], cols);
+  const plan = planSnoonuSync({ ...base(), mode: "PARTIAL", rows, emptySpiRows: [] });
+  assert.equal(plan.removals.length, 0, "SPI_B/SPI_C absent → still zero removals");
+  assert.equal(plan.counts.removedFromSnoonu, 0);
+  const m = plan.matched.find((x) => x.spi === SPI_A)!;
+  assert.deepEqual(m.changes, [{ field: "availability", from: "In Stock", to: "Out of Stock" }], "stock 0 drives availability");
+});
+
+test("removal 10+11+12: the planned behavior matches the product's lifecycle (DRAFT never attempts DRAFT→STOPPED)", () => {
+  const canonical = [
+    product("pa", "mkA", { lifecycleState: "ACTIVE" }),
+    product("pd", "mkD", { lifecycleState: "DRAFT" }),
+    product("ps", "mkS", { lifecycleState: "STOPPED" }),
+  ];
+  const listings = [listing("pa", SPI_A), listing("pd", SPI_B), listing("ps", SPI_C)];
+  const plan = planSnoonuSync({ mode: "FULL", canonical, listings, emptySpiRows: [], rows: [] });
+  const byS = new Map(plan.removals.map((r) => [r.productSku, r]));
+  assert.equal(byS.get("mkA")!.plannedBehavior, "stop_and_archive", "ACTIVE → certified STOPPED transition + archive");
+  assert.equal(byS.get("mkD")!.plannedBehavior, "archive_listing_only", "DRAFT → archive listing ONLY, lifecycle untouched");
+  assert.equal(byS.get("mkD")!.lifecycleState, "DRAFT");
+  assert.ok(!byS.has("mkS"), "an already-STOPPED product needs no further removal");
+});
+
+test("repair 13: the repair plan is limited to the outstanding operations only", () => {
+  const existing = product("px", "mk2231", { barcode: "9597068053198" });
+  const plan = planSnoonuSync({
+    mode: "FULL",
+    canonical: [...base().canonical, existing],
+    listings: [...base().listings, listing("px", "mk2231")],
+    emptySpiRows: [],
+    rows: [row(SPI_A, { availability: false }), row(SPI_NEW, { sku: "mk2231", barcode: "9597068053198" })],
+  });
+  const repair = selectSnoonuRepairPlan(plan);
+  assert.equal(repair.scope, "failed_operations_only");
+  assert.equal(repair.reconciles.length, 1, "the outstanding SPI link");
+  assert.equal(repair.removals.length, 2, "the outstanding removals");
+  assert.ok(!("matched" in repair) && !("news" in repair), "no field updates or creations ride along with a repair");
+  assert.ok(plan.matched.length > 0, "…even though the full plan does contain field updates");
+});
+
+test("15: SPI remains the ONLY identity key — stock/price/name never match a row", () => {
+  const plan = planSnoonuSync({ ...base(), mode: "PARTIAL", rows: [
+    row("69e40de66040178fae1ccfff", { sku: "mk10", barcode: null, nameEn: "Product mk10", availability: false }),
+  ] });
+  assert.equal(plan.matched.length, 0, "an unknown SPI never matches by SKU/name");
+  assert.equal(plan.counts.reconcileExisting, 0, "a single identifier does not reconcile either");
 });
