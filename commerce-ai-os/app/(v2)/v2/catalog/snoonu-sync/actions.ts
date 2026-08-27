@@ -139,6 +139,36 @@ export async function applySnoonuSyncAction(
   return { data: applied.value };
 }
 
+// ── SCOPED REPAIR (owner-only, five authorized operations) ──────────────────
+
+/** READ-ONLY preview of the authorized repairs against live production. */
+export async function previewSnoonuRepairAction(): Promise<
+  { data: import("@/lib/snoonu/repair").SnoonuRepairPlanResult } | { error: string }
+> {
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
+  const { previewSnoonuRepair } = await import("@/lib/snoonu/repair.server");
+  const plan = await previewSnoonuRepair();
+  if (!plan) return { error: ERR.context_failed };
+  return { data: plan };
+}
+
+/** Execute the authorized repairs after the owner's explicit confirmation. */
+export async function applySnoonuRepairAction(
+  formData: FormData,
+): Promise<{ data: import("@/lib/snoonu/repair.server").SnoonuRepairApplyResult } | { error: string }> {
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
+  const fingerprint = formData.get("fingerprint");
+  if (typeof fingerprint !== "string" || fingerprint.length !== 64) return { error: ERR.plan_changed };
+  const { applySnoonuRepair } = await import("@/lib/snoonu/repair.server");
+  const res = await applySnoonuRepair({ expectedFingerprint: fingerprint, actor: owner.email });
+  if (!res.ok) {
+    return { error: res.error === "plan_changed" ? ERR.plan_changed : res.error === "nothing_eligible" ? "لا توجد عمليات مؤهلة للإصلاح." : ERR.context_failed };
+  }
+  return { data: res.value };
+}
+
 /** READ-ONLY duplicate-pair audit for IDENTITY_COLLISION cases (OWNER only).
  *  Snoonu Sync never merges — this prepares the separate resolution decision. */
 export async function previewDuplicatePairAction(

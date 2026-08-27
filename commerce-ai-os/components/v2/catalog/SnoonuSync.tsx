@@ -21,11 +21,21 @@ import {
   applySnoonuSyncAction,
   buildSnoonuReturnFileAction,
   previewDuplicatePairAction,
+  previewSnoonuRepairAction,
+  applySnoonuRepairAction,
   type SnoonuSyncPreviewVM,
 } from "@/app/(v2)/v2/catalog/snoonu-sync/actions";
 import type { SnoonuApplyResult } from "@/lib/snoonu/sync.server";
 import { SNOONU_MODE_LABEL, SNOONU_MODE_NOTICE, SNOONU_STOCK_RULE_NOTE, type SnoonuImportMode } from "@/lib/snoonu/sync";
 import type { DuplicatePairAudit } from "@/lib/products/duplicate-resolution.server";
+import type { SnoonuRepairPlanResult } from "@/lib/snoonu/repair";
+import type { SnoonuRepairApplyResult } from "@/lib/snoonu/repair.server";
+
+const REPAIR_STATUS_LABEL: Record<string, string> = {
+  eligible: "مؤهلة للإصلاح",
+  already_repaired: "مُصلحة مسبقاً",
+  blocked: "محظورة",
+};
 
 const NEW_CLASS_LABEL: Record<string, string> = {
   NEW: "جديد (مكتمل الهوية)",
@@ -52,6 +62,42 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
   const [zeroAccepted, setZeroAccepted] = useState<Set<string>>(new Set());
   const [dupAudit, setDupAudit] = useState<DuplicatePairAudit | null>(null);
   const [dupBusy, setDupBusy] = useState(false);
+  // SCOPED REPAIR — completely separate from «تطبيق المزامنة».
+  const [repairPlan, setRepairPlan] = useState<SnoonuRepairPlanResult | null>(null);
+  const [repairBusy, setRepairBusy] = useState<"preview" | "apply" | null>(null);
+  const [repairConfirm, setRepairConfirm] = useState(false);
+  const [repairDone, setRepairDone] = useState<SnoonuRepairApplyResult | null>(null);
+  const [repairError, setRepairError] = useState<string | null>(null);
+
+  async function runRepairPreview() {
+    setRepairBusy("preview"); setRepairError(null); setRepairPlan(null); setRepairDone(null); setRepairConfirm(false);
+    try {
+      const res = await previewSnoonuRepairAction();
+      if ("error" in res) { setRepairError(res.error); return; }
+      setRepairPlan(res.data);
+    } catch {
+      setRepairError("تعذّرت معاينة الإصلاح.");
+    } finally {
+      setRepairBusy(null);
+    }
+  }
+
+  async function runRepairApply() {
+    if (!repairPlan) return;
+    setRepairBusy("apply"); setRepairError(null);
+    try {
+      const fd = new FormData();
+      fd.set("fingerprint", repairPlan.fingerprint);
+      const res = await applySnoonuRepairAction(fd);
+      if ("error" in res) { setRepairError(res.error); return; }
+      setRepairDone(res.data);
+      setRepairConfirm(false);
+    } catch {
+      setRepairError("تعذّر تنفيذ الإصلاح.");
+    } finally {
+      setRepairBusy(null);
+    }
+  }
 
   function formDataWithFile(): FormData | null {
     const file = fileRef.current?.files?.[0];
@@ -151,6 +197,80 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
         </div>
         <Link href="/v2/catalog/import" className="btn-ghost text-xs">تحديث الكتالوج العام من Excel</Link>
       </div>
+
+      {isOwner && (
+        <section className="card space-y-3 border-2 border-amber-300">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-amber-900">إصلاح العمليات الفاشلة فقط</h2>
+            <button type="button" className="btn-ghost text-xs disabled:opacity-50" disabled={repairBusy !== null} onClick={() => void runRepairPreview()}>
+              {repairBusy === "preview" ? "جارٍ الفحص…" : "فحص العمليات الفاشلة (قراءة فقط)"}
+            </button>
+          </div>
+          <p className="text-[10px] text-muted">
+            مسار منفصل تماماً عن «تطبيق المزامنة»: لا يقرأ أي ملف، ولا يغيّر المحتوى أو السعر أو المخزون أو SKU/الباركود
+            أو دورة الحياة، ولا يُنشئ منتجات — يعدّل فقط صفوف ربط سنونو للعمليات الخمس المصرّح بها.
+          </p>
+          {repairError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{repairError}</p>}
+          {repairPlan && (
+            <>
+              <div className="overflow-x-auto rounded-lg border border-amber-200">
+                <table className="w-full min-w-[820px] text-right text-[11px]">
+                  <thead className="bg-amber-50 text-amber-900"><tr>
+                    <th className="px-2 py-1 font-medium">SKU</th>
+                    <th className="px-2 py-1 font-medium">النوع</th>
+                    <th className="px-2 py-1 font-medium">SPI</th>
+                    <th className="px-2 py-1 font-medium">قبل</th>
+                    <th className="px-2 py-1 font-medium">بعد</th>
+                    <th className="px-2 py-1 font-medium">دورة الحياة</th>
+                    <th className="px-2 py-1 font-medium">الحالة</th>
+                  </tr></thead>
+                  <tbody>
+                    {repairPlan.rows.map((r) => (
+                      <tr key={r.sku} className="border-t border-amber-100">
+                        <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{r.sku}</td>
+                        <td className="px-2 py-1">{r.type === "RECONCILE_PLACEHOLDER" ? "ربط منتج موجود" : "أرشفة ربط سنونو"}</td>
+                        <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{r.spi}</td>
+                        <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{r.beforeExternalId ?? "—"} / {r.beforeMappingStatus ?? "—"}</td>
+                        <td className="px-2 py-1 font-mono text-[10px]" dir="ltr">{r.afterExternalId ?? "—"} / {r.afterMappingStatus ?? "—"}</td>
+                        <td className="px-2 py-1">{r.lifecycleBefore ?? "—"} (بدون تغيير)</td>
+                        <td className="px-2 py-1">
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] ${r.status === "eligible" ? "bg-emerald-50 text-emerald-700" : r.status === "already_repaired" ? "bg-slate-100 text-slate-600" : "bg-rose-50 text-rose-700"}`}>
+                            {REPAIR_STATUS_LABEL[r.status]}{r.reason ? ` — ${r.reason}` : ""}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {repairDone ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  ✓ تم الإصلاح: {repairDone.repaired} · محظور/فشل: {repairDone.blocked}
+                  {!repairDone.auditRecorded && <div className="pt-1 text-amber-800">تنبيه: لم يُسجَّل سجل التدقيق (جدول snoonu_sync_audits غير مهيأ).</div>}
+                </div>
+              ) : repairConfirm ? (
+                <div className="space-y-2">
+                  <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    تأكيد: مؤهلة {repairPlan.eligible} · محظورة {repairPlan.blocked} · مُصلحة مسبقاً {repairPlan.alreadyRepaired} —{" "}
+                    <span className="font-mono text-[10px]" dir="ltr">{repairPlan.rows.filter((r) => r.status === "eligible").map((r) => r.sku).join(", ") || "—"}</span>.
+                    <br />لن يتم تطبيق تغييرات المحتوى أو السعر أو المخزون.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button type="button" className="btn-ghost text-xs" onClick={() => setRepairConfirm(false)}>إلغاء</button>
+                    <button type="button" className="btn-primary text-xs disabled:opacity-50" disabled={repairBusy !== null || repairPlan.eligible === 0} onClick={() => void runRepairApply()}>
+                      {repairBusy === "apply" ? "جارٍ التنفيذ…" : "تنفيذ إصلاح الخمس حالات"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="btn-primary text-xs disabled:opacity-50" disabled={repairBusy !== null || repairPlan.eligible === 0} onClick={() => setRepairConfirm(true)}>
+                  تنفيذ إصلاح الخمس حالات…
+                </button>
+              )}
+            </>
+          )}
+        </section>
+      )}
 
       <section className="card space-y-3">
         {/* EXPLICIT import-mode choice — extremely visible, never defaulted,
