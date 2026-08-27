@@ -30,6 +30,7 @@ import { makeInventoryInitializer } from "@/lib/products/inventory-initializer";
 import { toProductRow, type ProductInput } from "@/lib/products/product-save";
 import {
   planSnoonuSync,
+  selectSnoonuRepairPlan,
   pendingSkuForSpi,
   availabilityToStockStatus,
   SNOONU_STOREFRONT_KEY,
@@ -109,6 +110,22 @@ export async function previewSnoonuSyncPlan(
   const ctx = await loadSnoonuSyncContext();
   if (!ctx) return null;
   return planSnoonuSync({ mode, rows, emptySpiRows, canonical: ctx.canonical, listings: ctx.listings });
+}
+
+/**
+ * READ-ONLY repair preview: re-plan the workbook against LIVE data and keep
+ * only the operations still outstanding (SPI reconciliations + Snoonu
+ * removals). Anything that already succeeded disappears on its own, so this
+ * is scoped to the failed rows without storing or trusting a failure list.
+ */
+export async function previewSnoonuRepairPlan(
+  mode: SnoonuImportMode,
+  rows: readonly SnoonuSyncRow[],
+  emptySpiRows: readonly number[],
+): Promise<{ plan: SnoonuSyncPlan; repair: ReturnType<typeof selectSnoonuRepairPlan> } | null> {
+  const plan = await previewSnoonuSyncPlan(mode, rows, emptySpiRows);
+  if (!plan) return null;
+  return { plan, repair: selectSnoonuRepairPlan(plan) };
 }
 
 export interface SnoonuApplyRowResult {
@@ -215,31 +232,52 @@ export async function applySnoonuSyncPlan(input: {
   // SKU and barcode untouched; only the certified external-channel listing is
   // written, then the row's safe field diffs flow through the normal path.
   for (const rec of plan.reconciles) {
-    const { error: linkErr } = await admin.from("external_channel_listings").insert({
-      product_id: rec.productId,
-      channel_key: "snoonu",
-      storefront_key: SNOONU_STOREFRONT_KEY,
-      external_product_id: rec.spi,
-      identity_type: "snoonu_spi",
-      mapping_status: "active",
-      exported_sku: rec.importedSku,
-      exported_barcode: rec.importedBarcode,
-    });
-    if (linkErr) {
-      results.push({ spi: rec.spi, action: "failed", productId: rec.productId, message: "تعذّر ربط SPI بالمنتج الموجود" });
-      continue;
-    }
-    // identity UPGRADE: the product's own legacy placeholder listings (never
-    // SPI-shaped, verified by the plan) are archived — not deleted — now that
-    // the real SPI listing exists.
-    if (rec.placeholderMappings.length > 0) {
-      await admin
+    // IDENTITY UPGRADE — the listing table enforces ONE product-grain mapping
+    // per (storefront, product), so inserting a second row alongside a legacy
+    // placeholder always fails. When exactly one placeholder exists we upgrade
+    // THAT ROW IN PLACE (same row id, same product, same SKU/barcode); only a
+    // product with no snoonu mapping at all gets a fresh insert. The plan
+    // already failed closed on >1 placeholder or any active SPI-shaped row.
+    let linkErr: { message: string } | null = null;
+    if (rec.placeholderMappings.length === 1) {
+      const upgraded = await admin
         .from("external_channel_listings")
-        .update({ mapping_status: "archived", updated_at: appliedAt })
+        .update({
+          external_product_id: rec.spi,
+          identity_type: "snoonu_spi",
+          mapping_status: "active",
+          exported_sku: rec.importedSku,
+          exported_barcode: rec.importedBarcode,
+          updated_at: appliedAt,
+        })
         .eq("storefront_key", SNOONU_STOREFRONT_KEY)
         .eq("product_id", rec.productId)
         .eq("mapping_status", "active")
-        .in("external_product_id", rec.placeholderMappings as string[]);
+        .eq("external_product_id", rec.placeholderMappings[0])
+        .select("id");
+      linkErr = upgraded.error as { message: string } | null;
+      if (!linkErr && (upgraded.data ?? []).length !== 1) {
+        // the placeholder moved between preview and apply — fail closed.
+        linkErr = { message: "placeholder drift" };
+      }
+    } else if (rec.placeholderMappings.length === 0) {
+      const inserted = await admin.from("external_channel_listings").insert({
+        product_id: rec.productId,
+        channel_key: "snoonu",
+        storefront_key: SNOONU_STOREFRONT_KEY,
+        external_product_id: rec.spi,
+        identity_type: "snoonu_spi",
+        mapping_status: "active",
+        exported_sku: rec.importedSku,
+        exported_barcode: rec.importedBarcode,
+      });
+      linkErr = inserted.error as { message: string } | null;
+    } else {
+      linkErr = { message: "ambiguous placeholder set" };
+    }
+    if (linkErr) {
+      results.push({ spi: rec.spi, action: "failed", productId: rec.productId, message: "تعذّر ربط SPI بالمنتج الموجود" });
+      continue;
     }
     const payload: Record<string, unknown> = {};
     for (const c of rec.changes) {
@@ -324,25 +362,41 @@ export async function applySnoonuSyncPlan(input: {
   // ── REMOVED FROM SNOONU — FULL mode ONLY (hard invariant above) — the
   //    CANONICAL lifecycle boundary (STOPPED) + listing archive. NEVER DELETE.
   for (const r of plan.mode === "FULL" ? plan.removals : []) {
-    const transition = await transitionProductLifecycle({
-      productId: r.productId,
-      targetState: "STOPPED",
-      reason: `REMOVED FROM SNOONU — SPI ${r.spi} absent from ${input.sourceFileName}`,
-    });
-    const ok = transition.outcome === "UPDATED" || transition.outcome === "UNCHANGED";
-    if (ok) {
-      await admin
-        .from("external_channel_listings")
-        .update({ mapping_status: "archived", updated_at: appliedAt })
-        .eq("storefront_key", SNOONU_STOREFRONT_KEY)
-        .eq("product_id", r.productId)
-        .eq("mapping_status", "active");
+    // "REMOVED FROM SNOONU" means STOP THE SNOONU LISTING. Only an ACTIVE
+    // product also takes the certified ACTIVE→STOPPED lifecycle transition;
+    // a DRAFT product has no legal DRAFT→STOPPED transition (and needs none),
+    // and a STOPPED one is already there — both simply lose the listing.
+    let lifecycleOk = true;
+    let behavior: "stop_and_archive" | "archive_listing_only" = "archive_listing_only";
+    if (r.lifecycleState === "ACTIVE") {
+      const transition = await transitionProductLifecycle({
+        productId: r.productId,
+        targetState: "STOPPED",
+        reason: `REMOVED FROM SNOONU — SPI ${r.spi} absent from ${input.sourceFileName}`,
+        expectedFromState: "ACTIVE",
+      });
+      lifecycleOk = transition.outcome === "UPDATED" || transition.outcome === "UNCHANGED";
+      behavior = "stop_and_archive";
     }
+    if (!lifecycleOk) {
+      results.push({ spi: r.spi, action: "failed", productId: r.productId, message: "تعذّر إيقاف المنتج عبر مسار دورة الحياة" });
+      continue;
+    }
+    const { error: archiveErr } = await admin
+      .from("external_channel_listings")
+      .update({ mapping_status: "archived", updated_at: appliedAt })
+      .eq("storefront_key", SNOONU_STOREFRONT_KEY)
+      .eq("product_id", r.productId)
+      .eq("mapping_status", "active");
     results.push({
       spi: r.spi,
-      action: ok ? "removed" : "failed",
+      action: archiveErr ? "failed" : "removed",
       productId: r.productId,
-      message: ok ? null : "تعذّر إيقاف المنتج عبر مسار دورة الحياة",
+      message: archiveErr
+        ? "تعذّر أرشفة ربط سنونو"
+        : behavior === "stop_and_archive"
+          ? "أُوقف المنتج (ACTIVE → STOPPED) وأُرشف ربط سنونو"
+          : `أُرشف ربط سنونو فقط — المنتج ${r.lifecycleState} ولم تتغيّر دورة حياته`,
     });
   }
 

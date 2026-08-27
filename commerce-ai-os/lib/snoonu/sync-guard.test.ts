@@ -136,3 +136,39 @@ test("the generic Excel importer is untouched: SPI stays reference-only there an
   assert.ok(core.includes('"spi", "spiuniqueidentifier"'), "generic import still ignores SPI as a match key");
   assert.ok(core.includes('"availability"'), "generic import still refuses availability columns");
 });
+
+test("reconcile 6+7+8 (apply): the placeholder row is UPGRADED IN PLACE — no second ECL row, no product insert, identity preserved", () => {
+  const server = read(SERVER);
+  const rec = server.slice(server.indexOf("IDENTITY UPGRADE"), server.indexOf("NEW Snoonu products"));
+  assert.ok(rec.includes("rec.placeholderMappings.length === 1"), "one placeholder ⇒ in-place upgrade branch");
+  assert.ok(/\.update\(\{[\s\S]*?external_product_id: rec\.spi[\s\S]*?identity_type: "snoonu_spi"[\s\S]*?mapping_status: "active"/.test(rec),
+    "the SAME row becomes the real SPI listing");
+  assert.ok(rec.includes('.eq("external_product_id", rec.placeholderMappings[0])'), "targeted at the exact placeholder row");
+  assert.ok(rec.includes('"placeholder drift"'), "a moved/missing placeholder fails closed instead of inserting");
+  assert.ok(rec.includes("rec.placeholderMappings.length === 0"), "only a product with NO snoonu mapping gets an insert");
+  assert.ok(rec.includes('"ambiguous placeholder set"'), ">1 placeholder fails closed at apply too");
+  assert.ok(!rec.includes("createProductCore") && !/from\("products"\)\s*\.insert\(/.test(rec), "no product is ever created");
+  assert.ok(!/update\(\s*\{[\s\S]{0,160}?\b(sku|barcode):/.test(rec), "canonical SKU/barcode are never rewritten");
+});
+
+test("removal 10+11+12 (apply): ACTIVE stops via the certified transition; DRAFT/STOPPED archive the listing only, and the result says which", () => {
+  const server = read(SERVER);
+  const rem = server.slice(server.indexOf('"REMOVED FROM SNOONU" means'));
+  assert.ok(rem.includes('r.lifecycleState === "ACTIVE"'), "the lifecycle transition is attempted ONLY for ACTIVE products");
+  assert.ok(rem.includes('expectedFromState: "ACTIVE"'), "the transition is pinned to the state the plan saw");
+  assert.ok(rem.includes("transitionProductLifecycle"), "and it is the certified boundary");
+  assert.ok(rem.includes('mapping_status: "archived"'), "every removal archives the snoonu listing");
+  assert.ok(rem.includes("أُوقف المنتج (ACTIVE → STOPPED) وأُرشف ربط سنونو"), "explicit ACTIVE outcome message");
+  assert.ok(rem.includes("أُرشف ربط سنونو فقط"), "explicit archive-only outcome message naming the lifecycle");
+  assert.ok(!rem.includes(".delete("), "never a delete");
+});
+
+test("repair preview is read-only and scoped: it re-plans live data and returns only outstanding operations", () => {
+  const server = read(SERVER);
+  const fn = server.slice(server.indexOf("export async function previewSnoonuRepairPlan"), server.indexOf("export interface SnoonuApplyRowResult"));
+  assert.ok(fn.includes("previewSnoonuSyncPlan"), "built from the READ-ONLY preview path");
+  assert.ok(fn.includes("selectSnoonuRepairPlan"), "narrowed by the pure repair selector");
+  for (const bad of [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("]) {
+    assert.ok(!fn.includes(bad), `the repair preview performs no write (${bad})`);
+  }
+});

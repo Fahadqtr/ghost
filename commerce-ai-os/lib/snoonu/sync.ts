@@ -56,7 +56,8 @@ export type SnoonuSyncField =
   | "sku"
   | "barcode"
   | "price"
-  | "availability";
+  | "availability"
+  | "stock";
 
 /** Arabic labels for the mapping UI — availability is RECOGNIZED, never غير مستخدم. */
 export const SNOONU_SYNC_FIELD_LABEL: Record<SnoonuSyncField, string> = {
@@ -69,7 +70,11 @@ export const SNOONU_SYNC_FIELD_LABEL: Record<SnoonuSyncField, string> = {
   barcode: "الباركود",
   price: "السعر",
   availability: "التوفر في سنونو / حالة التوفر",
+  stock: "مخزون سنونو (الفرع) — 0 أو unavailable = غير متوفر",
 };
+
+/** Owner-facing explanation of Snoonu's bulk stock encoding. */
+export const SNOONU_STOCK_RULE_NOTE = "سنونو: 0 أو unavailable = غير متوفر · أي كمية أكبر من 0 = متوفر";
 
 const FIELD_ALIASES: Record<SnoonuSyncField, string[]> = {
   spi: ["spi", "spiuniqueidentifier"],
@@ -83,7 +88,17 @@ const FIELD_ALIASES: Record<SnoonuSyncField, string[]> = {
   // workbook — both spellings normalize into the same proposed-price field.
   price: ["priceglobalupdate", "priceglobal", "priceqar"],
   availability: [],
+  stock: [],
 };
+
+/**
+ * The store whose stock/availability column drives canonical availability.
+ * Both real workbooks name it: the catalog export as
+ * "Availability for Malikas Universe Beauty Ali Bin Abdullah Street(Update)"
+ * and the bulk-update export as "Stock Ali Bin Abdullah Street". Matching is
+ * by normalized token, so neither full header string is hardcoded.
+ */
+export const SNOONU_STORE_TOKEN = "alibinabdullah";
 
 export interface SnoonuSyncColumn {
   index: number;
@@ -101,6 +116,9 @@ export function detectSnoonuSyncColumns(headers: readonly unknown[]): SnoonuSync
     const norm = normalizeHeader(header);
     let field: SnoonuSyncField | null = null;
     if (norm.startsWith("availabilityfor")) field = "availability";
+    // the BULK workbook has no boolean availability column — the store's stock
+    // column carries the state (0 / "unavailable" ⇒ out, quantity ⇒ in).
+    else if (norm.startsWith("stock") && norm.includes(SNOONU_STORE_TOKEN)) field = "stock";
     else {
       for (const f of Object.keys(FIELD_ALIASES) as SnoonuSyncField[]) {
         if (FIELD_ALIASES[f].includes(norm)) { field = f; break; }
@@ -124,8 +142,13 @@ export interface SnoonuSyncRow {
   sku: string | null;
   barcode: string | null;
   price: number | null;
-  /** True/False from the store availability column; null = unreadable/absent. */
+  /** effective availability for the store: the boolean column when present,
+   *  otherwise DERIVED from the store's stock column. null = not stated. */
   availability: boolean | null;
+  /** the store stock column's own reading (bulk workbook), null when absent. */
+  stockState: "IN" | "OUT" | null;
+  /** which column decided `availability` — for honest preview reporting. */
+  availabilitySource: "availability_column" | "stock_column" | null;
   warnings: string[];
 }
 
@@ -140,6 +163,23 @@ export function parseAvailabilityCell(v: unknown): boolean | null {
   const t = (clean(v) ?? "").toLowerCase();
   if (["true", "1", "yes", "متوفر"].includes(t)) return true;
   if (["false", "0", "no", "غير متوفر"].includes(t)) return false;
+  return null;
+}
+
+/**
+ * Snoonu bulk stock encoding (owner rule, from the real bulk workbook):
+ *   numeric 0            → OUT OF STOCK
+ *   literal "unavailable"→ OUT OF STOCK
+ *   any positive quantity→ IN STOCK
+ * Anything else (blank/unreadable) is null — never guessed.
+ */
+export function parseStockCell(v: unknown): "IN" | "OUT" | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v > 0 ? "IN" : "OUT";
+  const t = (clean(v) ?? "").toLowerCase();
+  if (t === "") return null;
+  if (t === "unavailable" || t === "out of stock" || t === "غير متوفر") return "OUT";
+  const n = Number.parseFloat(t.replace(/,/g, ""));
+  if (Number.isFinite(n)) return n > 0 ? "IN" : "OUT";
   return null;
 }
 
@@ -170,8 +210,16 @@ export function parseSnoonuSyncData(
     if (!spi) { emptySpiRows.push(rowNum); continue; }
     const warnings: string[] = [];
     const availabilityRaw = cell("availability");
-    const availability = parseAvailabilityCell(availabilityRaw);
-    if (availability === null && clean(availabilityRaw) !== null) warnings.push("قيمة توفر غير مقروءة");
+    const fromAvailability = parseAvailabilityCell(availabilityRaw);
+    if (fromAvailability === null && clean(availabilityRaw) !== null) warnings.push("قيمة توفر غير مقروءة");
+    const stockRaw = cell("stock");
+    const stockState = parseStockCell(stockRaw);
+    if (stockState === null && clean(stockRaw) !== null) warnings.push("قيمة مخزون غير مقروءة");
+    // the boolean column wins when present; otherwise the store's stock column
+    // decides (0 / "unavailable" ⇒ out, positive quantity ⇒ in).
+    const availability = fromAvailability !== null ? fromAvailability : stockState === null ? null : stockState === "IN";
+    const availabilitySource: SnoonuSyncRow["availabilitySource"] =
+      fromAvailability !== null ? "availability_column" : stockState !== null ? "stock_column" : null;
     const priceRaw = cell("price");
     const price = parsePriceCell(priceRaw);
     if (price === null && clean(priceRaw) !== null) warnings.push("سعر غير مقروء");
@@ -186,6 +234,8 @@ export function parseSnoonuSyncData(
       barcode: clean(cell("barcode")),
       price,
       availability,
+      stockState,
+      availabilitySource,
       warnings,
     });
   }
@@ -308,6 +358,13 @@ export interface SnoonuRemovalPlan {
   spi: string;
   productSku: string;
   displayName: string;
+  /** canonical lifecycle NOW — decides the valid removal behavior:
+   *  ACTIVE → certified ACTIVE→STOPPED transition + archive listing;
+   *  DRAFT  → archive the Snoonu listing ONLY (DRAFT→STOPPED is not a legal
+   *           transition and the business meaning is "stop the listing");
+   *  STOPPED→ archive listing only (no lifecycle mutation needed). */
+  lifecycleState: string;
+  plannedBehavior: "stop_and_archive" | "archive_listing_only";
 }
 
 export interface SnoonuProblemRow {
@@ -392,6 +449,10 @@ export interface SnoonuSyncCounts {
   zeroPriceReviews: number;
   identityCollisions: number;
   reconcileExisting: number;
+  /** rows the FILE says are out of stock (0 / "unavailable" / False). */
+  outOfStockInFile: number;
+  /** rows the FILE says are in stock (positive quantity / True). */
+  inStockInFile: number;
   newProducts: number;
   newMissingSku: number;
   newMissingBarcode: number;
@@ -539,6 +600,12 @@ export function planSnoonuSync(input: {
           const existing = activeByProduct.get(skuOwned.id) ?? [];
           if (existing.some((l) => spiLike(l.externalId))) {
             conflicts.push({ rowNum: r.rowNum, spi: r.spi, productSku: skuOwned.sku, message: "المنتج مرتبط بالفعل بـ SPI سنونو نشط آخر — لا ربط تلقائي" });
+            continue;
+          }
+          if (existing.length > 1) {
+            // more than one placeholder candidate — which row to upgrade is
+            // ambiguous, so FAIL CLOSED rather than guess.
+            conflicts.push({ rowNum: r.rowNum, spi: r.spi, productSku: skuOwned.sku, message: "أكثر من ربط سنونو قديم للمنتج — يحتاج مراجعة يدوية" });
             continue;
           }
           reconcile = {
@@ -723,6 +790,8 @@ export function planSnoonuSync(input: {
       spi: spiListings[0].externalId,
       productSku: product.sku,
       displayName: product.nameEn ?? product.nameAr ?? product.sku,
+      lifecycleState: product.lifecycleState,
+      plannedBehavior: product.lifecycleState === "ACTIVE" ? "stop_and_archive" : "archive_listing_only",
     });
   }
 
@@ -739,6 +808,8 @@ export function planSnoonuSync(input: {
     zeroPriceReviews: zeroPriceReviews.length,
     identityCollisions: identityCollisions.length,
     reconcileExisting: reconciles.length,
+    outOfStockInFile: input.rows.filter((r) => r.availability === false).length,
+    inStockInFile: input.rows.filter((r) => r.availability === true).length,
     newProducts: news.length,
     newMissingSku: news.filter((n) => n.klass === "NEW_WAITING_SKU" || n.klass === "NEW_WAITING_SKU_BARCODE").length,
     newMissingBarcode: news.filter((n) => n.klass === "NEW_WAITING_BARCODE" || n.klass === "NEW_WAITING_SKU_BARCODE").length,
@@ -779,6 +850,26 @@ export function planSnoonuSync(input: {
     applyBlocked: duplicateSpis.length > 0,
     fingerprint,
   };
+}
+
+// ── scoped REPAIR plan (pure) ────────────────────────────────────────────────
+
+export interface SnoonuRepairPlan {
+  reconciles: SnoonuReconcilePlan[];
+  removals: SnoonuRemovalPlan[];
+  /** nothing else from the plan is included — repair never re-runs a full apply. */
+  scope: "failed_operations_only";
+}
+
+/**
+ * The subset of a freshly-planned workbook that represents operations still
+ * OUTSTANDING: SPI reconciliations and Snoonu removals. Rows that already
+ * succeeded disappear naturally (their SPI now matches; removed products are
+ * archived/stopped), so re-planning against live data yields exactly the
+ * residual failures — no stored failure list, nothing fabricated.
+ */
+export function selectSnoonuRepairPlan(plan: SnoonuSyncPlan): SnoonuRepairPlan {
+  return { reconciles: plan.reconciles, removals: plan.removals, scope: "failed_operations_only" };
 }
 
 // ── Snoonu return/update workbook (task 7) ───────────────────────────────────
