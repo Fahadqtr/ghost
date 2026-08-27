@@ -105,9 +105,13 @@ test("the allow-repair migration only swaps the CHECK constraint", () => {
   assert.equal(touched.length, 2, "exactly two statements: the drop and the add");
 });
 
-test("the repair server writes an import_mode the chain accepts", () => {
-  const server = read("lib/snoonu/repair.server.ts");
-  const mode = /import_mode:\s*"([A-Z]+)"/.exec(server)?.[1];
-  assert.ok(mode, "the repair audit must set an explicit import_mode");
-  assert.ok(accepts(mode), `repair.server.ts writes ${mode} — the constraint must accept it`);
+test("every server that writes an audit uses an import_mode the chain accepts", () => {
+  // literal modes written by any snoonu server module must be in the value set.
+  for (const rel of ["lib/snoonu/availability-sync.server.ts", "lib/snoonu/sync.server.ts"]) {
+    for (const m of read(rel).matchAll(/import_mode:\s*"([A-Z]+)"/g)) {
+      assert.ok(accepts(m[1]), `${rel} writes ${m[1]} — the constraint must accept it`);
+    }
+  }
+  const avail = read("lib/snoonu/availability-sync.server.ts");
+  assert.ok(/import_mode:\s*"PARTIAL"/.test(avail), "availability runs are PARTIAL — they never remove anything");
 });

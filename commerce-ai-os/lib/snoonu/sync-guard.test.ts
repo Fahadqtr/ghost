@@ -37,15 +37,16 @@ test("preview is write-free: the pure planner has no I/O and the preview path pe
   for (const bad of [".insert(", ".update(", ".upsert(", ".delete(", ".rpc("]) {
     assert.ok(!previewSlice.includes(bad), `context/preview performs no write (${bad})`);
   }
+  // the page's own preview is now the availability flow — writer-gated there.
   const actions = read(ACTIONS);
-  assert.ok(/previewSnoonuSyncAction[\s\S]*?requireMalakWriter/.test(actions), "preview is at least writer-gated");
+  assert.ok(/previewSnoonuAvailabilityAction[\s\S]*?requireMalakWriter/.test(actions), "preview is at least writer-gated");
 });
 
 test("apply is OWNER-gated, confirmation-driven, and drift fails closed via the plan fingerprint", () => {
   const actions = read(ACTIONS);
-  const apply = actions.slice(actions.indexOf("export async function applySnoonuSyncAction"));
+  const apply = actions.slice(actions.indexOf("export async function applySnoonuAvailabilityAction"));
   assert.ok(apply.includes("requireOwner()"), "apply requires the OWNER");
-  assert.ok(apply.indexOf("requireOwner()") < apply.indexOf("parseSnoonuFile"), "gate before any work");
+  assert.ok(apply.indexOf("requireOwner()") < apply.indexOf("parseBoth"), "gate before any work");
   const server = read(SERVER);
   assert.ok(server.includes("plan.fingerprint !== input.expectedFingerprint"), "recomputed plan must equal what the owner previewed");
   assert.ok(server.includes('return { ok: false, error: "plan_changed" }'), "drift fails closed");
@@ -82,10 +83,9 @@ test("modes 15+16: apply REBUILDS the plan server-side in the EXPLICIT mode — 
   assert.ok(server.includes("planSnoonuSync({ mode: input.mode,"), "the plan is rebuilt server-side in the request's explicit mode");
   assert.ok(server.includes('input.mode !== "FULL" && plan.removals.length > 0'), "hard invariant: non-FULL removals fail closed");
   assert.ok(server.includes('plan.mode === "FULL" ? plan.removals : []'), "the removal executor itself is FULL-gated");
-  const actions = read(ACTIONS);
-  assert.ok(actions.includes('v === "FULL" || v === "PARTIAL" ? v : null'), "mode parses fail-closed — no default, no coercion");
-  assert.ok(/applySnoonuSyncAction[\s\S]*?readMode\(formData\)/.test(actions), "apply requires the explicit mode field");
-  assert.ok(actions.includes("mode_required"), "a missing mode is a refusal, never a silent FULL");
+  // The single-workbook FULL/PARTIAL uploader is gone from the page, so no
+  // caller can request FULL semantics at all; the engine invariants above are
+  // what still make removal unreachable if one ever returns.
   assert.ok(server.includes("import_mode: plan.mode"), "the audit records import_mode");
 });
 
@@ -95,9 +95,8 @@ test("zero-price safety: only an owner-resolved SPI that the REBUILT plan flagge
   assert.ok(server.includes("if (!review) continue;"), "an override not in the plan's review list writes nothing");
   const zeroWrites = server.match(/update\(\{ price: 0 \}\)/g) ?? [];
   assert.equal(zeroWrites.length, 1, "exactly ONE code path can write price 0 — the explicit per-row resolution");
-  const ui = read(UI);
-  assert.ok(ui.includes("الاحتفاظ بالسعر الحالي") && ui.includes("اعتماد السعر صفر"), "the UI offers the two explicit owner choices");
-  assert.ok(ui.includes("zeroPriceOverrides"), "overrides travel explicitly with the apply");
+  // the availability page writes no price at all, so it carries no zero-price
+  // resolution UI — the engine guard above is what keeps the rule.
 });
 
 test("duplicate resolution is SEPARATE and read-only: Snoonu Sync never merges canonical products", () => {
@@ -110,7 +109,7 @@ test("duplicate resolution is SEPARATE and read-only: Snoonu Sync never merges c
     assert.ok(!server.toLowerCase().includes(bad.toLowerCase()), `the sync apply layer contains no merge/resolution path (${bad})`);
   }
   const actions = read(ACTIONS);
-  assert.ok(/previewDuplicatePairAction[\s\S]*?requireOwner/.test(actions), "the pair audit is OWNER-gated");
+  assert.ok(!actions.includes("auditDuplicatePair"), "the availability page offers no merge/resolution path at all");
 });
 
 test("reconcile 2+3+11: RECONCILE_EXISTING writes ONLY the certified snoonu listing — no product insert, target revalidated by the rebuilt plan", () => {
