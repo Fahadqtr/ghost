@@ -11,7 +11,7 @@ create table if not exists public.snoonu_sync_audits (
   source_file text not null,
   applied_at timestamptz not null,
   actor text not null,
-  import_mode text not null check (import_mode in ('FULL','PARTIAL','REPAIR')),
+  import_mode text not null check (import_mode in ('FULL','PARTIAL')),
   counts jsonb not null,
   changes jsonb not null,
   fingerprint text not null,
