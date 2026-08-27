@@ -26,6 +26,10 @@ import {
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
+/** Source with comments stripped — these guards assert on CODE, so a comment
+ *  that merely NAMES a banned symbol cannot break (or satisfy) them. */
+const code = (rel: string) =>
+  read(rel).replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 
 const SPI_A = "67d388e5b4436ea067f36cb5";
 const SPI_B = "67e71be43c4a71b97c93330e";
@@ -263,15 +267,26 @@ test("14. the combined preview is READ-ONLY and deterministic", () => {
   });
   assert.equal(mk().fingerprint, mk().fingerprint, "same inputs ⇒ same fingerprint (no clock, no randomness)");
 
-  const pure = read("lib/snoonu/two-source.ts");
+  const pure = code("lib/snoonu/two-source.ts");
   for (const banned of [".update(", ".insert(", ".upsert(", ".delete(", "createAdminClient", "Date.now" + "(", "Math.random" + "("]) {
     assert.ok(!pure.includes(banned), `the pure planner must not contain ${banned}`);
   }
-  const server = read("lib/snoonu/two-source.server.ts");
-  for (const banned of [".update(", ".insert(", ".upsert(", ".delete(", "applySnoonuSyncPlan", "applySnoonuRepair"]) {
-    assert.ok(!server.includes(banned), `the combined server adapter must not contain ${banned}`);
+  // The server module also hosts the OWNER-gated operational apply, so the
+  // write-free assertion belongs to the PREVIEW function body specifically —
+  // the apply's own boundary is pinned in operational-apply.test.ts (9, 10).
+  const server = code("lib/snoonu/two-source.server.ts");
+  const previewBody = server.slice(
+    server.indexOf("export async function previewSnoonuCombined"),
+    server.indexOf("export interface SnoonuOperationalApplyRow"),
+  );
+  assert.ok(previewBody.length > 0, "the preview function is findable");
+  for (const banned of [".update(", ".insert(", ".upsert(", ".delete(", "createAdminClient",
+                        "writeProductAvailability", "applySnoonuSyncPlan", "applySnoonuRepair"]) {
+    assert.ok(!previewBody.includes(banned), `the combined PREVIEW must not contain ${banned}`);
   }
-  assert.ok(server.includes("loadSnoonuSyncContext"), "it only READS the catalog");
+  assert.ok(previewBody.includes("loadSnoonuSyncContext"), "it only READS the catalog");
+  // and the preview action still cannot reach the apply (see test 15).
+  assert.ok(!previewBody.includes("applySnoonuOperational"), "preview never calls the apply");
 });
 
 test("15. nothing in the combined path can write — no apply is reachable from it", () => {

@@ -24,12 +24,15 @@ import {
   previewSnoonuRepairAction,
   applySnoonuRepairAction,
   previewSnoonuCombinedAction,
+  applySnoonuOperationalAction,
   type SnoonuSyncPreviewVM,
   type SnoonuCombinedPreviewVM,
 } from "@/app/(v2)/v2/catalog/snoonu-sync/actions";
 import type { SnoonuApplyResult } from "@/lib/snoonu/sync.server";
 import { SNOONU_MODE_LABEL, SNOONU_MODE_NOTICE, SNOONU_STOCK_RULE_NOTE, type SnoonuImportMode } from "@/lib/snoonu/sync";
+import type { SnoonuOperationalApplyResult } from "@/lib/snoonu/two-source.server";
 import {
+  selectSnoonuOperationalApply,
   SNOONU_COMBINED_AUTHORITY,
   SNOONU_SOURCE_LABEL,
   SNOONU_STOCK_SOURCE_MISMATCH,
@@ -64,6 +67,36 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
   const [combined, setCombined] = useState<SnoonuCombinedPreviewVM | null>(null);
   const [combinedBusy, setCombinedBusy] = useState(false);
   const [combinedError, setCombinedError] = useState<string | null>(null);
+
+  const [opBusy, setOpBusy] = useState(false);
+  const [opConfirm, setOpConfirm] = useState(false);
+  const [opResult, setOpResult] = useState<SnoonuOperationalApplyResult | null>(null);
+  const [opError, setOpError] = useState<string | null>(null);
+
+  // derived client-side ONLY for the confirmation summary — the server rebuilds
+  // this plan and refuses on any fingerprint drift.
+  const operational = combined ? selectSnoonuOperationalApply(combined.plan) : null;
+
+  async function runOperationalApply() {
+    if (!operational) return;
+    setOpBusy(true);
+    setOpError(null);
+    try {
+      const fd = new FormData();
+      const f = combinedFullRef.current?.files?.[0];
+      const b = combinedBulkRef.current?.files?.[0];
+      if (f) fd.set("fullFile", f);
+      if (b) fd.set("bulkFile", b);
+      fd.set("fingerprint", operational.fingerprint);
+      fd.set("zeroPriceOverrides", JSON.stringify([]));
+      const res = await applySnoonuOperationalAction(fd);
+      if ("error" in res) { setOpError(res.error); setOpResult(null); }
+      else { setOpResult(res.data); setOpError(null); }
+      setOpConfirm(false);
+    } finally {
+      setOpBusy(false);
+    }
+  }
 
   async function runCombinedPreview() {
     setCombinedBusy(true);
@@ -337,6 +370,55 @@ export default function SnoonuSync({ isOwner }: { isOwner: boolean }) {
             <p className="text-[10px] text-muted">
               معاينة للقراءة فقط — لا تكتب أي شيء. بصمة الخطة: <span className="font-mono">{combined.plan.fingerprint.slice(0, 16)}…</span>
             </p>
+            {isOwner && operational && (
+              <div className="space-y-2 rounded-lg border-2 border-emerald-300 bg-emerald-50/40 p-3">
+                <h3 className="text-xs font-semibold text-emerald-900">التحديث التشغيلي من Bulk</h3>
+                <p className="text-[10px] text-muted">
+                  يطبّق المخزون والسعر وSKU والباركود من ملف Bulk فقط. لا يطبّق محتوى ملف الكتالوج (الأسماء/الأوصاف)،
+                  ولا يحذف أو يؤرشف أي منتج، ولا يُنشئ منتجات.
+                </p>
+                <button
+                  type="button"
+                  className="btn-primary text-xs disabled:opacity-50"
+                  disabled={opBusy || operational.counts.rows === 0}
+                  onClick={() => setOpConfirm(true)}
+                >
+                  {opBusy ? "جارٍ التطبيق…" : "تطبيق التحديث التشغيلي من Bulk"}
+                </button>
+                {opError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{opError}</p>}
+                {opResult && (
+                  <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                    تم التطبيق — {opResult.rows.filter((r) => r.action !== "failed").length} عملية ناجحة،
+                    {" "}{opResult.rows.filter((r) => r.action === "failed").length} فاشلة.
+                    {opResult.auditRecorded ? " وسُجّل التدقيق." : " (تعذّر تسجيل التدقيق)"}
+                  </p>
+                )}
+                {opConfirm && (
+                  <div className="space-y-2 rounded-lg border border-emerald-400 bg-surface p-3">
+                    <p className="text-xs font-semibold text-ink">تأكيد التحديث التشغيلي</p>
+                    <ul className="space-y-0.5 text-[11px] text-ink">
+                      <li>المخزون ← غير متوفر: <b>{operational.counts.stockToOut}</b></li>
+                      <li>المخزون ← متوفر: <b>{operational.counts.stockToIn}</b></li>
+                      <li>تغييرات السعر: <b>{operational.counts.priceChanges}</b></li>
+                      <li>تغييرات SKU: <b>{operational.counts.skuChanges}</b></li>
+                      <li>تغييرات الباركود: <b>{operational.counts.barcodeChanges}</b></li>
+                      <li>صفوف محظورة (سعر صفر): <b>{operational.counts.blockedZeroPrice}</b></li>
+                      <li>تعارض هوية (محظور): <b>{operational.counts.blockedIdentityCollisions}</b></li>
+                      <li>عمليات حذف: <b>{operational.counts.removals}</b> — لا حذف إطلاقاً</li>
+                    </ul>
+                    <p className="text-[10px] text-muted">
+                      لن يتم تطبيق أي محتوى من ملف الكتالوج (الأسماء أو الأوصاف)، ولن يُنشأ أي منتج، ولن تتغيّر دورة حياة أي منتج.
+                    </p>
+                    <div className="flex gap-2">
+                      <button type="button" className="btn-primary text-xs disabled:opacity-50" disabled={opBusy} onClick={() => void runOperationalApply()}>
+                        تأكيد التطبيق
+                      </button>
+                      <button type="button" className="btn-ghost text-xs" onClick={() => setOpConfirm(false)}>إلغاء</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </section>
