@@ -37,6 +37,16 @@ const ERR = {
   context_failed: "تعذّر قراءة الكتالوج الحالي — حاول مرة أخرى.",
   plan_changed: "تغيّرت البيانات منذ المعاينة — أعد المعاينة ثم طبّق.",
   apply_blocked: "التطبيق محظور: يوجد SPI مكرر داخل الملف — أصلح الملف أولاً.",
+  bulk_required: "التحديث التشغيلي يحتاج ملف Bulk.",
+} as const;
+
+/** operational-apply refusals — each one fails closed with an explicit cause. */
+const OPERATIONAL_ERR = {
+  context_failed: ERR.context_failed,
+  plan_changed: ERR.plan_changed,
+  nothing_eligible: "لا توجد تغييرات تشغيلية قابلة للتطبيق.",
+  apply_blocked: ERR.apply_blocked,
+  removal_guard: "أُوقف التطبيق: خطة التحديث الجزئي أنتجت عملية حذف — وهذا غير مسموح إطلاقاً.",
 } as const;
 
 async function readWorkbookFile(formData: FormData): Promise<{ ok: true; bytes: Buffer; name: string } | { ok: false; error: string }> {
@@ -210,6 +220,49 @@ export async function previewSnoonuCombinedAction(
       plan,
     },
   };
+}
+
+/** OWNER-ONLY: apply the OPERATIONAL half (BULK stock/price/SKU/barcode).
+ *  FULL content is never written here; absence never removes anything. */
+export async function applySnoonuOperationalAction(
+  formData: FormData,
+): Promise<{ data: import("@/lib/snoonu/two-source.server").SnoonuOperationalApplyResult } | { error: string }> {
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
+  const fingerprint = formData.get("fingerprint");
+  if (typeof fingerprint !== "string" || fingerprint.length !== 64) return { error: ERR.plan_changed };
+
+  const fullRes = await parseNamedSource(formData, "full");
+  const bulkRes = await parseNamedSource(formData, "bulk");
+  if (fullRes && !fullRes.ok) return { error: fullRes.error };
+  if (bulkRes && !bulkRes.ok) return { error: bulkRes.error };
+  const full = fullRes?.ok ? fullRes.value : null;
+  const bulk = bulkRes?.ok ? bulkRes.value : null;
+  // the operational apply is BULK's — without it there is nothing to run.
+  if (!bulk) return { error: ERR.bulk_required };
+
+  const overridesRaw = formData.get("zeroPriceOverrides");
+  let zeroPriceOverrides: string[] = [];
+  if (typeof overridesRaw === "string" && overridesRaw !== "") {
+    try {
+      const arr = JSON.parse(overridesRaw);
+      zeroPriceOverrides = Array.isArray(arr) ? arr.filter((v): v is string => typeof v === "string").slice(0, 500) : [];
+    } catch {
+      return { error: ERR.plan_changed };
+    }
+  }
+
+  const { applySnoonuOperational } = await import("@/lib/snoonu/two-source.server");
+  const res = await applySnoonuOperational({
+    full: full ? { rows: full.rows, emptySpiRows: full.emptySpiRows } : null,
+    bulk: { rows: bulk.rows, emptySpiRows: bulk.emptySpiRows },
+    expectedFingerprint: fingerprint,
+    zeroPriceOverrides,
+    sourceFileName: bulk.fileName,
+    actor: owner.email,
+  });
+  if (!res.ok) return { error: OPERATIONAL_ERR[res.error] };
+  return { data: res.value };
 }
 
 // ── SCOPED REPAIR (owner-only, five authorized operations) ──────────────────

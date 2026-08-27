@@ -26,6 +26,7 @@ import {
   type SnoonuListingRecord,
   type SnoonuSyncPlan,
   type SnoonuSyncRow,
+  type SnoonuUpdateField,
 } from "./sync.ts";
 
 export type SnoonuSourceKind = "FULL" | "BULK";
@@ -293,6 +294,140 @@ export function planSnoonuCombined(input: {
     bulkOnlySpis,
     bothSources,
     applyBlocked: Boolean(fullPlan?.applyBlocked) || Boolean(bulkPlan?.applyBlocked),
+    fingerprint: hash.digest("hex"),
+  };
+}
+
+// ── operational apply (BULK-authoritative) ───────────────────────────────────
+
+/**
+ * The ONLY fields the combined apply may write. FULL's catalog content —
+ * names, descriptions — is deliberately absent: the combined apply is an
+ * OPERATIONAL run, and content stays with the FULL apply path where the owner
+ * reviews it separately.
+ */
+export const SNOONU_OPERATIONAL_FIELDS: readonly SnoonuUpdateField[] =
+  Object.freeze(["availability", "price", "sku", "barcode"] as const);
+
+/** Content fields the combined apply must NEVER write, whatever BULK carries. */
+export const SNOONU_CONTENT_FIELDS: readonly SnoonuUpdateField[] =
+  Object.freeze(["name_en", "name_ar", "description_en", "description_ar"] as const);
+
+export const isOperationalField = (f: SnoonuUpdateField): boolean =>
+  (SNOONU_OPERATIONAL_FIELDS as readonly string[]).includes(f);
+
+export interface SnoonuOperationalRow {
+  spi: string;
+  productId: string;
+  productSku: string;
+  displayName: string;
+  /** the canonical availability this row moves to, or null when unchanged. */
+  stockTo: "In Stock" | "Out of Stock" | null;
+  price: number | null;
+  sku: string | null;
+  barcode: string | null;
+}
+
+export interface SnoonuOperationalCounts {
+  stockToOut: number;
+  stockToIn: number;
+  priceChanges: number;
+  skuChanges: number;
+  barcodeChanges: number;
+  blockedZeroPrice: number;
+  blockedIdentityCollisions: number;
+  /** structurally always 0 — BULK is PARTIAL and absence means nothing. */
+  removals: number;
+  rows: number;
+}
+
+export interface SnoonuOperationalPlan {
+  rows: SnoonuOperationalRow[];
+  counts: SnoonuOperationalCounts;
+  /** held back for an explicit per-row owner decision — never auto-applied. */
+  blockedZeroPrice: SnoonuSyncPlan["zeroPriceReviews"];
+  /** never resolved automatically: no identifier is written for these. */
+  blockedIdentityCollisions: SnoonuSyncPlan["identityCollisions"];
+  applyBlocked: boolean;
+  /** the fingerprint the owner confirms; apply refuses anything else. */
+  fingerprint: string;
+}
+
+const EMPTY_OPERATIONAL: SnoonuOperationalPlan = {
+  rows: [],
+  counts: { stockToOut: 0, stockToIn: 0, priceChanges: 0, skuChanges: 0, barcodeChanges: 0,
+    blockedZeroPrice: 0, blockedIdentityCollisions: 0, removals: 0, rows: 0 },
+  blockedZeroPrice: [],
+  blockedIdentityCollisions: [],
+  applyBlocked: false,
+  fingerprint: "",
+};
+
+/**
+ * Derive the operational apply from a combined preview.
+ *
+ * Source of truth is the BULK plan and nothing else — no FULL row reaches
+ * this. Within BULK, only the four operational fields survive; content
+ * changes are dropped even when the BULK workbook carries name columns (it
+ * does). NEW products are ignored entirely: the combined apply never creates.
+ * Removals cannot appear — BULK is planned PARTIAL — and the count is
+ * asserted here as well as in the server guard.
+ */
+export function selectSnoonuOperationalApply(combined: SnoonuCombinedPlan): SnoonuOperationalPlan {
+  const bulk = combined.bulk;
+  if (!bulk) return EMPTY_OPERATIONAL;
+
+  const rows: SnoonuOperationalRow[] = [];
+  let stockToOut = 0, stockToIn = 0, priceChanges = 0, skuChanges = 0, barcodeChanges = 0;
+
+  for (const m of bulk.matched) {
+    // content is dropped HERE, not merely unused downstream.
+    const ops = m.changes.filter((c) => isOperationalField(c.field));
+    if (ops.length === 0) continue;
+    const row: SnoonuOperationalRow = {
+      spi: m.spi, productId: m.productId, productSku: m.productSku, displayName: m.displayName,
+      stockTo: null, price: null, sku: null, barcode: null,
+    };
+    for (const c of ops) {
+      if (c.field === "availability") {
+        row.stockTo = c.to === "In Stock" ? "In Stock" : "Out of Stock";
+        if (row.stockTo === "In Stock") stockToIn += 1; else stockToOut += 1;
+      } else if (c.field === "price") {
+        row.price = Number(c.to);
+        priceChanges += 1;
+      } else if (c.field === "sku") {
+        row.sku = c.to;
+        skuChanges += 1;
+      } else if (c.field === "barcode") {
+        row.barcode = c.to;
+        barcodeChanges += 1;
+      }
+    }
+    rows.push(row);
+  }
+
+  const counts: SnoonuOperationalCounts = {
+    stockToOut, stockToIn, priceChanges, skuChanges, barcodeChanges,
+    blockedZeroPrice: bulk.zeroPriceReviews.length,
+    blockedIdentityCollisions: bulk.identityCollisions.length,
+    removals: bulk.removals.length, // PARTIAL ⇒ structurally 0
+    rows: rows.length,
+  };
+
+  const hash = createHash("sha256");
+  hash.write(JSON.stringify({
+    kind: "SNOONU_OPERATIONAL_APPLY",
+    bulk: bulk.fingerprint,
+    counts,
+    rows: rows.map((r) => [r.spi, r.productId, r.stockTo, r.price, r.sku, r.barcode]),
+  }));
+
+  return {
+    rows,
+    counts,
+    blockedZeroPrice: bulk.zeroPriceReviews,
+    blockedIdentityCollisions: bulk.identityCollisions,
+    applyBlocked: bulk.applyBlocked,
     fingerprint: hash.digest("hex"),
   };
 }
