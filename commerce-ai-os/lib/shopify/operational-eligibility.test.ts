@@ -215,7 +215,8 @@ test("8b. archived products stay visible to reporting (onlyShopify), not hidden"
 // ── 9. preview: an archived shell alone must not raise IDENTITY_CONFLICT ─────
 test("9. preview builds its SKU index from operational products only", () => {
   const src = code("../export/shopify/preview.ts");
-  assert.match(src, /buildOperationalIndex\(/, "SKU ownership must come from the operational index");
+  // The call may carry an explicit type argument — match with or without one.
+  assert.match(src, /buildOperationalIndex(<[^>]*>)?\(/, "SKU ownership must come from the operational index");
   assert.equal(
     /if \(sk !== "" && !liveVariantBySku\.has\(sk\)\)/.test(src),
     false,
@@ -280,7 +281,7 @@ test("14. the retired first-wins matchers are gone from every operational path",
   const diff = code("../shopify-diff.ts");
   assert.equal(/if \(k && !bySku\.has\(k\)\) bySku\.set/.test(diff), false, "old first-wins SKU index");
   assert.equal(/if \(!byTitle\.has\(normTitle\(p\.title\)\)\)/.test(diff), false, "old first-wins title index");
-  assert.match(diff, /buildOperationalIndex\(/);
+  assert.match(diff, /buildOperationalIndex(<[^>]*>)?\(/);
   assert.match(diff, /liveStatus !== SHOPIFY_ARCHIVED_STATUS/);
 
   const adapter = code("../../app/(app)/import-export/shopify-adapter.server.ts");
