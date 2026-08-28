@@ -17,6 +17,8 @@ export type ShopifyStockSyncReason =
   | "not_configured"          // Shopify isn't connected — no request was attempted
   | "missing_location"        // no active inventory location could be resolved
   | "missing_inventory_item"  // the SKU has no matching Shopify inventory item
+  | "archived_only"           // the ONLY product with this SKU is archived (retired) — never written to
+  | "ambiguous_sku"           // 2+ eligible products/items share this SKU — fail closed, nothing written
   | "shopify_error";          // Shopify returned an error for the set
 
 /** Result of syncing ONE SKU's quantity to Shopify. */
@@ -48,7 +50,14 @@ export interface ShopifyStockPushSummary {
 export interface ShopifyStockPushDeps {
   configured: () => boolean;
   resolveLocationId: () => Promise<{ locationId?: string; error?: string }>;
-  resolveInventoryItemId: (sku: string) => Promise<{ inventoryItemId?: string; error?: string }>;
+  /**
+   * MUST return an inventory item belonging to a NON-ARCHIVED product, and MUST
+   * fail closed (empty id + a `reason`) when the SKU is ambiguous — the real
+   * implementation is `resolveInventoryItemIdBySku()`, which enforces both.
+   */
+  resolveInventoryItemId: (
+    sku: string,
+  ) => Promise<{ inventoryItemId?: string; error?: string; reason?: "none" | "archived_only" | "ambiguous" }>;
   setQuantity: (locationId: string, inventoryItemId: string, quantity: number) => Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -88,8 +97,16 @@ export async function syncStockBySku(
       continue;
     }
     if (!resolved.inventoryItemId) {
+      // No operational target. `archived_only` / `ambiguous_sku` are surfaced
+      // distinctly so a duplicate-SKU collision is visible instead of looking
+      // like an ordinary "not on Shopify yet" miss. All three count as missing:
+      // nothing was written, which is the whole point.
       missing++;
-      perItem.push({ sku: it.sku, result: { synced: false, reason: "missing_inventory_item" } });
+      const reason: ShopifyStockSyncReason =
+        resolved.reason === "archived_only" ? "archived_only"
+        : resolved.reason === "ambiguous" ? "ambiguous_sku"
+        : "missing_inventory_item";
+      perItem.push({ sku: it.sku, result: { synced: false, reason } });
       continue;
     }
     const set = await deps.setQuantity(locationId, resolved.inventoryItemId, it.quantity);

@@ -34,6 +34,7 @@ import {
   type ExportValidationSummary,
 } from "../validation.ts";
 import { type ExportPreview, type ExportPreviewItem } from "../preview.ts";
+import { buildOperationalIndex, isOperationalShopifyProduct } from "../../shopify/operational-eligibility.ts";
 
 export const SHOPIFY_STOREFRONT_KEY = "shopify:malikas" as const;
 export type ShopifyStorefrontKey = typeof SHOPIFY_STOREFRONT_KEY;
@@ -310,16 +311,40 @@ export function buildShopifyPreview(input: ShopifyPreviewInput): ShopifyPreviewR
   const liveSkuToGid = new Map<string, string>(); // lower(sku) → owning product GID
   const liveVariantBySku = new Map<string, { product: ShopifyLiveProduct; variant: ShopifyLiveVariant }>();
   const liveVariantByGid = new Map<string, { product: ShopifyLiveProduct; variant: ShopifyLiveVariant }>();
+  // GID-keyed indexes are HISTORICAL: a product mapped in ECL must still resolve
+  // even if it has since been archived, otherwise a real mapping would read as
+  // "missing from the store".
   for (const lp of live ?? []) {
     if (lp.id) liveByGid.set(lp.id, lp);
     for (const lv of lp.variants ?? []) {
-      const sk = clean(lv.sku).toLowerCase();
-      if (sk !== "" && !liveVariantBySku.has(sk)) {
-        liveVariantBySku.set(sk, { product: lp, variant: lv });
-        liveSkuToGid.set(sk, lp.id);
-      }
       if (lv.id) liveVariantByGid.set(lv.id, { product: lp, variant: lv });
     }
+  }
+  // SKU-keyed indexes are OPERATIONAL: they decide whether an unmapped product
+  // is treated as colliding with something already on Shopify. An ARCHIVED
+  // shell keeps its SKU after a duplicate cleanup, so including it here would
+  // raise a false IDENTITY_CONFLICT against a product that has no live twin.
+  // Ambiguity between two ELIGIBLE products is still a real conflict and is
+  // kept (blocked keys are re-added below) — fail-safe behaviour is unchanged.
+  const liveList: ShopifyLiveProduct[] = live ?? [];
+  const skuOwners = buildOperationalIndex<ShopifyLiveProduct>(
+    liveList,
+    (lp) => [...new Set((lp.variants ?? []).map((lv) => clean(lv.sku).toLowerCase()).filter((s) => s !== ""))],
+    (lp) => String(lp.id ?? ""),
+  );
+  for (const [sk, lp] of skuOwners.resolved) {
+    const lv = (lp.variants ?? []).find((v) => clean(v.sku).toLowerCase() === sk);
+    if (lv) liveVariantBySku.set(sk, { product: lp, variant: lv });
+    liveSkuToGid.set(sk, lp.id);
+  }
+  for (const [sk, reason] of skuOwners.blocked) {
+    // AMBIGUOUS ⇒ two live products own this SKU: that IS a duplication risk,
+    // so keep the conflict signal. ARCHIVED_ONLY ⇒ retired identity, no signal.
+    if (reason !== "AMBIGUOUS") continue;
+    const owner = liveList.find(
+      (lp) => isOperationalShopifyProduct(lp) && (lp.variants ?? []).some((v) => clean(v.sku).toLowerCase() === sk),
+    );
+    if (owner) liveSkuToGid.set(sk, owner.id);
   }
 
   // One-GID → many-internal detection (§10): tally the product GID each internal

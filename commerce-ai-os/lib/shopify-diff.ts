@@ -3,6 +3,23 @@
 // Matching: our products ↔ Shopify products by variant SKU first (exact,
 // case-insensitive), then by normalized English title. Our catalog is the
 // source of truth: "updated" lists what would change ON SHOPIFY.
+//
+// OPERATIONAL SAFETY (archived shells)
+// ------------------------------------
+// De-duplicating on Shopify retires the loser by ARCHIVING it, and an archived
+// product keeps both its SKU and its title. Matching therefore runs ONLY over
+// the operational candidate set defined in `lib/shopify/operational-eligibility`
+// — archived products can never be a match target — and any identity carried by
+// two eligible products FAILS CLOSED (no match) instead of silently taking the
+// first one. Reporting is unaffected: `onlyShopify` still lists every store
+// product, archived included, with its status.
+
+import {
+  SHOPIFY_ARCHIVED_STATUS,
+  buildOperationalIndex,
+  normalizeShopifyStatus,
+  type OperationalReason,
+} from "./shopify/operational-eligibility.ts";
 
 export interface OurProductRow {
   id: string;
@@ -72,29 +89,59 @@ export function targetShopifyPrice(p: OurProductRow): { price: string; compareAt
 
 type ShopifyHit = { p: ShopifyProductLite; v: ShopifyProductLite["variants"][number] };
 
-/** Index Shopify by variant SKU and by normalized title (shared matcher). */
+const skuKey = (v: unknown): string => String(v ?? "").trim().toLowerCase();
+
+/**
+ * Index Shopify by variant SKU and by normalized title (shared matcher).
+ *
+ * OPERATIONAL, not historical: archived products are excluded from both
+ * indexes, and an identity claimed by two eligible products is recorded in
+ * `blockedSkus` / `blockedTitles` instead of being resolved. `match()` returns
+ * `undefined` for a blocked identity — the caller sees "no match", never the
+ * wrong product.
+ */
 export function indexShopify(shopify: ShopifyProductLite[]): {
   bySku: Map<string, ShopifyHit>;
   byTitle: Map<string, ShopifyProductLite>;
+  blockedSkus: Map<string, Exclude<OperationalReason, "OK">>;
+  blockedTitles: Map<string, Exclude<OperationalReason, "OK">>;
   match: (sku: string | null, nameEn: string | null) => ShopifyHit | undefined;
 } {
+  const list = (Array.isArray(shopify) ? shopify : []).filter(Boolean);
+  const identity = (p: ShopifyProductLite) => String(p.id ?? "");
+
+  // One key per DISTINCT sku a product carries (a 5-shade product repeating the
+  // same SKU is one claimant, not five).
+  const skuIdx = buildOperationalIndex(
+    list,
+    (p) => [...new Set((p.variants ?? []).map((v) => skuKey(v.sku)).filter((k) => k !== ""))],
+    identity,
+  );
+  const titleIdx = buildOperationalIndex(list, (p) => [normTitle(p.title)], identity);
+
   const bySku = new Map<string, ShopifyHit>();
-  const byTitle = new Map<string, ShopifyProductLite>();
-  for (const p of shopify) {
-    if (!byTitle.has(normTitle(p.title))) byTitle.set(normTitle(p.title), p);
-    for (const v of p.variants) {
-      const k = v.sku.toLowerCase();
-      if (k && !bySku.has(k)) bySku.set(k, { p, v });
-    }
+  for (const [k, p] of skuIdx.resolved) {
+    const v = (p.variants ?? []).find((x) => skuKey(x.sku) === k);
+    if (v) bySku.set(k, { p, v });
   }
+  const byTitle = titleIdx.resolved;
+
   const match = (sku: string | null, nameEn: string | null): ShopifyHit | undefined => {
-    const k = String(sku ?? "").trim().toLowerCase();
-    const hit = k ? bySku.get(k) : undefined;
-    if (hit) return hit;
-    const t = byTitle.get(normTitle(nameEn));
-    return t ? { p: t, v: t.variants[0] } : undefined;
+    const k = skuKey(sku);
+    if (k !== "") {
+      // Ambiguous or archived-only SKU ⇒ stop. Never fall through to the title
+      // fallback: that is exactly how a write lands on the wrong twin.
+      if (skuIdx.blocked.has(k)) return undefined;
+      const hit = bySku.get(k);
+      if (hit) return hit;
+    }
+    const t = normTitle(nameEn);
+    if (t === "" || titleIdx.blocked.has(t)) return undefined;
+    const p = byTitle.get(t);
+    return p ? { p, v: p.variants[0] } : undefined;
   };
-  return { bySku, byTitle, match };
+
+  return { bySku, byTitle, blockedSkus: skuIdx.blocked, blockedTitles: titleIdx.blocked, match };
 }
 
 /** Diff our catalog (source of truth) against the live Shopify products. */
@@ -138,8 +185,14 @@ export function diffShopify(ours: OurProductRow[], shopify: ShopifyProductLite[]
       changes.push({ field: "title", old: hit.p.title, new: String(o.name_en ?? "") });
     }
     const wantActive = String(o.approval ?? "") === "Approved";
-    const isActive = hit.p.status === "ACTIVE";
-    if (wantActive !== isActive) {
+    const liveStatus = normalizeShopifyStatus(hit.p.status);
+    const isActive = liveStatus === "ACTIVE";
+    // ARCHIVED is a RETIRED identity, never an activation candidate: a retired
+    // shell must not be planned back to ACTIVE just because our row is
+    // Approved. Restoring one is an explicit, owner-authorized action. (The
+    // operational index already excludes archived products; this is the
+    // defence-in-depth so no future matcher change can resurrect the path.)
+    if (liveStatus !== SHOPIFY_ARCHIVED_STATUS && wantActive !== isActive) {
       changes.push({ field: "status", old: hit.p.status, new: wantActive ? "ACTIVE" : "DRAFT" });
     }
     if (changes.length) {
