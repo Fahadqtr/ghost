@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncStockBySku, type ShopifyStockPushSummary } from "./stock-push";
+import { selectOperational } from "./operational-eligibility";
 
 // Env-gated Shopify Admin API client (GraphQL). Needs SHOPIFY_STORE_DOMAIN
 // (xxxxx.myshopify.com) plus a token: either SHOPIFY_ADMIN_TOKEN directly
@@ -88,7 +89,18 @@ interface ProductsQuery {
   };
 }
 
-/** Every product in the store (paginated 100/page; hard cap 5000 products). */
+/**
+ * Every product in the store (paginated 100/page; hard cap 5000 products).
+ *
+ * HISTORICAL read — deliberately UNFILTERED. Archived products are included so
+ * audit/admin views ("only on Shopify", status columns, reconciliation) keep
+ * seeing retired records. Each item carries `status`.
+ *
+ * Callers that MATCH (choose a product to write to) must not use this list as
+ * the candidate set directly: run it through the operational rule in
+ * `lib/shopify/operational-eligibility` first — `indexShopify()` and
+ * `buildShopifyPreview()` already do.
+ */
 export async function fetchAllShopifyProducts(): Promise<{ products?: ShopifyProduct[]; error?: string }> {
   const out: ShopifyProduct[] = [];
   let after: string | null = null;
@@ -432,25 +444,78 @@ export async function setInventoryQuantities(
 
 /**
  * Resolve a variant's inventory item id by SKU via the central client.
- * Returns `inventoryItemId: ""` when no variant matches the SKU (not an error),
- * and `error` only on an actual Shopify failure. The SKU is quote/backslash
- * stripped so it can't alter the search filter.
+ *
+ * OPERATIONAL resolution — this id is written to, so it must never point at a
+ * retired product. After a duplicate cleanup the store holds an ACTIVE product
+ * and an ARCHIVED shell answering to the same SKU, so:
+ *   • we ask for MANY candidates, never `first: 1` (Shopify's result order is
+ *     not a guarantee and must not decide which product gets the write);
+ *   • we read each candidate's PARENT product status and drop archived ones;
+ *   • two eligible products (or two same-SKU variants inside one product) →
+ *     FAIL CLOSED with `reason: "ambiguous"`, nothing is returned.
+ *
+ * Returns `inventoryItemId: ""` when nothing operational matches (not an
+ * error), `reason` explaining why, and `error` only on an actual Shopify
+ * failure. The SKU is quote/backslash stripped so it can't alter the filter.
  */
 export async function resolveInventoryItemIdBySku(
   sku: string,
-): Promise<{ inventoryItemId?: string; error?: string }> {
+): Promise<{ inventoryItemId?: string; error?: string; reason?: "none" | "archived_only" | "ambiguous" }> {
   const clean = String(sku ?? "").replace(/["\\]/g, "");
-  if (!clean) return { inventoryItemId: "" };
+  if (!clean) return { inventoryItemId: "", reason: "none" };
   const { data, error } = await shopifyGraphQL<{
-    productVariants: { edges: { node: { inventoryItem: { id: string } | null } }[] };
+    productVariants: {
+      edges: {
+        node: {
+          id: string;
+          sku: string | null;
+          inventoryItem: { id: string } | null;
+          product: { id: string; status: string } | null;
+        };
+      }[];
+    };
   }>(
     `query($q: String!) {
-      productVariants(first: 1, query: $q) { edges { node { inventoryItem { id } } } }
+      productVariants(first: 100, query: $q) {
+        edges { node { id sku inventoryItem { id } product { id status } } }
+      }
     }`,
     { q: `sku:"${clean}"` },
   );
   if (error) return { error };
-  return { inventoryItemId: String(data?.productVariants?.edges?.[0]?.node?.inventoryItem?.id ?? "") };
+
+  const wanted = clean.trim().toLowerCase();
+  const nodes = (data?.productVariants?.edges ?? [])
+    .map((e) => e?.node)
+    .filter((n): n is NonNullable<typeof n> => Boolean(n?.product?.id))
+    // Shopify's SKU search is a search, not an equality filter — re-assert it.
+    .filter((n) => String(n.sku ?? "").trim().toLowerCase() === wanted);
+
+  const selection = selectOperational(
+    nodes.map((n) => ({ node: n, status: n.product!.status })),
+    (c) => c.node.product!.id,
+  );
+  if (!selection.ok) {
+    return {
+      inventoryItemId: "",
+      reason: selection.reason === "AMBIGUOUS" ? "ambiguous" : selection.reason === "ARCHIVED_ONLY" ? "archived_only" : "none",
+    };
+  }
+
+  // One product chosen — but it must expose exactly ONE inventory item for this
+  // SKU (a multi-shade product repeating a SKU across variants is ambiguous).
+  const productId = selection.match.node.product!.id;
+  const items = [
+    ...new Set(
+      nodes
+        .filter((n) => n.product!.id === productId)
+        .map((n) => String(n.inventoryItem?.id ?? ""))
+        .filter((id) => id !== ""),
+    ),
+  ];
+  if (items.length === 0) return { inventoryItemId: "", reason: "none" };
+  if (items.length > 1) return { inventoryItemId: "", reason: "ambiguous" };
+  return { inventoryItemId: items[0]! };
 }
 
 /**

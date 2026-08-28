@@ -10,6 +10,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { runShopifyInventorySync, type InventorySyncResult } from "@/lib/shopify/inventory-sync";
 import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { diffShopify, targetShopifyPrice, normTitle, mapShopifyToCatalogRow, type ShopifyDiff, type OurProductRow } from "@/lib/shopify-diff";
+import { isOperationalShopifyProduct } from "@/lib/shopify/operational-eligibility";
 import { createProductCore } from "@/lib/products/product-create";
 import { makeInventoryInitializer } from "@/lib/products/inventory-initializer";
 
@@ -306,6 +307,9 @@ export async function listShopifyMissingImages(): Promise<{
     const pairs: MissingImagePair[] = [];
     let storeMissing = 0;
     for (const sp of remote.products ?? []) {
+      // ARCHIVED products are retired identities — never offer to write media to
+      // one. (`pushShopifyImages` calls addProductImage on whatever lands here.)
+      if (!isOperationalShopifyProduct(sp)) continue;
       if (String(sp.imageUrl ?? "").trim()) continue;
       storeMissing++;
       const sku = String(sp.variants[0]?.sku ?? "").trim().toLowerCase();

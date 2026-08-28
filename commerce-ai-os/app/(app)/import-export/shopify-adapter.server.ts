@@ -27,6 +27,7 @@ import {
   listShopifyMissingImages,
   pushShopifyImages,
 } from "@/app/(app)/import-export/shopify-actions";
+import { indexShopify } from "@/lib/shopify-diff";
 
 /** Build the concrete Shopify adapter, bound to the real integration functions. */
 export function shopifyAdapter(): ChannelAdapter {
@@ -99,14 +100,16 @@ export function shopifyAdapter(): ChannelAdapter {
       const { data } = await sb.from("products").select("id, sku, name_en").in("id", idsArr);
       const remote = await fetchAllShopifyProducts();
       if (remote.error) return { ok: false, error: remote.error, updated: 0, failed: [] };
-      const bySku = new Map<string, string>();
-      for (const p of remote.products ?? []) {
-        for (const v of p.variants ?? []) if (v.sku) bySku.set(String(v.sku).toLowerCase(), p.id);
-      }
+      // OPERATIONAL matching only. The previous hand-rolled map was LAST-wins
+      // over every product, archived included — with a duplicate SKU it would
+      // resolve to the ARCHIVED shell and flip it ARCHIVED → DRAFT, un-retiring
+      // it. `indexShopify` excludes archived products and fails closed on an
+      // ambiguous SKU, so an unresolved row is reported, never guessed.
+      const { match } = indexShopify(remote.products ?? []);
       let updated = 0;
       const failed: { name: string; error: string }[] = [];
       for (const row of (data ?? []) as { id: string; sku: string | null; name_en: string | null }[]) {
-        const sid = bySku.get(String(row.sku ?? "").toLowerCase());
+        const sid = match(row.sku, row.name_en)?.p.id;
         const name = row.name_en ?? row.id;
         if (!sid) { failed.push({ name, error: "not found on Shopify" }); continue; }
         const r = await updateShopifyProductContent(sid, { status: "DRAFT" });
