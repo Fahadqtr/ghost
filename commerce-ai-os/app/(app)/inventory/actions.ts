@@ -19,8 +19,10 @@ import {
 import { requireUser, requireWriterGate, requireOwnerGate } from "@/lib/auth/requireUser";
 import { insertAuditRow } from "@/lib/audit";
 import { getInventoryMode, setInventoryMode, type InventoryMode } from "@/lib/settings";
-import { pushInventoryStockToShopify } from "@/lib/shopify/admin";
+import { pushInventoryStockToShopify, pushVariantInventoryToShopify } from "@/lib/shopify/admin";
 import { summarizeStockSync, type ShopifyStockSyncStatus } from "@/lib/shopify/stock-push";
+import { planProductInventoryGrain, isVariantGrainProduct, type InventoryGrainPlan } from "@/lib/shopify/variant-inventory";
+import { loadCanonicalInventoryInputs } from "@/lib/shopify/canonical-inventory.server";
 import { setProductAvailabilityState, writeProductAvailability, setVariantAvailabilityState } from "@/lib/availability/engine";
 import { availabilityFromInStock, isAvailable } from "@/lib/availability/read";
 import Anthropic from "@anthropic-ai/sdk";
@@ -1039,8 +1041,59 @@ export async function pushStockToShopify(
   if (unauth) {
     return { configured: false, synced: false, pushed: 0, failed: 0, missing: 0, reason: "not_configured", message: unauth.error };
   }
-  const summary = await pushInventoryStockToShopify(items);
-  return summarizeStockSync(summary);
+
+  // GRAIN SPLIT. A canonical product that has variants is listed on Shopify as
+  // one product with several variants, and ECL already names each of them. Its
+  // stock must be written per variant, addressed by the mapped variant GID —
+  // resolving its bare SKU instead lands on an unmapped legacy twin and writes
+  // the whole product quantity into a single arbitrary variant. Simple products
+  // keep the existing fail-closed SKU resolver.
+  const wanted = (items ?? []).filter((i) => String(i?.sku ?? "").trim() !== "");
+  if (wanted.length === 0) return summarizeStockSync(await pushInventoryStockToShopify([]));
+
+  const sb = createAdminClient();
+  const { data: prodRows } = await sb
+    .from("products").select("id, sku")
+    .in("sku", wanted.map((i) => i.sku));
+  const idBySku = new Map<string, string>();
+  for (const r of (prodRows ?? []) as { id: string; sku: string | null }[]) {
+    if (r.sku) idBySku.set(String(r.sku).trim().toLowerCase(), r.id);
+  }
+
+  const inputs = await loadCanonicalInventoryInputs(sb, [...idBySku.values()]);
+  const inputById = new Map(inputs.map((i) => [i.productId, i]));
+
+  const simple: { sku: string; quantity: number }[] = [];
+  const variantPlans: InventoryGrainPlan[] = [];
+  for (const it of wanted) {
+    const input = inputById.get(idBySku.get(String(it.sku).trim().toLowerCase()) ?? "");
+    if (!input || !isVariantGrainProduct(input)) { simple.push(it); continue; }
+    // Variant products carry their own per-variant quantities; the caller's
+    // product-level number is never collapsed into one variant.
+    variantPlans.push(planProductInventoryGrain(input, "CANONICAL"));
+  }
+
+  const bySku = simple.length ? await pushInventoryStockToShopify(simple) : null;
+  const byVariant = variantPlans.length ? await pushVariantInventoryToShopify(variantPlans) : null;
+
+  const base = bySku
+    ? summarizeStockSync(bySku)
+    : { configured: byVariant?.configured ?? false, synced: false, pushed: 0, failed: 0, missing: 0 };
+  if (!byVariant) return base;
+
+  const configured = base.configured || byVariant.configured;
+  const pushed = base.pushed + byVariant.synced;
+  const missing = base.missing + byVariant.blocked;
+  const attempted = (bySku?.attempted ?? 0) + byVariant.attempted;
+  const reason = base.reason ?? byVariant.reason;
+  return {
+    configured,
+    synced: configured && !reason && attempted > 0 && base.failed === 0 && missing === 0,
+    pushed,
+    failed: base.failed,
+    missing,
+    ...(reason ? { reason } : {}),
+  };
 }
 
 export type MovementInput = {
