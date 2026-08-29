@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { PLATFORMS } from "@/lib/constants";
-import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, setInventoryQuantities } from "@/lib/shopify/admin";
+import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, setInventoryQuantities, pushVariantInventoryToShopify } from "@/lib/shopify/admin";
+import { isOperationalShopifyProduct } from "@/lib/shopify/operational-eligibility";
+import { planInventoryGrainBatch, isVariantGrainProduct } from "@/lib/shopify/variant-inventory";
+import { loadCanonicalInventoryInputs } from "@/lib/shopify/canonical-inventory.server";
 import {
   reconcile,
   type PlatformUpload,
@@ -137,20 +140,45 @@ export async function applyReconciledToShopify(
     if (remote.error || loc.error || !loc.locationId) {
       shopify = { configured: true, pushed: 0, failed: skus.length, message: remote.error || loc.error };
     } else {
-      const wanted = new Set(skus.map((s) => s.toLowerCase()));
+      // GRAIN SPLIT (INV.6). Bare-SKU matching across the whole store is unsafe
+      // twice over: it hits ARCHIVED products, and for a canonical VARIANT
+      // product the bare SKU exists only on an unmapped LEGACY twin, so every
+      // one of that twin's variants would be zeroed while the mapped listing is
+      // untouched. Variant products are zeroed through their exact ECL-mapped
+      // variant GIDs instead; simple products keep SKU matching, now restricted
+      // to operational (non-archived) products.
+      const { data: prodRows } = await sb.from("products").select("id, sku").in("sku", skus);
+      const rows = (prodRows ?? []) as { id: string; sku: string | null }[];
+      const inputs = await loadCanonicalInventoryInputs(sb, rows.map((r) => r.id));
+      const variantSkus = new Set(
+        inputs.filter((i) => isVariantGrainProduct(i)).map((i) => String(i.sku ?? "").toLowerCase()),
+      );
+
+      let variantPushed = 0, variantFailed = 0;
+      const variantInputs = inputs.filter((i) => isVariantGrainProduct(i));
+      if (variantInputs.length) {
+        const vs = await pushVariantInventoryToShopify(planInventoryGrainBatch(variantInputs, "ZERO"));
+        variantPushed = vs.variantsWritten;
+        variantFailed = vs.blocked;
+      }
+
+      const wanted = new Set(
+        skus.map((s) => s.toLowerCase()).filter((s) => s !== "" && !variantSkus.has(s)),
+      );
       const items: { inventoryItemId: string; quantity: number }[] = [];
       for (const p of remote.products ?? []) {
+        if (!isOperationalShopifyProduct(p)) continue; // never write to a retired listing
         for (const v of p.variants) {
           if (v.sku && v.inventoryItemId && wanted.has(v.sku.toLowerCase())) items.push({ inventoryItemId: v.inventoryItemId, quantity: 0 });
         }
       }
       if (items.length === 0) {
-        shopify = { configured: true, pushed: 0, failed: 0 };
+        shopify = { configured: true, pushed: variantPushed, failed: variantFailed };
       } else {
         const r = await setInventoryQuantities(loc.locationId, items);
         shopify = r.ok
-          ? { configured: true, pushed: r.updated, failed: 0 }
-          : { configured: true, pushed: r.updated, failed: items.length - r.updated, message: r.error };
+          ? { configured: true, pushed: r.updated + variantPushed, failed: variantFailed }
+          : { configured: true, pushed: r.updated + variantPushed, failed: items.length - r.updated + variantFailed, message: r.error };
       }
     }
   }

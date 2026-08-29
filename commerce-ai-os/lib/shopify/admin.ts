@@ -1,7 +1,13 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { syncStockBySku, type ShopifyStockPushSummary } from "./stock-push";
-import { selectOperational } from "./operational-eligibility";
+import { selectOperational, isOperationalShopifyProduct } from "./operational-eligibility";
+import {
+  syncVariantInventory,
+  type InventoryGrainPlan,
+  type VariantInventorySummary,
+  type VariantResolveReason,
+} from "./variant-inventory";
 
 // Env-gated Shopify Admin API client (GraphQL). Needs SHOPIFY_STORE_DOMAIN
 // (xxxxx.myshopify.com) plus a token: either SHOPIFY_ADMIN_TOKEN directly
@@ -534,6 +540,76 @@ export async function pushInventoryStockToShopify(
     resolveInventoryItemId: resolveInventoryItemIdBySku,
     setQuantity: async (locationId, inventoryItemId, quantity) => {
       const r = await setInventoryQuantities(locationId, [{ inventoryItemId, quantity }]);
+      return { ok: r.ok, ...(r.error ? { error: r.error } : {}) };
+    },
+  });
+}
+
+/**
+ * Resolve ONE exact Shopify ProductVariant GID to its inventory item id.
+ *
+ * This is the variant-grain counterpart of `resolveInventoryItemIdBySku`, and
+ * the ONLY correct resolver for a canonical product that has variants: the ECL
+ * mapping already names the exact Shopify variant, so there is nothing to
+ * search for and nothing to disambiguate. No SKU query is issued here — a SKU
+ * search is what sent these writes to an unmapped legacy twin in the first
+ * place.
+ *
+ * Fails closed (empty id + `reason`, never a guess) when the variant does not
+ * exist, its parent product is ARCHIVED, it exposes no inventory item, or its
+ * live SKU contradicts the canonical variant SKU we expected.
+ */
+export async function resolveInventoryItemIdByVariantGid(
+  variantGid: string,
+  expectedSku?: string | null,
+): Promise<{ inventoryItemId?: string; error?: string; reason?: VariantResolveReason }> {
+  const gid = String(variantGid ?? "").trim();
+  if (!gid.startsWith("gid://shopify/ProductVariant/")) return { inventoryItemId: "", reason: "not_found" };
+
+  const { data, error } = await shopifyGraphQL<{
+    node: {
+      id: string;
+      sku: string | null;
+      inventoryItem: { id: string } | null;
+      product: { id: string; status: string } | null;
+    } | null;
+  }>(
+    `query($id: ID!) {
+      node(id: $id) {
+        ... on ProductVariant { id sku inventoryItem { id } product { id status } }
+      }
+    }`,
+    { id: gid },
+  );
+  if (error) return { error };
+
+  const node = data?.node ?? null;
+  if (!node || !node.id) return { inventoryItemId: "", reason: "not_found" };
+  if (!isOperationalShopifyProduct(node.product)) return { inventoryItemId: "", reason: "archived_parent" };
+
+  const want = String(expectedSku ?? "").trim().toLowerCase();
+  const live = String(node.sku ?? "").trim().toLowerCase();
+  if (want !== "" && live !== "" && want !== live) return { inventoryItemId: "", reason: "sku_mismatch" };
+
+  const itemId = String(node.inventoryItem?.id ?? "");
+  if (itemId === "") return { inventoryItemId: "", reason: "no_inventory_item" };
+  return { inventoryItemId: itemId };
+}
+
+/**
+ * Push variant-grain inventory for canonical products that have variants —
+ * every write addressed by the exact ECL-mapped Shopify variant GID, never by
+ * SKU. All-or-nothing per product (see `syncVariantInventory`).
+ */
+export async function pushVariantInventoryToShopify(
+  plans: readonly InventoryGrainPlan[],
+): Promise<VariantInventorySummary> {
+  return syncVariantInventory(plans, {
+    configured: shopifyConfigured,
+    resolveLocationId: fetchPrimaryLocationId,
+    resolveInventoryItemIdByVariantGid,
+    setQuantities: async (locationId, items) => {
+      const r = await setInventoryQuantities(locationId, items);
       return { ok: r.ok, ...(r.error ? { error: r.error } : {}) };
     },
   });

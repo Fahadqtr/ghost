@@ -6,6 +6,9 @@ import { classifyShopifyOrderChannel } from "./orders-compute";
 import { claimAndDeduct, syncCanPush, type ClaimDeductPorts, type ClaimDeductPlanners, type BlockedReason } from "./order-ledger";
 import { logAuthoritativeStockTransition, logAuthoritativeVariantOnlyTransition } from "@/lib/inventory/transition";
 import { shopifyOosZeroPushList } from "@/lib/availability/channel-policy";
+import { pushVariantInventoryToShopify } from "./admin";
+import { planInventoryGrainBatch, type VariantInventorySummary } from "./variant-inventory";
+import { loadCanonicalInventoryInputs } from "./canonical-inventory.server";
 
 const SHOPIFY_ORDER_ACTOR = "شوبي فاي — طلب متجر";
 /** A zero crossing in either direction (matches planStockTransition's <=0 threshold). */
@@ -207,25 +210,51 @@ export async function runShopifyInventorySync(sb: any): Promise<InventorySyncRes
     // OutOfStock products are pushed (to external quantity 0); In-Stock products
     // are NEVER overwritten with a local quantity this phase (physical counts are
     // not yet trusted), and no local quantity is ever written to represent it.
-    const ours = shopifyOosZeroPushList(prods);
+    const oosAll = shopifyOosZeroPushList(prods);
+
+    // GRAIN SPLIT (INV.6). A canonical product with variants must NEVER be
+    // resolved by its bare product SKU here: that SKU exists on Shopify only on
+    // an unmapped LEGACY twin, so the zero would land on the wrong product and
+    // on just one of its variants. Those products go through the exact
+    // ECL-mapped variant GIDs instead, and every mapped variant is zeroed.
+    // Business scope is unchanged — still zeros only, still only for products
+    // our availability says are Out of Stock.
+    const variantParents = new Set<string>();
+    for (const v of variants) if (v.parent_product_id) variantParents.add(v.parent_product_id);
+    const ours = oosAll.filter((o) => !variantParents.has(o.id));
+    const variantOosIds = oosAll.filter((o) => variantParents.has(o.id)).map((o) => o.id);
+
+    let variantSummary: VariantInventorySummary | null = null;
+    if (variantOosIds.length) {
+      const inputs = await loadCanonicalInventoryInputs(sb, variantOosIds);
+      variantSummary = await pushVariantInventoryToShopify(planInventoryGrainBatch(inputs, "ZERO"));
+    }
 
     const remote = await fetchAllShopifyProducts();
     if (remote.error) return { ok: false, error: remote.error, ...EMPTY };
 
     const plan = planInventorySync(ours, remote.products ?? []);
+    // Variant-grain products are counted alongside the simple ones so the UI
+    // total reflects every zero actually written, not just the SKU-matched half.
+    const vMatched = variantSummary?.synced ?? 0;
+    const vUnmatched = variantSummary?.blocked ?? 0;
+    const vWritten = variantSummary?.variantsWritten ?? 0;
     const examples = plan.changes.slice(0, 5).map((c) => `${c.name_en}: ${c.from ?? "؟"}←${c.quantity}`);
     if (!plan.changes.length) {
-      return { ok: true, matched: plan.matched, unmatched: plan.unmatched, drift: 0, updated: 0, examples: [], ...orderStep };
+      return {
+        ok: true, matched: plan.matched + vMatched, unmatched: plan.unmatched + vUnmatched,
+        drift: vWritten, updated: vWritten, examples: [], ...orderStep,
+      };
     }
 
     const loc = await fetchPrimaryLocationId();
-    if (loc.error || !loc.locationId) return { ok: false, error: loc.error ?? "location?", ...EMPTY, matched: plan.matched, unmatched: plan.unmatched, drift: plan.changes.length };
+    if (loc.error || !loc.locationId) return { ok: false, error: loc.error ?? "location?", ...EMPTY, matched: plan.matched + vMatched, unmatched: plan.unmatched + vUnmatched, drift: plan.changes.length + vWritten };
 
     const res = await setInventoryQuantities(loc.locationId, plan.changes);
     return {
       ok: res.ok, ...(res.error ? { error: res.error } : {}),
-      matched: plan.matched, unmatched: plan.unmatched,
-      drift: plan.changes.length, updated: res.updated, examples,
+      matched: plan.matched + vMatched, unmatched: plan.unmatched + vUnmatched,
+      drift: plan.changes.length + vWritten, updated: res.updated + vWritten, examples,
       ...orderStep,
     };
   } catch (e) {
