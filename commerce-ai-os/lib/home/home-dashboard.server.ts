@@ -25,7 +25,6 @@ import { loadShopifySnapshotView } from "@/lib/platforms/shopify/snapshot-presen
 import { loadPureSoulSnapshotView } from "@/lib/platforms/puresoul/snapshot-presence";
 import { loadTalabatSnapshotView } from "@/lib/platforms/talabat/snapshot-presence";
 import { loadRafeeqSnapshotView } from "@/lib/platforms/rafeeq/snapshot-presence";
-import { getCeoKpis } from "@/lib/dashboard";
 import { loadExportCenter } from "@/lib/export/export-center.server";
 import { loadRecentExportRuns } from "@/lib/export/shopify/run-store.server";
 import { loadCatalogHealthDistribution } from "@/lib/catalog/health/health-distribution.server";
@@ -37,14 +36,41 @@ import { loadAiCenter } from "@/lib/operations/ai/ai-center.server";
 import { parseAiFilters } from "@/lib/operations/ai/ai-center";
 import { listPending, listRewardReady, listCustomers } from "@/lib/loyalty/rewards";
 import { loadRecentActivity } from "./recent-activity.server.ts";
+import { loadMasterScope } from "./master-scope.server.ts";
+import { scopeRows, scopeRowsKeepingGlobal, type MasterScope } from "./master-scope.ts";
+import { summarizeActions } from "@/lib/actions/action-model";
 
 const OWNER_NAME = "Fahad";
+
+/**
+ * CURRENT OPERATIONAL SCOPE.
+ *
+ * Every product-derived metric below is measured over the ACTIVE snoonu:malikas
+ * master — the same membership /v2/catalog uses — so the two pages can never
+ * disagree. The master size is derived per request; no count is hardcoded.
+ * Historical and system data (audit history, export runs, AI diagnostics,
+ * analytics, rewards) stays deliberately GLOBAL.
+ *
+ * Products outside the master remain untouched in the database; they are only
+ * excluded from current operational counts.
+ */
+
+/** Count readiness rows failing a given required check — the field-gap source. */
+const failing = (readiness: readonly { checks: readonly { code: string; passed: boolean }[] }[], code: string): number =>
+  readiness.filter((r) => r.checks.some((c) => c.code === code && !c.passed)).length;
 
 const numOr = (v: unknown): Maybe<number> => (typeof v === "number" && Number.isFinite(v) ? v : UNKNOWN);
 const strOr = (v: unknown): Maybe<string> => (typeof v === "string" && v.length > 0 ? v : UNKNOWN);
 
-/** ONE operations scan → lifecycle breakdown (Section 4) + channel health (Section 5). */
-const getOperations = cache(async () => {
+/**
+ * ONE operations scan → lifecycle (Section 4), channel health (Section 5),
+ * catalog field gaps and the export-readiness baseline — all measured over the
+ * master only. Scoping the scanned items ONCE makes every downstream engine
+ * (summary → platform overview → platform health → channel cards) master-scoped
+ * without a second query or a second rule.
+ */
+const getOperations = cache(async (scope: MasterScope) => {
+  if (!scope.ok) return null; // fail closed — never fall back to the whole catalog
   try {
     const supabase = createClient();
     // Snapshot-only readers: real per-channel presence from stored snapshots
@@ -57,7 +83,10 @@ const getOperations = cache(async () => {
       rafeeqSnapshot: { loadRafeeqSnapshotView: (c) => loadRafeeqSnapshotView(c as never) },
     });
     if (result.status !== "ok") return null;
-    const items = annotateTickTick(result.data.items, new Set<string>());
+    // ── MASTER SCOPE: filter the scanned universe down to the master ──────────
+    const scopedItems = scopeRows(result.data.items, (i) => i.id, scope);
+    const scopedReadiness = scopeRows(result.data.readiness ?? [], (r) => r.productId, scope);
+    const items = annotateTickTick(scopedItems, new Set<string>());
     const summary = buildDashboardSummary(
       items,
       result.data.health,
@@ -80,17 +109,51 @@ const getOperations = cache(async () => {
       const { count } = await supabase.from("product_archive").select("id", { count: "exact", head: true });
       if (typeof count === "number") archived = count;
     } catch { archived = 0; }
-    const opsCenter = buildOperationsCenter({ kpis: summary.kpis, overview: summary.platformOverview, platformHealth, items });
+    // Snoonu — Malikas presence, MEASURED (never hardcoded): of the master's
+    // members, how many resolve to a live scanned product row. A listing whose
+    // product row is gone shows up as "missing" rather than silently inflating.
+    const snoonuPresent = scopedItems.length;
+    const snoonuMalikasPresence = {
+      mapped: snoonuPresent,
+      needsMapping: Math.max(0, scope.total - snoonuPresent),
+      needsReview: 0,
+    };
+    const opsCenter = buildOperationsCenter({
+      kpis: summary.kpis,
+      overview: summary.platformOverview,
+      platformHealth,
+      items,
+      snoonuMalikasPresence,
+    });
     // Certified variant blocker: the readiness engine's "missing_variants" reason
     // (a product that expects variants but has none). Counted over the SAME scan —
     // no new scan, no new rule.
-    const variantProblems = (result.data.readiness ?? []).filter(
+    const variantProblems = scopedReadiness.filter(
       (r) => Array.isArray(r.reasons) && r.reasons.some((x) => x.code === "missing_variants"),
     ).length;
+    // Catalog field gaps come from the SAME scoped readiness checks rather than
+    // from catalog-wide head counts, so Home and /v2/catalog can never disagree
+    // (this is what made Home report "needs image 2" while the catalog said 0 —
+    // both of those products are outside the master).
+    const gaps = {
+      total: scopedItems.length,
+      needsImage: failing(scopedReadiness, "image"),
+      needsPrice: failing(scopedReadiness, "price"),
+      needsCategory: failing(scopedReadiness, "category"),
+      needsBrand: failing(scopedReadiness, "brand"),
+      needsSku: failing(scopedReadiness, "sku"),
+      needsBarcode: failing(scopedReadiness, "barcode"),
+    };
+    // Export-readiness baseline over the master (replaces the catalog-wide one).
+    const readyCount = scopedReadiness.filter((r) => r.readyToPublish).length;
     return {
       lifecycle: buildLifecycleBreakdown(items, archived),
       channels: opsCenter.channels,
       variantProblems,
+      gaps,
+      eligible: readyCount,
+      blocked: Math.max(0, scopedReadiness.length - readyCount),
+      masterTotal: scope.total,
     };
   } catch {
     return null;
@@ -114,10 +177,13 @@ const metricStat = (key: string, label: string, m: { status: string; value: numb
 export const loadHomeDashboard = cache(async (now: Date = new Date()): Promise<HomeDashboardModel> => {
   const nowIso = now.toISOString();
 
+  // Membership first — every operational metric below is measured against it.
+  const scope = await loadMasterScope();
+  const memberIds = scope.ok ? scope.ids : null;
+
   const [
     action,
     ops,
-    ceo,
     exportCenter,
     shopifyRuns,
     healthDist,
@@ -131,13 +197,14 @@ export const loadHomeDashboard = cache(async (now: Date = new Date()): Promise<H
     activity,
   ] = await Promise.all([
     loadActionCenter(now).catch(() => null),
-    getOperations(),
-    getCeoKpis().catch(() => null),
+    getOperations(scope),
     loadExportCenter(now).then((r) => ("model" in r ? r.model : null)).catch(() => null),
     loadRecentExportRuns(createClient() as never, "shopify:malikas", 20).catch(() => null),
-    loadCatalogHealthDistribution().catch(() => null),
-    loadEvidenceOverview().catch(() => null),
-    loadRecommendationSummary().catch(() => null),
+    loadCatalogHealthDistribution(memberIds).catch(() => null),
+    // Both reuse the SAME bounded evidence batch inside the certified loaders;
+    // the membership filter is applied there, not re-implemented here.
+    loadEvidenceOverview(memberIds).catch(() => null),
+    loadRecommendationSummary(memberIds).catch(() => null),
     loadAnalytics(now).catch(() => null),
     loadAiCenter(parseAiFilters({})).then((r) => ("model" in r ? r : null)).catch(() => null),
     listPending().catch(() => null),
@@ -146,16 +213,21 @@ export const loadHomeDashboard = cache(async (now: Date = new Date()): Promise<H
     loadRecentActivity(20).catch(() => null),
   ]);
 
-  // SECTION 2/3 — Action Center (lanes + severity axis)
-  const actionsFacts = action
+  // SECTION 2/3 — Action Center (lanes + severity axis), scoped to the master.
+  // Product-bound actions outside the master are dropped; catalog-wide actions
+  // (entityId null) are kept. The summary is recomputed with the SAME certified
+  // pure summarizer over the filtered list — no new counting rule.
+  const scopedActions = action ? scopeRowsKeepingGlobal(action.actions, (a) => a.entityId, scope) : [];
+  const scopedSummary = action ? summarizeActions(scopedActions) : null;
+  const actionsFacts = action && scopedSummary
     ? {
-        critical: numOr(action.summary.critical),
-        approvalRequired: numOr(action.summary.approvalRequired),
-        waiting: numOr(action.summary.waiting),
-        completedToday: numOr(action.summary.completedToday),
-        total: numOr(action.summary.total),
-        high: numOr(action.actions.filter((a) => a.severity === "warning").length),
-        medium: numOr(action.actions.filter((a) => a.severity === "info").length),
+        critical: numOr(scopedSummary.critical),
+        approvalRequired: numOr(scopedSummary.approvalRequired),
+        waiting: numOr(scopedSummary.waiting),
+        completedToday: numOr(scopedSummary.completedToday),
+        total: numOr(scopedSummary.total),
+        high: numOr(scopedActions.filter((a) => a.severity === "warning").length),
+        medium: numOr(scopedActions.filter((a) => a.severity === "info").length),
       }
     : null;
 
@@ -164,22 +236,27 @@ export const loadHomeDashboard = cache(async (now: Date = new Date()): Promise<H
     ? { active: numOr(ops.lifecycle.active), draft: numOr(ops.lifecycle.draft), stopped: numOr(ops.lifecycle.stopped), ready: numOr(ops.lifecycle.ready) }
     : null;
 
-  // SECTION 4 — catalog field gaps (getCeoKpis) + ready/blocked (Export Center readiness baseline)
-  const eligible = exportCenter ? (typeof exportCenter.readinessBaseline.eligible === "number" ? exportCenter.readinessBaseline.eligible : UNKNOWN) : UNKNOWN;
-  const blocked = exportCenter ? (typeof exportCenter.readinessBaseline.blocked === "number" ? exportCenter.readinessBaseline.blocked : UNKNOWN) : UNKNOWN;
-  const catalogFacts = ceo || exportCenter
+  // SECTION 4 — catalog field gaps + ready/blocked, BOTH derived from the one
+  // master-scoped operations scan. `getCeoKpis` is deliberately no longer used
+  // here: its head counts are catalog-wide and cannot be filtered to membership.
+  const eligible: Maybe<number> = ops ? numOr(ops.eligible) : UNKNOWN;
+  const blocked: Maybe<number> = ops ? numOr(ops.blocked) : UNKNOWN;
+  const catalogFacts = ops
     ? {
-        total: numOr(ceo?.totalProducts),
+        total: numOr(ops.gaps.total),
         ready: eligible,
         blocked,
-        needsImage: numOr(ceo?.missingImage),
-        needsCategory: numOr(ceo?.missingCategory),
-        needsPrice: numOr(ceo?.missingPrice),
-        needsBrand: ceo ? numOr(ceo.totalProducts - ceo.productsWithBrand) : UNKNOWN,
+        needsImage: numOr(ops.gaps.needsImage),
+        needsCategory: numOr(ops.gaps.needsCategory),
+        needsPrice: numOr(ops.gaps.needsPrice),
+        needsBrand: numOr(ops.gaps.needsBrand),
       }
     : null;
 
-  // SECTION 9 — CAT.1A health distribution + CAT.1B evidence + CAT.1D recommendations
+  // SECTION 9 — CAT.1A health distribution + CAT.1B evidence + CAT.1D
+  // recommendations, all restricted to the master. Evidence and recommendations
+  // are derived from ONE shared batch, filtered by membership, then handed to the
+  // same certified pure engines.
   const healthFacts = healthDist
     ? { averageScore: numOr(healthDist.averageScore), total: numOr(healthDist.total), byGrade: healthDist.byGrade }
     : null;
@@ -218,6 +295,9 @@ export const loadHomeDashboard = cache(async (now: Date = new Date()): Promise<H
   // SECTION 5 — Channel health (from the single ops scan). Shopify last export
   // reuses the export_runs reader; other channels have no durable export timeline.
   const shopifyLastExport = runsAvail ? strOr(runList[0]?.finishedAt) : UNKNOWN;
+  // Pure Seoul is a SEPARATE storefront, not a Malikas-master channel — it is
+  // never expressed against the Malikas denominator.
+  const isMasterChannel = (key: string) => key !== "snoonu:pure_seoul";
   const channelFacts: ChannelFacts[] | null = ops
     ? ops.channels.map((c) => ({
         key: c.storefront,
@@ -226,6 +306,7 @@ export const loadHomeDashboard = cache(async (now: Date = new Date()): Promise<H
         mapped: numOr(c.mapped),
         blocked: numOr(c.needsMapping),
         needsReview: numOr(c.needsReview),
+        masterTotal: isMasterChannel(c.storefront) ? numOr(ops.masterTotal) : UNKNOWN,
         lastExport: c.storefront === "shopify:malikas" ? shopifyLastExport : UNKNOWN,
         href: c.href,
       }))
@@ -289,18 +370,20 @@ export const loadHomeDashboard = cache(async (now: Date = new Date()): Promise<H
         key: c.storefront,
         label: c.label,
         ready: numOr(c.mapped),
+        masterTotal: isMasterChannel(c.storefront) ? numOr(ops.masterTotal) : UNKNOWN,
         href: `/v2/export/${encodeURIComponent(c.storefront)}`,
       }))
     : [];
-  const launchReadinessFacts: LaunchReadinessFacts | null = ops || exportCenter
+  const launchReadinessFacts: LaunchReadinessFacts | null = ops
     ? {
         exportReady: eligible,
         blocked,
+        masterTotal: numOr(ops.masterTotal),
         channels: readyChannels,
-        criticalBlockers: numOr(action?.summary.critical),
-        missingPrice: numOr(ceo?.missingPrice),
-        missingImage: numOr(ceo?.missingImage),
-        missingCategory: numOr(ceo?.missingCategory),
+        criticalBlockers: numOr(scopedSummary?.critical),
+        missingPrice: numOr(ops.gaps.needsPrice),
+        missingImage: numOr(ops.gaps.needsImage),
+        missingCategory: numOr(ops.gaps.needsCategory),
         variantProblems: ops ? numOr(ops.variantProblems) : UNKNOWN,
         needsReview: needsReviewTotal,
         lifecycleBlocked: ops ? numOr(ops.lifecycle.stopped) : UNKNOWN,

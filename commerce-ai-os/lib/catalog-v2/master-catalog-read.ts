@@ -90,10 +90,10 @@ const VARIANT_COLUMNS = "parent_product_id";
 // Membership read: `product_id` ONLY. No external id, no mapping metadata.
 const LISTING_COLUMNS = "product_id";
 
-/** The storefront whose ACTIVE listings define catalog membership. */
-export const CATALOG_STOREFRONT_KEY = "snoonu:malikas";
-/** Only listings in this mapping state count as membership. */
-export const CATALOG_MAPPING_STATUS = "active";
+// The storefront/status that define membership live in a shared pure module so
+// this reader and the Home Dashboard cannot drift apart.
+export { CATALOG_MAPPING_STATUS, CATALOG_STOREFRONT_KEY } from "./master-membership.ts";
+import { CATALOG_MAPPING_STATUS, CATALOG_STOREFRONT_KEY } from "./master-membership.ts";
 
 /** Fixed page size. Kept at/below the PostgREST default max-rows so no single
  *  response is silently truncated. Pagination reads every page until the source

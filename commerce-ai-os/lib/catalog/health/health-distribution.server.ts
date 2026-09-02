@@ -25,7 +25,12 @@ interface ReadClient {
 }
 
 /** Bounded, read-only catalog-content health distribution. Null when unauthenticated. */
-export async function loadCatalogHealthDistribution(): Promise<HealthDistribution | null> {
+export async function loadCatalogHealthDistribution(
+  /** Optional membership filter: when supplied, only these product ids are
+   *  scored (the Malikas operational master). `null`/omitted = whole catalog,
+   *  which is what the standalone catalog-health page still wants. */
+  memberIds?: ReadonlySet<string> | null,
+): Promise<HealthDistribution | null> {
   if (!(await isSignedIn())) return null;
   const sb = createClient() as unknown as ReadClient;
 
@@ -43,7 +48,11 @@ export async function loadCatalogHealthDistribution(): Promise<HealthDistributio
     return null;
   }
 
-  const healths = rows.map((p) => {
+  const scoped = memberIds
+    ? rows.filter((p) => typeof p.id === "string" && memberIds.has(p.id))
+    : rows;
+
+  const healths = scoped.map((p) => {
     const input: CatalogHealthInput = {
       productId: str(p.id) ?? "",
       sku: str(p.sku), barcode: str(p.barcode),

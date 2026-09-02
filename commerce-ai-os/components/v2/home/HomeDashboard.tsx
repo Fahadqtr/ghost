@@ -29,7 +29,12 @@ function fmt(v: Maybe<number>): string {
 function StatCard({ stat }: { stat: HomeStat }) {
   const body = (
     <div className={`rounded-xl border px-3 py-2 ${TONE[stat.tone]}`}>
-      <div className="text-lg font-bold">{fmt(stat.value)}</div>
+      <div className="text-lg font-bold">
+        {fmt(stat.value)}
+        {typeof stat.of === "number" ? (
+          <span className="text-xs font-semibold opacity-60"> / {fmt(stat.of)}</span>
+        ) : null}
+      </div>
       <div className="text-[11px] font-semibold opacity-90">{stat.label}</div>
     </div>
   );
@@ -167,7 +172,15 @@ export default function HomeDashboard({ model }: { model: HomeDashboardModel }) 
                 <span className="text-[11px] font-semibold text-slate-500">{c.status}</span>
               </div>
               <div className="mt-2 grid grid-cols-3 gap-1 text-center text-xs">
-                <div><div className="font-bold text-slate-700">{fmt(c.mapped)}</div><div className="text-[10px] text-slate-400">مربوط</div></div>
+                <div>
+                  <div className="font-bold text-slate-700">
+                    {fmt(c.mapped)}
+                    {typeof c.masterTotal === "number" ? (
+                      <span className="text-[10px] font-semibold text-slate-400"> / {fmt(c.masterTotal)}</span>
+                    ) : null}
+                  </div>
+                  <div className="text-[10px] text-slate-400">مُدرج</div>
+                </div>
                 <div><div className="font-bold text-slate-700">{fmt(c.blocked)}</div><div className="text-[10px] text-slate-400">ناقص</div></div>
                 <div><div className="font-bold text-slate-700">{fmt(c.needsReview)}</div><div className="text-[10px] text-slate-400">مراجعة</div></div>
               </div>

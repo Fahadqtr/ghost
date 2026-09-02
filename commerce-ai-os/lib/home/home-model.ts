@@ -21,6 +21,9 @@ export interface HomeStat {
   value: Maybe<number>;
   tone: HomeTone;
   href?: string;
+  /** Denominator to render as "value / of" (the current master size). Present
+   *  only where the metric is genuinely a fraction of the master. */
+  of?: Maybe<number>;
 }
 
 /** A pre-formatted (string) metric for money/text values the server already rendered. */
@@ -88,6 +91,10 @@ export interface ChannelFacts {
   mapped: Maybe<number>;
   blocked: Maybe<number>;
   needsReview: Maybe<number>;
+  /** Malikas master size this channel is measured against. UNKNOWN for
+   *  storefronts that are not part of the Malikas master (e.g. Pure Seoul);
+   *  absent for callers that do not measure against the master. */
+  masterTotal?: Maybe<number>;
   lastExport: Maybe<string>;
   href: string;
 }
@@ -156,13 +163,21 @@ export interface ActivityFact {
 export interface ChannelReadyFact {
   key: string;
   label: string;
+  /** Products of the master PRESENT on this channel (mapped/listed) — the most
+   *  accurate word the underlying snapshot supports; not a publish-readiness. */
   ready: Maybe<number>;
+  /** Denominator: current master size, UNKNOWN for non-Malikas storefronts,
+   *  absent for callers that do not measure against the master. */
+  masterTotal?: Maybe<number>;
   href: string;
 }
 
 export interface LaunchReadinessFacts {
   exportReady: Maybe<number>; // certified export-readiness baseline (eligible)
   blocked: Maybe<number>; // certified export-readiness baseline (blocked)
+  /** Current operational master size (derived per request, never hardcoded).
+   *  Absent for callers that are not master-scoped. */
+  masterTotal?: Maybe<number>;
   channels: readonly ChannelReadyFact[]; // per-channel READY = certified active-mapping count
   criticalBlockers: Maybe<number>; // Action Center summary.critical
   missingPrice: Maybe<number>;
@@ -396,25 +411,37 @@ export function buildLaunchReadiness(lr: LaunchReadinessFacts | null): LaunchRea
   }
   const ready = num(lr.exportReady);
   const blocked = num(lr.blocked);
-  const total = isNum(ready) && isNum(blocked) ? ready + blocked : null;
+  // Denominator is the CURRENT master size when known (derived per request);
+  // ready+blocked is the fallback for the same scoped scan.
+  const masterTotal = num(lr.masterTotal);
+  const total = isNum(masterTotal) && masterTotal > 0
+    ? masterTotal
+    : (isNum(ready) && isNum(blocked) ? ready + blocked : null);
   const readinessPct: Maybe<number> = total != null && total > 0 ? Math.round((ready as number) / total * 100) : UNKNOWN;
 
   const chan = Array.isArray(lr.channels) ? lr.channels : [];
   const byKey = (k: string) => chan.find((c) => c.key === k);
   const channelCard = (key: string, label: string): HomeStat => {
     const c = byKey(key);
-    return { key: `ready_${key}`, label, value: c ? num(c.ready) : UNKNOWN, tone: "good", href: c ? c.href : channelReadyHref(key) };
+    return {
+      key: `ready_${key}`,
+      label,
+      value: c ? num(c.ready) : UNKNOWN,
+      tone: "good",
+      href: c ? c.href : channelReadyHref(key),
+      of: c ? num(c.masterTotal) : UNKNOWN,
+    };
   };
 
   const headline: HomeStat[] = [
     { key: "readiness_pct", label: "جاهزية الإطلاق ٪", value: readinessPct, tone: readinessPct === UNKNOWN ? "neutral" : (readinessPct >= 90 ? "good" : readinessPct >= 60 ? "warn" : "bad") },
     { key: "export_ready", label: "جاهز للنشر", value: ready, tone: "good", href: "/v2/export" },
     { key: "blocked_products", label: "منتجات محظورة", value: blocked, tone: attentionTone(blocked, true), href: "/v2/export" },
-    channelCard("shopify:malikas", "Shopify جاهز"),
-    channelCard("talabat:malikas", "Talabat جاهز"),
-    channelCard("snoonu:malikas", "Snoonu Malikas جاهز"),
-    channelCard("snoonu:pure_seoul", "Snoonu Pure Seoul جاهز"),
-    channelCard("rafeeq:malikas", "Rafeeq جاهز"),
+    channelCard("shopify:malikas", "Shopify مُدرج"),
+    channelCard("talabat:malikas", "Talabat مُدرج"),
+    channelCard("snoonu:malikas", "Snoonu Malikas مُدرج"),
+    channelCard("snoonu:pure_seoul", "Snoonu Pure Seoul مُدرج (متجر منفصل)"),
+    channelCard("rafeeq:malikas", "Rafeeq مُدرج"),
     { key: "critical_blockers", label: "معوّقات حرجة", value: num(lr.criticalBlockers), tone: attentionTone(num(lr.criticalBlockers), true), href: "/v2/actions" },
   ];
 
@@ -492,16 +519,16 @@ export function buildHomeDashboard(facts: HomeFacts): HomeDashboardModel {
   const catalog: CatalogVM = {
     available: f.catalog != null || f.lifecycle != null,
     cards: [
-      { key: "products", label: "المنتجات", value: num(f.catalog?.total), tone: "neutral", href: "/v2/catalog" },
+      { key: "products", label: "منتجات الماستر", value: num(f.catalog?.total), tone: "neutral", href: "/v2/catalog" },
       { key: "active", label: "مُفعّل", value: num(f.lifecycle?.active), tone: "good" },
       { key: "draft", label: "مسودة", value: num(f.lifecycle?.draft), tone: "neutral" },
       { key: "stopped", label: "موقوف", value: num(f.lifecycle?.stopped), tone: "warn" },
-      { key: "ready", label: "جاهز للنشر", value: num(f.catalog?.ready), tone: "good" },
+      { key: "ready", label: "جاهز للنشر", value: num(f.catalog?.ready), tone: "good", of: num(f.catalog?.total) },
       { key: "blocked", label: "محظور", value: num(f.catalog?.blocked), tone: attentionTone(num(f.catalog?.blocked), true) },
       { key: "needs_image", label: "يحتاج صورة", value: num(f.catalog?.needsImage), tone: attentionTone(num(f.catalog?.needsImage)) },
       { key: "needs_category", label: "يحتاج تصنيف", value: num(f.catalog?.needsCategory), tone: attentionTone(num(f.catalog?.needsCategory)) },
       { key: "needs_price", label: "يحتاج سعر", value: num(f.catalog?.needsPrice), tone: attentionTone(num(f.catalog?.needsPrice)) },
-      { key: "needs_brand", label: "يحتاج علامة", value: num(f.catalog?.needsBrand), tone: attentionTone(num(f.catalog?.needsBrand)) },
+      { key: "needs_brand", label: "إثراء: علامة تجارية", value: num(f.catalog?.needsBrand), tone: "neutral" },
     ],
   };
 
@@ -533,8 +560,8 @@ export function buildHomeDashboard(facts: HomeFacts): HomeDashboardModel {
     provider: { label: provider.label, tone: provider.tone, configured: Boolean(f.ai?.providerConfigured) },
     cards: [
       { key: "need_generation", label: "يحتاج توليد", value: num(f.ai?.needGeneration), tone: attentionTone(num(f.ai?.needGeneration)), href: "/v2/operations/ai" },
-      { key: "need_review", label: "يحتاج مراجعة", value: num(f.ai?.needReview), tone: "neutral", href: "/v2/operations/ai" },
-      { key: "ready_apply", label: "جاهز للتطبيق", value: num(f.ai?.readyApply), tone: "good", href: "/v2/operations/ai" },
+      { key: "need_review", label: "يحتاج مراجعة (جلسة فقط)", value: num(f.ai?.needReview), tone: "neutral", href: "/v2/operations/ai" },
+      { key: "ready_apply", label: "جاهز للتطبيق (جلسة فقط)", value: num(f.ai?.readyApply), tone: "good", href: "/v2/operations/ai" },
     ],
   };
 

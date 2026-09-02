@@ -16,19 +16,28 @@ export interface RecommendationBatch {
 }
 
 /** All catalog recommendations from the shared bounded evidence batch. Null on failure. */
-export async function loadRecommendationBatch(): Promise<RecommendationBatch | null> {
+export async function loadRecommendationBatch(
+  memberIds?: ReadonlySet<string> | null,
+): Promise<RecommendationBatch | null> {
   const batch = await loadCatalogEvidenceBatch();
   if (!batch) return null;
+  const results = memberIds ? batch.results.filter((r) => memberIds.has(r.productId)) : batch.results;
   const recommendations: Recommendation[] = [];
-  for (const res of batch.results) {
+  for (const res of results) {
     recommendations.push(...buildRecommendations(res.evidence, res.productId));
   }
   return { recommendations, labels: batch.labels };
 }
 
-/** Catalog-wide recommendation overview. Null when unauthenticated / on failure. */
-export async function loadRecommendationSummary(): Promise<RecommendationSummary | null> {
-  const batch = await loadRecommendationBatch();
+/**
+ * Recommendation overview. Null when unauthenticated / on failure.
+ * `memberIds` optionally restricts it to a product membership (the Malikas
+ * operational master); omitted/null = whole catalog, the original behaviour.
+ */
+export async function loadRecommendationSummary(
+  memberIds?: ReadonlySet<string> | null,
+): Promise<RecommendationSummary | null> {
+  const batch = await loadRecommendationBatch(memberIds);
   if (!batch) return null;
   return computeRecommendationSummary(batch.recommendations);
 }
