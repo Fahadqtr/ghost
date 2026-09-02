@@ -5,9 +5,18 @@ import "server-only";
 // from the existing `products` and `product_variants` tables (a temporary source
 // until the V2 catalog schema exists), then projects rows through the pure view
 // layer. It creates no client (one is passed in from the page), performs no
-// write / RPC / external call, reads no inventory/channel/platform/order table,
-// and never surfaces a raw database error. Reads are capped; if the cap is hit
-// the result is explicitly marked partial rather than claiming completeness.
+// write / RPC / external call, reads no inventory/platform/order table, and
+// never surfaces a raw database error. Reads are capped; if the cap is hit the
+// result is explicitly marked partial rather than claiming completeness.
+//
+// Catalog MEMBERSHIP is scoped to the active Snoonu Malikas master: the catalog
+// shows exactly those products that hold an ACTIVE `snoonu:malikas` row in
+// `external_channel_listings`. That membership is derived at read time from the
+// listing table — never a hardcoded count — and it is the ONLY reason this
+// reader touches a channel table: it selects `product_id` alone and reads no
+// external id, no mapping metadata and no other storefront's data. Products
+// outside the master are hidden from the catalog view only; nothing is deleted,
+// archived or modified anywhere.
 
 // The pure view layer is referenced by a relative import. Its TYPE is imported
 // statically (erased at runtime → node:test can load this file); the pure
@@ -46,6 +55,10 @@ export interface CatalogQueryResult {
 export interface CatalogRangeBuilder extends PromiseLike<CatalogQueryResult> {
   order(column: string, options: { ascending: boolean }): CatalogRangeBuilder;
   range(from: number, to: number): CatalogRangeBuilder;
+  // Generic parameterized filter (same reason as the detail surface below: `.eq`
+  // derives its value type from the row generic and instantiates too deeply).
+  // Used only to scope the membership read; values are bound, never interpolated.
+  filter(column: string, operator: string, value: string): CatalogRangeBuilder;
 }
 export interface CatalogSelectBuilder {
   select(columns: string): CatalogRangeBuilder;
@@ -74,6 +87,14 @@ export interface CatalogDetailReadClient {
 const PRODUCT_COLUMNS = "id, sku, barcode, name_ar, name_en, price, discount_price, image_url, approval";
 const VARIANT_COLUMNS = "parent_product_id";
 
+// Membership read: `product_id` ONLY. No external id, no mapping metadata.
+const LISTING_COLUMNS = "product_id";
+
+/** The storefront whose ACTIVE listings define catalog membership. */
+export const CATALOG_STOREFRONT_KEY = "snoonu:malikas";
+/** Only listings in this mapping state count as membership. */
+export const CATALOG_MAPPING_STATUS = "active";
+
 /** Fixed page size. Kept at/below the PostgREST default max-rows so no single
  *  response is silently truncated. Pagination reads every page until the source
  *  is proven exhausted (a page shorter than PAGE_SIZE) or the cap is exceeded. */
@@ -82,12 +103,14 @@ const PAGE_SIZE = 1000;
 /** Safe row caps. Reading beyond a cap yields a clearly partial result. */
 const PRODUCT_CAP = 5000;
 const VARIANT_CAP = 20000;
+const LISTING_CAP = 20000;
 
 // Deterministic ordering per table: a primary column plus a UNIQUE tie-breaker
 // (the primary key `id`) so pages never overlap and never skip. `id` is used only
 // for ordering — it is not part of the projected output.
 const PRODUCT_ORDER: readonly [string, string] = ["sku", "id"];
 const VARIANT_ORDER: readonly [string, string] = ["parent_product_id", "id"];
+const LISTING_ORDER: readonly [string, string] = ["product_id", "id"];
 
 export interface MasterCatalogResult {
   status: "ok" | "error";
@@ -124,6 +147,7 @@ async function readAllPages(
   columns: string,
   order: readonly [string, string],
   cap: number,
+  filters: readonly (readonly [string, string])[] = [],
 ): Promise<PagedRead> {
   const acc: unknown[] = [];
   let offset = 0;
@@ -133,9 +157,9 @@ async function readAllPages(
   for (;;) {
     let res: unknown;
     try {
-      res = await client
-        .from(table)
-        .select(columns)
+      let q = client.from(table).select(columns);
+      for (const [column, value] of filters) q = q.filter(column, "eq", value);
+      res = await q
         .order(order[0], { ascending: true })
         .order(order[1], { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1);
@@ -159,17 +183,67 @@ async function readAllPages(
 }
 
 /**
- * Load the Malikas master catalog. `products` is the core source: if any page
- * fails, the whole read fails closed (status error, no products). A
- * `product_variants` page failure is non-fatal but its rows are ALL discarded —
- * products still render with variantCount 0 and the result is marked partial,
- * so partial counts are never shown as if complete.
+ * Collect the set of product ids that are members of the active Snoonu Malikas
+ * master. Only non-empty string `product_id` values count; anything malformed is
+ * ignored rather than admitted.
+ */
+function membershipIds(rows: readonly unknown[]): Set<string> {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (!isPlainObject(row)) continue;
+    const pid = row.product_id;
+    if (typeof pid === "string" && pid.length > 0) ids.add(pid);
+  }
+  return ids;
+}
+
+/** Keep only product rows whose `id` is in the membership set. */
+function scopeToMembership(rows: readonly unknown[], ids: ReadonlySet<string>): unknown[] {
+  const out: unknown[] = [];
+  for (const row of rows) {
+    if (!isPlainObject(row)) continue;
+    const id = row.id;
+    if (typeof id === "string" && ids.has(id)) out.push(row);
+  }
+  return out;
+}
+
+/**
+ * Load the Malikas master catalog, scoped to the ACTIVE `snoonu:malikas`
+ * listings.
+ *
+ * Both the membership read and the `products` read are core sources: if either
+ * fails, the whole read fails closed (status error, no products). Failing closed
+ * matters for membership specifically — a silent fallback would render every
+ * product in the table as though it belonged to the master, which is exactly the
+ * wrong answer. A `product_variants` page failure stays non-fatal but its rows
+ * are ALL discarded — products still render with variantCount 0 and the result
+ * is marked partial, so partial counts are never shown as if complete.
+ *
+ * The returned product list is the single source every downstream view helper
+ * (summary cards, filter, sort, pagination, search) operates on, so scoping here
+ * scopes all of them consistently.
  */
 export async function loadMasterCatalog(
   client: CatalogReadClient,
   options?: LoadMasterCatalogOptions,
 ): Promise<MasterCatalogResult> {
   const projector = options?.project ?? (await defaultProjector());
+
+  const listingRead = await readAllPages(
+    client,
+    "external_channel_listings",
+    LISTING_COLUMNS,
+    LISTING_ORDER,
+    LISTING_CAP,
+    [
+      ["storefront_key", CATALOG_STOREFRONT_KEY],
+      ["mapping_status", CATALOG_MAPPING_STATUS],
+    ],
+  );
+  if (!listingRead.ok) {
+    return { status: "error", products: [], partial: false };
+  }
 
   const productRead = await readAllPages(client, "products", PRODUCT_COLUMNS, PRODUCT_ORDER, PRODUCT_CAP);
   if (!productRead.ok) {
@@ -178,8 +252,9 @@ export async function loadMasterCatalog(
 
   const variantRead = await readAllPages(client, "product_variants", VARIANT_COLUMNS, VARIANT_ORDER, VARIANT_CAP);
 
-  const products = projector.projectCatalogRows(productRead.rows, variantRead.ok ? variantRead.rows : []);
-  const partial = productRead.capped || !variantRead.ok || variantRead.capped;
+  const scopedRows = scopeToMembership(productRead.rows, membershipIds(listingRead.rows));
+  const products = projector.projectCatalogRows(scopedRows, variantRead.ok ? variantRead.rows : []);
+  const partial = productRead.capped || listingRead.capped || !variantRead.ok || variantRead.capped;
 
   return { status: "ok", products, partial };
 }
