@@ -20,8 +20,9 @@ import { loadPureSoulSnapshotView } from "@/lib/platforms/puresoul/snapshot-pres
 import { loadTalabatSnapshotView } from "@/lib/platforms/talabat/snapshot-presence";
 import { loadRafeeqSnapshotView } from "@/lib/platforms/rafeeq/snapshot-presence";
 import type { OperationsListItem } from "@/lib/operations/dashboard-view";
-import { getCeoKpis } from "@/lib/dashboard";
 import { loadExportCenter } from "@/lib/export/export-center.server";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
+import { countMasterGap, scopeReadiness } from "@/lib/readiness/master-readiness";
 import { loadActionCenter } from "@/lib/actions/action-center.server";
 import { loadAnalytics } from "@/lib/analytics/analytics-read.server";
 
@@ -42,7 +43,15 @@ const loadOps = cache(async () => {
       rafeeqSnapshot: { loadRafeeqSnapshotView: (c) => loadRafeeqSnapshotView(c as never) },
     });
     if (result.status !== "ok") return null;
-    const items = annotateTickTick(result.data.items, new Set<string>());
+    // CURRENT MASTER scope: Launch is an operational surface, so its queues and
+    // blocker counts cover the active snoonu:malikas membership only. Products
+    // outside the master (including PENDING-SNOONU shells that can never be
+    // approved) are preserved in the database but never counted as launch work.
+    const scope = await loadMasterScope();
+    if (!scope.ok) return null; // fail closed — never fall back to every product
+    const scopedItems = (result.data.items ?? []).filter((i) => scope.ids.has(i.id));
+    const scopedReadiness = scopeReadiness(result.data.readiness ?? [], scope);
+    const items = annotateTickTick(scopedItems, new Set<string>());
     const summary = buildDashboardSummary(
       items, result.data.health, result.data.shopifyAvailable,
       { available: result.data.puresoulAvailable, lastCapturedAt: result.data.puresoulLastCapturedAt, stale: result.data.puresoulStale },
@@ -56,9 +65,16 @@ const loadOps = cache(async () => {
       { puresoul: result.data.puresoulDegraded, talabat: result.data.talabatDegraded, rafeeq: result.data.rafeeqDegraded }, 0,
     );
     const opsCenter = buildOperationsCenter({ kpis: summary.kpis, overview: summary.platformOverview, platformHealth, items });
-    const variantProblems = (result.data.readiness ?? []).filter(
+    const variantProblems = scopedReadiness.filter(
       (r) => Array.isArray(r.reasons) && r.reasons.some((x) => x.code === "missing_variants"),
     ).length;
+    // Blocker counts come from the SAME scoped readiness checks rather than
+    // catalog-wide head counts, so they can never include outside-master rows.
+    const gaps = {
+      missingImage: countMasterGap(scopedReadiness, scope, "image"),
+      missingPrice: countMasterGap(scopedReadiness, scope, "price"),
+      missingCategory: countMasterGap(scopedReadiness, scope, "category"),
+    };
     let archived = 0;
     try {
       const { count } = await supabase.from("product_archive").select("id", { count: "exact", head: true });
@@ -69,6 +85,8 @@ const loadOps = cache(async () => {
       channels: opsCenter.channels,
       lifecycle: buildLifecycleBreakdown(items, archived),
       variantProblems,
+      gaps,
+      masterTotal: scope.total,
     };
   } catch {
     return null;
@@ -87,10 +105,9 @@ const channelMissing = (it: OperationsListItem) => {
 
 /** Single shared read model for /v2/catalog/launch. */
 export const loadLaunchWorkspace = cache(async (now: Date = new Date()): Promise<LaunchWorkspaceModel> => {
-  const [ops, exportCenter, ceo, action, analytics] = await Promise.all([
+  const [ops, exportCenter, action, analytics] = await Promise.all([
     loadOps(),
     loadExportCenter(now).then((r) => ("model" in r ? r.model : null)).catch(() => null),
-    getCeoKpis().catch(() => null),
     loadActionCenter(now).catch(() => null),
     loadAnalytics(now).catch(() => null),
   ]);
@@ -113,9 +130,9 @@ export const loadLaunchWorkspace = cache(async (now: Date = new Date()): Promise
           blocked,
           channels: readyChannels,
           criticalBlockers: numOr(action?.summary.critical),
-          missingPrice: numOr(ceo?.missingPrice),
-          missingImage: numOr(ceo?.missingImage),
-          missingCategory: numOr(ceo?.missingCategory),
+          missingPrice: numOr(ops?.gaps.missingPrice),
+          missingImage: numOr(ops?.gaps.missingImage),
+          missingCategory: numOr(ops?.gaps.missingCategory),
           variantProblems: ops ? numOr(ops.variantProblems) : UNKNOWN,
           needsReview: ops ? ops.channels.reduce((n, c) => n + (Number(c.needsReview) || 0), 0) : UNKNOWN,
           lifecycleBlocked: ops ? numOr(ops.lifecycle.stopped) : UNKNOWN,

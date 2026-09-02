@@ -39,6 +39,7 @@ import { loadRecentActivity } from "./recent-activity.server.ts";
 import { loadMasterScope } from "./master-scope.server.ts";
 import { scopeRows, scopeRowsKeepingGlobal, type MasterScope } from "./master-scope.ts";
 import { summarizeActions } from "@/lib/actions/action-model";
+import { computeMasterReadiness, countMasterGap } from "@/lib/readiness/master-readiness";
 
 const OWNER_NAME = "Fahad";
 
@@ -54,10 +55,6 @@ const OWNER_NAME = "Fahad";
  * Products outside the master remain untouched in the database; they are only
  * excluded from current operational counts.
  */
-
-/** Count readiness rows failing a given required check — the field-gap source. */
-const failing = (readiness: readonly { checks: readonly { code: string; passed: boolean }[] }[], code: string): number =>
-  readiness.filter((r) => r.checks.some((c) => c.code === code && !c.passed)).length;
 
 const numOr = (v: unknown): Maybe<number> => (typeof v === "number" && Number.isFinite(v) ? v : UNKNOWN);
 const strOr = (v: unknown): Maybe<string> => (typeof v === "string" && v.length > 0 ? v : UNKNOWN);
@@ -137,22 +134,23 @@ const getOperations = cache(async (scope: MasterScope) => {
     // both of those products are outside the master).
     const gaps = {
       total: scopedItems.length,
-      needsImage: failing(scopedReadiness, "image"),
-      needsPrice: failing(scopedReadiness, "price"),
-      needsCategory: failing(scopedReadiness, "category"),
-      needsBrand: failing(scopedReadiness, "brand"),
-      needsSku: failing(scopedReadiness, "sku"),
-      needsBarcode: failing(scopedReadiness, "barcode"),
+      needsImage: countMasterGap(scopedReadiness, scope, "image"),
+      needsPrice: countMasterGap(scopedReadiness, scope, "price"),
+      needsCategory: countMasterGap(scopedReadiness, scope, "category"),
+      needsBrand: countMasterGap(scopedReadiness, scope, "brand"),
+      needsSku: countMasterGap(scopedReadiness, scope, "sku"),
+      needsBarcode: countMasterGap(scopedReadiness, scope, "barcode"),
     };
-    // Export-readiness baseline over the master (replaces the catalog-wide one).
-    const readyCount = scopedReadiness.filter((r) => r.readyToPublish).length;
+    // Readiness baseline over the master — the SAME shared counter Launch and
+    // Export use, so the three surfaces cannot diverge.
+    const baseline = computeMasterReadiness(scopedReadiness, scope);
     return {
       lifecycle: buildLifecycleBreakdown(items, archived),
       channels: opsCenter.channels,
       variantProblems,
       gaps,
-      eligible: readyCount,
-      blocked: Math.max(0, scopedReadiness.length - readyCount),
+      eligible: baseline.ready,
+      blocked: baseline.blocked,
       masterTotal: scope.total,
     };
   } catch {
