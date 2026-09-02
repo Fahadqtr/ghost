@@ -48,9 +48,21 @@ test("launch workspace read-model composes certified loaders + HOME.2, no writes
     "@/lib/export/export-center.server",
     "@/lib/actions/action-center.server",
     "@/lib/analytics/analytics-read.server",
-    "@/lib/dashboard",
+    // NOTE: "@/lib/dashboard" (getCeoKpis) is deliberately NOT reused any more.
+    // Its head counts are catalog-wide `count(*)` queries that cannot be
+    // restricted to the operational master, so Launch's blocker counts included
+    // products outside it. Blocker counts now come from the master-scoped
+    // readiness scan via the shared countMasterGap helper.
   ];
   for (const mod of REQUIRED) assert.ok(raw.includes(mod), `read-model reuses ${mod}`);
+  // Launch is an operational surface: it must be master-scoped and must not
+  // fall back to catalog-wide head counts or hardcode the master size.
+  assert.ok(/loadMasterScope/.test(raw), "read-model uses the shared membership seam");
+  assert.ok(/countMasterGap/.test(raw), "blocker counts come from the scoped readiness scan");
+  assert.equal(/getCeoKpis/.test(s), false, "must not use catalog-wide head counts");
+  for (const n of ["1343", "1292", "1530", "1418"]) {
+    assert.equal(new RegExp(`\\b${n}\\b`).test(s), false, `must not hardcode ${n}`);
+  }
   assert.ok(/buildLaunchReadiness\(/.test(raw), "reuses the HOME.2 Launch Readiness composer");
   assert.ok(/buildLaunchWorkspace\(/.test(raw), "feeds the pure workspace composer");
   // single shared scan: exactly one loadOperationsDashboard call, cache-wrapped.

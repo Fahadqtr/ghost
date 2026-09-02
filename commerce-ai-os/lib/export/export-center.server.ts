@@ -20,22 +20,36 @@ import {
   type ExportCenterModel,
   type Unknownable,
 } from "./export-center.ts";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
+import { computeMasterReadiness } from "@/lib/readiness/master-readiness";
 
 export async function loadExportCenter(now: Date = new Date()): Promise<{ model: ExportCenterModel } | { error: string }> {
   try {
     const client = createClient();
 
-    // Global catalog-readiness baseline (reused; no Shopify presence, no new scan).
+    // OPERATIONAL readiness baseline — restricted to the CURRENT MASTER (the
+    // active snoonu:malikas membership), using the same certified readiness
+    // output and the same shared counter Home uses. Previously this counted
+    // every product row, so Launch and Export reported readiness over a
+    // universe that included products outside the master.
+    //
+    // This baseline drives the OPERATIONAL cards only. Full-catalog exports are
+    // produced by a separate route and are deliberately NOT scoped here.
     let eligible: Unknownable<number> = UNKNOWN;
     let blocked: Unknownable<number> = UNKNOWN;
     try {
-      const dash = await loadOperationsDashboard(client as never);
-      if (dash.status === "ok") {
-        const readiness = dash.data.readiness;
-        const total = readiness.length;
-        const ready = readiness.filter((r) => r.readyToPublish).length;
-        eligible = ready;
-        blocked = total - ready;
+      const scope = await loadMasterScope();
+      // Fail closed: without membership we show UNKNOWN rather than falling back
+      // to an unscoped count that would overstate readiness.
+      if (scope.ok) {
+        const dash = await loadOperationsDashboard(client as never);
+        if (dash.status === "ok") {
+          const baseline = computeMasterReadiness(dash.data.readiness, scope);
+          if (baseline.available) {
+            eligible = baseline.ready;
+            blocked = baseline.blocked;
+          }
+        }
       }
     } catch {
       /* leave UNKNOWN */
