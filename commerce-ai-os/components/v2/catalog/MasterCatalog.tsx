@@ -20,6 +20,7 @@ import {
   type CatalogSummary,
 } from "@/lib/catalog-v2/master-catalog-view";
 import MasterCatalogResults from "@/components/v2/catalog/MasterCatalogPreview";
+import FullCatalogExportButton from "@/components/v2/catalog/FullCatalogExportButton";
 
 function KpiCard({ label, value }: { label: string; value: number }) {
   return (
@@ -65,6 +66,9 @@ export default function MasterCatalog({
           <p className="text-sm text-muted">المصدر الرئيسي لجميع منتجات ومنصات Malikas Universe</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Full-catalog Excel export — always the WHOLE catalog, never the
+              current search/filter/sort result. */}
+          <FullCatalogExportButton />
           {/* Phase UI.6: Excel catalog updater entry */}
           <Link href="/v2/catalog/import" className="btn-ghost">
             تحديث الكتالوج من Excel
