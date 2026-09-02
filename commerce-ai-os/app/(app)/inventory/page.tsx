@@ -7,6 +7,8 @@ import InventoryModeToggle from "@/components/InventoryModeToggle";
 import SimpleAvailabilityList from "@/components/SimpleAvailabilityList";
 import { getInventoryMode } from "@/lib/settings";
 import { isAvailable } from "@/lib/availability/read";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
+import { scopeRows } from "@/lib/home/master-scope";
 import { getT } from "@/lib/i18n-server";
 
 // Count staff movements still awaiting the owner's review (details.review unset).
@@ -116,8 +118,10 @@ export default async function InventoryPage() {
     }
   }
 
-  // Fetch ALL rows (Supabase caps each request at 1000 — page through them).
-  const rows: InventoryRow[] = [];
+  // Fetch ALL inventory rows (Supabase caps each request at 1000 — page through
+  // them). Every row stays in the database; membership scoping below is a READ
+  // concern only and never touches quantity, stock_status or availability.
+  const allRows: InventoryRow[] = [];
   let loadError: string | null = null;
   const PAGE = 1000;
   const sel = `id, product_id, stock_quantity, low_stock_threshold, sold_quantity, updated_at${
@@ -135,7 +139,7 @@ export default async function InventoryPage() {
       break;
     }
     for (const r of (data ?? []) as any[]) {
-      rows.push({
+      allRows.push({
         id: r.id,
         product_id: r.product_id ?? null,
         product_name: r.products?.name_en ?? null,
@@ -154,6 +158,19 @@ export default async function InventoryPage() {
     }
     if (!data || data.length < PAGE) break;
   }
+
+  // CURRENT MASTER scope. The Inventory Center is a CURRENT OPERATIONAL
+  // surface, so its product universe is the active snoonu:malikas membership —
+  // read through the SAME shared seam as /v2, /v2/catalog and /v2/export, never
+  // a second ECL query. Outside-master inventory rows stay physically stored and
+  // untouched; they are simply not part of today's operational universe.
+  //
+  // Fails CLOSED: if membership cannot be read we show an error instead of
+  // falling back to every product, because an unscoped fallback would silently
+  // reinstate the outside-master rows this page exists to exclude.
+  const masterScope = await loadMasterScope();
+  const scopeUnavailable = !masterScope.ok;
+  const rows: InventoryRow[] = scopeRows(allRows, (r) => r.product_id, masterScope);
 
   // Effective stock per product: when a product is sold as options, its real
   // stock lives on the variants, and the inventory row often reads 0. Sum the
@@ -227,6 +244,16 @@ export default async function InventoryPage() {
       {loadError ? (
         <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
           {L(`تعذّر تحميل المخزون: ${loadError}. تأكّد أنك مسجّل الدخول (RLS).`, `Couldn’t load inventory: ${loadError}. Make sure you’re signed in (RLS).`)}
+        </div>
+      ) : scopeUnavailable ? (
+        /* FAIL CLOSED — membership unreadable. We show nothing rather than the
+           whole catalog: an unscoped fallback would quietly present products
+           outside the current master as operational stock. */
+        <div className="card border-amber-200 bg-amber-50 text-sm text-amber-800">
+          {L(
+            "تعذّر تحديد نطاق الكتالوج الحالي. لم يتم عرض المخزون لتفادي إظهار منتجات خارج النطاق. حدّث الصفحة للمحاولة مرة أخرى.",
+            "Couldn’t determine the current catalog scope. Inventory is hidden rather than showing products outside it. Refresh to try again.",
+          )}
         </div>
       ) : simpleMode ? (
         <>

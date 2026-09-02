@@ -2,6 +2,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import OutOfStockSection, { type OosItem } from "@/components/OutOfStockSection";
 import { isAvailable } from "@/lib/availability/read";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
+import { scopeRows } from "@/lib/home/master-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,21 @@ export default async function OutOfStockPage() {
       if (!data || data.length < PAGE) break;
     }
 
+    // CURRENT MASTER scope — same shared membership seam as the Inventory
+    // Center and /v2 (never a second ECL query). This page lists TODAY'S
+    // out-of-stock work, so products outside the active snoonu:malikas master
+    // are not listed; their rows remain untouched in the database.
+    //
+    // Fails CLOSED: an unreadable membership throws to the error card below
+    // rather than falling back to every product.
+    const masterScope = await loadMasterScope();
+    if (!masterScope.ok) {
+      throw new Error(
+        "تعذّر تحديد نطاق الكتالوج الحالي · couldn’t determine the current catalog scope",
+      );
+    }
+    const scoped = scopeRows(rows, (r: any) => r?.id, masterScope);
+
     // Channels a product is still ACTIVE on — so we can flag "out of stock here
     // but still live on a channel" (e.g. Pure Seoul).
     const activeByProduct = new Map<string, string[]>();
@@ -53,7 +70,7 @@ export default async function OutOfStockPage() {
       }
     }
 
-    for (const r of rows as any[]) {
+    for (const r of scoped as any[]) {
       if (isAvailable(r.stock_status)) continue; // only NOT-available products
       items.push({
         id: r.id,
