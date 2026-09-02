@@ -372,8 +372,13 @@ test("read source: SELECT-only, no writes/RPC/fetch/admin/env/logging/select(*)"
   // Membership scope: derived from ACTIVE snoonu:malikas listings, product_id
   // only, and never a hardcoded master size.
   assert.ok(/["']external_channel_listings["']/.test(src), "reads external_channel_listings for membership");
-  assert.ok(/["']snoonu:malikas["']/.test(src), "scoped to the snoonu:malikas storefront");
-  assert.ok(/["']active["']/.test(src), "scoped to active mappings");
+  // The storefront/status literals live in the SHARED pure module that the Home
+  // Dashboard membership provider imports too, so the two cannot drift apart.
+  assert.ok(/master-membership/.test(src), "membership definition comes from the shared module");
+  const shared = strip(readFileSync(new URL("./master-membership.ts", import.meta.url), "utf8"));
+  assert.ok(/["']snoonu:malikas["']/.test(shared), "scoped to the snoonu:malikas storefront");
+  assert.ok(/["']active["']/.test(shared), "scoped to active mappings");
+  assert.ok(!/\b1343\b/.test(shared), "master size must never be hardcoded (shared)");
   assert.ok(!/\b1343\b/.test(src), "master size must never be hardcoded");
   assert.ok(!/external_product_id/.test(src), "membership read must not select external ids");
 });

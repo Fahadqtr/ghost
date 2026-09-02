@@ -37,6 +37,11 @@ export interface OpsCenterInput {
    *  the dashboard has no snoonu:malikas snapshot reader; it stays OPERATIONALLY
    *  BLOCKED here, matching the CH.CERT operational note). */
   snoonuMalikasReaderAvailable?: boolean;
+  /** Real snoonu:malikas presence, measured from the ACTIVE external channel
+   *  listings that define the operational master. When supplied the channel row
+   *  is COMPUTED from it; when absent the row stays operationally blocked rather
+   *  than reporting a fabricated zero. */
+  snoonuMalikasPresence?: { mapped: number; needsMapping: number; needsReview: number };
 }
 
 // ── routes (existing workflows only — OPS.1 never introduces a parallel screen) ─
@@ -177,15 +182,18 @@ export function buildChannelHealth(input: OpsCenterInput): ChannelHealthRow[] {
       href: channelHref("shopify:malikas"),
     },
     {
-      // No snoonu:malikas presence reader is wired into the dashboard (CH.CERT
-      // operational note) — surfaced as OPERATIONALLY_BLOCKED, never as "missing".
+      // Presence is MEASURED from the active snoonu:malikas listings that define
+      // the operational master (`snoonuMalikasPresence`). Only when no such
+      // measurement is supplied does the row fall back to OPERATIONALLY_BLOCKED —
+      // it never reports a fabricated zero as though it were a real count.
       storefront: "snoonu:malikas",
       label: "Snoonu — Malikas",
-      mapped: 0,
-      needsMapping: 0,
-      needsReview: 0,
+      mapped: input.snoonuMalikasPresence?.mapped ?? 0,
+      needsMapping: input.snoonuMalikasPresence?.needsMapping ?? 0,
+      needsReview: input.snoonuMalikasPresence?.needsReview ?? 0,
       syncErrors: 0,
-      operationalBlocked: input.snoonuMalikasReaderAvailable !== true,
+      operationalBlocked:
+        input.snoonuMalikasPresence === undefined && input.snoonuMalikasReaderAvailable !== true,
       href: channelHref("snoonu:malikas"),
     },
     {

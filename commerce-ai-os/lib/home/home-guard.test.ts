@@ -59,12 +59,22 @@ test("home assembler composes certified loaders only and performs no writes", ()
     "@/lib/catalog/recommendations/recommendation-summary.server",
     "@/lib/analytics/analytics-read.server",
     "@/lib/operations/ai/ai-center.server",
-    "@/lib/dashboard",
+    // NOTE: "@/lib/dashboard" (getCeoKpis) is deliberately NOT reused any more.
+    // Its head counts are catalog-wide `count(*)` queries that cannot be
+    // restricted to the operational master, which is exactly what made Home
+    // report "needs image 2" while /v2/catalog reported 0. Home now derives its
+    // field gaps from the master-scoped operations scan instead.
     "@/lib/loyalty/rewards",
   ];
   for (const mod of REQUIRED_REUSE) assert.ok(raw.includes(mod), `assembler reuses ${mod}`);
   // it feeds the pure composer
   assert.ok(/buildHomeDashboard\(/.test(raw), "assembler feeds the pure composer");
+  // operational metrics are measured against the master membership, never the
+  // whole products table, and never a hardcoded master size
+  assert.ok(raw.includes("./master-scope.server.ts"), "assembler reuses the shared membership provider");
+  // `s` is the comment-stripped source: these assert real CODE, not prose.
+  assert.equal(/getCeoKpis/.test(s), false, "assembler must not use catalog-wide head counts");
+  assert.equal(/\b1343\b/.test(s), false, "master size must never be hardcoded");
 });
 
 // ── activity reader is a read-only projection of the audit source ─────────────

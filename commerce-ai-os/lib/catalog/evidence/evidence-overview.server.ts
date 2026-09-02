@@ -9,9 +9,18 @@ import "server-only";
 import { computeEvidenceOverview, type EvidenceOverview } from "./evidence-engine.ts";
 import { loadCatalogEvidenceBatch } from "./evidence-batch.server.ts";
 
-/** Bounded, read-only evidence overview. Null when unauthenticated / on failure. */
-export async function loadEvidenceOverview(): Promise<EvidenceOverview | null> {
+/**
+ * Bounded, read-only evidence overview. Null when unauthenticated / on failure.
+ *
+ * `memberIds` optionally restricts the overview to a product membership (the
+ * Malikas operational master) so an operational dashboard is not diluted by
+ * products outside it. Omitted/null = whole catalog, the original behaviour.
+ */
+export async function loadEvidenceOverview(
+  memberIds?: ReadonlySet<string> | null,
+): Promise<EvidenceOverview | null> {
   const batch = await loadCatalogEvidenceBatch();
   if (!batch) return null;
-  return computeEvidenceOverview(batch.results);
+  const results = memberIds ? batch.results.filter((r) => memberIds.has(r.productId)) : batch.results;
+  return computeEvidenceOverview(results);
 }
