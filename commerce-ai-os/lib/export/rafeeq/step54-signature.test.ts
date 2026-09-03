@@ -119,7 +119,7 @@ test("54.4: HTML_EMAIL_SIGNATURE_READY — the Rafeeq email carries the approved
   assert.equal(
     planRafeeqEmailSend({
       configured: true,
-      toRaw: "rafeeq@example.com",
+      toRaw: "orders@rafeeq.qa", // a reserved domain would be blocked by STEP 55
       ccRaw: "",
       subject: d.subject,
       html: d.html,

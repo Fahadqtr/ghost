@@ -473,7 +473,7 @@ function pickEmailExamples(plan: RafeeqPackageJobPlan): {
  */
 export async function buildRafeeqEmailDraftForJob(
   jobId: string,
-  opts?: { downloadLink?: { url: string; expiresAtIso: string } | null },
+  opts?: { downloadLink?: { url: string; expiresAtIso: string; filename?: string | null } | null },
 ): Promise<RafeeqJobApiResult<RafeeqEmailDraft>> {
   const admin = createAdminClient();
   const row = await admin.from("rafeeq_package_jobs").select(CANDIDATE_SELECT).eq("id", jobId).maybeSingle();
@@ -516,6 +516,8 @@ export async function buildRafeeqEmailDraftForJob(
     samePriceExample: samePrice,
     differingPriceExample: differing,
     downloadLink: opts?.downloadLink ?? null,
+    // real clock, so an expired signed link is rejected rather than rendered
+    nowIso: new Date().toISOString(),
   });
   return { ok: true, value: draft };
 }

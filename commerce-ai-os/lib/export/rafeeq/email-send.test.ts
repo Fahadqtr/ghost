@@ -19,7 +19,8 @@ import { zipEntrySegment, zipDirectorySegment } from "../../net/zip.ts";
 function input(over: Partial<RafeeqEmailSendPlanInput> = {}): RafeeqEmailSendPlanInput {
   return {
     configured: true,
-    toRaw: "rafeeq@example.com",
+    // NOT a reserved/placeholder domain: STEP 55 blocks example.com et al.
+    toRaw: "orders@rafeeq.qa",
     ccRaw: "",
     subject: "Malikas Universe — Full Catalog Package (137 products) — rafeeq-full.zip",
     html: "<div>body</div>",
@@ -54,7 +55,7 @@ test("7: invalid or missing recipients block the send", () => {
   assert.ok(!bad.ok && bad.error === "invalid_recipient");
   const badCc = planRafeeqEmailSend(input({ ccRaw: "broken@@x" }));
   assert.ok(!badCc.ok && badCc.error === "invalid_recipient", "invalid CC blocks too");
-  const multi = validateRecipients("a@example.com, b@example.com; c@example.com", "d@example.com");
+  const multi = validateRecipients("a@rafeeq.qa, b@rafeeq.qa; c@rafeeq.qa", "d@rafeeq.qa");
   assert.ok(multi.ok && multi.to.length === 3 && multi.cc.length === 1, "comma/semicolon-separated recipients parse");
   assert.equal(planRafeeqEmailSend(input()).ok, true, "valid recipients pass");
 });
@@ -73,7 +74,7 @@ test("8: an attachment set over the configured cap blocks the send — never a s
 });
 
 test("14: the audit record is written ONLY AFTER a successful provider response, with the exact send facts", async () => {
-  const planned = planRafeeqEmailSend(input({ ccRaw: "cc@example.com" }));
+  const planned = planRafeeqEmailSend(input({ ccRaw: "cc@rafeeq.qa" }));
   assert.ok(planned.ok);
   const calls: string[] = [];
   let audit: RafeeqEmailAuditRecord | null = null;
@@ -90,8 +91,8 @@ test("14: the audit record is written ONLY AFTER a successful provider response,
   const a = audit!;
   assert.equal(a.jobId, "job-1");
   assert.equal(a.packageId, "pkg-1");
-  assert.deepEqual(a.recipients, ["rafeeq@example.com"]);
-  assert.deepEqual(a.cc, ["cc@example.com"]);
+  assert.deepEqual(a.recipients, ["orders@rafeeq.qa"]);
+  assert.deepEqual(a.cc, ["cc@rafeeq.qa"]);
   assert.equal(a.providerMessageId, "<mid@smtp>");
   assert.deepEqual(a.attachmentFilenames, ["rafeeq_catalog.xlsx", "manifest.json"]);
   assert.equal(a.status, "sent");

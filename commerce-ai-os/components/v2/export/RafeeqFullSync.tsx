@@ -200,7 +200,7 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
   // "copy" are the same fresh-link call with different feedback; "open"
   // downloads DIRECTLY from private object storage (never through Vercel).
   const [linkBusy, setLinkBusy] = useState<string | null>(null);
-  async function packageLink(jobId: string, action: "copy" | "refresh" | "open") {
+  async function packageLink(jobId: string, action: "copy" | "refresh" | "open" | "attach") {
     if (linkBusy) return;
     setLinkBusy(jobId); setError(null); setNotice(null);
     try {
@@ -214,6 +214,18 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
       }
       if (action === "open") {
         window.open(body.url, "_blank", "noopener");
+        return;
+      }
+      // "attach" — the route returns the draft REBUILT with this link for the
+      // same job, so the preview shows the real download section and the
+      // missing_download_link blocker clears. The URL is never copied here.
+      if (action === "attach") {
+        if (body.draft && typeof body.draft.subject === "string") {
+          setEmailDraft(body.draft as RafeeqEmailDraftVM);
+          setNotice(`تم تجهيز رابط التنزيل الآمن وإضافته للمسودة — صالح حتى ${fmtDate(body.expiresAtIso ?? null)}.`);
+        } else {
+          setError(rafeeqSendErrorMessageAr("package_link_unavailable"));
+        }
         return;
       }
       await navigator.clipboard.writeText(body.url);
@@ -387,6 +399,8 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
           onCopy={copyText}
           onSend={() => setSendOpen(true)}
           onClose={() => setEmailDraft(null)}
+          onEnsureLink={() => { if (emailJobId) void packageLink(emailJobId, "attach"); }}
+          linkBusy={linkBusy !== null}
         />
       )}
       {sendOpen && emailJobId && <RafeeqSendModal jobId={emailJobId} onClose={() => setSendOpen(false)} />}
@@ -773,6 +787,8 @@ function RafeeqEmailSection({
   onCopy,
   onSend,
   onClose,
+  onEnsureLink,
+  linkBusy,
 }: {
   draft: RafeeqEmailDraftVM | null;
   loading: boolean;
@@ -784,6 +800,9 @@ function RafeeqEmailSection({
   onCopy: (label: string, text: string) => void | Promise<void>;
   onSend: () => void;
   onClose: () => void;
+  /** RAFEEQ.PKGLINK — mint/refresh the signed link for THIS job and refresh the draft. */
+  onEnsureLink: () => void;
+  linkBusy: boolean;
 }) {
   const [showPreview, setShowPreview] = useState(false);
   if (loading) {
@@ -795,6 +814,8 @@ function RafeeqEmailSection({
     );
   }
   if (!draft) return null;
+  // The draft itself is the source of truth: PR #706 reports the blocker.
+  const hasLink = !draft.blockers.includes("missing_download_link");
   const copyBtn = (label: string, text: string, title: string, primary = false) => (
     <button type="button" className={`${primary ? "btn-primary" : "btn-ghost"} text-xs`} onClick={() => void onCopy(label, text)}>
       {copied === label ? "✓ تم النسخ" : title}
@@ -819,6 +840,16 @@ function RafeeqEmailSection({
         </button>
         {jobId && (
           <a href={rafeeqJobDownloadUrl(jobId)} download className="btn-ghost text-xs">تنزيل الملفات</a>
+        )}
+        {isOwner && jobId && (
+          <button
+            type="button"
+            disabled={linkBusy}
+            className={`${hasLink ? "btn-ghost" : "btn-primary"} text-xs disabled:opacity-50`}
+            onClick={onEnsureLink}
+          >
+            {linkBusy ? "جارٍ التجهيز…" : hasLink ? "تجديد رابط التحميل الآمن" : "إنشاء رابط التحميل الآمن"}
+          </button>
         )}
         {isOwner && jobId && (
           <button type="button" className="btn-primary text-xs" onClick={onSend}>إرسال إلى رفيق</button>
@@ -877,7 +908,7 @@ function RafeeqEmailSection({
         {!draft.sendable && (
           <p className="text-[11px] font-medium text-red-700">
             المسودة غير جاهزة للإرسال:
-            {draft.blockers.includes("missing_download_link") && " لا يوجد رابط تنزيل آمن صالح."}
+            {draft.blockers.includes("missing_download_link") && " لا يوجد رابط تنزيل آمن صالح — اضغط «إنشاء رابط التحميل الآمن» أعلاه."}
             {draft.blockers.includes("signature_not_installed") && " لم يتم تركيب التوقيع المعتمد."}
           </p>
         )}
