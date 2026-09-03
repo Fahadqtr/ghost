@@ -7,9 +7,10 @@
 //     ever regenerated;
 //   • no provider configured (env vars missing) → every surface reports
 //     mail_not_configured and nothing can be sent;
-//   • the ZIP is attached only when it fits the configured cap — otherwise
-//     the send proceeds with the workbook + manifest and the body already
-//     carries "The full catalog package will be shared separately.";
+//   • the ZIP is NEVER attached — it is delivered by a scoped signed link;
+//   • the email carries EXACTLY two attachments: the workbook and the reading
+//     guide. manifest.json is deliberately excluded from the EMAIL only — it
+//     stays inside the certified ZIP and reaches Rafeeq through the link;
 //   • the delivery audit row (rafeeq_email_deliveries) is written ONLY after
 //     the provider accepted the message; provider failure changes nothing;
 //   • sending an email NEVER touches rafeeq_packages.sent_at — the Rafeeq
@@ -58,8 +59,8 @@ export interface RafeeqSendPreflightDTO {
    * object could not be prepared/verified, and sending is blocked.
    */
   zipLink: { sha256: string; bytes: number; expiresAtIso: string } | null;
-  /** the attachment set (workbook + manifest + reading guide — the ZIP is link-delivered). */
-  attachments: { filename: string; bytes: number; kind: "xlsx" | "manifest" | "guide" }[];
+  /** the attachment set: workbook + reading guide ONLY. manifest.json stays in the ZIP; the ZIP is link-delivered. */
+  attachments: { filename: string; bytes: number; kind: "xlsx" | "guide" }[];
   generatedAt: string;
   productCount: number;
   imageCount: number;
@@ -109,7 +110,18 @@ async function readSavedRecipient(): Promise<string> {
   }
 }
 
-/** Workbook + manifest sliced from the stored tail part (read-only, no rebuild). */
+/**
+ * The WORKBOOK, sliced from the stored tail part (read-only, no rebuild).
+ *
+ * OWNER DECISION (STEP 57): the Rafeeq email carries exactly two attachments —
+ * the workbook and the reading guide. `manifest.json` is deliberately NOT
+ * attached. This is an EMAIL-DELIVERY rule only: the manifest remains inside
+ * the certified ZIP on storage, untouched, and still reaches Rafeeq through
+ * the secure download link. Nothing about the package is changed here.
+ *
+ * Both callers of this function are email paths (the send and its preflight),
+ * so the exclusion lives here and cannot be bypassed by one of them.
+ */
 async function loadTailAttachments(
   parts: { path: string; bytes: number }[],
 ): Promise<{ filename: string; bytes: Uint8Array; contentType: string }[]> {
@@ -118,12 +130,8 @@ async function loadTailAttachments(
   const tail = await readRafeeqPackagePart(tailPath);
   if (!tail) return [];
   return extractLeadingZipEntries(tail)
-    .filter((e) => !e.filename.startsWith("images/"))
-    .map((e) => ({
-      filename: e.filename,
-      bytes: e.bytes,
-      contentType: e.filename.endsWith(".xlsx") ? XLSX_MIME : "application/json",
-    }));
+    .filter((e) => e.filename.endsWith(".xlsx"))
+    .map((e) => ({ filename: e.filename, bytes: e.bytes, contentType: XLSX_MIME }));
 }
 
 /**
@@ -163,7 +171,7 @@ export async function getRafeeqEmailSendPreflight(jobId: string): Promise<Rafeeq
   const base: RafeeqSendPreflightDTO["attachments"] = tailAttachments.map((a) => ({
     filename: a.filename,
     bytes: a.bytes.length,
-    kind: a.filename.endsWith(".xlsx") ? ("xlsx" as const) : ("manifest" as const),
+    kind: "xlsx" as const,
   }));
   // the guide ships as a real attachment whenever the body claims it — show it
   // in the confirmation modal so the preflight matches what is actually sent.
