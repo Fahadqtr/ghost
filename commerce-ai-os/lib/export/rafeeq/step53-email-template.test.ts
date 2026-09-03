@@ -182,6 +182,21 @@ test("9: the package fingerprint renders DYNAMICALLY from the selected package",
     assert.ok(flat(body).includes("Any earlier package with the same filename should be discarded."), "discard sentence");
   }
   // a DIFFERENT package renders ITS fingerprint
+  // STEP 49: the VALUE appears exactly once in the HTML — the summary table
+  // row. The paragraph below the table is the explanation only; repeating the
+  // value there read as a duplicate in the delivered email.
+  assert.equal(
+    (d.html.match(/03a327da9235fb40/g) ?? []).length,
+    1,
+    "the fingerprint value is rendered exactly once in the HTML body",
+  );
+  assert.equal((d.textEmail.match(/03a327da9235fb40/g) ?? []).length, 1, "and exactly once in the plain text");
+  assert.ok(
+    d.html.includes("<th align=\"left\">Package fingerprint</th><td><code>03a327da9235fb40</code></td>"),
+    "the one occurrence is the summary table row",
+  );
+  assert.ok(!d.html.includes("<b>Package fingerprint:</b>"), "no standalone fingerprint line below the table");
+
   const other = buildRafeeqEmailDraft(ctx({ packageFingerprint: "a2402a4d8d0a55fd" }));
   assert.ok(other.html.includes("a2402a4d8d0a55fd") && !other.html.includes("03a327da9235fb40"), "follows the package");
   // and a package without one renders NO fingerprint block rather than inventing one

@@ -390,9 +390,11 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
        This package represents the latest and authoritative version of our full Rafeeq catalog.</p>`
     : "";
 
-  const fingerprintHtml = fingerprint
-    ? `<p><b>Package fingerprint:</b> <code>${esc(fingerprint)}</code><br/>
-       Please verify that this fingerprint matches the package you import. Any earlier package with the same filename
+  // The fingerprint VALUE is rendered once, in the Package summary table row.
+  // This paragraph is only the explanation that follows it — repeating the
+  // value here read as a duplicate in the delivered email.
+  const fingerprintNoteHtml = fingerprint
+    ? `<p>Please verify that this fingerprint matches the package you import. Any earlier package with the same filename
        should be discarded.</p>`
     : "";
 
@@ -429,7 +431,7 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
       typeof ctx.warningCount === "number" ? `\n    <tr><th align="left">Rows flagged for review</th><td>${n(ctx.warningCount)}</td></tr>` : ""
     }${fingerprint ? `\n    <tr><th align="left">Package fingerprint</th><td><code>${esc(fingerprint)}</code></td></tr>` : ""}
   </table>
-  ${fingerprintHtml}
+  ${fingerprintNoteHtml}
   <p><b>${n(ctx.physicalRowCount)} physical rows does NOT mean ${n(ctx.physicalRowCount)} products.</b>
   A product with options repeats its row once per option (see below).</p>
 
