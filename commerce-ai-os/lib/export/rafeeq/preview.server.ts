@@ -10,6 +10,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
 import {
   buildRafeeqPreview,
   RAFEEQ_STOREFRONT_KEY,
@@ -44,7 +45,7 @@ export async function loadRafeeqPreview(): Promise<RafeeqPreviewResult | null> {
   try {
     const client = createClient();
 
-    const [productRows, imageRows, variantRows, eclRows] = await Promise.all([
+    const [allProductRows, imageRows, variantRows, eclRows] = await Promise.all([
       readAll(client, "products",
         "id, sku, barcode, name_en, name_ar, main_category, price, discount_price, description_en, description_ar, image_url, image_filename, lifecycle_state, platform_status",
         "id"),
@@ -52,6 +53,22 @@ export async function loadRafeeqPreview(): Promise<RafeeqPreviewResult | null> {
       readAll(client, "product_variants", "id, parent_product_id, sku, barcode, variant_name, variant_name_en, price", "parent_product_id"),
       readAll(client, "external_channel_listings", "product_id, variant_id, storefront_key, exported_sku, external_product_id, mapping_status", "exported_sku").catch(() => []),
     ]);
+
+    // CURRENT MASTER scope. The Rafeeq FULL catalogue is a replacement of the
+    // CURRENT operational catalogue, so its universe is the active
+    // snoonu:malikas membership — read through the SAME shared seam as /v2,
+    // /v2/catalog, Launch, Export, Inventory and Operations, never a second
+    // definition of the master. Products outside it stay in the database
+    // untouched; they are simply not part of today's Rafeeq catalogue.
+    //
+    // Fails CLOSED: an unreadable membership returns null (the caller renders
+    // its load error) rather than falling back to every canonical product,
+    // which would ship the outside-master products to the marketplace.
+    const scope = await loadMasterScope();
+    if (!scope.ok) return null;
+    const productRows = allProductRows.filter(
+      (p) => typeof p.id === "string" && scope.ids.has(p.id),
+    );
 
     interface Img { url: string | null; isPrimary: boolean; sortOrder: number }
     const imagesByProduct = new Map<string, Img[]>();
