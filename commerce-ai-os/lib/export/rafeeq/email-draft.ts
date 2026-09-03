@@ -68,8 +68,18 @@ export interface RafeeqEmailContext {
   /**
    * scoped signed direct-download URL for the certified ZIP (served straight
    * from private object storage — the ZIP is NEVER attached to the email).
+   *
+   * `filename`, when supplied, is the artifact the link actually points at: it
+   * is cross-checked against this package's filename so a link minted for a
+   * DIFFERENT package can never be attached to this draft.
    */
-  downloadLink?: { url: string; expiresAtIso: string } | null;
+  downloadLink?: { url: string; expiresAtIso: string; filename?: string | null } | null;
+  /**
+   * Current time, for judging link expiry. Passed in rather than read from a
+   * clock so the draft stays pure and deterministic. Omit to skip the expiry
+   * check (a caller that has no clock cannot assert freshness either way).
+   */
+  nowIso?: string | null;
 }
 
 export interface RafeeqEmailDraft {
@@ -100,7 +110,40 @@ export interface RafeeqEmailDraft {
 }
 
 /** Why a built draft must not be sent as-is. */
-export type RafeeqDraftBlocker = "missing_download_link" | "signature_not_installed";
+export type RafeeqDraftBlocker =
+  | "missing_download_link"
+  | "download_link_expired"
+  | "download_link_package_mismatch"
+  | "signature_not_installed";
+
+/**
+ * Decide whether a supplied signed link may be used for THIS package.
+ * Rejects an expired link and a link minted for a different artifact — both
+ * would otherwise send Rafeeq a URL that 404s or, worse, delivers the WRONG
+ * package. Pure: expiry is judged against the `nowIso` handed in.
+ */
+export function classifyDownloadLink(
+  link: { url: string; expiresAtIso: string; filename?: string | null } | null | undefined,
+  packageFilename: string,
+  nowIso?: string | null,
+): { ok: true } | { ok: false; reason: RafeeqDraftBlocker } {
+  if (!link || String(link.url ?? "").trim() === "") return { ok: false, reason: "missing_download_link" };
+  const linkFile = String(link.filename ?? "").trim();
+  if (linkFile !== "" && linkFile !== packageFilename.trim()) {
+    return { ok: false, reason: "download_link_package_mismatch" };
+  }
+  const now = String(nowIso ?? "").trim();
+  if (now !== "") {
+    const expiresAt = Date.parse(String(link.expiresAtIso ?? ""));
+    const nowMs = Date.parse(now);
+    // An unparseable expiry is treated as expired: we never send a link whose
+    // validity we cannot establish.
+    if (!Number.isFinite(expiresAt) || (Number.isFinite(nowMs) && expiresAt <= nowMs)) {
+      return { ok: false, reason: "download_link_expired" };
+    }
+  }
+  return { ok: true };
+}
 
 /** Trim a package fingerprint; blank/absent ⇒ null so nothing is ever invented. */
 const normalizeFingerprint = (v: string | null | undefined): string | null => {
@@ -281,7 +324,11 @@ function buildPlainTextEmail(
     "Attachments:",
     ...attachments.map((a) => `- ${a}`),
   );
-  const link = ctx.downloadLink ?? null;
+  // same rejection rules as the HTML body — an expired or wrong-package link
+  // must not appear in EITHER body.
+  const link = classifyDownloadLink(ctx.downloadLink, ctx.filename, ctx.nowIso).ok
+    ? (ctx.downloadLink ?? null)
+    : null;
   if (isFull) lines.push("", ...FULL_REPLACEMENT_TEXT);
   if (link) {
     lines.push(
@@ -315,13 +362,15 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
     : `Malikas Universe — New / Pending Products Package (${n(ctx.productCount)} products) — ${ctx.filename}`;
   const subject = correction ? `CORRECTED PACKAGE — ${subjectBase}` : subjectBase;
 
-  const link = ctx.downloadLink ?? null;
-  // FAIL CLOSED. A partner-facing email must carry a real signed URL and the
-  // APPROVED sign-off; a draft missing either reports itself unsendable rather
-  // than rendering a placeholder or an unapproved signature.
+  // FAIL CLOSED. A partner-facing email must carry a real, unexpired signed URL
+  // for THIS package and the APPROVED sign-off; a draft missing any of those
+  // reports itself unsendable rather than rendering a placeholder, a dead or
+  // wrong-package link, or an unapproved signature.
+  const linkCheck = classifyDownloadLink(ctx.downloadLink, ctx.filename, ctx.nowIso);
+  const link = linkCheck.ok ? (ctx.downloadLink ?? null) : null;
   const signOffHtml = renderSignOffHtml();
   const blockers: RafeeqDraftBlocker[] = [];
-  if (!link) blockers.push("missing_download_link");
+  if (!linkCheck.ok) blockers.push(linkCheck.reason);
   if (signOffHtml === null) blockers.push("signature_not_installed");
 
   const attachments = [

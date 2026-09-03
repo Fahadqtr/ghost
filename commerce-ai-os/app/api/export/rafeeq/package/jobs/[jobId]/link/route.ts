@@ -1,7 +1,7 @@
 // RAFEEQ.PKGLINK — owner-only signed direct-download link for a COMPLETED
 // package's certified stored artifact.
 //
-// POST → { url, expiresAtIso, filename, bytes, sha256 }. Idempotently ensures
+// POST → { url, expiresAtIso, filename, bytes, sha256, draft }. Idempotently ensures
 // the single certified object exists in the private bucket (assembled from
 // the already-stored parts — never regenerated), then creates a fresh scoped
 // signed URL (default 7 days) served DIRECTLY by Supabase Storage/CDN. Every
@@ -10,6 +10,7 @@
 
 import { requireOwner } from "@/lib/malak/authz";
 import { createRafeeqPackageSignedLink } from "@/lib/rafeeq/artifact-object.server";
+import { buildRafeeqEmailDraftForJob } from "@/lib/rafeeq/package-job.server";
 import { rafeeqSendErrorMessageAr } from "@/lib/export/rafeeq/email-send";
 
 export const runtime = "nodejs";
@@ -25,5 +26,19 @@ export async function POST(_req: Request, { params }: { params: Promise<{ jobId:
   const { jobId } = await params;
   const result = await createRafeeqPackageSignedLink(jobId);
   if (!result.ok) return jsonRes({ error: result.error, message_ar: rafeeqSendErrorMessageAr(result.error) }, result.status);
-  return jsonRes(result.value, 200);
+
+  // Return the draft REBUILT WITH this link, for THIS job. The read-only
+  // GET …/email endpoint cannot mint a link (that is an owner-gated storage
+  // ensure + signing), so a previewed draft always reported
+  // missing_download_link. Composing the two here — same job id, same
+  // existing mechanisms — is what makes the preview show the real download
+  // section and become sendable. The URL is never accepted from the client.
+  const draft = await buildRafeeqEmailDraftForJob(jobId, {
+    downloadLink: {
+      url: result.value.url,
+      expiresAtIso: result.value.expiresAtIso,
+      filename: result.value.filename,
+    },
+  });
+  return jsonRes({ ...result.value, draft: draft.ok ? draft.value : null }, 200);
 }

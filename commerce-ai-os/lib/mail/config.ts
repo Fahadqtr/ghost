@@ -144,9 +144,36 @@ export type RecipientsCheck =
 export function validateRecipients(toRaw: string, ccRaw: string): RecipientsCheck {
   const to = parseRecipients(toRaw);
   const cc = parseRecipients(ccRaw);
-  const invalid = [...to, ...cc].filter((a) => !isValidEmailAddress(a));
+  const invalid = [...to, ...cc].filter((a) => !isValidEmailAddress(a) || isPlaceholderEmailAddress(a));
   if (to.length === 0 || invalid.length > 0) return { ok: false, invalid, emptyTo: to.length === 0 };
   return { ok: true, to, cc };
+}
+
+/**
+ * RFC 2606 / RFC 6761 reserved names, which can never receive mail, plus the
+ * UI's own placeholder domain. `rafeeq@example.com` is SYNTACTICALLY valid, so
+ * isValidEmailAddress alone would let a placeholder left in the recipient box
+ * reach a real send attempt. Matched on the domain (and any subdomain of it),
+ * case-insensitively — never on the local part, since "example@" is a
+ * perfectly ordinary mailbox name.
+ */
+const RESERVED_EMAIL_DOMAINS = [
+  "example.com",
+  "example.net",
+  "example.org",
+  "example.edu",
+  "example",
+  "test",
+  "invalid",
+  "localhost",
+  "local",
+] as const;
+
+/** True when the address's domain is a reserved/placeholder name (never deliverable). */
+export function isPlaceholderEmailAddress(address: string): boolean {
+  const domain = address.trim().toLowerCase().split("@").pop() ?? "";
+  if (domain === "") return false;
+  return RESERVED_EMAIL_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`));
 }
 
 /**

@@ -205,7 +205,7 @@ export async function sendRafeeqPackageEmail(
   if (!link.ok) return sendErr("package_link_unavailable", link.status);
 
   const draft = await buildRafeeqEmailDraftForJob(jobId, {
-    downloadLink: { url: link.value.url, expiresAtIso: link.value.expiresAtIso },
+    downloadLink: { url: link.value.url, expiresAtIso: link.value.expiresAtIso, filename: link.value.filename },
   });
   if (!draft.ok) return sendErr("job_not_found", draft.status);
 
