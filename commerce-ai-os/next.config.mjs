@@ -6,6 +6,14 @@ const nextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "16mb" },
   },
+  // The Rafeeq direct-send route attaches the options reading guide as a real
+  // MIME attachment, so its bytes must be traced into that serverless function
+  // — `public/` is served statically and is NOT bundled with route handlers by
+  // default. Without this the read fails in production and the send is blocked
+  // (fail closed), rather than mailing a body that claims an absent attachment.
+  outputFileTracingIncludes: {
+    "/api/export/rafeeq/package/jobs/[jobId]/send": ["./public/Rafeeq-Options-Reading-Guide.png"],
+  },
   images: {
     // Allow product/variant images served from Supabase Storage.
     remotePatterns: [
