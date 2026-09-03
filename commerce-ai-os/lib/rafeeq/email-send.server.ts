@@ -17,6 +17,8 @@
 
 import "server-only";
 
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getMailConfig, sendMailViaSmtp } from "@/lib/mail/smtp.server";
 import { isValidEmailAddress, diagnoseMailEnv, blockingMailEnvNames, type MailEnvDiagnostic } from "@/lib/mail/config";
@@ -33,11 +35,12 @@ import {
   readRafeeqPackagePart,
 } from "@/lib/rafeeq/package-job.server";
 import { createRafeeqPackageSignedLink } from "@/lib/rafeeq/artifact-object.server";
+import { RAFEEQ_GUIDE_PNG } from "@/lib/export/rafeeq/email-draft";
 
 const RECIPIENT_SETTING_KEY = "rafeeq_email_recipient";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-export type RafeeqSendApiError = RafeeqEmailSendBlock | "job_not_found" | "package_link_unavailable";
+export type RafeeqSendApiError = RafeeqEmailSendBlock | "job_not_found" | "package_link_unavailable" | "guide_unavailable";
 export type RafeeqSendApiResult<T> = { ok: true; value: T } | { ok: false; error: RafeeqSendApiError; status: number };
 const sendErr = <T,>(error: RafeeqSendApiError, status: number): RafeeqSendApiResult<T> => ({ ok: false, error, status });
 
@@ -55,8 +58,8 @@ export interface RafeeqSendPreflightDTO {
    * object could not be prepared/verified, and sending is blocked.
    */
   zipLink: { sha256: string; bytes: number; expiresAtIso: string } | null;
-  /** the attachment set (workbook + manifest only — the ZIP is link-delivered). */
-  attachments: { filename: string; bytes: number; kind: "xlsx" | "manifest" }[];
+  /** the attachment set (workbook + manifest + reading guide — the ZIP is link-delivered). */
+  attachments: { filename: string; bytes: number; kind: "xlsx" | "manifest" | "guide" }[];
   generatedAt: string;
   productCount: number;
   imageCount: number;
@@ -123,6 +126,27 @@ async function loadTailAttachments(
     }));
 }
 
+/**
+ * The options reading guide, as REAL attachment bytes. FULL emails say "The
+ * attached Rafeeq-Options-Reading-Guide.png shows the option structure
+ * visually", so it must actually be attached — a body that claims an
+ * attachment it does not carry is worse than no guide at all.
+ *
+ * The file ships in `public/` and is traced into this route's bundle via
+ * outputFileTracingIncludes (see next.config.mjs). Returns null if it cannot
+ * be read, and the caller FAILS CLOSED rather than sending the claim without
+ * the file.
+ */
+async function loadGuideAttachment(): Promise<{ filename: string; bytes: Uint8Array; contentType: string } | null> {
+  try {
+    const bytes = await readFile(join(process.cwd(), "public", RAFEEQ_GUIDE_PNG));
+    if (bytes.length === 0) return null;
+    return { filename: RAFEEQ_GUIDE_PNG, bytes: new Uint8Array(bytes), contentType: "image/png" };
+  } catch {
+    return null;
+  }
+}
+
 /** Everything the confirmation modal shows BEFORE the owner can confirm. READ-ONLY. */
 export async function getRafeeqEmailSendPreflight(jobId: string): Promise<RafeeqSendApiResult<RafeeqSendPreflightDTO>> {
   const row = await readJobRow(jobId);
@@ -136,11 +160,17 @@ export async function getRafeeqEmailSendPreflight(jobId: string): Promise<Rafeeq
   const diagnostic = diagnoseMailEnv(process.env as Record<string, string | undefined>);
   const maxBytes = config?.attachmentMaxBytes ?? 0;
   const tailAttachments = await loadTailAttachments(artifact.value.parts);
-  const base = tailAttachments.map((a) => ({
+  const base: RafeeqSendPreflightDTO["attachments"] = tailAttachments.map((a) => ({
     filename: a.filename,
     bytes: a.bytes.length,
     kind: a.filename.endsWith(".xlsx") ? ("xlsx" as const) : ("manifest" as const),
   }));
+  // the guide ships as a real attachment whenever the body claims it — show it
+  // in the confirmation modal so the preflight matches what is actually sent.
+  if (draft.value.attachments.includes(RAFEEQ_GUIDE_PNG)) {
+    const guide = await loadGuideAttachment();
+    if (guide) base.push({ filename: guide.filename, bytes: guide.bytes.length, kind: "guide" as const });
+  }
   // the certified ZIP is NEVER attached — ensure the stored single object +
   // report the verified link facts the modal shows (sha256/size/expiry).
   const link = await createRafeeqPackageSignedLink(jobId);
@@ -211,8 +241,18 @@ export async function sendRafeeqPackageEmail(
 
   const tailAttachments = await loadTailAttachments(artifact.value.parts);
   if (tailAttachments.length === 0) return sendErr("no_attachments", 409);
-  const attachmentsBytes = new Map(tailAttachments.map((a) => [a.filename, a.bytes]));
-  const planned: RafeeqPlannedAttachment[] = tailAttachments.map((a) => ({
+
+  // The DRAFT decides whether the guide belongs: it lists the guide exactly
+  // when its body says "The attached Rafeeq-Options-Reading-Guide.png …".
+  // Attaching off that same signal keeps the claim and the MIME part in
+  // lockstep; unreadable ⇒ block rather than ship an unfulfilled claim.
+  const guideClaimed = draft.value.attachments.includes(RAFEEQ_GUIDE_PNG);
+  const guide = guideClaimed ? await loadGuideAttachment() : null;
+  if (guideClaimed && !guide) return sendErr("guide_unavailable", 409);
+
+  const allAttachments = guide ? [...tailAttachments, guide] : tailAttachments;
+  const attachmentsBytes = new Map(allAttachments.map((a) => [a.filename, a.bytes]));
+  const planned: RafeeqPlannedAttachment[] = allAttachments.map((a) => ({
     filename: a.filename,
     bytes: a.bytes.length,
     contentType: a.contentType,
