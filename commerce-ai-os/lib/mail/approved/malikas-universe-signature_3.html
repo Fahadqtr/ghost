@@ -1,51 +1,13 @@
-// MALIKAS UNIVERSE EMAIL SIGNATURE (PURE) — the single source of the sign-off
-// used by outbound Malikas emails (currently the Rafeeq catalog emails).
-//
-// Owner rules baked in:
-//   • the APPROVED HTML signature is stored verbatim in APPROVED_SIGNATURE_HTML
-//     below — it is never regenerated, restyled or "improved" from the identity
-//     fields, because the approved artwork carries its own inline styles, image
-//     URLs and links that must survive untouched;
-//   • the identity constants exist so the PLAIN-TEXT fallback (which has no
-//     markup to preserve) can be rendered deterministically, and so tests can
-//     assert the signature actually carries the approved contact details;
-//   • the signature is CONTENT ONLY. It never implies, reads or changes the
-//     SMTP envelope: MAIL_FROM_ADDRESS / MAIL_USERNAME / transport config are
-//     deployment secrets and are not referenced anywhere in this file.
-//
-// FAIL-CLOSED: if APPROVED_SIGNATURE_HTML is ever empty, HTML mail that
-// requires the approved signature is NOT sendable (see signatureInstalled
-// below). We never substitute a look-alike — an unapproved signature going to
-// a partner is worse than a blocked send.
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Malika's Universe — Email Signature</title>
+</head>
+<body style="margin:0;padding:24px;background:#ffffff;">
 
-/** Approved sign-off identity. Used to render the plain-text fallback. */
-export const MALIKAS_SIGNATURE_IDENTITY = {
-  name: "Fahad Abdulaziz Ali",
-  title: "Founder & Managing Director",
-  company: "Malika's Universe Trading",
-  email: "fahad@malikasuniverse.com",
-  phone: "+974 3331 5315",
-  website: "malikasuniverse.com",
-} as const;
-
-/**
- * The approved HTML signature, stored EXACTLY as supplied in
- * `malikas-universe-signature_3.html` — structure, inline styles, image URLs
- * and links preserved byte-for-byte.
- *
- * This is the fragment the supplied file itself delimits with its
- * "COPY FROM HERE" / "COPY TO HERE" markers: the <table> element only. The
- * file's <!DOCTYPE>/<html>/<head>/<body> wrapper is deliberately excluded
- * because a document wrapper cannot be nested inside an email body — that is
- * the ONLY difference from the supplied file, and the table itself is
- * unmodified (verified byte-for-byte against the source in
- * lib/export/rafeeq/step54-signature.test.ts).
- *
- * Do NOT restyle, reflow, minify or "tidy" this markup, and do not edit the
- * identity inside it: it is approved artwork, not generated output. Replacing
- * it means pasting a new approved file's fragment in whole.
- */
-export const APPROVED_SIGNATURE_HTML = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="width:600px;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;background:#ffffff;">
+<!-- ===== COPY FROM HERE ===== -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="width:600px;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;background:#ffffff;">
   <tr>
     <!-- LOGO -->
     <td width="170" valign="middle" style="width:170px;padding:0 22px 0 0;border-right:1px solid #e3e3e3;">
@@ -130,45 +92,8 @@ export const APPROVED_SIGNATURE_HTML = `<table role="presentation" cellpadding="
       MALIKA'S&nbsp;UNIVERSE&nbsp;TRADING
     </td>
   </tr>
-</table>`;
+</table>
+<!-- ===== COPY TO HERE ===== -->
 
-/** True once the approved signature markup has actually been installed above. */
-export function signatureInstalled(html: string = APPROVED_SIGNATURE_HTML): boolean {
-  return html.trim().length > 0;
-}
-
-/** Approved closing line, shared by both the HTML and plain-text bodies. */
-export const SIGNOFF_CLOSING = "Thank you for your support.";
-export const SIGNOFF_REGARDS = "Best regards,";
-
-/**
- * Plain-text sign-off — the approved closing, "Best regards," and the approved
- * identity block. Fully determined by the constants above, so it is always
- * available even while the HTML artwork is not.
- */
-export function renderSignOffText(): string {
-  const id = MALIKAS_SIGNATURE_IDENTITY;
-  return [
-    SIGNOFF_CLOSING,
-    "",
-    SIGNOFF_REGARDS,
-    "",
-    id.name,
-    id.title,
-    id.company,
-    id.email,
-    id.phone,
-    id.website,
-  ].join("\n");
-}
-
-/**
- * HTML sign-off — the approved closing plus the approved signature markup,
- * inserted verbatim. Returns null when the approved markup is not installed,
- * so callers must decide explicitly (they fail closed) instead of silently
- * emitting a body with no signature.
- */
-export function renderSignOffHtml(html: string = APPROVED_SIGNATURE_HTML): string | null {
-  if (!signatureInstalled(html)) return null;
-  return `<p>${SIGNOFF_CLOSING}</p>\n  <p>${SIGNOFF_REGARDS}</p>\n  ${html}`;
-}
+</body>
+</html>
