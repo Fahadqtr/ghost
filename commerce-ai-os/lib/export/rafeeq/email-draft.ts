@@ -11,7 +11,16 @@
 //   • wording adapts to FULL / NEW-PENDING / CORRECTION contexts;
 //   • it exposes NOTHING Rafeeq doesn't need: no internal UUIDs, no variant
 //     SKUs/barcodes — only parent SKUs, display names and prices;
+//   • a superseded package is NEVER identified by filename — several generated
+//     packages legitimately share one filename (rafeeq-full-<date>.zip), so a
+//     filename cannot tell two builds apart. The email points at the secure
+//     link + the package fingerprint instead;
+//   • the download link and the approved sign-off FAIL CLOSED: a draft with no
+//     signed URL, or with the approved signature not installed, reports itself
+//     unsendable and no placeholder is ever emitted into a sendable body;
 //   • building a draft NEVER sends anything and mutates nothing.
+
+import { renderSignOffHtml, renderSignOffText } from "../../mail/malikas-signature.ts";
 
 export const RAFEEQ_GUIDE_PNG = "Rafeeq-Options-Reading-Guide.png";
 /** Default recipient — the owner fills/edits the address in the UI. */
@@ -38,8 +47,19 @@ export interface RafeeqEmailContext {
   imageCount: number;
   warningCount?: number;
   zipBytes?: number;
-  /** CORRECTION/REPLACEMENT context — set when this package replaces one. */
-  correction?: { previousFilename: string } | null;
+  /**
+   * Manifest fingerprint of THIS package, straight from the generated package
+   * metadata. Never hardcoded: a fingerprint identifies one specific build, so
+   * it is rendered only when the selected package actually carries one.
+   */
+  packageFingerprint?: string | null;
+  /**
+   * CORRECTION/REPLACEMENT context — set when this package supersedes earlier
+   * ones. Deliberately carries NO filename: packages share filenames, so the
+   * wording tells Rafeeq to disregard every earlier package and use only the
+   * one behind this email's link.
+   */
+  correction?: boolean | null;
   /** NEW-mode context: what the pending set means right now. */
   newPackage?: { hasSentBaseline: boolean; equalsWholeCatalog: boolean } | null;
   /** real representative examples picked from THIS package (never fixed SKUs). */
@@ -70,7 +90,47 @@ export interface RafeeqEmailDraft {
   attachments: string[];
   /** true ⇒ the ZIP is too large to attach; the note is already in the body. */
   zipTooLargeForEmail: boolean;
+  /**
+   * FAIL-CLOSED sendability. False whenever the draft is missing something a
+   * partner-facing email must not go out without. `blockers` names each reason;
+   * `sendable` is exactly `blockers.length === 0`.
+   */
+  sendable: boolean;
+  blockers: RafeeqDraftBlocker[];
 }
+
+/** Why a built draft must not be sent as-is. */
+export type RafeeqDraftBlocker = "missing_download_link" | "signature_not_installed";
+
+/** Trim a package fingerprint; blank/absent ⇒ null so nothing is ever invented. */
+const normalizeFingerprint = (v: string | null | undefined): string | null => {
+  const s = String(v ?? "").trim();
+  return s === "" ? null : s;
+};
+
+/** FULL-catalog replacement instruction — shared wording, HTML and plain text. */
+const FULL_REPLACEMENT_TEXT = [
+  "FULL CATALOG REPLACEMENT",
+  "",
+  "This package represents our complete current Rafeeq catalog.",
+  "",
+  "Please use it to fully update and align our Rafeeq catalog.",
+  "",
+  "Products not represented in this full catalog should no longer remain part of our active current catalog.",
+  "",
+  "The product_id field is intentionally blank in this full replacement submission so Rafeeq can assign the current identifiers.",
+  "",
+  "After the catalog update is completed, please confirm with us. We will then export the updated catalog from Rafeeq and reconcile the newly assigned Rafeeq product IDs with our internal catalog.",
+] as const;
+
+const FULL_REPLACEMENT_HTML = `
+  <h2>Full catalog replacement</h2>
+  <p>This package represents our <b>complete current Rafeeq catalog</b>.</p>
+  <p>Please use it to fully update and align our Rafeeq catalog.</p>
+  <p>Products not represented in this full catalog should no longer remain part of our active current catalog.</p>
+  <p>The <code>product_id</code> field is intentionally blank in this full replacement submission so Rafeeq can assign the current identifiers.</p>
+  <p>After the catalog update is completed, please confirm with us. We will then export the updated catalog from Rafeeq and
+  reconcile the newly assigned Rafeeq product IDs with our internal catalog.</p>`;
 
 const esc = (v: string | number | null | undefined): string =>
   String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -115,6 +175,7 @@ function buildPlainTextEmail(
 ): string {
   const isFull = ctx.mode === "FULL";
   const correction = ctx.correction ?? null;
+  const fingerprint = normalizeFingerprint(ctx.packageFingerprint);
   const lines: (string | null)[] = [
     "Dear Rafeeq team,",
     "",
@@ -123,12 +184,16 @@ function buildPlainTextEmail(
   ];
   if (correction) {
     lines.push(
-      "Please disregard the previous package and use this corrected package instead.",
-      `Previous package: ${correction.previousFilename}`,
+      "IMPORTANT",
+      "",
+      "Please disregard any earlier catalog package shared by us and use ONLY the package provided through the secure download link in this email.",
+      "",
+      "This package represents the latest and authoritative version of our full Rafeeq catalog.",
       "",
     );
   }
-  if (isFull) {
+  if (isFull && !correction) {
+    // With a correction notice the authoritative sentence above already says this.
     lines.push("This package represents the full current Malikas Universe catalog.", "");
   } else if (ctx.newPackage?.hasSentBaseline) {
     lines.push(
@@ -152,6 +217,13 @@ function buildPlainTextEmail(
     `Options: ${n(ctx.optionCount)}`,
     `Images: ${n(ctx.imageCount)}`,
     typeof ctx.warningCount === "number" ? `Rows flagged for review: ${n(ctx.warningCount)}` : null,
+    ...(fingerprint
+      ? [
+          `Package fingerprint: ${fingerprint}`,
+          "",
+          "Please verify that this fingerprint matches the package you import. Any earlier package with the same filename should be discarded.",
+        ]
+      : []),
     "",
     `${n(ctx.physicalRowCount)} physical rows does NOT mean ${n(ctx.physicalRowCount)} products. A product with options repeats its row once per option (see below).`,
     "",
@@ -210,19 +282,24 @@ function buildPlainTextEmail(
     ...attachments.map((a) => `- ${a}`),
   );
   const link = ctx.downloadLink ?? null;
+  if (isFull) lines.push("", ...FULL_REPLACEMENT_TEXT);
   if (link) {
     lines.push(
       "",
-      "DOWNLOAD FULL CATALOG PACKAGE",
+      "PACKAGE DOWNLOAD",
+      "",
+      "Download Full Catalog Package",
       "",
       `The full package (${ctx.filename}, images included) is delivered through this secure direct-download link instead of an email attachment:`,
       link.url,
       `Link valid until: ${link.expiresAtIso}`,
     );
   } else if (zipTooLargeForEmail) {
+    // NO placeholder is ever emitted — the draft reports itself unsendable and
+    // the owner-facing UI blocks the send until a real signed URL exists.
     lines.push("", "The full catalog package will be shared separately. (The ZIP is too large to attach to email.)");
   }
-  lines.push("", "Regards,", "Malikas Universe");
+  lines.push("", renderSignOffText());
   return lines.filter((l): l is string => l !== null).join("\n");
 }
 
@@ -230,6 +307,7 @@ function buildPlainTextEmail(
 export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft {
   const isFull = ctx.mode === "FULL";
   const correction = ctx.correction ?? null;
+  const fingerprint = normalizeFingerprint(ctx.packageFingerprint);
   const zipTooLargeForEmail = (ctx.zipBytes ?? Number.MAX_SAFE_INTEGER) > RAFEEQ_EMAIL_MAX_ATTACH_BYTES;
 
   const subjectBase = isFull
@@ -238,6 +316,14 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
   const subject = correction ? `CORRECTED PACKAGE — ${subjectBase}` : subjectBase;
 
   const link = ctx.downloadLink ?? null;
+  // FAIL CLOSED. A partner-facing email must carry a real signed URL and the
+  // APPROVED sign-off; a draft missing either reports itself unsendable rather
+  // than rendering a placeholder or an unapproved signature.
+  const signOffHtml = renderSignOffHtml();
+  const blockers: RafeeqDraftBlocker[] = [];
+  if (!link) blockers.push("missing_download_link");
+  if (signOffHtml === null) blockers.push("signature_not_installed");
+
   const attachments = [
     "rafeeq_catalog.xlsx",
     ...(isFull ? [RAFEEQ_GUIDE_PNG] : []),
@@ -249,8 +335,16 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
   ];
 
   const correctionHtml = correction
-    ? `<p style="color:#b00020"><b>Please disregard the previous package and use this corrected package instead.</b><br/>
-       Previous package: <code>${esc(correction.previousFilename)}</code></p>`
+    ? `<p style="color:#b00020"><b>IMPORTANT</b><br/>
+       Please disregard any earlier catalog package shared by us and use <b>ONLY</b> the package provided through the secure
+       download link in this email.<br/>
+       This package represents the latest and authoritative version of our full Rafeeq catalog.</p>`
+    : "";
+
+  const fingerprintHtml = fingerprint
+    ? `<p><b>Package fingerprint:</b> <code>${esc(fingerprint)}</code><br/>
+       Please verify that this fingerprint matches the package you import. Any earlier package with the same filename
+       should be discarded.</p>`
     : "";
 
   const newExplainer = !isFull
@@ -261,7 +355,8 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
         }. For the first upload we recommend using the FULL catalog package as a complete replacement.</p>`
     : "";
 
-  const fullStatement = isFull
+  // With a correction notice the authoritative sentence above already says this.
+  const fullStatement = isFull && !correction
     ? `<p><b>This package represents the full current Malikas Universe catalog.</b></p>`
     : "";
 
@@ -283,8 +378,9 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
     <tr><th align="left">Options</th><td>${n(ctx.optionCount)}</td></tr>
     <tr><th align="left">Images</th><td>${n(ctx.imageCount)}</td></tr>${
       typeof ctx.warningCount === "number" ? `\n    <tr><th align="left">Rows flagged for review</th><td>${n(ctx.warningCount)}</td></tr>` : ""
-    }
+    }${fingerprint ? `\n    <tr><th align="left">Package fingerprint</th><td><code>${esc(fingerprint)}</code></td></tr>` : ""}
   </table>
+  ${fingerprintHtml}
   <p><b>${n(ctx.physicalRowCount)} physical rows does NOT mean ${n(ctx.physicalRowCount)} products.</b>
   A product with options repeats its row once per option (see below).</p>
 
@@ -330,6 +426,7 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
   </ul>
 
   ${isFull ? `<p>The attached <code>${RAFEEQ_GUIDE_PNG}</code> shows the option structure visually (one product → parent SKU → option group → options). The explanations above stand on their own if the image is not displayed.</p>` : ""}
+  ${isFull ? FULL_REPLACEMENT_HTML : ""}
   ${
     link
       ? `
@@ -345,11 +442,12 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
         : ""
   }
 
-  <p>Thank you,<br/>Malikas Universe</p>
+  ${signOffHtml ?? ""}
 </div>`.trim();
 
   const textAr = [
-    correction ? `⚠️ حزمة مصحّحة — الرجاء تجاهل الحزمة السابقة (${correction.previousFilename}) واستخدام هذه الحزمة بدلاً منها.` : null,
+    correction ? "⚠️ حزمة محدَّثة — الرجاء تجاهل أي حزمة سابقة واستخدام الحزمة الموجودة على رابط التنزيل الآمن في هذا الإيميل فقط." : null,
+    fingerprint ? `بصمة الحزمة: ${fingerprint}` : null,
     isFull ? "هذه الحزمة تمثّل كتالوج ملكة يونيفرس الكامل الحالي." : (ctx.newPackage?.hasSentBaseline
       ? "هذه الحزمة تحتوي فقط على المنتجات/التحديثات المعلّقة منذ آخر حزمة عُلّمت «تم الإرسال»."
       : "لا يوجد خطّ أساس مُرسَل بعد — ملف «الجديد» يعادل عملياً الكتالوج كاملاً؛ يُنصح باستخدام الحزمة الكاملة للرفع الأول."),
@@ -369,5 +467,15 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
   ].filter((l): l is string => l !== null).join("\n");
 
   const textEmail = buildPlainTextEmail(ctx, attachments, zipTooLargeForEmail);
-  return { to: RAFEEQ_EMAIL_TO_DEFAULT, subject, html, textEmail, textAr, attachments, zipTooLargeForEmail };
+  return {
+    to: RAFEEQ_EMAIL_TO_DEFAULT,
+    subject,
+    html,
+    textEmail,
+    textAr,
+    attachments,
+    zipTooLargeForEmail,
+    sendable: blockers.length === 0,
+    blockers,
+  };
 }

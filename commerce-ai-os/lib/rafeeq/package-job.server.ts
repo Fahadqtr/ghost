@@ -488,21 +488,11 @@ export async function buildRafeeqEmailDraftForJob(
     return errResult("job_not_found", 409);
   }
 
-  // CORRECTION context: this recording superseded earlier unsent package(s) —
-  // reference the most recently superseded one of the same mode (read-only).
-  let previousFilename: string | null = null;
-  if ((state.packageRecorded?.supersededCount ?? 0) > 0) {
-    const prev = await admin
-      .from("rafeeq_packages")
-      .select("output_filename, superseded_at")
-      .eq("mode", c.mode)
-      .not("superseded_at", "is", null)
-      .order("superseded_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const name = (prev.data as { output_filename?: string } | null)?.output_filename;
-    if (!prev.error && typeof name === "string" && name !== "") previousFilename = name;
-  }
+  // CORRECTION context: this recording superseded earlier package(s). We only
+  // record THAT it supersedes — never which filename, because several builds
+  // legitimately share one filename and a name cannot identify a build. The
+  // email points Rafeeq at the secure link + this package's fingerprint.
+  const correction = (state.packageRecorded?.supersededCount ?? 0) > 0;
 
   const delivery = await loadRafeeqDeliveryState();
   const baseline = hasSentBaseline(delivery.packages);
@@ -520,7 +510,8 @@ export async function buildRafeeqEmailDraftForJob(
     imageCount: s.imageCount,
     warningCount: s.needsReviewIncluded,
     zipBytes: state.artifact.totalBytes,
-    correction: previousFilename ? { previousFilename } : null,
+    packageFingerprint: state.artifact.manifestFingerprint ?? null,
+    correction,
     newPackage: c.mode === "NEW" ? { hasSentBaseline: baseline, equalsWholeCatalog: !baseline } : null,
     samePriceExample: samePrice,
     differingPriceExample: differing,

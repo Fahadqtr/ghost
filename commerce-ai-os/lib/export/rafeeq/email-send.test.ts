@@ -29,6 +29,7 @@ function input(over: Partial<RafeeqEmailSendPlanInput> = {}): RafeeqEmailSendPla
       { filename: "manifest.json", bytes: 4_000, contentType: "application/json" },
     ],
     attachmentMaxBytes: 20 * 1024 * 1024,
+    draftBlockers: [],
     ...over,
   };
 }

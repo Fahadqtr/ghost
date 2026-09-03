@@ -227,6 +227,7 @@ export async function sendRafeeqPackageEmail(
     text: draft.value.textEmail,
     attachments: planned,
     attachmentMaxBytes: config.attachmentMaxBytes,
+    draftBlockers: draft.value.blockers,
   });
   if (!plan.ok) return sendErr(plan.error, plan.error === "attachments_too_large" ? 413 : 422);
 

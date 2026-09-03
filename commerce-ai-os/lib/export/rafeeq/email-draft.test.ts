@@ -151,14 +151,21 @@ test("11b: FULL carries its required whole-catalog statement", () => {
   assert.ok(d.html.includes("<b>This package represents the full current Malikas Universe catalog.</b>"), "required FULL sentence");
 });
 
-test("12: CORRECTION context prefixes the subject and carries the disregard sentence + the replaced filename", () => {
-  const d = buildRafeeqEmailDraft(ctx({ correction: { previousFilename: "rafeeq-full-2026-08-20.zip" } }));
+// STEP 53: a superseded package is NEVER named by filename — several builds
+// legitimately share one filename, so a name cannot identify a build.
+test("12: CORRECTION context prefixes the subject and points at the LINK, never a previous filename", () => {
+  const d = buildRafeeqEmailDraft(ctx({ correction: true }));
   assert.ok(d.subject.startsWith("CORRECTED PACKAGE — "), "subject prefix");
-  assert.ok(d.html.includes("<b>Please disregard the previous package and use this corrected package instead.</b>"), "required correction sentence");
-  assert.ok(d.html.includes("rafeeq-full-2026-08-20.zip"), "previous package named");
-  assert.ok(d.textAr.includes("حزمة مصحّحة"), "Arabic correction line");
+  assert.ok(
+    d.html.includes("Please disregard any earlier catalog package shared by us and use <b>ONLY</b> the package provided through the secure"),
+    "approved disregard wording",
+  );
+  assert.ok(d.textEmail.includes("Please disregard any earlier catalog package shared by us and use ONLY the package provided through the secure download link in this email."), "plain-text disregard wording");
+  assert.ok(d.html.includes("latest and authoritative version"), "authoritative sentence");
+  assert.ok(!d.html.includes("Previous package:") && !d.textEmail.includes("Previous package:"), "no filename-based previous-package line");
+  assert.ok(d.textAr.includes("تجاهل أي حزمة سابقة"), "Arabic correction line");
   const plain = buildRafeeqEmailDraft(ctx());
-  assert.ok(!plain.subject.includes("CORRECTED") && !plain.html.includes("disregard the previous package"), "absent without correction context");
+  assert.ok(!plain.subject.includes("CORRECTED") && !plain.html.includes("disregard any earlier catalog package"), "absent without correction context");
 });
 
 test("13: attachment checklist + oversized-ZIP handling ('shared separately' sentence)", () => {
@@ -229,11 +236,11 @@ test("mobile 2: the plain text preserves the package facts and structure (summar
   assert.ok(t.includes("Products with options: 9") && t.includes("Options: 23") && t.includes("Images: 137"), "option/image facts");
   assert.ok(t.includes("Attachments:") && t.includes("- rafeeq_catalog.xlsx"), "attachment checklist");
   assert.ok(t.includes("\n\n"), "readable blank-line spacing");
-  assert.ok(t.trimEnd().endsWith("Regards,\nMalikas Universe"), "sign-off");
+  assert.ok(t.trimEnd().endsWith("Thank you for your support.\n\nBest regards,\n\nFahad Abdulaziz Ali\nFounder & Managing Director\nMalika's Universe Trading\nfahad@malikasuniverse.com\n+974 3331 5315\nmalikasuniverse.com"), "approved plain-text sign-off");
 });
 
 test("mobile 13: plain text and HTML carry the SAME package facts and required sentences", () => {
-  const d = buildRafeeqEmailDraft(ctx({ correction: { previousFilename: "rafeeq-full-2026-08-20.zip" } }));
+  const d = buildRafeeqEmailDraft(ctx({ correction: true }));
   const facts = ["rafeeq-full-2026-08-26.zip", "137", "151", "mk9001", "mk9002", "PRICE ON SELECTION"];
   for (const f of facts) {
     assert.ok(d.html.includes(f), `HTML carries ${f}`);
@@ -241,11 +248,19 @@ test("mobile 13: plain text and HTML carry the SAME package facts and required s
   }
   for (const sentence of [
     "These repeated rows represent ONE product with multiple options — not separate products.",
-    "Please disregard the previous package and use this corrected package instead.",
-    "This package represents the full current Malikas Universe catalog.",
+    "This package represents the latest and authoritative version of our full Rafeeq catalog.",
   ]) {
     assert.ok(d.html.includes(sentence), `HTML: ${sentence.slice(0, 30)}…`);
     assert.ok(d.textEmail.includes(sentence), `text: ${sentence.slice(0, 30)}…`);
+  }
+  // Without a correction notice the plain FULL sentence carries that meaning
+  // instead; with one it would just repeat the authoritative sentence above.
+  const noCorrection = buildRafeeqEmailDraft(ctx());
+  for (const body of [noCorrection.html, noCorrection.textEmail]) {
+    assert.ok(body.includes("This package represents the full current Malikas Universe catalog."), "FULL sentence without correction");
+  }
+  for (const body of [d.html, d.textEmail]) {
+    assert.ok(!body.includes("This package represents the full current Malikas Universe catalog."), "not duplicated under correction");
   }
   assert.ok(d.textEmail.includes("option_price is the FULL selling price of that selected option, not an additional charge."), "pricing sentence in text (tag-free form)");
 });
@@ -271,7 +286,7 @@ test("link: HTML carries the prominent Download Full Catalog Package button + ex
 test("link: the RAW signed URL appears in the mobile-safe plain text with its validity", () => {
   const url = "https://storage.example.test/object/sign/x.zip?token=SIGNED";
   const d = buildRafeeqEmailDraft(ctx({ downloadLink: { url, expiresAtIso: "2026-09-02T10:00:00.000Z" } }));
-  assert.ok(d.textEmail.includes("DOWNLOAD FULL CATALOG PACKAGE"), "plain-text section header");
+  assert.ok(d.textEmail.includes("PACKAGE DOWNLOAD") && d.textEmail.includes("Download Full Catalog Package"), "plain-text section header");
   assert.ok(d.textEmail.split("\n").includes(url), "raw URL on its own line");
   assert.ok(d.textEmail.includes("Link valid until: 2026-09-02T10:00:00.000Z"), "validity in plain text");
   assert.ok(d.textAr.includes(url), "Arabic summary carries the link too");
