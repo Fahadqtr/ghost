@@ -17,6 +17,7 @@ import {
   type RafeeqPreviewVariant,
   type RafeeqMappingEvidence,
   type RafeeqPreviewResult,
+  rafeeqExportDiscountPrice,
 } from "./preview.ts";
 
 const PAGE = 1000;
@@ -117,7 +118,8 @@ export async function loadRafeeqPreview(): Promise<RafeeqPreviewResult | null> {
         nameAr: s(p.name_ar),
         category: s(p.main_category),
         price: n(p.price),
-        discountPrice: n(p.discount_price),
+        // Snoonu-aligned pricing policy — see rafeeqExportDiscountPrice.
+        discountPrice: rafeeqExportDiscountPrice(n(p.discount_price)),
         descriptionEn: s(p.description_en),
         descriptionAr: s(p.description_ar),
         imageUrl: primaryUrl,
