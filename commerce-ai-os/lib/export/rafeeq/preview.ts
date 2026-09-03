@@ -96,6 +96,34 @@ export interface RafeeqMappingEvidence {
 }
 const UNMAPPED: RafeeqMappingEvidence = { status: "unmapped", externalId: null, exportedSku: null, productId: null };
 
+/**
+ * RAFEEQ EXPORT PRICING POLICY — Snoonu alignment (owner decision, STEP 46/47).
+ *
+ * Rafeeq must sell at the SAME price the Snoonu master currently shows.
+ * `products.discount_price` is a Snoonu-independent promotional field: feeding
+ * it to the pricing rule below made the Rafeeq catalogue undercut Snoonu by
+ * 50-70% on 15 products.
+ *
+ * The policy is applied at the RAFEEQ INPUT BOUNDARY only — the reader projects
+ * the discount away before `buildRafeeqPreview` ever sees it. The generic
+ * pricing rule (`positive(discountPrice) ?? positive(price)`) is unchanged, no
+ * price is hardcoded, no canonical value is modified, and no other exporter is
+ * affected.
+ *
+ * Option pricing is untouched: a variant's OWN price still wins, so
+ * PRICE ON SELECTION products and uniform-option products keep exporting the
+ * real purchasable option price.
+ */
+export const RAFEEQ_SNOONU_ALIGNED_PRICING = true;
+
+/**
+ * The discount price the Rafeeq exporter is allowed to see. Returns null under
+ * Snoonu alignment so the parent SELLING price is used.
+ */
+export function rafeeqExportDiscountPrice(discountPrice: number | null): number | null {
+  return RAFEEQ_SNOONU_ALIGNED_PRICING ? null : discountPrice;
+}
+
 export interface RafeeqPreviewInput {
   products: readonly RafeeqPreviewProduct[];
   /** ECL evidence for rafeeq:malikas only, keyed by lower(parent exported sku). */
