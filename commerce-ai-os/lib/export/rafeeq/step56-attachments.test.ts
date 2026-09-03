@@ -47,7 +47,11 @@ const ctx = (over: Partial<RafeeqEmailContext> = {}): RafeeqEmailContext => ({
 
 test("1: the workbook comes from the stored artifact, never rebuilt", () => {
   assert.ok(SEND_SERVER.includes("loadTailAttachments(artifact.value.parts)"), "sliced from the stored parts");
-  assert.ok(SEND_SERVER.includes('e.filename.startsWith("images/")'), "image entries are excluded");
+  // STEP 57 replaced the "exclude images/" filter with a positive allow-list:
+  // only the .xlsx workbook is taken, so images AND manifest.json are both
+  // excluded by construction rather than by enumeration.
+  assert.ok(SEND_SERVER.includes('.filter((e) => e.filename.endsWith(".xlsx"))'), "only the workbook is taken");
+  assert.ok(!SEND_SERVER.includes('startsWith("images/")'), "the old enumeration filter is gone");
   // FULL packages name the workbook rafeeq_catalog.xlsx
   assert.equal(src("lib/export/rafeeq/fullsync.ts").includes('"rafeeq_catalog.xlsx"'), true);
   const d = buildRafeeqEmailDraft(ctx());
@@ -128,10 +132,9 @@ test("5: the claim and the attachment stay in lockstep — unreadable guide FAIL
 test("6: the size gate still applies, and the real attachment set fits it", () => {
   const guideBytes = statSync(join(APP_ROOT, "public", RAFEEQ_GUIDE_PNG)).size;
   const cap = 20 * 1024 * 1024;
-  // representative real sizes: workbook + manifest + guide
+  // the real set (STEP 57): workbook + guide ONLY — manifest.json stays in the ZIP
   const set = [
     { filename: "rafeeq_catalog.xlsx", bytes: 900_000, contentType: "x" },
-    { filename: "manifest.json", bytes: 400_000, contentType: "application/json" },
     { filename: RAFEEQ_GUIDE_PNG, bytes: guideBytes, contentType: "image/png" },
   ];
   const ok = planRafeeqEmailSend({
@@ -146,7 +149,7 @@ test("6: the size gate still applies, and the real attachment set fits it", () =
     draftBlockers: [],
   });
   assert.equal(ok.ok, true, "the real set plans within the cap");
-  assert.equal(ok.ok && ok.plan.attachments.length, 3, "all three parts survive planning");
+  assert.equal(ok.ok && ok.plan.attachments.length, 2, "exactly the two parts survive planning");
   assert.ok(estimateEncodedBytes([guideBytes]) < estimateEncodedBytes([cap]), "the guide alone is far inside the cap");
 
   // an oversized set is still refused — never a silent partial set

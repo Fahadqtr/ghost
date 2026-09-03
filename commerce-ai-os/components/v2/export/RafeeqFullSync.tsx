@@ -107,7 +107,7 @@ interface RafeeqSendPreflightVM {
   zipTotalBytes: number;
   /** the certified ZIP is NEVER attached — delivered by secure signed link. */
   zipLink: { sha256: string; bytes: number; expiresAtIso: string } | null;
-  attachments: { filename: string; bytes: number; kind: "xlsx" | "manifest" }[];
+  attachments: { filename: string; bytes: number; kind: "xlsx" | "guide" }[];
   generatedAt: string;
   productCount: number;
   imageCount: number;
