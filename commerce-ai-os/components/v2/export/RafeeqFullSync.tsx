@@ -92,6 +92,9 @@ interface RafeeqEmailDraftVM {
   textAr: string;
   attachments: string[];
   zipTooLargeForEmail: boolean;
+  /** FAIL-CLOSED: false ⇒ the draft must not be sent (see blockers). */
+  sendable: boolean;
+  blockers: string[];
 }
 
 /** Preflight JSON for the owner-only direct send (GET …/jobs/<id>/send). */
@@ -870,6 +873,13 @@ function RafeeqEmailSection({
         </ul>
         {draft.zipTooLargeForEmail && (
           <p className="text-[11px] text-amber-800">ملف ZIP كبير — سيُشارَك بشكل منفصل (المسودة تتضمن هذه الملاحظة).</p>
+        )}
+        {!draft.sendable && (
+          <p className="text-[11px] font-medium text-red-700">
+            المسودة غير جاهزة للإرسال:
+            {draft.blockers.includes("missing_download_link") && " لا يوجد رابط تنزيل آمن صالح."}
+            {draft.blockers.includes("signature_not_installed") && " لم يتم تركيب التوقيع المعتمد."}
+          </p>
         )}
       </div>
       {/* developer/debug action — clearly labeled, never the normal user path */}

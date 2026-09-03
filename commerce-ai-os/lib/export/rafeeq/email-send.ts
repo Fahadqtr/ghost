@@ -20,6 +20,7 @@ export type RafeeqEmailSendBlock =
   | "invalid_recipient"
   | "no_attachments"
   | "attachments_too_large"
+  | "draft_not_sendable"
   | "send_failed";
 
 export interface RafeeqPlannedAttachment {
@@ -38,6 +39,13 @@ export interface RafeeqEmailSendPlanInput {
   text: string;
   attachments: RafeeqPlannedAttachment[];
   attachmentMaxBytes: number;
+  /**
+   * Fail-closed reasons carried over from the built draft (see
+   * RafeeqEmailDraft.blockers) — a missing signed download link or an
+   * uninstalled approved signature. Required so no call site can plan a send
+   * without deciding about them; a non-empty list blocks the send outright.
+   */
+  draftBlockers: readonly string[];
 }
 
 export interface RafeeqEmailSendPlan {
@@ -58,6 +66,8 @@ export type RafeeqEmailSendPlanResult =
 /** Gate + shape one send. Pure — nothing is transmitted here. */
 export function planRafeeqEmailSend(input: RafeeqEmailSendPlanInput): RafeeqEmailSendPlanResult {
   if (!input.configured) return { ok: false, error: "mail_not_configured" };
+  // FAIL CLOSED before anything else: an incomplete draft is never plannable.
+  if (input.draftBlockers.length > 0) return { ok: false, error: "draft_not_sendable" };
   const recipients = validateRecipients(input.toRaw, input.ccRaw);
   if (!recipients.ok) return { ok: false, error: "invalid_recipient", invalid: recipients.invalid };
   if (input.attachments.length === 0) return { ok: false, error: "no_attachments" };
@@ -140,6 +150,8 @@ export const RAFEEQ_SEND_ERROR_AR: Record<RafeeqEmailSendBlock | "forbidden" | "
   mail_not_configured: "لم يتم إعداد مزود البريد بعد — أضف إعدادات SMTP (متغيرات البيئة) أولاً.",
   invalid_recipient: "عنوان البريد غير صالح — تحقق من حقل المستلمين.",
   no_attachments: "لا توجد مرفقات جاهزة من الحزمة المكتملة.",
+  draft_not_sendable:
+    "المسودة غير مكتملة — لا يوجد رابط تنزيل آمن صالح أو لم يتم تركيب التوقيع المعتمد. لن يُرسل أي إيميل حتى تكتمل المسودة.",
   attachments_too_large: "الحزمة أكبر من الحد المسموح للإرسال عبر البريد.",
   send_failed: "تعذّر إرسال الإيميل عبر مزود البريد — لم يتغيّر أي شيء، حاول مرة أخرى.",
   forbidden: "الإرسال المباشر متاح للمالك فقط.",

@@ -66,7 +66,14 @@ test("22: the new server lookup + email sections are READ-ONLY — no writes to 
   for (const bad of [".insert(", ".update(", ".upsert(", ".delete(", ".upload(", ".remove(", ".rpc("]) {
     assert.ok(!section.includes(bad), `read-only sections perform no write (${bad})`);
   }
-  assert.ok(section.includes('.select("output_filename, superseded_at")'), "correction context is read, never written");
+  // STEP 53 removed the superseded-FILENAME lookup entirely: several builds
+  // legitimately share one filename, so a name can never identify a build. The
+  // correction context is now derived from in-memory job state with NO query at
+  // all — strictly more read-only than before, so assert that instead.
+  assert.ok(!section.includes("output_filename, superseded_at"), "the superseded-filename lookup is gone");
+  assert.ok(!section.includes("previousFilename"), "no previous-filename plumbing remains");
+  assert.ok(section.includes("supersededCount"), "correction context comes from in-memory job state");
+  assert.ok(section.includes("packageFingerprint: state.artifact.manifestFingerprint"), "the package is identified by its own fingerprint");
   assert.ok(!/\.(update|insert|upsert)\(\s*\{[\s\S]{0,200}?sent_at/.test(section), "sent_at is never written by these sections");
   assert.ok(section.includes("selectDownloadCandidates"), "selection semantics come from the tested pure module");
 });
