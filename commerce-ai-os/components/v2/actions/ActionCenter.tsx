@@ -92,7 +92,14 @@ export default function ActionCenter({
                 }
               >
                 <span className="text-2xl font-bold text-slate-800">{value}</span>
-                <span className="text-xs text-muted">{t.label}</span>
+                {/* UNIT: every lane tile counts ACTIONS, not products. One
+                    product can raise several actions, and a global finding
+                    raises an action bound to no product at all — so these are
+                    labelled in actions to stop them being read as a product
+                    total. */}
+                <span className="text-xs text-muted">
+                  {t.label} · <span className="text-[10px]">إجراءات</span>
+                </span>
                 {placeholder ? <span className="text-[10px] text-muted">(قيد التتبّع لاحقًا)</span> : null}
               </button>
             );
@@ -113,7 +120,8 @@ export default function ActionCenter({
               title={s.ok ? "متصل" : "غير متوفّر الآن"}
             >
               <span className={"h-1.5 w-1.5 rounded-full " + (s.ok ? "bg-emerald-500" : "bg-amber-500")} />
-              {SOURCE_LABEL[s.source] ?? s.source}: {s.count}
+              {/* UNIT: actions contributed by this source (post-scoping), not products. */}
+              {SOURCE_LABEL[s.source] ?? s.source}: {s.count} إجراء
             </span>
           ))}
         </div>

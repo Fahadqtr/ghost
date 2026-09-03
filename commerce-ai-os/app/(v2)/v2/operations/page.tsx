@@ -43,6 +43,8 @@ import {
 } from "@/lib/operations/operations-queue";
 import { buildPlatformHealth, type PlatformHealth } from "@/lib/operations/platform-health";
 import { buildOperationsCenter, type OperationsCenterModel } from "@/lib/operations/ops-center";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
+import { scopeRows } from "@/lib/home/master-scope";
 import Link from "next/link";
 import { Suspense } from "react";
 import OperationsDashboard from "@/components/v2/operations/OperationsDashboard";
@@ -132,7 +134,19 @@ export default async function OperationsPage({ searchParams }: { searchParams?: 
       // Annotate once (server-side) so KPIs, queues AND the ticktick_synced
       // filter all read the same enriched items — the whole set stays here; only
       // the summary + current page are sent to the browser.
-      const items: OperationsListItem[] = annotateTickTick(result.data.items, ticktick.ids);
+      // CURRENT MASTER scope. Every current operational queue, KPI, page slice
+      // and lifecycle bucket on this page derives from this ONE array, so
+      // scoping it here scopes all of them consistently. Historical domains are
+      // deliberately NOT scoped: `archivedCount` (product_archive) and the
+      // platform snapshot readers stay global — see below.
+      //
+      // Fails CLOSED: an unreadable membership yields the page's error state
+      // rather than a silent fallback to every product.
+      const scope = await loadMasterScope();
+      // Throwing lands in this page's existing catch, which renders LOAD_ERROR.
+      if (!scope.ok) throw new Error("master_scope_unavailable");
+      const scopedItems = scopeRows(result.data.items, (r) => r.id, scope);
+      const items: OperationsListItem[] = annotateTickTick(scopedItems, ticktick.ids);
       const summary = buildDashboardSummary(
         items,
         result.data.health,

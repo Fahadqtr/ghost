@@ -37,8 +37,8 @@ import { parseAiFilters } from "@/lib/operations/ai/ai-center";
 import { listPending, listRewardReady, listCustomers } from "@/lib/loyalty/rewards";
 import { loadRecentActivity } from "./recent-activity.server.ts";
 import { loadMasterScope } from "./master-scope.server.ts";
-import { scopeRows, scopeRowsKeepingGlobal, type MasterScope } from "./master-scope.ts";
-import { summarizeActions } from "@/lib/actions/action-model";
+import { scopeRows, type MasterScope } from "./master-scope.ts";
+import { scopeActionCenterView } from "@/lib/actions/action-scope";
 import { computeMasterReadiness, countMasterGap } from "@/lib/readiness/master-readiness";
 
 const OWNER_NAME = "Fahad";
@@ -215,8 +215,13 @@ export const loadHomeDashboard = cache(async (now: Date = new Date()): Promise<H
   // Product-bound actions outside the master are dropped; catalog-wide actions
   // (entityId null) are kept. The summary is recomputed with the SAME certified
   // pure summarizer over the filtered list — no new counting rule.
-  const scopedActions = action ? scopeRowsKeepingGlobal(action.actions, (a) => a.entityId, scope) : [];
-  const scopedSummary = action ? summarizeActions(scopedActions) : null;
+  // Uses the SAME shared helper as /v2/actions, so the two surfaces cannot drift
+  // onto different membership rules. Semantics are unchanged from #700: keep
+  // entity-less (catalog-wide) actions, drop product-bound non-members, and
+  // recount with the certified pure summarizer.
+  const scopedView = action ? scopeActionCenterView(action, (id) => scope.ids.has(id), scope.ok) : null;
+  const scopedActions = scopedView ? scopedView.actions : [];
+  const scopedSummary = scopedView ? scopedView.summary : null;
   const actionsFacts = action && scopedSummary
     ? {
         critical: numOr(scopedSummary.critical),

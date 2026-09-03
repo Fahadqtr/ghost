@@ -10,6 +10,8 @@ import { Suspense } from "react";
 
 import { loadActionCenter, loadActionCenterDetail } from "@/lib/actions/action-center.server";
 import { ACTION_LANES, type ActionLane } from "@/lib/actions/action-model";
+import { scopeActionCenterView } from "@/lib/actions/action-scope";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
 import ActionCenter from "@/components/v2/actions/ActionCenter";
 
 export const dynamic = "force-dynamic";
@@ -38,14 +40,27 @@ function SectionSkeleton() {
 
 // Streamed secondary — the product-level Media + AI queues (§9).
 async function ProductQueues() {
-  const detail = await loadActionCenterDetail();
-  return <ActionCenter view={detail} heading="مهام على مستوى المنتج" />;
+  const [detail, scope] = await Promise.all([loadActionCenterDetail(), loadMasterScope()]);
+  return (
+    <ActionCenter
+      view={scopeActionCenterView(detail, (id) => scope.ids.has(id), scope.ok)}
+      heading="مهام على مستوى المنتج"
+    />
+  );
 }
 
 export default async function ActionsPage({ searchParams }: { searchParams?: SearchParams }) {
   const params = searchParams ? await searchParams : {};
   const initialLane = parseLane(params.lane);
-  const view = await loadActionCenter();
+  // CURRENT MASTER scope. Product-bound actions outside the active
+  // snoonu:malikas master are not current operational work; global/system
+  // findings (entityId null) carry no membership semantics and are kept.
+  //
+  // Fails CLOSED on product-derived data: an unreadable membership drops every
+  // product-bound action rather than falling back to the whole catalog. Global
+  // findings still render, since they do not depend on membership.
+  const [rawView, scope] = await Promise.all([loadActionCenter(), loadMasterScope()]);
+  const view = scopeActionCenterView(rawView, (id) => scope.ids.has(id), scope.ok);
 
   return (
     <div className="space-y-4">
@@ -54,7 +69,9 @@ export default async function ActionsPage({ searchParams }: { searchParams?: Sea
         <p className="text-sm text-muted">
           مركز موحّد للقراءة فقط يجمع كل ما يحتاج لمراجعة المالك من مراكز العمليات وطبقة التحليلات المعتمدة.
           لا يوجد تنفيذ أو أتمتة في هذه المرحلة — كل عنصر يفتح سير العمل الأصلي للمراجعة. المصادر غير المتوفّرة تظهر بوضوح
-          ولا تُختلق أرقامها.
+          ولا تُختلق أرقامها. كل الأرقام هنا تُحسب بـ<strong>الإجراءات</strong> وليس بعدد المنتجات؛ المنتج الواحد قد يرفع
+          أكثر من إجراء، وبعض الإجراءات عامة على مستوى النظام ولا ترتبط بمنتج. الإجراءات المرتبطة بمنتج تقتصر على كتالوج
+          سنونو الحالي، أمّا النتائج العامة فتظهر كما هي.
         </p>
       </header>
 

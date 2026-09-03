@@ -7,6 +7,8 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { loadTasksView } from "@/lib/operations/read-model";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
+import { scopeRows } from "@/lib/home/master-scope";
 import { loadShopifyPresence } from "@/lib/operations/shopify-presence";
 import { ticktickConfigured, projectMapFromEnv, appBaseUrl } from "@/lib/integrations/ticktick/client";
 import {
@@ -94,7 +96,16 @@ export default async function TasksPage({ searchParams }: { searchParams?: Searc
     const supabase = createClient();
     const result = await loadTasksView(supabase as never, { shopify: { loadShopifyPresence } });
     if (result.status === "ok") {
-      const all = result.data.tasks;
+      // CURRENT MASTER scope. Every task here is product-derived: flattenTasks
+      // emits one row per (product, task) with the canonical `productId`, so
+      // there is no entity-less task to preserve. The summary, the filtered
+      // match count and the current page all read this ONE array.
+      //
+      // Fails CLOSED: an unreadable membership shows the page's error state
+      // rather than the whole catalog's tasks.
+      const scope = await loadMasterScope();
+      if (!scope.ok) throw new Error("master_scope_unavailable");
+      const all = scopeRows(result.data.tasks, (t) => t.productId, scope);
       // summary over the WHOLE task set; matchCount over the active filter+search.
       const matched = searchTaskViews(filterTaskViews(sortTaskViews(all), controls.filter), controls.query);
       // TickTick is a best-effort surface: its config/owner checks NEVER block the
