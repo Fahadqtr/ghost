@@ -60,6 +60,8 @@ export default function TalabatPackageControls({ plan }: { plan: TalabatPlanVM }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorStage, setErrorStage] = useState<string | null>(null);
+  /** STEP 76 — the failure is a finalization stall, not a lost package. */
+  const [resumable, setResumable] = useState(false);
   const [job, setJob] = useState<TalabatJobStatus | null>(null);
   const [result, setResult] = useState<TalabatJobStatus | null>(null);
   /** epoch ms when THIS generation began — state, not a ref, so the elapsed
@@ -88,6 +90,7 @@ export default function TalabatPackageControls({ plan }: { plan: TalabatPlanVM }
     setBusy(true);
     setError(null);
     setErrorStage(null);
+    setResumable(false);
     setResult(null);
     stoppedRef.current = false;
     setStartedAtMs(Date.now());
@@ -103,8 +106,12 @@ export default function TalabatPackageControls({ plan }: { plan: TalabatPlanVM }
     });
     if (!res.ok) {
       setError(jobErrorMessage(res.code));
-      const stage = (last as TalabatJobStatus | null)?.stage;
+      const lastStatus = last as TalabatJobStatus | null;
+      const stage = lastStatus?.stage;
       setErrorStage(stage ? (TALABAT_JOB_STAGE_AR[stage] ?? stage) : null);
+      // STEP 76 — when the images are already packaged and the archive is
+      // durable, the retry CONTINUES the same job; it never restarts download.
+      setResumable(lastStatus?.resumable === true || res.code === "upload_incomplete");
     } else if (res.value.status === "completed") {
       setResult(res.value);
     }
@@ -217,14 +224,19 @@ export default function TalabatPackageControls({ plan }: { plan: TalabatPlanVM }
       {/* FAILED — fixed Arabic copy only; never a raw platform error page. */}
       {error ? (
         <div className="space-y-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">
-          <div className="font-semibold">فشل توليد الحزمة</div>
+          <div className="font-semibold">{resumable ? "فشل رفع الحزمة النهائية" : "فشل توليد الحزمة"}</div>
           {errorStage ? <div className="text-[11px]">المرحلة: {errorStage}</div> : null}
           <div className="text-[11px]">السبب: {error}</div>
+          {resumable ? (
+            <div className="text-[11px] font-medium">
+              الصور محفوظة ولن تحتاج إلى إعادة تجهيزها — يمكنك متابعة الرفع من حيث توقف.
+            </div>
+          ) : null}
           {job?.error?.refId ? (
             <div className="text-[10px] text-rose-500" dir="ltr">ref: {job.error.refId}</div>
           ) : null}
           <button type="button" onClick={generate} disabled={busy} className="btn-ghost mt-1 text-[11px]">
-            إعادة المحاولة
+            {resumable ? "متابعة رفع الحزمة" : "إعادة المحاولة"}
           </button>
         </div>
       ) : null}

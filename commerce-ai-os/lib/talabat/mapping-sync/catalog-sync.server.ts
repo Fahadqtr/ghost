@@ -53,16 +53,37 @@ export interface CatalogSyncResult {
   channelStatus: "ok" | "missing" | "ambiguous";
   validRows: number;
   blockedRows: number;
+  /**
+   * STEP 76 — total mapping candidates the FULL catalogue yields, and how many
+   * have been persisted after this call. When `nextOffset < totalCandidates`
+   * the caller must invoke again with that offset: the persistence layer does
+   * TWO sequential round trips per candidate, so all 1454 in one request is
+   * ~2,908 serial DB calls — the measured cause of the STEP 74 finalization
+   * timeout. Bounding the slice keeps every step well inside the budget.
+   */
+  totalCandidates: number;
+  nextOffset: number;
 }
 
-const EMPTY: CatalogSyncResult = { ok: false, counts: null, channelStatus: "missing", validRows: 0, blockedRows: 0 };
+const EMPTY: CatalogSyncResult = {
+  ok: false, counts: null, channelStatus: "missing", validRows: 0, blockedRows: 0,
+  totalCandidates: 0, nextOffset: 0,
+};
+
+/** Candidates persisted per invocation — bounded so one request cannot stall. */
+export const MAPPING_SYNC_BATCH = 200;
 
 /**
  * Persist Talabat channel_variant_mappings for the FULL valid catalog. Writer
  * gate is owned by the caller. Never throws — a failure returns ok:false with the
  * best-known counts so the caller can surface it without failing the package.
  */
-export async function syncTalabatMappingsFromCatalog(actor: string): Promise<CatalogSyncResult> {
+export async function syncTalabatMappingsFromCatalog(
+  actor: string,
+  /** STEP 76 — persist only candidates[offset, offset + MAPPING_SYNC_BATCH). */
+  offset = 0,
+  limit: number = MAPPING_SYNC_BATCH,
+): Promise<CatalogSyncResult> {
   try {
     const supabase = createClient();
 
@@ -122,11 +143,20 @@ export async function syncTalabatMappingsFromCatalog(actor: string): Promise<Cat
     // Same candidate computation as the legacy path — identical cardinality/keys.
     const result = buildTalabatExport(productInputs, variantInputs);
 
+    // STEP 76 — persist a BOUNDED slice. The candidate list is deterministic
+    // (buildTalabatExport over the same master scope), so slicing by offset is
+    // stable across steps and every candidate is persisted exactly once.
+    const allCandidates = result.mappings;
+    const start = Math.max(0, offset);
+    const slice = allCandidates.slice(start, start + Math.max(1, limit));
     let counts: PersistCounts | null = null;
-    if (result.rows.length > 0 && channelRes.status === "ok") {
+    if (slice.length > 0 && channelRes.status === "ok") {
       const admin = createAdminClient() as unknown as MappingSyncAdmin;
-      counts = await syncTalabatMappings(admin, channelRes.id, result.mappings, new Date().toISOString(), actor);
+      counts = await syncTalabatMappings(admin, channelRes.id, slice, new Date().toISOString(), actor);
     }
+    const nextOffset = Math.min(allCandidates.length, start + slice.length);
+    // The export gate is judged on the FULL row set, as before; a partial slice
+    // with zero failures is not "not ok", it is simply not finished yet.
     const gate = decideExportGate(result.rows.length, channelRes, counts);
     return {
       ok: gate.ok,
@@ -134,6 +164,8 @@ export async function syncTalabatMappingsFromCatalog(actor: string): Promise<Cat
       channelStatus: channelRes.status,
       validRows: result.rows.length,
       blockedRows: result.blocked.length,
+      totalCandidates: allCandidates.length,
+      nextOffset,
     };
   } catch {
     return EMPTY;

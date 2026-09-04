@@ -36,6 +36,10 @@ export interface TalabatJobStatus {
   mappingsSynced: boolean;
   auditRecorded: boolean;
   error: { code: string; refId: string } | null;
+  /** STEP 76 — every planned image is packaged and the archive is durable. */
+  imagesComplete: boolean;
+  /** STEP 76 — retry continues this job; it does NOT re-download images. */
+  resumable: boolean;
 }
 
 export type TalabatJobReadResult =
