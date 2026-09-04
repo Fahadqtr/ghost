@@ -130,20 +130,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
         # npm retired the /security/audits "quick" endpoint (410 Gone) that
         # `pnpm audit` calls, so it now errors for infra reasons on every run,
-        # unrelated to any real advisory. The same endpoint also times out
-        # intermittently (ERR_SOCKET_TIMEOUT after pnpm exhausts its retries),
-        # which is the same class of problem: we learned nothing about our
-        # dependencies. Tolerate ONLY those transport failures (surface a warning
-        # saying the gate did not run) while still failing on genuine
-        # high-severity findings, which produce advisory output, not a fetch error.
+        # unrelated to any real advisory. Tolerate that specific failure (surface
+        # a warning) while still failing on genuine high-severity findings.
       - name: audit
         run: |
           set +e
           out=$(pnpm audit --audit-level high 2>&1)
           code=$?
           echo "$out"
-          if [ $code -ne 0 ] && echo "$out" | grep -qE "ERR_PNPM_AUDIT_BAD_RESPONSE|being retired|410|ERR_SOCKET_TIMEOUT|ERR_PNPM_FETCH_|FetchError"; then
-            echo "::warning::npm audit endpoint unreachable (retired 410 or network failure) — advisory gate skipped; dependency advisories were NOT evaluated on this run"
+          if [ $code -ne 0 ] && echo "$out" | grep -qE "ERR_PNPM_AUDIT_BAD_RESPONSE|being retired|410"; then
+            echo "::warning::npm audit endpoint retired (410) — advisory gate skipped until pnpm/npm move to the bulk endpoint"
             exit 0
           fi
           exit $code
