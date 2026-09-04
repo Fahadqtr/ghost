@@ -44,7 +44,7 @@ import {
 } from "@/lib/export/talabat/package-job";
 import type { TalabatJobStage, TalabatJobUiErrorCode } from "@/lib/export/talabat/package-job-errors";
 import { isRecoverableTalabatJobError } from "@/lib/export/talabat/package-job-errors";
-import { mappingComplete } from "@/lib/export/talabat/package-job";
+import { mappingComplete, normalizeTalabatPackageJobState } from "@/lib/export/talabat/package-job";
 
 const BUCKET = "talabat-packages";
 const CHANNEL = "talabat:malikas";
@@ -140,6 +140,19 @@ async function getJson<T>(path: string): Promise<T | null> {
 
 const planPath = (jobId: string) => `jobs/${jobId}/plan.json`;
 const statePath = (jobId: string) => `jobs/${jobId}/state.json`;
+
+/**
+ * STEP 77 — the ONE way job state is read back.
+ *
+ * Persisted state is plain JSON from whichever build wrote it, so a state
+ * written before a field existed reads that field as `undefined`. Normalising
+ * here — at the single read boundary rather than at each use — means every
+ * consumer downstream is handed real numbers and no comparison can ever meet an
+ * `undefined`. Every state read goes through this; none calls getJson directly.
+ */
+async function readState(jobId: string): Promise<TalabatPackageJobState | null> {
+  return normalizeTalabatPackageJobState(await getJson<unknown>(statePath(jobId)));
+}
 /** The ONE deterministic storage prefix owned by a job. */
 export const jobPrefix = (jobId: string) => `jobs/${jobId}`;
 
@@ -379,7 +392,7 @@ export async function startTalabatPackageJob(input: {
   const live = existing.data as unknown as JobRow | null;
   if (live) {
     const fresh = Date.now() - new Date(live.updated_at).getTime() < STALE_MS;
-    const st0 = await getJson<TalabatPackageJobState>(statePath(live.id));
+    const st0 = await readState(live.id);
     const pl0 = await getJson<TalabatPackageJobPlan>(planPath(live.id));
     // STEP 76 — a job whose ARTIFACT is already durable is resumable no matter
     // how long it has been idle. The first production run reached 2501/2501 and
@@ -410,7 +423,7 @@ export async function startTalabatPackageJob(input: {
   // rather than re-downloading 2501 images into a fresh one.
   const revived = await resumeRecoverableJob();
   if (revived) {
-    const st = await getJson<TalabatPackageJobState>(statePath(revived.id));
+    const st = await readState(revived.id);
     const pl = await getJson<TalabatPackageJobPlan>(planPath(revived.id));
     if (st && pl) return { ok: true, value: statusDTO(st, pl, revived) };
   }
@@ -454,7 +467,7 @@ export async function startTalabatPackageJob(input: {
         .order("created_at", { ascending: false }).limit(1).maybeSingle();
       const row = winner.data as unknown as JobRow | null;
       if (row) {
-        const st = await getJson<TalabatPackageJobState>(statePath(row.id));
+        const st = await readState(row.id);
         const pl = await getJson<TalabatPackageJobPlan>(planPath(row.id));
         if (st && pl) return { ok: true, value: statusDTO(st, pl, row) };
       }
@@ -477,7 +490,7 @@ export async function getTalabatPackageJob(jobId: string): Promise<TalabatJobApi
     return errResult(String((row.error as { code?: string }).code ?? "") === UNDEFINED_TABLE ? "jobs_unavailable" : "job_not_found", 503);
   }
   if (!row.data) return errResult("job_not_found", 404);
-  const state = await getJson<TalabatPackageJobState>(statePath(jobId));
+  const state = await readState(jobId);
   const plan = await getJson<TalabatPackageJobPlan>(planPath(jobId));
   if (!state || !plan) return errResult("job_not_found", 404);
   return { ok: true, value: statusDTO(state, plan, row.data as unknown as JobRow) };
@@ -497,7 +510,7 @@ export async function stepTalabatPackageJob(jobId: string): Promise<TalabatJobAp
   if (!row.data) return errResult("job_not_found", 404);
   const seen = row.data as unknown as JobRow;
 
-  const state = await getJson<TalabatPackageJobState>(statePath(jobId));
+  const state = await readState(jobId);
   const plan = await getJson<TalabatPackageJobPlan>(planPath(jobId));
   if (!state || !plan) return errResult("job_not_found", 404);
   if (state.status !== "running") return { ok: true, value: statusDTO(state, plan, seen) };
@@ -574,7 +587,7 @@ export async function stepTalabatPackageJob(jobId: string): Promise<TalabatJobAp
 export async function getTalabatPackageArtifact(jobId: string): Promise<
   { ok: true; filename: string; totalBytes: number; parts: string[] } | { ok: false }
 > {
-  const state = await getJson<TalabatPackageJobState>(statePath(jobId));
+  const state = await readState(jobId);
   if (!state || state.status !== "completed" || !state.artifact) return { ok: false };
   return {
     ok: true,

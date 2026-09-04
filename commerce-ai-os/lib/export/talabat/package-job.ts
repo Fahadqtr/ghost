@@ -529,15 +529,53 @@ async function archiveStep(
   return state;
 }
 
-/** True once every mapping candidate has been persisted. */
-export function mappingComplete(state: TalabatPackageJobState): boolean {
-  if (state.mappingTotal === null) return false;
-  return state.mappingCursor >= state.mappingTotal;
+/** A non-negative integer, or null when the value is missing/nonsensical. */
+export function counter(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null;
 }
 
-/** A non-negative integer, or null when the value is missing/nonsensical. */
-function counter(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null;
+/**
+ * STEP 77 — normalise a state object read back from storage.
+ *
+ * Job state is persisted as plain JSON and read back with a bare cast, so a
+ * state written by an OLDER build simply lacks the fields that build did not
+ * know about. STEP 76 added `mappingCursor` / `mappingTotal`; a job created
+ * before it deployed reads them as `undefined`, and `undefined` silently poisons
+ * every comparison it touches — `200 > undefined` is false, so the cursor never
+ * advanced, and `undefined >= undefined` is false, so the stage never completed.
+ * Production job ad8aa4db looped the first 200 mapping candidates for ~30
+ * minutes that way: its images and its 64 archive parts were all intact, and it
+ * still could not reach FINALIZING.
+ *
+ * Normalising ONCE at the read boundary is what makes that class of bug
+ * impossible rather than fixing this one instance of it: every consumer is then
+ * guaranteed real numbers, so no downstream comparison can meet `undefined`.
+ * Unknown/extra keys are preserved untouched, so a state written by a NEWER
+ * build survives a rollback intact.
+ */
+export function normalizeTalabatPackageJobState(raw: unknown): TalabatPackageJobState | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  // Identity must be real; anything else is not a job state.
+  if (typeof s.jobId !== "string" || s.jobId === "") return null;
+  const cursor = counter(s.mappingCursor) ?? 0;
+  const total = counter(s.mappingTotal);
+  return {
+    ...(raw as TalabatPackageJobState),
+    mappingCursor: cursor,
+    // A total below the cursor would report the stage complete before its work
+    // is done, so an out-of-range value degrades to "unknown" (null), never to a
+    // smaller number.
+    mappingTotal: total !== null && total >= cursor ? total : null,
+  };
+}
+
+/** True once every mapping candidate has been persisted. */
+export function mappingComplete(state: TalabatPackageJobState): boolean {
+  const total = counter(state.mappingTotal);
+  // Unknown total (null, or anything not a real count) = not yet complete.
+  if (total === null) return false;
+  return (counter(state.mappingCursor) ?? 0) >= total;
 }
 
 /**
@@ -561,8 +599,12 @@ async function mappingStep(
 
   const total = counter(res.totalCandidates);
   const next = counter(res.nextOffset);
-  const advanced = next !== null && next > state.mappingCursor;
-  if (advanced) state.mappingCursor = next;
+  // Read through counter() as well: normalizeTalabatPackageJobState guarantees a
+  // real number at the read boundary, and this keeps the step correct even if a
+  // caller ever hands the engine an unnormalised state directly.
+  const cursor = counter(state.mappingCursor) ?? 0;
+  const advanced = next !== null && next > cursor;
+  state.mappingCursor = advanced ? next : cursor;
   // Stop slicing when the sync failed, reported no bounded total, or made no
   // forward progress: pin the total to the cursor so mappingComplete() is true.
   state.mappingTotal = res.ok && total !== null && advanced ? total : state.mappingCursor;
