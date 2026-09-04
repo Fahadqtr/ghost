@@ -177,6 +177,14 @@ async function TalabatDetail({ dest }: { dest: NonNullable<ReturnType<typeof exp
       ) : (
         <>
           <TalabatPreview
+            /* INT.2B.2 — real package generation (Generate Ready Package). The
+               generator runs server-side through a writer-gated API route; this
+               page renders only the read-only preview + the controls. Talabat
+               publish stays unavailable — this phase produces files only.
+               Rendered through the preview's afterSummary slot so it sits at the
+               TOP of the page (under the headline stats, above reasons/filters/
+               table) instead of below the table. Same element, same props. */
+            afterSummary={<TalabatPackageControls plan={previewGenerationPlan(result.rows, { mode: "ready" })} />}
             vm={{
               rows: result.rows.map<TalabatPreviewVM["rows"][number]>((r) => ({
                 internalProductId: r.internalProductId,
@@ -201,12 +209,6 @@ async function TalabatDetail({ dest }: { dest: NonNullable<ReturnType<typeof exp
               counts: result.counts,
             }}
           />
-
-          {/* INT.2B.2 — real package generation (Generate Ready Package). The
-              generator runs server-side through a writer-gated API route; this
-              page renders only the read-only preview + the controls. Talabat
-              publish stays unavailable — this phase produces files only. */}
-          <TalabatPackageControls plan={previewGenerationPlan(result.rows, { mode: "ready" })} />
         </>
       )}
     </div>

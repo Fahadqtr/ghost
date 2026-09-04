@@ -17,6 +17,7 @@
 import { buildFlattenedName, normalizeExportedSku, normalizeBarcode } from "../../talabat/export.ts";
 import { resolveTalabatCategory } from "./native-template.ts";
 import { resolveTalabatBarcode } from "./barcode-alias.ts";
+import { resolveTalabatSellingPrice } from "./price-policy.ts";
 import { resolveLifecycleState, type LifecycleState } from "../../lifecycle/state.ts";
 import { primaryImageName, variantImageName, extensionFromUrl } from "../image-naming.ts";
 import { summarizeValidation, type ExportItemStatus, type ExportReason, type ExportValidationItem, type ExportValidationSummary } from "../validation.ts";
@@ -42,7 +43,17 @@ export interface TalabatPreviewProduct {
   nameEn: string | null;
   nameAr: string | null;
   price: number | null;
+  /**
+   * STEP 72 — carried for DIAGNOSTICS ONLY. It is excluded from Talabat
+   * selling-price precedence and is never passed to the price resolver.
+   */
   discountPrice: number | null;
+  /**
+   * STEP 72 — `channel_products.channel_price` for the EXACT Talabat channel
+   * (null when the channel or the link is absent). Product grain: a variant's
+   * own price outranks it.
+   */
+  channelPrice?: number | null;
   category: string | null;
   /** product long-form descriptions (product-level; variants inherit these). */
   descriptionEn?: string | null;
@@ -137,9 +148,6 @@ export interface TalabatPreviewResult {
   counts: { productCount: number; variantCount: number; sellableRowCount: number };
 }
 
-function positive(v: number | null | undefined): number | null {
-  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
-}
 function clean(v: string | null | undefined): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -257,8 +265,15 @@ function buildRow(
   // Descriptions are product-level (variants inherit them) — mirrors the legacy export.
   const descriptionEn = clean(p.descriptionEn);
   const descriptionAr = clean(p.descriptionAr);
-  const price = isVariant ? positive(v!.price) ?? positive(p.discountPrice) ?? positive(p.price)
-    : positive(p.discountPrice) ?? positive(p.price);
+  // STEP 72 — ONE shared policy, identical to the mapping snapshot's:
+  //   simple  : channelPrice ?? productPrice
+  //   variant : variantPrice(>0) ?? channelPrice ?? productPrice
+  // discount_price is NOT an input — it cannot steer a Talabat price.
+  const price = resolveTalabatSellingPrice({
+    productPrice: p.price,
+    channelPrice: p.channelPrice ?? null,
+    variantPrice: isVariant ? v!.price : null,
+  }).price;
   const category = clean(p.category) || null;
   // STEP 64 — resolve to the exact Talabat string. FAILS CLOSED.
   const catRes = resolveTalabatCategory(category);

@@ -10,7 +10,7 @@
 // pre-validated from the pure buildTalabatPreview; this component never re-derives
 // a rule.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import ProductThumb from "@/components/ProductThumb";
 import type { ExportReasonCode } from "@/lib/export/validation";
 import type { ExportItemStatus } from "@/lib/export/validation";
@@ -87,7 +87,14 @@ const MAPPING_LABEL: Record<TalabatPreviewRowVM["mappingStatus"], string> = {
 
 type StatusFilter = "ALL" | ExportItemStatus;
 
-export default function TalabatPreview({ vm }: { vm: TalabatPreviewVM }) {
+/**
+ * `afterSummary` renders between the headline summary cards and the
+ * reasons-by-type block. The Talabat page uses it to place the package
+ * generation section at the TOP of the page (it previously sat at the bottom,
+ * after the results table). Purely positional: the node is rendered verbatim,
+ * so its own markup, props, state and button behaviour are untouched.
+ */
+export default function TalabatPreview({ vm, afterSummary }: { vm: TalabatPreviewVM; afterSummary?: ReactNode }) {
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const [issue, setIssue] = useState<"ALL" | ExportReasonCode>("ALL");
   const [q, setQ] = useState("");
@@ -129,6 +136,8 @@ export default function TalabatPreview({ vm }: { vm: TalabatPreviewVM }) {
         {vm.counts.productCount} منتج · {vm.counts.variantCount} متغيّر · {vm.counts.sellableRowCount} صف قابل للبيع
         (كل متغيّر صف مستقل — لا يوجد صف أب).
       </p>
+
+      {afterSummary ?? null}
 
       {/* Grouped reasons */}
       {issueTypes.length > 0 ? (

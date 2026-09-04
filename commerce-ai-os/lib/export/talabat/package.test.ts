@@ -175,7 +175,9 @@ test("AoA maps identity to text cells, price to a number, and the exact image fi
   assert.equal(row[0], "mk1234"); // SKU (string)
   assert.equal(row[1], "6291041500213"); // barcode (string, not scientific)
   assert.equal(typeof row[2], "number"); // price numeric
-  assert.equal(row[2], 65); // discount-aware effective price
+  // STEP 72 — the base price, NOT the 65 discount: discount_price no longer
+  // steers a Talabat selling price, and this fixture carries no channel price.
+  assert.equal(row[2], 75);
   assert.equal(row[4], "Vitamin C Serum");
   assert.equal(row[9], "mk1234.jpg"); // image filename matches the packaged file
 });

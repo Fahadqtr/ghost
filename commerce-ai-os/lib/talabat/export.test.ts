@@ -138,9 +138,14 @@ test("12: a variant price overrides the parent price", () => {
   assert.equal(r.rows[0].priceQar, "50");
 });
 
-test("13: the parent discount applies to a no-variant product", () => {
+test("13: STEP 72 — the parent discount NEVER lowers a no-variant price", () => {
+  // Was "the parent discount applies": the owner's STEP 72 policy excludes
+  // discount_price from Talabat selling-price precedence entirely.
   const r = buildTalabatExport([prod({ price: 100, discount_price: 80 })], []);
-  assert.equal(r.rows[0].priceQar, "80");
+  assert.equal(r.rows[0].priceQar, "100");
+  // and the channel price outranks the base price when one exists
+  const c = buildTalabatExport([prod({ price: 100, discount_price: 80, channel_price: 120 })], []);
+  assert.equal(c.rows[0].priceQar, "120");
 });
 
 test("14: EN and AR names are built independently", () => {
