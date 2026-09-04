@@ -29,7 +29,10 @@ import { rafeeqJobErrorMessageAr } from "@/lib/export/rafeeq/package-job-errors"
 import { driveRafeeqPackageJob, rafeeqJobDownloadUrl } from "@/lib/export/rafeeq/package-job-client";
 import { RAFEEQ_GUIDE_PNG } from "@/lib/export/rafeeq/email-draft";
 import { rafeeqSendErrorMessageAr } from "@/lib/export/rafeeq/email-send";
-import { validateRecipients } from "@/lib/mail/config";
+// ONE authoritative recipient for a pending send — the draft's value,
+// snapshotted at confirmation. Validation still runs through the shared
+// validateRecipients inside this resolver.
+import { resolvePendingRecipient, normalizeRecipient } from "@/lib/export/rafeeq/send-recipient";
 
 export interface RafeeqFullSyncPackageVM {
   id: string;
@@ -403,7 +406,9 @@ export default function RafeeqFullSync({ vm }: { vm: RafeeqFullSyncVM }) {
           linkBusy={linkBusy !== null}
         />
       )}
-      {sendOpen && emailJobId && <RafeeqSendModal jobId={emailJobId} onClose={() => setSendOpen(false)} />}
+      {sendOpen && emailJobId && (
+        <RafeeqSendModal jobId={emailJobId} recipient={emailTo} onClose={() => setSendOpen(false)} />
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* 1 — FULL CATALOG */}
@@ -930,10 +935,22 @@ function RafeeqEmailSection({
  * copy and download stay available either way. Sending never regenerates the
  * package and never marks the Rafeeq SENT baseline.
  */
-function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => void }) {
+function RafeeqSendModal({
+  jobId,
+  recipient,
+  onClose,
+}: {
+  jobId: string;
+  /** the draft's recipient — the ONE authoritative value for this send. */
+  recipient: string;
+  onClose: () => void;
+}) {
+  // SNAPSHOT the draft recipient at open. This exact value is displayed and
+  // sent; if the draft changes underneath, `stale` blocks the confirmation
+  // rather than letting a stale address through.
+  const [snapshotTo] = useState(() => normalizeRecipient(recipient));
   const [pf, setPf] = useState<RafeeqSendPreflightVM | null>(null);
   const [pfError, setPfError] = useState<string | null>(null);
-  const [to, setTo] = useState("");
   const [cc, setCc] = useState("");
   const [saveRecipient, setSaveRecipient] = useState(false);
   const [sending, setSending] = useState(false);
@@ -951,7 +968,6 @@ function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => voi
         if (cancelled) return;
         if (!res.ok) { setPfError(typeof body?.message_ar === "string" ? body.message_ar : rafeeqSendErrorMessageAr(body?.error)); return; }
         setPf(body as RafeeqSendPreflightVM);
-        setTo((body as RafeeqSendPreflightVM).savedRecipient ?? "");
       } catch {
         if (!cancelled) setPfError(rafeeqSendErrorMessageAr("send_failed"));
       }
@@ -959,10 +975,10 @@ function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => voi
     return () => { cancelled = true; };
   }, [jobId]);
 
-  const recipients = validateRecipients(to, cc);
+  const pending = resolvePendingRecipient(snapshotTo, recipient, cc);
   // a verified stored-object link is REQUIRED — a broken/missing package
   // link can never be emailed.
-  const canSend = !!pf && pf.configured && !!pf.zipLink && recipients.ok && !sending && !sentResult;
+  const canSend = !!pf && pf.configured && !!pf.zipLink && pending.canConfirm && !sending && !sentResult;
 
   async function confirmSend() {
     if (!canSend) return;
@@ -971,7 +987,7 @@ function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => voi
       const res = await fetch(`/api/export/rafeeq/package/jobs/${jobId}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, cc, saveRecipient }),
+        body: JSON.stringify({ to: pending.pendingTo, cc, saveRecipient }),
       });
       const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
       if (!isJson) { setSendError(rafeeqSendErrorMessageAr("send_failed")); return; }
@@ -1028,14 +1044,27 @@ function RafeeqSendModal({ jobId, onClose }: { jobId: string; onClose: () => voi
               <span className="pt-1.5 text-muted">من</span>
               <input readOnly dir="ltr" value={pf.from ?? "— غير مُعد —"} className="input font-mono text-[11px]" />
               <label className="pt-1.5 text-muted" htmlFor="rafeeq-send-to">إلى</label>
-              <input id="rafeeq-send-to" type="text" dir="ltr" value={to} onChange={(e) => setTo(e.target.value)} placeholder="rafeeq@example.com" className="input font-mono text-xs" />
+              <input id="rafeeq-send-to" readOnly type="text" dir="ltr" value={pending.pendingTo} className="input font-mono text-xs" />
               <label className="pt-1.5 text-muted" htmlFor="rafeeq-send-cc">نسخة (CC)</label>
               <input id="rafeeq-send-cc" type="text" dir="ltr" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="اختياري" className="input font-mono text-xs" />
               <span className="pt-1.5 text-muted">الموضوع</span>
               <input readOnly dir="ltr" value={pf.subject} className="input font-mono text-[11px]" />
             </div>
-            {!recipients.ok && to.trim() !== "" && (
-              <p className="text-[11px] text-rose-700">عنوان البريد غير صالح — تحقق من حقل المستلمين.</p>
+            {pending.pendingTo === "" && (
+              <p className="text-[11px] text-rose-700">
+                لم يُدخَل مستلم — أغلق هذه النافذة وأدخل عنوان رفيق في حقل «إلى» بالمسودة.
+                {pf.savedRecipient !== "" && (
+                  <> (محفوظ سابقاً: <span className="font-mono text-[10px]" dir="ltr">{pf.savedRecipient}</span>)</>
+                )}
+              </p>
+            )}
+            {pending.pendingTo !== "" && !pending.valid && (
+              <p className="text-[11px] text-rose-700">عنوان البريد غير صالح — تحقق من حقل المستلمين في المسودة.</p>
+            )}
+            {pending.stale && (
+              <p className="text-[11px] font-medium text-rose-700">
+                تغيّر المستلم بعد فتح التأكيد — أغلق هذه النافذة وافتحها من جديد ليُعاد بناء التأكيد على العنوان الحالي.
+              </p>
             )}
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px]" dir="rtl">
               <div>الحزمة: <span className="font-mono text-[10px]" dir="ltr">{pf.zipFilename}</span> ({fmtBytes(pf.zipTotalBytes)})</div>
