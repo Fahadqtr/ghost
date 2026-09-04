@@ -11,6 +11,7 @@
 // a rule.
 
 import { useMemo, useState } from "react";
+import ProductThumb from "@/components/ProductThumb";
 import type { ExportReasonCode } from "@/lib/export/validation";
 import type { ExportItemStatus } from "@/lib/export/validation";
 
@@ -26,6 +27,13 @@ export interface TalabatPreviewRowVM {
   category: string | null;
   hasImage: boolean;
   imageExportName: string | null;
+  /**
+   * STEP 71 — the primary image URL the preview ALREADY resolved
+   * (TalabatPreviewRow.primaryImageUrl). Display only: it adds no query, no
+   * second image-resolution system, and it never affects export eligibility.
+   * A variant carries the parent's URL — the same one the package fetches.
+   */
+  primaryImageUrl: string | null;
   inheritedParentImage: boolean;
   mappingStatus: "resolved" | "needs_review" | "unmapped";
   status: ExportItemStatus;
@@ -210,16 +218,37 @@ export default function TalabatPreview({ vm }: { vm: TalabatPreviewVM }) {
                     {r.price === null ? <span className="text-amber-600">—</span> : r.price}
                   </td>
                   <td className="px-3 py-2">
-                    {r.hasImage ? (
-                      <div className="space-y-0.5">
-                        <div className="font-mono text-[10px] text-muted" dir="ltr">{r.imageExportName ?? "—"}</div>
-                        {r.inheritedParentImage ? (
-                          <div className="text-[10px] text-amber-600">موروثة من المنتج الأب</div>
-                        ) : null}
+                    <div className="flex items-center gap-2">
+                      {/* STEP 71 — reuses the shared ProductThumb (lazy, rounded,
+                          bordered, object-cover, falls back to a neutral badge
+                          when every candidate fails). A variant passes no SKU:
+                          there is no per-variant storage file, so its only real
+                          source is the inherited parent URL. */}
+                      <ProductThumb
+                        imageUrl={r.primaryImageUrl}
+                        sku={r.isVariant ? null : r.sku}
+                        sizeClass="h-12 w-12"
+                        label={r.hasImage ? "تعذّر التحميل" : "بدون صورة"}
+                      />
+                      <div className="min-w-0 space-y-0.5">
+                        {r.hasImage ? (
+                          <>
+                            <div
+                              className="max-w-[9rem] truncate font-mono text-[10px] text-muted"
+                              dir="ltr"
+                              title={r.imageExportName ?? undefined}
+                            >
+                              {r.imageExportName ?? "—"}
+                            </div>
+                            {r.inheritedParentImage ? (
+                              <div className="text-[10px] text-amber-600">موروثة من المنتج الأب</div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span className="text-[10px] text-rose-600">مفقودة</span>
+                        )}
                       </div>
-                    ) : (
-                      <span className="text-rose-600">مفقودة</span>
-                    )}
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] ${STATUS_TONE[r.status]}`}>
