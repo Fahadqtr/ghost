@@ -17,6 +17,7 @@ export type TalabatJobUiErrorCode =
   | "job_not_found"
   | "conflict"
   | "forbidden"
+  | "stale_abandoned"
   | "network";
 
 /** Owner-facing Arabic messages — the UI must NEVER render a raw response body. */
@@ -28,6 +29,9 @@ export const TALABAT_JOB_ERROR_AR: Record<TalabatJobUiErrorCode, string> = {
   jobs_unavailable: "خدمة توليد الحزم غير مهيأة بعد (ترحيل قاعدة البيانات غير مُطبَّق).",
   job_not_found: "مهمة التوليد غير موجودة أو انتهت صلاحيتها.",
   conflict: "توليد آخر قيد التنفيذ لهذه الحزمة — انتظر لحظة ثم أعد المحاولة.",
+  // STEP 75 — a job abandoned mid-flight and reaped by a later start. Its
+  // temporary parts were cleaned; a fresh generation can be started safely.
+  stale_abandoned: "توقّف توليد سابق دون إكمال وتم إنهاؤه — يمكنك بدء توليد جديد.",
   forbidden: "لا تملك صلاحية توليد حزمة طلبات.",
   network: "تعذّر الاتصال بالخادم — الرجاء المحاولة مرة أخرى.",
 };
