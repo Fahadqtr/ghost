@@ -48,6 +48,12 @@ const BUCKET = "talabat-packages";
 const CHANNEL = "talabat:malikas";
 const DESTINATION = "talabat:malikas";
 const UNDEFINED_TABLE = "42P01";
+/** Postgres unique_violation — the partial one-active-job index rejected us. */
+const UNIQUE_VIOLATION = "23505";
+/** Internal marker for a job abandoned mid-flight and reaped by a later start. */
+const STALE_ERROR_CODE = "stale_abandoned";
+/** Only a real UUID may ever become a storage prefix (defense in depth). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A running job untouched for longer than this is treated as abandoned. */
 const STALE_MS = 10 * 60 * 1000;
 
@@ -127,6 +133,45 @@ async function getJson<T>(path: string): Promise<T | null> {
 
 const planPath = (jobId: string) => `jobs/${jobId}/plan.json`;
 const statePath = (jobId: string) => `jobs/${jobId}/state.json`;
+/** The ONE deterministic storage prefix owned by a job. */
+export const jobPrefix = (jobId: string) => `jobs/${jobId}`;
+
+/**
+ * STEP 75 — delete the temporary artifacts of a TERMINAL job.
+ *
+ * Scope is exactly `talabat-packages/jobs/<uuid>/` and, within it, only the ZIP
+ * parts plus the (now useless) plan. state.json is KEPT: it is small and is the
+ * diagnostic record of why the job failed.
+ *
+ * Never call this for a completed job — a completed artifact IS its parts.
+ * The jobId is UUID-validated before it is used as a prefix, so a malformed id
+ * can never widen the deletion, and `remove()` is given an explicit list of
+ * exact paths (never a bucket-wide or prefix-wide delete).
+ *
+ * Failure here is swallowed: a cleanup problem must never overwrite or mask the
+ * original job failure, and never reaches the UI.
+ */
+async function cleanupJobArtifacts(jobId: string): Promise<{ ok: boolean; removed: number }> {
+  if (!UUID_RE.test(jobId)) return { ok: false, removed: 0 };
+  try {
+    const admin = createAdminClient();
+    const prefix = jobPrefix(jobId);
+    const { data, error } = await admin.storage.from(BUCKET).list(prefix, { limit: 1000 });
+    if (error || !Array.isArray(data)) return { ok: false, removed: 0 };
+    // ONLY this job's parts and its plan — never state.json, never anything
+    // outside this prefix.
+    const doomed = data
+      .map((o) => String((o as { name?: unknown }).name ?? ""))
+      .filter((name) => name.startsWith("part-") || name === "plan.json")
+      .map((name) => `${prefix}/${name}`);
+    if (doomed.length === 0) return { ok: true, removed: 0 };
+    const res = await admin.storage.from(BUCKET).remove(doomed);
+    if (res.error) return { ok: false, removed: 0 };
+    return { ok: true, removed: doomed.length };
+  } catch {
+    return { ok: false, removed: 0 };
+  }
+}
 
 // ── engine ports (real) ───────────────────────────────────────────────────────
 
@@ -227,6 +272,34 @@ function statusDTO(state: TalabatPackageJobState, plan: TalabatPackageJobPlan, r
 // ── public API ────────────────────────────────────────────────────────────────
 
 /**
+ * STEP 75 — atomically retire an abandoned job and clean its temporary parts.
+ *
+ * The status guard makes the transition the arbitration point: only the racer
+ * whose UPDATE matches a still-active row performs the cleanup, so parts are
+ * never deleted twice and never while another worker still owns the job.
+ */
+async function reapStaleJob(jobId: string): Promise<boolean> {
+  const admin = createAdminClient();
+  const nowIso = new Date().toISOString();
+  const claimed = await admin
+    .from("talabat_package_jobs")
+    .update({
+      status: "failed",
+      error_code: STALE_ERROR_CODE,
+      error_ref: `${jobId.slice(0, 8)}-stale`,
+      completed_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq("id", jobId)
+    .in("status", ["queued", "running"])
+    .select("id");
+  const won = !claimed.error && Array.isArray(claimed.data) && claimed.data.length > 0;
+  // Cleanup is best-effort and never masks anything: the row is already retired.
+  if (won) await cleanupJobArtifacts(jobId);
+  return won;
+}
+
+/**
  * Start (or RESUME) the Talabat package job. Idempotent by design: a live job
  * for the channel is returned instead of starting a second one, so a
  * double-click can never create competing jobs.
@@ -253,10 +326,22 @@ export async function startTalabatPackageJob(input: {
     return errResult("jobs_unavailable", 503);
   }
   const live = existing.data as unknown as JobRow | null;
-  if (live && Date.now() - new Date(live.updated_at).getTime() < STALE_MS) {
-    const st = await getJson<TalabatPackageJobState>(statePath(live.id));
-    const pl = await getJson<TalabatPackageJobPlan>(planPath(live.id));
-    if (st && pl) return { ok: true, value: statusDTO(st, pl, live) };
+  if (live) {
+    const fresh = Date.now() - new Date(live.updated_at).getTime() < STALE_MS;
+    if (fresh) {
+      // A genuinely live job — RESUME it rather than starting a second one.
+      const st = await getJson<TalabatPackageJobState>(statePath(live.id));
+      const pl = await getJson<TalabatPackageJobPlan>(planPath(live.id));
+      if (st && pl) return { ok: true, value: statusDTO(st, pl, live) };
+    } else {
+      // STEP 75 — STALE. It is not enough to ignore the row: leaving it
+      // queued/running forever would both leak its parts and (with the partial
+      // unique index) permanently block every replacement. Transition it out of
+      // the active set ATOMICALLY, then clean its temporary parts. The `.in`
+      // guard means exactly one racer wins the reap; the loser's update matches
+      // no row and it proceeds to the insert, where the unique index arbitrates.
+      await reapStaleJob(live.id);
+    }
   }
 
   const preview = await loadTalabatPreview();
@@ -286,10 +371,27 @@ export async function startTalabatPackageJob(input: {
     .select("id")
     .maybeSingle();
   if (inserted.error) {
-    return errResult(
-      String((inserted.error as { code?: string }).code ?? "") === UNDEFINED_TABLE ? "jobs_unavailable" : "generation_failed",
-      503,
-    );
+    const pgCode = String((inserted.error as { code?: string }).code ?? "");
+    if (pgCode === UNDEFINED_TABLE) return errResult("jobs_unavailable", 503);
+    if (pgCode === UNIQUE_VIOLATION) {
+      // STEP 75 — we LOST the race: another request created the active job
+      // between our lookup and our insert. Serve that job instead of an error;
+      // a raw DB error must never reach the operator.
+      const winner = await admin
+        .from("talabat_package_jobs").select(ROW_SELECT)
+        .eq("channel", CHANNEL).in("status", ["queued", "running"])
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const row = winner.data as unknown as JobRow | null;
+      if (row) {
+        const st = await getJson<TalabatPackageJobState>(statePath(row.id));
+        const pl = await getJson<TalabatPackageJobPlan>(planPath(row.id));
+        if (st && pl) return { ok: true, value: statusDTO(st, pl, row) };
+      }
+      // The winner exists but has not published its plan/state yet — a friendly
+      // "another generation is in progress", never the DB error.
+      return errResult("conflict", 409);
+    }
+    return errResult("generation_failed", 503);
   }
   await putObject(planPath(jobId), json(created.plan), "application/json");
   await putObject(statePath(jobId), json(created.state), "application/json");
@@ -350,6 +452,11 @@ export async function stepTalabatPackageJob(jobId: string): Promise<TalabatJobAp
   });
 
   await putObject(statePath(jobId), json(next), "application/json");
+  // STEP 75 — a job that just FAILED will never be resumed (retry starts a new
+  // job), so its parts are dead weight: up to ~800 MB per failure. Clean them
+  // now, scoped to this job's own prefix. Best-effort by construction — a
+  // cleanup problem must not change the recorded failure.
+  if (next.status === "failed") await cleanupJobArtifacts(jobId);
   const progress = jobProgress(next, plan);
   const nowIso = new Date().toISOString();
   await admin

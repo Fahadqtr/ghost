@@ -76,6 +76,22 @@ create table if not exists public.talabat_package_jobs (
 create index if not exists talabat_package_jobs_channel_status_idx
   on public.talabat_package_jobs (channel, status, created_at desc);
 
+-- STEP 75 — the DB is the FINAL authority on "one active job per channel".
+-- The application still does a SELECT-then-INSERT for UX (resume the live job
+-- instead of erroring), but that check has a wide race window: it spans a full
+-- bounded catalogue read, so two concurrent starts could both observe "no live
+-- job" and both insert. Two active jobs would mean two artifacts, two mapping
+-- syncs and two audit rows.
+--
+-- This PARTIAL unique index closes that race in the database: at most one row
+-- per channel may be queued or running at any instant. The loser of a race
+-- receives 23505 and is served the already-active job instead of an error.
+-- Terminal rows (completed / failed) are outside the predicate, so history is
+-- unbounded and a replacement job can always start once the previous one ends.
+create unique index if not exists talabat_package_jobs_one_active_idx
+  on public.talabat_package_jobs (channel)
+  where status in ('queued', 'running');
+
 alter table public.talabat_package_jobs enable row level security;
 -- No anon/authenticated policies: only the service-role server layer touches
 -- job rows (same posture as rafeeq_package_jobs).
