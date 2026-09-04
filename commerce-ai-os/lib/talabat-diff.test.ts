@@ -8,7 +8,7 @@ import { detectTalabatColumns, diffTalabat, baseSku, talabatEmailText, imageFile
 
 const our = (over: Partial<TalabatOurRow>): TalabatOurRow => ({
   id: "p1", sku: "MK-1", barcode: null, name_en: "Rose Serum", name_ar: "سيروم الورد",
-  approval: "Approved", hasVariants: false, price: 50, ...over,
+  eligible: true, hasVariants: false, price: 50, ...over,
 });
 
 test("detectTalabatColumns finds loose header names", () => {
@@ -31,7 +31,7 @@ test("diffTalabat: matched / missing / options marked for split / not-approved",
       our({}),                                                             // on Talabat by SKU
       our({ id: "p2", sku: "MK-2", name_en: "Gold Mask" }),                // missing (simple)
       our({ id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true }), // missing (will split)
-      our({ id: "p4", sku: "MK-4", name_en: "Old Thing", approval: "Rejected" }), // not approved
+      our({ id: "p4", sku: "MK-4", name_en: "Old Thing", eligible: false }), // not approved
       our({ id: "p5", sku: null, name_en: "Lip Tint" }),                   // on Talabat by name
     ],
     [
@@ -48,7 +48,7 @@ test("diffTalabat: matched / missing / options marked for split / not-approved",
     { product_id: "p3", sku: "MK-3", name_en: "Nail Set", hasVariants: true, image_url: null, noPrice: false },
   ]);
   assert.equal(d.counts.withOptions, 1);
-  assert.equal(d.counts.notApproved, 1);
+  assert.equal(d.counts.notEligible, 1);
   assert.deepEqual(d.extraOnTalabat, [{ sku: "ZZ-9", name: "Their Own Product" }]);
 });
 

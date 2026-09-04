@@ -197,7 +197,7 @@ export default function TalabatSync() {
         ["في الكتالوج", diff.counts.ours],
         ["مؤهل لطلبات", diff.counts.eligible],
         ["ناقص فيه خيارات (ينقسم)", diff.counts.withOptions],
-        ["غير معتمد", diff.counts.notApproved],
+        ["خارج الماستر", diff.counts.notEligible],
         ["في ملف طلبات", diff.counts.theirRows],
         ["متطابق", diff.counts.matched],
         ["ناقص في طلبات", diff.counts.missing],

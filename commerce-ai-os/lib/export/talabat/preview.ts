@@ -9,13 +9,12 @@
 //   • title   → buildFlattenedName  ("{parent} — {option}", em dash, no repeat)
 //   • sku     → normalizeExportedSku (the sellable SKU verbatim; NO parent fallback)
 //   • barcode → normalizeBarcode     (the sellable barcode; NEVER the parent's)
-//   • approval→ isApprovedForTalabat (approval === "Approved")
 // Image FILENAME uses the INT.2A canonical SKU-based naming (what the future
 // package will contain, §6/§15). Lifecycle eligibility reuses OPS.8
 // resolveLifecycleState. Duplicate SKU/barcode are checked across the FINAL
 // flattened dataset (§10). No I/O — framework-free, node:test-loadable.
 
-import { buildFlattenedName, normalizeExportedSku, normalizeBarcode, isApprovedForTalabat } from "../../talabat/export.ts";
+import { buildFlattenedName, normalizeExportedSku, normalizeBarcode } from "../../talabat/export.ts";
 import { resolveLifecycleState, type LifecycleState } from "../../lifecycle/state.ts";
 import { primaryImageName, variantImageName, extensionFromUrl } from "../image-naming.ts";
 import { summarizeValidation, type ExportItemStatus, type ExportReason, type ExportValidationItem, type ExportValidationSummary } from "../validation.ts";
@@ -56,7 +55,10 @@ export interface TalabatPreviewProduct {
   galleryImageUrls?: readonly string[];
   /** product image count (image_url + gallery). Variants inherit these. */
   imageCount: number;
-  /** platform_status(platform='talabat').approval === "Approved" */
+  /**
+   * platform_status(platform='talabat').approval === "Approved".
+   * STEP 62: informational ONLY — never an export gate.
+   */
   approved: boolean;
   /** stored lifecycle_state (or legacy fallback) — resolved by the caller shape */
   lifecycleState?: unknown;
@@ -251,9 +253,11 @@ function buildRow(
   const block = (code: ExportReason["code"], message?: string) => reasons.push({ code, blocking: true, message });
   const warn = (code: ExportReason["code"], message?: string) => reasons.push({ code, blocking: false, message });
 
-  // Lifecycle + approval eligibility (existing approved export semantics + OPS.8).
+  // Lifecycle eligibility (OPS.8). STEP 62 — approval is NO LONGER an export
+  // gate: the universe is the active snoonu:malikas master (applied upstream in
+  // preview.server), and within it only a STOPPED product is ineligible. The
+  // `approved` flag is still carried for display, but it never blocks.
   if (state === "STOPPED") block("LIFECYCLE_NOT_ELIGIBLE", "المنتج موقوف — غير مؤهّل للتصدير.");
-  if (!isApprovedForTalabat(p.approved ? "Approved" : "")) block("LIFECYCLE_NOT_ELIGIBLE", "المنتج غير معتمد للتصدير.");
 
   // SKU (P0) — no fallback from a missing variant SKU to the parent SKU.
   if (sku === "") {

@@ -6,6 +6,7 @@ import { requireMalakWriter } from "@/lib/malak/authz";
 import { safeError } from "@/lib/security/safe-error";
 import { revalidatePath } from "next/cache";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
 import { verdictForTask, type VerifyTaskLite } from "@/lib/tasks/verify-compute";
 import { insertComment } from "@/lib/tasks/commentStore";
 import { detectTalabatColumns, baseSku } from "@/lib/talabat-diff";
@@ -13,6 +14,17 @@ import { diffTalabat, talabatEmailText, imageFileFor, type TalabatDiff, type Tal
 import { buildTalabatRows, TALABAT_HEADERS } from "@/lib/malak/talabat-export.mjs";
 
 export type { TalabatDiff } from "@/lib/talabat-diff";
+
+/**
+ * STEP 62 — the Talabat eligible universe is the active snoonu:malikas master,
+ * read through the SAME shared seam as the certified preview (STEP 60). Approval
+ * is no longer consulted anywhere in the Talabat export paths. Fails CLOSED: an
+ * unreadable membership yields an empty set, so nothing is treated as sellable.
+ */
+async function masterIds(): Promise<ReadonlySet<string>> {
+  const scope = await loadMasterScope();
+  return scope.ok ? scope.ids : new Set<string>();
+}
 
 // Talabat has no API — the owner uploads Talabat's own catalog export, we
 // diff it against the catalog, then build the "please add these" package:
@@ -22,7 +34,7 @@ export type { TalabatDiff } from "@/lib/talabat-diff";
 
 const EMPTY_DIFF: TalabatDiff = {
   ok: false, columns: {},
-  counts: { ours: 0, eligible: 0, withOptions: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, noPrice: 0, extraOnTalabat: 0 },
+  counts: { ours: 0, eligible: 0, withOptions: 0, notEligible: 0, theirRows: 0, matched: 0, missing: 0, noPrice: 0, extraOnTalabat: 0 },
   missing: [], extraOnTalabat: [],
 };
 
@@ -70,14 +82,15 @@ export async function listTalabatQueue(): Promise<{ ok: boolean; ready: boolean;
     const ids = ((q ?? []) as { product_id: string; queued_at: string | null }[]);
     if (!ids.length) return { ok: true, ready: true, items: [] };
 
+    const master = await masterIds();
     const queuedAt = new Map(ids.map((r) => [String(r.product_id), r.queued_at ?? null]));
     const { data: prods } = await admin
       .from("products")
-      .select("id, sku, name_en, name_ar, image_url, price, discount_price, approval")
+      .select("id, sku, name_en, name_ar, image_url, price, discount_price")
       .in("id", ids.map((r) => r.product_id));
 
     const items: TalabatQueueItem[] = ((prods ?? []) as any[])
-      .filter((p) => String(p.approval ?? "") === "Approved") // rejected later? drop from view
+      .filter((p) => master.has(String(p.id))) // STEP 62 — master membership, not approval
       .map((p) => ({
         id: String(p.id),
         sku: p.sku ?? null,
@@ -125,10 +138,10 @@ export async function computeTalabatDiff(rows: Record<string, unknown>[]): Promi
     const sb = await createClient();
     let prods: Record<string, any>[];
     try {
-      prods = await pageAll((from, to) => sb.from("products").select("id, sku, barcode, name_en, name_ar, approval, image_url, price, discount_price").range(from, to));
+      prods = await pageAll((from, to) => sb.from("products").select("id, sku, barcode, name_en, name_ar, image_url, price, discount_price").range(from, to));
     } catch {
       // barcode column may not exist on older installs.
-      prods = await pageAll((from, to) => sb.from("products").select("id, sku, name_en, name_ar, approval, image_url, price, discount_price").range(from, to));
+      prods = await pageAll((from, to) => sb.from("products").select("id, sku, name_en, name_ar, image_url, price, discount_price").range(from, to));
     }
     const parents = new Set<string>();
     try {
@@ -137,10 +150,11 @@ export async function computeTalabatDiff(rows: Record<string, unknown>[]): Promi
       for (const v of vars) if (v.parent_product_id) parents.add(v.parent_product_id);
     } catch { /* no variants table → nothing excluded */ }
 
+    const master = await masterIds();
     const ours: TalabatOurRow[] = prods.map((p) => ({
       id: p.id, sku: p.sku ?? null, barcode: p.barcode ?? null,
       name_en: p.name_en ?? null, name_ar: p.name_ar ?? null,
-      approval: p.approval ?? null, hasVariants: parents.has(p.id),
+      eligible: master.has(String(p.id)), hasVariants: parents.has(p.id), // STEP 62
       image_url: p.image_url ?? null,
       price: p.price ?? null, discount_price: p.discount_price ?? null,
     }));

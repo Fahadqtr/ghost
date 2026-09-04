@@ -50,7 +50,7 @@ const BASE: CaptureTalabatResult = {
   events: 0,
 };
 
-/** Reads our catalog rows the diff needs (id, sku, barcode, name, approval). */
+/** Reads our catalog rows the diff needs (id, sku, barcode, name) + master membership. */
 export type OurCatalogLoader = (client: unknown) => Promise<TalabatCatalogRow[]>;
 /** The existing pure diff (injected in tests; lib/talabat-diff in prod). */
 export type TalabatDiffRunner = (
@@ -65,17 +65,23 @@ export type CaptureRunner = (
 const PAGE = 1000;
 
 async function defaultLoadOurCatalog(client: unknown): Promise<TalabatCatalogRow[]> {
+  // STEP 62 — the eligible universe is the active snoonu:malikas master, read
+  // through the shared seam. Fails CLOSED: an unreadable membership yields an
+  // empty set, so the diff is SKIPPED rather than marking the catalogue missing.
+  const { loadMasterScope } = await import("@/lib/home/master-scope.server");
+  const scope = await loadMasterScope();
+  const master: ReadonlySet<string> = scope.ok ? scope.ids : new Set<string>();
   const sb = client as {
     from: (t: string) => { select: (c: string) => { range: (a: number, b: number) => Promise<{ data: unknown[] | null; error: unknown }> } };
   };
   const out: TalabatCatalogRow[] = [];
   // barcode column may not exist on older installs — fall back without it.
-  let cols = "id, sku, barcode, name_en, name_ar, approval";
+  let cols = "id, sku, barcode, name_en, name_ar";
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await sb.from("products").select(cols).range(from, from + PAGE - 1);
     if (error) {
       if (cols.includes("barcode")) {
-        cols = "id, sku, name_en, name_ar, approval";
+        cols = "id, sku, name_en, name_ar";
         from -= PAGE; // retry this page without the optional column
         continue;
       }
@@ -89,7 +95,8 @@ async function defaultLoadOurCatalog(client: unknown): Promise<TalabatCatalogRow
         barcode: (p.barcode as string) ?? null,
         name_en: (p.name_en as string) ?? null,
         name_ar: (p.name_ar as string) ?? null,
-        approval: (p.approval as string) ?? null,
+        // STEP 62 — eligibility is master membership, not approval.
+        eligible: master.has(String(p.id ?? "")),
       });
     }
     if (rows.length < PAGE) break;

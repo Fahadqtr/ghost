@@ -218,12 +218,10 @@ export function buildTalabatExport(
       warnings.push({ kind: "excluded_archived", masterProductId: p.id, masterVariantSku: null, exportedSku: null, message: "product archived — excluded from export" });
       continue;
     }
-    // Fail-closed: a product enters the Talabat export ONLY with explicit
-    // approval (approved === true). Missing/undefined ⇒ excluded.
-    if (p.approved !== true) {
-      warnings.push({ kind: "excluded_not_approved", masterProductId: p.id, masterVariantSku: null, exportedSku: null, message: "product not approved for Talabat — excluded" });
-      continue;
-    }
+    // STEP 62 — approval is NO LONGER an export gate. The Talabat universe is
+    // the active snoonu:malikas master, applied by the caller; within it only a
+    // STOPPED/archived product is excluded. `approved` stays on the input type
+    // (approval infrastructure is retained globally) but is not read here.
 
     const image = resolveImage(p);
     const category = clean(p.main_category);
