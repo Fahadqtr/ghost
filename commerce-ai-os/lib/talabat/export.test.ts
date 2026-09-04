@@ -58,9 +58,9 @@ test("1: a no-variant product yields one row + one mapping with masterVariantSku
 
 test("2: a product with three variants yields three rows + three mappings", () => {
   const vs = [
-    variant({ sku: "mk100-1", barcode: "111", variant_name_en: "21N Ivory", variant_name: "21N آيفوري" }),
-    variant({ sku: "mk100-2", barcode: "222", variant_name_en: "23N Sand", variant_name: "23N ساند" }),
-    variant({ sku: "mk100-3", barcode: "333", variant_name_en: "24N Latte", variant_name: "24N لاتيه" }),
+    variant({ sku: "mk100-1", barcode: "1110000000010", variant_name_en: "21N Ivory", variant_name: "21N آيفوري" }),
+    variant({ sku: "mk100-2", barcode: "2220000000021", variant_name_en: "23N Sand", variant_name: "23N ساند" }),
+    variant({ sku: "mk100-3", barcode: "3330000000032", variant_name_en: "24N Latte", variant_name: "24N لاتيه" }),
   ];
   const r = buildTalabatExport([prod()], vs);
   assert.equal(r.rows.length, 3);
@@ -69,7 +69,7 @@ test("2: a product with three variants yields three rows + three mappings", () =
 });
 
 test("3: the variant SKU is the durable mapping key", () => {
-  const vs = [variant({ sku: "mk100-2", barcode: "222" })];
+  const vs = [variant({ sku: "mk100-2", barcode: "2220000000021" })];
   const r = buildTalabatExport([prod()], vs);
   assert.equal(r.mappings[0].masterVariantSku, "mk100-2");
   assert.equal(r.mappings[0].exportedSku, "mk100-2");
@@ -97,24 +97,24 @@ test("6: a variant with no barcode is blocked", () => {
 
 test("7: the parent barcode is never copied onto a variant", () => {
   // A variant missing a barcode is blocked (not given the parent's)...
-  const blockedR = buildTalabatExport([prod({ barcode: "PARENT-BC" })], [variant({ barcode: null })]);
+  const blockedR = buildTalabatExport([prod({ barcode: "9990000000099" })], [variant({ barcode: null })]);
   assert.equal(blockedR.rows.length, 0);
   assert.equal(blockedR.blocked[0].reason, "missing_barcode");
   // ...and a variant with its own barcode ships that one, not the parent's.
-  const okR = buildTalabatExport([prod({ barcode: "PARENT-BC" })], [variant({ barcode: "VARIANT-BC" })]);
-  assert.equal(okR.rows[0].barcode, "VARIANT-BC");
-  assert.notEqual(okR.rows[0].barcode, "PARENT-BC");
+  const okR = buildTalabatExport([prod({ barcode: "9990000000099" })], [variant({ barcode: "1234567890123" })]);
+  assert.equal(okR.rows[0].barcode, "1234567890123");
+  assert.notEqual(okR.rows[0].barcode, "9990000000099");
 });
 
 test("8: a duplicate exported SKU blocks the conflicting rows", () => {
-  const vs = [variant({ sku: "dup", barcode: "111" }), variant({ sku: "dup", barcode: "222" })];
+  const vs = [variant({ sku: "dup", barcode: "1110000000010" }), variant({ sku: "dup", barcode: "2220000000021" })];
   const r = buildTalabatExport([prod()], vs);
   assert.equal(r.rows.length, 0);
   assert.equal(r.blocked.filter((b) => b.reason === "duplicate_sku").length, 2);
 });
 
 test("9: a duplicate exported barcode blocks the conflicting rows", () => {
-  const vs = [variant({ sku: "mk100-1", barcode: "same" }), variant({ sku: "mk100-2", barcode: "same" })];
+  const vs = [variant({ sku: "mk100-1", barcode: "1234567890123" }), variant({ sku: "mk100-2", barcode: "1234567890123" })];
   const r = buildTalabatExport([prod()], vs);
   assert.equal(r.rows.length, 0);
   assert.equal(r.blocked.filter((b) => b.reason === "duplicate_barcode").length, 2);
@@ -333,7 +333,7 @@ test("INV.2D: an In-Stock product exports InStock even when a variant quantity i
 test("INV.2E: an explicit Out-of-Stock VARIANT exports OutOfStock even under an In-Stock product", () => {
   const r = buildTalabatExport(
     [prod({ stock_status: "In Stock" })],
-    [variant({ sku: "mk100-1", barcode: "111", stock_status: "Out of Stock", stock_quantity: 99 })],
+    [variant({ sku: "mk100-1", barcode: "1110000000010", stock_status: "Out of Stock", stock_quantity: 99 })],
   );
   assert.equal(r.mappings[0].exportSnapshot.availability, "OutOfStock");
   assert.ok(r.warnings.some((w) => w.kind === "out_of_stock"));
@@ -342,15 +342,15 @@ test("INV.2E: an explicit Out-of-Stock VARIANT exports OutOfStock even under an 
 test("INV.2E: an explicit In-Stock VARIANT exports InStock even under an Out-of-Stock product", () => {
   const r = buildTalabatExport(
     [prod({ stock_status: "Out of Stock" })],
-    [variant({ sku: "mk100-1", barcode: "111", stock_status: "In Stock", stock_quantity: 0 })],
+    [variant({ sku: "mk100-1", barcode: "1110000000010", stock_status: "In Stock", stock_quantity: 0 })],
   );
   assert.equal(r.mappings[0].exportSnapshot.availability, "InStock");
 });
 
 test("INV.2E: a variant with UNSET availability inherits the product-level availability", () => {
-  const inStock = buildTalabatExport([prod({ stock_status: "In Stock" })], [variant({ sku: "mk100-1", barcode: "111", stock_status: null })]);
+  const inStock = buildTalabatExport([prod({ stock_status: "In Stock" })], [variant({ sku: "mk100-1", barcode: "1110000000010", stock_status: null })]);
   assert.equal(inStock.mappings[0].exportSnapshot.availability, "InStock");
-  const outStock = buildTalabatExport([prod({ stock_status: "Out of Stock" })], [variant({ sku: "mk100-2", barcode: "222", stock_status: null })]);
+  const outStock = buildTalabatExport([prod({ stock_status: "Out of Stock" })], [variant({ sku: "mk100-2", barcode: "2220000000021", stock_status: null })]);
   assert.equal(outStock.mappings[0].exportSnapshot.availability, "OutOfStock");
 });
 
@@ -400,7 +400,7 @@ test("F2: the retired route is a static 410 (no CSV, no raw error) and catalog-s
 });
 
 test("summary reports counts for preview / dry-run", () => {
-  const vs = [variant({ sku: "a", barcode: "1" }), variant({ sku: "b", barcode: null })];
+  const vs = [variant({ sku: "a", barcode: "1234567890123" }), variant({ sku: "b", barcode: null })];
   const r = buildTalabatExport([prod()], vs);
   const s = summarizeTalabatExport(r, { baseProducts: 1, variants: 2 });
   assert.equal(s.baseProducts, 1);

@@ -11,6 +11,7 @@
 
 import { isAvailable, normalizeAvailability } from "../availability/read.ts";
 import { resolveTalabatCategory } from "../export/talabat/native-template.ts";
+import { resolveTalabatBarcode } from "../export/talabat/barcode-alias.ts";
 
 export type MappingStatus = "active" | "needs_review" | "archived";
 
@@ -61,7 +62,9 @@ export type TalabatBlockedReason =
   | "missing_barcode"
   | "missing_image"
   | "duplicate_sku"
-  | "duplicate_barcode";
+  | "duplicate_barcode"
+  /** STEP 68 — a variant barcode shape the Talabat resolver will not alias. */
+  | "unsupported_barcode";
 
 export interface TalabatExportRow {
   sku: string;
@@ -246,9 +249,17 @@ export function buildTalabatExport(
     if (vs.length === 0) {
       // No-variant product → one standalone row.
       const sku = normalizeExportedSku(p.sku);
-      const barcode = normalizeBarcode(p.barcode);
+      // STEP 68 — same export-local resolution as the variant branch, so the
+      // two exporters cannot drift. Real parent barcodes are 13-digit numeric,
+      // so this is a no-op on current data.
+      const pRes = resolveTalabatBarcode(normalizeBarcode(p.barcode));
+      const barcode = pRes.ok ? pRes.barcode : null;
       if (sku === "") { block("missing_sku", p.id, null, null, nameEnParent); continue; }
-      if (barcode === null) { block("missing_barcode", p.id, null, sku, nameEnParent); continue; }
+      if (barcode === null) {
+        block(pRes.ok || pRes.reason === "missing" ? "missing_barcode" : "unsupported_barcode",
+              p.id, null, sku, nameEnParent);
+        continue;
+      }
       if (image === "") { block("missing_image", p.id, null, sku, nameEnParent); continue; }
 
       const price = priceForProduct(p);
@@ -266,12 +277,20 @@ export function buildTalabatExport(
     // Product with variants → one standalone row per valid variant.
     for (const v of vs) {
       const sku = normalizeExportedSku(v.sku);
-      const barcode = normalizeBarcode(v.barcode);            // never the parent's
+      const rawBarcode = normalizeBarcode(v.barcode);          // never the parent's
+      // STEP 68 — EXPORT-LOCAL alias only; the canonical variant barcode in
+      // product_variants is never mutated (it is live Shopify identity).
+      const bcRes = resolveTalabatBarcode(rawBarcode);
+      const barcode = bcRes.ok ? bcRes.barcode : null;
       const nameEn = buildFlattenedName(p.name_en, v.variant_name_en ?? v.variant_name);
       const nameAr = buildFlattenedName(p.name_ar, v.variant_name);
 
       if (sku === "") { block("missing_sku", p.id, null, null, nameEn); continue; }
-      if (barcode === null) { block("missing_barcode", p.id, sku, sku, nameEn); continue; }
+      if (barcode === null) {
+        block(bcRes.ok ? "missing_barcode" : (bcRes.reason === "missing" ? "missing_barcode" : "unsupported_barcode"),
+              p.id, sku, sku, nameEn);
+        continue;
+      }
       if (image === "") { block("missing_image", p.id, sku, sku, nameEn); continue; }
 
       // Variants have no own image column → they inherit the parent's image, so
