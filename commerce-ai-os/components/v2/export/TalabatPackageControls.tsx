@@ -9,8 +9,19 @@
 // "Generate Ready Package" mode packages every NOT-blocked sellable row; blocked
 // rows can never be included.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ExportReasonCode } from "@/lib/export/validation";
+import {
+  driveTalabatPackageJob,
+  talabatJobDownloadUrl,
+  formatDuration,
+  formatClock,
+  formatBytes,
+  estimateRemainingMs,
+  jobErrorMessage,
+  type TalabatJobStatus,
+} from "@/lib/export/talabat/package-job-client";
+import { TALABAT_JOB_STAGE_AR } from "@/lib/export/talabat/package-job-errors";
 
 export interface TalabatPlanVM {
   products: number;
@@ -26,19 +37,6 @@ export interface TalabatPlanVM {
   blockersByReason: Partial<Record<ExportReasonCode, number>>;
 }
 
-interface GeneratedSummary {
-  filename: string;
-  sellableRows: string;
-  simpleRows: string;
-  variantRows: string;
-  images: string;
-  sharedImages: string;
-  warnings: string;
-  excludedBlocked: string;
-  excludedNoImage: string;
-  generatedAt: string;
-  generatedBy: string;
-}
 
 const REASON_LABEL: Record<string, string> = {
   MISSING_SKU: "SKU مفقود",
@@ -61,56 +59,62 @@ const REASON_LABEL: Record<string, string> = {
 export default function TalabatPackageControls({ plan }: { plan: TalabatPlanVM }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<GeneratedSummary | null>(null);
+  const [errorStage, setErrorStage] = useState<string | null>(null);
+  const [job, setJob] = useState<TalabatJobStatus | null>(null);
+  const [result, setResult] = useState<TalabatJobStatus | null>(null);
+  /** epoch ms when THIS generation began — state, not a ref, so the elapsed
+   *  clock can be derived during render without reading a ref. */
+  const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const stoppedRef = useRef(false);
 
   const blockerEntries = Object.entries(plan.blockersByReason).filter(([, n]) => (n ?? 0) > 0);
 
+  // Advance the elapsed clock once a second while a generation is in flight.
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
+
+  // Stop driving if the component unmounts mid-generation. The job itself is
+  // durable and resumable — a later click RESUMES it rather than restarting.
+  useEffect(() => () => { stoppedRef.current = true; }, []);
+
   async function generate() {
+    // Guard 1 of 2 against a double-click creating two jobs; the server's
+    // idempotent start is the authoritative guard.
     if (busy) return;
     setBusy(true);
     setError(null);
-    try {
-      const res = await fetch("/api/export/talabat/package", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "ready" }),
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        setError(text || "تعذّر توليد الحزمة الآن — الرجاء المحاولة لاحقاً.");
-        return;
-      }
-      const h = res.headers;
-      const summary: GeneratedSummary = {
-        filename: h.get("X-Talabat-Output-Filename") ?? "talabat-export.zip",
-        sellableRows: h.get("X-Talabat-Sellable-Rows") ?? "0",
-        simpleRows: h.get("X-Talabat-Simple-Rows") ?? "0",
-        variantRows: h.get("X-Talabat-Variant-Rows") ?? "0",
-        images: h.get("X-Talabat-Image-Count") ?? "0",
-        sharedImages: h.get("X-Talabat-Shared-Image-Count") ?? "0",
-        warnings: h.get("X-Talabat-Warning-Count") ?? "0",
-        excludedBlocked: h.get("X-Talabat-Excluded-Blocked") ?? "0",
-        excludedNoImage: h.get("X-Talabat-Excluded-No-Image") ?? "0",
-        generatedAt: h.get("X-Talabat-Generated-At") ?? "",
-        generatedBy: h.get("X-Talabat-Generated-By") ?? "",
-      };
-      // Stream the archive to a download without exposing any filesystem path.
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = summary.filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      setResult(summary);
-    } catch {
-      setError("تعذّر الاتصال بالخادم — الرجاء المحاولة لاحقاً.");
-    } finally {
-      setBusy(false);
+    setErrorStage(null);
+    setResult(null);
+    stoppedRef.current = false;
+    setStartedAtMs(Date.now());
+    setNowMs(Date.now());
+
+    // Track the latest status locally: the `job` state setter is async, so the
+    // failure branch must not read a stale render value for the stage.
+    let last: TalabatJobStatus | null = null;
+    const res = await driveTalabatPackageJob({
+      mode: "ready",
+      onProgress: (s) => { last = s; setJob(s); },
+      shouldStop: () => stoppedRef.current,
+    });
+    if (!res.ok) {
+      setError(jobErrorMessage(res.code));
+      const stage = (last as TalabatJobStatus | null)?.stage;
+      setErrorStage(stage ? (TALABAT_JOB_STAGE_AR[stage] ?? stage) : null);
+    } else if (res.value.status === "completed") {
+      setResult(res.value);
     }
+    setBusy(false);
   }
+
+  const elapsedMs = startedAtMs === null ? 0 : Math.max(0, nowMs - startedAtMs);
+  const etaMs = job === null ? null : estimateRemainingMs({
+    elapsedMs, current: job.progressCurrent, total: job.progressTotal,
+  });
 
   return (
     <section className="card space-y-4">
@@ -175,27 +179,74 @@ export default function TalabatPackageControls({ plan }: { plan: TalabatPlanVM }
         ) : null}
       </div>
 
-      {error ? (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">
-          {error}
+      {/* RUNNING — stage, progress bar, counts, elapsed and an approximate ETA. */}
+      {busy && job ? (
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div className="flex items-center justify-between text-xs font-semibold text-ink">
+            <span>جاري توليد الحزمة…</span>
+            <span dir="ltr">{job.progressPercent}%</span>
+          </div>
+          <div
+            className="h-2 w-full overflow-hidden rounded-full bg-slate-200"
+            role="progressbar"
+            aria-valuenow={job.progressPercent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${job.progressPercent}%` }} />
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-muted sm:grid-cols-3">
+            <ResultRow label="المرحلة" value={TALABAT_JOB_STAGE_AR[job.stage] ?? job.stage} />
+            <ResultRow label="تم" value={`${job.progressCurrent} / ${job.progressTotal} صورة`} />
+            <ResultRow label="الحجم حتى الآن" value={formatBytes(job.bytesDone)} />
+            <ResultRow label="الوقت المنقضي" value={formatDuration(elapsedMs)} ltr />
+            <ResultRow
+              label="الوقت المتبقي التقريبي"
+              value={etaMs === null ? "—" : formatDuration(etaMs)}
+              ltr
+            />
+            <ResultRow label="بدأ" value={formatClock(job.startedAt)} ltr />
+            <ResultRow label="آخر تحديث" value={formatClock(job.updatedAt)} ltr />
+          </div>
+          <p className="text-[10px] text-muted">
+            الوقت المتبقي تقديري تقريبي. يمكنك ترك الصفحة مفتوحة — التوليد يتم على دفعات ويُستأنف من حيث توقف.
+          </p>
         </div>
       ) : null}
 
-      {result ? (
+      {/* FAILED — fixed Arabic copy only; never a raw platform error page. */}
+      {error ? (
+        <div className="space-y-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" dir="auto">
+          <div className="font-semibold">فشل توليد الحزمة</div>
+          {errorStage ? <div className="text-[11px]">المرحلة: {errorStage}</div> : null}
+          <div className="text-[11px]">السبب: {error}</div>
+          {job?.error?.refId ? (
+            <div className="text-[10px] text-rose-500" dir="ltr">ref: {job.error.refId}</div>
+          ) : null}
+          <button type="button" onClick={generate} disabled={busy} className="btn-ghost mt-1 text-[11px]">
+            إعادة المحاولة
+          </button>
+        </div>
+      ) : null}
+
+      {/* COMPLETED — artifact facts. No email, no publish, nothing marked sent. */}
+      {result && result.artifact ? (
         <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-          <div className="text-xs font-semibold text-emerald-800">تم توليد الحزمة وتنزيلها</div>
+          <div className="text-xs font-semibold text-emerald-800">تم توليد الحزمة بنجاح</div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-emerald-900 sm:grid-cols-3">
-            <ResultRow label="الملف" value={result.filename} ltr />
-            <ResultRow label="الصفوف" value={result.sellableRows} />
-            <ResultRow label="المتغيّرات" value={result.variantRows} />
-            <ResultRow label="الصور" value={result.images} />
-            <ResultRow label="صور مشتركة من المنتج" value={result.sharedImages} />
-            <ResultRow label="تحذيرات" value={result.warnings} />
-            <ResultRow label="محظور مُستبعَد" value={result.excludedBlocked} />
-            <ResultRow label="بلا صورة مُستبعَد" value={result.excludedNoImage} />
-            <ResultRow label="وقت التوليد" value={result.generatedAt} ltr />
-            <ResultRow label="بواسطة" value={result.generatedBy} ltr />
+            <ResultRow label="الملف" value={result.artifact.filename} ltr />
+            <ResultRow label="الصفوف" value={String(result.artifact.rowCount)} />
+            <ResultRow label="المنتجات" value={String(result.artifact.productCount)} />
+            <ResultRow label="الصور" value={String(result.artifact.imageCount)} />
+            <ResultRow label="الحجم" value={formatBytes(result.artifact.totalBytes)} ltr />
+            {result.artifact.sha256 ? <ResultRow label="SHA256" value={result.artifact.sha256.slice(0, 16)} ltr /> : null}
+            <ResultRow label="بصمة المانيفست" value={result.artifact.manifestFingerprint.slice(0, 16)} ltr />
+            <ResultRow label="وقت التوليد" value={formatClock(result.completedAt ?? result.updatedAt)} ltr />
+            <ResultRow label="مزامنة الربط" value={result.mappingsSynced ? "تمت" : "لم تتم"} />
           </div>
+          <a href={talabatJobDownloadUrl(result.jobId)} className="btn-ghost inline-block text-[11px]" download>
+            تنزيل الحزمة
+          </a>
         </div>
       ) : null}
     </section>

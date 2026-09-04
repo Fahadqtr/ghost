@@ -1,0 +1,544 @@
+// TALABAT.PKGJOB — chunked package-generation ENGINE (PURE). STEP 74.
+//
+// WHY THIS EXISTS — measured on the real current catalogue (1343 master
+// products, 1454 sellable rows, 2501 planned images):
+//
+//     workbook build                       0.9 s
+//     image download 2501 x ~333 KB       ~775 s at concurrency 6   <-- wall
+//     ZIP assembly                         8.9 s  (799 MB archive)
+//     peak buffered memory                ~1.6 GB                   <-- wall
+//
+// The single-shot route therefore fails with FUNCTION_INVOCATION_TIMEOUT, and
+// would OOM even if the clock allowed it. Two independent ceilings — the 300 s
+// function limit and the instance memory limit — so raising maxDuration cannot
+// fix it. This engine splits the SAME certified pipeline into bounded steps
+// that each fetch a small image batch, write one self-contained ZIP part to
+// durable storage, and persist a resumable state. The final artifact is the
+// ordered concatenation of the parts — byte-equivalent to the single-shot ZIP
+// (STORE entries + central directory; see lib/net/zip segments).
+//
+// Modelled directly on lib/export/rafeeq/package-job.ts, which already solved
+// the identical problem for Rafeeq. No second job system is invented.
+//
+// PURE: no I/O of its own. All effects go through injected ports (fetchImage /
+// putPart / syncMappings / recordAudit), so node:test drives the full lifecycle
+// with fakes. It reuses the certified pure helpers (generation set, image plan,
+// package rows, manifest, integrity) — never a second algorithm.
+//
+// PACKAGE CONTENT IS UNCHANGED. Master scope, pricing policy (STEP 72), barcode
+// alias (STEP 68), category resolver (STEP 64) and row selection all live
+// upstream in the preview and are consumed here verbatim. This module changes
+// only HOW MANY REQUESTS the work is spread across.
+
+import { buildTalabatXlsxBuffer } from "../../talabat/package-xlsx.ts";
+import { zipEntrySegment, zipDirectorySegment, type ZipSegmentEntry } from "../../net/zip.ts";
+import { hashPayload } from "../../platforms/core/hash.ts";
+import type { TalabatPreviewRow } from "./preview.ts";
+import {
+  resolveGenerationSet,
+  planRowImages,
+  toPackageRow,
+  checkReferentialIntegrity,
+  buildManifest,
+  usesSharedProductImage,
+  primaryFilenameFor,
+  TALABAT_PACKAGE_LIMITS,
+  type TalabatGenerationMode,
+  type TalabatPackageRow,
+  type PackagedFile,
+} from "./package.ts";
+import type { TalabatJobErrorCode } from "./package-job-errors.ts";
+import type { TalabatJobStage } from "./package-job-errors.ts";
+
+export {
+  TALABAT_JOB_ERROR_AR,
+  talabatJobErrorMessageAr,
+  TALABAT_JOB_STAGES,
+  TALABAT_JOB_STAGE_AR,
+  type TalabatJobErrorCode,
+  type TalabatJobStage,
+} from "./package-job-errors.ts";
+
+// ── tuning ────────────────────────────────────────────────────────────────────
+
+/** Bounded work per step: at most this many IMAGES fetched in one request.
+ *  2501 images / 40 = ~63 steps, each well inside the function budget. */
+export const JOB_STEP_MAX_IMAGES = 40;
+/** Soft cap on one part's bytes (Supabase Storage default object limit 50 MB). */
+export const JOB_STEP_MAX_PART_BYTES = 40 * 1024 * 1024;
+/** A planned image gets this many fetch attempts (across steps) before it is
+ *  skipped — transient failures retry rather than failing the whole job. */
+export const JOB_IMAGE_ATTEMPTS = 2;
+
+// ── types ─────────────────────────────────────────────────────────────────────
+
+/** One planned image: the exact filename the sheet references and its source. */
+export interface TalabatJobPlanImage {
+  /** index into plan.rows — the row this image belongs to. */
+  rowIndex: number;
+  filename: string;
+  sourceUrl: string;
+  kind: "primary" | "gallery";
+  /** for a gallery image: the primary filename it belongs to. */
+  ownerPrimary?: string;
+}
+
+/** The immutable per-job plan (uploaded once at start; never rewritten). */
+export interface TalabatPackageJobPlan {
+  version: 1;
+  jobId: string;
+  mode: TalabatGenerationMode;
+  actor: string | null;
+  startedAt: string;
+  /** the certified, already-validated sellable rows, in deterministic order. */
+  rows: TalabatPreviewRow[];
+  /** every image the package will contain, in deterministic order. */
+  images: TalabatJobPlanImage[];
+  counts: {
+    simpleProductCount: number;
+    variantRowCount: number;
+    warningCount: number;
+    imageSharedFromProductCount: number;
+    excludedBlockedCount: number;
+    cappedExcludedCount: number;
+  };
+}
+
+interface JobEntryRecord extends ZipSegmentEntry {
+  part: number;
+}
+
+export interface TalabatPackageJobSummary {
+  destination: string;
+  generatedAt: string;
+  actor: string | null;
+  outputFilename: string;
+  sellableRowCount: number;
+  simpleProductCount: number;
+  variantRowCount: number;
+  productCount: number;
+  imageCount: number;
+  warningCount: number;
+  imageSharedFromProductCount: number;
+  excludedBlockedCount: number;
+  excludedNoImageCount: number;
+  cappedExcludedCount: number;
+  manifestFingerprint: string;
+  integrityOk: boolean;
+}
+
+export interface TalabatMappingSyncResult {
+  ok: boolean;
+  inserted: number;
+  updated: number;
+  failed: number;
+}
+
+/** The small mutable job state (rewritten after every step; plan lives apart). */
+export interface TalabatPackageJobState {
+  version: 1;
+  jobId: string;
+  mode: TalabatGenerationMode;
+  status: "running" | "completed" | "failed";
+  stage: TalabatJobStage;
+  /** next plan.images index to fetch. */
+  cursor: number;
+  /** fetch attempts spent on plan.images[cursor]. */
+  attempts: number;
+  /** cumulative archive bytes already committed as parts. */
+  offset: number;
+  entries: JobEntryRecord[];
+  /** filenames successfully packaged (drives the integrity check). */
+  packaged: PackagedFile[];
+  /** plan.images indexes skipped after exhausting attempts. */
+  droppedImages: number[];
+  parts: { path: string; bytes: number }[];
+  artifact: {
+    filename: string;
+    totalBytes: number;
+    sha256: string | null;
+    manifestFingerprint: string;
+    imageCount: number;
+  } | null;
+  summary: TalabatPackageJobSummary | null;
+  mappingSync: TalabatMappingSyncResult | null;
+  auditRecorded: boolean;
+  error: { code: TalabatJobErrorCode; refId: string } | null;
+}
+
+export interface TalabatJobPorts {
+  /** SSRF-safe validated fetch (server wires the certified boundary). null = failed/invalid. */
+  fetchImage(url: string): Promise<{ bytes: Uint8Array; ext: string } | null>;
+  /** Durable, idempotent write of one artifact part (same path may be overwritten). */
+  putPart(path: string, bytes: Uint8Array): Promise<void>;
+}
+
+export interface TalabatJobAdvanceDeps {
+  ports: TalabatJobPorts;
+  /** Talabat channel mapping sync — invoked at most ONCE per job, after the
+   *  artifact is fully committed. Absent = never synced. */
+  syncMappings?: (actor: string | null) => Promise<TalabatMappingSyncResult>;
+  /** The single malak_audit trail row — invoked at most ONCE per job, last. */
+  recordAudit?: (summary: TalabatPackageJobSummary) => Promise<boolean>;
+  budget?: { maxImages?: number; maxPartBytes?: number };
+}
+
+// ── plan / state construction ─────────────────────────────────────────────────
+
+export function jobPartPath(jobId: string, part: number): string {
+  return `jobs/${jobId}/part-${String(part).padStart(5, "0")}`;
+}
+
+export function talabatJobZipName(nowIso: string): string {
+  return `talabat-package-${nowIso.slice(0, 10)}.zip`;
+}
+
+/**
+ * Build the immutable plan from the certified preview rows. This is the ONLY
+ * place row selection happens, and it delegates entirely to the certified
+ * resolveGenerationSet + planRowImages — no second selection algorithm.
+ */
+export function createTalabatPackageJob(input: {
+  jobId: string;
+  mode: TalabatGenerationMode;
+  selectedKeys?: readonly string[];
+  previewRows: readonly TalabatPreviewRow[];
+  actor: string | null;
+  nowIso: string;
+}):
+  | { ok: true; plan: TalabatPackageJobPlan; state: TalabatPackageJobState }
+  | { ok: false; error: "no_exportable_rows" } {
+  const set = resolveGenerationSet(input.previewRows, { mode: input.mode, selectedKeys: input.selectedKeys });
+  const capped = set.included.slice(0, TALABAT_PACKAGE_LIMITS.maxRows);
+  if (capped.length === 0) return { ok: false, error: "no_exportable_rows" };
+
+  const images: TalabatJobPlanImage[] = [];
+  for (let i = 0; i < capped.length; i++) {
+    const plan = planRowImages(capped[i]);
+    if (plan.primary) {
+      images.push({
+        rowIndex: i, filename: plan.primary.filename,
+        sourceUrl: plan.primary.sourceUrl, kind: "primary",
+      });
+      for (const g of plan.gallery) {
+        images.push({
+          rowIndex: i, filename: g.filename, sourceUrl: g.sourceUrl,
+          kind: "gallery", ownerPrimary: plan.primary.filename,
+        });
+      }
+    }
+  }
+
+  const plan: TalabatPackageJobPlan = {
+    version: 1,
+    jobId: input.jobId,
+    mode: input.mode,
+    actor: input.actor,
+    startedAt: input.nowIso,
+    rows: [...capped],
+    images,
+    counts: {
+      simpleProductCount: capped.filter((r) => !r.isVariant).length,
+      variantRowCount: capped.filter((r) => r.isVariant).length,
+      warningCount: set.counts.warnings,
+      imageSharedFromProductCount: capped.filter((r) => usesSharedProductImage(r)).length,
+      excludedBlockedCount: set.excludedBlocked.length,
+      cappedExcludedCount: set.included.length - capped.length,
+    },
+  };
+  const state: TalabatPackageJobState = {
+    version: 1,
+    jobId: input.jobId,
+    mode: input.mode,
+    status: "running",
+    stage: images.length > 0 ? "DOWNLOADING_IMAGES" : "BUILDING_WORKBOOK",
+    cursor: 0,
+    attempts: 0,
+    offset: 0,
+    entries: [],
+    packaged: [],
+    droppedImages: [],
+    parts: [],
+    artifact: null,
+    summary: null,
+    mappingSync: null,
+    auditRecorded: false,
+    error: null,
+  };
+  return { ok: true, plan, state };
+}
+
+/** Progress for the status endpoint / UI. Totals come from the real plan. */
+export function jobProgress(
+  state: TalabatPackageJobState,
+  plan: Pick<TalabatPackageJobPlan, "images" | "rows">,
+): {
+  stage: TalabatJobStage;
+  progressCurrent: number;
+  progressTotal: number;
+  progressPercent: number;
+  imagesDone: number;
+  imagesTotal: number;
+  rowsTotal: number;
+  bytesDone: number;
+} {
+  const total = plan.images.length;
+  const done = Math.min(state.cursor, total);
+  // The image phase IS the long pole (measured 775 s of 785 s), so percent is
+  // driven by it; finalize contributes the last sliver.
+  const percent =
+    state.status === "completed" ? 100
+      : total === 0 ? (state.status === "running" ? 0 : 100)
+        : Math.min(99, Math.floor((done / total) * 100));
+  return {
+    stage: state.stage,
+    progressCurrent: done,
+    progressTotal: total,
+    progressPercent: percent,
+    imagesDone: done,
+    imagesTotal: total,
+    rowsTotal: plan.rows.length,
+    bytesDone: state.offset,
+  };
+}
+
+function refId(state: TalabatPackageJobState): string {
+  return `${state.jobId.slice(0, 8)}-p${state.parts.length}-c${state.cursor}`;
+}
+
+// ── the step ──────────────────────────────────────────────────────────────────
+
+/**
+ * Advance the job by ONE bounded step. Running out of planned images → the
+ * finalize steps (workbook + directory tail, then mapping sync, then audit).
+ * A completed/failed job is a no-op (idempotent). The returned state is a new
+ * object; the caller persists it and the part files are already durable.
+ */
+export async function advanceTalabatPackageJob(
+  stateIn: TalabatPackageJobState,
+  plan: TalabatPackageJobPlan,
+  deps: TalabatJobAdvanceDeps,
+): Promise<TalabatPackageJobState> {
+  if (stateIn.status !== "running") return stateIn;
+  const state: TalabatPackageJobState = JSON.parse(JSON.stringify(stateIn));
+  try {
+    if (state.cursor < plan.images.length) return await imageStep(state, plan, deps);
+    if (state.artifact === null) return await archiveStep(state, plan, deps);
+    if (deps.syncMappings && state.mappingSync === null) return await mappingStep(state, deps);
+    return await finalizeStep(state, deps);
+  } catch {
+    state.status = "failed";
+    state.error = { code: "generation_failed", refId: refId(state) };
+    return state;
+  }
+}
+
+/** Fetch a bounded batch of images and commit them as ONE archive part. */
+async function imageStep(
+  state: TalabatPackageJobState,
+  plan: TalabatPackageJobPlan,
+  deps: TalabatJobAdvanceDeps,
+): Promise<TalabatPackageJobState> {
+  const maxImages = deps.budget?.maxImages ?? JOB_STEP_MAX_IMAGES;
+  const maxBytes = deps.budget?.maxPartBytes ?? JOB_STEP_MAX_PART_BYTES;
+  state.stage = "DOWNLOADING_IMAGES";
+
+  const segments: Uint8Array[] = [];
+  const partIndex = state.parts.length;
+  let partBytes = 0;
+  let fetched = 0;
+
+  while (state.cursor < plan.images.length && fetched < maxImages && partBytes < maxBytes) {
+    const img = plan.images[state.cursor];
+    const got = await deps.ports.fetchImage(img.sourceUrl);
+    if (got === null) {
+      state.attempts += 1;
+      if (state.attempts >= JOB_IMAGE_ATTEMPTS) {
+        // Exhausted: skip this image. A missing gallery image never fails the
+        // job; a missing PRIMARY drops its row from the sheet at finalize.
+        state.droppedImages.push(state.cursor);
+        state.cursor += 1;
+        state.attempts = 0;
+      }
+      // Leave the cursor put on a retryable failure — the next step retries it.
+      break;
+    }
+    state.attempts = 0;
+
+    const entryName = `Talabat/images/${img.filename}`;
+    const seg = zipEntrySegment(entryName, got.bytes);
+    state.entries.push({
+      name: entryName, crc: seg.crc, size: seg.size,
+      offset: state.offset + partBytes, part: partIndex,
+    });
+    state.packaged.push({
+      name: img.filename,
+      kind: img.kind,
+      ...(img.ownerPrimary ? { ownerPrimary: img.ownerPrimary } : {}),
+    });
+    segments.push(seg.bytes);
+    partBytes += seg.bytes.length;
+    fetched += 1;
+    state.cursor += 1;
+  }
+
+  if (segments.length > 0) {
+    const path = jobPartPath(plan.jobId, partIndex);
+    await deps.ports.putPart(path, concatBytes(segments));
+    state.parts.push({ path, bytes: partBytes });
+    state.offset += partBytes;
+  }
+  return state;
+}
+
+/**
+ * Build the workbook from the SURVIVING rows, append it plus the central
+ * directory as the closing part, and record the artifact. This is where
+ * BUILDING_WORKBOOK / BUILDING_ARCHIVE / UPLOADING_ARTIFACT happen — measured
+ * at ~10 s total, comfortably inside one request.
+ */
+async function archiveStep(
+  state: TalabatPackageJobState,
+  plan: TalabatPackageJobPlan,
+  deps: TalabatJobAdvanceDeps,
+): Promise<TalabatPackageJobState> {
+  state.stage = "BUILDING_WORKBOOK";
+
+  // A row survives only when its PRIMARY image was packaged — identical to the
+  // single-shot generator's excludedNoImage rule.
+  const primaryByRow = new Map<number, string>();
+  for (const img of plan.images) {
+    if (img.kind !== "primary") continue;
+    if (state.packaged.some((p) => p.name === img.filename)) primaryByRow.set(img.rowIndex, img.filename);
+  }
+  const survivors: { row: TalabatPreviewRow; filename: string }[] = [];
+  for (let i = 0; i < plan.rows.length; i++) {
+    const f = primaryByRow.get(i);
+    if (f) survivors.push({ row: plan.rows[i], filename: f });
+  }
+  if (survivors.length === 0) {
+    state.status = "failed";
+    state.error = { code: "no_exportable_rows", refId: refId(state) };
+    return state;
+  }
+
+  const packageRows: TalabatPackageRow[] = survivors.map((s) => toPackageRow(s.row, s.filename));
+  const xlsxBytes = buildTalabatXlsxBuffer(packageRows);
+
+  // §15 referential integrity — every filename the sheet names must exist.
+  const integrity = checkReferentialIntegrity(packageRows.map((r) => r.imageFilename), state.packaged);
+  if (!integrity.ok) {
+    state.status = "failed";
+    state.error = { code: "integrity_failed", refId: refId(state) };
+    return state;
+  }
+
+  const generatedAt = new Date().toISOString();
+  const outputFilename = talabatJobZipName(generatedAt);
+  const summary: TalabatPackageJobSummary = {
+    destination: "talabat:malikas",
+    generatedAt,
+    actor: plan.actor,
+    outputFilename,
+    sellableRowCount: survivors.length,
+    simpleProductCount: survivors.filter((s) => !s.row.isVariant).length,
+    variantRowCount: survivors.filter((s) => s.row.isVariant).length,
+    productCount: new Set(survivors.map((s) => s.row.internalProductId)).size,
+    imageCount: state.packaged.length,
+    warningCount: plan.counts.warningCount,
+    imageSharedFromProductCount: survivors.filter((s) => usesSharedProductImage(s.row)).length,
+    excludedBlockedCount: plan.counts.excludedBlockedCount,
+    excludedNoImageCount: plan.rows.length - survivors.length,
+    cappedExcludedCount: plan.counts.cappedExcludedCount,
+    manifestFingerprint: "",
+    integrityOk: true,
+  };
+
+  const manifest = buildManifest({
+    destination: summary.destination,
+    generatedAt,
+    actor: plan.actor,
+    simpleProductCount: summary.simpleProductCount,
+    variantRowCount: summary.variantRowCount,
+    sellableRowCount: summary.sellableRowCount,
+    imageCount: summary.imageCount,
+    warningCount: summary.warningCount,
+    imageSharedFromProductCount: summary.imageSharedFromProductCount,
+    excludedBlockedCount: summary.excludedBlockedCount,
+    outputFilename,
+    previewReference: { jobId: plan.jobId, mode: plan.mode, plannedImages: plan.images.length },
+  });
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+  // The Talabat manifest carries no fingerprint field of its own, so the
+  // fingerprint IS the content digest of the manifest — computed with the
+  // existing shared hashPayload (canonical, key-order independent), never a
+  // second hashing scheme.
+  summary.manifestFingerprint = hashPayload(manifest);
+
+  state.stage = "BUILDING_ARCHIVE";
+  const tail: Uint8Array[] = [];
+  let tailBytes = 0;
+  for (const [name, data] of [
+    ["Talabat/talabat-products.xlsx", xlsxBytes],
+    ["manifest.json", manifestBytes],
+  ] as [string, Uint8Array][]) {
+    const seg = zipEntrySegment(name, data);
+    state.entries.push({ name, crc: seg.crc, size: seg.size, offset: state.offset + tailBytes, part: state.parts.length });
+    tail.push(seg.bytes);
+    tailBytes += seg.bytes.length;
+  }
+  const directory = zipDirectorySegment(state.entries);
+  tail.push(directory);
+  tailBytes += directory.length;
+
+  state.stage = "UPLOADING_ARTIFACT";
+  const path = jobPartPath(plan.jobId, state.parts.length);
+  await deps.ports.putPart(path, concatBytes(tail));
+  state.parts.push({ path, bytes: tailBytes });
+  state.offset += tailBytes;
+
+  state.summary = summary;
+  state.artifact = {
+    filename: outputFilename,
+    totalBytes: state.offset,
+    sha256: null, // computed by the server layer when it streams the parts
+    manifestFingerprint: summary.manifestFingerprint,
+    imageCount: summary.imageCount,
+  };
+  return state;
+}
+
+/** Talabat channel mapping sync — exactly once, after the artifact is durable. */
+async function mappingStep(
+  state: TalabatPackageJobState,
+  deps: TalabatJobAdvanceDeps,
+): Promise<TalabatPackageJobState> {
+  state.stage = "SYNCING_MAPPINGS";
+  state.mappingSync = await deps.syncMappings!(state.summary?.actor ?? null);
+  return state;
+}
+
+/** The single malak_audit trail row, then the job is complete. */
+async function finalizeStep(
+  state: TalabatPackageJobState,
+  deps: TalabatJobAdvanceDeps,
+): Promise<TalabatPackageJobState> {
+  state.stage = "FINALIZING";
+  if (deps.recordAudit && !state.auditRecorded && state.summary) {
+    state.auditRecorded = await deps.recordAudit(state.summary);
+  }
+  state.stage = "COMPLETED";
+  state.status = "completed";
+  return state;
+}
+
+function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.length; }
+  return out;
+}
+
+/** Deterministic primary filename for a row — re-exported for the server layer. */
+export { primaryFilenameFor };
