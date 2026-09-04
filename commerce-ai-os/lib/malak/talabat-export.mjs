@@ -108,7 +108,8 @@ export function seqOf(parentSku, variantSku) {
 /**
  * Build the Talabat rows.
  *  - products: [{ id, sku, barcode, price, discount_price, name_en, name_ar,
- *                 main_category, description_en, description_ar, image_filename }]
+ *                 talabat_category, description_en, description_ar, image_filename }]
+ *                 (talabat_category = registry-resolved exact Talabat string)
  *  - variants: [{ parent_product_id, variant_name, sku }]
  *  - masterDescEn: Map(sku -> Description EN) used ONLY to fill an empty DB
  *                  description (Supabase stays primary). Pass an empty Map to skip.
@@ -158,7 +159,11 @@ export function buildTalabatRows(products, variants, masterDescEn = new Map()) {
       Barcode: S(p.barcode),
       "Price (QAR)": S(p.price),
       Discount: S(p.discount_price),
-      Category: clean(p.main_category), // variants inherit the parent's category
+      // STEP 64 — the caller resolves the canonical category to the exact
+      // Talabat string (lib/export/talabat/native-template) and supplies it as
+      // `talabat_category`. This builder NEVER reads main_category: a raw
+      // canonical value must not reach the Talabat sheet.
+      Category: clean(p.talabat_category), // variants inherit the parent's category
       "Description EN": clean(descEn),
       "Description AR": clean(p.description_ar),
       "New Image Filename": imgFile,

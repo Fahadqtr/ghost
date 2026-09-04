@@ -7,6 +7,7 @@ import { safeError } from "@/lib/security/safe-error";
 import { revalidatePath } from "next/cache";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { loadMasterScope } from "@/lib/home/master-scope.server";
+import { resolveTalabatCategory } from "@/lib/export/talabat/native-template";
 import { verdictForTask, type VerifyTaskLite } from "@/lib/tasks/verify-compute";
 import { insertComment } from "@/lib/tasks/commentStore";
 import { detectTalabatColumns, baseSku } from "@/lib/talabat-diff";
@@ -205,6 +206,18 @@ export async function buildTalabatPackage(productIds: string[]): Promise<Talabat
     // Shopify-imported products have image_url but no image_filename — derive
     // the sheet name from the SKU so the sheet and the images ZIP agree.
     for (const p of prods) p.image_filename = imageFileFor(p.sku, p.image_filename, p.image_url);
+
+    // STEP 64 — resolve every canonical category to its EXACT Talabat string
+    // before the sheet is built. FAILS CLOSED: a product whose category cannot
+    // resolve is dropped from the package rather than shipped with raw text.
+    const unresolvedCategory: { sku: string | null; category: string | null }[] = [];
+    const resolved = prods.filter((p) => {
+      const r = resolveTalabatCategory(p.main_category);
+      if (!r.ok) { unresolvedCategory.push({ sku: p.sku ?? null, category: p.main_category ?? null }); return false; }
+      p.talabat_category = r.category;
+      return true;
+    });
+    prods.length = 0; prods.push(...resolved);
 
     // Options → one standalone row per option ({sku}-{N}, name suffixed with
     // the option): Talabat rejects variant products, so each option ships solo.

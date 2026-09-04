@@ -36,7 +36,7 @@ function simpleProduct(over: Partial<TalabatPreviewProduct> = {}): TalabatPrevie
     nameAr: "سيروم فيتامين سي",
     price: 75,
     discountPrice: 65,
-    category: "Korean Skincare",
+    category: "Face Care", // STEP 64: registry category
     descriptionEn: "Bright skin.",
     descriptionAr: "بشرة مشرقة.",
     imageUrl: IMG("mk1234.jpg"),

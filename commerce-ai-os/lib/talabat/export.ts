@@ -10,6 +10,7 @@
 // variant SKU — never product_variants.id, never array order, never an index.
 
 import { isAvailable, normalizeAvailability } from "../availability/read.ts";
+import { resolveTalabatCategory } from "../export/talabat/native-template.ts";
 
 export type MappingStatus = "active" | "needs_review" | "archived";
 
@@ -52,6 +53,7 @@ export type TalabatWarningKind =
   | "no_variant_image"
   | "out_of_stock"
   | "excluded_not_approved"
+  | "excluded_unknown_category"
   | "excluded_archived";
 
 export type TalabatBlockedReason =
@@ -224,7 +226,15 @@ export function buildTalabatExport(
     // (approval infrastructure is retained globally) but is not read here.
 
     const image = resolveImage(p);
-    const category = clean(p.main_category);
+    // STEP 64 — the Talabat sheet carries the registry-resolved string. FAILS
+    // CLOSED: an unknown category excludes the product rather than shipping
+    // raw free text to the marketplace.
+    const catRes = resolveTalabatCategory(p.main_category);
+    if (!catRes.ok) {
+      warnings.push({ kind: "excluded_unknown_category", masterProductId: p.id, masterVariantSku: null, exportedSku: null, message: `category not resolvable for Talabat (${catRes.reason}) — excluded` });
+      continue;
+    }
+    const category = catRes.category;
     const descEn = clean(p.description_en);
     const descAr = clean(p.description_ar);
     const vs = variantsByParent.get(p.id) ?? [];
