@@ -24,7 +24,7 @@ function product(over: Partial<TalabatPreviewProduct> = {}): TalabatPreviewProdu
     nameAr: "سيروم",
     price: 50,
     discountPrice: null,
-    category: "Skincare",
+    category: "Face Care", // STEP 64: must be a real registry category
     imageUrl: "https://cdn/x/pic.jpg",
     imageFilename: null,
     imageCount: 1,
@@ -212,15 +212,28 @@ test("a complete, approved, active, mapped row is READY", () => {
   assert.equal(r.reasons.length, 0);
 });
 
-// ── price / category are warnings, not blocks ─────────────────────────────────
-test("missing price / category are WARNING only", () => {
+// ── price is a warning; category now FAILS CLOSED (STEP 64) ──────────────────
+test("missing price is WARNING only", () => {
   const res = buildTalabatPreview({
-    products: [product({ id: "w", sku: "W1", price: null, discountPrice: null, category: null })],
+    products: [product({ id: "w", sku: "W1", price: null, discountPrice: null })],
   });
   const r = res.rows[0]!;
   assert.equal(r.status, "WARNING");
   assert.ok(r.reasons.some((x) => x.code === "MISSING_PRICE" && !x.blocking));
-  assert.ok(r.reasons.some((x) => x.code === "MISSING_CATEGORY" && !x.blocking));
+  // STEP 64 — a resolvable category produces no category reason at all
+  assert.equal(r.reasons.some((x) => x.code === "MISSING_CATEGORY"), false);
+  assert.equal(r.talabatCategory, "Face Care");
+});
+
+test("STEP 64 — an absent or unknown category BLOCKS (fail closed)", () => {
+  const absent = buildTalabatPreview({ products: [product({ id: "a", sku: "A1", category: null })] });
+  assert.equal(absent.rows[0]!.status, "BLOCKED");
+  assert.ok(absent.rows[0]!.reasons.some((x) => x.code === "MISSING_CATEGORY" && x.blocking));
+  assert.equal(absent.rows[0]!.talabatCategory, null);
+
+  const unknown = buildTalabatPreview({ products: [product({ id: "u", sku: "U1", category: "Korean Skincare" })] });
+  assert.equal(unknown.rows[0]!.status, "BLOCKED");
+  assert.equal(unknown.rows[0]!.talabatCategory, null, "raw free text is never passed through");
 });
 
 // ── §11: mapping evidence (no fabricated ids) ─────────────────────────────────

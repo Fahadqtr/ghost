@@ -199,6 +199,7 @@ export interface TalabatPackageRow {
   discount: string;
   nameEn: string;
   nameAr: string;
+  /** STEP 64 — the EXACT Talabat category string (registry-resolved). */
   category: string;
   descriptionEn: string;
   descriptionAr: string;
@@ -232,7 +233,10 @@ export function toPackageRow(r: TalabatPreviewRow, imageFilename: string): Talab
     discount: "",
     nameEn: r.title,
     nameAr: r.titleAr,
-    category: r.category ?? "",
+    // STEP 64 — the registry-resolved Talabat string, never the raw canonical
+    // category. A row that could not resolve is BLOCKED upstream and therefore
+    // never reaches this builder; "" here would be a bug, not a fallback.
+    category: r.talabatCategory ?? "",
     descriptionEn: r.descriptionEn,
     descriptionAr: r.descriptionAr,
     imageFilename,

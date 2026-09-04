@@ -15,6 +15,7 @@
 // flattened dataset (§10). No I/O — framework-free, node:test-loadable.
 
 import { buildFlattenedName, normalizeExportedSku, normalizeBarcode } from "../../talabat/export.ts";
+import { resolveTalabatCategory } from "./native-template.ts";
 import { resolveLifecycleState, type LifecycleState } from "../../lifecycle/state.ts";
 import { primaryImageName, variantImageName, extensionFromUrl } from "../image-naming.ts";
 import { summarizeValidation, type ExportItemStatus, type ExportReason, type ExportValidationItem, type ExportValidationSummary } from "../validation.ts";
@@ -93,7 +94,14 @@ export interface TalabatPreviewRow {
   descriptionEn: string;
   descriptionAr: string;
   price: number | null;
+  /** the CANONICAL catalog category, unchanged — diagnostics only. */
   category: string | null;
+  /**
+   * STEP 64 — the EXACT Talabat category string this row must ship
+   * (registry-resolved). null ⇒ unresolved, and the row is BLOCKED: an
+   * unknown category is never passed through as raw text.
+   */
+  talabatCategory: string | null;
   hasImage: boolean;
   imageCount: number;
   /** SKU-based export image filename (INT.2A canonical); null when SKU missing. */
@@ -237,6 +245,9 @@ function buildRow(
   const price = isVariant ? positive(v!.price) ?? positive(p.discountPrice) ?? positive(p.price)
     : positive(p.discountPrice) ?? positive(p.price);
   const category = clean(p.category) || null;
+  // STEP 64 — resolve to the exact Talabat string. FAILS CLOSED.
+  const catRes = resolveTalabatCategory(category);
+  const talabatCategory = catRes.ok ? catRes.category : null;
   const hasImage = p.imageCount > 0 || clean(p.imageUrl) !== "" || clean(p.imageFilename) !== "";
   const inheritedParentImage = isVariant && hasImage; // no per-variant image column exists
   const ext = extensionFromUrl(p.imageFilename || p.imageUrl);
@@ -284,7 +295,14 @@ function buildRow(
   // Title / price / category.
   if (clean(title) === "") block("MISSING_TITLE");
   if (price === null) warn("MISSING_PRICE");
-  if (category === null) warn("MISSING_CATEGORY");
+  // STEP 64 — the Talabat category must resolve to an exact registry value.
+  // Unknown/absent BLOCKS: shipping a guessed or raw category is exactly what
+  // the registry exists to prevent.
+  if (!catRes.ok) {
+    block("MISSING_CATEGORY", catRes.reason === "missing"
+      ? "لا يوجد قسم للمنتج — غير مؤهّل للتصدير إلى طلبات."
+      : "قسم غير معروف لدى طلبات — لا يمكن تصديره كما هو.");
+  }
 
   const blocking = reasons.some((r) => r.blocking);
   const status: ExportItemStatus = blocking ? "BLOCKED" : reasons.length > 0 ? "WARNING" : "READY";
@@ -302,6 +320,7 @@ function buildRow(
     descriptionAr,
     price,
     category,
+    talabatCategory,
     hasImage,
     imageCount: p.imageCount,
     imageExportName,
