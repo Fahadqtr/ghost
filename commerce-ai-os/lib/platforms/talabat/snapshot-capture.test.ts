@@ -11,8 +11,8 @@ import type { PlatformSnapshot, SnapshotInput } from "../core/types.ts";
 
 const AT = "2026-08-10T10:00:00.000Z";
 const OURS: TalabatCatalogRow[] = [
-  { id: "p1", sku: "S1", barcode: null, name_en: "One", name_ar: null, approval: "Approved" },
-  { id: "p2", sku: "S2", barcode: null, name_en: "Two", name_ar: null, approval: "Approved" },
+  { id: "p1", sku: "S1", barcode: null, name_en: "One", name_ar: null, eligible: true },
+  { id: "p2", sku: "S2", barcode: null, name_en: "Two", name_ar: null, eligible: true },
 ];
 const SHEET = [{ SKU: "S1", Name: "One" }];
 

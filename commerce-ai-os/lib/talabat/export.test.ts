@@ -161,10 +161,10 @@ test("16: an archived product produces no active row", () => {
   assert.ok(r.warnings.some((w) => w.kind === "excluded_archived"));
 });
 
-test("16b: a not-approved product is excluded", () => {
+test("16b: STEP 62 — a not-approved product is NO LONGER excluded", () => {
   const r = buildTalabatExport([prod({ approved: false })], []);
-  assert.equal(r.rows.length, 0);
-  assert.ok(r.warnings.some((w) => w.kind === "excluded_not_approved"));
+  assert.equal(r.rows.length, 1, "approval is not an export gate");
+  assert.equal(r.warnings.some((w) => w.kind === "excluded_not_approved"), false);
 });
 
 test("17: a mapping update never clears channel_product_id", () => {
@@ -239,20 +239,24 @@ test("R1: only explicit \"Approved\" counts; undefined/other are not approved", 
   }
 });
 
-test("R1: a product with no Talabat approval (undefined) is excluded", () => {
+test("R1: STEP 62 — a product with no Talabat approval still exports", () => {
   const r = buildTalabatExport([prod({ approved: undefined })], []);
-  assert.equal(r.rows.length, 0);
-  assert.ok(r.warnings.some((w) => w.kind === "excluded_not_approved"));
+  assert.equal(r.rows.length, 1, "a NULL approval must not block — the 51 unreviewed master products");
+  assert.equal(r.warnings.some((w) => w.kind === "excluded_not_approved"), false);
 });
 
-test("R1: Not Listed / Pending / Rejected are excluded; only explicit approval enters", () => {
-  for (const status of [undefined, null, "", "Not Listed", "Pending", "Rejected", "SentAI"]) {
+test("R1: STEP 62 — NO approval value excludes a product from the Talabat export", () => {
+  // The helper is retained (approval infrastructure stays global) but the
+  // exporter no longer consults it: every value exports identically.
+  for (const status of [undefined, null, "", "Not Listed", "Pending", "Rejected", "SentAI", "Approved"]) {
     const approved = isApprovedForTalabat(status as string | null | undefined);
     const r = buildTalabatExport([prod({ approved })], []);
-    assert.equal(r.rows.length, 0, `status "${String(status)}" must be excluded`);
+    assert.equal(r.rows.length, 1, `status "${String(status)}" must still export`);
+    assert.equal(r.warnings.some((w) => w.kind === "excluded_not_approved"), false);
   }
-  const ok = buildTalabatExport([prod({ approved: isApprovedForTalabat("Approved") })], []);
-  assert.equal(ok.rows.length, 1);
+  // the helper itself is unchanged
+  assert.equal(isApprovedForTalabat("Approved"), true);
+  assert.equal(isApprovedForTalabat("Rejected"), false);
 });
 
 // ---- Review fix 2: unambiguous Talabat channel -------------------------------
@@ -352,13 +356,17 @@ test("INV.2E: a variant with UNSET availability inherits the product-level avail
 
 // ---- Review: route wiring (source scan) --------------------------------------
 
-test("R: the re-homed catalog-sync uses explicit approval + exact channel + fail-closed gate", () => {
+test("R: the re-homed catalog-sync is master-scoped + exact channel + fail-closed gate", () => {
   // INT.2F.2 — the mapping-persist logic moved verbatim from the retired route to
   // the certified catalog-sync helper. Its safety wiring is preserved.
+  // STEP 62 — approval is gone; the universe is the shared master seam instead.
   const sync = read("lib/talabat/mapping-sync/catalog-sync.server.ts");
-  assert.match(sync, /isApprovedForTalabat/);
+  const syncCode = sync.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/isApprovedForTalabat/.test(syncCode), "approval is no longer an export gate");
+  assert.ok(!/platform_status/.test(syncCode), "the approval overlay is no longer read");
+  assert.match(syncCode, /loadMasterScope\(\)/);
+  assert.match(syncCode, /if \(!scope\.ok\) return EMPTY;/);
   assert.ok(!/!==\s*"Not Listed"/.test(sync), "must not gate approval by channel_status !== Not Listed");
-  assert.match(sync, /platform_status/);
   assert.match(sync, /resolveExactChannelId/);
   assert.ok(!/chanIds\[0\]/.test(sync), "must not pick chanIds[0]");
   assert.match(sync, /decideExportGate/);

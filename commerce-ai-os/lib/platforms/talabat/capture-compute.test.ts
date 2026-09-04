@@ -23,9 +23,9 @@ import type { PlatformSnapshot, SnapshotInput } from "../core/types.ts";
 const AT = "2026-08-10T10:00:00.000Z";
 
 const ours: TalabatCatalogRow[] = [
-  { id: "p1", sku: "SKU1", barcode: "B1", name_en: "One", name_ar: "واحد", approval: "Approved" },
-  { id: "p2", sku: "SKU2", barcode: "B2", name_en: "Two", name_ar: "اثنان", approval: "Approved" },
-  { id: "p3", sku: "SKU3", barcode: null, name_en: "Three", name_ar: null, approval: "SentAI" }, // NOT approved
+  { id: "p1", sku: "SKU1", barcode: "B1", name_en: "One", name_ar: "واحد", eligible: true },
+  { id: "p2", sku: "SKU2", barcode: "B2", name_en: "Two", name_ar: "اثنان", eligible: true },
+  { id: "p3", sku: "SKU3", barcode: null, name_en: "Three", name_ar: null, eligible: false }, // NOT approved
 ];
 
 function diff(missingIds: string[]): TalabatDiffResult {
@@ -85,7 +85,7 @@ test("metadata carries only a fixed verdict flag — no secrets", () => {
 
 test("bounded: never builds more than the cap", () => {
   const many: TalabatCatalogRow[] = Array.from({ length: MAX_TALABAT_SNAPSHOT_INPUTS + 20 }, (_, n) => ({
-    id: `p${n}`, sku: `S${n}`, barcode: null, name_en: `N${n}`, name_ar: null, approval: "Approved",
+    id: `p${n}`, sku: `S${n}`, barcode: null, name_en: `N${n}`, name_ar: null, eligible: true,
   }));
   assert.equal(diffToSnapshotInputs(many, diff([]), AT).length, MAX_TALABAT_SNAPSHOT_INPUTS);
 });

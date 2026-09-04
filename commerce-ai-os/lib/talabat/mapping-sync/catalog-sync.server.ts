@@ -24,8 +24,9 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
 import {
-  buildTalabatExport, isApprovedForTalabat, resolveExactChannelId, decideExportGate,
+  buildTalabatExport, resolveExactChannelId, decideExportGate,
   type ExportProductInput, type ExportVariantInput, type PersistCounts,
 } from "@/lib/talabat/export";
 import { syncTalabatMappings, type MappingSyncAdmin } from "@/lib/talabat/mapping-sync/mapping-sync.server";
@@ -67,11 +68,18 @@ export async function syncTalabatMappingsFromCatalog(actor: string): Promise<Cat
 
     // Products (all). Only the columns the Talabat flatten needs — NO legacy
     // per-store identity columns are read.
-    const products = await fetchAll((from, to) =>
+    const allProducts = await fetchAll((from, to) =>
       supabase.from("products")
         .select("id, sku, barcode, name_en, name_ar, main_category, price, discount_price, image_url, image_filename, description_en, description_ar, stock_status")
         .order("sku", { ascending: true })
         .range(from, to));
+
+    // STEP 62 — mappings are computed over the CURRENT MASTER only, through the
+    // same shared seam the preview uses (STEP 60). Fails CLOSED: an unreadable
+    // membership yields no mapping write rather than the whole catalogue.
+    const scope = await loadMasterScope();
+    if (!scope.ok) return EMPTY;
+    const products = allProducts.filter((p) => typeof p.id === "string" && scope.ids.has(p.id));
 
     // Exact Talabat channel — a partial "%talabat%" sibling can never leak in.
     const { data: chans } = await supabase.from("channels").select("id, name").ilike("name", `%talabat%`);
@@ -90,11 +98,9 @@ export async function syncTalabatMappingsFromCatalog(actor: string): Promise<Cat
         .select("parent_product_id, variant_name, variant_name_en, sku, barcode, price, stock_quantity, stock_status")
         .range(from, to));
 
-    // Explicit Talabat approval overlay (platform_status where platform='talabat').
-    const approvalByProduct: Record<string, string | null> = {};
-    const approvals = await fetchAll((from, to) =>
-      supabase.from("platform_status").select("product_id, approval").eq("platform", "talabat").range(from, to));
-    for (const a of approvals) approvalByProduct[String(a.product_id)] = (a.approval as string) ?? null;
+    // STEP 62 — the Talabat approval overlay is NO LONGER read: approval is not
+    // an export gate. The universe is the active snoonu:malikas master, applied
+    // below, and mappings are computed over exactly that set.
 
     const productInputs: ExportProductInput[] = products.map((p) => ({
       id: p.id as string, sku: p.sku as string, barcode: p.barcode as string,
@@ -104,7 +110,6 @@ export async function syncTalabatMappingsFromCatalog(actor: string): Promise<Cat
       description_en: p.description_en as string, description_ar: p.description_ar as string,
       image_filename: p.image_filename as string, image_url: p.image_url as string,
       channel_price: talabatPrice[p.id as string] ?? null,          // exact Talabat channel only
-      approved: isApprovedForTalabat(approvalByProduct[p.id as string]), // explicit approval only
       stock_status: (p.stock_status as string) ?? null,             // INV.2D explicit availability
     }));
     const variantInputs: ExportVariantInput[] = variants.map((v) => ({

@@ -11,7 +11,7 @@ import { buildPlatformHistory } from "../core/history.ts";
 import { createPlatformTimelineProviders, platformToTimelineSource } from "../../operations/timeline/providers/platform-provider.ts";
 import { buildTimeline } from "../../operations/timeline/timeline-engine.ts";
 
-const ours: TalabatCatalogRow[] = [{ id: "p1", sku: "S1", barcode: null, name_en: "One", name_ar: null, approval: "Approved" }];
+const ours: TalabatCatalogRow[] = [{ id: "p1", sku: "S1", barcode: null, name_en: "One", name_ar: null, eligible: true }];
 const snap = (missing: string[], at: string) =>
   createSnapshot(diffToSnapshotInputs(ours, { ok: true, missing: missing.map((product_id) => ({ product_id })) }, at)[0]!);
 

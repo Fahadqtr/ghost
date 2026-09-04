@@ -5,7 +5,8 @@
 // which of OUR sellable products are missing over there. Talabat rejects
 // variant products, so products WITH options are still sent — SPLIT into one
 // standalone row per option (mk123-1, mk123-2 …) by the package builder; the
-// diff just marks them. Only Approved products count as sellable.
+// diff just marks them. STEP 62: the sellable set is the active Snoonu master
+// (the caller supplies `eligible`), NOT products.approval.
 
 export interface TalabatOurRow {
   id: string;
@@ -13,7 +14,11 @@ export interface TalabatOurRow {
   barcode?: string | null;
   name_en: string | null;
   name_ar: string | null;
-  approval: string | null;
+  /**
+   * STEP 62 — eligibility is MASTER MEMBERSHIP, not approval. The caller decides
+   * (active snoonu:malikas member); this module never reads an approval field.
+   */
+  eligible: boolean;
   hasVariants: boolean;
   image_url?: string | null;
   price?: number | string | null;
@@ -34,9 +39,10 @@ export interface TalabatDiff {
   columns: TalabatColumns; // what we recognized in their sheet
   counts: {
     ours: number;
-    eligible: number;         // Approved (option products included — they split)
+    eligible: number;         // active-master members (option products included — they split)
     withOptions: number;      // among missing: products that will be split
-    notApproved: number;
+    /** rows outside the active Snoonu master (STEP 62; was `notApproved`). */
+    notEligible: number;
     theirRows: number;
     matched: number;
     missing: number;          // eligible but absent from their sheet
@@ -77,7 +83,7 @@ export function baseSku(v: unknown): string {
 export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unknown>[]): TalabatDiff {
   const empty: TalabatDiff = {
     ok: false, columns: {},
-    counts: { ours: 0, eligible: 0, withOptions: 0, notApproved: 0, theirRows: 0, matched: 0, missing: 0, noPrice: 0, extraOnTalabat: 0 },
+    counts: { ours: 0, eligible: 0, withOptions: 0, notEligible: 0, theirRows: 0, matched: 0, missing: 0, noPrice: 0, extraOnTalabat: 0 },
     missing: [], extraOnTalabat: [],
   };
   if (!theirRows.length) return { ...empty, error: "الملف فاضي — ما فيه صفوف." };
@@ -106,7 +112,7 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
   // Walk OUR catalog.
   const missing: TalabatDiff["missing"] = [];
   const matchedOurKeys = { skus: new Set<string>(), barcodes: new Set<string>(), names: new Set<string>() };
-  let eligible = 0, notApproved = 0, matched = 0, withOptions = 0, noPriceCount = 0;
+  let eligible = 0, notEligible = 0, matched = 0, withOptions = 0, noPriceCount = 0;
 
   for (const o of ours) {
     const sku = key(o.sku);
@@ -125,7 +131,7 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
     if (nEn) matchedOurKeys.names.add(nEn);
     if (nAr) matchedOurKeys.names.add(nAr);
 
-    if (String(o.approval ?? "") !== "Approved") { notApproved++; continue; }
+    if (o.eligible !== true) { notEligible++; continue; }
     eligible++;
     if (hit) { matched++; continue; }
     if (o.hasVariants) withOptions++;
@@ -158,7 +164,7 @@ export function diffTalabat(ours: TalabatOurRow[], theirRows: Record<string, unk
     ok: true,
     columns,
     counts: {
-      ours: ours.length, eligible, withOptions, notApproved,
+      ours: ours.length, eligible, withOptions, notEligible,
       theirRows: theirRows.length, matched, missing: missing.length, noPrice: noPriceCount, extraOnTalabat: extraOnTalabat.length,
     },
     missing, extraOnTalabat,

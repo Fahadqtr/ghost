@@ -190,14 +190,18 @@ test("a row with no product image at all is BLOCKED (MISSING_IMAGE)", () => {
 });
 
 // ── §8: lifecycle eligibility ─────────────────────────────────────────────────
-test("STOPPED / non-approved products are not eligible (LIFECYCLE_NOT_ELIGIBLE, blocking)", () => {
+test("STOPPED blocks; non-approved does NOT (STEP 62)", () => {
   const stopped = buildTalabatPreview({
     products: [product({ id: "s", sku: "S1", lifecycleState: "STOPPED", platformStatus: "Stopped" })],
   });
   assert.ok(stopped.rows[0]!.reasons.some((r) => r.code === "LIFECYCLE_NOT_ELIGIBLE" && r.blocking));
 
+  // STEP 62 — approval is NO LONGER an export gate. A not-approved product
+  // inside the master exports normally; only STOPPED blocks.
   const notApproved = buildTalabatPreview({ products: [product({ id: "na", sku: "NA1", approved: false })] });
-  assert.ok(notApproved.rows[0]!.reasons.some((r) => r.code === "LIFECYCLE_NOT_ELIGIBLE" && r.blocking));
+  assert.equal(notApproved.rows[0]!.reasons.some((r) => r.code === "LIFECYCLE_NOT_ELIGIBLE"), false,
+    "approval must not produce a lifecycle block");
+  assert.notEqual(notApproved.rows[0]!.status, "BLOCKED", "an unapproved master product still exports");
 });
 
 // ── §9: a fully-valid row is READY with no reasons ────────────────────────────

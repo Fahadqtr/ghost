@@ -39,7 +39,8 @@ export interface TalabatCatalogRow {
   barcode?: string | null;
   name_en: string | null;
   name_ar: string | null;
-  approval: string | null;
+  /** STEP 62 — master membership, not approval. Supplied by the caller. */
+  eligible: boolean;
 }
 
 /** Structural subset of a TalabatDiff (lib/talabat-diff) this adapter reads. */
@@ -101,7 +102,7 @@ export function diffToSnapshotInputs(
   for (const o of ours ?? []) {
     const id = S(o?.id);
     if (id === null) continue;
-    if (String(o.approval ?? "") !== "Approved") continue; // eligibility mirrors the diff
+    if (o.eligible !== true) continue; // eligibility mirrors the diff (master membership)
     const verdict: TalabatVerdict = missing.has(id) ? "missing" : "present";
     const meta: TalabatMeta = { verdict, source: "upload" };
     out.push({
