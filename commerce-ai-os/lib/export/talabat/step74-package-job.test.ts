@@ -112,7 +112,10 @@ test("2: a live job is RESUMED, never duplicated", () => {
   // the idempotent-start lookup, then an early return with the live job
   assert.match(server, /\.eq\("channel", CHANNEL\)/);
   assert.match(server, /\.in\("status", \["queued", "running"\]\)/);
-  assert.match(server, /if \(st && pl\) return \{ ok: true, value: statusDTO\(st, pl, live\) \}/);
+  // STEP 76 kept the invariant and widened it: the live job is returned as-is,
+  // and a job with a durable artifact is resumed however long it has been idle.
+  assert.match(server, /return \{ ok: true, value: statusDTO\(st0, pl0, live\) \};/);
+  assert.match(server, /const hasDurableArtifact = st0\?\.artifact != null/);
   // and the step claim is optimistic, so two drivers cannot run one step twice
   assert.match(server, /\.eq\("step", seen\.step\)/);
   // the client guards the double-click too

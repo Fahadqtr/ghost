@@ -144,7 +144,10 @@ test("3: a FAILED job's temporary parts are deleted", async () => {
   assert.equal(bucket.objects.has(`jobs/${plan.jobId}/plan.json`), false, "the dead plan is gone too");
   assert.equal(bucket.objects.has(`jobs/${plan.jobId}/state.json`), true, "state.json KEPT for diagnostics");
   // and the server wires exactly this on failure
-  assert.match(code(SERVER), /if \(next\.status === "failed"\) await cleanupJobArtifacts\(jobId\)/);
+  // STEP 76 narrowed this to UNRECOVERABLE failures only: a job whose archive is
+  // already durable keeps its parts so retry can continue the upload.
+  assert.match(code(SERVER),
+    /if \(next\.status === "failed" && !isRecoverableTalabatJobError\(next\.error\?\.code\)\) \{\s*\n\s*await cleanupJobArtifacts\(jobId\);/);
 });
 
 test("4: cleanup can never touch another job's parts", async () => {
@@ -180,7 +183,7 @@ test("5: a stale job is transitioned OUT of the active set atomically", () => {
   // the status guard IS the arbitration point — only one racer reaps
   assert.match(s, /\.eq\("id", jobId\)\s*\n\s*\.in\("status", \["queued", "running"\]\)/);
   // and start() reaps instead of silently ignoring the row
-  assert.match(s, /\} else \{[\s\S]{0,600}await reapStaleJob\(live\.id\)/);
+  assert.match(s, /if \(!fresh && !hasDurableArtifact\) \{[\s\S]{0,600}await reapStaleJob\(live\.id\)/);
   assert.equal(/if \(live && Date\.now\(\) - new Date\(live\.updated_at\)\.getTime\(\) < STALE_MS\) \{[\s\S]{0,200}\}\s*\n\s*const preview/.test(s), false,
     "the old ignore-and-continue shape is gone");
 });

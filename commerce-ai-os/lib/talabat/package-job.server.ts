@@ -43,6 +43,8 @@ import {
   type TalabatJobPorts,
 } from "@/lib/export/talabat/package-job";
 import type { TalabatJobStage, TalabatJobUiErrorCode } from "@/lib/export/talabat/package-job-errors";
+import { isRecoverableTalabatJobError } from "@/lib/export/talabat/package-job-errors";
+import { mappingComplete } from "@/lib/export/talabat/package-job";
 
 const BUCKET = "talabat-packages";
 const CHANNEL = "talabat:malikas";
@@ -63,13 +65,14 @@ interface JobRow {
   status: "queued" | "running" | "completed" | "failed";
   stage: TalabatJobStage;
   step: number;
+  error_code: string | null;
   created_by: string | null;
   started_at: string;
   updated_at: string;
   completed_at: string | null;
 }
 
-const ROW_SELECT = "id, mode, status, stage, step, created_by, started_at, updated_at, completed_at";
+const ROW_SELECT = "id, mode, status, stage, step, error_code, created_by, started_at, updated_at, completed_at";
 
 export interface TalabatJobStatusDTO {
   jobId: string;
@@ -96,6 +99,10 @@ export interface TalabatJobStatusDTO {
   mappingsSynced: boolean;
   auditRecorded: boolean;
   error: { code: string; refId: string } | null;
+  /** STEP 76 — every planned image is packaged and the archive is durable. */
+  imagesComplete: boolean;
+  /** STEP 76 — a failure here can resume in place; images are NOT re-fetched. */
+  resumable: boolean;
 }
 
 export type TalabatJobApiResult<T> =
@@ -263,13 +270,57 @@ function statusDTO(state: TalabatPackageJobState, plan: TalabatPackageJobPlan, r
         productCount: state.summary.productCount,
       }
       : null,
-    mappingsSynced: state.mappingSync?.ok === true,
+    mappingsSynced: mappingComplete(state),
     auditRecorded: state.auditRecorded,
     error: state.error,
+    imagesComplete: state.artifact !== null,
+    // Resumable when the archive is already durable: the remaining work is the
+    // cheap finalization tail, so a retry continues instead of restarting.
+    resumable: state.artifact !== null && state.status !== "completed",
   };
 }
 
 // ── public API ────────────────────────────────────────────────────────────────
+
+/** STEP 76 — keep a resumed job out of the stale window while it is driven. */
+async function touchJob(jobId: string): Promise<void> {
+  try {
+    const admin = createAdminClient();
+    await admin
+      .from("talabat_package_jobs")
+      .update({ status: "running", error_code: null, error_ref: null, updated_at: new Date().toISOString() })
+      .eq("id", jobId);
+  } catch {
+    /* best-effort: resuming still works, the row just keeps its old timestamp */
+  }
+}
+
+/**
+ * STEP 76 — revive a job that FAILED recoverably (upload_incomplete): its
+ * artifact and every part are still durable, so the operator continues the
+ * finalization tail on the SAME job instead of re-downloading 2501 images.
+ * Safe against the partial unique index because it only runs when no other
+ * queued/running row exists for the channel.
+ */
+async function resumeRecoverableJob(): Promise<JobRow | null> {
+  try {
+    const admin = createAdminClient();
+    const row = await admin
+      .from("talabat_package_jobs").select(ROW_SELECT)
+      .eq("channel", CHANNEL).eq("status", "failed")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const cand = row.data as unknown as JobRow | null;
+    if (!cand || !isRecoverableTalabatJobError(cand.error_code)) return null;
+    const revived = await admin
+      .from("talabat_package_jobs")
+      .update({ status: "running", error_code: null, error_ref: null, completed_at: null, updated_at: new Date().toISOString() })
+      .eq("id", cand.id).eq("status", "failed")
+      .select(ROW_SELECT).maybeSingle();
+    return (revived.data as unknown as JobRow | null) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * STEP 75 — atomically retire an abandoned job and clean its temporary parts.
@@ -328,12 +379,22 @@ export async function startTalabatPackageJob(input: {
   const live = existing.data as unknown as JobRow | null;
   if (live) {
     const fresh = Date.now() - new Date(live.updated_at).getTime() < STALE_MS;
-    if (fresh) {
-      // A genuinely live job — RESUME it rather than starting a second one.
-      const st = await getJson<TalabatPackageJobState>(statePath(live.id));
-      const pl = await getJson<TalabatPackageJobPlan>(planPath(live.id));
-      if (st && pl) return { ok: true, value: statusDTO(st, pl, live) };
-    } else {
+    const st0 = await getJson<TalabatPackageJobState>(statePath(live.id));
+    const pl0 = await getJson<TalabatPackageJobPlan>(planPath(live.id));
+    // STEP 76 — a job whose ARTIFACT is already durable is resumable no matter
+    // how long it has been idle. The first production run reached 2501/2501 and
+    // committed a valid 538 MB archive, then stalled in the finalization tail;
+    // reaping it as "stale" destroyed all 66 parts and forced a full restart.
+    // Durable work is never thrown away again: such a job is resumed in place,
+    // keeping its id, its parts and its image cursor.
+    const hasDurableArtifact = st0?.artifact != null && st0.status !== "completed";
+    if (fresh || hasDurableArtifact) {
+      if (st0 && pl0) {
+        if (!fresh && hasDurableArtifact) await touchJob(live.id);
+        return { ok: true, value: statusDTO(st0, pl0, live) };
+      }
+    }
+    if (!fresh && !hasDurableArtifact) {
       // STEP 75 — STALE. It is not enough to ignore the row: leaving it
       // queued/running forever would both leak its parts and (with the partial
       // unique index) permanently block every replacement. Transition it out of
@@ -342,6 +403,16 @@ export async function startTalabatPackageJob(input: {
       // no row and it proceeds to the insert, where the unique index arbitrates.
       await reapStaleJob(live.id);
     }
+  }
+
+  // STEP 76 — before starting anything new, revive a recoverably-failed job:
+  // its artifact and parts are durable, so "retry" must continue that job
+  // rather than re-downloading 2501 images into a fresh one.
+  const revived = await resumeRecoverableJob();
+  if (revived) {
+    const st = await getJson<TalabatPackageJobState>(statePath(revived.id));
+    const pl = await getJson<TalabatPackageJobPlan>(planPath(revived.id));
+    if (st && pl) return { ok: true, value: statusDTO(st, pl, revived) };
   }
 
   const preview = await loadTalabatPreview();
@@ -444,9 +515,16 @@ export async function stepTalabatPackageJob(jobId: string): Promise<TalabatJobAp
 
   const next = await advanceTalabatPackageJob(state, plan, {
     ports: enginePorts,
-    syncMappings: async (actor) => {
-      const r = await syncTalabatMappingsFromCatalog(actor ?? "");
-      return { ok: r.ok, inserted: r.counts?.inserted ?? 0, updated: r.counts?.updated ?? 0, failed: r.counts?.failed ?? 0 };
+    syncMappings: async (actor, offset) => {
+      const r = await syncTalabatMappingsFromCatalog(actor ?? "", offset);
+      return {
+        ok: r.ok,
+        inserted: r.counts?.inserted ?? 0,
+        updated: r.counts?.updated ?? 0,
+        failed: r.counts?.failed ?? 0,
+        totalCandidates: r.totalCandidates,
+        nextOffset: r.nextOffset,
+      };
     },
     recordAudit,
   });
@@ -456,7 +534,14 @@ export async function stepTalabatPackageJob(jobId: string): Promise<TalabatJobAp
   // job), so its parts are dead weight: up to ~800 MB per failure. Clean them
   // now, scoped to this job's own prefix. Best-effort by construction — a
   // cleanup problem must not change the recorded failure.
-  if (next.status === "failed") await cleanupJobArtifacts(jobId);
+  // STEP 76 — clean ONLY an UNRECOVERABLE failure. A recoverable one
+  // (upload_incomplete: the artifact is durable, only the finalization tail
+  // remains) keeps every part so the same job can resume without re-fetching
+  // 2501 images. Deleting them is exactly what destroyed the first real 538 MB
+  // artifact in production.
+  if (next.status === "failed" && !isRecoverableTalabatJobError(next.error?.code)) {
+    await cleanupJobArtifacts(jobId);
+  }
   const progress = jobProgress(next, plan);
   const nowIso = new Date().toISOString();
   await admin

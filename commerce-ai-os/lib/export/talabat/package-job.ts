@@ -132,6 +132,9 @@ export interface TalabatMappingSyncResult {
   inserted: number;
   updated: number;
   failed: number;
+  /** STEP 76 — bounded-slice progress. */
+  totalCandidates: number;
+  nextOffset: number;
 }
 
 /** The small mutable job state (rewritten after every step; plan lives apart). */
@@ -162,6 +165,15 @@ export interface TalabatPackageJobState {
   } | null;
   summary: TalabatPackageJobSummary | null;
   mappingSync: TalabatMappingSyncResult | null;
+  /**
+   * STEP 76 — how many mapping candidates are already persisted, and how many
+   * exist in total. The persistence layer costs TWO sequential DB round trips
+   * per candidate, so all 1454 in one request is ~2,908 serial calls — the
+   * measured cause of the first production finalization stall. The sync is now
+   * driven a bounded slice at a time and this cursor survives across steps.
+   */
+  mappingCursor: number;
+  mappingTotal: number | null;
   auditRecorded: boolean;
   error: { code: TalabatJobErrorCode; refId: string } | null;
 }
@@ -177,7 +189,7 @@ export interface TalabatJobAdvanceDeps {
   ports: TalabatJobPorts;
   /** Talabat channel mapping sync — invoked at most ONCE per job, after the
    *  artifact is fully committed. Absent = never synced. */
-  syncMappings?: (actor: string | null) => Promise<TalabatMappingSyncResult>;
+  syncMappings?: (actor: string | null, offset: number) => Promise<TalabatMappingSyncResult>;
   /** The single malak_audit trail row — invoked at most ONCE per job, last. */
   recordAudit?: (summary: TalabatPackageJobSummary) => Promise<boolean>;
   budget?: { maxImages?: number; maxPartBytes?: number };
@@ -262,6 +274,8 @@ export function createTalabatPackageJob(input: {
     artifact: null,
     summary: null,
     mappingSync: null,
+    mappingCursor: 0,
+    mappingTotal: null,
     auditRecorded: false,
     error: null,
   };
@@ -324,11 +338,18 @@ export async function advanceTalabatPackageJob(
   try {
     if (state.cursor < plan.images.length) return await imageStep(state, plan, deps);
     if (state.artifact === null) return await archiveStep(state, plan, deps);
-    if (deps.syncMappings && state.mappingSync === null) return await mappingStep(state, deps);
+    if (deps.syncMappings && !mappingComplete(state)) return await mappingStep(state, deps);
     return await finalizeStep(state, deps);
   } catch {
     state.status = "failed";
-    state.error = { code: "generation_failed", refId: refId(state) };
+    // STEP 76 — classify. Once the artifact is durable in storage every
+    // remaining step is cheap bookkeeping, so a failure there is RECOVERABLE:
+    // the job keeps its parts and resumes at finalization rather than
+    // re-downloading 2501 images. Only a failure BEFORE the artifact exists is
+    // unrecoverable and eligible for cleanup.
+    state.error = state.artifact !== null
+      ? { code: "upload_incomplete", refId: refId(state) }
+      : { code: "generation_failed", refId: refId(state) };
     return state;
   }
 }
@@ -508,13 +529,53 @@ async function archiveStep(
   return state;
 }
 
-/** Talabat channel mapping sync — exactly once, after the artifact is durable. */
+/** True once every mapping candidate has been persisted. */
+export function mappingComplete(state: TalabatPackageJobState): boolean {
+  if (state.mappingTotal === null) return false;
+  return state.mappingCursor >= state.mappingTotal;
+}
+
+/** A non-negative integer, or null when the value is missing/nonsensical. */
+function counter(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null;
+}
+
+/**
+ * Talabat channel mapping sync — a BOUNDED slice per step, resumed via
+ * mappingCursor. Each candidate costs two sequential DB round trips, so the
+ * full 1454 in one request (~2,908 serial calls) is what stalled the first
+ * production run; slicing keeps every step inside the function budget.
+ *
+ * TERMINATION is guaranteed and does not rely on the injected sync behaving.
+ * The stage is marked complete — mappingTotal pinned to the cursor — whenever
+ * the slice reports a failure, reports no bounded total (an implementation
+ * that syncs everything in one call), or fails to move the cursor forward.
+ * Without that, a sync that never advances would spin the job for ever.
+ */
 async function mappingStep(
   state: TalabatPackageJobState,
   deps: TalabatJobAdvanceDeps,
 ): Promise<TalabatPackageJobState> {
   state.stage = "SYNCING_MAPPINGS";
-  state.mappingSync = await deps.syncMappings!(state.summary?.actor ?? null);
+  const res = await deps.syncMappings!(state.summary?.actor ?? null, state.mappingCursor);
+
+  const total = counter(res.totalCandidates);
+  const next = counter(res.nextOffset);
+  const advanced = next !== null && next > state.mappingCursor;
+  if (advanced) state.mappingCursor = next;
+  // Stop slicing when the sync failed, reported no bounded total, or made no
+  // forward progress: pin the total to the cursor so mappingComplete() is true.
+  state.mappingTotal = res.ok && total !== null && advanced ? total : state.mappingCursor;
+
+  const prev = state.mappingSync;
+  state.mappingSync = {
+    ok: (prev?.ok ?? true) && res.ok,
+    inserted: (prev?.inserted ?? 0) + (counter(res.inserted) ?? 0),
+    updated: (prev?.updated ?? 0) + (counter(res.updated) ?? 0),
+    failed: (prev?.failed ?? 0) + (counter(res.failed) ?? 0),
+    totalCandidates: total ?? state.mappingCursor,
+    nextOffset: state.mappingCursor,
+  };
   return state;
 }
 

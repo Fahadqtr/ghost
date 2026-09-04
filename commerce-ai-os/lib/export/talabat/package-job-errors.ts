@@ -9,7 +9,22 @@ export type TalabatJobErrorCode =
   | "no_exportable_rows"
   | "filename_collision"
   | "integrity_failed"
-  | "generation_failed";
+  | "generation_failed"
+  /**
+   * STEP 76 — RECOVERABLE. Every image is packaged and the archive is durable
+   * in storage; only the cheap finalization tail (mapping sync / audit) did not
+   * finish. The job keeps its parts and resumes from that stage — it must NEVER
+   * restart image download, and its parts must NEVER be cleaned.
+   */
+  | "upload_incomplete";
+
+/** Failure codes that keep their durable parts and can resume in place. */
+export const TALABAT_RECOVERABLE_ERROR_CODES: readonly string[] = ["upload_incomplete"];
+
+/** True when a failed job may resume rather than being cleaned and restarted. */
+export function isRecoverableTalabatJobError(code: string | null | undefined): boolean {
+  return TALABAT_RECOVERABLE_ERROR_CODES.includes(String(code ?? ""));
+}
 
 export type TalabatJobUiErrorCode =
   | TalabatJobErrorCode
@@ -26,6 +41,8 @@ export const TALABAT_JOB_ERROR_AR: Record<TalabatJobUiErrorCode, string> = {
   filename_collision: "تعارض في أسماء ملفات الصور — راجع تكرار SKU قبل التوليد.",
   integrity_failed: "فشل فحص سلامة الحزمة — لم يُولَّد أي ملف.",
   generation_failed: "تعذّر توليد الحزمة — أعد المحاولة، وسيُستأنف التوليد من حيث توقف.",
+  // STEP 76 — the images are safe; only the finalization tail remains.
+  upload_incomplete: "فشل رفع الحزمة النهائية. الصور محفوظة ولن تحتاج إلى إعادة تجهيزها. يمكنك متابعة الرفع من حيث توقف.",
   jobs_unavailable: "خدمة توليد الحزم غير مهيأة بعد (ترحيل قاعدة البيانات غير مُطبَّق).",
   job_not_found: "مهمة التوليد غير موجودة أو انتهت صلاحيتها.",
   conflict: "توليد آخر قيد التنفيذ لهذه الحزمة — انتظر لحظة ثم أعد المحاولة.",
