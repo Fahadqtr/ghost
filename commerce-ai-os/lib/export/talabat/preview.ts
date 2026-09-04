@@ -16,6 +16,7 @@
 
 import { buildFlattenedName, normalizeExportedSku, normalizeBarcode } from "../../talabat/export.ts";
 import { resolveTalabatCategory } from "./native-template.ts";
+import { resolveTalabatBarcode } from "./barcode-alias.ts";
 import { resolveLifecycleState, type LifecycleState } from "../../lifecycle/state.ts";
 import { primaryImageName, variantImageName, extensionFromUrl } from "../image-naming.ts";
 import { summarizeValidation, type ExportItemStatus, type ExportReason, type ExportValidationItem, type ExportValidationSummary } from "../validation.ts";
@@ -87,7 +88,15 @@ export interface TalabatPreviewRow {
   grain: "SELLABLE_LISTING";
   isVariant: boolean;
   sku: string; // normalized; "" when missing
+  /** the CANONICAL barcode, unchanged — diagnostics only. */
   barcode: string | null;
+  /**
+   * STEP 68 — the EXACT value the Talabat barcode cell must carry. Genuine
+   * numeric barcodes pass through; the audited ^\d{13}-\d$ shape becomes its
+   * 14-digit export-local alias. null ⇒ unresolved and the row is BLOCKED.
+   * NOT a GTIN / GS1 / EAN-14 / manufacturer barcode.
+   */
+  talabatBarcode: string | null;
   title: string; // flattened English listing name
   /** flattened Arabic listing name (same flattening as `title`). */
   titleAr: string;
@@ -166,8 +175,11 @@ export function buildTalabatPreview(input: TalabatPreviewInput): TalabatPreviewR
   for (const s of staged) {
     const sku = normalizeExportedSku(s.variant ? s.variant.sku : s.product.sku);
     const barcode = normalizeBarcode(s.variant ? s.variant.barcode : s.product.barcode);
+    // STEP 68 — duplicate detection runs over the RESOLVED export value, since
+    // that is what Talabat actually receives.
+    const resolved = resolveTalabatBarcode(barcode);
     skuLower.push(sku.toLowerCase());
-    barcodes.push(barcode ?? "");
+    barcodes.push(resolved.ok ? resolved.barcode : (barcode ?? ""));
   }
   const skuCounts = tally(skuLower);
   const barcodeCounts = tally(barcodes);
@@ -236,6 +248,9 @@ function buildRow(
   const isVariant = v !== null;
   const sku = normalizeExportedSku(isVariant ? v!.sku : p.sku);
   const barcode = normalizeBarcode(isVariant ? v!.barcode : p.barcode);
+  // STEP 68 — export-local resolution. Canonical data is never mutated.
+  const bcRes = resolveTalabatBarcode(barcode);
+  const talabatBarcode = bcRes.ok ? bcRes.barcode : null;
   const title = buildFlattenedName(p.nameEn ?? p.nameAr, isVariant ? (v!.nameEn ?? v!.nameAr) : "");
   // Arabic listing name uses the SAME certified flattening (no second algorithm).
   const titleAr = buildFlattenedName(p.nameAr ?? p.nameEn, isVariant ? (v!.nameAr ?? v!.nameEn) : "");
@@ -280,8 +295,14 @@ function buildRow(
 
   // Barcode — missing blocks (certified); invalid format is a WARNING (certified does not block on format).
   if (barcode === null) block("MISSING_BARCODE");
-  else if ((barcodeCounts.get(barcode) ?? 0) > 1) block("DUPLICATE_BARCODE");
-  else if (!BARCODE_RE.test(barcode)) warn("INVALID_BARCODE", "صيغة الباركود غير قياسية.");
+  else if (!bcRes.ok) {
+    // STEP 68 — an unsupported shape (e.g. a two-digit suffix "…-10", whose
+    // hyphen removal would yield 15 digits) FAILS CLOSED rather than shipping
+    // an unaudited identifier.
+    block("INVALID_BARCODE", "صيغة باركود غير مدعومة لطلبات — تحتاج مراجعة.");
+  }
+  else if ((barcodeCounts.get(talabatBarcode!) ?? 0) > 1) block("DUPLICATE_BARCODE");
+  else if (!BARCODE_RE.test(talabatBarcode!)) warn("INVALID_BARCODE", "صيغة الباركود غير قياسية.");
 
   // Image (P0) — a row with no product image at all is blocked (certified missing_image).
   if (!hasImage) block("MISSING_IMAGE");
@@ -314,6 +335,7 @@ function buildRow(
     isVariant,
     sku,
     barcode,
+    talabatBarcode,
     title,
     titleAr,
     descriptionEn,

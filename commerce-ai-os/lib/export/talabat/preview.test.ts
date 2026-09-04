@@ -170,15 +170,17 @@ test("duplicate barcode is detected across the flattened dataset", () => {
 });
 
 // ── §5: barcode statuses ──────────────────────────────────────────────────────
-test("missing barcode blocks; non-standard barcode format is a WARNING only", () => {
+test("missing barcode blocks; an unsupported barcode shape now blocks too (STEP 68)", () => {
   const missing = buildTalabatPreview({ products: [product({ id: "m", sku: "M1", barcode: null })] });
   assert.ok(missing.rows[0]!.reasons.some((r) => r.code === "MISSING_BARCODE" && r.blocking));
   assert.equal(missing.rows[0]!.status, "BLOCKED");
 
+  // STEP 68 — a non-numeric barcode now FAILS CLOSED rather than shipping raw.
   const invalid = buildTalabatPreview({ products: [product({ id: "i", sku: "I1", barcode: "ABC" })] });
   const r = invalid.rows[0]!;
-  assert.ok(r.reasons.some((x) => x.code === "INVALID_BARCODE" && !x.blocking));
-  assert.equal(r.status, "WARNING", "invalid format alone does not block");
+  assert.ok(r.reasons.some((x) => x.code === "INVALID_BARCODE" && x.blocking));
+  assert.equal(r.status, "BLOCKED", "an unsupported barcode shape is never passed through");
+  assert.equal(r.talabatBarcode, null);
 });
 
 // ── §6/§7: no product image at all blocks the row ─────────────────────────────

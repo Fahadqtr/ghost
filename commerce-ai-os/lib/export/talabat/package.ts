@@ -228,7 +228,9 @@ export function sanitizeSpreadsheetText(value: string | null | undefined): strin
 export function toPackageRow(r: TalabatPreviewRow, imageFilename: string): TalabatPackageRow {
   return {
     sku: r.sku,
-    barcode: r.barcode ?? "",
+    // STEP 68 — the export-local resolved barcode, never the raw canonical
+    // value. An unresolved row is BLOCKED upstream and never reaches here.
+    barcode: r.talabatBarcode ?? "",
     priceQar: r.price,
     discount: "",
     nameEn: r.title,
