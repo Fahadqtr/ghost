@@ -189,6 +189,9 @@ async function TalabatDetail({ dest }: { dest: NonNullable<ReturnType<typeof exp
                 category: r.category,
                 hasImage: r.hasImage,
                 imageExportName: r.imageExportName,
+                // STEP 71 — display-only pass-through of the URL the preview
+                // already resolved. No extra read, no export-logic change.
+                primaryImageUrl: r.primaryImageUrl,
                 inheritedParentImage: r.inheritedParentImage,
                 mappingStatus: r.mapping.status,
                 status: r.status,
