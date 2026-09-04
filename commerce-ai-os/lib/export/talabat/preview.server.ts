@@ -6,10 +6,17 @@
 // nothing. Talabat mapping evidence is read from ECL (authoritative go-forward);
 // an absent listing ⇒ unmapped (no fabricated id). Delegates all projection +
 // validation to the pure buildTalabatPreview.
+//
+// STEP 60 — the product universe is the CURRENT MASTER (the active
+// snoonu:malikas membership), read through the shared loadMasterScope seam, and
+// it fails CLOSED. Approval, category, price, flattening, image and lifecycle
+// rules are untouched: this narrows WHICH products are considered, never how
+// any of them is evaluated.
 
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { loadMasterScope } from "@/lib/home/master-scope.server";
 import { isApprovedForTalabat } from "@/lib/talabat/export";
 import {
   buildTalabatPreview,
@@ -43,7 +50,7 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
   try {
     const client = createClient();
 
-    const [productRows, variantRows, imageRows, approvalRows, eclRows] = await Promise.all([
+    const [allProductRows, variantRows, imageRows, approvalRows, eclRows] = await Promise.all([
       readAll(client, "products",
         "id, sku, barcode, name_en, name_ar, price, discount_price, main_category, description_en, description_ar, image_url, image_filename, lifecycle_state, platform_status",
         "id"),
@@ -54,6 +61,26 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
       // Talabat identity evidence (read-only; storefront-scoped)
       readAll(client, "external_channel_listings", "exported_sku, external_product_id, mapping_status, storefront_key", "exported_sku").catch(() => []),
     ]);
+
+    // CURRENT MASTER scope. Talabat is aligned to the CURRENT operational
+    // catalogue, so its universe is the active snoonu:malikas membership — read
+    // through the SAME shared seam as /v2, /v2/catalog, Launch, Export,
+    // Inventory, Operations and the Rafeeq adapter, never a second definition of
+    // the master. Products outside it stay in the database untouched; they are
+    // simply not part of today's Talabat catalogue.
+    //
+    // Scoping BEFORE projection also confines the dataset-wide duplicate SKU /
+    // barcode checks (§10) to the master, so an out-of-master twin can no
+    // longer block an in-master row.
+    //
+    // Fails CLOSED: an unreadable membership returns null (the caller renders
+    // its load error) rather than falling back to every canonical product,
+    // which would ship the outside-master products to the marketplace.
+    const scope = await loadMasterScope();
+    if (!scope.ok) return null;
+    const productRows = allProductRows.filter(
+      (p) => typeof p.id === "string" && scope.ids.has(p.id),
+    );
 
     // variants by parent
     const variantsByProduct = new Map<string, TalabatPreviewVariant[]>();
