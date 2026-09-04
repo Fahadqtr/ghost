@@ -12,6 +12,7 @@
 import { isAvailable, normalizeAvailability } from "../availability/read.ts";
 import { resolveTalabatCategory } from "../export/talabat/native-template.ts";
 import { resolveTalabatBarcode } from "../export/talabat/barcode-alias.ts";
+import { resolveTalabatSellingPrice } from "../export/talabat/price-policy.ts";
 
 export type MappingStatus = "active" | "needs_review" | "archived";
 
@@ -154,11 +155,6 @@ function resolveImage(p: ExportProductInput): string {
   return fileNameOf(p.image_filename) || fileNameOf(p.image_url);
 }
 
-const positive = (x: unknown): number | null => {
-  const n = Number(x);
-  return Number.isFinite(n) && n > 0 ? n : null;
-};
-
 const priceStr = (n: number): string => (Number.isInteger(n) ? String(n) : String(n));
 
 /**
@@ -174,14 +170,21 @@ export function buildFlattenedName(parentName: unknown, optionName: unknown): st
   return `${p} — ${o}`;
 }
 
-/** No-variant effective price: channel override → valid discount → base price. */
+// STEP 72 — both helpers now defer to the SINGLE shared resolver, so the
+// mapping snapshot and the certified workbook can never disagree on a price.
+// discount_price is no longer part of the precedence (it is still read into
+// ExportProductInput for diagnostics, but never reaches the resolver).
+
+/** No-variant selling price: channel override → base price. */
 function priceForProduct(p: ExportProductInput): number {
-  return positive(p.channel_price) ?? positive(p.discount_price) ?? positive(p.price) ?? 0;
+  return resolveTalabatSellingPrice({ productPrice: p.price, channelPrice: p.channel_price ?? null }).price ?? 0;
 }
 
-/** Variant effective price: own price → parent override → parent discount → parent price. */
+/** Variant selling price: own price → parent channel override → parent base price. */
 function priceForVariant(p: ExportProductInput, v: ExportVariantInput): number {
-  return positive(v.price) ?? positive(p.channel_price) ?? positive(p.discount_price) ?? positive(p.price) ?? 0;
+  return resolveTalabatSellingPrice({
+    productPrice: p.price, channelPrice: p.channel_price ?? null, variantPrice: v.price,
+  }).price ?? 0;
 }
 
 interface Staged {

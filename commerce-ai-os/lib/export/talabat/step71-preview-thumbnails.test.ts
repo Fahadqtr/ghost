@@ -173,7 +173,7 @@ test("9: no export/package/barcode/category/price logic changed", () => {
   assert.equal(/primaryImageUrl/.test(pkg.split("planRowImages")[0] ?? ""), false);
   // price / barcode / category resolution in the preview is byte-unchanged
   const pv = code("lib/export/talabat/preview.ts");
-  assert.match(pv, /const price = isVariant \? positive\(v!\.price\) \?\? positive\(p\.discountPrice\) \?\? positive\(p\.price\)/);
+  assert.match(pv, /resolveTalabatSellingPrice\(\{/, "STEP 72 — the shared price resolver");
   assert.match(pv, /const talabatBarcode = bcRes\.ok \? bcRes\.barcode : null/);
   assert.match(pv, /const talabatCategory = catRes\.ok \? catRes\.category : null/);
 });

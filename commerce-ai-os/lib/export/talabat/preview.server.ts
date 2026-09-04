@@ -17,7 +17,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { loadMasterScope } from "@/lib/home/master-scope.server";
-import { isApprovedForTalabat } from "@/lib/talabat/export";
+import { isApprovedForTalabat, resolveExactChannelId } from "@/lib/talabat/export";
 import {
   buildTalabatPreview,
   type TalabatPreviewProduct,
@@ -31,16 +31,55 @@ const MAX = 20000;
 
 type Client = ReturnType<typeof createClient>;
 
-async function readAll(client: Client, table: string, columns: string, orderCol: string): Promise<Record<string, unknown>[]> {
+async function readAll(
+  client: Client, table: string, columns: string, orderCol: string,
+  /** optional equality narrowing (STEP 72: channel_products by channel_id). */
+  eq?: { column: string; value: string },
+): Promise<Record<string, unknown>[]> {
   const rows: Record<string, unknown>[] = [];
   for (let from = 0; from < MAX; from += PAGE) {
-    const { data, error } = await client.from(table).select(columns).order(orderCol, { ascending: true }).range(from, from + PAGE - 1);
+    let q = client.from(table).select(columns).order(orderCol, { ascending: true }).range(from, from + PAGE - 1);
+    if (eq) q = q.eq(eq.column, eq.value) as typeof q;
+    const { data, error } = await q;
     if (error) throw error;
     if (!Array.isArray(data) || data.length === 0) break;
     rows.push(...(data as unknown as Record<string, unknown>[]));
     if (data.length < PAGE) break;
   }
   return rows;
+}
+
+/**
+ * STEP 72 — the Talabat channel price links, resolved through the SAME exact
+ * channel seam the mapping sync uses: every channel row is read (there are a
+ * handful) and `resolveExactChannelId` picks the one named exactly "talabat",
+ * so a partial "%talabat%" sibling can never leak in. Reads go through readAll,
+ * keeping the adapter's single-query-site batching discipline (INT.2B guard).
+ *
+ * Degrades OPEN, not closed: a missing or ambiguous channel yields an empty map
+ * and the policy falls back to products.price. It never fails the preview —
+ * unlike master scope, an absent channel price is a normal state, not a
+ * correctness risk.
+ */
+async function readTalabatChannelPrices(client: Client): Promise<Map<string, number>> {
+  const prices = new Map<string, number>();
+  try {
+    const chans = await readAll(client, "channels", "id, name", "id");
+    const res = resolveExactChannelId(chans as unknown as { id: string; name: string }[], "talabat");
+    if (res.status !== "ok") return prices;
+    const links = await readAll(
+      client, "channel_products", "product_id, channel_price", "product_id",
+      { column: "channel_id", value: res.id },
+    );
+    for (const l of links) {
+      const pid = typeof l.product_id === "string" ? l.product_id : "";
+      const cp = typeof l.channel_price === "number" ? l.channel_price : Number(l.channel_price);
+      if (pid && Number.isFinite(cp)) prices.set(pid, cp);
+    }
+  } catch {
+    return new Map();
+  }
+  return prices;
 }
 
 const s = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
@@ -78,6 +117,10 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
     // which would ship the outside-master products to the marketplace.
     const scope = await loadMasterScope();
     if (!scope.ok) return null;
+
+    // STEP 72 — product-grain Talabat channel price (the policy's first choice
+    // for a simple row, and the fallback for a variant with no price of its own).
+    const channelPrices = await readTalabatChannelPrices(client);
     const productRows = allProductRows.filter(
       (p) => typeof p.id === "string" && scope.ids.has(p.id),
     );
@@ -158,7 +201,9 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
         nameEn: s(p.name_en),
         nameAr: s(p.name_ar),
         price: n(p.price),
+        // diagnostics only — STEP 72 excludes it from selling-price precedence
         discountPrice: n(p.discount_price),
+        channelPrice: channelPrices.get(id) ?? null,
         category: s(p.main_category),
         descriptionEn: s(p.description_en),
         descriptionAr: s(p.description_ar),
