@@ -10,7 +10,7 @@
 
 import { MALIKAS_SIGNATURE_IDENTITY } from "../../mail/malikas-signature.ts";
 
-export type TalabatEmailKind = "existing_updates" | "new_products";
+export type TalabatEmailKind = "existing_updates" | "new_products" | "barcode_corrections";
 
 export interface TalabatEmailDraft {
   kind: TalabatEmailKind;
@@ -18,6 +18,14 @@ export interface TalabatEmailDraft {
   bodyText: string;
   /** filenames the owner is expected to attach — never fabricated content. */
   attachments: string[];
+  /**
+   * STEP 79B — false means this flow is REVIEW-ONLY and must never reach a
+   * transport, whatever the UI or a caller asks for. Barcode corrections are
+   * gated this way until barcode correctness is resolved: 126 of the 270
+   * differences would replace a valid manufacturer barcode with a synthetic
+   * one, so the draft exists to be read, not sent.
+   */
+  sendable: boolean;
 }
 
 const SIGNOFF = [
@@ -33,7 +41,15 @@ const SIGNOFF = [
 export const TALABAT_EMAIL_SUBJECTS: Record<TalabatEmailKind, string> = {
   existing_updates: "Malika's Universe — Talabat Product Data Update",
   new_products: "Malika's Universe — New Products for Talabat",
+  barcode_corrections: "Malika's Universe — Talabat Barcode Corrections (REVIEW ONLY — DO NOT SEND)",
 };
+
+/** Flows the owner has authorised for sending. Barcode corrections are not. */
+export const TALABAT_SENDABLE_EMAIL_KINDS: readonly TalabatEmailKind[] = ["existing_updates", "new_products"];
+
+export function isTalabatEmailSendable(kind: TalabatEmailKind): boolean {
+  return TALABAT_SENDABLE_EMAIL_KINDS.includes(kind);
+}
 
 /** EMAIL A — updates to products Talabat already lists. */
 export function buildTalabatUpdateEmail(updateWorkbookName: string): TalabatEmailDraft {
@@ -57,6 +73,7 @@ export function buildTalabatUpdateEmail(updateWorkbookName: string): TalabatEmai
       SIGNOFF,
     ].join("\n"),
     attachments: [updateWorkbookName],
+    sendable: true,
   };
 }
 
@@ -82,6 +99,7 @@ export function buildTalabatNewProductsEmail(newWorkbookName: string, imagesZipN
       SIGNOFF,
     ].join("\n"),
     attachments: [newWorkbookName, imagesZipName],
+    sendable: true,
   };
 }
 
@@ -98,5 +116,34 @@ export function buildTalabatEmailPair(input: {
   return {
     updates: buildTalabatUpdateEmail(input.updateWorkbookName),
     newProducts: buildTalabatNewProductsEmail(input.newWorkbookName, input.imagesZipName),
+  };
+}
+
+/**
+ * EMAIL C — barcode corrections. REVIEW ONLY.
+ *
+ * Built so the owner can read exactly what would be proposed, and marked
+ * `sendable: false` so no caller can dispatch it. It is not part of
+ * buildTalabatEmailPair for the same reason: the pair is the sendable set.
+ */
+export function buildTalabatBarcodeCorrectionEmail(barcodeReviewWorkbookName: string): TalabatEmailDraft {
+  return {
+    kind: "barcode_corrections",
+    subject: TALABAT_EMAIL_SUBJECTS.barcode_corrections,
+    bodyText: [
+      "REVIEW ONLY — this draft is not approved for sending.",
+      "",
+      "Dear Talabat Team,",
+      "",
+      "Please find attached a list of products where our records and the current",
+      "Talabat catalog hold different barcodes.",
+      "",
+      "We are verifying these internally before requesting any change. No action is",
+      "required from your side yet.",
+      "",
+      SIGNOFF,
+    ].join("\n"),
+    attachments: [barcodeReviewWorkbookName],
+    sendable: false,
   };
 }

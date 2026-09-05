@@ -18,7 +18,11 @@ import {
 } from "./baseline-delta.ts";
 
 /** `talabat-<kind>-YYYY-MM-DD.xlsx` from an ISO instant. */
-export function deltaWorkbookName(kind: "products-needing-update" | "products-update" | "new-products", iso: string): string {
+export type DeltaWorkbookKind =
+  | "products-needing-update" | "products-update" | "new-products"
+  | "safe-product-updates" | "barcode-review";
+
+export function deltaWorkbookName(kind: DeltaWorkbookKind, iso: string): string {
   const d = new Date(iso);
   const day = Number.isNaN(d.getTime()) ? "unknown" : d.toISOString().slice(0, 10);
   return `talabat-${kind}-${day}.xlsx`;
@@ -196,4 +200,126 @@ export function newProductImageScope(result: TalabatDeltaResult): NewProductImag
     newDistinctProducts: new Set(rows.map((r) => r.our.internalProductId)).size,
     rowsMissingImage: rows.filter((r) => !r.our.primaryImageUrl).length,
   };
+}
+
+// ── STEP 79B: safe updates and barcode review, deliberately separated ────────
+
+/**
+ * The fields safe to submit to Talabat today.
+ *
+ * BARCODE is excluded by owner decision: of the 270 differences, 126 are rows
+ * where Talabat's value passes the EAN check digit and ours does not, so
+ * "correcting" them would replace a real manufacturer barcode with a synthetic
+ * one. CATEGORY is excluded because our certified string ("Face Care") is not
+ * the string Talabat stores ("All Face Care") — emitting ours could
+ * recategorise the whole menu. ACTIVE is excluded because it is Talabat's own
+ * listing flag and we hold no authoritative equivalent.
+ */
+export const SAFE_UPDATE_FIELDS = ["NAME_DIFF", "PRICE_DIFF"] as const;
+export type SafeUpdateField = (typeof SAFE_UPDATE_FIELDS)[number];
+
+const isSafe = (f: string): f is SafeUpdateField => (SAFE_UPDATE_FIELDS as readonly string[]).includes(f);
+
+/** Existing Talabat products with at least one SAFE difference. */
+export function safeUpdateRows(result: TalabatDeltaResult): TalabatDeltaRow[] {
+  return updateDeltaRows(result).filter((r) => r.diffs.some((d) => isSafe(d.field)));
+}
+
+/**
+ * The Talabat-schema SAFE update workbook: ONE row per product carrying both
+ * desired values when a product changed name AND price.
+ *
+ * Every column we are not submitting is emitted EMPTY — barcode included. A
+ * blank cell in a SKU-keyed update sheet means "leave as is"; writing our
+ * barcode here would submit exactly the change the owner withheld, which is the
+ * single thing this workbook exists to prevent.
+ */
+export function buildTalabatSafeUpdateAoa(result: TalabatDeltaResult): Cell[][] {
+  const out: Cell[][] = [TALABAT_BASELINE_COLUMNS.slice() as unknown as Cell[]];
+  for (const r of safeUpdateRows(result)) {
+    const price = r.our.price;
+    const changed = new Set(r.diffs.filter((d) => isSafe(d.field)).map((d) => d.field));
+    out.push([
+      r.our.sku,
+      changed.has("NAME_DIFF") ? r.our.title : "",
+      changed.has("PRICE_DIFF") && typeof price === "number" && Number.isFinite(price) ? price : "",
+      "",              // active — never submitted
+      "", "", "", "", "",
+      "",              // barcode 1 — DELIBERATELY BLANK (owner decision)
+      "", "",
+      "",              // category 1 — our string is not Talabat's menu string
+    ]);
+  }
+  return out;
+}
+
+export type BarcodeReviewClass =
+  | "TALABAT_VALID_OUR_INVALID"
+  | "BOTH_VALID_DIFFERENT"
+  | "NEITHER_VALID"
+  | "OUR_VALID_TALABAT_INVALID";
+
+/** What the owner should do with a barcode difference. Never an auto-action. */
+export const BARCODE_RECOMMENDED_ACTION: Record<BarcodeReviewClass, string> = {
+  TALABAT_VALID_OUR_INVALID: "VERIFY OUR CANONICAL BARCODE — do NOT send a Talabat correction automatically",
+  BOTH_VALID_DIFFERENT: "MANUAL PRODUCT/BARCODE VERIFICATION",
+  NEITHER_VALID: "MANUAL VERIFICATION / SYNTHETIC BARCODE REVIEW",
+  OUR_VALID_TALABAT_INVALID: "CANDIDATE_TALABAT_CORRECTION — still requires owner review before send",
+};
+
+/** Pad a compared barcode back to a check-digit-testable width. */
+function padded(v: string | null): string | null {
+  const n = normalizeBarcodeForCompare(v);
+  return n === null ? null : n.length === 12 ? `0${n}` : n;
+}
+
+export function classifyBarcodeDifference(ourBarcode: string, talabatBarcode: string | null): BarcodeReviewClass {
+  const ours = hasValidEanCheckDigit(ourBarcode);
+  const t = padded(talabatBarcode);
+  const theirs = t === null ? false : hasValidEanCheckDigit(t);
+  if (theirs && !ours) return "TALABAT_VALID_OUR_INVALID";
+  if (theirs && ours) return "BOTH_VALID_DIFFERENT";
+  if (!theirs && ours) return "OUR_VALID_TALABAT_INVALID";
+  return "NEITHER_VALID";
+}
+
+export const BARCODE_REVIEW_COLUMNS = [
+  "SKU", "PRODUCT_NAME", "TALABAT_BARCODE", "OUR_BARCODE",
+  "TALABAT_EAN_VALID", "OUR_EAN_VALID", "BARCODE_EVIDENCE", "RECOMMENDED_ACTION",
+] as const;
+
+/** Every barcode difference, classified — a REVIEW artifact, never a submission. */
+export function buildBarcodeReviewAoa(result: TalabatDeltaResult): Cell[][] {
+  const out: Cell[][] = [BARCODE_REVIEW_COLUMNS.slice() as unknown as Cell[]];
+  for (const r of updateDeltaRows(result)) {
+    const d = r.diffs.find((x) => x.field === "BARCODE_DIFF");
+    if (!d) continue;
+    const ourBarcode = r.our.talabatBarcode ?? "";
+    const theirRaw = r.baseline?.barcode1 ?? null;
+    const t = padded(theirRaw);
+    const cls = classifyBarcodeDifference(ourBarcode, theirRaw);
+    out.push([
+      r.our.sku,
+      r.our.title,
+      theirRaw ?? "",
+      ourBarcode,
+      String(t === null ? false : hasValidEanCheckDigit(t)),
+      String(hasValidEanCheckDigit(ourBarcode)),
+      cls,
+      BARCODE_RECOMMENDED_ACTION[cls],
+    ]);
+  }
+  return out;
+}
+
+/** Counts per class, for the owner report. */
+export function barcodeReviewCounts(result: TalabatDeltaResult): Record<BarcodeReviewClass, number> {
+  const counts: Record<BarcodeReviewClass, number> = {
+    TALABAT_VALID_OUR_INVALID: 0, BOTH_VALID_DIFFERENT: 0, NEITHER_VALID: 0, OUR_VALID_TALABAT_INVALID: 0,
+  };
+  for (const r of updateDeltaRows(result)) {
+    if (!r.diffs.some((x) => x.field === "BARCODE_DIFF")) continue;
+    counts[classifyBarcodeDifference(r.our.talabatBarcode ?? "", r.baseline?.barcode1 ?? null)]++;
+  }
+  return counts;
 }
