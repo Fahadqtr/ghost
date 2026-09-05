@@ -77,8 +77,19 @@ export function buildTalabatUpdateEmail(updateWorkbookName: string): TalabatEmai
   };
 }
 
-/** EMAIL B — products Talabat does not list yet, with their images. */
-export function buildTalabatNewProductsEmail(newWorkbookName: string, imagesZipName: string): TalabatEmailDraft {
+/**
+ * EMAIL B — products Talabat does not list yet, with their images.
+ *
+ * STEP 80: `sendable` is now a GATE, not a constant. Creating a product in a
+ * live menu is not self-correcting the way a price update is, so the draft is
+ * only dispatchable once every readiness condition holds — see
+ * evaluateNewProductsReadiness. Callers that pass nothing get the safe answer.
+ */
+export function buildTalabatNewProductsEmail(
+  newWorkbookName: string,
+  imagesZipName: string,
+  readiness: { sendable: boolean } = { sendable: false },
+): TalabatEmailDraft {
   return {
     kind: "new_products",
     subject: TALABAT_EMAIL_SUBJECTS.new_products,
@@ -99,7 +110,7 @@ export function buildTalabatNewProductsEmail(newWorkbookName: string, imagesZipN
       SIGNOFF,
     ].join("\n"),
     attachments: [newWorkbookName, imagesZipName],
-    sendable: true,
+    sendable: readiness.sendable,
   };
 }
 
@@ -112,10 +123,13 @@ export function buildTalabatEmailPair(input: {
   updateWorkbookName: string;
   newWorkbookName: string;
   imagesZipName: string;
+  /** Email B's gate — omitted means NOT sendable (see the builder above). */
+  newProductsReadiness?: { sendable: boolean };
 }): { updates: TalabatEmailDraft; newProducts: TalabatEmailDraft } {
   return {
     updates: buildTalabatUpdateEmail(input.updateWorkbookName),
-    newProducts: buildTalabatNewProductsEmail(input.newWorkbookName, input.imagesZipName),
+    newProducts: buildTalabatNewProductsEmail(
+      input.newWorkbookName, input.imagesZipName, input.newProductsReadiness ?? { sendable: false }),
   };
 }
 

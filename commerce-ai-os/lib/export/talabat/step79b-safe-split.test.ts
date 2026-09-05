@@ -219,14 +219,20 @@ test("13: the barcode email is REVIEW-ONLY and is not in the sendable set", () =
   assert.match(draft.bodyText, /No action is\nrequired from your side yet/);
 });
 
-test("14: the two authorised flows remain sendable and separate", () => {
-  const { updates, newProducts } = buildTalabatEmailPair({
+test("14: the two authorised flows remain separate; B is gated, A is not", () => {
+  const args = {
     updateWorkbookName: "talabat-safe-product-updates-2026-09-05.xlsx",
     newWorkbookName: "talabat-new-products-2026-09-05.xlsx",
     imagesZipName: "talabat-new-products-images-2026-09-05.zip",
-  });
-  assert.equal(updates.sendable, true);
-  assert.equal(newProducts.sendable, true);
+  };
+  const { updates, newProducts } = buildTalabatEmailPair(args);
+  assert.equal(updates.sendable, true, "Email A is unconditionally sendable");
+  // STEP 80 turned Email B's `sendable` into a readiness GATE rather than a
+  // constant: creating products in a live menu is not self-correcting, so the
+  // default is refuse. Both kinds remain AUTHORISED flows (unlike Email C).
+  assert.equal(newProducts.sendable, false, "Email B defaults to blocked");
+  assert.equal(buildTalabatEmailPair({ ...args, newProductsReadiness: { sendable: true } }).newProducts.sendable, true,
+    "and becomes sendable only when readiness says so");
   assert.equal(isTalabatEmailSendable("existing_updates"), true);
   assert.equal(isTalabatEmailSendable("new_products"), true);
   // the pair never carries the barcode review
