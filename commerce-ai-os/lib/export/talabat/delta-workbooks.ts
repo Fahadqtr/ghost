@@ -323,3 +323,17 @@ export function barcodeReviewCounts(result: TalabatDeltaResult): Record<BarcodeR
   }
   return counts;
 }
+
+/**
+ * The certified preview rows for the NEW products only.
+ *
+ * This is the whole of the "new-product image package": the rows are handed
+ * unchanged to createTalabatPackageJob, so image resolution, filename naming,
+ * gallery rules, dedupe, path safety, the integrity check and ZIP assembly all
+ * remain the single certified implementation. Narrowing the INPUT is the only
+ * difference between the full package and the delta package — there is no
+ * second image pipeline, and this function is why one is not needed.
+ */
+export function newProductPreviewRows(result: TalabatDeltaResult): TalabatDeltaRow["our"][] {
+  return newDeltaRows(result).map((r) => r.our);
+}
