@@ -78,6 +78,7 @@ test("links are grouped by section, in declaration order", () => {
   assert.deepEqual(sections[3]!.links.map((l) => l.href), [
     "/v2/operations",
     "/v2/operations/channels",
+    "/v2/operations/channels/talabat-email",
     "/v2/operations/ai",
     "/v2/operations/health",
     "/v2/export",

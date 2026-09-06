@@ -155,6 +155,9 @@ test("NAV.1/INT.2A/NAV.MEDIA «العمليات» group order: center, channels,
     [
       "/v2/operations",
       "/v2/operations/channels",
+      // STEP 87 — the Talabat email workflow is a channels operation and sits
+      // directly under the channels center it belongs to.
+      "/v2/operations/channels/talabat-email",
       "/v2/operations/ai",
       "/v2/operations/health",
       "/v2/export",
