@@ -20,7 +20,16 @@ import { readChannelRecipients, readSenderStatus, loadTalabatEmailBundle } from 
 import { resolveSendRecipients } from "@/lib/mail/recipient-settings";
 import { buildTalabatUpdateEmail, buildTalabatNewProductsEmail } from "@/lib/export/talabat/email-templates";
 import { isTalabatSendableKind, type TalabatSendKind } from "@/lib/export/talabat/email-send";
-import { verifyArtifactScope, runFingerprint, artifactPath } from "@/lib/export/talabat/email-artifacts";
+import {
+  verifyArtifactScope, runFingerprint, artifactPath, type GenerationError,
+} from "@/lib/export/talabat/email-artifacts";
+import {
+  DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, parseDeltaImageMeta, verifyDeltaImagePackage,
+  deltaImageSelectionKeys, deltaImagePlannedCount, DELTA_IMAGE_BLOCK_AR,
+} from "@/lib/export/talabat/delta-image-package";
+import {
+  startTalabatDeltaImageJob, type TalabatJobStatusDTO,
+} from "@/lib/talabat/package-job.server";
 import {
   validateBaselineWorkbook, baselineObjectPath, parseActiveBaselineMeta,
   ACTIVE_BASELINE_POINTER, BASELINE_SHEET_NAME, type ActiveBaselineMeta,
@@ -521,11 +530,16 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
     };
   }
 
-  const zip = await readCompletedDeltaImageZip();
-  if (!zip) return fail("image_package_missing", 409);
+  // The staged package must belong to THIS run and THIS baseline. 632
+  // photographs look equally plausible whichever comparison produced them, so
+  // without the binding check a package built last week would be linked from
+  // today's email and nothing would look wrong.
+  const zip = await readCompletedDeltaImageZip(delta.fingerprint, baseline?.fingerprint ?? null);
+  if (!zip.ok) return fail(zip.error, 409);
   const out = await generateNewProductsArtifact({
     result: delta.result, nowIso,
-    imageZipBytes: zip.bytes, imageCount: zip.imageCount, extensionAudit: zip.extensionAudit,
+    imageZipBytes: zip.value.bytes, imageCount: zip.value.imageCount,
+    extensionAudit: zip.value.extensionAudit,
     baselineFingerprint: baseline?.fingerprint,
   });
   if (!out.ok) return fail("artifact_write_failed", 502);
@@ -547,30 +561,56 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
  * Read from storage, never rebuilt here. Absent ⇒ the caller reports
  * image_package_missing rather than shipping a workbook with no images.
  */
-export const DELTA_IMAGE_ZIP_OBJECT = "email-artifacts/new_products/source/images.zip";
-export const DELTA_IMAGE_META_OBJECT = "email-artifacts/new_products/source/images.json";
+/**
+ * @deprecated STEP 90 moved these to lib/export/talabat/delta-image-package.ts,
+ * where the sidecar contract that binds the package to a run also lives. Kept
+ * as re-exports so nothing that imported them from here breaks.
+ */
+export const DELTA_IMAGE_ZIP_OBJECT = DELTA_IMAGE_ZIP_PATH;
+export const DELTA_IMAGE_META_OBJECT = DELTA_IMAGE_META_PATH;
 
-async function readCompletedDeltaImageZip(): Promise<
-  { bytes: Uint8Array; imageCount: number; extensionAudit: { mismatches: number; renamed: number; collisions: number } } | null
-> {
+type DeltaZipRead =
+  | { ok: true; value: { bytes: Uint8Array; imageCount: number; extensionAudit: { mismatches: number; renamed: number; collisions: number } } }
+  | { ok: false; error: GenerationError };
+
+/**
+ * The staged new-product image package, verified against the current run.
+ *
+ * Read, never rebuilt: building it is the certified job's work (STEP 90's
+ * staging flow). Absent, stale or short ⇒ a NAMED refusal, so the owner is told
+ * which of the three it is instead of one message for all of them.
+ */
+async function readCompletedDeltaImageZip(
+  currentRunFingerprint: string,
+  currentBaselineFingerprint: string | null,
+): Promise<DeltaZipRead> {
   try {
     const admin = createAdminClient();
     const [zip, meta] = await Promise.all([
-      admin.storage.from(BUCKET).download(DELTA_IMAGE_ZIP_OBJECT),
-      admin.storage.from(BUCKET).download(DELTA_IMAGE_META_OBJECT),
+      admin.storage.from(BUCKET).download(DELTA_IMAGE_ZIP_PATH),
+      admin.storage.from(BUCKET).download(DELTA_IMAGE_META_PATH),
     ]);
-    if (zip.error || !zip.data || meta.error || !meta.data) return null;
+    if (zip.error || !zip.data || meta.error || !meta.data) return { ok: false, error: "image_package_missing" };
     const bytes = new Uint8Array(await zip.data.arrayBuffer());
-    const parsed = JSON.parse(await meta.data.text()) as Record<string, unknown>;
-    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-    const imageCount = num(parsed.imageCount);
-    const a = parsed.extensionAudit as Record<string, unknown> | undefined;
-    if (bytes.length === 0 || imageCount === null || !a) return null;
-    const mismatches = num(a.mismatches); const renamed = num(a.renamed); const collisions = num(a.collisions);
-    if (mismatches === null || renamed === null || collisions === null) return null;
-    return { bytes, imageCount, extensionAudit: { mismatches, renamed, collisions } };
+    const parsed = parseDeltaImageMeta(JSON.parse(await meta.data.text()));
+    if (bytes.length === 0 || parsed === null) return { ok: false, error: "image_package_missing" };
+
+    const blocks = verifyDeltaImagePackage(parsed, currentRunFingerprint, currentBaselineFingerprint);
+    if (blocks.includes("image_package_missing")) return { ok: false, error: "image_package_missing" };
+    if (blocks.includes("image_package_stale_run") || blocks.includes("image_package_stale_baseline")) {
+      return { ok: false, error: "image_package_stale" };
+    }
+    if (blocks.length > 0) return { ok: false, error: "image_package_incomplete" };
+    // The stored bytes must be the bytes the sidecar measured, or one of the
+    // two was written by a run the other never saw.
+    if (bytes.length !== parsed.zipBytes) return { ok: false, error: "image_package_stale" };
+
+    return {
+      ok: true,
+      value: { bytes, imageCount: parsed.imageCount, extensionAudit: parsed.extensionAudit },
+    };
   } catch {
-    return null;
+    return { ok: false, error: "image_package_missing" };
   }
 }
 
@@ -733,4 +773,70 @@ export async function signImagesLink(zipFilename: string): Promise<SignedImagesL
   } catch {
     return null;
   }
+}
+
+// ── STEP 90: preparing the Email B image package ─────────────────────────────
+
+export interface DeltaImagePackageStatusDTO {
+  /** a package is staged AND belongs to the current run/baseline. */
+  ready: boolean;
+  staged: boolean;
+  imageCount: number | null;
+  expectedImages: number;
+  zipBytes: number | null;
+  stagedAtIso: string | null;
+  /** owner-facing reasons the staged package cannot be used, if any. */
+  blockers: string[];
+}
+
+/**
+ * What the V2 screen shows before Email B can be generated.
+ *
+ * `expectedImages` is computed from the CURRENT delta every time — it is the
+ * plan the job would build, not a number recorded anywhere.
+ */
+export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<DeltaImagePackageStatusDTO>> {
+  const delta = await loadCurrentTalabatDelta();
+  if (!delta.ok) return fail(delta.error, 409);
+  const expectedImages = deltaImagePlannedCount(delta.result);
+
+  let meta = null;
+  try {
+    const admin = createAdminClient();
+    const got = await admin.storage.from(BUCKET).download(DELTA_IMAGE_META_PATH);
+    if (!got.error && got.data) meta = parseDeltaImageMeta(JSON.parse(await got.data.text()));
+  } catch {
+    meta = null;
+  }
+  const blocks = verifyDeltaImagePackage(meta, delta.fingerprint, delta.baseline?.fingerprint ?? null);
+  return {
+    ok: true,
+    value: {
+      ready: meta !== null && blocks.length === 0,
+      staged: meta !== null,
+      imageCount: meta?.imageCount ?? null,
+      expectedImages,
+      zipBytes: meta?.zipBytes ?? null,
+      stagedAtIso: meta?.stagedAtIso ?? null,
+      blockers: blocks.map((b) => DELTA_IMAGE_BLOCK_AR[b]),
+    },
+  };
+}
+
+/**
+ * Start the image job for the current Email B delta.
+ *
+ * The row selection is the workbook's own allowed set, so the package cannot
+ * cover a row the email does not, and cannot miss one it does.
+ */
+export async function startDeltaImagePackage(actor: string | null): Promise<WorkflowApiResult<TalabatJobStatusDTO>> {
+  const delta = await loadCurrentTalabatDelta();
+  if (!delta.ok) return fail(delta.error, 409);
+  const started = await startTalabatDeltaImageJob({
+    selectedKeys: deltaImageSelectionKeys(delta.result),
+    runFingerprint: delta.fingerprint,
+    baselineFingerprint: delta.baseline?.fingerprint ?? null,
+    actor,
+  });
+  return started.ok ? { ok: true, value: started.value } : fail(started.error, started.status);
 }

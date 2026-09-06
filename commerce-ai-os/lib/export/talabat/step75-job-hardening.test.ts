@@ -217,8 +217,14 @@ test("8: failed-job cleanup never runs against a completed job", async () => {
   // the server only cleans on the failed transition and on the stale reap —
   // there is no cleanup call on the completed path
   const s = code(SERVER);
-  assert.equal((s.match(/cleanupJobArtifacts\(/g) ?? []).length, 3,
-    "declaration + failed-step + stale-reap only");
+  // STEP 90 added a second step driver (the Email B image job), so there is now
+  // one more call site. The invariant is not the COUNT — it is that every call
+  // other than the declaration is guarded by an unrecoverable FAILURE.
+  const calls = (s.match(/cleanupJobArtifacts\(/g) ?? []).length;
+  assert.equal(calls, 4, "declaration + two failed-step guards + stale-reap");
+  const guarded = (s.match(/if \(next\.status === "failed" && !isRecoverableTalabatJobError\(next\.error\?\.code\)\) \{\s*\n\s*await cleanupJobArtifacts\(jobId\);/g) ?? []).length;
+  const reap = (s.match(/STALE_ERROR_CODE[\s\S]{0,600}?cleanupJobArtifacts\(/g) ?? []).length;
+  assert.equal(guarded + reap + 1, calls, "every call site is a failure path");
   assert.equal(/next\.status === "completed"[\s\S]{0,80}cleanupJobArtifacts/.test(s), false);
 });
 
