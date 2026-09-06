@@ -15,6 +15,8 @@ type Preview = {
   to: string[];
   cc: string[];
   subject: string;
+  /** the exact HTML the transport will send. null ⇒ plain text only. */
+  bodyHtml: string | null;
   bodyText: string;
   attachments: { filename: string; bytes: number }[];
   size: { rawAttachmentBytes: number; estimatedMessageBytes: number; limitBytes: number; withinLimit: boolean };
@@ -28,9 +30,12 @@ type Preview = {
   sendable: boolean;
 };
 
+// The counts are NOT written here. Every figure the owner reads comes from the
+// generated artifact's own scope, shown in the preview below — a number typed
+// into the UI is a number that goes stale the first time the delta changes.
 const KINDS = [
-  { kind: "existing_updates", title: "تحديث المنتجات الحالية", note: "١٤٧ منتجاً — الاسم والسعر فقط" },
-  { kind: "new_products", title: "إضافة المنتجات الجديدة", note: "٤٠٨ منتجات · ٥١٧ صفاً · ٦٣٢ صورة" },
+  { kind: "existing_updates", title: "تحديث المنتجات الحالية", note: "الاسم والسعر فقط — لا باركود" },
+  { kind: "new_products", title: "إضافة المنتجات الجديدة", note: "منتجات غير مدرجة على طلبات + الصور برابط آمن" },
 ] as const;
 
 const mb = (b: number) => (b / (1024 * 1024)).toFixed(1);
@@ -160,7 +165,7 @@ function EmailCard({
           <p><span className="text-slate-500">إلى:</span> <span className="font-mono">{preview.to.join("، ") || "—"}</span></p>
           {preview.cc.length > 0 ? <p><span className="text-slate-500">نسخة:</span> <span className="font-mono">{preview.cc.join("، ")}</span></p> : null}
           <p><span className="text-slate-500">الموضوع:</span> {preview.subject}</p>
-          <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-2 text-xs">{preview.bodyText}</pre>
+          <BodyPreview bodyHtml={preview.bodyHtml} bodyText={preview.bodyText} />
           <ul className="text-xs text-slate-600">
             {preview.attachments.map((a) => <li key={a.filename}><span className="font-mono">{a.filename}</span> — {mb(a.bytes)} م.ب</li>)}
           </ul>
@@ -208,5 +213,39 @@ function EmailCard({
         </div>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * The message body, exactly as it will arrive.
+ *
+ * The HTML is rendered inside a sandboxed iframe, not injected into the page:
+ * an iframe is the only way to show the email in its OWN styles instead of the
+ * app's, and sandboxing means the preview can never run anything. The plain-text
+ * alternative is one click away because that is what some recipients will read.
+ */
+function BodyPreview({ bodyHtml, bodyText }: { bodyHtml: string | null; bodyText: string }) {
+  const [tab, setTab] = useState<"html" | "text">(bodyHtml === null ? "text" : "html");
+  const showHtml = tab === "html" && bodyHtml !== null;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 text-xs">
+        <button type="button" onClick={() => setTab("html")} disabled={bodyHtml === null}
+          className={`rounded px-2 py-1 ${showHtml ? "bg-slate-800 text-white" : "border border-slate-300"} disabled:opacity-40`}>
+          الرسالة كما ستصل
+        </button>
+        <button type="button" onClick={() => setTab("text")}
+          className={`rounded px-2 py-1 ${showHtml ? "border border-slate-300" : "bg-slate-800 text-white"}`}>
+          النص العادي
+        </button>
+        {bodyHtml === null ? <span className="text-amber-700">التوقيع المعتمد غير مثبّت — ستُرسل كنص عادي.</span> : null}
+      </div>
+      {showHtml ? (
+        <iframe title="معاينة البريد" sandbox="" srcDoc={bodyHtml as string} dir="ltr"
+          className="h-96 w-full rounded border border-slate-200 bg-white" />
+      ) : (
+        <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-2 text-xs">{bodyText}</pre>
+      )}
+    </div>
   );
 }

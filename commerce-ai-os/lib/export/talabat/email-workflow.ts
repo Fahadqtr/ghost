@@ -23,6 +23,7 @@
 //      worse outcome than no email.
 
 import { estimateEncodedBytes } from "../../mail/config.ts";
+import { mailNoticeBanner, mailShellPrepend } from "../../mail/mail-shell.ts";
 import type { TalabatSendKind } from "./email-send.ts";
 
 // ── test presentation ────────────────────────────────────────────────────────
@@ -45,10 +46,38 @@ export function testBody(bodyText: string): string {
   return bodyText.startsWith(TEST_BODY_NOTICE) ? bodyText : `${TEST_BODY_NOTICE}\n\n${bodyText}`;
 }
 
-export function presentForMode(mode: SendMode, subject: string, bodyText: string): { subject: string; bodyText: string } {
+/**
+ * STEP 89 — the HTML counterpart of TEST_BODY_NOTICE.
+ *
+ * Same warning, same position, but rendered as the house notice banner instead
+ * of a bare line of text: the test has to LOOK like the real email so the owner
+ * can judge the real email by it, while still being unmistakably a test.
+ */
+export const TEST_BANNER_TITLE = "INTERNAL TEST";
+export const TEST_BANNER_DETAIL = "This email has not been sent to Talabat.";
+
+export function testBodyHtml(bodyHtml: string): string {
+  return bodyHtml.includes(TEST_BANNER_DETAIL)
+    ? bodyHtml
+    : mailShellPrepend(bodyHtml, mailNoticeBanner(TEST_BANNER_TITLE, TEST_BANNER_DETAIL));
+}
+
+/**
+ * Present ONE draft for a mode. Subject, plain text and HTML are marked as a
+ * test together — a body that says "test" under a subject that does not (or the
+ * reverse) is how a rehearsal gets mistaken for the real thing.
+ */
+export function presentForMode(
+  mode: SendMode, subject: string, bodyText: string, bodyHtml?: string | null,
+): { subject: string; bodyText: string; bodyHtml: string | null } {
+  const html = bodyHtml ?? null;
   return mode === "test"
-    ? { subject: testSubject(subject), bodyText: testBody(bodyText) }
-    : { subject, bodyText };
+    ? {
+        subject: testSubject(subject),
+        bodyText: testBody(bodyText),
+        bodyHtml: html === null ? null : testBodyHtml(html),
+      }
+    : { subject, bodyText, bodyHtml: html };
 }
 
 // ── attachment size ──────────────────────────────────────────────────────────
