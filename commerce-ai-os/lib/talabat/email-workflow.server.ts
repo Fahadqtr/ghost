@@ -20,7 +20,12 @@ import { readChannelRecipients, readSenderStatus, loadTalabatEmailBundle } from 
 import { resolveSendRecipients } from "@/lib/mail/recipient-settings";
 import { buildTalabatUpdateEmail, buildTalabatNewProductsEmail } from "@/lib/export/talabat/email-templates";
 import { isTalabatSendableKind, type TalabatSendKind } from "@/lib/export/talabat/email-send";
-import { verifyArtifactScope, runFingerprint } from "@/lib/export/talabat/email-artifacts";
+import { verifyArtifactScope, runFingerprint, artifactPath } from "@/lib/export/talabat/email-artifacts";
+import {
+  validateBaselineWorkbook, baselineFingerprint, baselineObjectPath, parseActiveBaselineMeta,
+  ACTIVE_BASELINE_POINTER, BASELINE_SHEET_NAME, type ActiveBaselineMeta,
+} from "@/lib/export/talabat/baseline-upload";
+import { RAFEEQ_LINK_TTL_SECONDS } from "@/lib/export/rafeeq/artifact-object";
 import { loadTalabatPreview } from "@/lib/export/talabat/preview.server";
 import { parseTalabatBaseline, compareTalabatBaseline, type TalabatDeltaResult } from "@/lib/export/talabat/baseline-delta";
 import {
@@ -81,6 +86,11 @@ export interface WorkflowPreviewDTO {
   artifactFresh: boolean;
   artifactRunFingerprint: string | null;
   artifactGeneratedAtIso: string | null;
+  /** which uploaded Talabat export the artifact was compared against. */
+  artifactBaselineFingerprint: string | null;
+  activeBaseline: { filename: string; rowCount: number; fingerprint: string; uploadedAtIso: string } | null;
+  /** Email B only — the images travel by link, never as an attachment. */
+  imagesLink: { url: string; expiresAtIso: string; filename: string; bytes: number } | null;
   /** the token the owner must echo back to confirm THIS exact message. */
   confirmationToken: string;
   blockers: string[];
@@ -116,20 +126,29 @@ export async function buildWorkflowPreview(
   const recipientValid = resolved.ok && to.length > 0;
 
   const bundle = await loadTalabatEmailBundle(kind);
+  const activeBaseline = await readActiveBaseline();
   const artifactPresent = bundle !== null;
   const artifactFresh = bundle !== null && input.currentRunFingerprint !== null
-    && verifyArtifactScope(bundle.artifactScope, input.currentRunFingerprint).length === 0;
+    && verifyArtifactScope(bundle.artifactScope, input.currentRunFingerprint,
+      activeBaseline?.fingerprint).length === 0;
 
   const files = bundle?.attachments.map((a) => a.filename) ?? [];
+  // Email B's ZIP is delivered by a time-limited signed link. Minting it here
+  // means the preview shows the owner the same link the send will carry.
+  const zipName = kind === "new_products" ? files.find((f) => f.endsWith(".zip")) ?? null : null;
+  const imagesLink = zipName !== null ? await signImagesLink(zipName) : null;
+
   const draft = kind === "existing_updates"
     ? buildTalabatUpdateEmail(files[0] ?? "")
-    : buildTalabatNewProductsEmail(files[0] ?? "", files[1] ?? "",
-        { sendable: false, categoryRequests: input.categoryRequests });
+    : buildTalabatNewProductsEmail(files[0] ?? "", zipName ?? "",
+        { sendable: false, categoryRequests: input.categoryRequests, imagesLink });
   const presented = presentForMode(input.mode, draft.subject, draft.bodyText);
 
-  const attachments = (bundle?.attachments ?? []).map((a) => ({
-    filename: a.filename, bytes: a.bytes.length, contentType: a.contentType,
-  }));
+  // Only what the draft CLAIMS to attach is measured and sent — the ZIP is
+  // excluded the moment a link exists, so the size gate reflects reality.
+  const attachments = (bundle?.attachments ?? [])
+    .filter((a) => draft.attachments.includes(a.filename))
+    .map((a) => ({ filename: a.filename, bytes: a.bytes.length, contentType: a.contentType }));
   const size = attachmentSizeReport(attachments, presented.bodyText.length, config?.attachmentMaxBytes ?? 0);
 
   const token = confirmationToken({
@@ -167,6 +186,12 @@ export async function buildWorkflowPreview(
       artifactPresent, artifactFresh,
       artifactRunFingerprint: bundle?.artifactScope.runFingerprint ?? null,
       artifactGeneratedAtIso: bundle?.artifactScope.generatedAtIso ?? null,
+      artifactBaselineFingerprint: bundle?.artifactScope.baselineFingerprint ?? null,
+      activeBaseline: activeBaseline === null ? null : {
+        filename: activeBaseline.filename, rowCount: activeBaseline.rowCount,
+        fingerprint: activeBaseline.fingerprint, uploadedAtIso: activeBaseline.uploadedAtIso,
+      },
+      imagesLink,
       confirmationToken: token,
       blockers: blocks.map((b) => WORKFLOW_BLOCK_AR[b]),
       sendable: blocks.length === 0,
@@ -247,9 +272,12 @@ export async function sendTalabatTestEmail(input: TestSendInput): Promise<Workfl
     subject: p.subject,
     text: p.bodyText,
     html: `<pre style="font-family:inherit;white-space:pre-wrap">${escapeHtml(p.bodyText)}</pre>`,
-    attachments: bundle.attachments.map((a) => ({
-      filename: a.filename, content: Buffer.from(a.bytes), contentType: a.contentType,
-    })),
+    // EXACTLY the files the preview listed: the image ZIP is excluded because
+    // the body delivers it by link, and attaching it anyway would both blow the
+    // size limit and contradict what the owner reviewed.
+    attachments: bundle.attachments
+      .filter((a) => p.attachments.some((x) => x.filename === a.filename))
+      .map((a) => ({ filename: a.filename, content: Buffer.from(a.bytes), contentType: a.contentType })),
   });
   if (!sent.ok) return fail("send_failed", 502);
 
@@ -266,7 +294,7 @@ export async function sendTalabatTestEmail(input: TestSendInput): Promise<Workfl
       subject: p.subject,
       sent_at: new Date().toISOString(),
       provider_message_id: sent.messageId,
-      attachment_filenames: bundle.attachments.map((a) => a.filename),
+      attachment_filenames: p.attachments.map((a) => a.filename),
       status: "sent",
       created_by: input.createdBy,
       error_reference: p.artifactRunFingerprint,
@@ -281,7 +309,7 @@ export async function sendTalabatTestEmail(input: TestSendInput): Promise<Workfl
     value: {
       sent: true, mode: "test", messageId: sent.messageId, auditRecorded,
       to: check.to, subject: p.subject,
-      attachmentFilenames: bundle.attachments.map((a) => a.filename),
+      attachmentFilenames: p.attachments.map((a) => a.filename),
     },
   };
 }
@@ -377,9 +405,10 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
   const delta = await loadCurrentTalabatDelta();
   if (!delta.ok) return fail(delta.error, 409);
   const nowIso = new Date().toISOString();
+  const baseline = await readActiveBaseline();
 
   if (kind === "existing_updates") {
-    const out = await generateSafeUpdateArtifact(delta.result, nowIso);
+    const out = await generateSafeUpdateArtifact(delta.result, nowIso, baseline?.fingerprint);
     if (!out.ok) return fail("artifact_write_failed", 502);
     const c = safeUpdateComposition(delta.result);
     return {
@@ -399,6 +428,7 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
   const out = await generateNewProductsArtifact({
     result: delta.result, nowIso,
     imageZipBytes: zip.bytes, imageCount: zip.imageCount, extensionAudit: zip.extensionAudit,
+    baselineFingerprint: baseline?.fingerprint,
   });
   if (!out.ok) return fail("artifact_write_failed", 502);
   return {
@@ -469,4 +499,140 @@ export async function talabatEmailScopeSummary(): Promise<WorkflowApiResult<{
       barcodeReviewRows: delta.result.counts.barcodeDiffs,
     },
   };
+}
+
+// ── baseline upload (STEP 88) ────────────────────────────────────────────────
+
+/**
+ * Versioned baseline storage. Each upload lands under its own fingerprint and
+ * a pointer records which is active, so an already-generated artifact can
+ * always be traced to the exact file it was compared against — an overwrite
+ * would destroy that evidence.
+ */
+export interface BaselineUploadResultDTO {
+  filename: string;
+  byteLength: number;
+  rowCount: number;
+  fingerprint: string;
+  uploadedAtIso: string;
+  detectedHeaders: string[];
+  extraColumns: string[];
+  objectPath: string;
+  /** artifacts generated from a DIFFERENT baseline are now stale. */
+  invalidatesExistingArtifacts: boolean;
+}
+
+export async function uploadTalabatBaseline(
+  filename: string, bytes: Uint8Array, uploadedBy: string,
+): Promise<WorkflowApiResult<BaselineUploadResultDTO>> {
+  // Parse first, store second: an unreadable or wrong-shaped file must never
+  // reach storage, or the next generation would compare against garbage.
+  let aoa: unknown[][] | null = null;
+  let sheetNames: string[] = [];
+  try {
+    const { createRequire } = await import("node:module");
+    const XLSX = createRequire(import.meta.url)("xlsx");
+    const wb = XLSX.read(bytes, { type: "buffer" });
+    sheetNames = Array.isArray(wb.SheetNames) ? wb.SheetNames : [];
+    const sheet = wb.Sheets[BASELINE_SHEET_NAME];
+    aoa = sheet ? (XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true }) as unknown[][]) : null;
+  } catch {
+    aoa = null;
+  }
+
+  const check = validateBaselineWorkbook({ filename, byteLength: bytes.length, aoa, sheetNames });
+  if (!check.ok) return fail(check.reason, 422);
+
+  const fingerprint = baselineFingerprint(bytes);
+  const previous = await readActiveBaseline();
+  const objectPath = baselineObjectPath(fingerprint);
+  const uploadedAtIso = new Date().toISOString();
+
+  const stored = await putObject(objectPath, bytes,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  if (!stored) return fail("baseline_write_failed", 502);
+
+  const meta: ActiveBaselineMeta = {
+    filename, byteLength: bytes.length, rowCount: check.rowCount, fingerprint,
+    uploadedAtIso, uploadedBy, detectedHeaders: check.detectedHeaders, objectPath,
+  };
+  const pointed = await putObject(ACTIVE_BASELINE_POINTER,
+    new TextEncoder().encode(JSON.stringify(meta, null, 2)), "application/json");
+  if (!pointed) return fail("baseline_write_failed", 502);
+
+  return {
+    ok: true,
+    value: {
+      ...meta,
+      extraColumns: check.extraColumns,
+      invalidatesExistingArtifacts: previous !== null && previous.fingerprint !== fingerprint,
+    },
+  };
+}
+
+async function putObject(path: string, bytes: Uint8Array, contentType: string): Promise<boolean> {
+  try {
+    const admin = createAdminClient();
+    const { error } = await admin.storage.from(BUCKET).upload(path, bytes, { contentType, upsert: true });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+export async function readActiveBaseline(): Promise<ActiveBaselineMeta | null> {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin.storage.from(BUCKET).download(ACTIVE_BASELINE_POINTER);
+    if (error || !data) return null;
+    return parseActiveBaselineMeta(JSON.parse(await data.text()) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+// ── signed link for the image package (STEP 88) ──────────────────────────────
+
+/**
+ * Reuses the Rafeeq policy verbatim: a private bucket, a time-limited signed
+ * URL minted on demand, seven days. Nothing is made public and no URL is
+ * persisted — the link is generated when the preview or the send needs one, so
+ * an expired link simply stops existing rather than lingering in a record.
+ */
+export const TALABAT_LINK_TTL_SECONDS = RAFEEQ_LINK_TTL_SECONDS;
+
+export interface SignedImagesLink {
+  url: string;
+  expiresAtIso: string;
+  filename: string;
+  bytes: number;
+}
+
+/**
+ * Mint a link for the image ZIP belonging to THIS run.
+ *
+ * The object path is derived from the artifact the run produced, so a link can
+ * never point at a different run's package: a stale artifact yields a link to
+ * the stale object, and the artifact gate refuses the send before the link is
+ * ever used.
+ */
+export async function signImagesLink(zipFilename: string): Promise<SignedImagesLink | null> {
+  try {
+    const admin = createAdminClient();
+    const path = artifactPath("new_products", zipFilename);
+    const { data, error } = await admin.storage.from(BUCKET)
+      .createSignedUrl(path, TALABAT_LINK_TTL_SECONDS, { download: zipFilename });
+    if (error || !data?.signedUrl) return null;
+    const head = await admin.storage.from(BUCKET).download(path);
+    const bytes = head.error || !head.data ? 0 : (await head.data.arrayBuffer()).byteLength;
+    if (bytes === 0) return null;
+    return {
+      url: data.signedUrl,
+      expiresAtIso: new Date(Date.now() + TALABAT_LINK_TTL_SECONDS * 1000).toISOString(),
+      filename: zipFilename,
+      bytes,
+    };
+  } catch {
+    return null;
+  }
 }

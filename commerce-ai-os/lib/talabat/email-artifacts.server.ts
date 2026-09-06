@@ -84,7 +84,7 @@ export interface SafeUpdateArtifactResult {
  * so the preflight verifies the file rather than trusting the builder.
  */
 export async function generateSafeUpdateArtifact(
-  result: TalabatDeltaResult, nowIso: string,
+  result: TalabatDeltaResult, nowIso: string, baselineFingerprint?: string,
 ): Promise<SafeUpdateArtifactResult> {
   const aoa = buildTalabatSafeUpdateAoa(result);
   const body = aoa.slice(1);
@@ -97,6 +97,7 @@ export async function generateSafeUpdateArtifact(
   const scope: TalabatArtifactScope = {
     kind: "existing_updates",
     runFingerprint: runFingerprint(result),
+    ...(baselineFingerprint ? { baselineFingerprint } : {}),
     generatedAtIso: nowIso,
     files: [fileRecord(filename, bytes, XLSX_MIME)],
     workbookRows: body.length,
@@ -141,6 +142,8 @@ export interface NewProductsArtifactInput {
   imageZipBytes: Uint8Array;
   imageCount: number;
   extensionAudit: { mismatches: number; renamed: number; collisions: number };
+  /** the uploaded Talabat export this was compared against. */
+  baselineFingerprint?: string;
 }
 
 export async function generateNewProductsArtifact(
@@ -157,6 +160,7 @@ export async function generateNewProductsArtifact(
   const scope: TalabatArtifactScope = {
     kind: "new_products",
     runFingerprint: runFingerprint(result),
+    ...(input.baselineFingerprint ? { baselineFingerprint: input.baselineFingerprint } : {}),
     generatedAtIso: nowIso,
     files: [
       fileRecord(workbookName, workbookBytes, XLSX_MIME),
