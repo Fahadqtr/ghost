@@ -11,6 +11,7 @@
 import { requireOwner } from "@/lib/malak/authz";
 import { uploadTalabatBaseline, readActiveBaseline } from "@/lib/talabat/email-workflow.server";
 import { BASELINE_MAX_BYTES, BASELINE_REJECTION_AR, type BaselineRejection } from "@/lib/export/talabat/baseline-upload";
+import { generationErrorMessageAr } from "@/lib/export/talabat/email-artifacts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,8 +20,10 @@ export const maxDuration = 120;
 const jsonRes = (body: unknown, status: number) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
+// Upload rejections first, then the generation vocabulary (which carries
+// baseline_write_failed). The send vocabulary is deliberately unreachable here.
 const messageAr = (code: string) =>
-  BASELINE_REJECTION_AR[code as BaselineRejection] ?? "تعذّر رفع الملف.";
+  BASELINE_REJECTION_AR[code as BaselineRejection] ?? generationErrorMessageAr(code);
 
 export async function GET() {
   const owner = await requireOwner();

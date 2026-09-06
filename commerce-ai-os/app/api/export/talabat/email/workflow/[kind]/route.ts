@@ -12,6 +12,7 @@ import { requireOwner } from "@/lib/malak/authz";
 import { buildWorkflowPreview, sendTalabatTestEmail } from "@/lib/talabat/email-workflow.server";
 import { WORKFLOW_BLOCK_AR, type WorkflowBlock } from "@/lib/export/talabat/email-workflow";
 import { talabatSendErrorMessageAr } from "@/lib/export/talabat/email-send";
+import { GENERATION_ERROR_AR, type GenerationError } from "@/lib/export/talabat/email-artifacts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,8 +21,13 @@ export const maxDuration = 300;
 const jsonRes = (body: unknown, status: number) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
+// Workflow blocks first, then GENERATION codes, and only then the send
+// vocabulary — so an artifact/baseline problem surfaced here can never be
+// reported as a mail-provider failure either.
 const messageAr = (code: string) =>
-  WORKFLOW_BLOCK_AR[code as WorkflowBlock] ?? talabatSendErrorMessageAr(code);
+  WORKFLOW_BLOCK_AR[code as WorkflowBlock]
+  ?? GENERATION_ERROR_AR[code as GenerationError]
+  ?? talabatSendErrorMessageAr(code);
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const list = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);

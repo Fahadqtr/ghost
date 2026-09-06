@@ -178,7 +178,8 @@ test("11: Email A and Email B counts are derived from the uploaded baseline", ()
   const server = code(SERVER);
   assert.ok(server.includes("loadCurrentTalabatDelta"), "generation rebuilds the delta");
   assert.ok(server.includes("compareTalabatBaseline"), "…against the uploaded file");
-  assert.ok(server.includes("readStoredBaseline"), "…read from storage, not assumed");
+  // STEP 88C renamed the reader when it was fixed to follow the active pointer
+  assert.ok(server.includes("readActiveBaselineBytes"), "…read from storage via the active pointer, not assumed");
   for (const n of ["147", "408", "517", "632"]) {
     assert.equal(server.includes(n), false, `${n} must not be a constant in the generation path`);
   }

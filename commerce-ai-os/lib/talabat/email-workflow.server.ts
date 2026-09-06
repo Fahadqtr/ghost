@@ -22,9 +22,10 @@ import { buildTalabatUpdateEmail, buildTalabatNewProductsEmail } from "@/lib/exp
 import { isTalabatSendableKind, type TalabatSendKind } from "@/lib/export/talabat/email-send";
 import { verifyArtifactScope, runFingerprint, artifactPath } from "@/lib/export/talabat/email-artifacts";
 import {
-  validateBaselineWorkbook, baselineFingerprint, baselineObjectPath, parseActiveBaselineMeta,
+  validateBaselineWorkbook, baselineObjectPath, parseActiveBaselineMeta,
   ACTIVE_BASELINE_POINTER, BASELINE_SHEET_NAME, type ActiveBaselineMeta,
 } from "@/lib/export/talabat/baseline-upload";
+import { baselineFingerprint } from "@/lib/talabat/baseline-fingerprint";
 import { RAFEEQ_LINK_TTL_SECONDS } from "@/lib/export/rafeeq/artifact-object";
 import { loadTalabatPreview } from "@/lib/export/talabat/preview.server";
 import { parseTalabatBaseline, compareTalabatBaseline, type TalabatDeltaResult } from "@/lib/export/talabat/baseline-delta";
@@ -346,13 +347,28 @@ function escapeHtml(s: string): string {
  * the file the owner uploaded and refuses when there is none — a generated
  * artifact built against a guessed baseline would be worse than no artifact.
  */
+/**
+ * The pre-STEP-88 fixed path. Kept ONLY as a fallback for an installation that
+ * has never uploaded through the versioned flow — never preferred over the
+ * active pointer, and never used to paper over a broken one.
+ */
 export const TALABAT_BASELINE_OBJECT = "email-artifacts/baseline/products.xlsx";
 const BUCKET = "talabat-packages";
 
-async function readStoredBaseline(): Promise<Uint8Array | null> {
+export type BaselineReadError =
+  | "baseline_missing"
+  | "baseline_invalid"
+  | "baseline_pointer_invalid"
+  | "baseline_fingerprint_mismatch";
+
+export type BaselineRead =
+  | { ok: true; bytes: Uint8Array; meta: ActiveBaselineMeta | null }
+  | { ok: false; error: BaselineReadError };
+
+async function download(path: string): Promise<Uint8Array | null> {
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin.storage.from(BUCKET).download(TALABAT_BASELINE_OBJECT);
+    const { data, error } = await admin.storage.from(BUCKET).download(path);
     if (error || !data) return null;
     const bytes = new Uint8Array(await data.arrayBuffer());
     return bytes.length > 0 ? bytes : null;
@@ -361,12 +377,67 @@ async function readStoredBaseline(): Promise<Uint8Array | null> {
   }
 }
 
+/**
+ * Resolve the ACTIVE baseline.
+ *
+ * STEP 88 moved storage to versioned objects behind an `active.json` pointer,
+ * but this reader was left on the old fixed path — so a perfectly good upload
+ * read back as "no baseline". The order below is the fix, and the failure modes
+ * are deliberately distinct rather than all collapsing into "missing":
+ *
+ *   pointer present + readable + fingerprint matches  → use it
+ *   pointer present but malformed                     → baseline_pointer_invalid
+ *   pointer present but its object is unreadable      → baseline_invalid
+ *   pointer present but the bytes hash differently    → baseline_fingerprint_mismatch
+ *   NO pointer at all                                 → legacy fixed path, else missing
+ *
+ * A broken pointer NEVER falls back to the legacy path. Silently comparing
+ * against an older file because the current one failed to load would produce
+ * confident, wrong numbers — worse than refusing.
+ */
+export async function readActiveBaselineBytes(): Promise<BaselineRead> {
+  let pointerRaw: unknown = null;
+  let pointerExists = false;
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin.storage.from(BUCKET).download(ACTIVE_BASELINE_POINTER);
+    if (!error && data) {
+      pointerExists = true;
+      try {
+        pointerRaw = JSON.parse(await data.text()) as unknown;
+      } catch {
+        pointerRaw = null;
+      }
+    }
+  } catch {
+    pointerExists = false;
+  }
+
+  if (pointerExists) {
+    const meta = parseActiveBaselineMeta(pointerRaw);
+    if (meta === null) return { ok: false, error: "baseline_pointer_invalid" };
+    const bytes = await download(meta.objectPath);
+    if (bytes === null) return { ok: false, error: "baseline_invalid" };
+    // The pointer claims a fingerprint; the bytes must actually hash to it.
+    if (baselineFingerprint(bytes) !== meta.fingerprint) {
+      return { ok: false, error: "baseline_fingerprint_mismatch" };
+    }
+    return { ok: true, bytes, meta };
+  }
+
+  const legacy = await download(TALABAT_BASELINE_OBJECT);
+  if (legacy === null) return { ok: false, error: "baseline_missing" };
+  return { ok: true, bytes: legacy, meta: null };
+}
+
 /** Rebuild the certified delta for THIS moment. One definition, no second copy. */
 export async function loadCurrentTalabatDelta(): Promise<
-  { ok: true; result: TalabatDeltaResult; fingerprint: string } | { ok: false; error: "baseline_missing" | "preview_unavailable" }
+  { ok: true; result: TalabatDeltaResult; fingerprint: string; baseline: ActiveBaselineMeta | null }
+  | { ok: false; error: BaselineReadError | "preview_unavailable" }
 > {
-  const baselineBytes = await readStoredBaseline();
-  if (!baselineBytes) return { ok: false, error: "baseline_missing" };
+  const baseline = await readActiveBaselineBytes();
+  if (!baseline.ok) return { ok: false, error: baseline.error };
+  const baselineBytes = baseline.bytes;
   const preview = await loadTalabatPreview();
   if (!preview) return { ok: false, error: "preview_unavailable" };
 
@@ -377,7 +448,7 @@ export async function loadCurrentTalabatDelta(): Promise<
   const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: null, raw: true });
   const parsed = parseTalabatBaseline(aoa as unknown[][], sheetName);
   const result = compareTalabatBaseline(preview.rows, parsed.rows);
-  return { ok: true, result, fingerprint: runFingerprint(result) };
+  return { ok: true, result, fingerprint: runFingerprint(result), baseline: baseline.meta };
 }
 
 export interface GenerationResultDTO {
@@ -405,7 +476,8 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
   const delta = await loadCurrentTalabatDelta();
   if (!delta.ok) return fail(delta.error, 409);
   const nowIso = new Date().toISOString();
-  const baseline = await readActiveBaseline();
+  // the baseline the delta was actually built from — not a second, racing read
+  const baseline = delta.baseline;
 
   if (kind === "existing_updates") {
     const out = await generateSafeUpdateArtifact(delta.result, nowIso, baseline?.fingerprint);
