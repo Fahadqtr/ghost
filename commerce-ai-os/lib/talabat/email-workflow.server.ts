@@ -18,7 +18,10 @@ import { getMailConfig, sendMailViaSmtp } from "@/lib/mail/smtp.server";
 import { validateRecipients } from "@/lib/mail/config";
 import { readChannelRecipients, readSenderStatus, loadTalabatEmailBundle } from "@/lib/talabat/email-send.server";
 import { resolveSendRecipients } from "@/lib/mail/recipient-settings";
-import { buildTalabatUpdateEmail, buildTalabatNewProductsEmail } from "@/lib/export/talabat/email-templates";
+import {
+  buildTalabatUpdateEmail, buildTalabatNewProductsEmail,
+  DEFAULT_TALABAT_GREETING, normalizeGreeting,
+} from "@/lib/export/talabat/email-templates";
 import { isTalabatSendableKind, type TalabatSendKind } from "@/lib/export/talabat/email-send";
 import {
   verifyArtifactScope, runFingerprint, artifactPath, type GenerationError,
@@ -88,6 +91,10 @@ export interface WorkflowPreviewDTO {
   recipientPresent: boolean;
   recipientValid: boolean;
   subject: string;
+  /** the greeting this preview was built with — what the send will carry. */
+  greeting: string;
+  /** false ⇒ the owner cleared it; the send is blocked, not defaulted. */
+  greetingPresent: boolean;
   /**
    * STEP 89 — the exact HTML the transport sends. The preview screen renders
    * THIS string; there is no second, prettier preview template, so what the
@@ -125,6 +132,11 @@ export interface WorkflowPreviewInput {
   /** the owner's typed recipient for this send. Blank ⇒ fall back to the saved one. */
   toRaw: string;
   ccRaw: string;
+  /**
+   * The owner's greeting for this send. Blank is NOT filled in with the
+   * default — the preview reports it as a blocker and the send refuses.
+   */
+  greetingRaw: string;
   currentRunFingerprint: string | null;
   categoryRequests: string[];
 }
@@ -143,6 +155,14 @@ export async function buildWorkflowPreview(
   const cc = resolved.ok ? resolved.value.cc : [];
   const recipientPresent = (input.toRaw.trim() !== "") || saved.to.length > 0;
   const recipientValid = resolved.ok && to.length > 0;
+
+  // One resolution, used by the renderer, the token and the gate alike. A blank
+  // field yields null, and null NEVER becomes the default here: the draft is
+  // still rendered (so the owner sees the shape of the message) but with the
+  // prefill marked absent, and the gate blocks the send.
+  const greeting = normalizeGreeting(input.greetingRaw);
+  const greetingPresent = greeting !== null;
+  const greetingForBody = greeting ?? DEFAULT_TALABAT_GREETING;
 
   const bundle = await loadTalabatEmailBundle(kind);
   const activeBaseline = await readActiveBaseline();
@@ -164,7 +184,7 @@ export async function buildWorkflowPreview(
   const draft = kind === "existing_updates"
     ? buildTalabatUpdateEmail(files[0] ?? "", scope === null ? undefined : {
         products: scope.workbookProducts, rows: scope.workbookRows,
-      })
+      }, greetingForBody)
     : buildTalabatNewProductsEmail(files[0] ?? "", zipName ?? "", {
         sendable: false,
         categoryRequests: input.categoryRequests,
@@ -173,7 +193,7 @@ export async function buildWorkflowPreview(
           products: scope.workbookProducts, rows: scope.workbookRows,
           images: scope.imageCount ?? 0,
         },
-      });
+      }, greetingForBody);
   const presented = presentForMode(input.mode, draft.subject, draft.bodyText, draft.bodyHtml);
 
   // Only what the draft CLAIMS to attach is measured and sent — the ZIP is
@@ -189,7 +209,7 @@ export async function buildWorkflowPreview(
 
   const token = confirmationToken({
     kind, mode: input.mode, from: sender.expected.address, to, cc,
-    subject: presented.subject, attachmentFilenames: files,
+    subject: presented.subject, greeting: greetingForBody, attachmentFilenames: files,
     runFingerprint: bundle?.artifactScope.runFingerprint ?? "",
   });
 
@@ -200,6 +220,7 @@ export async function buildWorkflowPreview(
     mode: input.mode,
     senderVerified: sender.match,
     artifactPresent, artifactFresh, recipientPresent, recipientValid,
+    greetingPresent,
     sizeWithinLimit: size.withinLimit,
     confirmation: { ok: true },
     deliveryLogReady,
@@ -215,6 +236,8 @@ export async function buildWorkflowPreview(
       savedTo: saved.to, savedCc: saved.cc,
       to, cc, recipientPresent, recipientValid,
       subject: presented.subject,
+      greeting: greetingForBody,
+      greetingPresent,
       bodyHtml: presented.bodyHtml,
       bodyText: presented.bodyText,
       attachments,
@@ -277,7 +300,8 @@ export async function sendTalabatTestEmail(input: TestSendInput): Promise<Workfl
 
   const confirmation = checkConfirmation(input.confirmationToken, {
     kind: p.kind, mode: "test", from: readSenderStatus().status.expected.address,
-    to: p.to, cc: p.cc, subject: p.subject, attachmentFilenames: p.attachments.map((a) => a.filename),
+    to: p.to, cc: p.cc, subject: p.subject, greeting: p.greeting,
+    attachmentFilenames: p.attachments.map((a) => a.filename),
     runFingerprint: p.artifactRunFingerprint ?? "",
   });
 
@@ -288,6 +312,7 @@ export async function sendTalabatTestEmail(input: TestSendInput): Promise<Workfl
     artifactFresh: p.artifactFresh,
     recipientPresent: p.recipientPresent,
     recipientValid: p.recipientValid,
+    greetingPresent: p.greetingPresent,
     sizeWithinLimit: p.size.withinLimit,
     confirmation,
     deliveryLogReady: p.deliveryLogReady,
