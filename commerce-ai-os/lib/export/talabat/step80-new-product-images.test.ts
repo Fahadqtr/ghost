@@ -179,20 +179,34 @@ test("6: the 16 certified categories map to the live menu, and 3 are absent", ()
   const toys = table.find((r) => r.certifiedCategory === "✨Toys")!;
   assert.equal(toys.currentBaselineCategory, null);
   assert.equal(toys.confidence, "none");
-  assert.match(toys.evidence, /ABSENT from the live Talabat menu/);
+  // STEP 81: still absent from the menu, now also excluded from the channel —
+  // the evidence line says which, and the absence itself is unchanged.
+  assert.match(toys.evidence, /EXCLUDED FROM TALABAT/);
   assert.ok(categoriesAbsentFromBaseline(baseline).includes("✨Toys"));
+  const summer = table.find((r) => r.certifiedCategory === "Summer And Camping Supplies")!;
+  assert.equal(summer.currentBaselineCategory, null);
+  assert.match(summer.evidence, /owner-approved/);
 });
 
-test("7: no import value is emitted while the format is unconfirmed", () => {
-  assert.equal(CATEGORY_IMPORT_FORMAT_CONFIRMED, false);
+test("7: the import value is emitted only because the OWNER settled the format", () => {
+  // STEP 80 emitted nothing here because the evidence was ambiguous. STEP 81
+  // did not resolve that ambiguity with new evidence from Talabat — the owner
+  // ruled. The flag flips, the evidence record does not, and the source of the
+  // decision is recorded so nobody later reads this as Talabat confirmation.
+  assert.equal(CATEGORY_IMPORT_FORMAT_CONFIRMED, true);
   const table = categoryMappingTable(parse([baseRow("a", "All Face Care")]));
   for (const r of table) {
-    assert.equal(r.newProductImportValue, null, `${r.certifiedCategory} must not carry a guessed import value`);
+    if (r.certifiedCategory === "Electronics" || r.certifiedCategory === "✨Toys") {
+      assert.equal(r.newProductImportValue, null, "an excluded category has no correct value to send");
+      continue;
+    }
+    assert.equal(r.newProductImportValue, `All ${r.certifiedCategory}`);
   }
-  // the evidence names both forms and the missing artifact
+  // the evidence that was ambiguous is kept verbatim, both forms and all
   assert.equal(CATEGORY_IMPORT_EVIDENCE.historicalTemplate.form, "bare");
   assert.equal(CATEGORY_IMPORT_EVIDENCE.currentBaselineExport.form, "All-prefixed");
   assert.match(CATEGORY_IMPORT_EVIDENCE.missingArtifact, /import template/);
+  assert.match(CATEGORY_IMPORT_EVIDENCE.resolution, /owner decision/);
 });
 
 test("8: the certified registry is NOT changed by this step", () => {
@@ -210,9 +224,13 @@ test("8: the certified registry is NOT changed by this step", () => {
 // ── 4: Email B readiness ────────────────────────────────────────────────────
 
 const READY = {
-  categoryFormatConfirmed: true, absentCategories: [], rowsInAbsentCategories: 0,
-  workbookRows: 564, imagePackageBuilt: true, rowsMissingRequiredImage: 0,
-  imagesInPackage: 720, blockedRows: 0, senderAuthenticated: true,
+  categoryFormatConfirmed: true,
+  categoriesToRequest: [] as { talabatCategory: string; rowCount: number }[],
+  unapprovedAbsentCategories: [] as string[],
+  rowsInUnapprovedCategories: 0,
+  policyExcludedRows: 0,
+  workbookRows: 517, imagePackageBuilt: true, rowsMissingRequiredImage: 0,
+  imagesInPackage: 632, blockedRows: 0, senderAuthenticated: true,
 };
 
 test("9: Email B is BLOCKED while the category import format is unconfirmed", () => {
@@ -235,12 +253,22 @@ test("10: Email B is BLOCKED when the image package is incomplete or absent", ()
   assert.ok(unbuilt.blockers.some((b) => b.includes("image package has not been built")));
 });
 
-test("11: Email B is BLOCKED for categories the live menu does not have", () => {
+test("11: Email B is BLOCKED only for absences NOBODY approved", () => {
+  // STEP 80 blocked on any absent category. STEP 81 splits that: Electronics
+  // and ✨Toys are excluded from the channel so they never reach readiness at
+  // all, and an owner-approved absence ships with a request. What is left —
+  // an absence with no decision behind it — still blocks.
   const r = evaluateNewProductsReadiness({
-    ...READY, absentCategories: ["Electronics", "✨Toys"], rowsInAbsentCategories: 73,
+    ...READY, unapprovedAbsentCategories: ["Nobody Approved This"], rowsInUnapprovedCategories: 73,
   });
   assert.equal(r.sendable, false);
-  assert.ok(r.blockers.some((b) => b.includes("73 new rows") && b.includes("Electronics")));
+  assert.ok(r.blockers.some((b) => b.includes("73 new rows") && b.includes("Nobody Approved This")));
+
+  const requested = evaluateNewProductsReadiness({
+    ...READY, categoriesToRequest: [{ talabatCategory: "All Summer And Camping Supplies", rowCount: 26 }],
+  });
+  assert.equal(requested.sendable, true, "an approved category request is carried, not blocking");
+  assert.deepEqual(requested.categoryRequests, ["All Summer And Camping Supplies"]);
 });
 
 test("12: Email B is BLOCKED when the sender is not authenticated — review still allowed", () => {

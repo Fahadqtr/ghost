@@ -14,8 +14,9 @@
 import {
   TALABAT_BASELINE_COLUMNS, normalizeBarcodeForCompare,
   type TalabatDeltaRow, type TalabatDeltaResult,
-  updateDeltaRows, newDeltaRows, ambiguousDeltaRows,
+  updateDeltaRows, ambiguousDeltaRows,
 } from "./baseline-delta.ts";
+import { allowedNewDeltaRows, talabatNewProductCategory } from "./category-policy.ts";
 
 /** `talabat-<kind>-YYYY-MM-DD.xlsx` from an ISO instant. */
 export type DeltaWorkbookKind =
@@ -141,9 +142,21 @@ export function buildTalabatUpdateAoa(result: TalabatDeltaResult): Cell[][] {
   return [TALABAT_BASELINE_COLUMNS.slice() as unknown as Cell[], ...updateDeltaRows(result).map(toTalabatSchemaRow)];
 }
 
-/** Talabat-schema workbook of products ABSENT from the baseline. */
+/**
+ * Talabat-schema workbook of products ABSENT from the baseline.
+ *
+ * STEP 81: the rows are the CHANNEL-ALLOWED new rows, and `category 1` carries
+ * Talabat's own spelling ("All Face Care"), not our certified string. Both come
+ * from category-policy so the workbook, the image scope and Email B cannot
+ * drift apart — there is one definition of "what Talabat is being sent".
+ */
 export function buildTalabatNewProductsAoa(result: TalabatDeltaResult): Cell[][] {
-  return [TALABAT_BASELINE_COLUMNS.slice() as unknown as Cell[], ...newDeltaRows(result).map(toTalabatSchemaRow)];
+  const rows = allowedNewDeltaRows(result).map((r) => {
+    const cells = toTalabatSchemaRow(r);
+    cells[cells.length - 1] = talabatNewProductCategory(r.our.talabatCategory) ?? "";
+    return cells;
+  });
+  return [TALABAT_BASELINE_COLUMNS.slice() as unknown as Cell[], ...rows];
 }
 
 /** Owner-facing sheet of identities we refuse to act on automatically. */
@@ -190,7 +203,8 @@ export interface NewProductImageScope {
  * dedupe and the integrity check stay in one place.
  */
 export function newProductImageScope(result: TalabatDeltaResult): NewProductImageScope {
-  const rows = newDeltaRows(result);
+  // STEP 81 — the SAME allowed set the workbook uses, so scope cannot diverge.
+  const rows = allowedNewDeltaRows(result);
   return {
     productIds: [...new Set(rows.map((r) => r.our.internalProductId))],
     skus: rows.map((r) => r.our.sku),
@@ -335,5 +349,5 @@ export function barcodeReviewCounts(result: TalabatDeltaResult): Record<BarcodeR
  * second image pipeline, and this function is why one is not needed.
  */
 export function newProductPreviewRows(result: TalabatDeltaResult): TalabatDeltaRow["our"][] {
-  return newDeltaRows(result).map((r) => r.our);
+  return allowedNewDeltaRows(result).map((r) => r.our);
 }
