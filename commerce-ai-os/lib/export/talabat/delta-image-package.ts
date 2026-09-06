@@ -80,6 +80,12 @@ export interface DeltaImageMeta {
   jobId: string;
   stagedAtIso: string;
   zipBytes: number;
+  /**
+   * STEP 90C — SHA-256 of exactly the bytes uploaded, computed while streaming.
+   * null only for a sidecar written before streaming existed; the size check
+   * still applies, so a null hash weakens nothing that was previously verified.
+   */
+  sha256: string | null;
 }
 
 const num = (v: unknown): number | null =>
@@ -104,6 +110,7 @@ export function parseDeltaImageMeta(raw: unknown): DeltaImageMeta | null {
   return {
     imageCount, expectedImages, zipBytes, runFingerprint, jobId, stagedAtIso,
     baselineFingerprint: str(o.baselineFingerprint),
+    sha256: str(o.sha256),
     extensionAudit: { mismatches, renamed, collisions },
   };
 }

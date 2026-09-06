@@ -31,7 +31,7 @@ import {
   deltaImageSelectionKeys, deltaImagePlannedCount, DELTA_IMAGE_BLOCK_AR,
 } from "@/lib/export/talabat/delta-image-package";
 import {
-  startTalabatDeltaImageJob, type TalabatJobStatusDTO,
+  startTalabatDeltaImageJob, findStageableDeltaImageJob, type TalabatJobStatusDTO,
 } from "@/lib/talabat/package-job.server";
 import {
   validateBaselineWorkbook, baselineObjectPath, parseActiveBaselineMeta,
@@ -40,6 +40,7 @@ import {
 import { baselineFingerprint } from "@/lib/talabat/baseline-fingerprint";
 import { RAFEEQ_LINK_TTL_SECONDS } from "@/lib/export/rafeeq/artifact-object";
 import { loadTalabatPreview } from "@/lib/export/talabat/preview.server";
+import type { TalabatPreviewRow } from "@/lib/export/talabat/preview";
 import { parseTalabatBaseline, compareTalabatBaseline, type TalabatDeltaResult } from "@/lib/export/talabat/baseline-delta";
 import {
   generateSafeUpdateArtifact, generateNewProductsArtifact, safeUpdateComposition,
@@ -492,7 +493,16 @@ export async function readActiveBaselineBytes(): Promise<BaselineRead> {
 
 /** Rebuild the certified delta for THIS moment. One definition, no second copy. */
 export async function loadCurrentTalabatDelta(): Promise<
-  { ok: true; result: TalabatDeltaResult; fingerprint: string; baseline: ActiveBaselineMeta | null }
+  {
+    ok: true; result: TalabatDeltaResult; fingerprint: string; baseline: ActiveBaselineMeta | null;
+    /**
+     * STEP 90C — the certified preview rows this delta was computed from,
+     * returned so a caller that needs them does not load the whole catalogue a
+     * SECOND time. The image-job start did exactly that, and two full catalogue
+     * reads in one request is what pushed it into an out-of-memory kill.
+     */
+    previewRows: readonly TalabatPreviewRow[];
+  }
   | { ok: false; error: BaselineReadError | "preview_unavailable" }
 > {
   const baseline = await readActiveBaselineBytes();
@@ -508,7 +518,10 @@ export async function loadCurrentTalabatDelta(): Promise<
   const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: null, raw: true });
   const parsed = parseTalabatBaseline(aoa as unknown[][], sheetName);
   const result = compareTalabatBaseline(preview.rows, parsed.rows);
-  return { ok: true, result, fingerprint: runFingerprint(result), baseline: baseline.meta };
+  return {
+    ok: true, result, fingerprint: runFingerprint(result),
+    baseline: baseline.meta, previewRows: preview.rows,
+  };
 }
 
 export interface GenerationResultDTO {
@@ -812,6 +825,13 @@ export interface DeltaImagePackageStatusDTO {
   stagedAtIso: string | null;
   /** owner-facing reasons the staged package cannot be used, if any. */
   blockers: string[];
+  /**
+   * STEP 90C — a COMPLETED image job for this same comparison whose archive has
+   * not been published yet. Its images are already downloaded and durable, so
+   * the screen must offer to publish it rather than invite another fetch of
+   * several hundred photographs.
+   */
+  readyJob: { jobId: string; imageCount: number; archiveBytes: number; completedAtIso: string } | null;
 }
 
 /**
@@ -834,16 +854,21 @@ export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<Delta
     meta = null;
   }
   const blocks = verifyDeltaImagePackage(meta, delta.fingerprint, delta.baseline?.fingerprint ?? null);
+  const ready = meta !== null && blocks.length === 0;
+  // Only look for a recoverable job when the published package is NOT usable —
+  // there is nothing to recover from when the current one already works.
+  const readyJob = ready ? null : await findStageableDeltaImageJob(delta.fingerprint);
   return {
     ok: true,
     value: {
-      ready: meta !== null && blocks.length === 0,
+      ready,
       staged: meta !== null,
       imageCount: meta?.imageCount ?? null,
       expectedImages,
       zipBytes: meta?.zipBytes ?? null,
       stagedAtIso: meta?.stagedAtIso ?? null,
       blockers: blocks.map((b) => DELTA_IMAGE_BLOCK_AR[b]),
+      readyJob,
     },
   };
 }
@@ -859,6 +884,8 @@ export async function startDeltaImagePackage(actor: string | null): Promise<Work
   if (!delta.ok) return fail(delta.error, 409);
   const started = await startTalabatDeltaImageJob({
     selectedKeys: deltaImageSelectionKeys(delta.result),
+    // The rows the delta was just computed from — ONE catalogue load per start.
+    previewRows: delta.previewRows,
     runFingerprint: delta.fingerprint,
     baselineFingerprint: delta.baseline?.fingerprint ?? null,
     actor,

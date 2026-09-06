@@ -20,6 +20,8 @@ type Status = {
   zipBytes: number | null;
   stagedAtIso: string | null;
   blockers: string[];
+  /** a completed job whose images are already downloaded, awaiting publish. */
+  readyJob: { jobId: string; imageCount: number; archiveBytes: number; completedAtIso: string } | null;
 };
 
 type Job = {
@@ -82,6 +84,31 @@ export default function ImagePackage() {
     });
     const body = (await res.json()) as Record<string, unknown> & { message_ar?: string };
     return { ok: res.ok, body };
+  };
+
+  /**
+   * Publish an ALREADY COMPLETED job. No image is fetched: the archive exists
+   * in durable parts and is streamed straight to the email-artifact path.
+   */
+  const publishReady = async (jobId: string) => {
+    if (running.current) return;
+    running.current = true;
+    setBusy(true); setError(""); setMissing([]);
+    try {
+      const staged = await post({ action: "stage", jobId });
+      if (!staged.ok) {
+        setError(String(staged.body.message_ar ?? "تعذّر نشر الحزمة."));
+        const miss = staged.body.missing;
+        if (Array.isArray(miss)) setMissing(miss as { filename: string; sku: string }[]);
+        return;
+      }
+      await loadStatus();
+    } catch {
+      setError("تعذّر الاتصال بالخادم.");
+    } finally {
+      running.current = false;
+      setBusy(false);
+    }
   };
 
   const run = async () => {
@@ -184,10 +211,25 @@ export default function ImagePackage() {
         </div>
       ) : null}
 
+      {status?.readyJob ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-900">
+          توجد حزمة مكتملة بالفعل لهذه المقارنة — <span className="font-mono">{status.readyJob.imageCount}</span> صورة ·{" "}
+          <span className="font-mono">{mb(status.readyJob.archiveBytes)} م.ب</span>. الصور محمّلة ولا تحتاج إلى إعادة تنزيل؛
+          يتبقّى نشرها فقط.
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
+        {status?.readyJob ? (
+          <button type="button" onClick={() => void publishReady(status.readyJob!.jobId)} disabled={busy}
+            className="rounded-lg bg-emerald-700 px-3 py-2 text-sm text-white disabled:opacity-50">
+            {busy ? "جارٍ النشر…" : "نشر الحزمة الجاهزة"}
+          </button>
+        ) : null}
         <button type="button" onClick={() => void run()} disabled={busy}
-          className="rounded-lg bg-emerald-700 px-3 py-2 text-sm text-white disabled:opacity-50">
-          {busy ? "جارٍ تجهيز الصور…" : status?.ready ? "إعادة تجهيز حزمة الصور" : "تجهيز حزمة الصور"}
+          className={`rounded-lg px-3 py-2 text-sm disabled:opacity-50 ${
+            status?.readyJob ? "border border-slate-300" : "bg-emerald-700 text-white"}`}>
+          {busy ? "جارٍ تجهيز الصور…" : status?.ready || status?.readyJob ? "إعادة تجهيز حزمة الصور" : "تجهيز حزمة الصور"}
         </button>
         <button type="button" onClick={() => void loadStatus()} disabled={busy}
           className="rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:opacity-50">
