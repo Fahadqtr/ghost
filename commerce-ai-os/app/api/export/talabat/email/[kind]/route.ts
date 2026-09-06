@@ -43,7 +43,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ kind: s
   const owner = await requireOwner();
   if (!owner.ok) return jsonRes({ error: "forbidden", message_ar: owner.error }, owner.status);
   const { kind } = await params;
-  let body: { confirm?: unknown; categoryRequests?: unknown; run?: unknown };
+  let body: { confirm?: unknown; categoryRequests?: unknown; run?: unknown; to?: unknown; cc?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -56,6 +56,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ kind: s
     categoryRequests: stringList(body.categoryRequests),
     createdBy: owner.email,
     currentRunFingerprint: typeof body.run === "string" && body.run !== "" ? body.run : null,
+    // STEP 86 — the recipient chosen for THIS send. Omitted/blank falls back to
+    // the saved default; a typed value must validate or the send is refused.
+    recipientOverride: typeof body.to === "string" || typeof body.cc === "string"
+      ? { toRaw: typeof body.to === "string" ? body.to : "", ccRaw: typeof body.cc === "string" ? body.cc : "" }
+      : null,
   });
   if (!result.ok) return jsonRes({ error: result.error, message_ar: talabatSendErrorMessageAr(result.error) }, result.status);
   return jsonRes(result.value, 200);

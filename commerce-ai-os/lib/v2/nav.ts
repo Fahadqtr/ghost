@@ -112,6 +112,9 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // NAV.MEDIA moved the Snoonu session helper («جلسة Snoonu», owner-only page,
   // connection-style icon preserved) into «الصور والوسائط» above.
   { href: "/v2/settings/integrations/ticktick", label: "تكاملات TickTick", icon: "operations", section: "الإعدادات" },
+  // STEP 86 — Email settings is V2-only from here on. The legacy page stays put
+  // for compatibility but gains nothing; this is the authoritative entry.
+  { href: "/v2/settings/email", label: "البريد", icon: "channels", section: "الإعدادات" },
 
   // Extra tools (UX.1, relabelled by UX.NAV.2) — still-used pages that live in
   // the PREVIOUS interface and are NOT in the legacy-redirect list. Linked (not

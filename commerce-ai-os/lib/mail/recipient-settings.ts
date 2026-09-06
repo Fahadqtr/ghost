@@ -117,3 +117,41 @@ export function describeRecipients(r: ChannelRecipients): string {
  * extending OutboundMail, the transport call, and the audit row together.
  */
 export const BCC_SUPPORTED = false;
+
+// ── per-send recipients ──────────────────────────────────────────────────────
+
+/**
+ * STEP 86 — the owner picks the recipient for EVERY send.
+ *
+ * The saved row is a convenience default, never a destination the system
+ * commits to on its own. An operator who has to retype an address each time
+ * makes typos; an operator who cannot change it at all sends to the wrong
+ * place when the contact changes. So: prefill from the saved value, allow an
+ * override on any send, and validate the override strictly.
+ *
+ * A BLANK override means "use the saved value" — not "send to nobody" — because
+ * an untouched field in the confirm dialog must behave as the prefill it shows.
+ * Only a non-blank, invalid override is an error.
+ */
+export type ResolvedSendRecipients =
+  | { ok: true; value: ChannelRecipients; source: "override" | "saved" }
+  | { ok: false; error: "not_configured" }
+  | { ok: false; error: "invalid_override"; invalid: string[] };
+
+export function resolveSendRecipients(
+  saved: ChannelRecipients,
+  override: { toRaw: string; ccRaw: string } | null,
+): ResolvedSendRecipients {
+  const toTyped = (override?.toRaw ?? "").trim() !== "";
+  const ccTyped = (override?.ccRaw ?? "").trim() !== "";
+  if (override !== null && (toTyped || ccTyped)) {
+    // A CC-only override still has to name a To — fall back to the saved To so
+    // adding a CC never silently drops the primary recipient.
+    const toRaw = toTyped ? override.toRaw : saved.to.join(", ");
+    const edit = validateRecipientEdit(toRaw, override.ccRaw);
+    if (!edit.ok) return { ok: false, error: "invalid_override", invalid: edit.invalid };
+    return { ok: true, value: edit.value, source: "override" };
+  }
+  if (!isChannelConfigured(saved)) return { ok: false, error: "not_configured" };
+  return { ok: true, value: saved, source: "saved" };
+}

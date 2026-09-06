@@ -25,7 +25,8 @@ import { getMailConfig, sendMailViaSmtp } from "@/lib/mail/smtp.server";
 import { diagnoseMailEnv, blockingMailEnvNames, type MailEnvDiagnostic } from "@/lib/mail/config";
 import {
   RECIPIENT_SETTING_KEYS, parseStoredRecipients, toStoredRecipients, isChannelConfigured,
-  validateRecipientEdit, BCC_SUPPORTED, type ChannelRecipients, type MailChannel,
+  validateRecipientEdit, resolveSendRecipients, BCC_SUPPORTED,
+  type ChannelRecipients, type MailChannel,
 } from "@/lib/mail/recipient-settings";
 import {
   DEFAULT_SENDER_IDENTITY, resolveSenderIdentity, resolveSenderIdentities, chooseSender, senderHeaders,
@@ -207,6 +208,11 @@ export interface TalabatSendPreflightDTO {
   /** display-only From ("Name <address>"). Never a credential. */
   from: string | null;
   recipients: { to: string[]; cc: string[]; configured: boolean };
+  /**
+   * STEP 86 — the saved value is a PREFILL, not a commitment. The confirm
+   * screen shows it in an editable field and may send a different address.
+   */
+  recipientOverrideAllowed: true;
   bccSupported: boolean;
   subject: string;
   bodyText: string;
@@ -287,6 +293,7 @@ export async function getTalabatSendPreflight(
       sender,
       from: config ? `${config.fromName} <${config.fromAddress}>` : null,
       recipients: { to: recipients.to, cc: recipients.cc, configured: isChannelConfigured(recipients) },
+      recipientOverrideAllowed: true,
       bccSupported: BCC_SUPPORTED,
       subject: draft.subject,
       bodyText: draft.bodyText,
@@ -323,6 +330,12 @@ export interface TalabatSendRequest {
   createdBy: string;
   /** must equal the stored artifacts' fingerprint, or nothing is sent. */
   currentRunFingerprint: string | null;
+  /**
+   * STEP 86 — the recipient the owner chose for THIS send. Blank means "use the
+   * saved default"; a non-blank value must validate or the send is refused,
+   * never silently replaced by the saved one.
+   */
+  recipientOverride: { toRaw: string; ccRaw: string } | null;
 }
 
 export interface TalabatSendResultDTO {
@@ -353,7 +366,12 @@ export async function sendTalabatEmail(req: TalabatSendRequest): Promise<Talabat
   const chosen = checkSenderTransport(senderHeaders(choice.identity).fromAddress, config?.fromAddress ?? null);
   if (!chosen.match || chosen.expected !== check.expected) return sendErr("sender_not_authenticated", 409);
 
-  const recipients = await readChannelRecipients("talabat");
+  const saved = await readChannelRecipients("talabat");
+  const resolved = resolveSendRecipients(saved, req.recipientOverride);
+  if (!resolved.ok) {
+    return sendErr(resolved.error === "not_configured" ? "recipient_not_configured" : "invalid_recipient", 422);
+  }
+  const recipients = resolved.value;
   const bundle = await loadTalabatEmailBundle(req.kind);
   if (!bundle) return sendErr("artifact_not_found", 409);
   // The send re-runs the SAME verification the preflight showed — a preflight
