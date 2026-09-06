@@ -38,6 +38,10 @@ import {
   type TalabatSendScope, type SenderTransportCheck,
 } from "@/lib/export/talabat/email-send";
 import { buildTalabatUpdateEmail, buildTalabatNewProductsEmail } from "@/lib/export/talabat/email-templates";
+import {
+  artifactPath, parseArtifactScope, verifyArtifactScope, SCOPE_SIDECAR_FILENAME,
+  ARTIFACT_BLOCK_AR, type TalabatArtifactScope,
+} from "@/lib/export/talabat/email-artifacts";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const ZIP_MIME = "application/zip";
@@ -50,11 +54,11 @@ const BUCKET = "talabat-packages";
  * preflight must be able to say "the artifact for THIS email is missing",
  * not "some file that looked close enough was found".
  */
-export const TALABAT_EMAIL_ARTIFACT_PREFIX = "email-artifacts";
-export const talabatEmailArtifactPath = (kind: TalabatSendKind, filename: string) =>
-  `${TALABAT_EMAIL_ARTIFACT_PREFIX}/${kind}/${filename}`;
+/** Re-exported so callers have ONE definition of where an artifact lives. */
+export { artifactPath as talabatEmailArtifactPath, TALABAT_EMAIL_ARTIFACT_PREFIX }
+  from "@/lib/export/talabat/email-artifacts";
 
-export type TalabatSendApiError = TalabatEmailSendBlock | "forbidden" | "artifact_not_found";
+export type TalabatSendApiError = TalabatEmailSendBlock | "forbidden" | "artifact_not_found" | "artifact_stale";
 export type TalabatSendApiResult<T> = { ok: true; value: T } | { ok: false; error: TalabatSendApiError; status: number };
 const sendErr = <T,>(error: TalabatSendApiError, status: number): TalabatSendApiResult<T> => ({ ok: false, error, status });
 
@@ -137,7 +141,7 @@ export interface TalabatEmailArtifact {
 async function readArtifact(kind: TalabatSendKind, filename: string): Promise<TalabatEmailArtifact | null> {
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin.storage.from(BUCKET).download(talabatEmailArtifactPath(kind, filename));
+    const { data, error } = await admin.storage.from(BUCKET).download(artifactPath(kind, filename));
     if (error || !data) return null;
     const bytes = new Uint8Array(await data.arrayBuffer());
     if (bytes.length === 0) return null;
@@ -158,56 +162,39 @@ async function readArtifact(kind: TalabatSendKind, filename: string): Promise<Ta
 export interface TalabatEmailBundle {
   attachments: TalabatEmailArtifact[];
   scope: TalabatSendScope;
+  /** the full stored sidecar — carries the run binding and the audit counts. */
+  artifactScope: TalabatArtifactScope;
 }
 
-export interface StoredScopeSidecar {
-  workbookRows: number;
-  imageCount: number | null;
-  rowsMissingImage: number;
-  excludedCategoryRows: number;
-  attachmentFilenames: string[];
-}
-
-async function readScopeSidecar(kind: TalabatSendKind): Promise<StoredScopeSidecar | null> {
+async function readArtifactScope(kind: TalabatSendKind): Promise<TalabatArtifactScope | null> {
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin.storage.from(BUCKET).download(talabatEmailArtifactPath(kind, "scope.json"));
+    const { data, error } = await admin.storage.from(BUCKET).download(artifactPath(kind, SCOPE_SIDECAR_FILENAME));
     if (error || !data) return null;
-    const parsed = JSON.parse(await data.text()) as unknown;
-    if (parsed === null || typeof parsed !== "object") return null;
-    const o = parsed as Record<string, unknown>;
-    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-    const workbookRows = num(o.workbookRows);
-    const rowsMissingImage = num(o.rowsMissingImage);
-    const excludedCategoryRows = num(o.excludedCategoryRows);
-    if (workbookRows === null || rowsMissingImage === null || excludedCategoryRows === null) return null;
-    const files = Array.isArray(o.attachmentFilenames)
-      ? o.attachmentFilenames.filter((x): x is string => typeof x === "string") : [];
-    return {
-      workbookRows, rowsMissingImage, excludedCategoryRows,
-      imageCount: num(o.imageCount),
-      attachmentFilenames: files,
-    };
+    const parsed = parseArtifactScope(JSON.parse(await data.text()) as unknown, kind);
+    return parsed.ok ? parsed.value : null;
   } catch {
     return null;
   }
 }
 
 export async function loadTalabatEmailBundle(kind: TalabatSendKind): Promise<TalabatEmailBundle | null> {
-  const sidecar = await readScopeSidecar(kind);
-  if (!sidecar || sidecar.attachmentFilenames.length === 0) return null;
-  const loaded = await Promise.all(sidecar.attachmentFilenames.map((f) => readArtifact(kind, f)));
-  // Every claimed attachment must actually be readable. A partial set is a
-  // missing bundle, never a smaller email than the one the owner reviewed.
-  if (loaded.some((a) => a === null)) return null;
+  const scope = await readArtifactScope(kind);
+  if (!scope) return null;
+  const loaded = await Promise.all(scope.files.map((f) => readArtifact(kind, f.filename)));
+  // Every claimed attachment must actually be readable AND be the size the
+  // sidecar recorded. A partial or altered set is a missing bundle, never a
+  // different email than the one the owner reviewed.
+  if (loaded.some((a, i) => a === null || a.bytes.length !== scope.files[i].bytes)) return null;
   return {
     attachments: loaded as TalabatEmailArtifact[],
     scope: {
-      workbookRows: sidecar.workbookRows,
-      imageCount: sidecar.imageCount,
-      rowsMissingImage: sidecar.rowsMissingImage,
-      excludedCategoryRows: sidecar.excludedCategoryRows,
+      workbookRows: scope.workbookRows,
+      imageCount: scope.imageCount,
+      rowsMissingImage: scope.rowsMissingImage,
+      excludedCategoryRows: scope.excludedCategoryRows,
     },
+    artifactScope: scope,
   };
 }
 
@@ -225,6 +212,12 @@ export interface TalabatSendPreflightDTO {
   bodyText: string;
   attachments: { filename: string; bytes: number; contentType: string }[];
   scope: TalabatSendScope | null;
+  /** the run the stored artifacts were generated from. null ⇒ none stored. */
+  artifactRunFingerprint: string | null;
+  /** the run the caller is acting on. null ⇒ the binding could not be checked. */
+  currentRunFingerprint: string | null;
+  runBindingVerified: boolean;
+  extensionAudit: { mismatches: number; renamed: number; collisions: number } | null;
   attachmentMaxBytes: number;
   /** every reason this email cannot be sent right now, in owner language. */
   blockers: string[];
@@ -245,7 +238,15 @@ function draftFor(kind: TalabatSendKind, files: string[], categoryRequests: stri
  * READ-ONLY: nothing is generated, stored, or transmitted.
  */
 export async function getTalabatSendPreflight(
-  kind: string, categoryRequests: string[] = [],
+  kind: string,
+  categoryRequests: string[] = [],
+  /**
+   * The fingerprint of the comparison run the caller is acting on. Omitted
+   * means the binding CANNOT be checked, which is a blocker rather than a
+   * pass: sending Monday's workbook against Tuesday's data is exactly the
+   * mistake the fingerprint exists to prevent.
+   */
+  currentRunFingerprint: string | null = null,
 ): Promise<TalabatSendApiResult<TalabatSendPreflightDTO>> {
   // Email C is refused here as well as in the planner — the preflight must not
   // even assemble a draft for a kind that can never be sent.
@@ -262,8 +263,20 @@ export async function getTalabatSendPreflight(
   if (!configured) blockers.push(talabatSendErrorMessageAr("mail_not_configured"));
   else if (!sender.match) blockers.push(talabatSendErrorMessageAr("sender_not_authenticated"));
   if (!isChannelConfigured(recipients)) blockers.push(talabatSendErrorMessageAr("recipient_not_configured"));
-  if (!bundle) blockers.push(talabatSendErrorMessageAr("artifact_not_found"));
-  else if (!scopeOk(bundle.scope)) blockers.push(talabatSendErrorMessageAr("attachment_scope_mismatch"));
+  if (!bundle) {
+    blockers.push(ARTIFACT_BLOCK_AR.artifact_missing);
+  } else {
+    if (currentRunFingerprint === null) {
+      blockers.push("تعذّر التحقق من ارتباط الملفات بالمقارنة الحالية — أعد التوليد من نفس التشغيل.");
+    }
+    for (const b of verifyArtifactScope(bundle.artifactScope, currentRunFingerprint ?? "")) {
+      // artifact_stale is already covered by the message above when the caller
+      // supplied nothing; do not say the same thing twice.
+      if (b === "artifact_stale" && currentRunFingerprint === null) continue;
+      blockers.push(ARTIFACT_BLOCK_AR[b]);
+    }
+    if (!scopeOk(bundle.scope)) blockers.push(talabatSendErrorMessageAr("attachment_scope_mismatch"));
+  }
 
   const diagnostic = diagnoseMailEnv(process.env as Record<string, string | undefined>);
   return {
@@ -281,6 +294,11 @@ export async function getTalabatSendPreflight(
         filename: a.filename, bytes: a.bytes.length, contentType: a.contentType,
       })),
       scope: bundle?.scope ?? null,
+      artifactRunFingerprint: bundle?.artifactScope.runFingerprint ?? null,
+      currentRunFingerprint,
+      runBindingVerified: bundle !== null && currentRunFingerprint !== null
+        && bundle.artifactScope.runFingerprint === currentRunFingerprint,
+      extensionAudit: bundle?.artifactScope.extensionAudit ?? null,
       attachmentMaxBytes: config?.attachmentMaxBytes ?? 0,
       blockers,
       sendable: blockers.length === 0,
@@ -303,6 +321,8 @@ export interface TalabatSendRequest {
   confirm: boolean;
   categoryRequests: string[];
   createdBy: string;
+  /** must equal the stored artifacts' fingerprint, or nothing is sent. */
+  currentRunFingerprint: string | null;
 }
 
 export interface TalabatSendResultDTO {
@@ -336,6 +356,12 @@ export async function sendTalabatEmail(req: TalabatSendRequest): Promise<Talabat
   const recipients = await readChannelRecipients("talabat");
   const bundle = await loadTalabatEmailBundle(req.kind);
   if (!bundle) return sendErr("artifact_not_found", 409);
+  // The send re-runs the SAME verification the preflight showed — a preflight
+  // the owner read minutes ago is not authority for the state right now.
+  if (req.currentRunFingerprint === null) return sendErr("artifact_stale", 409);
+  if (verifyArtifactScope(bundle.artifactScope, req.currentRunFingerprint).length > 0) {
+    return sendErr("artifact_stale", 409);
+  }
   const files = bundle.attachments.map((a) => a.filename);
   const draft = draftFor(req.kind, files, req.categoryRequests);
 

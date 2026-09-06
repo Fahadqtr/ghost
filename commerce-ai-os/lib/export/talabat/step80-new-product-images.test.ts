@@ -335,24 +335,28 @@ test("18: nothing in the new modules can send mail or write to a marketplace", (
   }
 });
 
-// ── 19: the packaged filename extension is URL-derived, not content-derived ──
+// ── 19: the extension correction is OPT-IN, and off by default ─────────────
 //
-// AUDIT FINDING, pinned here so it cannot quietly change. In the real 720-image
-// package 133 files carry a .jpg/.jpeg name over PNG bytes. That is not a STEP
-// 80 bug: the certified planner names each file from the SOURCE URL, while the
-// fetch port only uses the sniffed type to decide whether the bytes are an
-// image at all. Both the full 2501-image package and this delta package behave
-// identically, so the delta introduces no new naming behaviour. Recorded rather
-// than "fixed", because changing it would alter a certified artifact.
-test("19: the certified planner names images from the URL while validating content", () => {
+// STEP 80 recorded the finding: the certified planner names each file from the
+// SOURCE URL while the fetch port sniffs the bytes only to decide they are an
+// image, so 133 of the 720 new-product files carried a .jpg name over PNG
+// bytes. STEP 84 fixes it package-locally behind an explicit opt-in.
+//
+// This test now pins BOTH halves: the planner still derives the plan name from
+// the URL (unchanged), and the engine corrects it only when a caller asks. The
+// default stays off so the certified full package is byte-for-byte what it has
+// always been — the correction is a deliberate choice, never a silent one.
+test("19: the planner names from the URL; the engine corrects only on request", () => {
   const planner = code("lib/export/talabat/package.ts");
-  // the plan's filename extension comes from the URL …
   assert.match(planner, /const ext = extensionFromUrl\(primaryUrl \|\| null\)/);
   assert.match(planner, /additionalImageName\(sku, position, extensionFromUrl\(url\)\)/);
-  // … and the content sniff exists but is not what names the entry.
   assert.match(planner, /export function sniffImageExtension/);
+
   const engine = code("lib/export/talabat/package-job.ts");
-  assert.match(engine, /const entryName = `Talabat\/images\/\$\{img\.filename\}`/);
-  assert.equal(/entryName[^\n]*got\.ext/.test(engine), false,
-    "the engine must not silently rename entries from the sniffed type");
+  // the correction exists, is gated, and defaults to absent
+  assert.match(engine, /correctExtensionFromBytes\?: boolean/);
+  assert.match(engine, /if \(deps\.correctExtensionFromBytes\)/);
+  assert.match(engine, /const entryName = `Talabat\/images\/\$\{packagedName\}`/);
+  // and with the flag off, the packaged name IS the plan name
+  assert.match(engine, /let packagedName = img\.filename;/);
 });

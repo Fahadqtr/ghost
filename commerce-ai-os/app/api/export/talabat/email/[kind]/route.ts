@@ -29,8 +29,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
   const owner = await requireOwner();
   if (!owner.ok) return jsonRes({ error: "forbidden", message_ar: owner.error }, owner.status);
   const { kind } = await params;
-  const requests = new URL(req.url).searchParams.getAll("categoryRequest");
-  const result = await getTalabatSendPreflight(kind, requests);
+  const url = new URL(req.url);
+  const requests = url.searchParams.getAll("categoryRequest");
+  // The caller states which comparison run it is acting on. Absent is not the
+  // same as matching — the preflight reports it as a blocker.
+  const runFingerprint = url.searchParams.get("run");
+  const result = await getTalabatSendPreflight(kind, requests, runFingerprint);
   if (!result.ok) return jsonRes({ error: result.error, message_ar: talabatSendErrorMessageAr(result.error) }, result.status);
   return jsonRes(result.value, 200);
 }
@@ -39,7 +43,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ kind: s
   const owner = await requireOwner();
   if (!owner.ok) return jsonRes({ error: "forbidden", message_ar: owner.error }, owner.status);
   const { kind } = await params;
-  let body: { confirm?: unknown; categoryRequests?: unknown };
+  let body: { confirm?: unknown; categoryRequests?: unknown; run?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -51,6 +55,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ kind: s
     confirm: body.confirm === true,
     categoryRequests: stringList(body.categoryRequests),
     createdBy: owner.email,
+    currentRunFingerprint: typeof body.run === "string" && body.run !== "" ? body.run : null,
   });
   if (!result.ok) return jsonRes({ error: result.error, message_ar: talabatSendErrorMessageAr(result.error) }, result.status);
   return jsonRes(result.value, 200);

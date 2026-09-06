@@ -226,7 +226,11 @@ test("12: workbook and image scope must agree or nothing is sent", () => {
 
 test("13: a partial attachment bundle is a MISSING bundle, never a smaller email", () => {
   const server = code("lib/talabat/email-send.server.ts");
-  assert.ok(server.includes("loaded.some((a) => a === null)"), "any unreadable attachment voids the bundle");
+  // STEP 84 tightened this: an attachment must be readable AND be the exact
+  // size the sidecar recorded, so a truncated or swapped file voids the bundle
+  // too — not just a missing one.
+  assert.ok(server.includes("a.bytes.length !== scope.files[i].bytes"), "size must match the sidecar");
+  assert.ok(server.includes("a === null"), "any unreadable attachment voids the bundle");
   assert.ok(server.includes("return null"), "and the bundle resolves to absent");
   const none = planTalabatEmailSend(planInput({ attachments: [] }));
   assert.equal(none.ok, false);
