@@ -80,16 +80,32 @@ export function buildTalabatUpdateEmail(updateWorkbookName: string): TalabatEmai
 /**
  * EMAIL B — products Talabat does not list yet, with their images.
  *
- * STEP 80: `sendable` is now a GATE, not a constant. Creating a product in a
- * live menu is not self-correcting the way a price update is, so the draft is
- * only dispatchable once every readiness condition holds — see
+ * STEP 80: `sendable` is a GATE, not a constant. Creating a product in a live
+ * menu is not self-correcting the way a price update is, so the draft is only
+ * dispatchable once every readiness condition holds — see
  * evaluateNewProductsReadiness. Callers that pass nothing get the safe answer.
+ *
+ * STEP 81: `categoryRequests` names Talabat categories that do not exist yet
+ * and must be created for some of the attached products. It is a request the
+ * email carries, not a reason to hold the attachment back — the owner decided
+ * the products ship alongside the ask. Categories Talabat has excluded are
+ * never mentioned here, because they are not in the attachment either.
  */
 export function buildTalabatNewProductsEmail(
   newWorkbookName: string,
   imagesZipName: string,
-  readiness: { sendable: boolean } = { sendable: false },
+  readiness: { sendable: boolean; categoryRequests?: readonly string[] } = { sendable: false },
 ): TalabatEmailDraft {
+  const requests = readiness.categoryRequests ?? [];
+  const categoryAsk = requests.length === 0 ? [] : [
+    "Please note that some of the attached products belong to a new category that",
+    "is not currently available in our Talabat menu:",
+    "",
+    ...requests,
+    "",
+    "Kindly create this category and add the relevant attached products under it.",
+    "",
+  ];
   return {
     kind: "new_products",
     subject: TALABAT_EMAIL_SUBJECTS.new_products,
@@ -104,6 +120,7 @@ export function buildTalabatNewProductsEmail(
       "Kindly add the attached products to our existing menu while keeping all",
       "currently listed products unchanged.",
       "",
+      ...categoryAsk,
       "Please let us know once the additions have been completed or if any further",
       "information is required.",
       "",
@@ -124,7 +141,7 @@ export function buildTalabatEmailPair(input: {
   newWorkbookName: string;
   imagesZipName: string;
   /** Email B's gate — omitted means NOT sendable (see the builder above). */
-  newProductsReadiness?: { sendable: boolean };
+  newProductsReadiness?: { sendable: boolean; categoryRequests?: readonly string[] };
 }): { updates: TalabatEmailDraft; newProducts: TalabatEmailDraft } {
   return {
     updates: buildTalabatUpdateEmail(input.updateWorkbookName),
