@@ -50,3 +50,48 @@ export function buildTalabatXlsxBuffer(rows: readonly TalabatPackageRow[]): Uint
   const buf: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
   return new Uint8Array(buf);
 }
+
+/**
+ * STEP 84 — serialize a DELTA workbook (Talabat's own baseline schema).
+ *
+ * Same spreadsheet-correctness discipline as the package sheet above, but the
+ * columns are Talabat's, not ours: SKU and the three barcode columns must stay
+ * TEXT or Excel eats a leading zero and turns a 13-digit barcode into
+ * scientific notation — which would arrive at Talabat as a different barcode.
+ * Price stays numeric so their importer reads a number, not a string.
+ *
+ * Takes an AoA because the delta builders already produce exactly the rows to
+ * write; re-deriving them here would create a second source of truth.
+ */
+export function buildTalabatDeltaXlsxBuffer(
+  aoa: readonly (readonly (string | number)[])[],
+  opts: { textColumns: readonly number[]; numericColumns: readonly number[]; sheetName: string },
+): Uint8Array {
+  const require = createRequire(import.meta.url);
+  const XLSX = require("xlsx");
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa as unknown[][]);
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const textCols = new Set<number>(opts.textColumns);
+  const numCols = new Set<number>(opts.numericColumns);
+
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    if (r === range.s.r) continue; // header row stays plain strings
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (!cell) continue;
+      if (textCols.has(c)) {
+        cell.t = "s";
+        cell.v = String(cell.v ?? "");
+        cell.z = "@";
+      } else if (numCols.has(c) && typeof cell.v === "number") {
+        cell.t = "n";
+      }
+    }
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, opts.sheetName);
+  const buf: Buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  return new Uint8Array(buf);
+}

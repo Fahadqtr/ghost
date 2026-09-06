@@ -155,6 +155,14 @@ export interface TalabatPackageJobState {
   packaged: PackagedFile[];
   /** plan.images indexes skipped after exhausting attempts. */
   droppedImages: number[];
+  /**
+   * STEP 84 — plan filename → the name actually packaged, when the two differ
+   * because the bytes were a different format than the URL claimed. Persisted
+   * with the state so a resumed job keeps referring to what it already wrote.
+   */
+  renames?: Record<string, string>;
+  /** STEP 84 — what the extension correction found and did. */
+  extensionAudit?: ExtensionAuditCounts;
   parts: { path: string; bytes: number }[];
   artifact: {
     filename: string;
@@ -178,6 +186,8 @@ export interface TalabatPackageJobState {
   error: { code: TalabatJobErrorCode; refId: string } | null;
 }
 
+import { decidePackagedName, emptyExtensionAudit, type ExtensionAuditCounts } from "./image-extension.ts";
+
 export interface TalabatJobPorts {
   /** SSRF-safe validated fetch (server wires the certified boundary). null = failed/invalid. */
   fetchImage(url: string): Promise<{ bytes: Uint8Array; ext: string } | null>;
@@ -193,6 +203,14 @@ export interface TalabatJobAdvanceDeps {
   /** The single malak_audit trail row — invoked at most ONCE per job, last. */
   recordAudit?: (summary: TalabatPackageJobSummary) => Promise<boolean>;
   budget?: { maxImages?: number; maxPartBytes?: number };
+  /**
+   * STEP 84 — make each packaged filename agree with its actual bytes.
+   *
+   * OPT-IN, default false, because the certified full package has shipped with
+   * URL-derived names and changing them silently would alter a certified
+   * artifact. The new-product delta package turns it on; nothing else does.
+   */
+  correctExtensionFromBytes?: boolean;
 }
 
 // ── plan / state construction ─────────────────────────────────────────────────
@@ -386,16 +404,38 @@ async function imageStep(
     }
     state.attempts = 0;
 
-    const entryName = `Talabat/images/${img.filename}`;
+    // STEP 84 — the packaged name must not lie about the bytes. Default OFF,
+    // so the certified full package is byte-for-byte what it has always been.
+    let packagedName = img.filename;
+    if (deps.correctExtensionFromBytes) {
+      const audit = (state.extensionAudit ??= emptyExtensionAudit());
+      const decision = decidePackagedName(img.filename, got.ext, new Set(state.packaged.map((p) => p.name)));
+      if (decision.action === "rename") {
+        audit.mismatches += 1; audit.renamed += 1;
+        packagedName = decision.name;
+        (state.renames ??= {})[img.filename] = decision.name;
+      } else if (decision.action === "collision") {
+        // Corrected name already taken: keep the original and report it UNFIXED
+        // so the preflight blocks, rather than overwrite a different image.
+        audit.mismatches += 1; audit.collisions += 1;
+      }
+    }
+    // A gallery names its owning primary; if that primary was renamed, the
+    // reference has to follow or the §15 integrity check would orphan it.
+    const ownerPrimary = img.ownerPrimary
+      ? state.renames?.[img.ownerPrimary] ?? img.ownerPrimary
+      : undefined;
+
+    const entryName = `Talabat/images/${packagedName}`;
     const seg = zipEntrySegment(entryName, got.bytes);
     state.entries.push({
       name: entryName, crc: seg.crc, size: seg.size,
       offset: state.offset + partBytes, part: partIndex,
     });
     state.packaged.push({
-      name: img.filename,
+      name: packagedName,
       kind: img.kind,
-      ...(img.ownerPrimary ? { ownerPrimary: img.ownerPrimary } : {}),
+      ...(ownerPrimary ? { ownerPrimary } : {}),
     });
     segments.push(seg.bytes);
     partBytes += seg.bytes.length;
@@ -430,7 +470,11 @@ async function archiveStep(
   const primaryByRow = new Map<number, string>();
   for (const img of plan.images) {
     if (img.kind !== "primary") continue;
-    if (state.packaged.some((p) => p.name === img.filename)) primaryByRow.set(img.rowIndex, img.filename);
+    // resolve through the rename map so a corrected filename is the one the
+    // sheet cites — otherwise the workbook would reference a file that the
+    // archive does not contain under that name.
+    const packagedName = state.renames?.[img.filename] ?? img.filename;
+    if (state.packaged.some((p) => p.name === packagedName)) primaryByRow.set(img.rowIndex, packagedName);
   }
   const survivors: { row: TalabatPreviewRow; filename: string }[] = [];
   for (let i = 0; i < plan.rows.length; i++) {
