@@ -235,3 +235,59 @@ export const ARTIFACT_BLOCK_AR: Record<ArtifactBlock, string> = {
   excluded_category_rows: "توجد صفوف من تصنيفات مستبعدة عن طلبات.",
   extension_mismatch_unfixed: "توجد صور امتدادها لا يطابق محتواها ولم يُصحَّح.",
 };
+
+// ── generation errors (STEP 88C) ─────────────────────────────────────────────
+//
+// Generation has its OWN vocabulary, deliberately kept apart from the send
+// vocabulary in email-send.ts.
+//
+// Why this exists: the generate route used to render every failure through
+// talabatSendErrorMessageAr, whose fallback is "the mail provider failed".
+// A missing baseline therefore told the owner SMTP had failed — while SMTP was
+// never contacted at all. An error message that names the wrong subsystem sends
+// someone to check credentials when the real problem is an unread file.
+//
+// A message about mail must never appear here, and a test asserts it.
+
+export type GenerationError =
+  | "baseline_missing"
+  | "baseline_invalid"
+  | "baseline_pointer_invalid"
+  | "baseline_fingerprint_mismatch"
+  | "preview_unavailable"
+  | "image_package_missing"
+  | "artifact_write_failed"
+  | "baseline_write_failed"
+  | "email_kind_not_sendable";
+
+export const GENERATION_ERROR_AR: Record<GenerationError, string> = {
+  baseline_missing:
+    "لم يتم العثور على ملف طلبات المرجعي. ارفع آخر ملف طلبات ثم حاول التوليد مرة أخرى.",
+  baseline_invalid:
+    "ملف طلبات المرجعي غير صالح. ارفع ملفاً صحيحاً ثم حاول مرة أخرى.",
+  baseline_pointer_invalid:
+    "تعذّر قراءة النسخة المرجعية الحالية لطلبات. أعد رفع الملف المرجعي.",
+  baseline_fingerprint_mismatch:
+    "الملف المرجعي الحالي لا يطابق البصمة المحفوظة. أعد رفع ملف طلبات.",
+  preview_unavailable:
+    "تعذّر تجهيز بيانات المقارنة للتوليد.",
+  image_package_missing:
+    "تعذّر تجهيز حزمة الصور المطلوبة.",
+  artifact_write_failed:
+    "تعذّر حفظ الملفات المولّدة. لم يتم إرسال أي بريد.",
+  baseline_write_failed:
+    "تعذّر حفظ الملف المرجعي. لم يتم تغيير النسخة الحالية.",
+  email_kind_not_sendable:
+    "هذا النوع من الرسائل غير مسموح بتوليده أو إرساله.",
+};
+
+/**
+ * Map a generation failure to owner language.
+ *
+ * The fallback is deliberately about GENERATION, not about mail — an unknown
+ * code here still cannot claim the provider failed.
+ */
+export function generationErrorMessageAr(code: string | null | undefined): string {
+  return GENERATION_ERROR_AR[(code ?? "") as GenerationError]
+    ?? "تعذّر توليد الملفات. لم يتم إرسال أي بريد.";
+}

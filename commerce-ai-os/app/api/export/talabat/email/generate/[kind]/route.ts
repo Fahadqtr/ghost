@@ -8,7 +8,9 @@
 
 import { requireOwner } from "@/lib/malak/authz";
 import { generateTalabatEmailArtifacts } from "@/lib/talabat/email-workflow.server";
-import { talabatSendErrorMessageAr } from "@/lib/export/talabat/email-send";
+// GENERATION vocabulary, not the send vocabulary: this route never contacts a
+// mail provider, so it must never be able to report that one failed.
+import { generationErrorMessageAr } from "@/lib/export/talabat/email-artifacts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +25,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ kind: 
   const { kind } = await params;
   const result = await generateTalabatEmailArtifacts(kind);
   if (!result.ok) {
-    return jsonRes({ error: result.error, message_ar: talabatSendErrorMessageAr(result.error) }, result.status);
+    return jsonRes({ error: result.error, message_ar: generationErrorMessageAr(result.error) }, result.status);
   }
   return jsonRes(result.value, 200);
 }
