@@ -65,6 +65,13 @@ export interface ArtifactFileRecord {
 export interface TalabatArtifactScope {
   kind: TalabatSendKind;
   runFingerprint: string;
+  /**
+   * STEP 88 — the Talabat export this artifact was compared against. The run
+   * fingerprint alone cannot catch a new baseline that happens to produce the
+   * same counts, and "which file did this come from" is the question an owner
+   * asks when a number looks wrong.
+   */
+  baselineFingerprint?: string;
   generatedAtIso: string;
   files: ArtifactFileRecord[];
   /** rows in the workbook the owner is sending. */
@@ -104,6 +111,7 @@ export function parseArtifactScope(raw: unknown, expectedKind: TalabatSendKind):
 
   if (o.kind !== expectedKind) return { ok: false, reason: "wrong_kind" };
   const fingerprint = str(o.runFingerprint);
+  const baselineFingerprint = str(o.baselineFingerprint);
   const generatedAtIso = str(o.generatedAtIso);
   const workbookRows = num(o.workbookRows);
   const workbookProducts = num(o.workbookProducts);
@@ -143,6 +151,7 @@ export function parseArtifactScope(raw: unknown, expectedKind: TalabatSendKind):
     value: {
       kind: expectedKind,
       runFingerprint: fingerprint,
+      ...(baselineFingerprint !== null ? { baselineFingerprint } : {}),
       generatedAtIso,
       files,
       workbookRows: workbookRows as number,
@@ -163,6 +172,7 @@ export function parseArtifactScope(raw: unknown, expectedKind: TalabatSendKind):
 export type ArtifactBlock =
   | "artifact_missing"
   | "artifact_stale"
+  | "baseline_changed"
   | "artifact_empty"
   | "barcode_values_present"
   | "active_values_present"
@@ -183,10 +193,21 @@ export type ArtifactBlock =
 export function verifyArtifactScope(
   scope: TalabatArtifactScope | null,
   currentFingerprint: string,
+  /**
+   * The ACTIVE baseline's fingerprint. Omitted keeps the STEP 84 behaviour for
+   * callers that predate baseline upload; supplied, a mismatch invalidates the
+   * artifact even when the counts happen to be identical.
+   */
+  currentBaselineFingerprint?: string,
 ): ArtifactBlock[] {
   if (scope === null) return ["artifact_missing"];
   const blocks: ArtifactBlock[] = [];
   if (scope.runFingerprint !== currentFingerprint) blocks.push("artifact_stale");
+  if (currentBaselineFingerprint !== undefined
+    && scope.baselineFingerprint !== undefined
+    && scope.baselineFingerprint !== currentBaselineFingerprint) {
+    blocks.push("baseline_changed");
+  }
   if (scope.workbookRows <= 0 || scope.files.length === 0) blocks.push("artifact_empty");
   if (scope.kind === "existing_updates") {
     // The safe-update workbook's whole point: name and price, nothing else.
@@ -205,6 +226,7 @@ export function verifyArtifactScope(
 export const ARTIFACT_BLOCK_AR: Record<ArtifactBlock, string> = {
   artifact_missing: "لم يتم توليد ملفات هذه الرسالة بعد.",
   artifact_stale: "الملفات المولّدة تعود لمقارنة سابقة — أعد التوليد قبل الإرسال.",
+  baseline_changed: "تم رفع ملف طلبات أحدث — أعد التوليد قبل الإرسال.",
   artifact_empty: "الملفات المولّدة فارغة.",
   barcode_values_present: "ملف التحديثات الآمنة يحتوي قيم باركود — ممنوع الإرسال.",
   active_values_present: "ملف التحديثات الآمنة يحتوي قيم توفّر — ممنوع الإرسال.",

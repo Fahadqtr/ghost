@@ -94,9 +94,30 @@ export function buildTalabatUpdateEmail(updateWorkbookName: string): TalabatEmai
 export function buildTalabatNewProductsEmail(
   newWorkbookName: string,
   imagesZipName: string,
-  readiness: { sendable: boolean; categoryRequests?: readonly string[] } = { sendable: false },
+  readiness: {
+    sendable: boolean;
+    categoryRequests?: readonly string[];
+    /**
+     * STEP 88 — the images travel as a time-limited signed download link, not
+     * as an attachment. 332 MB of photographs is not an email, and silently
+     * dropping them to make it one would ship a different package than the one
+     * the owner reviewed. When a link is supplied the ZIP is NOT in
+     * `attachments`, and the body says where the images actually are.
+     */
+    imagesLink?: { url: string; expiresAtIso: string } | null;
+  } = { sendable: false },
 ): TalabatEmailDraft {
   const requests = readiness.categoryRequests ?? [];
+  const link = readiness.imagesLink ?? null;
+  const imagesSection = link === null ? [] : [
+    "The product images are provided as a secure download link rather than an",
+    "email attachment, because of their size:",
+    "",
+    link.url,
+    "",
+    `This link expires on ${link.expiresAtIso}.`,
+    "",
+  ];
   const categoryAsk = requests.length === 0 ? [] : [
     "Please note that some of the attached products belong to a new category that",
     "is not currently available in our Talabat menu:",
@@ -114,9 +135,14 @@ export function buildTalabatNewProductsEmail(
       "",
       "Please find attached our latest new-product additions for Malika's Universe.",
       "",
-      "The attached Excel contains only products that are not currently listed in",
-      "our Talabat catalog, together with the required product images.",
+      link === null
+        ? "The attached Excel contains only products that are not currently listed in"
+        : "The attached Excel contains only products that are not currently listed in",
+      link === null
+        ? "our Talabat catalog, together with the required product images."
+        : "our Talabat catalog. The product images are linked below.",
       "",
+      ...imagesSection,
       "Kindly add the attached products to our existing menu while keeping all",
       "currently listed products unchanged.",
       "",
@@ -126,7 +152,10 @@ export function buildTalabatNewProductsEmail(
       "",
       SIGNOFF,
     ].join("\n"),
-    attachments: [newWorkbookName, imagesZipName],
+    // The ZIP is listed as an attachment ONLY when there is no link for it —
+    // the attachment list is what the sender actually attaches, so it must not
+    // claim a file that is being delivered another way.
+    attachments: link === null ? [newWorkbookName, imagesZipName] : [newWorkbookName],
     sendable: readiness.sendable,
   };
 }

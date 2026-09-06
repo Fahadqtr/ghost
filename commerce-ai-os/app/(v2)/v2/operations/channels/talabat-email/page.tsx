@@ -17,9 +17,10 @@
 import { isOwner } from "@/lib/malak/authz";
 import { OWNER_ONLY_DENIED } from "@/lib/malak/owner-check";
 import { getEmailSettings } from "@/lib/talabat/email-send.server";
-import { deliveryLogSupportsMode } from "@/lib/talabat/email-workflow.server";
+import { deliveryLogSupportsMode, readActiveBaseline } from "@/lib/talabat/email-workflow.server";
 import { OFFICIAL_SEND_DISABLED_AR } from "@/lib/export/talabat/email-workflow";
 import TalabatEmailWorkflow from "./TalabatEmailWorkflow";
+import BaselineUpload from "./BaselineUpload";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,7 @@ export default async function TalabatEmailPage() {
   const sender = settings.senders.find((s) => s.isDefault) ?? settings.senders[0] ?? null;
   const senderVerified = sender?.verification === "verified";
   const deliveryLogReady = await deliveryLogSupportsMode();
+  const activeBaseline = await readActiveBaseline();
 
   return (
     <div className="space-y-4">
@@ -62,6 +64,13 @@ export default async function TalabatEmailPage() {
               <> — الاقتراح المحفوظ: <span className="font-mono">{settings.talabat.to.join(", ")}</span></>
             ) : <> — لا يوجد اقتراح محفوظ</>}
           </li>
+          <li>
+            ملف طلبات المرجعي:{" "}
+            {activeBaseline
+              ? <><span className="font-mono">{activeBaseline.filename}</span> · {activeBaseline.rowCount} صفاً · <span className="font-mono">{activeBaseline.fingerprint}</span></>
+              : <span className="text-amber-800">غير مرفوع — التوليد متوقف</span>}
+          </li>
+          <li>صور المنتجات الجديدة: تُسلَّم برابط تنزيل موقّع محدود الصلاحية، لا كمرفق.</li>
           <li>مراجعة الباركود: ٢٧٠ صفاً — غير قابلة للإرسال، وخارج الرسالتين تماماً.</li>
           <li className="text-amber-800">الإرسال الرسمي: معطّل — {OFFICIAL_SEND_DISABLED_AR}</li>
           {!deliveryLogReady ? (
@@ -72,6 +81,8 @@ export default async function TalabatEmailPage() {
           ) : null}
         </ul>
       </section>
+
+      <BaselineUpload active={activeBaseline} />
 
       <TalabatEmailWorkflow
         senderVerified={senderVerified}
