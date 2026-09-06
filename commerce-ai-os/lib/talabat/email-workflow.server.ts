@@ -79,6 +79,15 @@ export interface WorkflowPreviewDTO {
   recipientPresent: boolean;
   recipientValid: boolean;
   subject: string;
+  /**
+   * STEP 89 — the exact HTML the transport sends. The preview screen renders
+   * THIS string; there is no second, prettier preview template, so what the
+   * owner approves is byte-for-byte what Talabat would receive.
+   *
+   * null only when the approved signature artwork is missing, in which case the
+   * message degrades to plain text rather than going out unsigned.
+   */
+  bodyHtml: string | null;
   bodyText: string;
   attachments: { filename: string; bytes: number; contentType: string }[];
   size: AttachmentSizeReport;
@@ -139,18 +148,35 @@ export async function buildWorkflowPreview(
   const zipName = kind === "new_products" ? files.find((f) => f.endsWith(".zip")) ?? null : null;
   const imagesLink = zipName !== null ? await signImagesLink(zipName) : null;
 
+  // Every figure the email states comes from the artifact scope that was written
+  // when the files were generated — never from a constant in this file. If the
+  // scope is missing the summary card is omitted rather than guessed.
+  const scope = bundle?.artifactScope ?? null;
   const draft = kind === "existing_updates"
-    ? buildTalabatUpdateEmail(files[0] ?? "")
-    : buildTalabatNewProductsEmail(files[0] ?? "", zipName ?? "",
-        { sendable: false, categoryRequests: input.categoryRequests, imagesLink });
-  const presented = presentForMode(input.mode, draft.subject, draft.bodyText);
+    ? buildTalabatUpdateEmail(files[0] ?? "", scope === null ? undefined : {
+        products: scope.workbookProducts, rows: scope.workbookRows,
+      })
+    : buildTalabatNewProductsEmail(files[0] ?? "", zipName ?? "", {
+        sendable: false,
+        categoryRequests: input.categoryRequests,
+        imagesLink,
+        summary: scope === null ? undefined : {
+          products: scope.workbookProducts, rows: scope.workbookRows,
+          images: scope.imageCount ?? 0,
+        },
+      });
+  const presented = presentForMode(input.mode, draft.subject, draft.bodyText, draft.bodyHtml);
 
   // Only what the draft CLAIMS to attach is measured and sent — the ZIP is
   // excluded the moment a link exists, so the size gate reflects reality.
   const attachments = (bundle?.attachments ?? [])
     .filter((a) => draft.attachments.includes(a.filename))
     .map((a) => ({ filename: a.filename, bytes: a.bytes.length, contentType: a.contentType }));
-  const size = attachmentSizeReport(attachments, presented.bodyText.length, config?.attachmentMaxBytes ?? 0);
+  // Both MIME parts count towards the message: the HTML body is an order of
+  // magnitude larger than the text one, and a size report that ignored it would
+  // under-report every message this step produces.
+  const bodyBytes = presented.bodyText.length + (presented.bodyHtml?.length ?? 0);
+  const size = attachmentSizeReport(attachments, bodyBytes, config?.attachmentMaxBytes ?? 0);
 
   const token = confirmationToken({
     kind, mode: input.mode, from: sender.expected.address, to, cc,
@@ -180,6 +206,7 @@ export async function buildWorkflowPreview(
       savedTo: saved.to, savedCc: saved.cc,
       to, cc, recipientPresent, recipientValid,
       subject: presented.subject,
+      bodyHtml: presented.bodyHtml,
       bodyText: presented.bodyText,
       attachments,
       size,
@@ -272,7 +299,10 @@ export async function sendTalabatTestEmail(input: TestSendInput): Promise<Workfl
     cc: check.cc,
     subject: p.subject,
     text: p.bodyText,
-    html: `<pre style="font-family:inherit;white-space:pre-wrap">${escapeHtml(p.bodyText)}</pre>`,
+    // The SAME string the preview displayed — not a re-render, not a wrapper
+    // around the plain text. When the approved signature is unavailable the
+    // HTML part is dropped entirely and the message goes out as text.
+    html: p.bodyHtml ?? undefined,
     // EXACTLY the files the preview listed: the image ZIP is excluded because
     // the body delivers it by link, and attaching it anyway would both blow the
     // size limit and contradict what the owner reviewed.
@@ -330,10 +360,6 @@ function statusFor(block: WorkflowBlock): number {
     case "delivery_log_not_ready": return 409;
     default: return 422;
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 

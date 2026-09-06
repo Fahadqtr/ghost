@@ -21,6 +21,11 @@
 //   • building a draft NEVER sends anything and mutates nothing.
 
 import { renderSignOffHtml, renderSignOffText } from "../../mail/malikas-signature.ts";
+// STEP 89 — the shell, the accent and the escape helper now live in one place
+// so Talabat and Rafeeq cannot drift into two house styles. These produce the
+// SAME strings this renderer already emitted; the Rafeeq output is unchanged
+// and its own template tests prove it.
+import { escapeMailHtml, mailShellOpen, mailShellClose, MAIL_ACCENT } from "../../mail/mail-shell.ts";
 
 export const RAFEEQ_GUIDE_PNG = "Rafeeq-Options-Reading-Guide.png";
 /** Default recipient — the owner fills/edits the address in the UI. */
@@ -175,8 +180,7 @@ const FULL_REPLACEMENT_HTML = `
   <p>After the catalog update is completed, please confirm with us. We will then export the updated catalog from Rafeeq and
   reconcile the newly assigned Rafeeq product IDs with our internal catalog.</p>`;
 
-const esc = (v: string | number | null | undefined): string =>
-  String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const esc = escapeMailHtml;
 const n = (v: number): string => v.toLocaleString("en-US");
 const price = (v: number | null): string => (v === null ? "—" : `${v} QAR`);
 
@@ -412,7 +416,7 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
     : "";
 
   const html = `
-<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#111111;max-width:640px;margin:0 auto;padding:0 8px">
+${mailShellOpen()}
   <p>Dear Rafeeq team,</p>
   <p>Please find our ${isFull ? "full catalog" : "new / pending products"} package below.</p>
   ${correctionHtml}
@@ -482,7 +486,7 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
     link
       ? `
   <h2>Package download</h2>
-  <table border="0" cellpadding="0" cellspacing="0" style="margin:12px 0"><tr><td style="background-color:#0f766e;border-radius:8px">
+  <table border="0" cellpadding="0" cellspacing="0" style="margin:12px 0"><tr><td style="background-color:${MAIL_ACCENT};border-radius:8px">
     <a href="${esc(link.url)}" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none">Download Full Catalog Package</a>
   </td></tr></table>
   <p>The full package (<code>${esc(ctx.filename)}</code>, images included) is delivered through this secure direct-download
@@ -494,7 +498,7 @@ export function buildRafeeqEmailDraft(ctx: RafeeqEmailContext): RafeeqEmailDraft
   }
 
   ${signOffHtml ?? ""}
-</div>`.trim();
+${mailShellClose()}`.trim();
 
   const textAr = [
     correction ? "⚠️ حزمة محدَّثة — الرجاء تجاهل أي حزمة سابقة واستخدام الحزمة الموجودة على رابط التنزيل الآمن في هذا الإيميل فقط." : null,

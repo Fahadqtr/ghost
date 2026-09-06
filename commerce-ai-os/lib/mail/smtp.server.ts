@@ -20,8 +20,13 @@ export interface OutboundMail {
   to: string[];
   cc: string[];
   subject: string;
-  html: string;
-  /** plain-text MIME alternative. */
+  /**
+   * The HTML part. Optional: a caller whose approved HTML is unavailable omits
+   * it and the message goes out as plain text only, rather than shipping a
+   * substituted or half-rendered body.
+   */
+  html?: string;
+  /** plain-text MIME alternative — always present. */
   text: string;
   attachments: OutboundMailAttachment[];
 }
