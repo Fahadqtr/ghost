@@ -211,6 +211,20 @@ export interface TalabatJobAdvanceDeps {
    * artifact. The new-product delta package turns it on; nothing else does.
    */
   correctExtensionFromBytes?: boolean;
+  /**
+   * STEP 90 — archive the IMAGES ONLY, omitting the workbook and manifest.
+   *
+   * OPT-IN, default false, for the same reason as the flag above: the certified
+   * full package must stay byte-for-byte what it has always been.
+   *
+   * The Email B delivery is an Excel ATTACHMENT plus an images link. If the
+   * linked ZIP also carried a workbook, Talabat would receive two different
+   * spreadsheets in one delivery — this one built from the full certified
+   * schema, the attached one from the new-product delta — and could import the
+   * wrong one. Row selection, survivor rules and the §15 integrity check are
+   * unchanged; only the two tail ENTRIES are left out of the archive.
+   */
+  imagesOnlyArchive?: boolean;
 }
 
 // ── plan / state construction ─────────────────────────────────────────────────
@@ -543,10 +557,13 @@ async function archiveStep(
   state.stage = "BUILDING_ARCHIVE";
   const tail: Uint8Array[] = [];
   let tailBytes = 0;
-  for (const [name, data] of [
-    ["Talabat/talabat-products.xlsx", xlsxBytes],
-    ["manifest.json", manifestBytes],
-  ] as [string, Uint8Array][]) {
+  // The workbook and manifest are still BUILT above — they decide which rows
+  // survive and they drive the integrity check — but an images-only archive
+  // does not carry them.
+  const tailEntries: [string, Uint8Array][] = deps.imagesOnlyArchive
+    ? []
+    : [["Talabat/talabat-products.xlsx", xlsxBytes], ["manifest.json", manifestBytes]];
+  for (const [name, data] of tailEntries) {
     const seg = zipEntrySegment(name, data);
     state.entries.push({ name, crc: seg.crc, size: seg.size, offset: state.offset + tailBytes, part: state.parts.length });
     tail.push(seg.bytes);

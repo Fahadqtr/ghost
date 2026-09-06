@@ -256,6 +256,11 @@ export type GenerationError =
   | "baseline_fingerprint_mismatch"
   | "preview_unavailable"
   | "image_package_missing"
+  // STEP 90 — a package that EXISTS but does not belong to this run. Distinct
+  // from "missing" on purpose: the two need different actions from the owner,
+  // and "prepare the images" is unhelpful advice when they already have.
+  | "image_package_stale"
+  | "image_package_incomplete"
   | "artifact_write_failed"
   | "baseline_write_failed"
   | "email_kind_not_sendable";
@@ -272,7 +277,11 @@ export const GENERATION_ERROR_AR: Record<GenerationError, string> = {
   preview_unavailable:
     "تعذّر تجهيز بيانات المقارنة للتوليد.",
   image_package_missing:
-    "تعذّر تجهيز حزمة الصور المطلوبة.",
+    "لم تُجهَّز حزمة صور المنتجات الجديدة بعد. جهّز حزمة الصور ثم أعد التوليد.",
+  image_package_stale:
+    "حزمة الصور المحفوظة بُنيت على مقارنة أو ملف مرجعي سابق. أعد تجهيز حزمة الصور.",
+  image_package_incomplete:
+    "حزمة الصور ناقصة أو تحتوي أسماء مكرّرة. أعد تجهيز حزمة الصور.",
   artifact_write_failed:
     "تعذّر حفظ الملفات المولّدة. لم يتم إرسال أي بريد.",
   baseline_write_failed:

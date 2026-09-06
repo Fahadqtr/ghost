@@ -21,6 +21,7 @@ import { deliveryLogSupportsMode, readActiveBaseline } from "@/lib/talabat/email
 import { OFFICIAL_SEND_DISABLED_AR } from "@/lib/export/talabat/email-workflow";
 import TalabatEmailWorkflow from "./TalabatEmailWorkflow";
 import BaselineUpload from "./BaselineUpload";
+import ImagePackage from "./ImagePackage";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +84,8 @@ export default async function TalabatEmailPage() {
       </section>
 
       <BaselineUpload active={activeBaseline} />
+
+      <ImagePackage />
 
       <TalabatEmailWorkflow
         senderVerified={senderVerified}

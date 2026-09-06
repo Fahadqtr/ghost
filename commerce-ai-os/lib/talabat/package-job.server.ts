@@ -45,6 +45,10 @@ import {
 import type { TalabatJobStage, TalabatJobUiErrorCode } from "@/lib/export/talabat/package-job-errors";
 import { isRecoverableTalabatJobError } from "@/lib/export/talabat/package-job-errors";
 import { mappingComplete, normalizeTalabatPackageJobState } from "@/lib/export/talabat/package-job";
+import {
+  DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, auditDeltaImageCoverage,
+  type DeltaImageMeta, type DeltaImageCoverage,
+} from "@/lib/export/talabat/delta-image-package";
 
 const BUCKET = "talabat-packages";
 const CHANNEL = "talabat:malikas";
@@ -600,4 +604,281 @@ export async function getTalabatPackageArtifact(jobId: string): Promise<
 /** One artifact part's bytes (download streaming). */
 export async function readTalabatPackagePart(path: string): Promise<Uint8Array | null> {
   return getObject(path);
+}
+
+// ── STEP 90: the Email B delta image package ─────────────────────────────────
+//
+// The SAME engine as above, driven over a subset of the same certified preview
+// rows. Not a second image pipeline: same fetch port, same filename rules, same
+// dedup, same retry, same §15 integrity check. Three deps differ, and each
+// difference is deliberate:
+//
+//   imagesOnlyArchive        ON  — Email B attaches its own delta workbook; a
+//                                  second, differently-built workbook inside
+//                                  the linked ZIP is a wrong-import risk.
+//   correctExtensionFromBytes ON — STEP 84 built this flag for exactly this
+//                                  package (the certified full one keeps its
+//                                  URL-derived names).
+//   syncMappings / recordAudit OFF — staging images for an email is not a
+//                                  catalogue export. No channel mapping is
+//                                  written and no export audit row is created,
+//                                  so this flow performs zero marketplace and
+//                                  zero canonical writes.
+//
+// It runs on the SAME channel as the certified export, so the existing
+// one-active-job index still guarantees only one image job at a time. No
+// schema change: `mode = selected` is already an allowed value.
+
+/** Marks a job as the Email B image job and binds it to the run it serves. */
+interface DeltaImageJobBinding {
+  marker: "email-b-delta-images";
+  runFingerprint: string;
+  baselineFingerprint: string | null;
+  expectedImages: number;
+}
+
+const DELTA_MARKER = "email-b-delta-images";
+const deltaBindingPath = (jobId: string) => `jobs/${jobId}/delta.json`;
+
+/**
+ * Assembling the staged ZIP needs the whole archive in memory once. 130 MB for
+ * the current package is comfortable; a ceiling turns a future runaway into a
+ * clean refusal instead of an out-of-memory kill that leaves no diagnosis.
+ */
+const DELTA_STAGE_MAX_BYTES = 400 * 1024 * 1024;
+
+async function readDeltaBinding(jobId: string): Promise<DeltaImageJobBinding | null> {
+  const raw = await getJson<Record<string, unknown>>(deltaBindingPath(jobId));
+  if (!raw || raw.marker !== DELTA_MARKER) return null;
+  const run = typeof raw.runFingerprint === "string" ? raw.runFingerprint : "";
+  const expected = typeof raw.expectedImages === "number" ? raw.expectedImages : -1;
+  if (run === "" || expected < 0) return null;
+  return {
+    marker: DELTA_MARKER,
+    runFingerprint: run,
+    baselineFingerprint: typeof raw.baselineFingerprint === "string" ? raw.baselineFingerprint : null,
+    expectedImages: expected,
+  };
+}
+
+/**
+ * Start (or resume) the image job for the CURRENT Email B delta.
+ *
+ * Unlike the certified start, this one never adopts a job it did not create:
+ * an active full-catalogue export is reported as a conflict rather than
+ * resumed, because staging its 2501-image artifact as "the new-product images"
+ * is precisely the wrong package.
+ */
+export async function startTalabatDeltaImageJob(input: {
+  selectedKeys: readonly string[];
+  runFingerprint: string;
+  baselineFingerprint: string | null;
+  actor: string | null;
+}): Promise<TalabatJobApiResult<TalabatJobStatusDTO>> {
+  if (input.selectedKeys.length === 0) return errResult("no_exportable_rows", 422);
+  const admin = createAdminClient();
+
+  const existing = await admin
+    .from("talabat_package_jobs").select(ROW_SELECT)
+    .eq("channel", CHANNEL).in("status", ["queued", "running"])
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (existing.error && String((existing.error as { code?: string }).code ?? "") === UNDEFINED_TABLE) {
+    return errResult("jobs_unavailable", 503);
+  }
+  const live = existing.data as unknown as JobRow | null;
+  if (live) {
+    const binding = await readDeltaBinding(live.id);
+    const st = await readState(live.id);
+    const pl = await getJson<TalabatPackageJobPlan>(planPath(live.id));
+    // Resume ONLY our own job, and only while it still serves this run.
+    if (binding && binding.runFingerprint === input.runFingerprint && st && pl) {
+      return { ok: true, value: statusDTO(st, pl, live) };
+    }
+    // Our OWN job, abandoned mid-flight and now serving a comparison that no
+    // longer applies: reap it exactly as the certified start reaps its own, or
+    // a dead row would block every future preparation for ever. A job that is
+    // still fresh, or that holds a durable artifact, is left alone — and a job
+    // that is not ours is never touched at all.
+    const fresh = Date.now() - new Date(live.updated_at).getTime() < STALE_MS;
+    if (!binding || fresh || (st?.artifact != null && st.status !== "completed")) {
+      return errResult("conflict", 409);
+    }
+    await reapStaleJob(live.id);
+  }
+
+  const preview = await loadTalabatPreview();
+  if (!preview) return errResult("generation_failed", 503);
+
+  const jobId = randomUUID();
+  const created = createTalabatPackageJob({
+    jobId, mode: "selected", selectedKeys: input.selectedKeys,
+    previewRows: preview.rows, actor: input.actor, nowIso: new Date().toISOString(),
+  });
+  if (!created.ok) return errResult("no_exportable_rows", 422);
+
+  const progress = jobProgress(created.state, created.plan);
+  const inserted = await admin
+    .from("talabat_package_jobs")
+    .insert({
+      id: jobId, channel: CHANNEL, mode: "selected", status: "running",
+      stage: created.state.stage, step: 0,
+      progress_current: 0, progress_total: progress.progressTotal,
+      rows_total: progress.rowsTotal,
+      products_total: created.plan.counts.simpleProductCount + created.plan.counts.variantRowCount,
+      created_by: input.actor,
+    })
+    .select("id").maybeSingle();
+  if (inserted.error) {
+    const pgCode = String((inserted.error as { code?: string }).code ?? "");
+    if (pgCode === UNDEFINED_TABLE) return errResult("jobs_unavailable", 503);
+    // Lost the race to some other job — never adopt it, just say so.
+    return errResult(pgCode === UNIQUE_VIOLATION ? "conflict" : "generation_failed", pgCode === UNIQUE_VIOLATION ? 409 : 503);
+  }
+
+  const binding: DeltaImageJobBinding = {
+    marker: DELTA_MARKER,
+    runFingerprint: input.runFingerprint,
+    baselineFingerprint: input.baselineFingerprint,
+    expectedImages: created.plan.images.length,
+  };
+  await putObject(planPath(jobId), json(created.plan), "application/json");
+  await putObject(statePath(jobId), json(created.state), "application/json");
+  await putObject(deltaBindingPath(jobId), json(binding), "application/json");
+  return { ok: true, value: statusDTO(created.state, created.plan, null) };
+}
+
+/** Drive the delta image job one bounded step. Refuses any other job. */
+export async function stepTalabatDeltaImageJob(jobId: string): Promise<TalabatJobApiResult<TalabatJobStatusDTO>> {
+  const admin = createAdminClient();
+  if (await readDeltaBinding(jobId) === null) return errResult("job_not_found", 404);
+
+  const row = await admin.from("talabat_package_jobs").select(ROW_SELECT).eq("id", jobId).maybeSingle();
+  if (row.error) {
+    return errResult(String((row.error as { code?: string }).code ?? "") === UNDEFINED_TABLE ? "jobs_unavailable" : "job_not_found", 503);
+  }
+  if (!row.data) return errResult("job_not_found", 404);
+  const seen = row.data as unknown as JobRow;
+
+  const state = await readState(jobId);
+  const plan = await getJson<TalabatPackageJobPlan>(planPath(jobId));
+  if (!state || !plan) return errResult("job_not_found", 404);
+  if (state.status !== "running") return { ok: true, value: statusDTO(state, plan, seen) };
+
+  const claim = await admin
+    .from("talabat_package_jobs")
+    .update({ step: seen.step + 1, updated_at: new Date().toISOString() })
+    .eq("id", jobId).eq("step", seen.step).select("id");
+  if (claim.error || !Array.isArray(claim.data) || claim.data.length === 0) {
+    return { ok: true, value: statusDTO(state, plan, seen) };
+  }
+
+  // No syncMappings, no recordAudit — see the section note above.
+  const next = await advanceTalabatPackageJob(state, plan, {
+    ports: enginePorts,
+    imagesOnlyArchive: true,
+    correctExtensionFromBytes: true,
+  });
+
+  await putObject(statePath(jobId), json(next), "application/json");
+  if (next.status === "failed" && !isRecoverableTalabatJobError(next.error?.code)) {
+    await cleanupJobArtifacts(jobId);
+  }
+  const progress = jobProgress(next, plan);
+  const nowIso = new Date().toISOString();
+  await admin.from("talabat_package_jobs").update({
+    status: next.status, stage: progress.stage,
+    progress_current: progress.progressCurrent, progress_total: progress.progressTotal,
+    rows_total: progress.rowsTotal, bytes_done: progress.bytesDone,
+    artifact_filename: next.artifact?.filename ?? null,
+    artifact_bytes: next.artifact?.totalBytes ?? null,
+    artifact_sha256: next.artifact?.sha256 ?? null,
+    manifest_fingerprint: next.artifact?.manifestFingerprint ?? null,
+    error_code: next.error?.code ?? null, error_ref: next.error?.refId ?? null,
+    completed_at: next.status === "completed" ? nowIso : null,
+    updated_at: nowIso,
+  }).eq("id", jobId);
+
+  const after = await admin.from("talabat_package_jobs").select(ROW_SELECT).eq("id", jobId).maybeSingle();
+  return { ok: true, value: statusDTO(next, plan, (after.data as unknown as JobRow | null) ?? seen) };
+}
+
+/**
+ * Staging outcome. The failure arm can carry the coverage audit: "incomplete"
+ * is only actionable if it says WHICH images are missing.
+ */
+export type DeltaImageStageOutcome =
+  | { ok: true; value: DeltaImageStageResult }
+  | {
+      ok: false; error: TalabatJobUiErrorCode; status: number;
+      coverage?: DeltaImageCoverage; missingRefs?: { filename: string; sku: string }[];
+    };
+
+export interface DeltaImageStageResult {
+  coverage: DeltaImageCoverage;
+  meta: DeltaImageMeta;
+  /** filename + SKU of every planned image the job could not retrieve. */
+  missingRefs: { filename: string; sku: string }[];
+}
+
+/**
+ * Publish a COMPLETED delta job's archive as the current Email B image source.
+ *
+ * Fails closed on an incomplete package. The owner asked for the exact missing
+ * references rather than a count, so a short package returns them and stages
+ * nothing: a partner receiving 600 of 632 photographs with no warning is worse
+ * than a partner receiving no email.
+ */
+export async function stageTalabatDeltaImagePackage(jobId: string): Promise<DeltaImageStageOutcome> {
+  const binding = await readDeltaBinding(jobId);
+  if (binding === null) return errResult("job_not_found", 404);
+  const state = await readState(jobId);
+  const plan = await getJson<TalabatPackageJobPlan>(planPath(jobId));
+  if (!state || !plan) return errResult("job_not_found", 404);
+  if (state.status !== "completed" || !state.artifact) return errResult("conflict", 409);
+
+  const coverage = auditDeltaImageCoverage({
+    expected: plan.images.length,
+    packagedNames: state.packaged.map((p) => p.name),
+    droppedCount: state.droppedImages.length,
+  });
+  const missingRefs = state.droppedImages
+    .map((i) => plan.images[i])
+    .filter((img): img is NonNullable<typeof img> => Boolean(img))
+    .map((img) => ({ filename: img.filename, sku: plan.rows[img.rowIndex]?.sku ?? "" }));
+  if (!coverage.complete) {
+    return { ok: false, error: "integrity_failed", status: 409, coverage, missingRefs };
+  }
+  if (state.artifact.totalBytes > DELTA_STAGE_MAX_BYTES) return errResult("upload_incomplete", 413);
+
+  // The archive is the ordered concatenation of its durable parts — the same
+  // bytes the download route streams, assembled once here so the partner
+  // receives ONE file behind ONE link.
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (const part of state.parts) {
+    const bytes = await readTalabatPackagePart(part.path);
+    if (bytes === null) return errResult("upload_incomplete", 502);
+    chunks.push(bytes); total += bytes.length;
+  }
+  const zip = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { zip.set(c, at); at += c.length; }
+
+  const meta: DeltaImageMeta = {
+    imageCount: coverage.packaged,
+    expectedImages: coverage.expected,
+    extensionAudit: state.extensionAudit ?? { mismatches: 0, renamed: 0, collisions: 0 },
+    runFingerprint: binding.runFingerprint,
+    baselineFingerprint: binding.baselineFingerprint,
+    jobId,
+    stagedAtIso: new Date().toISOString(),
+    zipBytes: zip.length,
+  };
+  try {
+    await putObject(DELTA_IMAGE_ZIP_PATH, zip, "application/zip");
+    await putObject(DELTA_IMAGE_META_PATH, json(meta), "application/json");
+  } catch {
+    return errResult("upload_incomplete", 502);
+  }
+  return { ok: true, value: { coverage, meta, missingRefs } };
 }
