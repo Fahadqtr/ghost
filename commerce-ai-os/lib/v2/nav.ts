@@ -66,6 +66,10 @@ export const V2_NAV_LINKS: readonly V2NavLink[] = [
   // existing V2 pages; nothing is renamed. NAV.MEDIA moved the Media Center
   // into the dedicated «الصور والوسائط» group below.
   { href: "/v2/operations/channels", label: "مركز القنوات", icon: "channels", section: "العمليات" },
+  // STEP 87 — the Talabat email workflow (generate → preview → test send).
+  // Lives under the channels area because it is a channel operation, not a
+  // settings screen: /v2/settings/email configures WHO we send as and to.
+  { href: "/v2/operations/channels/talabat-email", label: "إرسال تحديثات طلبات", icon: "channels", section: "العمليات" },
   { href: "/v2/operations/ai", label: "مركز الذكاء الاصطناعي", icon: "ai", section: "العمليات" },
   { href: "/v2/operations/health", label: "صحة المنصة", icon: "health", section: "العمليات" },
   // Export Center (Phase INT.2A) — the unified outbound export/publish entry
