@@ -9,12 +9,16 @@
 
 import { useState } from "react";
 
+import { DEFAULT_TALABAT_GREETING } from "@/lib/export/talabat/email-templates";
+
 type Preview = {
   kind: string;
   from: string | null;
   to: string[];
   cc: string[];
   subject: string;
+  greeting: string;
+  greetingPresent: boolean;
   /** the exact HTML the transport will send. null ⇒ plain text only. */
   bodyHtml: string | null;
   bodyText: string;
@@ -66,6 +70,10 @@ function EmailCard({
 }) {
   const [to, setTo] = useState(savedTo);
   const [cc, setCc] = useState(savedCc);
+  // A PREFILL. The owner is expected to change it — "Dear July," when writing
+  // to a person, the desk's name when writing to a desk — and clearing it
+  // blocks the send rather than silently restoring this text.
+  const [greeting, setGreeting] = useState(DEFAULT_TALABAT_GREETING);
   const [run, setRun] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [confirmedToken, setConfirmedToken] = useState<string | null>(null);
@@ -103,7 +111,7 @@ function EmailCard({
   async function loadPreview() {
     setBusy("preview"); setError(null); setMessage(null); setConfirmedToken(null);
     try {
-      const q = new URLSearchParams({ mode: "test", to, cc, ...(run ? { run } : {}) });
+      const q = new URLSearchParams({ mode: "test", to, cc, greeting, ...(run ? { run } : {}) });
       setPreview(await call(`/api/export/talabat/email/workflow/${kindId}?${q}`) as Preview);
     } catch (e) {
       setError(e instanceof Error ? e.message : "تعذّرت المعاينة.");
@@ -117,7 +125,7 @@ function EmailCard({
       const body = await call(`/api/export/talabat/email/workflow/${kindId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, cc, run, confirmationToken: confirmedToken }),
+        body: JSON.stringify({ to, cc, greeting, run, confirmationToken: confirmedToken }),
       });
       setMessage(`تم إرسال رسالة اختبار إلى ${(body?.to ?? []).join("، ")} — معرّف المزوّد: ${body?.messageId ?? "—"}`);
       setConfirmedToken(null);
@@ -151,6 +159,15 @@ function EmailCard({
           className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm" />
       </label>
       <label className="block text-sm">
+        <span className="mb-1 block text-slate-600">التحية (Greeting) — تُكتب لكل رسالة</span>
+        <input type="text" dir="ltr" value={greeting} onChange={(e) => edit(setGreeting)(e.target.value)}
+          placeholder={DEFAULT_TALABAT_GREETING}
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm" />
+        <span className="mt-1 block text-xs text-slate-500">
+          سطر الافتتاح كما سيظهر في الرسالة — مثل Dear July, أو Dear Talabat Content Team,
+        </span>
+      </label>
+      <label className="block text-sm">
         <span className="mb-1 block text-slate-600">نسخة (CC) — اختياري</span>
         <input type="text" dir="ltr" value={cc} onChange={(e) => edit(setCc)(e.target.value)}
           className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm" />
@@ -165,6 +182,12 @@ function EmailCard({
           <p><span className="text-slate-500">إلى:</span> <span className="font-mono">{preview.to.join("، ") || "—"}</span></p>
           {preview.cc.length > 0 ? <p><span className="text-slate-500">نسخة:</span> <span className="font-mono">{preview.cc.join("، ")}</span></p> : null}
           <p><span className="text-slate-500">الموضوع:</span> {preview.subject}</p>
+          <p>
+            <span className="text-slate-500">التحية:</span>{" "}
+            {preview.greetingPresent
+              ? <span className="font-mono">{preview.greeting}</span>
+              : <span className="text-amber-800">لم تُكتب — الإرسال متوقف</span>}
+          </p>
           <BodyPreview bodyHtml={preview.bodyHtml} bodyText={preview.bodyText} />
           <ul className="text-xs text-slate-600">
             {preview.attachments.map((a) => <li key={a.filename}><span className="font-mono">{a.filename}</span> — {mb(a.bytes)} م.ب</li>)}

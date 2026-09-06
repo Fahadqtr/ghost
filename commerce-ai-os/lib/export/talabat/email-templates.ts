@@ -16,6 +16,33 @@ import {
 
 export type TalabatEmailKind = "existing_updates" | "new_products" | "barcode_corrections";
 
+/**
+ * STEP 89B — the greeting is written per send, not baked into the template.
+ *
+ * "Dear Talabat Team," is a PREFILL and nothing more: the owner may be writing
+ * to a named contact ("Dear July,") or to a specific desk ("Dear Talabat
+ * Content Team,"), and a letter that opens by addressing the wrong party reads
+ * as a form letter however good the rest of it is.
+ *
+ * The default is exported so the UI can prefill it and the tests can pin it —
+ * it is NOT a fallback the server quietly substitutes for a blank field. An
+ * empty greeting is a refusal, not a default (see normalizeGreeting).
+ */
+export const DEFAULT_TALABAT_GREETING = "Dear Talabat Team,";
+
+/**
+ * The one place a typed greeting becomes a usable one.
+ *
+ * Trims, and returns null for anything that is not a greeting. Null means the
+ * caller must REFUSE — never substitute — because silently restoring the
+ * default after the owner cleared the field would send a greeting they did not
+ * write, and had explicitly removed.
+ */
+export function normalizeGreeting(raw: string | null | undefined): string | null {
+  const trimmed = (raw ?? "").trim();
+  return trimmed === "" ? null : trimmed;
+}
+
 export interface TalabatEmailDraft {
   kind: TalabatEmailKind;
   subject: string;
@@ -63,6 +90,8 @@ const SIGNOFF = [
  */
 function renderTalabatHtml(input: {
   title: string;
+  /** the owner's greeting for THIS send, already normalized. */
+  greeting: string;
   intro: readonly string[];
   summaryRows: readonly MailSummaryRow[];
   instruction: string;
@@ -75,7 +104,7 @@ function renderTalabatHtml(input: {
   return mailShell([
     `  <p style="font-size:12px;letter-spacing:2px;color:#9a9a9a;margin:0 0 4px 0">MALIKA'S UNIVERSE</p>`,
     `  <h1 style="font-size:20px;line-height:1.3;margin:0 0 16px 0;color:#111111">${escapeMailHtml(input.title)}</h1>`,
-    `  <p>Dear Talabat Team,</p>`,
+    `  <p>${escapeMailHtml(input.greeting)}</p>`,
     ...input.intro.map((p) => `  <p>${escapeMailHtml(p)}</p>`),
     mailHeading("Summary"),
     mailSummaryTable(input.summaryRows),
@@ -113,9 +142,11 @@ export interface UpdateEmailSummary {
 export function buildTalabatUpdateEmail(
   updateWorkbookName: string,
   summary?: UpdateEmailSummary,
+  /** the owner's greeting for this send. Omitted ⇒ the prefill. */
+  greeting: string = DEFAULT_TALABAT_GREETING,
 ): TalabatEmailDraft {
   const bodyText = [
-    "Dear Talabat Team,",
+    greeting,
     "",
     "Please find attached our latest product data update for Malika's Universe.",
     "",
@@ -154,6 +185,7 @@ export function buildTalabatUpdateEmail(
     subject: TALABAT_EMAIL_SUBJECTS.existing_updates,
     bodyHtml: renderTalabatHtml({
       title: "Talabat Product Data Update",
+      greeting,
       intro: [
         "Please find attached our latest product data update for Malika's Universe.",
         "The attached file contains only products that are already listed on Talabat and require data updates.",
@@ -191,6 +223,8 @@ export function buildTalabatNewProductsEmail(
     imagesLink?: { url: string; expiresAtIso: string } | null;
     summary?: NewProductsEmailSummary;
   } = { sendable: false },
+  /** the owner's greeting for this send. Omitted ⇒ the prefill. */
+  greeting: string = DEFAULT_TALABAT_GREETING,
 ): TalabatEmailDraft {
   const requests = readiness.categoryRequests ?? [];
   const link = readiness.imagesLink ?? null;
@@ -216,7 +250,7 @@ export function buildTalabatNewProductsEmail(
   ];
 
   const bodyText = [
-    "Dear Talabat Team,",
+    greeting,
     "",
     "Please find attached our latest new-product additions for Malika's Universe.",
     "",
@@ -281,6 +315,7 @@ export function buildTalabatNewProductsEmail(
     subject: TALABAT_EMAIL_SUBJECTS.new_products,
     bodyHtml: renderTalabatHtml({
       title: "New Products for Talabat",
+      greeting,
       intro: [
         "Please find attached our latest new-product additions for Malika's Universe.",
         link === null
@@ -339,7 +374,9 @@ export function buildTalabatBarcodeCorrectionEmail(barcodeReviewWorkbookName: st
     bodyText: [
       "REVIEW ONLY — this draft is not approved for sending.",
       "",
-      "Dear Talabat Team,",
+      // Not editable: Email C can never be sent, so there is no send to write a
+      // greeting for. It uses the prefill so the owner reads the same opening.
+      DEFAULT_TALABAT_GREETING,
       "",
       "Please find attached a list of products where our records and the current",
       "Talabat catalog hold different barcodes.",

@@ -45,6 +45,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
     mode: url.searchParams.get("mode") === "official" ? "official" : "test",
     toRaw: url.searchParams.get("to") ?? "",
     ccRaw: url.searchParams.get("cc") ?? "",
+    // Passed through verbatim. A missing parameter is a BLANK greeting, not
+    // the default: the server never writes a greeting the owner did not.
+    greetingRaw: url.searchParams.get("greeting") ?? "",
     currentRunFingerprint: url.searchParams.get("run"),
     categoryRequests: url.searchParams.getAll("categoryRequest"),
   });
@@ -67,6 +70,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ kind: s
     mode: "test", // pinned: this route can never carry an official send
     toRaw: str(body.to),
     ccRaw: str(body.cc),
+    greetingRaw: str(body.greeting),
     currentRunFingerprint: typeof body.run === "string" && body.run !== "" ? body.run : null,
     categoryRequests: list(body.categoryRequests),
     confirmationToken: typeof body.confirmationToken === "string" ? body.confirmationToken : null,

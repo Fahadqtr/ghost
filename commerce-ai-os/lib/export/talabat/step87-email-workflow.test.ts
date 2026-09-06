@@ -47,13 +47,14 @@ function subject(over: Partial<ConfirmationSubject> = {}): ConfirmationSubject {
   return {
     kind: "existing_updates", mode: "test", from: "sender@malikas.test.qa",
     to: ["a@talabat.test.qa"], cc: [], subject: "[TEST] s",
+    greeting: "Dear Talabat Team,",
     attachmentFilenames: ["w.xlsx"], runFingerprint: "r1.x", ...over,
   };
 }
 function gate(over: Partial<WorkflowGateInput> = {}): WorkflowGateInput {
   return {
     mode: "test", senderVerified: true, artifactPresent: true, artifactFresh: true,
-    recipientPresent: true, recipientValid: true, sizeWithinLimit: true,
+    recipientPresent: true, recipientValid: true, greetingPresent: true, sizeWithinLimit: true,
     confirmation: { ok: true }, deliveryLogReady: true, ...over,
   };
 }
@@ -181,13 +182,15 @@ test("11: a confirmation is bound to ONE exact message", () => {
   assert.equal(blank.ok, false);
 });
 
-test("12: changing To, CC, subject, attachments or the run invalidates it", () => {
+test("12: changing To, CC, subject, greeting, attachments or the run invalidates it", () => {
   const base = subject();
   const token = confirmationToken(base);
   for (const [what, changed] of [
     ["To", subject({ to: ["other@talabat.test.qa"] })],
     ["CC", subject({ cc: ["watch@talabat.test.qa"] })],
     ["subject", subject({ subject: "[TEST] different" })],
+    // STEP 89B — the greeting is part of the message the owner confirmed.
+    ["greeting", subject({ greeting: "Dear July," })],
     ["attachments", subject({ attachmentFilenames: ["w.xlsx", "extra.zip"] })],
     ["run", subject({ runFingerprint: "r1.y" })],
     ["mode", subject({ mode: "official" })],

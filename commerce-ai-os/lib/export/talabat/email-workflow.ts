@@ -152,6 +152,14 @@ export interface ConfirmationSubject {
   to: string[];
   cc: string[];
   subject: string;
+  /**
+   * STEP 89B — the greeting the owner wrote for THIS message. In the token
+   * because it is part of what they are confirming: editing "Dear July," to
+   * "Dear Talabat Team," after ticking the box changes who the letter
+   * addresses, and a confirmation that survived that would be a confirmation
+   * of a different message.
+   */
+  greeting: string;
   attachmentFilenames: string[];
   runFingerprint: string;
 }
@@ -166,9 +174,12 @@ export interface ConfirmationSubject {
  */
 export function confirmationToken(s: ConfirmationSubject): string {
   const norm = (xs: readonly string[]) => [...xs].map((x) => x.trim().toLowerCase()).sort().join(",");
+  // "c2": the token gained the greeting, so a token minted by the previous
+  // shape can never be mistaken for a match on the new one.
   return [
-    "c1", s.kind, s.mode, s.from.trim().toLowerCase(),
-    norm(s.to), norm(s.cc), s.subject, norm(s.attachmentFilenames), s.runFingerprint,
+    "c2", s.kind, s.mode, s.from.trim().toLowerCase(),
+    norm(s.to), norm(s.cc), s.subject, s.greeting.trim(),
+    norm(s.attachmentFilenames), s.runFingerprint,
   ].join("|");
 }
 
@@ -195,6 +206,7 @@ export type WorkflowBlock =
   | "artifact_stale"
   | "recipient_missing"
   | "recipient_invalid"
+  | "greeting_missing"
   | "attachments_too_large"
   | "not_confirmed"
   | "confirmation_stale"
@@ -220,6 +232,8 @@ export interface WorkflowGateInput {
   artifactFresh: boolean;
   recipientPresent: boolean;
   recipientValid: boolean;
+  /** the owner wrote a greeting for this send. Never defaulted for them. */
+  greetingPresent: boolean;
   sizeWithinLimit: boolean;
   confirmation: ConfirmationCheck;
   deliveryLogReady: boolean;
@@ -235,6 +249,7 @@ export function evaluateWorkflowGate(input: WorkflowGateInput): WorkflowBlock[] 
   else if (!input.artifactFresh) blocks.push("artifact_stale");
   if (!input.recipientPresent) blocks.push("recipient_missing");
   else if (!input.recipientValid) blocks.push("recipient_invalid");
+  if (!input.greetingPresent) blocks.push("greeting_missing");
   if (!input.sizeWithinLimit) blocks.push("attachments_too_large");
   if (!input.deliveryLogReady) blocks.push("delivery_log_not_ready");
   if (!input.confirmation.ok) {
@@ -249,6 +264,7 @@ export const WORKFLOW_BLOCK_AR: Record<WorkflowBlock, string> = {
   artifact_stale: "الملفات المولّدة تعود لمقارنة سابقة — أعد التوليد.",
   recipient_missing: "أدخل عنوان المستلم.",
   recipient_invalid: "عنوان المستلم غير صالح.",
+  greeting_missing: "اكتب التحية قبل الإرسال.",
   attachments_too_large: "حجم المرفقات يتجاوز الحد المسموح لدى مزوّد البريد.",
   not_confirmed: "الإرسال يتطلب تأكيداً صريحاً.",
   confirmation_stale: "تغيّرت بيانات الرسالة بعد التأكيد — أعد التأكيد.",
