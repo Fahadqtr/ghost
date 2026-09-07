@@ -873,6 +873,14 @@ export interface DeltaImagePackageStatusDTO {
   expectedImages: number;
   zipBytes: number | null;
   stagedAtIso: string | null;
+  /**
+   * STEP 94B — the CURRENT Email B scope, recomputed on every read of this
+   * screen. It is here so the owner can see what a channel-policy change did to
+   * the scope WITHOUT generating anything: the delta is recomputed either way,
+   * and reporting two numbers it already produced costs nothing.
+   */
+  scopeProducts: number;
+  scopeRows: number;
   /** owner-facing reasons the staged package cannot be used, if any. */
   blockers: string[];
   /**
@@ -894,6 +902,9 @@ export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<Delta
   const delta = await loadCurrentTalabatDelta();
   if (!delta.ok) return fail(delta.error, 409);
   const expectedImages = deltaImagePlannedCount(delta.result);
+  const allowedRows = allowedNewDeltaRows(delta.result);
+  const scopeRows = allowedRows.length;
+  const scopeProducts = new Set(allowedRows.map((r) => r.our.internalProductId)).size;
 
   let meta = null;
   try {
@@ -917,6 +928,8 @@ export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<Delta
       expectedImages,
       zipBytes: meta?.zipBytes ?? null,
       stagedAtIso: meta?.stagedAtIso ?? null,
+      scopeProducts,
+      scopeRows,
       blockers: blocks.map((b) => DELTA_IMAGE_BLOCK_AR[b]),
       readyJob,
     },
