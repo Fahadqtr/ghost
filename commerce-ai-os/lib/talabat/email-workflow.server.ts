@@ -24,7 +24,8 @@ import {
 } from "@/lib/export/talabat/email-templates";
 import { isTalabatSendableKind, type TalabatSendKind } from "@/lib/export/talabat/email-send";
 import {
-  verifyArtifactScope, runFingerprint, artifactPath, type GenerationError,
+  verifyArtifactScope, runFingerprint,
+  type GenerationError, type TalabatImagePackageRef,
 } from "@/lib/export/talabat/email-artifacts";
 import {
   DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, parseDeltaImageMeta, verifyDeltaImagePackage,
@@ -45,7 +46,7 @@ import { parseTalabatBaseline, compareTalabatBaseline, type TalabatDeltaResult }
 import {
   generateSafeUpdateArtifact, generateNewProductsArtifact, safeUpdateComposition,
 } from "@/lib/talabat/email-artifacts.server";
-import { newProductPreviewRows, newProductImageScope } from "@/lib/export/talabat/delta-workbooks";
+import { newProductPreviewRows, newProductImageScope, newProductsImagesZipName } from "@/lib/export/talabat/delta-workbooks";
 import { allowedNewDeltaRows } from "@/lib/export/talabat/category-policy";
 import {
   attachmentSizeReport, oversizeGuidance, presentForMode, confirmationToken, checkConfirmation,
@@ -173,10 +174,13 @@ export async function buildWorkflowPreview(
       activeBaseline?.fingerprint).length === 0;
 
   const files = bundle?.attachments.map((a) => a.filename) ?? [];
-  // Email B's ZIP is delivered by a time-limited signed link. Minting it here
-  // means the preview shows the owner the same link the send will carry.
-  const zipName = kind === "new_products" ? files.find((f) => f.endsWith(".zip")) ?? null : null;
-  const imagesLink = zipName !== null ? await signImagesLink(zipName) : null;
+  // Email B's images are delivered by a time-limited signed link to the
+  // PUBLISHED package. The artifact no longer carries a copy, so the reference
+  // in the scope is what names and locates it; minting here means the preview
+  // shows the owner the same link the send will carry.
+  const imageRef = kind === "new_products" ? bundle?.artifactScope.imagePackage ?? null : null;
+  const zipName = imageRef?.filename ?? null;
+  const imagesLink = imageRef !== null ? await signImagesLink(imageRef) : null;
 
   // Every figure the email states comes from the artifact scope that was written
   // when the files were generated — never from a constant in this file. If the
@@ -572,12 +576,12 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
   // photographs look equally plausible whichever comparison produced them, so
   // without the binding check a package built last week would be linked from
   // today's email and nothing would look wrong.
-  const zip = await readCompletedDeltaImageZip(delta.fingerprint, baseline?.fingerprint ?? null);
-  if (!zip.ok) return fail(zip.error, 409);
+  const pkg = await readPublishedImagePackage(delta.fingerprint, baseline?.fingerprint ?? null, nowIso);
+  if (!pkg.ok) return fail(pkg.error, 409);
   const out = await generateNewProductsArtifact({
     result: delta.result, nowIso,
-    imageZipBytes: zip.value.bytes, imageCount: zip.value.imageCount,
-    extensionAudit: zip.value.extensionAudit,
+    imagePackage: pkg.value.ref,
+    extensionAudit: pkg.value.extensionAudit,
     baselineFingerprint: baseline?.fingerprint,
   });
   if (!out.ok) return fail("artifact_write_failed", 502);
@@ -607,31 +611,30 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
 export const DELTA_IMAGE_ZIP_OBJECT = DELTA_IMAGE_ZIP_PATH;
 export const DELTA_IMAGE_META_OBJECT = DELTA_IMAGE_META_PATH;
 
-type DeltaZipRead =
-  | { ok: true; value: { bytes: Uint8Array; imageCount: number; extensionAudit: { mismatches: number; renamed: number; collisions: number } } }
+type DeltaPackageRead =
+  | { ok: true; value: { ref: TalabatImagePackageRef; extensionAudit: { mismatches: number; renamed: number; collisions: number } } }
   | { ok: false; error: GenerationError };
 
 /**
- * The staged new-product image package, verified against the current run.
+ * The published image package, verified WITHOUT reading the archive.
  *
- * Read, never rebuilt: building it is the certified job's work (STEP 90's
- * staging flow). Absent, stale or short ⇒ a NAMED refusal, so the owner is told
- * which of the three it is instead of one message for all of them.
+ * STEP 90E — this used to download all 330 MB to hand the bytes to the artifact
+ * generator, which then uploaded a second copy. Everything the caller needs is
+ * in the 423-byte sidecar; the only thing worth asking storage is whether the
+ * object is really there at the size the sidecar claims, and a directory
+ * listing answers that without transferring a byte.
  */
-async function readCompletedDeltaImageZip(
+async function readPublishedImagePackage(
   currentRunFingerprint: string,
   currentBaselineFingerprint: string | null,
-): Promise<DeltaZipRead> {
+  nowIso: string,
+): Promise<DeltaPackageRead> {
   try {
     const admin = createAdminClient();
-    const [zip, meta] = await Promise.all([
-      admin.storage.from(BUCKET).download(DELTA_IMAGE_ZIP_PATH),
-      admin.storage.from(BUCKET).download(DELTA_IMAGE_META_PATH),
-    ]);
-    if (zip.error || !zip.data || meta.error || !meta.data) return { ok: false, error: "image_package_missing" };
-    const bytes = new Uint8Array(await zip.data.arrayBuffer());
+    const meta = await admin.storage.from(BUCKET).download(DELTA_IMAGE_META_PATH);
+    if (meta.error || !meta.data) return { ok: false, error: "image_package_missing" };
     const parsed = parseDeltaImageMeta(JSON.parse(await meta.data.text()));
-    if (bytes.length === 0 || parsed === null) return { ok: false, error: "image_package_missing" };
+    if (parsed === null) return { ok: false, error: "image_package_missing" };
 
     const blocks = verifyDeltaImagePackage(parsed, currentRunFingerprint, currentBaselineFingerprint);
     if (blocks.includes("image_package_missing")) return { ok: false, error: "image_package_missing" };
@@ -639,16 +642,50 @@ async function readCompletedDeltaImageZip(
       return { ok: false, error: "image_package_stale" };
     }
     if (blocks.length > 0) return { ok: false, error: "image_package_incomplete" };
-    // The stored bytes must be the bytes the sidecar measured, or one of the
-    // two was written by a run the other never saw.
-    if (bytes.length !== parsed.zipBytes) return { ok: false, error: "image_package_stale" };
+    // The sidecar records a hash; without one we cannot say WHICH archive the
+    // email would link to, so the package is not usable.
+    if (parsed.sha256 === null) return { ok: false, error: "image_package_incomplete" };
+
+    // Size check by listing, not by download.
+    const stored = await statPublishedImageZip();
+    if (stored === null) return { ok: false, error: "image_package_missing" };
+    if (stored !== parsed.zipBytes) return { ok: false, error: "image_package_stale" };
 
     return {
       ok: true,
-      value: { bytes, imageCount: parsed.imageCount, extensionAudit: parsed.extensionAudit },
+      value: {
+        ref: {
+          objectPath: DELTA_IMAGE_ZIP_PATH,
+          filename: newProductsImagesZipName(nowIso),
+          bytes: parsed.zipBytes,
+          sha256: parsed.sha256,
+          expectedImages: parsed.expectedImages,
+          packagedImages: parsed.imageCount,
+          sourceJobId: parsed.jobId,
+          baselineFingerprint: parsed.baselineFingerprint,
+          runFingerprint: parsed.runFingerprint,
+        },
+        extensionAudit: parsed.extensionAudit,
+      },
     };
   } catch {
     return { ok: false, error: "image_package_missing" };
+  }
+}
+
+/** The published archive's stored size, from a listing. Never downloads it. */
+async function statPublishedImageZip(): Promise<number | null> {
+  try {
+    const admin = createAdminClient();
+    const dir = DELTA_IMAGE_ZIP_PATH.slice(0, DELTA_IMAGE_ZIP_PATH.lastIndexOf("/"));
+    const name = DELTA_IMAGE_ZIP_PATH.slice(DELTA_IMAGE_ZIP_PATH.lastIndexOf("/") + 1);
+    const { data, error } = await admin.storage.from(BUCKET).list(dir, { limit: 100 });
+    if (error || !Array.isArray(data)) return null;
+    const row = data.find((o: { name: string; metadata?: { size?: number } | null }) => o.name === name);
+    const size = row?.metadata?.size;
+    return typeof size === "number" ? size : null;
+  } catch {
+    return null;
   }
 }
 
@@ -792,21 +829,34 @@ export interface SignedImagesLink {
  * the stale object, and the artifact gate refuses the send before the link is
  * ever used.
  */
-export async function signImagesLink(zipFilename: string): Promise<SignedImagesLink | null> {
+/**
+ * Mint a signed link to the PUBLISHED image package.
+ *
+ * STEP 90E — this used to download the whole archive to learn its size, on
+ * every preview. 330 MB through a serverless function to produce one integer
+ * is the same mistake that killed staging and generation; the size is in the
+ * reference, and the object's presence is confirmed by a listing.
+ *
+ * Still minted on demand and never persisted: a signed URL is stateless, so a
+ * fresh one can be issued whenever it is needed and none is ever stored.
+ */
+export async function signImagesLink(ref: {
+  objectPath: string; filename: string; bytes: number;
+}): Promise<SignedImagesLink | null> {
   try {
+    if (ref.bytes <= 0) return null;
     const admin = createAdminClient();
-    const path = artifactPath("new_products", zipFilename);
     const { data, error } = await admin.storage.from(BUCKET)
-      .createSignedUrl(path, TALABAT_LINK_TTL_SECONDS, { download: zipFilename });
+      .createSignedUrl(ref.objectPath, TALABAT_LINK_TTL_SECONDS, { download: ref.filename });
     if (error || !data?.signedUrl) return null;
-    const head = await admin.storage.from(BUCKET).download(path);
-    const bytes = head.error || !head.data ? 0 : (await head.data.arrayBuffer()).byteLength;
-    if (bytes === 0) return null;
+    // Confirm the object is really there — by listing, not by transferring it.
+    const stored = await statPublishedImageZip();
+    if (stored === null || stored !== ref.bytes) return null;
     return {
       url: data.signedUrl,
       expiresAtIso: new Date(Date.now() + TALABAT_LINK_TTL_SECONDS * 1000).toISOString(),
-      filename: zipFilename,
-      bytes,
+      filename: ref.filename,
+      bytes: ref.bytes,
     };
   } catch {
     return null;

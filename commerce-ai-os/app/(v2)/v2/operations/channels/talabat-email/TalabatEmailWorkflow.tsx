@@ -10,6 +10,7 @@
 import { useState } from "react";
 
 import { DEFAULT_TALABAT_GREETING } from "@/lib/export/talabat/email-templates";
+import { errorTextFor } from "@/lib/export/talabat/request-errors";
 
 type Preview = {
   kind: string;
@@ -90,7 +91,7 @@ function EmailCard({
   async function call(url: string, init?: RequestInit) {
     const res = await fetch(url, init);
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(typeof body?.message_ar === "string" ? body.message_ar : "تعذّر تنفيذ الطلب.");
+    if (!res.ok) throw new Error(errorTextFor(res, body));
     return body;
   }
 

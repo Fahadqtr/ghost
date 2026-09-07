@@ -316,6 +316,19 @@ function scopeFixture(over: Partial<TalabatArtifactScope> = {}): TalabatArtifact
   };
 }
 
+/** STEP 90E — a new_products scope must reference a bound image package. */
+function boundPackage(over: Record<string, unknown> = {}) {
+  return {
+    objectPath: "email-artifacts/new_products/source/images.zip",
+    filename: "talabat-new-products-images-2026-09-07.zip",
+    bytes: 346_244_336, sha256: "c".repeat(64),
+    expectedImages: 632, packagedImages: 632,
+    sourceJobId: "f03464d8-ff05-4439-ac2a-1c2cc70211e6",
+    baselineFingerprint: null, runFingerprint: "r1.x",
+    ...over,
+  };
+}
+
 test("16: a bundle from a DIFFERENT run is refused", () => {
   assert.deepEqual(verifyArtifactScope(scopeFixture(), "r1.x"), []);
   assert.deepEqual(verifyArtifactScope(scopeFixture(), "r1.y"), ["artifact_stale"]);
@@ -330,14 +343,17 @@ test("17: the safe-update file is re-verified, not merely trusted", () => {
   assert.deepEqual(verifyArtifactScope(scopeFixture({ categoryValueRows: 2 }), "r1.x"), ["category_values_present"]);
   // …and those three checks apply to the SAFE UPDATE file only; the new-product
   // file legitimately carries barcode and category values
-  const newScope = scopeFixture({ kind: "new_products", barcodeValueRows: 517, categoryValueRows: 517, imageCount: 632 });
+  const newScope = scopeFixture({
+    kind: "new_products", barcodeValueRows: 517, categoryValueRows: 517, imageCount: 632,
+    imagePackage: boundPackage(),
+  });
   assert.deepEqual(verifyArtifactScope(newScope, "r1.x"), []);
 });
 
 test("18: an unfixed extension mismatch blocks the send", () => {
-  const clean = scopeFixture({ kind: "new_products", imageCount: 632, extensionAudit: { mismatches: 133, renamed: 133, collisions: 0 } });
+  const clean = scopeFixture({ kind: "new_products", imageCount: 632, imagePackage: boundPackage(), extensionAudit: { mismatches: 133, renamed: 133, collisions: 0 } });
   assert.deepEqual(verifyArtifactScope(clean, "r1.x"), [], "fully corrected is fine");
-  const stuck = scopeFixture({ kind: "new_products", imageCount: 632, extensionAudit: { mismatches: 133, renamed: 132, collisions: 1 } });
+  const stuck = scopeFixture({ kind: "new_products", imageCount: 632, imagePackage: boundPackage(), extensionAudit: { mismatches: 133, renamed: 132, collisions: 1 } });
   assert.deepEqual(verifyArtifactScope(stuck, "r1.x"), ["extension_mismatch_unfixed"]);
   assert.ok(ARTIFACT_BLOCK_AR.extension_mismatch_unfixed.length > 0);
 });
@@ -391,7 +407,11 @@ test("23: generation writes ONLY under the email-artifacts prefix", () => {
   // artifactPath() — so nothing can be written outside the prefix.
   const calls = gen.split("\n")
     .filter((l) => /\bput\(/.test(l) && !/async function put\(/.test(l));
-  assert.ok(calls.length >= 4, `expected the workbooks, the zip and the sidecars; saw ${calls.length}`);
+  // STEP 90E — one fewer write than before: the image archive is referenced,
+  // not copied, so only the two workbooks and the two sidecars are written.
+  assert.ok(calls.length >= 3, `expected the workbooks and the sidecars; saw ${calls.length}`);
+  assert.equal(gen.includes("imageZipBytes"), false, "the generator never handles archive bytes");
+  assert.equal(/put\([^)]*ZIP_MIME/.test(gen), false, "no ZIP object is written by generation");
   for (const call of calls) {
     assert.ok(call.includes("artifactPath("), `write target must be an artifactPath: ${call.trim()}`);
   }

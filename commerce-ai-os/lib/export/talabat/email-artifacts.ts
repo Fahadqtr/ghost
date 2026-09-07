@@ -62,6 +62,36 @@ export interface ArtifactFileRecord {
   crc32: number;
 }
 
+/**
+ * STEP 90E — the image package, recorded BY REFERENCE.
+ *
+ * Email B's images are delivered as a signed link to the published source
+ * object, so the artifact never needed its own copy of the archive. It kept one
+ * anyway: generation downloaded 330 MB, ran CRC-32 across it and uploaded a
+ * second copy, which is what killed the request with an out-of-memory error
+ * after the workbook had already been written.
+ *
+ * Everything the artifact actually needs about those bytes — how many there
+ * are, what they hash to, which job produced them, which comparison they serve
+ * — is small, and the source sidecar already records it. So the scope carries
+ * this reference and the bytes stay exactly where they were published.
+ */
+export interface TalabatImagePackageRef {
+  /** the published object the signed link points at. Never a public URL. */
+  objectPath: string;
+  /** the name the partner sees on the download. */
+  filename: string;
+  bytes: number;
+  /** SHA-256 of the published archive, from the source sidecar. */
+  sha256: string | null;
+  expectedImages: number;
+  packagedImages: number;
+  /** the certified job whose parts were streamed into the published object. */
+  sourceJobId: string;
+  baselineFingerprint: string | null;
+  runFingerprint: string;
+}
+
 export interface TalabatArtifactScope {
   kind: TalabatSendKind;
   runFingerprint: string;
@@ -88,6 +118,11 @@ export interface TalabatArtifactScope {
   categoryValueRows: number;
   /** STEP 84 image-extension audit; null when there is no image package. */
   extensionAudit: { mismatches: number; renamed: number; collisions: number } | null;
+  /**
+   * STEP 90E — Email B's image package, by reference. null for Email A, which
+   * has no images, and for a scope written before the reference model existed.
+   */
+  imagePackage?: TalabatImagePackageRef | null;
 }
 
 /** Names the preflight reads back. Kept separate so a caller cannot mistype. */
@@ -139,6 +174,28 @@ export function parseArtifactScope(raw: unknown, expectedKind: TalabatSendKind):
   }
   if (files.length === 0) return { ok: false, reason: "unreadable" };
 
+  // The image-package reference. Absent is fine (Email A, or a scope written
+  // before STEP 90E); PRESENT BUT MALFORMED is not — a half-read reference
+  // would let a send proceed against an unidentified archive.
+  let imagePackage: TalabatImagePackageRef | null = null;
+  if (o.imagePackage !== undefined && o.imagePackage !== null) {
+    if (typeof o.imagePackage !== "object") return { ok: false, reason: "unreadable" };
+    const p = o.imagePackage as Record<string, unknown>;
+    const objectPath = str(p.objectPath); const ipFilename = str(p.filename);
+    const ipBytes = num(p.bytes); const expectedImages = num(p.expectedImages);
+    const packagedImages = num(p.packagedImages); const sourceJobId = str(p.sourceJobId);
+    const ipRun = str(p.runFingerprint);
+    if (objectPath === null || ipFilename === null || ipBytes === null || expectedImages === null
+      || packagedImages === null || sourceJobId === null || ipRun === null) {
+      return { ok: false, reason: "unreadable" };
+    }
+    imagePackage = {
+      objectPath, filename: ipFilename, bytes: ipBytes,
+      sha256: str(p.sha256), expectedImages, packagedImages, sourceJobId,
+      baselineFingerprint: str(p.baselineFingerprint), runFingerprint: ipRun,
+    };
+  }
+
   const audit = o.extensionAudit;
   let extensionAudit: TalabatArtifactScope["extensionAudit"] = null;
   if (audit !== null && typeof audit === "object") {
@@ -163,6 +220,7 @@ export function parseArtifactScope(raw: unknown, expectedKind: TalabatSendKind):
       activeValueRows: activeValueRows as number,
       categoryValueRows: categoryValueRows as number,
       extensionAudit,
+      imagePackage,
     },
   };
 }
@@ -179,7 +237,10 @@ export type ArtifactBlock =
   | "category_values_present"
   | "rows_missing_image"
   | "excluded_category_rows"
-  | "extension_mismatch_unfixed";
+  | "extension_mismatch_unfixed"
+  // STEP 90E — the referenced image package is absent, or belongs to a
+  // different comparison than the workbook beside it.
+  | "image_package_unbound";
 
 /**
  * Verify a stored bundle against the CURRENT comparison run.
@@ -220,6 +281,21 @@ export function verifyArtifactScope(
   if (scope.extensionAudit !== null && scope.extensionAudit.collisions !== 0) {
     blocks.push("extension_mismatch_unfixed");
   }
+  // The images travel by reference now, so the reference itself carries the
+  // binding a copied archive used to carry implicitly. A workbook for THIS
+  // comparison beside an archive for another one is the exact mistake the whole
+  // fingerprinting scheme exists to prevent.
+  if (scope.kind === "new_products") {
+    const ip = scope.imagePackage ?? null;
+    if (ip === null) blocks.push("image_package_unbound");
+    else if (ip.runFingerprint !== currentFingerprint) blocks.push("image_package_unbound");
+    else if (ip.expectedImages !== ip.packagedImages) blocks.push("image_package_unbound");
+    else if (ip.bytes <= 0) blocks.push("image_package_unbound");
+    else if (currentBaselineFingerprint !== undefined && ip.baselineFingerprint !== null
+      && ip.baselineFingerprint !== currentBaselineFingerprint) {
+      blocks.push("image_package_unbound");
+    }
+  }
   return blocks;
 }
 
@@ -234,6 +310,7 @@ export const ARTIFACT_BLOCK_AR: Record<ArtifactBlock, string> = {
   rows_missing_image: "توجد صفوف بلا صورة في الحزمة.",
   excluded_category_rows: "توجد صفوف من تصنيفات مستبعدة عن طلبات.",
   extension_mismatch_unfixed: "توجد صور امتدادها لا يطابق محتواها ولم يُصحَّح.",
+  image_package_unbound: "حزمة الصور المرتبطة لا تخص هذه المقارنة — أعد تجهيزها ثم أعد التوليد.",
 };
 
 // ── generation errors (STEP 88C) ─────────────────────────────────────────────

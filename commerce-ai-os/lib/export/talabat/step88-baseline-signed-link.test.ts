@@ -240,8 +240,12 @@ test("15: the link reuses the Rafeeq policy — private, time-limited, on demand
 
 test("16: the link is minted for the CURRENT run's object", () => {
   const server = code(SERVER);
-  assert.ok(server.includes('artifactPath("new_products", zipFilename)'),
-    "the path comes from the artifact this run produced");
+  // STEP 90E — the link targets the PUBLISHED package named by this run's
+  // artifact scope, rather than a copy the artifact used to carry.
+  assert.ok(server.includes("createSignedUrl(ref.objectPath"),
+    "the path comes from the reference this run's scope recorded");
+  assert.ok(server.includes("bundle?.artifactScope.imagePackage"),
+    "…and that reference is read from the artifact, not guessed");
   // a run whose artifacts are stale is refused before any link is used
   assert.ok(server.includes("verifyArtifactScope"));
   assert.ok(server.includes("activeBaseline?.fingerprint"), "…including the baseline binding");

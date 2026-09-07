@@ -22,20 +22,19 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { buildTalabatDeltaXlsxBuffer } from "@/lib/talabat/package-xlsx";
 import {
   buildTalabatSafeUpdateAoa, buildTalabatNewProductsAoa, safeUpdateRows,
-  deltaWorkbookName, newProductsImagesZipName, newProductPreviewRows, newProductImageScope,
+  deltaWorkbookName, newProductPreviewRows, newProductImageScope,
 } from "@/lib/export/talabat/delta-workbooks";
 import { TALABAT_BASELINE_COLUMNS, type TalabatDeltaResult } from "@/lib/export/talabat/baseline-delta";
 import { policyExcludedNewDeltaRows } from "@/lib/export/talabat/category-policy";
 import {
   artifactPath, runFingerprint, SCOPE_SIDECAR_FILENAME,
-  type ArtifactFileRecord, type TalabatArtifactScope,
+  type ArtifactFileRecord, type TalabatArtifactScope, type TalabatImagePackageRef,
 } from "@/lib/export/talabat/email-artifacts";
 import type { TalabatSendKind } from "@/lib/export/talabat/email-send";
 import { crc32 } from "@/lib/net/zip";
 
 const BUCKET = "talabat-packages";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const ZIP_MIME = "application/zip";
 const JSON_MIME = "application/json";
 
 /**
@@ -138,9 +137,17 @@ export function safeUpdateComposition(result: TalabatDeltaResult): {
 export interface NewProductsArtifactInput {
   result: TalabatDeltaResult;
   nowIso: string;
-  /** the assembled image ZIP bytes, produced by the CERTIFIED job engine. */
-  imageZipBytes: Uint8Array;
-  imageCount: number;
+  /**
+   * STEP 90E — the PUBLISHED image package, by reference.
+   *
+   * This used to be the archive's bytes. Generation downloaded 330 MB, ran
+   * CRC-32 over it and uploaded a second copy into the artifact folder, which
+   * killed the request on memory after the workbook was already written — and
+   * the copy was never needed, because the email links to the published source
+   * object. The reference carries the counts, the size and the hash; the bytes
+   * stay where they are.
+   */
+  imagePackage: TalabatImagePackageRef;
   extensionAudit: { mismatches: number; renamed: number; collisions: number };
   /** the uploaded Talabat export this was compared against. */
   baselineFingerprint?: string;
@@ -154,7 +161,6 @@ export async function generateNewProductsArtifact(
   const body = aoa.slice(1);
   const workbookBytes = deltaXlsx(aoa);
   const workbookName = deltaWorkbookName("new-products", nowIso);
-  const zipName = newProductsImagesZipName(nowIso);
   const imgScope = newProductImageScope(result);
 
   const scope: TalabatArtifactScope = {
@@ -162,13 +168,12 @@ export async function generateNewProductsArtifact(
     runFingerprint: runFingerprint(result),
     ...(input.baselineFingerprint ? { baselineFingerprint: input.baselineFingerprint } : {}),
     generatedAtIso: nowIso,
-    files: [
-      fileRecord(workbookName, workbookBytes, XLSX_MIME),
-      fileRecord(zipName, input.imageZipBytes, ZIP_MIME),
-    ],
+    // The workbook is the ONLY artifact file. The image archive is referenced,
+    // not copied, so nothing here ever holds it.
+    files: [fileRecord(workbookName, workbookBytes, XLSX_MIME)],
     workbookRows: body.length,
     workbookProducts: new Set(newProductPreviewRows(result).map((r) => r.internalProductId)).size,
-    imageCount: input.imageCount,
+    imageCount: input.imagePackage.packagedImages,
     rowsMissingImage: imgScope.rowsMissingImage,
     // Rows the Talabat category policy withholds must never be IN the file;
     // this counts what actually reached the workbook, not what was filtered.
@@ -177,12 +182,12 @@ export async function generateNewProductsArtifact(
     activeValueRows: 0,
     categoryValueRows: 0,
     extensionAudit: input.extensionAudit,
+    imagePackage: input.imagePackage,
   };
 
   const wrote = await put(artifactPath("new_products", workbookName), workbookBytes, XLSX_MIME)
-    && await put(artifactPath("new_products", zipName), input.imageZipBytes, ZIP_MIME)
     && await putScope("new_products", scope);
-  return { ok: wrote, filenames: [workbookName, zipName], scope };
+  return { ok: wrote, filenames: [workbookName, input.imagePackage.filename], scope };
 }
 
 /** How many workbook rows belong to a SKU the category policy excludes. */
