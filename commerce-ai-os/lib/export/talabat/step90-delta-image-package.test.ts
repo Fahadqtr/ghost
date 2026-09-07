@@ -286,9 +286,10 @@ test("17. the sidecar is parsed strictly — a malformed one is NOT a package", 
 
 test("18. the reader verifies the binding before the bytes are used", () => {
   const src = code(WORKFLOW);
-  assert.match(src, /readCompletedDeltaImageZip\(delta\.fingerprint, baseline\?\.fingerprint \?\? null\)/);
+  assert.match(src, /readPublishedImagePackage\(delta\.fingerprint, baseline\?\.fingerprint \?\? null, nowIso\)/);
   assert.match(src, /verifyDeltaImagePackage\(parsed, currentRunFingerprint, currentBaselineFingerprint\)/);
-  assert.match(src, /bytes\.length !== parsed\.zipBytes/);
+  // STEP 90E — the size is compared against a LISTING, never a download.
+  assert.match(src, /stored !== parsed\.zipBytes/);
 });
 
 test("19. stale and missing are DIFFERENT owner messages", () => {

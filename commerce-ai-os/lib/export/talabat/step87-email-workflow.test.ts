@@ -99,9 +99,10 @@ test("4: the full 538 MB package is never rebuilt to make Email B", () => {
   const server = code(SERVER);
   assert.equal(server.includes("startTalabatPackageJob"), false, "no full-package job is started");
   assert.equal(server.includes("createTalabatPackageJob"), false);
-  // the delta image ZIP is READ from storage, not produced here
-  assert.ok(server.includes("readCompletedDeltaImageZip"));
-  assert.ok(server.includes("DELTA_IMAGE_ZIP_OBJECT"));
+  // STEP 90E — the delta image package is REFERENCED from storage, never
+  // produced here and (since the OOM) never even downloaded here.
+  assert.ok(server.includes("readPublishedImagePackage"));
+  assert.ok(server.includes("DELTA_IMAGE_ZIP_PATH"));
 });
 
 test("5: generation refuses rather than inventing a baseline", () => {
@@ -165,7 +166,10 @@ test("10: an oversize message blocks the send outright", () => {
   assert.deepEqual(blocks, ["attachments_too_large"]);
   // the code contains no splitting or image-dropping path
   const server = code(SERVER);
-  for (const forbidden of ["slice(0,", "splitMessage", "dropImages", "omitAttachment"]) {
+  // ATTACHMENT manipulation, not any use of slice(): path arithmetic is not a
+  // silent change to what the owner reviewed, and matching it would be this
+  // guard tripping over unrelated code.
+  for (const forbidden of ["attachments.slice(", "splitMessage", "dropImages", "omitAttachment"]) {
     assert.equal(server.includes(forbidden), false, `${forbidden} would silently change what was reviewed`);
   }
 });
