@@ -299,6 +299,7 @@ export function buildTalabatNewProductsEmail(
     mailCtaButton({
       url: link.url,
       label: "Download Product Images",
+      fallbackTarget: "the product images",
       note: `The images are delivered through this secure direct-download link instead of an email attachment, because of their size. The link is valid until <b>${escapeMailHtml(link.expiresAtIso)}</b>.`,
     }),
   ].join("\n");

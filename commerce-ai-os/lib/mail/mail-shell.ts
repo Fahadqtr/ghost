@@ -62,19 +62,33 @@ export function mailSummaryTable(rows: readonly MailSummaryRow[]): string {
 /**
  * A download call-to-action.
  *
- * The plain-text address is repeated underneath on purpose: a button is an
- * anchor, and corporate mail clients strip or fail to render anchors often
- * enough that a link with no visible fallback is a link some recipients simply
- * cannot use.
+ * There are TWO links here, not one, and both matter. Corporate mail clients
+ * strip or fail to render styled anchors often enough that a button with no
+ * second route is a download some recipients simply cannot reach.
+ *
+ * STEP 91 — the second route is a short "click here", not the address itself.
+ * A signed URL is a couple of hundred characters of opaque token; printing it
+ * in the body wrapped three lines of noise across the middle of a letter to a
+ * partner, and read as something machine-generated rather than sent by a
+ * person. The same URL is still behind both links, and the PLAIN-TEXT part
+ * still carries it in full — a text-only client has no anchor to click, so
+ * there the address IS the only route and must stay.
  */
-export function mailCtaButton(input: { url: string; label: string; note?: string }): string {
+export function mailCtaButton(input: {
+  url: string;
+  label: string;
+  note?: string;
+  /** what the fallback offers to download, e.g. "the product images". */
+  fallbackTarget?: string;
+}): string {
   const url = escapeMailHtml(input.url);
+  const target = escapeMailHtml(input.fallbackTarget ?? "the file");
   return [
     `  <table border="0" cellpadding="0" cellspacing="0" style="margin:12px 0"><tr><td style="background-color:${MAIL_ACCENT};border-radius:8px">`,
     `    <a href="${url}" style="display:inline-block;padding:14px 28px;font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none">${escapeMailHtml(input.label)}</a>`,
     `  </td></tr></table>`,
     input.note ? `  <p>${input.note}</p>` : "",
-    `  <p>If the button does not work, copy this address into your browser:<br/><a href="${url}" style="word-break:break-all">${url}</a></p>`,
+    `  <p>If the button does not work, <a href="${url}" style="color:${MAIL_ACCENT}">click here</a> to download ${target}.</p>`,
   ].filter((l) => l !== "").join("\n");
 }
 
