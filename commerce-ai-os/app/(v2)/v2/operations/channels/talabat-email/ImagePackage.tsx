@@ -19,6 +19,8 @@ type Status = {
   expectedImages: number;
   zipBytes: number | null;
   stagedAtIso: string | null;
+  scopeProducts: number;
+  scopeRows: number;
   blockers: string[];
   /** a completed job whose images are already downloaded, awaiting publish. */
   readyJob: { jobId: string; imageCount: number; archiveBytes: number; completedAtIso: string } | null;
@@ -166,7 +168,11 @@ export default function ImagePackage() {
 
       {status ? (
         <ul className="space-y-1 text-slate-700">
-          <li>الصور المطلوبة للمقارنة الحالية: <span className="font-mono">{status.expectedImages}</span></li>
+          <li>
+            نطاق المقارنة الحالية: <span className="font-mono">{status.scopeProducts}</span> منتجاً ·{" "}
+            <span className="font-mono">{status.scopeRows}</span> صفاً ·{" "}
+            <span className="font-mono">{status.expectedImages}</span> صورة
+          </li>
           {status.staged ? (
             <li>
               المحفوظ حالياً: <span className="font-mono">{status.imageCount}</span> صورة ·{" "}

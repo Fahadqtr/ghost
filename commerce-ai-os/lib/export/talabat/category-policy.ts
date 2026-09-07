@@ -45,6 +45,47 @@ export function isTalabatExcludedCategory(category: string | null | undefined): 
   return typeof category === "string" && TALABAT_EXCLUDED_CATEGORIES.includes(category);
 }
 
+// ── 1b. authenticity hold (STEP 94B) ─────────────────────────────────────────
+
+/**
+ * Individual products withheld from Talabat pending an authenticity review.
+ * TALABAT ONLY — exactly like the category exclusion above it, and for the
+ * same architectural reason: a channel decision must not become a catalog one.
+ *
+ * These are watches whose own descriptions call them a "master copy", plus two
+ * carrying a trademarked name with no such wording. Submitting them to a
+ * marketplace before their source is reviewed is a risk the owner chose not to
+ * take; nothing about the products themselves is wrong, and they stay exactly
+ * as they are on Snoonu, Rafeeq and Shopify.
+ *
+ * WHY A LIST IN CODE RATHER THAN A FLAG IN THE DATABASE. The obvious
+ * alternative — lifecycle_state = STOPPED — was tried and reverted: STOPPED is
+ * read by every channel, so it removed the products from Shopify and Rafeeq and
+ * marked them outside the active catalog for Snoonu, to achieve an exclusion
+ * wanted on ONE channel. The other candidate, the platform_status approval
+ * overlay, has not gated the export since STEP 62 ("approval is NO LONGER an
+ * export gate … it never blocks"), so writing to it would have changed nothing
+ * at all. A reviewed constant costs a deploy to change and, in exchange, cannot
+ * leak to another channel and cannot be altered without a diff someone reads.
+ */
+export const TALABAT_AUTHENTICITY_HOLD: readonly string[] = [
+  // explicit "master copy" wording in the product's own description
+  "mk1127", "mk1128", "mk1111", "mk1129", "mk922", "mk923", "mk2321", "mk924",
+  // trademarked name, no "master copy" wording — held pending the same review
+  "mk2088", "mk2086",
+  // held here INSTEAD of lifecycle_state = STOPPED, which reached other channels
+  "mk1999", "mk2000", "mk2001",
+];
+
+export const TALABAT_AUTHENTICITY_HOLD_REASON = "authenticity_review";
+
+/** Case-insensitive: a SKU's letter case must never decide whether a hold applies. */
+export function isTalabatAuthenticityHeld(sku: string | null | undefined): boolean {
+  if (typeof sku !== "string") return false;
+  const needle = sku.trim().toLowerCase();
+  return needle !== "" && TALABAT_AUTHENTICITY_HOLD.some((s) => s.toLowerCase() === needle);
+}
+
 /**
  * How a new-product row is classified once channel policy is applied.
  *
@@ -52,12 +93,41 @@ export function isTalabatExcludedCategory(category: string | null | undefined): 
  * are not BLOCKED (nothing is wrong with them) and not MANUAL_REVIEW (there is
  * nothing to decide) — they are intentionally out of scope for this channel.
  */
-export type TalabatNewRowClass = "NEW_PRODUCT" | "EXCLUDED_BY_TALABAT_CATEGORY_POLICY";
+export type TalabatNewRowClass =
+  | "NEW_PRODUCT"
+  | "EXCLUDED_BY_TALABAT_CATEGORY_POLICY"
+  | "EXCLUDED_BY_TALABAT_AUTHENTICITY_HOLD";
 
+/**
+ * The ONE place a new row's channel eligibility is decided.
+ *
+ * Everything downstream — the workbook, the image selection, the image package,
+ * the preview and the send scope — reads allowedNewDeltaRows, so a hold applied
+ * here applies everywhere by construction. There is deliberately no second list
+ * in another layer to fall out of step with this one.
+ *
+ * A variant row is held by its PARENT's SKU as well as its own: the hold names
+ * a product, and "mk1999-1-black" must not slip through because the list spells
+ * the parent.
+ */
 export function classifyTalabatNewRow(row: TalabatDeltaRow): TalabatNewRowClass {
-  return isTalabatExcludedCategory(row.our.talabatCategory)
-    ? "EXCLUDED_BY_TALABAT_CATEGORY_POLICY"
-    : "NEW_PRODUCT";
+  if (isTalabatExcludedCategory(row.our.talabatCategory)) return "EXCLUDED_BY_TALABAT_CATEGORY_POLICY";
+  if (isTalabatAuthenticityHeld(row.our.sku) || isTalabatAuthenticityHeld(parentSkuOf(row.our.sku))) {
+    return "EXCLUDED_BY_TALABAT_AUTHENTICITY_HOLD";
+  }
+  return "NEW_PRODUCT";
+}
+
+/**
+ * The parent SKU behind a variant SKU: "mk1999-1-black" → "mk1999".
+ *
+ * Variant SKUs are the parent followed by "-<index>-<label>", so the parent is
+ * the segment before the first hyphen. A SKU with no hyphen is its own parent.
+ */
+function parentSkuOf(sku: string | null | undefined): string | null {
+  if (typeof sku !== "string") return null;
+  const i = sku.indexOf("-");
+  return i > 0 ? sku.slice(0, i) : null;
 }
 
 /** New rows Talabat may have. The ONE input to every new-product artifact. */
@@ -65,7 +135,13 @@ export function allowedNewDeltaRows(result: TalabatDeltaResult): TalabatDeltaRow
   return newDeltaRows(result).filter((r) => classifyTalabatNewRow(r) === "NEW_PRODUCT");
 }
 
-/** New rows withheld from Talabat by category policy — reported, never sent. */
+/** New rows withheld by the authenticity hold — reported, never sent. */
+export function authenticityHeldNewDeltaRows(result: TalabatDeltaResult): TalabatDeltaRow[] {
+  return newDeltaRows(result).filter(
+    (r) => classifyTalabatNewRow(r) === "EXCLUDED_BY_TALABAT_AUTHENTICITY_HOLD");
+}
+
+/** New rows withheld from Talabat by ANY channel policy — reported, never sent. */
 export function policyExcludedNewDeltaRows(result: TalabatDeltaResult): TalabatDeltaRow[] {
   return newDeltaRows(result).filter((r) => classifyTalabatNewRow(r) !== "NEW_PRODUCT");
 }
