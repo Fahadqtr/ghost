@@ -104,6 +104,7 @@ const META = (over: Partial<DeltaImageMeta> = {}): DeltaImageMeta => ({
   runFingerprint: "run-A", baselineFingerprint: "base-A",
   jobId: "11111111-2222-3333-4444-555555555555",
   stagedAtIso: "2026-09-06T21:00:00.000Z", zipBytes: 4096,
+  sha256: "a".repeat(64),
   ...over,
 });
 
@@ -248,7 +249,10 @@ test("13. the package is stored privately, under the email-artifact prefix", () 
   assert.equal(DELTA_IMAGE_ZIP_PATH, `${DELTA_IMAGE_SOURCE_PREFIX}/images.zip`);
   assert.equal(DELTA_IMAGE_META_PATH, `${DELTA_IMAGE_SOURCE_PREFIX}/images.json`);
   const src = code(JOBS);
-  assert.match(src, /putObject\(DELTA_IMAGE_ZIP_PATH, zip, "application\/zip"\)/);
+  // STEP 90C — the object is written by the streaming uploader now, not by a
+  // buffered putObject, but it is the SAME private path.
+  assert.match(src, /objectPath: DELTA_IMAGE_ZIP_PATH,/);
+  assert.match(src, /makeTusPorts\(BUCKET\)/, "the private job bucket, not a new one");
   // the private bucket, never a public one and never a permanent URL
   assert.ok(!src.includes("getPublicUrl"), "no public URL is ever minted");
   assert.ok(!/public:\s*true/.test(src));
@@ -332,8 +336,10 @@ test("23. staging refuses an incomplete package and returns the missing refs", (
   const stage = src.slice(src.indexOf("export async function stageTalabatDeltaImagePackage"));
   assert.match(stage, /if \(!coverage\.complete\)/);
   assert.match(stage, /missingRefs/);
-  // the ZIP is written only AFTER the completeness check
-  assert.ok(stage.indexOf("if (!coverage.complete)") < stage.indexOf("putObject(DELTA_IMAGE_ZIP_PATH"));
+  // the ZIP is uploaded only AFTER the completeness check
+  assert.ok(stage.indexOf("if (!coverage.complete)") < stage.indexOf("streamPartsToObject("));
+  // …and the sidecar only after the upload verified its stored size
+  assert.ok(stage.indexOf("streamPartsToObject(") < stage.indexOf("putObject(DELTA_IMAGE_META_PATH"));
   assert.match(stage, /sku: plan\.rows\[img\.rowIndex\]\?\.sku/);
 });
 

@@ -33,6 +33,7 @@ import {
   TALABAT_PACKAGE_LIMITS,
   type TalabatGenerationMode,
 } from "@/lib/export/talabat/package";
+import type { TalabatPreviewRow } from "@/lib/export/talabat/preview";
 import {
   createTalabatPackageJob,
   advanceTalabatPackageJob,
@@ -46,9 +47,11 @@ import type { TalabatJobStage, TalabatJobUiErrorCode } from "@/lib/export/talaba
 import { isRecoverableTalabatJobError } from "@/lib/export/talabat/package-job-errors";
 import { mappingComplete, normalizeTalabatPackageJobState } from "@/lib/export/talabat/package-job";
 import {
-  DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, auditDeltaImageCoverage,
+  DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, auditDeltaImageCoverage, parseDeltaImageMeta,
   type DeltaImageMeta, type DeltaImageCoverage,
 } from "@/lib/export/talabat/delta-image-package";
+import { streamPartsToObject } from "@/lib/export/artifact-stream";
+import { makeTusPorts } from "@/lib/storage/tus.server";
 
 const BUCKET = "talabat-packages";
 const CHANNEL = "talabat:malikas";
@@ -640,12 +643,13 @@ interface DeltaImageJobBinding {
 const DELTA_MARKER = "email-b-delta-images";
 const deltaBindingPath = (jobId: string) => `jobs/${jobId}/delta.json`;
 
-/**
- * Assembling the staged ZIP needs the whole archive in memory once. 130 MB for
- * the current package is comfortable; a ceiling turns a future runaway into a
- * clean refusal instead of an out-of-memory kill that leaves no diagnosis.
- */
-const DELTA_STAGE_MAX_BYTES = 400 * 1024 * 1024;
+// STEP 90C — there is no byte ceiling here any more, and that is the fix, not a
+// relaxation. The old DELTA_STAGE_MAX_BYTES measured the ARCHIVE (330 MB, under
+// its 400 MB limit, so it never fired) while the real constraint was PEAK
+// MEMORY, which the buffering implementation drove to twice that. Streaming
+// makes peak memory independent of archive size, so the quantity the ceiling
+// was guessing at no longer varies. The provider's own limits still apply.
+const deltaTusPorts = makeTusPorts(BUCKET);
 
 async function readDeltaBinding(jobId: string): Promise<DeltaImageJobBinding | null> {
   const raw = await getJson<Record<string, unknown>>(deltaBindingPath(jobId));
@@ -671,6 +675,12 @@ async function readDeltaBinding(jobId: string): Promise<DeltaImageJobBinding | n
  */
 export async function startTalabatDeltaImageJob(input: {
   selectedKeys: readonly string[];
+  /**
+   * STEP 90C — the certified rows the caller ALREADY loaded to compute the
+   * delta. Passed in rather than re-read: loading the whole catalogue twice in
+   * one request is what pushed this endpoint into an out-of-memory kill.
+   */
+  previewRows: readonly TalabatPreviewRow[];
   runFingerprint: string;
   baselineFingerprint: string | null;
   actor: string | null;
@@ -694,25 +704,36 @@ export async function startTalabatDeltaImageJob(input: {
     if (binding && binding.runFingerprint === input.runFingerprint && st && pl) {
       return { ok: true, value: statusDTO(st, pl, live) };
     }
-    // Our OWN job, abandoned mid-flight and now serving a comparison that no
-    // longer applies: reap it exactly as the certified start reaps its own, or
-    // a dead row would block every future preparation for ever. A job that is
-    // still fresh, or that holds a durable artifact, is left alone — and a job
-    // that is not ours is never touched at all.
+    // STEP 90C — which abandoned jobs may be reaped, in order of danger.
+    //
+    // The previous rule treated a MISSING binding as "not ours, never touch",
+    // which sounded safe and was not: a start request killed between the plan
+    // write and the binding write leaves a row with no binding, so that row
+    // became unreapable for ever and blocked every future preparation. Job
+    // c2e53b7a did exactly that in production.
     const fresh = Date.now() - new Date(live.updated_at).getTime() < STALE_MS;
-    if (!binding || fresh || (st?.artifact != null && st.status !== "completed")) {
+    // 1. A live job is never disturbed, whoever owns it.
+    if (fresh) return errResult("conflict", 409);
+    // 2. Durable work is never destroyed: an artifact exists, so this job can
+    //    still resume its finalization without re-fetching a single image.
+    if (st?.artifact != null && st.status !== "completed") return errResult("conflict", 409);
+    // 3. NO STATE AT ALL means the start request died before writing any: the
+    //    row owns no parts, and no driver — ours or the certified one — can
+    //    ever advance it, because both read state.json first. Reapable
+    //    regardless of who created it, precisely because it holds nothing.
+    // 4. Our own stale job with no durable artifact is reapable.
+    if (!st || binding) {
+      await reapStaleJob(live.id);
+    } else {
+      // Stale, has state, and is not ours — someone else's business.
       return errResult("conflict", 409);
     }
-    await reapStaleJob(live.id);
   }
-
-  const preview = await loadTalabatPreview();
-  if (!preview) return errResult("generation_failed", 503);
 
   const jobId = randomUUID();
   const created = createTalabatPackageJob({
     jobId, mode: "selected", selectedKeys: input.selectedKeys,
-    previewRows: preview.rows, actor: input.actor, nowIso: new Date().toISOString(),
+    previewRows: input.previewRows, actor: input.actor, nowIso: new Date().toISOString(),
   });
   if (!created.ok) return errResult("no_exportable_rows", 422);
 
@@ -741,9 +762,12 @@ export async function startTalabatDeltaImageJob(input: {
     baselineFingerprint: input.baselineFingerprint,
     expectedImages: created.plan.images.length,
   };
+  // The binding goes FIRST, and it is tiny. If the request dies part-way from
+  // here, the row is still identifiable as ours and reapable on its own terms,
+  // rather than becoming an anonymous block on every future start.
+  await putObject(deltaBindingPath(jobId), json(binding), "application/json");
   await putObject(planPath(jobId), json(created.plan), "application/json");
   await putObject(statePath(jobId), json(created.state), "application/json");
-  await putObject(deltaBindingPath(jobId), json(binding), "application/json");
   return { ok: true, value: statusDTO(created.state, created.plan, null) };
 }
 
@@ -818,6 +842,8 @@ export interface DeltaImageStageResult {
   meta: DeltaImageMeta;
   /** filename + SKU of every planned image the job could not retrieve. */
   missingRefs: { filename: string; sku: string }[];
+  /** false ⇒ the identical package was already published; nothing was rewritten. */
+  republished: boolean;
 }
 
 /**
@@ -848,21 +874,6 @@ export async function stageTalabatDeltaImagePackage(jobId: string): Promise<Delt
   if (!coverage.complete) {
     return { ok: false, error: "integrity_failed", status: 409, coverage, missingRefs };
   }
-  if (state.artifact.totalBytes > DELTA_STAGE_MAX_BYTES) return errResult("upload_incomplete", 413);
-
-  // The archive is the ordered concatenation of its durable parts — the same
-  // bytes the download route streams, assembled once here so the partner
-  // receives ONE file behind ONE link.
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (const part of state.parts) {
-    const bytes = await readTalabatPackagePart(part.path);
-    if (bytes === null) return errResult("upload_incomplete", 502);
-    chunks.push(bytes); total += bytes.length;
-  }
-  const zip = new Uint8Array(total);
-  let at = 0;
-  for (const c of chunks) { zip.set(c, at); at += c.length; }
 
   const meta: DeltaImageMeta = {
     imageCount: coverage.packaged,
@@ -872,13 +883,87 @@ export async function stageTalabatDeltaImagePackage(jobId: string): Promise<Delt
     baselineFingerprint: binding.baselineFingerprint,
     jobId,
     stagedAtIso: new Date().toISOString(),
-    zipBytes: zip.length,
+    zipBytes: state.artifact.totalBytes,
+    sha256: null,
   };
+
+  // IDEMPOTENT. Re-publishing 330 MB that is already published is minutes of
+  // upload and a window where the object is half-rewritten, so an existing
+  // sidecar describing THIS job, THIS run and THIS baseline, backed by a stored
+  // object of exactly the right size, is accepted as done.
+  const existing = parseDeltaImageMeta(await getJson<unknown>(DELTA_IMAGE_META_PATH));
+  if (existing
+    && existing.jobId === jobId
+    && existing.runFingerprint === meta.runFingerprint
+    && existing.baselineFingerprint === meta.baselineFingerprint
+    && existing.imageCount === meta.imageCount
+    && existing.zipBytes === meta.zipBytes) {
+    const stored = await deltaTusPorts.statObject(DELTA_IMAGE_ZIP_PATH);
+    if (stored === existing.zipBytes) {
+      return { ok: true, value: { coverage, meta: existing, missingRefs, republished: false } };
+    }
+  }
+
+  // STREAMED. The archive is the ordered concatenation of the job's durable
+  // parts, uploaded one bounded chunk at a time by the same resumable uploader
+  // the Rafeeq artifact uses. The whole ZIP is never resident: buffering it was
+  // what killed the first staging attempts.
+  const streamed = await streamPartsToObject(
+    {
+      objectPath: DELTA_IMAGE_ZIP_PATH,
+      parts: state.parts.map((p) => ({ path: p.path, bytes: p.bytes })),
+      totalBytes: state.artifact.totalBytes,
+    },
+    { readPart: readTalabatPackagePart, ...deltaTusPorts },
+  );
+  if (!streamed.ok) {
+    return errResult(streamed.error === "part_missing" ? "job_not_found" : "upload_incomplete", 502);
+  }
+  meta.sha256 = streamed.sha256;
+
+  // The sidecar is written only after the object is uploaded AND its stored
+  // size verified, so a sidecar can never describe an archive that is not there.
   try {
-    await putObject(DELTA_IMAGE_ZIP_PATH, zip, "application/zip");
     await putObject(DELTA_IMAGE_META_PATH, json(meta), "application/json");
   } catch {
     return errResult("upload_incomplete", 502);
   }
-  return { ok: true, value: { coverage, meta, missingRefs } };
+  return { ok: true, value: { coverage, meta, missingRefs, republished: true } };
+}
+
+/**
+ * The most recent COMPLETED delta image job that could be published for the
+ * given run — the recovery path. Its images are already downloaded and durable,
+ * so publishing is a stream-and-record, never a re-fetch.
+ */
+export async function findStageableDeltaImageJob(
+  runFingerprint: string,
+): Promise<{ jobId: string; imageCount: number; archiveBytes: number; completedAtIso: string } | null> {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("talabat_package_jobs")
+      .select("id, completed_at, artifact_bytes, progress_current")
+      .eq("channel", CHANNEL).eq("mode", "selected").eq("status", "completed")
+      .order("completed_at", { ascending: false }).limit(5);
+    if (error || !Array.isArray(data)) return null;
+    for (const row of data as unknown as {
+      id: string; completed_at: string | null; artifact_bytes: number | null; progress_current: number | null;
+    }[]) {
+      const binding = await readDeltaBinding(row.id);
+      // Only a job built for THIS comparison may be published for it.
+      if (!binding || binding.runFingerprint !== runFingerprint) continue;
+      const st = await readState(row.id);
+      if (!st || st.status !== "completed" || !st.artifact) continue;
+      return {
+        jobId: row.id,
+        imageCount: st.packaged.length,
+        archiveBytes: st.artifact.totalBytes,
+        completedAtIso: row.completed_at ?? "",
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

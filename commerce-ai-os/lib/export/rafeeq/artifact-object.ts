@@ -15,12 +15,16 @@
 //   • ANY failure records nothing — a missing/unverified object can never be
 //     linked in an email (the send layer blocks on absent metadata).
 
-import { createHash } from "node:crypto";
+import {
+  streamPartsToObject, TUS_CHUNK_BYTES, TUS_MAX_PATCH_BYTES,
+  type StreamedAssemblyPorts,
+} from "../artifact-stream.ts";
 
-/** Supabase TUS chunk unit — every PATCH except the final one is a multiple. */
-export const TUS_CHUNK_BYTES = 6 * 1024 * 1024;
-/** cap a single PATCH at 4 chunk units (24 MiB) to bound request bodies. */
-export const TUS_MAX_PATCH_BYTES = 4 * TUS_CHUNK_BYTES;
+// STEP 90C — the streaming assembly moved to ../artifact-stream.ts so Email B's
+// image package could use the SAME uploader instead of a second one. The
+// protocol, the chunk arithmetic and the byte order are unchanged; these
+// re-exports keep every existing importer working.
+export { TUS_CHUNK_BYTES, TUS_MAX_PATCH_BYTES };
 
 /** default signed-link lifetime: 7 days. */
 export const RAFEEQ_LINK_TTL_SECONDS = 7 * 24 * 3600;
@@ -44,15 +48,7 @@ export type RafeeqArtifactObjectError =
   | "size_mismatch"
   | "meta_write_failed";
 
-export interface RafeeqArtifactObjectPorts {
-  /** read one stored certified part (exact bytes). null = missing. */
-  readPart(path: string): Promise<Uint8Array | null>;
-  /** create the resumable upload; returns the upload URL or null. */
-  tusCreate(objectPath: string, totalBytes: number): Promise<string | null>;
-  /** upload one chunk at `offset`; returns the NEW offset or null. */
-  tusPatch(uploadUrl: string, offset: number, chunk: Uint8Array): Promise<number | null>;
-  /** size of the stored object after upload (null = not found). */
-  statObject(objectPath: string): Promise<number | null>;
+export interface RafeeqArtifactObjectPorts extends StreamedAssemblyPorts {
   /** persist the metadata record. false = write failed. */
   writeMeta(meta: RafeeqArtifactObjectMeta): Promise<boolean>;
 }
@@ -74,47 +70,11 @@ export async function assembleRafeeqArtifactObject(
   ports: RafeeqArtifactObjectPorts,
 ): Promise<{ ok: true; meta: RafeeqArtifactObjectMeta } | { ok: false; error: RafeeqArtifactObjectError }> {
   const objectPath = artifactObjectPath(input.jobId, input.filename);
-  const uploadUrl = await ports.tusCreate(objectPath, input.totalBytes);
-  if (!uploadUrl) return { ok: false, error: "upload_failed" };
-
-  const hash = createHash("sha256");
-  let offset = 0;
-  let carry = new Uint8Array(0);
-
-  const patch = async (chunk: Uint8Array): Promise<boolean> => {
-    const next = await ports.tusPatch(uploadUrl, offset, chunk);
-    if (next === null || next !== offset + chunk.length) return false;
-    offset = next;
-    return true;
-  };
-
-  for (const part of input.parts) {
-    const bytes = await ports.readPart(part.path);
-    if (!bytes || bytes.length !== part.bytes) return { ok: false, error: "part_missing" };
-    // Hash is a stream — write() is its streaming absorb call (chosen so the
-    // export-foundation no-DB-write guard scan stays strict: any database
-    // write verb appearing in this tree is a real violation).
-    hash.write(bytes);
-    // append to the carry, then flush whole 6 MiB multiples (≤24 MiB per PATCH)
-    const buf = new Uint8Array(carry.length + bytes.length);
-    buf.set(carry, 0);
-    buf.set(bytes, carry.length);
-    let at = 0;
-    while (buf.length - at >= TUS_CHUNK_BYTES) {
-      const take = Math.min(
-        Math.floor((buf.length - at) / TUS_CHUNK_BYTES) * TUS_CHUNK_BYTES,
-        TUS_MAX_PATCH_BYTES,
-      );
-      if (!(await patch(buf.subarray(at, at + take)))) return { ok: false, error: "upload_failed" };
-      at += take;
-    }
-    carry = buf.subarray(at);
-  }
-  if (carry.length > 0 && !(await patch(carry))) return { ok: false, error: "upload_failed" };
-  if (offset !== input.totalBytes) return { ok: false, error: "size_mismatch" };
-
-  const stored = await ports.statObject(objectPath);
-  if (stored !== input.totalBytes) return { ok: false, error: "size_mismatch" };
+  const streamed = await streamPartsToObject(
+    { objectPath, parts: input.parts, totalBytes: input.totalBytes },
+    ports,
+  );
+  if (!streamed.ok) return { ok: false, error: streamed.error };
 
   const meta: RafeeqArtifactObjectMeta = {
     version: 1,
@@ -122,8 +82,8 @@ export async function assembleRafeeqArtifactObject(
     objectPath,
     filename: input.filename,
     bytes: input.totalBytes,
-    sha256: hash.digest("hex"),
-    partCount: input.parts.length,
+    sha256: streamed.sha256,
+    partCount: streamed.partCount,
     uploadedAtIso: input.nowIso,
   };
   if (!(await ports.writeMeta(meta))) return { ok: false, error: "meta_write_failed" };

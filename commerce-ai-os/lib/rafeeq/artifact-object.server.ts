@@ -26,6 +26,7 @@ import {
   type RafeeqArtifactObjectMeta,
 } from "@/lib/export/rafeeq/artifact-object";
 import { getRafeeqPackageArtifact, readRafeeqPackagePart, RAFEEQ_JOB_BUCKET } from "@/lib/rafeeq/package-job.server";
+import { makeTusPorts } from "@/lib/storage/tus.server";
 
 const metaPath = (jobId: string) => `jobs/${jobId}/artifact-object.json`;
 
@@ -33,77 +34,13 @@ export type RafeeqArtifactLinkError = "job_not_found" | "package_link_unavailabl
 export type RafeeqLinkApiResult<T> = { ok: true; value: T } | { ok: false; error: RafeeqArtifactLinkError; status: number };
 const linkErr = <T,>(error: RafeeqArtifactLinkError, status: number): RafeeqLinkApiResult<T> => ({ ok: false, error, status });
 
-function supabaseStorageEnv(): { url: string; key: string } | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  return url && key ? { url: url.replace(/\/$/, ""), key } : null;
-}
+// ── TUS ports (the shared implementation, bound to this bucket) ─────────────
+//
+// STEP 90C — these three calls moved to lib/storage/tus.server.ts so Email B's
+// image package could use the same resumable upload instead of a second copy.
+// Same protocol, same headers, same offsets; only the bucket is a parameter.
 
-// ── real TUS ports (Supabase resumable upload) ───────────────────────────────
-
-async function tusCreate(objectPath: string, totalBytes: number): Promise<string | null> {
-  const env = supabaseStorageEnv();
-  if (!env) return null;
-  const b64 = (v: string) => Buffer.from(v, "utf8").toString("base64");
-  try {
-    const res = await fetch(`${env.url}/storage/v1/upload/resumable`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.key}`,
-        apikey: env.key,
-        "tus-resumable": "1.0.0",
-        "upload-length": String(totalBytes),
-        "x-upsert": "true",
-        "upload-metadata": [
-          `bucketName ${b64(RAFEEQ_JOB_BUCKET)}`,
-          `objectName ${b64(objectPath)}`,
-          `contentType ${b64("application/zip")}`,
-          `cacheControl ${b64("3600")}`,
-        ].join(","),
-      },
-    });
-    if (res.status !== 201) return null;
-    const location = res.headers.get("location");
-    if (!location) return null;
-    return location.startsWith("http") ? location : `${env.url}${location}`;
-  } catch {
-    return null;
-  }
-}
-
-async function tusPatch(uploadUrl: string, offset: number, chunk: Uint8Array): Promise<number | null> {
-  const env = supabaseStorageEnv();
-  if (!env) return null;
-  try {
-    const res = await fetch(uploadUrl, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${env.key}`,
-        apikey: env.key,
-        "tus-resumable": "1.0.0",
-        "upload-offset": String(offset),
-        "Content-Type": "application/offset+octet-stream",
-      },
-      body: new Uint8Array(chunk),
-    });
-    if (res.status !== 204) return null;
-    const next = Number.parseInt(res.headers.get("upload-offset") ?? "", 10);
-    return Number.isInteger(next) ? next : null;
-  } catch {
-    return null;
-  }
-}
-
-async function statObject(objectPath: string): Promise<number | null> {
-  const admin = createAdminClient();
-  const dir = objectPath.slice(0, objectPath.lastIndexOf("/"));
-  const name = objectPath.slice(objectPath.lastIndexOf("/") + 1);
-  const { data, error } = await admin.storage.from(RAFEEQ_JOB_BUCKET).list(dir, { limit: 100 });
-  if (error || !data) return null;
-  const row = data.find((o: { name: string; metadata?: { size?: number } | null }) => o.name === name);
-  const size = row?.metadata?.size;
-  return typeof size === "number" ? size : null;
-}
+const { tusCreate, tusPatch, statObject } = makeTusPorts(RAFEEQ_JOB_BUCKET);
 
 async function readMeta(jobId: string): Promise<RafeeqArtifactObjectMeta | null> {
   const admin = createAdminClient();
