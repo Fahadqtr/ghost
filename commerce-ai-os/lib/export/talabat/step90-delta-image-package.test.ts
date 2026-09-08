@@ -105,8 +105,12 @@ const META = (over: Partial<DeltaImageMeta> = {}): DeltaImageMeta => ({
   jobId: "11111111-2222-3333-4444-555555555555",
   stagedAtIso: "2026-09-06T21:00:00.000Z", zipBytes: 4096,
   sha256: "a".repeat(64),
+  scopeProducts: 9, scopeRows: 10,
   ...over,
 });
+
+/** STEP 85F — the scope META() was staged for, so only the block under test fires. */
+const SCOPE = { expectedImages: 12, scopeProducts: 9, scopeRows: 10 };
 
 // ── 1. scope: the package covers the workbook's rows, and only those ─────────
 
@@ -259,20 +263,20 @@ test("13. the package is stored privately, under the email-artifact prefix", () 
 });
 
 test("14. a package built for another RUN is refused", () => {
-  const blocks = verifyDeltaImagePackage(META(), "run-B", "base-A");
+  const blocks = verifyDeltaImagePackage(META(), "run-B", SCOPE, "base-A");
   assert.deepEqual(blocks, ["image_package_stale_run"]);
   assert.ok(DELTA_IMAGE_BLOCK_AR.image_package_stale_run.length > 0);
 });
 
 test("15. a package built against another BASELINE is refused", () => {
-  const blocks = verifyDeltaImagePackage(META(), "run-A", "base-B");
+  const blocks = verifyDeltaImagePackage(META(), "run-A", SCOPE, "base-B");
   assert.deepEqual(blocks, ["image_package_stale_baseline"]);
 });
 
 test("16. a matching package passes, and a missing one is named as missing", () => {
-  assert.deepEqual(verifyDeltaImagePackage(META(), "run-A", "base-A"), []);
-  assert.deepEqual(verifyDeltaImagePackage(null, "run-A", "base-A"), ["image_package_missing"]);
-  assert.deepEqual(verifyDeltaImagePackage(META({ zipBytes: 0 }), "run-A", "base-A"), ["image_package_missing"]);
+  assert.deepEqual(verifyDeltaImagePackage(META(), "run-A", SCOPE, "base-A"), []);
+  assert.deepEqual(verifyDeltaImagePackage(null, "run-A", SCOPE, "base-A"), ["image_package_missing"]);
+  assert.deepEqual(verifyDeltaImagePackage(META({ zipBytes: 0 }), "run-A", SCOPE, "base-A"), ["image_package_missing"]);
 });
 
 test("17. the sidecar is parsed strictly — a malformed one is NOT a package", () => {
@@ -286,8 +290,10 @@ test("17. the sidecar is parsed strictly — a malformed one is NOT a package", 
 
 test("18. the reader verifies the binding before the bytes are used", () => {
   const src = code(WORKFLOW);
-  assert.match(src, /readPublishedImagePackage\(delta\.fingerprint, baseline\?\.fingerprint \?\? null, nowIso\)/);
-  assert.match(src, /verifyDeltaImagePackage\(parsed, currentRunFingerprint, currentBaselineFingerprint\)/);
+  // STEP 85F — the generation path passes the CURRENT scope too, so a package
+  // built for a different comparison cannot be linked from today's email.
+  assert.match(src, /readPublishedImagePackage\(\s*delta\.fingerprint, baseline\?\.fingerprint \?\? null, deltaImageScope\(delta\.result\), nowIso\)/);
+  assert.match(src, /verifyDeltaImagePackage\(parsed, currentRunFingerprint, currentScope, currentBaselineFingerprint\)/);
   // STEP 90E — the size is compared against a LISTING, never a download.
   assert.match(src, /stored !== parsed\.zipBytes/);
 });
@@ -322,7 +328,7 @@ test("21. duplicate filenames fail closed", () => {
   assert.equal(c.complete, false);
   // and a collision recorded by the extension audit blocks the package too
   assert.deepEqual(
-    verifyDeltaImagePackage(META({ extensionAudit: { mismatches: 1, renamed: 0, collisions: 1 } }), "run-A", "base-A"),
+    verifyDeltaImagePackage(META({ extensionAudit: { mismatches: 1, renamed: 0, collisions: 1 } }), "run-A", SCOPE, "base-A"),
     ["image_package_duplicate_names"],
   );
 });
@@ -345,9 +351,19 @@ test("23. staging refuses an incomplete package and returns the missing refs", (
 });
 
 test("24. an incomplete package also blocks at read time", () => {
+  // A package that DROPPED images is incomplete on its own two numbers, whatever
+  // the current scope is — asserted here against a scope that matches what it
+  // actually packaged, so "incomplete" cannot be confused with a scope mismatch.
   assert.deepEqual(
-    verifyDeltaImagePackage(META({ imageCount: 600, expectedImages: 632 }), "run-A", "base-A"),
+    verifyDeltaImagePackage(META({ imageCount: 600, expectedImages: 632 }), "run-A",
+      { expectedImages: 600, scopeProducts: 9, scopeRows: 10 }, "base-A"),
     ["image_package_incomplete"],
+  );
+  // …and when the CURRENT plan wants 632, it is both incomplete and off-scope.
+  assert.deepEqual(
+    verifyDeltaImagePackage(META({ imageCount: 600, expectedImages: 632 }), "run-A",
+      { expectedImages: 632, scopeProducts: 9, scopeRows: 10 }, "base-A"),
+    ["image_package_incomplete", "image_package_scope_mismatch"],
   );
 });
 
@@ -403,7 +419,7 @@ test("30. the preparation screen is V2 and owner-gated end to end", () => {
 test("31. the screen reports the expected count from the current delta", () => {
   const src = code(WORKFLOW);
   assert.match(src, /expectedImages/);
-  assert.match(src, /deltaImagePlannedCount\(delta\.result\)/);
+  assert.match(src, /const scope = deltaImageScope\(delta\.result\);/);
   assert.match(code(UI), /status\.expectedImages/);
 });
 
