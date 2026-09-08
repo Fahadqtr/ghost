@@ -29,7 +29,8 @@ import {
 } from "@/lib/export/talabat/email-artifacts";
 import {
   DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, parseDeltaImageMeta, verifyDeltaImagePackage,
-  deltaImageSelectionKeys, deltaImagePlannedCount, DELTA_IMAGE_BLOCK_AR,
+  deltaImageScope, type DeltaImageScope,
+  deltaImageSelectionKeys, DELTA_IMAGE_BLOCK_AR,
 } from "@/lib/export/talabat/delta-image-package";
 import {
   startTalabatDeltaImageJob, findStageableDeltaImageJob, type TalabatJobStatusDTO,
@@ -576,7 +577,8 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
   // photographs look equally plausible whichever comparison produced them, so
   // without the binding check a package built last week would be linked from
   // today's email and nothing would look wrong.
-  const pkg = await readPublishedImagePackage(delta.fingerprint, baseline?.fingerprint ?? null, nowIso);
+  const pkg = await readPublishedImagePackage(
+    delta.fingerprint, baseline?.fingerprint ?? null, deltaImageScope(delta.result), nowIso);
   if (!pkg.ok) return fail(pkg.error, 409);
   const out = await generateNewProductsArtifact({
     result: delta.result, nowIso,
@@ -627,6 +629,7 @@ type DeltaPackageRead =
 async function readPublishedImagePackage(
   currentRunFingerprint: string,
   currentBaselineFingerprint: string | null,
+  currentScope: DeltaImageScope,
   nowIso: string,
 ): Promise<DeltaPackageRead> {
   try {
@@ -636,9 +639,13 @@ async function readPublishedImagePackage(
     const parsed = parseDeltaImageMeta(JSON.parse(await meta.data.text()));
     if (parsed === null) return { ok: false, error: "image_package_missing" };
 
-    const blocks = verifyDeltaImagePackage(parsed, currentRunFingerprint, currentBaselineFingerprint);
+    const blocks = verifyDeltaImagePackage(parsed, currentRunFingerprint, currentScope, currentBaselineFingerprint);
     if (blocks.includes("image_package_missing")) return { ok: false, error: "image_package_missing" };
-    if (blocks.includes("image_package_stale_run") || blocks.includes("image_package_stale_baseline")) {
+    // STEP 85F — a package built for a DIFFERENT scope is stale in the way that
+    // matters most here: generating against it would link an archive holding
+    // images of products the workbook deliberately withholds.
+    if (blocks.includes("image_package_stale_run") || blocks.includes("image_package_stale_baseline")
+      || blocks.includes("image_package_scope_mismatch")) {
       return { ok: false, error: "image_package_stale" };
     }
     if (blocks.length > 0) return { ok: false, error: "image_package_incomplete" };
@@ -901,10 +908,8 @@ export interface DeltaImagePackageStatusDTO {
 export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<DeltaImagePackageStatusDTO>> {
   const delta = await loadCurrentTalabatDelta();
   if (!delta.ok) return fail(delta.error, 409);
-  const expectedImages = deltaImagePlannedCount(delta.result);
-  const allowedRows = allowedNewDeltaRows(delta.result);
-  const scopeRows = allowedRows.length;
-  const scopeProducts = new Set(allowedRows.map((r) => r.our.internalProductId)).size;
+  const scope = deltaImageScope(delta.result);
+  const { expectedImages, scopeRows, scopeProducts } = scope;
 
   let meta = null;
   try {
@@ -914,7 +919,7 @@ export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<Delta
   } catch {
     meta = null;
   }
-  const blocks = verifyDeltaImagePackage(meta, delta.fingerprint, delta.baseline?.fingerprint ?? null);
+  const blocks = verifyDeltaImagePackage(meta, delta.fingerprint, scope, delta.baseline?.fingerprint ?? null);
   const ready = meta !== null && blocks.length === 0;
   // Only look for a recoverable job when the published package is NOT usable —
   // there is nothing to recover from when the current one already works.
@@ -947,6 +952,9 @@ export async function startDeltaImagePackage(actor: string | null): Promise<Work
   if (!delta.ok) return fail(delta.error, 409);
   const started = await startTalabatDeltaImageJob({
     selectedKeys: deltaImageSelectionKeys(delta.result),
+    // STEP 85F — recorded on the job so the sidecar it eventually stages can
+    // state the scope it serves, instead of leaving a later reader to infer it.
+    scope: deltaImageScope(delta.result),
     // The rows the delta was just computed from — ONE catalogue load per start.
     previewRows: delta.previewRows,
     runFingerprint: delta.fingerprint,

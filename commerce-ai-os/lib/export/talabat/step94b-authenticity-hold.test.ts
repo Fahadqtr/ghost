@@ -259,7 +259,11 @@ test("16. the earlier exclusions still hold", () => {
 test("17. the screen reports the recomputed scope without generating anything", () => {
   // So a channel-policy change can be SEEN before any artifact is built.
   const wf = code("lib/talabat/email-workflow.server.ts");
-  assert.match(wf, /const allowedRows = allowedNewDeltaRows\(delta\.result\);/);
+  // STEP 85F — the three numbers now come from ONE helper, which is also what
+  // the staged package is verified against.
+  assert.match(wf, /const scope = deltaImageScope\(delta\.result\);/);
+  assert.match(code("lib/export/talabat/delta-image-package.ts"),
+    /export function deltaImageScope[\s\S]*?allowedNewDeltaRows\(result\)/);
   assert.match(wf, /scopeProducts,\n\s*scopeRows,/);
   const status = wf.slice(wf.indexOf("export async function deltaImagePackageStatus"));
   const body = status.slice(0, status.indexOf("\nexport "));

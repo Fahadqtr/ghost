@@ -370,11 +370,13 @@ test("24. the sidecar binds the source job, the baseline and the run", () => {
     runFingerprint: "run-A", baselineFingerprint: "base-A",
     jobId: "38b410f9-c04d-4efa-8de8-220212c65d20",
     stagedAtIso: "2026-09-06T23:00:00.000Z", sha256: "b".repeat(64),
+    scopeProducts: 517, scopeRows: 517,
   });
   assert.ok(meta !== null);
   assert.equal(meta.jobId, "38b410f9-c04d-4efa-8de8-220212c65d20");
   assert.equal(meta.sha256, "b".repeat(64));
-  assert.deepEqual(verifyDeltaImagePackage(meta, "run-A", "base-A"), []);
+  assert.deepEqual(verifyDeltaImagePackage(meta, "run-A",
+    { expectedImages: 632, scopeProducts: 517, scopeRows: 517 }, "base-A"), []);
   // and the staging record carries every one of them
   const stage = code(JOBS).slice(code(JOBS).indexOf("export async function stageTalabatDeltaImagePackage"));
   for (const field of ["runFingerprint:", "baselineFingerprint:", "jobId,", "zipBytes:", "stagedAtIso:", "sha256"]) {
@@ -387,11 +389,12 @@ test("25. a stale published package is still rejected at read time", () => {
     imageCount: 632, expectedImages: 632, zipBytes: 1, sha256: null,
     extensionAudit: { mismatches: 0, renamed: 0, collisions: 0 },
     runFingerprint: "run-A", baselineFingerprint: "base-A",
-    jobId: "j", stagedAtIso: "t", ...over,
+    jobId: "j", stagedAtIso: "t", scopeProducts: null, scopeRows: null, ...over,
   });
-  assert.deepEqual(verifyDeltaImagePackage(meta(), "run-B", "base-A"), ["image_package_stale_run"]);
-  assert.deepEqual(verifyDeltaImagePackage(meta(), "run-A", "base-B"), ["image_package_stale_baseline"]);
-  assert.match(code(WORKFLOW), /verifyDeltaImagePackage\(parsed, currentRunFingerprint, currentBaselineFingerprint\)/);
+  const scope = { expectedImages: 632, scopeProducts: 517, scopeRows: 517 };
+  assert.deepEqual(verifyDeltaImagePackage(meta(), "run-B", scope, "base-A"), ["image_package_stale_run"]);
+  assert.deepEqual(verifyDeltaImagePackage(meta(), "run-A", scope, "base-B"), ["image_package_stale_baseline"]);
+  assert.match(code(WORKFLOW), /verifyDeltaImagePackage\(parsed, currentRunFingerprint, currentScope, currentBaselineFingerprint\)/);
 });
 
 test("26. the signed link still targets the published ZIP on the 7-day policy", () => {

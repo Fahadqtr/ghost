@@ -65,6 +65,29 @@ export function deltaImagePlannedCount(result: TalabatDeltaResult): number {
   }, 0);
 }
 
+/**
+ * STEP 85F — the CURRENT package scope, as one value.
+ *
+ * The three numbers the screen shows are the three a staged package has to
+ * agree with, so they travel together rather than being recomputed by each
+ * caller from a slightly different set of rows.
+ */
+export interface DeltaImageScope {
+  expectedImages: number;
+  scopeProducts: number;
+  scopeRows: number;
+}
+
+/** The current scope, from the certified allowed set. One definition. */
+export function deltaImageScope(result: TalabatDeltaResult): DeltaImageScope {
+  const allowed = allowedNewDeltaRows(result);
+  return {
+    expectedImages: deltaImagePlannedCount(result),
+    scopeProducts: new Set(allowed.map((r) => r.our.internalProductId)).size,
+    scopeRows: allowed.length,
+  };
+}
+
 /** What the staged ZIP is accompanied by. Every field is a binding or a count. */
 export interface DeltaImageMeta {
   /** images actually packaged. */
@@ -86,6 +109,14 @@ export interface DeltaImageMeta {
    * still applies, so a null hash weakens nothing that was previously verified.
    */
   sha256: string | null;
+  /**
+   * STEP 85F — the scope this package was staged FOR, so a later comparison can
+   * be checked against it directly instead of being inferred from the image
+   * count alone. null on a sidecar written before this field existed; such a
+   * package is still caught by the image-count check, which needs no history.
+   */
+  scopeProducts: number | null;
+  scopeRows: number | null;
 }
 
 const num = (v: unknown): number | null =>
@@ -112,6 +143,8 @@ export function parseDeltaImageMeta(raw: unknown): DeltaImageMeta | null {
     baselineFingerprint: str(o.baselineFingerprint),
     sha256: str(o.sha256),
     extensionAudit: { mismatches, renamed, collisions },
+    scopeProducts: num(o.scopeProducts),
+    scopeRows: num(o.scopeRows),
   };
 }
 
@@ -120,6 +153,7 @@ export type DeltaImageBlock =
   | "image_package_stale_run"
   | "image_package_stale_baseline"
   | "image_package_incomplete"
+  | "image_package_scope_mismatch"
   | "image_package_duplicate_names";
 
 /**
@@ -129,10 +163,25 @@ export type DeltaImageBlock =
  * plausible whichever run produced them, so without this check a package built
  * against last week's baseline would be linked from today's email and nobody
  * would see it. Fail closed on every mismatch.
+ *
+ * STEP 85F — `currentScope` is REQUIRED, and it is the parameter this function
+ * was missing. The old contract compared `meta.imageCount` against
+ * `meta.expectedImages`: two numbers the SAME sidecar wrote about ITSELF, so a
+ * package that finished cleanly always agreed with itself and passed. In
+ * production a 632-image package staged on 2026-09-07 reported ready with no
+ * blockers while the current comparison planned 622, because nothing compared
+ * the package to the plan it now had to satisfy.
+ *
+ * The run fingerprint did not catch it either, and cannot: it is built from the
+ * comparison COUNTS, and a Talabat-only channel policy (the authenticity hold)
+ * changes which rows are ALLOWED without moving a single count. A scope change
+ * is therefore invisible to the fingerprint by construction, which is exactly
+ * why the scope has to be compared on its own terms.
  */
 export function verifyDeltaImagePackage(
   meta: DeltaImageMeta | null,
   currentRunFingerprint: string,
+  currentScope: DeltaImageScope,
   currentBaselineFingerprint?: string | null,
 ): DeltaImageBlock[] {
   if (meta === null) return ["image_package_missing"];
@@ -146,7 +195,18 @@ export function verifyDeltaImagePackage(
     && meta.baselineFingerprint !== currentBaselineFingerprint) {
     blocks.push("image_package_stale_baseline");
   }
+  // Did the package FINISH? Its own two numbers still answer that, and nothing
+  // else does — a job that dropped an image records the shortfall right here.
   if (meta.imageCount !== meta.expectedImages) blocks.push("image_package_incomplete");
+  // Does the package match the scope it must serve NOW? The image count is the
+  // check that needs no stored history, so it also covers every sidecar written
+  // before the scope fields existed. The row and product counts are compared
+  // only when the sidecar recorded them: absent is unknown, never "equal".
+  if (meta.imageCount !== currentScope.expectedImages
+    || (meta.scopeRows !== null && meta.scopeRows !== currentScope.scopeRows)
+    || (meta.scopeProducts !== null && meta.scopeProducts !== currentScope.scopeProducts)) {
+    blocks.push("image_package_scope_mismatch");
+  }
   if (meta.extensionAudit.collisions > 0) blocks.push("image_package_duplicate_names");
   return blocks;
 }
@@ -156,6 +216,7 @@ export const DELTA_IMAGE_BLOCK_AR: Record<DeltaImageBlock, string> = {
   image_package_stale_run: "حزمة الصور بُنيت على مقارنة سابقة — أعد تجهيزها.",
   image_package_stale_baseline: "حزمة الصور بُنيت على ملف طلبات سابق — أعد تجهيزها.",
   image_package_incomplete: "حزمة الصور ناقصة — لم تُحمَّل كل الصور المطلوبة.",
+  image_package_scope_mismatch: "حزمة الصور المحفوظة لا تطابق نطاق المقارنة الحالية — جهِّز حزمة جديدة أو انشر الحزمة الجاهزة.",
   image_package_duplicate_names: "تكرار في أسماء ملفات الصور — لم تُجهَّز الحزمة.",
 };
 

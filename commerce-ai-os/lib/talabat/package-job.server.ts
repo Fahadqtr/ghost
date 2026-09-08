@@ -48,7 +48,7 @@ import { isRecoverableTalabatJobError } from "@/lib/export/talabat/package-job-e
 import { mappingComplete, normalizeTalabatPackageJobState } from "@/lib/export/talabat/package-job";
 import {
   DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, auditDeltaImageCoverage, parseDeltaImageMeta,
-  type DeltaImageMeta, type DeltaImageCoverage,
+  type DeltaImageMeta, type DeltaImageCoverage, type DeltaImageScope,
 } from "@/lib/export/talabat/delta-image-package";
 import { streamPartsToObject } from "@/lib/export/artifact-stream";
 import { makeTusPorts } from "@/lib/storage/tus.server";
@@ -638,6 +638,14 @@ interface DeltaImageJobBinding {
   runFingerprint: string;
   baselineFingerprint: string | null;
   expectedImages: number;
+  /**
+   * STEP 85F — the scope this job was started for. Carried through to the
+   * sidecar so a staged package states which comparison it satisfies, rather
+   * than leaving the image count as the only evidence. null on a binding
+   * written before this field existed.
+   */
+  scopeProducts: number | null;
+  scopeRows: number | null;
 }
 
 const DELTA_MARKER = "email-b-delta-images";
@@ -657,11 +665,15 @@ async function readDeltaBinding(jobId: string): Promise<DeltaImageJobBinding | n
   const run = typeof raw.runFingerprint === "string" ? raw.runFingerprint : "";
   const expected = typeof raw.expectedImages === "number" ? raw.expectedImages : -1;
   if (run === "" || expected < 0) return null;
+  const count = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null;
   return {
     marker: DELTA_MARKER,
     runFingerprint: run,
     baselineFingerprint: typeof raw.baselineFingerprint === "string" ? raw.baselineFingerprint : null,
     expectedImages: expected,
+    scopeProducts: count(raw.scopeProducts),
+    scopeRows: count(raw.scopeRows),
   };
 }
 
@@ -683,6 +695,8 @@ export async function startTalabatDeltaImageJob(input: {
   previewRows: readonly TalabatPreviewRow[];
   runFingerprint: string;
   baselineFingerprint: string | null;
+  /** STEP 85F — the scope this job serves, recorded on its binding. */
+  scope: DeltaImageScope;
   actor: string | null;
 }): Promise<TalabatJobApiResult<TalabatJobStatusDTO>> {
   if (input.selectedKeys.length === 0) return errResult("no_exportable_rows", 422);
@@ -761,6 +775,8 @@ export async function startTalabatDeltaImageJob(input: {
     runFingerprint: input.runFingerprint,
     baselineFingerprint: input.baselineFingerprint,
     expectedImages: created.plan.images.length,
+    scopeProducts: input.scope.scopeProducts,
+    scopeRows: input.scope.scopeRows,
   };
   // The binding goes FIRST, and it is tiny. If the request dies part-way from
   // here, the row is still identifiable as ours and reapable on its own terms,
@@ -885,6 +901,8 @@ export async function stageTalabatDeltaImagePackage(jobId: string): Promise<Delt
     stagedAtIso: new Date().toISOString(),
     zipBytes: state.artifact.totalBytes,
     sha256: null,
+    scopeProducts: binding.scopeProducts,
+    scopeRows: binding.scopeRows,
   };
 
   // IDEMPOTENT. Re-publishing 330 MB that is already published is minutes of
