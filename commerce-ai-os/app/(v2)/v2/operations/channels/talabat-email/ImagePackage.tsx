@@ -70,6 +70,25 @@ export default function ImagePackage() {
     if (got.ok) setStatus(got.value); else setError(got.message);
   }, [fetchStatus]);
 
+  /**
+   * STEP 85D — re-read the card after EVERY attempt, including a failed one.
+   *
+   * A failed publish leaves the completed job untouched on the server: its
+   * images are downloaded, its parts are durable and `findStageableDeltaImageJob`
+   * still offers it. The screen used to keep the status it fetched on mount —
+   * taken BEFORE the job existed — so `readyJob` stayed null and the recovery
+   * button never appeared, making a resumable failure look like a dead end and
+   * inviting another 300 MB download.
+   *
+   * It never touches `error`: the failure the owner needs to read is the stage
+   * error, not a later fetch problem, so a refresh can add the recovery button
+   * but can never overwrite the reason the publish failed.
+   */
+  const refreshStatusQuietly = useCallback(async () => {
+    const got = await fetchStatus();
+    if (got.ok) setStatus(got.value);
+  }, [fetchStatus]);
+
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -104,10 +123,10 @@ export default function ImagePackage() {
         if (Array.isArray(miss)) setMissing(miss as { filename: string; sku: string }[]);
         return;
       }
-      await loadStatus();
     } catch {
       setError("تعذّر الاتصال بالخادم.");
     } finally {
+      await refreshStatusQuietly();
       running.current = false;
       setBusy(false);
     }
@@ -143,10 +162,10 @@ export default function ImagePackage() {
         if (Array.isArray(miss)) setMissing(miss as { filename: string; sku: string }[]);
         return;
       }
-      await loadStatus();
     } catch {
       setError("تعذّر الاتصال بالخادم.");
     } finally {
+      await refreshStatusQuietly();
       running.current = false;
       setBusy(false);
     }
