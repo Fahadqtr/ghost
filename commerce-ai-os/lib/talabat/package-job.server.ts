@@ -967,7 +967,6 @@ export async function stageTalabatDeltaImagePackage(jobId: string): Promise<Delt
     jobId,
     objectPath: DELTA_IMAGE_ZIP_PATH,
     totalBytes: state.artifact.totalBytes,
-    runFingerprint: binding.runFingerprint,
   };
   const nowMs = Date.now();
   const prior = parseDeltaImagePublishState(await getJson<unknown>(publishStatePath(jobId)));
@@ -980,6 +979,8 @@ export async function stageTalabatDeltaImagePackage(jobId: string): Promise<Delt
   const writePublishState = async (over: Partial<DeltaImagePublishState> & { uploadUrl: string }) => {
     const next: DeltaImagePublishState = {
       ...identity,
+      // Recorded for the audit trail, never used to gate the resume (STEP 85I).
+      runFingerprint: binding.runFingerprint,
       scopeProducts: binding.scopeProducts,
       scopeRows: binding.scopeRows,
       confirmedOffset: 0,
@@ -1049,13 +1050,11 @@ export async function stageTalabatDeltaImagePackage(jobId: string): Promise<Delt
  * actually use.
  */
 export async function readDeltaImagePublishProgress(
-  jobId: string, runFingerprint: string, totalBytes: number,
+  jobId: string, totalBytes: number,
 ): Promise<DeltaImagePublishProgress | null> {
   try {
     const state = parseDeltaImagePublishState(await getJson<unknown>(publishStatePath(jobId)));
-    return publishProgressOf(state, {
-      jobId, objectPath: DELTA_IMAGE_ZIP_PATH, totalBytes, runFingerprint,
-    });
+    return publishProgressOf(state, { jobId, objectPath: DELTA_IMAGE_ZIP_PATH, totalBytes });
   } catch {
     return null;
   }
@@ -1083,6 +1082,7 @@ export async function findStageableDeltaImageJob(
       .eq("channel", CHANNEL).eq("mode", "selected").eq("status", "completed")
       .order("completed_at", { ascending: false }).limit(5);
     if (error || !Array.isArray(data)) return null;
+    let best: { jobId: string; imageCount: number; archiveBytes: number; completedAtIso: string } | null = null;
     for (const row of data as unknown as {
       id: string; completed_at: string | null; artifact_bytes: number | null; progress_current: number | null;
     }[]) {
@@ -1108,14 +1108,24 @@ export async function findStageableDeltaImageJob(
       }
       const st = await readState(row.id);
       if (!st || st.status !== "completed" || !st.artifact) continue;
-      return {
+      const candidate = {
         jobId: row.id,
         imageCount: st.packaged.length,
         archiveBytes: st.artifact.totalBytes,
         completedAtIso: row.completed_at ?? "",
       };
+      // STEP 85I — a part-uploaded archive wins over a merely newer one.
+      //
+      // Candidates arrive newest-first, and pressing "prepare" again mints
+      // another identical job. Taking the newest would abandon a 324 MB upload
+      // already most of the way to the server and start that transfer over —
+      // the precise waste the resume exists to prevent. So the first candidate
+      // carrying real progress is preferred, and the newest is the fallback.
+      const progress = await readDeltaImagePublishProgress(row.id, candidate.archiveBytes);
+      if (progress?.resumeAvailable) return candidate;
+      if (best === null) best = candidate;
     }
-    return null;
+    return best;
   } catch {
     return null;
   }

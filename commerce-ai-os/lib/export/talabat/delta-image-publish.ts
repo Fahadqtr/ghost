@@ -69,26 +69,48 @@ export function parseDeltaImagePublishState(raw: unknown): DeltaImagePublishStat
   };
 }
 
-/** What the publish being attempted right now is delivering. */
+/**
+ * What the publish being attempted right now is delivering.
+ *
+ * STEP 85I — an UPLOAD, not a comparison. The job IS the archive: its parts are
+ * immutable and its byte count is fixed, so job + target path + size names
+ * these exact bytes going to this exact object and nothing else can be
+ * confused with it. Whether that job is still the right one for today's email
+ * is a different question, settled by findStageableDeltaImageJob before this
+ * token is ever consulted.
+ */
 export interface DeltaImagePublishIdentity {
   jobId: string;
   objectPath: string;
   totalBytes: number;
-  runFingerprint: string;
 }
 
 export type PublishResumeVerdict =
   | { usable: true }
   | { usable: false; reason: "no_state" | "different_job" | "different_path"
-      | "different_size" | "different_run" };
+      | "different_size" };
 
 /**
  * May this token be resumed for this publish?
  *
- * Fails closed on every mismatch. A token from another job, another target
- * path, another archive size or another comparison is refused outright — the
- * caller then starts a fresh upload, which is safe precisely because nothing
- * of this run was ever appended to that other object.
+ * Fails closed on every mismatch. A token from another job, another target path
+ * or another archive size is refused outright — the caller then starts a fresh
+ * upload, which is safe precisely because nothing of this archive was ever
+ * appended to that other object.
+ *
+ * STEP 85I — the comparison fingerprint is recorded on the token but is NOT
+ * compared here, and that omission is the fix. It used to be, and it made the
+ * resume invisible in production: the token carries the fingerprint the job was
+ * bound to, the status screen asked with the CURRENT one, and 48 unrelated
+ * price edits moved the current one. So a partially uploaded 324 MB archive
+ * reported no progress at all and the owner was offered a fresh start instead
+ * of the resume that was sitting there. Same mistake as STEP 85H, in the reader
+ * written beside it: a comparison-wide identity standing in for a narrower one.
+ *
+ * Nothing is weakened. A job's binding is written once and never rewritten, so
+ * for any given jobId the fingerprint on the token could only ever equal the
+ * one the staging path asks with — the check was a tautology where it was
+ * evaluated and a false negative everywhere else.
  */
 export function resumeVerdict(
   state: DeltaImagePublishState | null,
@@ -98,7 +120,6 @@ export function resumeVerdict(
   if (state.jobId !== identity.jobId) return { usable: false, reason: "different_job" };
   if (state.objectPath !== identity.objectPath) return { usable: false, reason: "different_path" };
   if (state.totalBytes !== identity.totalBytes) return { usable: false, reason: "different_size" };
-  if (state.runFingerprint !== identity.runFingerprint) return { usable: false, reason: "different_run" };
   return { usable: true };
 }
 
