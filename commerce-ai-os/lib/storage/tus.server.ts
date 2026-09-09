@@ -26,6 +26,28 @@ export type TusTransportPorts = Omit<StreamedAssemblyPorts, "readPart">;
 export function makeTusPorts(bucket: string, contentType = "application/zip"): TusTransportPorts {
   const b64 = (v: string) => Buffer.from(v, "utf8").toString("base64");
 
+  /**
+   * STEP 85J — the headers EVERY request of a resumable upload carries.
+   *
+   * `x-upsert` used to sit on the creation call alone, and that cost two
+   * production publishes. Storage defers the duplicate check to the write, so
+   * creating the upload returned 201 while every PATCH came back 409 Conflict:
+   * the target object already existed — the 632-image archive from 2026-09-07 —
+   * and a PATCH without upsert may not overwrite it. Zero bytes were ever
+   * accepted, which is why the resume had nothing to resume. The one stage that
+   * ever succeeded was the one where the path was still empty.
+   *
+   * Supabase's own documented usage passes these headers to a tus client, which
+   * applies them to POST, HEAD and PATCH alike. Building the set once here is
+   * what makes that true of this transport too.
+   */
+  const uploadHeaders = (key: string): Record<string, string> => ({
+    Authorization: `Bearer ${key}`,
+    apikey: key,
+    "tus-resumable": "1.0.0",
+    "x-upsert": "true",
+  });
+
   return {
     async tusCreate(objectPath: string, totalBytes: number): Promise<string | null> {
       const env = supabaseStorageEnv();
@@ -34,11 +56,8 @@ export function makeTusPorts(bucket: string, contentType = "application/zip"): T
         const res = await fetch(`${env.url}/storage/v1/upload/resumable`, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${env.key}`,
-            apikey: env.key,
-            "tus-resumable": "1.0.0",
+            ...uploadHeaders(env.key),
             "upload-length": String(totalBytes),
-            "x-upsert": "true",
             "upload-metadata": [
               `bucketName ${b64(bucket)}`,
               `objectName ${b64(objectPath)}`,
@@ -63,9 +82,7 @@ export function makeTusPorts(bucket: string, contentType = "application/zip"): T
         const res = await fetch(uploadUrl, {
           method: "PATCH",
           headers: {
-            Authorization: `Bearer ${env.key}`,
-            apikey: env.key,
-            "tus-resumable": "1.0.0",
+            ...uploadHeaders(env.key),
             "upload-offset": String(offset),
             "Content-Type": "application/offset+octet-stream",
           },
@@ -93,11 +110,7 @@ export function makeTusPorts(bucket: string, contentType = "application/zip"): T
       try {
         const res = await fetch(uploadUrl, {
           method: "HEAD",
-          headers: {
-            Authorization: `Bearer ${env.key}`,
-            apikey: env.key,
-            "tus-resumable": "1.0.0",
-          },
+          headers: uploadHeaders(env.key),
         });
         if (res.status !== 200 && res.status !== 204) return null;
         const at = Number.parseInt(res.headers.get("upload-offset") ?? "", 10);

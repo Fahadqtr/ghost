@@ -175,8 +175,14 @@ test("6. Rafeeq and Talabat share ONE streaming implementation", () => {
   assert.match(code(RAFEEQ_OBJ), /streamPartsToObject\(/);
   assert.match(code(JOBS), /streamPartsToObject\(/);
   // and one transport, parameterised by bucket rather than copied
-  // STEP 85G — create + patch + the HEAD that asks the server for its offset.
-  assert.equal((code(TUS).match(/tus-resumable/g) ?? []).length, 3, "create + patch + offset, once each");
+  // STEP 85J — the protocol header now lives in ONE shared header set that
+  // create, patch and the offset HEAD all spread, which is a stronger form of
+  // "one implementation" than three matching copies: a request cannot be
+  // written that quietly omits part of it. That omission is exactly what cost
+  // two production publishes when x-upsert sat on the creation call alone.
+  assert.equal((code(TUS).match(/tus-resumable/g) ?? []).length, 1, "declared once");
+  assert.equal((code(TUS).match(/uploadHeaders\(env\.key\)/g) ?? []).length, 3,
+    "and used by create + patch + offset");
   assert.match(code(RAFEEQ_SRV), /makeTusPorts\(RAFEEQ_JOB_BUCKET\)/);
   assert.match(code(JOBS), /makeTusPorts\(BUCKET\)/);
 });
