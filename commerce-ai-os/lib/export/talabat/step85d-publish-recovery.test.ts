@@ -157,7 +157,7 @@ test("12: discovery is bound to the run fingerprint only — not to publish succ
 
 test("13: the card looks for a recoverable job whenever the published one is unusable", () => {
   const wf = code(WORKFLOW);
-  assert.match(wf, /const readyJob = ready \? null : await findStageableDeltaImageJob\(delta\.fingerprint\)/,
+  assert.match(wf, /const readyJob = ready \? null : await findStageableDeltaImageJob\(delta\.fingerprint, imagePlan\)/,
     "a stale published package does not mask the current ready job");
 });
 

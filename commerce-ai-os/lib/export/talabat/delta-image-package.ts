@@ -19,6 +19,8 @@
 //
 // Nothing here fetches, zips, stores or sends.
 
+import { createHash } from "node:crypto";
+
 import { previewRowKey, planRowImages } from "./package.ts";
 import { allowedNewDeltaRows } from "./category-policy.ts";
 import type { TalabatDeltaResult } from "./baseline-delta.ts";
@@ -88,6 +90,42 @@ export function deltaImageScope(result: TalabatDeltaResult): DeltaImageScope {
   };
 }
 
+/**
+ * STEP 85H — the identity of the IMAGE SET a package must contain.
+ *
+ * The run fingerprint is a comparison-wide identity: it is built from counts
+ * like nameDiffs and priceDiffs, so editing the price of an existing product
+ * changes it. That is right for a workbook and wrong for an archive of
+ * photographs — in production, 48 product edits invalidated four completed
+ * 622-image jobs whose images were still exactly the images today's email
+ * needs, and offered the owner nothing but a fifth 324 MB download.
+ *
+ * This fingerprint covers precisely what the archive holds: every planned
+ * image, in plan order, by the filename it is stored under and the URL its
+ * bytes came from. A different image set — an added row, a dropped gallery
+ * shot, a re-uploaded photograph at a new URL — changes it. A price edit does
+ * not. Fail-closed is preserved where it means something.
+ */
+export function imagePlanFingerprintOf(
+  entries: readonly { filename: string; sourceUrl: string }[],
+): string {
+  const h = createHash("sha256");
+  for (const e of entries) h.write(`${e.filename}\t${e.sourceUrl}\n`);
+  return `i1.${entries.length}.${h.digest("hex")}`;
+}
+
+/** The image-set identity of the CURRENT comparison. */
+export function deltaImagePlanFingerprint(result: TalabatDeltaResult): string {
+  const entries: { filename: string; sourceUrl: string }[] = [];
+  for (const r of allowedNewDeltaRows(result)) {
+    const plan = planRowImages(r.our);
+    if (!plan.primary) continue;
+    entries.push({ filename: plan.primary.filename, sourceUrl: plan.primary.sourceUrl });
+    for (const g of plan.gallery) entries.push({ filename: g.filename, sourceUrl: g.sourceUrl });
+  }
+  return imagePlanFingerprintOf(entries);
+}
+
 /** What the staged ZIP is accompanied by. Every field is a binding or a count. */
 export interface DeltaImageMeta {
   /** images actually packaged. */
@@ -117,6 +155,11 @@ export interface DeltaImageMeta {
    */
   scopeProducts: number | null;
   scopeRows: number | null;
+  /**
+   * STEP 85H — the image set this archive holds. null on a sidecar written
+   * before this field existed, which then falls back to the run fingerprint.
+   */
+  imagePlanFingerprint: string | null;
 }
 
 const num = (v: unknown): number | null =>
@@ -145,6 +188,7 @@ export function parseDeltaImageMeta(raw: unknown): DeltaImageMeta | null {
     extensionAudit: { mismatches, renamed, collisions },
     scopeProducts: num(o.scopeProducts),
     scopeRows: num(o.scopeRows),
+    imagePlanFingerprint: str(o.imagePlanFingerprint),
   };
 }
 
@@ -183,11 +227,23 @@ export function verifyDeltaImagePackage(
   currentRunFingerprint: string,
   currentScope: DeltaImageScope,
   currentBaselineFingerprint?: string | null,
+  /**
+   * STEP 85H — the current image set. When the sidecar records one too, THIS is
+   * what decides staleness: it is exact about the bytes the archive must hold,
+   * where the run fingerprint merely correlates with them and moves whenever
+   * any product's name or price is edited.
+   */
+  currentImagePlanFingerprint?: string | null,
 ): DeltaImageBlock[] {
   if (meta === null) return ["image_package_missing"];
   const blocks: DeltaImageBlock[] = [];
   if (meta.zipBytes === 0 || meta.imageCount === 0) blocks.push("image_package_missing");
-  if (meta.runFingerprint !== currentRunFingerprint) blocks.push("image_package_stale_run");
+  const staleRun = meta.imagePlanFingerprint !== null && currentImagePlanFingerprint
+    ? meta.imagePlanFingerprint !== currentImagePlanFingerprint
+    // No recorded image set: fall back to the comparison-wide identity, which
+    // is what such a sidecar was written against. Conservative by construction.
+    : meta.runFingerprint !== currentRunFingerprint;
+  if (staleRun) blocks.push("image_package_stale_run");
   // Only compared when BOTH sides know their baseline: a package staged before
   // the binding existed is stale-by-run anyway, and inventing a mismatch from a
   // missing value would block on nothing.

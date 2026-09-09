@@ -105,7 +105,7 @@ const META = (over: Partial<DeltaImageMeta> = {}): DeltaImageMeta => ({
   jobId: "11111111-2222-3333-4444-555555555555",
   stagedAtIso: "2026-09-06T21:00:00.000Z", zipBytes: 4096,
   sha256: "a".repeat(64),
-  scopeProducts: 9, scopeRows: 10,
+  scopeProducts: 9, scopeRows: 10, imagePlanFingerprint: null,
   ...over,
 });
 
@@ -292,8 +292,8 @@ test("18. the reader verifies the binding before the bytes are used", () => {
   const src = code(WORKFLOW);
   // STEP 85F — the generation path passes the CURRENT scope too, so a package
   // built for a different comparison cannot be linked from today's email.
-  assert.match(src, /readPublishedImagePackage\(\s*delta\.fingerprint, baseline\?\.fingerprint \?\? null, deltaImageScope\(delta\.result\), nowIso\)/);
-  assert.match(src, /verifyDeltaImagePackage\(parsed, currentRunFingerprint, currentScope, currentBaselineFingerprint\)/);
+  assert.match(src, /readPublishedImagePackage\(\s*delta\.fingerprint, baseline\?\.fingerprint \?\? null, deltaImageScope\(delta\.result\),\s*deltaImagePlanFingerprint\(delta\.result\), nowIso\)/);
+  assert.match(src, /verifyDeltaImagePackage\(\s*parsed, currentRunFingerprint, currentScope, currentBaselineFingerprint,\s*currentImagePlanFingerprint\)/);
   // STEP 90E — the size is compared against a LISTING, never a download.
   assert.match(src, /stored !== parsed\.zipBytes/);
 });

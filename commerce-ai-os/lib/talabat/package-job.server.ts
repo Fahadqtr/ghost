@@ -48,6 +48,7 @@ import { isRecoverableTalabatJobError } from "@/lib/export/talabat/package-job-e
 import { mappingComplete, normalizeTalabatPackageJobState } from "@/lib/export/talabat/package-job";
 import {
   DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, auditDeltaImageCoverage, parseDeltaImageMeta,
+  imagePlanFingerprintOf,
   type DeltaImageMeta, type DeltaImageCoverage, type DeltaImageScope,
 } from "@/lib/export/talabat/delta-image-package";
 import {
@@ -651,6 +652,12 @@ interface DeltaImageJobBinding {
    */
   scopeProducts: number | null;
   scopeRows: number | null;
+  /**
+   * STEP 85H — the image set this job was planned for. null on a binding
+   * written before this field existed; such a job is matched by recomputing the
+   * same fingerprint from its own immutable plan.json instead.
+   */
+  imagePlanFingerprint: string | null;
 }
 
 const DELTA_MARKER = "email-b-delta-images";
@@ -679,7 +686,23 @@ async function readDeltaBinding(jobId: string): Promise<DeltaImageJobBinding | n
     expectedImages: expected,
     scopeProducts: count(raw.scopeProducts),
     scopeRows: count(raw.scopeRows),
+    imagePlanFingerprint: typeof raw.imagePlanFingerprint === "string" && raw.imagePlanFingerprint !== ""
+      ? raw.imagePlanFingerprint : null,
   };
+}
+
+/**
+ * STEP 85H — the image set a job was planned for, recomputed from its own plan.
+ *
+ * plan.json is written once at start and never rewritten, so this is not a
+ * guess about a legacy job: it is the same function over the same list the job
+ * actually fetched. No image is re-downloaded to answer it.
+ */
+async function imagePlanFingerprintOfJob(jobId: string): Promise<string | null> {
+  const plan = await getJson<TalabatPackageJobPlan>(planPath(jobId));
+  if (!plan || !Array.isArray(plan.images)) return null;
+  return imagePlanFingerprintOf(
+    plan.images.map((i) => ({ filename: i.filename, sourceUrl: i.sourceUrl })));
 }
 
 /**
@@ -782,6 +805,8 @@ export async function startTalabatDeltaImageJob(input: {
     expectedImages: created.plan.images.length,
     scopeProducts: input.scope.scopeProducts,
     scopeRows: input.scope.scopeRows,
+    imagePlanFingerprint: imagePlanFingerprintOf(
+      created.plan.images.map((i) => ({ filename: i.filename, sourceUrl: i.sourceUrl }))),
   };
   // The binding goes FIRST, and it is tiny. If the request dies part-way from
   // here, the row is still identifiable as ours and reapable on its own terms,
@@ -908,6 +933,8 @@ export async function stageTalabatDeltaImagePackage(jobId: string): Promise<Delt
     sha256: null,
     scopeProducts: binding.scopeProducts,
     scopeRows: binding.scopeRows,
+    imagePlanFingerprint: binding.imagePlanFingerprint
+      ?? await imagePlanFingerprintOfJob(jobId),
   };
 
   // IDEMPOTENT. Re-publishing 330 MB that is already published is minutes of
@@ -1041,6 +1068,12 @@ export async function readDeltaImagePublishProgress(
  */
 export async function findStageableDeltaImageJob(
   runFingerprint: string,
+  /**
+   * STEP 85H — the image set the current comparison needs. A job is offered
+   * when it holds THAT set, whatever has happened to unrelated product prices
+   * since. Omitted, the old comparison-wide rule applies unchanged.
+   */
+  imagePlanFingerprint?: string | null,
 ): Promise<{ jobId: string; imageCount: number; archiveBytes: number; completedAtIso: string } | null> {
   try {
     const admin = createAdminClient();
@@ -1054,8 +1087,25 @@ export async function findStageableDeltaImageJob(
       id: string; completed_at: string | null; artifact_bytes: number | null; progress_current: number | null;
     }[]) {
       const binding = await readDeltaBinding(row.id);
-      // Only a job built for THIS comparison may be published for it.
-      if (!binding || binding.runFingerprint !== runFingerprint) continue;
+      if (!binding) continue;
+      // Only a job holding THIS comparison's images may be published for it.
+      //
+      // Matched on the image set when both sides know it, and for a binding
+      // written before that field existed the same fingerprint is recomputed
+      // from the job's own immutable plan.json — reconstruction from a
+      // persisted artifact, not a relaxation: a job whose plan lists different
+      // images is still refused. Only when neither side can name its image set
+      // does the comparison-wide fingerprint decide, exactly as before.
+      if (imagePlanFingerprint) {
+        const jobPlan = binding.imagePlanFingerprint ?? await imagePlanFingerprintOfJob(row.id);
+        if (jobPlan === null) {
+          if (binding.runFingerprint !== runFingerprint) continue;
+        } else if (jobPlan !== imagePlanFingerprint) {
+          continue;
+        }
+      } else if (binding.runFingerprint !== runFingerprint) {
+        continue;
+      }
       const st = await readState(row.id);
       if (!st || st.status !== "completed" || !st.artifact) continue;
       return {

@@ -30,7 +30,7 @@ import {
 import {
   DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, parseDeltaImageMeta, verifyDeltaImagePackage,
   deltaImageScope, type DeltaImageScope,
-  deltaImageSelectionKeys, DELTA_IMAGE_BLOCK_AR,
+  deltaImageSelectionKeys, deltaImagePlanFingerprint, DELTA_IMAGE_BLOCK_AR,
 } from "@/lib/export/talabat/delta-image-package";
 import {
   startTalabatDeltaImageJob, findStageableDeltaImageJob, readDeltaImagePublishProgress,
@@ -579,7 +579,8 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
   // without the binding check a package built last week would be linked from
   // today's email and nothing would look wrong.
   const pkg = await readPublishedImagePackage(
-    delta.fingerprint, baseline?.fingerprint ?? null, deltaImageScope(delta.result), nowIso);
+    delta.fingerprint, baseline?.fingerprint ?? null, deltaImageScope(delta.result),
+    deltaImagePlanFingerprint(delta.result), nowIso);
   if (!pkg.ok) return fail(pkg.error, 409);
   const out = await generateNewProductsArtifact({
     result: delta.result, nowIso,
@@ -631,6 +632,7 @@ async function readPublishedImagePackage(
   currentRunFingerprint: string,
   currentBaselineFingerprint: string | null,
   currentScope: DeltaImageScope,
+  currentImagePlanFingerprint: string,
   nowIso: string,
 ): Promise<DeltaPackageRead> {
   try {
@@ -640,7 +642,9 @@ async function readPublishedImagePackage(
     const parsed = parseDeltaImageMeta(JSON.parse(await meta.data.text()));
     if (parsed === null) return { ok: false, error: "image_package_missing" };
 
-    const blocks = verifyDeltaImagePackage(parsed, currentRunFingerprint, currentScope, currentBaselineFingerprint);
+    const blocks = verifyDeltaImagePackage(
+      parsed, currentRunFingerprint, currentScope, currentBaselineFingerprint,
+      currentImagePlanFingerprint);
     if (blocks.includes("image_package_missing")) return { ok: false, error: "image_package_missing" };
     // STEP 85F — a package built for a DIFFERENT scope is stale in the way that
     // matters most here: generating against it would link an archive holding
@@ -928,11 +932,13 @@ export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<Delta
   } catch {
     meta = null;
   }
-  const blocks = verifyDeltaImagePackage(meta, delta.fingerprint, scope, delta.baseline?.fingerprint ?? null);
+  const imagePlan = deltaImagePlanFingerprint(delta.result);
+  const blocks = verifyDeltaImagePackage(
+    meta, delta.fingerprint, scope, delta.baseline?.fingerprint ?? null, imagePlan);
   const ready = meta !== null && blocks.length === 0;
   // Only look for a recoverable job when the published package is NOT usable —
   // there is nothing to recover from when the current one already works.
-  const readyJob = ready ? null : await findStageableDeltaImageJob(delta.fingerprint);
+  const readyJob = ready ? null : await findStageableDeltaImageJob(delta.fingerprint, imagePlan);
   const publishProgress = readyJob
     ? await readDeltaImagePublishProgress(readyJob.jobId, delta.fingerprint, readyJob.archiveBytes)
     : null;
