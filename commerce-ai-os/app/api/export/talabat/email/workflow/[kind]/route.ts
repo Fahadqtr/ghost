@@ -49,6 +49,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ kind: st
     // the default: the server never writes a greeting the owner did not.
     greetingRaw: url.searchParams.get("greeting") ?? "",
     currentRunFingerprint: url.searchParams.get("run"),
+    // STEP 86A — travels beside the run, and is what decides whether the
+    // referenced image archive still serves this email.
+    currentImagePlanFingerprint: url.searchParams.get("imagePlan"),
     categoryRequests: url.searchParams.getAll("categoryRequest"),
   });
   if (!result.ok) return jsonRes({ error: result.error, message_ar: messageAr(result.error) }, result.status);
@@ -72,6 +75,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ kind: s
     ccRaw: str(body.cc),
     greetingRaw: str(body.greeting),
     currentRunFingerprint: typeof body.run === "string" && body.run !== "" ? body.run : null,
+    currentImagePlanFingerprint:
+      typeof body.imagePlan === "string" && body.imagePlan !== "" ? body.imagePlan : null,
     categoryRequests: list(body.categoryRequests),
     confirmationToken: typeof body.confirmationToken === "string" ? body.confirmationToken : null,
     createdBy: owner.email,

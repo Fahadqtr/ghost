@@ -32,6 +32,9 @@ type Preview = {
   artifactGeneratedAtIso: string | null;
   confirmationToken: string;
   blockers: string[];
+  /** STEP 86A — why the artifact is unusable, when it is. "Regenerate" is the
+   *  wrong instruction for most of these, so the real reason is shown. */
+  artifactBlockers: string[];
   sendable: boolean;
 };
 
@@ -76,6 +79,10 @@ function EmailCard({
   // blocks the send rather than silently restoring this text.
   const [greeting, setGreeting] = useState(DEFAULT_TALABAT_GREETING);
   const [run, setRun] = useState("");
+  // STEP 86A — the image set the current comparison needs, carried beside the
+  // run so the preview can judge the referenced archive on the images it holds
+  // rather than on a comparison that moves with every price edit.
+  const [imagePlan, setImagePlan] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [confirmedToken, setConfirmedToken] = useState<string | null>(null);
   const [busy, setBusy] = useState<"" | "generate" | "preview" | "send">("");
@@ -100,6 +107,7 @@ function EmailCard({
     try {
       const body = await call(`/api/export/talabat/email/generate/${kindId}`, { method: "POST" });
       setRun(typeof body?.runFingerprint === "string" ? body.runFingerprint : "");
+      setImagePlan(typeof body?.imagePlanFingerprint === "string" ? body.imagePlanFingerprint : "");
       const files = Array.isArray(body?.files) ? body.files : [];
       setMessage(
         `تم التوليد: ${files.map((f: { filename: string; bytes: number }) => `${f.filename} (${mb(f.bytes)} م.ب)`).join("، ")}` +
@@ -112,7 +120,10 @@ function EmailCard({
   async function loadPreview() {
     setBusy("preview"); setError(null); setMessage(null); setConfirmedToken(null);
     try {
-      const q = new URLSearchParams({ mode: "test", to, cc, greeting, ...(run ? { run } : {}) });
+      const q = new URLSearchParams({
+        mode: "test", to, cc, greeting,
+        ...(run ? { run } : {}), ...(imagePlan ? { imagePlan } : {}),
+      });
       setPreview(await call(`/api/export/talabat/email/workflow/${kindId}?${q}`) as Preview);
     } catch (e) {
       setError(e instanceof Error ? e.message : "تعذّرت المعاينة.");
@@ -126,7 +137,7 @@ function EmailCard({
       const body = await call(`/api/export/talabat/email/workflow/${kindId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, cc, greeting, run, confirmationToken: confirmedToken }),
+        body: JSON.stringify({ to, cc, greeting, run, imagePlan, confirmationToken: confirmedToken }),
       });
       setMessage(`تم إرسال رسالة اختبار إلى ${(body?.to ?? []).join("، ")} — معرّف المزوّد: ${body?.messageId ?? "—"}`);
       setConfirmedToken(null);
@@ -213,6 +224,14 @@ function EmailCard({
             <ul className="list-disc space-y-1 pe-4 text-xs text-amber-900">
               {preview.blockers.map((b) => <li key={b}>{b}</li>)}
             </ul>
+          ) : null}
+          {preview.artifactBlockers.length > 0 ? (
+            <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+              <p className="mb-1 font-semibold">سبب رفض الملفات المولّدة:</p>
+              <ul className="list-disc space-y-1 pe-4">
+                {preview.artifactBlockers.map((b) => <li key={b}>{b}</li>)}
+              </ul>
+            </div>
           ) : null}
 
           <label className="flex items-start gap-2 text-sm">

@@ -24,7 +24,7 @@ import {
 } from "@/lib/export/talabat/email-templates";
 import { isTalabatSendableKind, type TalabatSendKind } from "@/lib/export/talabat/email-send";
 import {
-  verifyArtifactScope, runFingerprint,
+  verifyArtifactScope, runFingerprint, ARTIFACT_BLOCK_AR,
   type GenerationError, type TalabatImagePackageRef,
 } from "@/lib/export/talabat/email-artifacts";
 import {
@@ -114,6 +114,13 @@ export interface WorkflowPreviewDTO {
   oversizeGuidance: string[];
   artifactPresent: boolean;
   artifactFresh: boolean;
+  /**
+   * STEP 86A — WHY the artifact is unusable, in the owner's words. "Regenerate"
+   * is the wrong instruction for most of these blocks and was the wrong one for
+   * the case that prompted this, so the reason is reported rather than a single
+   * catch-all. Empty when the artifact is fine.
+   */
+  artifactBlockers: string[];
   artifactRunFingerprint: string | null;
   artifactGeneratedAtIso: string | null;
   /** which uploaded Talabat export the artifact was compared against. */
@@ -142,6 +149,8 @@ export interface WorkflowPreviewInput {
    */
   greetingRaw: string;
   currentRunFingerprint: string | null;
+  /** STEP 86A — the image set the current comparison needs. */
+  currentImagePlanFingerprint?: string | null;
   categoryRequests: string[];
 }
 
@@ -171,9 +180,17 @@ export async function buildWorkflowPreview(
   const bundle = await loadTalabatEmailBundle(kind);
   const activeBaseline = await readActiveBaseline();
   const artifactPresent = bundle !== null;
+  // STEP 86A — every reason an artifact is unusable, kept as reasons rather
+  // than collapsed into one boolean. `artifactFresh` still drives the gate, but
+  // the owner is now told WHICH check failed: "regenerate" is the wrong
+  // instruction for most of these, and was the wrong one for the case that
+  // prompted this — a fresh workbook refused over its image package's binding.
+  const artifactBlocks = bundle !== null && input.currentRunFingerprint !== null
+    ? verifyArtifactScope(bundle.artifactScope, input.currentRunFingerprint,
+      activeBaseline?.fingerprint, input.currentImagePlanFingerprint ?? null)
+    : [];
   const artifactFresh = bundle !== null && input.currentRunFingerprint !== null
-    && verifyArtifactScope(bundle.artifactScope, input.currentRunFingerprint,
-      activeBaseline?.fingerprint).length === 0;
+    && artifactBlocks.length === 0;
 
   const files = bundle?.attachments.map((a) => a.filename) ?? [];
   // Email B's images are delivered by a time-limited signed link to the
@@ -251,6 +268,7 @@ export async function buildWorkflowPreview(
       size,
       oversizeGuidance: oversizeGuidance(size),
       artifactPresent, artifactFresh,
+      artifactBlockers: artifactBlocks.map((b) => ARTIFACT_BLOCK_AR[b]),
       artifactRunFingerprint: bundle?.artifactScope.runFingerprint ?? null,
       artifactGeneratedAtIso: bundle?.artifactScope.generatedAtIso ?? null,
       artifactBaselineFingerprint: bundle?.artifactScope.baselineFingerprint ?? null,
@@ -676,6 +694,9 @@ async function readPublishedImagePackage(
           sourceJobId: parsed.jobId,
           baselineFingerprint: parsed.baselineFingerprint,
           runFingerprint: parsed.runFingerprint,
+          // STEP 86A — carried through so the artifact can be judged on the
+          // images it references, not on a comparison that has since moved.
+          imagePlanFingerprint: parsed.imagePlanFingerprint,
         },
         extensionAudit: parsed.extensionAudit,
       },
@@ -704,6 +725,8 @@ async function statPublishedImageZip(): Promise<number | null> {
 /** Scope figures the V2 screen shows before anything is generated. */
 export async function talabatEmailScopeSummary(): Promise<WorkflowApiResult<{
   runFingerprint: string;
+  /** STEP 86A — the image set this comparison needs; travels with the run. */
+  imagePlanFingerprint: string;
   safeUpdateProducts: number; safeUpdateRows: number; nameRows: number; priceRows: number;
   newProducts: number; newProductRows: number; plannedImages: number;
   barcodeReviewRows: number;
@@ -717,6 +740,7 @@ export async function talabatEmailScopeSummary(): Promise<WorkflowApiResult<{
     ok: true,
     value: {
       runFingerprint: delta.fingerprint,
+      imagePlanFingerprint: deltaImagePlanFingerprint(delta.result),
       safeUpdateProducts: c.products, safeUpdateRows: c.rows, nameRows: c.nameRows, priceRows: c.priceRows,
       newProducts: new Set(newProductPreviewRows(delta.result).map((r) => r.internalProductId)).size,
       newProductRows: allowed.length,
