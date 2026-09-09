@@ -79,6 +79,34 @@ export function makeTusPorts(bucket: string, contentType = "application/zip"): T
       }
     },
 
+    /**
+     * STEP 85G — how many bytes the server already holds for this upload.
+     *
+     * A TUS HEAD is the only authority on that: the caller's own idea of where
+     * it stopped is exactly what a killed request loses. null means the
+     * resource is gone or unreadable, and the caller must not treat a stored
+     * upload URL as resumable on faith.
+     */
+    async tusOffset(uploadUrl: string): Promise<number | null> {
+      const env = supabaseStorageEnv();
+      if (!env) return null;
+      try {
+        const res = await fetch(uploadUrl, {
+          method: "HEAD",
+          headers: {
+            Authorization: `Bearer ${env.key}`,
+            apikey: env.key,
+            "tus-resumable": "1.0.0",
+          },
+        });
+        if (res.status !== 200 && res.status !== 204) return null;
+        const at = Number.parseInt(res.headers.get("upload-offset") ?? "", 10);
+        return Number.isInteger(at) && at >= 0 ? at : null;
+      } catch {
+        return null;
+      }
+    },
+
     async statObject(objectPath: string): Promise<number | null> {
       const admin = createAdminClient();
       const dir = objectPath.slice(0, objectPath.lastIndexOf("/"));

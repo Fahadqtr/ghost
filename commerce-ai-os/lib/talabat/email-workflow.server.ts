@@ -33,7 +33,8 @@ import {
   deltaImageSelectionKeys, DELTA_IMAGE_BLOCK_AR,
 } from "@/lib/export/talabat/delta-image-package";
 import {
-  startTalabatDeltaImageJob, findStageableDeltaImageJob, type TalabatJobStatusDTO,
+  startTalabatDeltaImageJob, findStageableDeltaImageJob, readDeltaImagePublishProgress,
+  type TalabatJobStatusDTO,
 } from "@/lib/talabat/package-job.server";
 import {
   validateBaselineWorkbook, baselineObjectPath, parseActiveBaselineMeta,
@@ -897,6 +898,14 @@ export interface DeltaImagePackageStatusDTO {
    * several hundred photographs.
    */
   readyJob: { jobId: string; imageCount: number; archiveBytes: number; completedAtIso: string } | null;
+  /**
+   * STEP 85G — a publish already part-way up. Present only when a stored resume
+   * token belongs to THIS job, run, target and archive size; anything else is
+   * reported as no progress, because it is not progress the owner can continue.
+   */
+  publishProgress: {
+    uploadedBytes: number; totalBytes: number; percent: number; resumeAvailable: boolean;
+  } | null;
 }
 
 /**
@@ -924,6 +933,9 @@ export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<Delta
   // Only look for a recoverable job when the published package is NOT usable —
   // there is nothing to recover from when the current one already works.
   const readyJob = ready ? null : await findStageableDeltaImageJob(delta.fingerprint);
+  const publishProgress = readyJob
+    ? await readDeltaImagePublishProgress(readyJob.jobId, delta.fingerprint, readyJob.archiveBytes)
+    : null;
   return {
     ok: true,
     value: {
@@ -937,6 +949,7 @@ export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<Delta
       scopeRows,
       blockers: blocks.map((b) => DELTA_IMAGE_BLOCK_AR[b]),
       readyJob,
+      publishProgress,
     },
   };
 }

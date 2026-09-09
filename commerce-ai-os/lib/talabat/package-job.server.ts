@@ -50,6 +50,11 @@ import {
   DELTA_IMAGE_ZIP_PATH, DELTA_IMAGE_META_PATH, auditDeltaImageCoverage, parseDeltaImageMeta,
   type DeltaImageMeta, type DeltaImageCoverage, type DeltaImageScope,
 } from "@/lib/export/talabat/delta-image-package";
+import {
+  publishStatePath, parseDeltaImagePublishState, resumeVerdict, publishLeaseHeld,
+  publishProgressOf, PUBLISH_LEASE_MS,
+  type DeltaImagePublishState, type DeltaImagePublishProgress,
+} from "@/lib/export/talabat/delta-image-publish";
 import { streamPartsToObject } from "@/lib/export/artifact-stream";
 import { makeTusPorts } from "@/lib/storage/tus.server";
 
@@ -922,19 +927,76 @@ export async function stageTalabatDeltaImagePackage(jobId: string): Promise<Delt
     }
   }
 
-  // STREAMED. The archive is the ordered concatenation of the job's durable
-  // parts, uploaded one bounded chunk at a time by the same resumable uploader
-  // the Rafeeq artifact uses. The whole ZIP is never resident: buffering it was
-  // what killed the first staging attempts.
+  // STREAMED, AND RESUMABLE. The archive is the ordered concatenation of the
+  // job's durable parts, uploaded one bounded chunk at a time. The whole ZIP is
+  // never resident: buffering it was what killed the first staging attempts.
+  //
+  // STEP 85G — and the upload now survives the request that carries it. 324 MB
+  // does not reliably fit in one 300-second function, and creating a fresh
+  // upload each time meant every retry re-sent from byte 0 and expired in the
+  // same place. The upload resource is written down before any byte is sent, so
+  // the next attempt asks the server how far it got and continues from there.
+  const identity = {
+    jobId,
+    objectPath: DELTA_IMAGE_ZIP_PATH,
+    totalBytes: state.artifact.totalBytes,
+    runFingerprint: binding.runFingerprint,
+  };
+  const nowMs = Date.now();
+  const prior = parseDeltaImagePublishState(await getJson<unknown>(publishStatePath(jobId)));
+  // One publish at a time. The lease expires on its own, so the request killed
+  // mid-upload — the very failure this exists for — never leaves a lock behind
+  // and nothing has to be deleted to clear one.
+  if (publishLeaseHeld(prior, nowMs)) return errResult("conflict", 409);
+  const resumable = resumeVerdict(prior, identity).usable ? prior : null;
+
+  const writePublishState = async (over: Partial<DeltaImagePublishState> & { uploadUrl: string }) => {
+    const next: DeltaImagePublishState = {
+      ...identity,
+      scopeProducts: binding.scopeProducts,
+      scopeRows: binding.scopeRows,
+      confirmedOffset: 0,
+      updatedAtIso: new Date().toISOString(),
+      leaseUntilIso: new Date(Date.now() + PUBLISH_LEASE_MS).toISOString(),
+      ...over,
+    };
+    await putObject(publishStatePath(jobId), json(next), "application/json");
+  };
+
+  let lastPersisted = -1;
   const streamed = await streamPartsToObject(
     {
       objectPath: DELTA_IMAGE_ZIP_PATH,
       parts: state.parts.map((p) => ({ path: p.path, bytes: p.bytes })),
       totalBytes: state.artifact.totalBytes,
+      resume: resumable ? { uploadUrl: resumable.uploadUrl } : null,
     },
     { readPart: readTalabatPackagePart, ...deltaTusPorts },
+    // Persisted on the way up, not only at the end: the point is to survive a
+    // request that never reaches its own last line. Written at most once per
+    // PATCH-sized advance so the token costs one small object write per chunk.
+    async (p) => {
+      if (p.confirmedOffset === lastPersisted) return;
+      lastPersisted = p.confirmedOffset;
+      await writePublishState({ uploadUrl: p.uploadUrl, confirmedOffset: p.confirmedOffset });
+    },
   );
   if (!streamed.ok) {
+    // A resume token the server no longer honours is cleared, so the owner's
+    // next click starts a clean upload instead of failing the same way for ever.
+    if (streamed.error === "resume_invalid") {
+      await putObject(publishStatePath(jobId), json({ cleared: true }), "application/json");
+      return errResult("upload_incomplete", 502);
+    }
+    // Otherwise the token stays exactly as the progress callback left it: the
+    // bytes the server confirmed are still there to be resumed from.
+    if (streamed.uploadUrl) {
+      await writePublishState({
+        uploadUrl: streamed.uploadUrl,
+        confirmedOffset: streamed.confirmedOffset ?? 0,
+        leaseUntilIso: null,
+      });
+    }
     return errResult(streamed.error === "part_missing" ? "job_not_found" : "upload_incomplete", 502);
   }
   meta.sha256 = streamed.sha256;
@@ -946,7 +1008,30 @@ export async function stageTalabatDeltaImagePackage(jobId: string): Promise<Delt
   } catch {
     return errResult("upload_incomplete", 502);
   }
+  // Published. The resume token has nothing left to resume, and leaving it
+  // would offer the owner a "resume" for an upload that already finished.
+  await putObject(publishStatePath(jobId), json({ cleared: true }), "application/json");
   return { ok: true, value: { coverage, meta, missingRefs, republished: true } };
+}
+
+/**
+ * STEP 85G — how far a partially uploaded publish got, for the screen.
+ *
+ * Read-only, and it trusts nothing: a token that fails the identity check is
+ * reported as no progress at all rather than as a resume the owner cannot
+ * actually use.
+ */
+export async function readDeltaImagePublishProgress(
+  jobId: string, runFingerprint: string, totalBytes: number,
+): Promise<DeltaImagePublishProgress | null> {
+  try {
+    const state = parseDeltaImagePublishState(await getJson<unknown>(publishStatePath(jobId)));
+    return publishProgressOf(state, {
+      jobId, objectPath: DELTA_IMAGE_ZIP_PATH, totalBytes, runFingerprint,
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**

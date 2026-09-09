@@ -46,6 +46,11 @@ export type RafeeqArtifactObjectError =
   | "part_missing"
   | "upload_failed"
   | "size_mismatch"
+  // STEP 85G — reachable only through a resumed upload, which Rafeeq never
+  // asks for: its object is reassembled on demand from the same parts, so a
+  // failed attempt costs one retry rather than a lost prefix. Carried in the
+  // union so the shared engine's error type stays exhaustive here.
+  | "resume_invalid"
   | "meta_write_failed";
 
 export interface RafeeqArtifactObjectPorts extends StreamedAssemblyPorts {
