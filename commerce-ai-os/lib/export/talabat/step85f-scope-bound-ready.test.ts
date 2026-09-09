@@ -58,7 +58,7 @@ const STALE_632 = (over: Partial<DeltaImageMeta> = {}): DeltaImageMeta => ({
   runFingerprint: "run-A", baselineFingerprint: "base-A",
   jobId: "f03464d8-ff05-4439-ac2a-1c2cc70211e6",
   stagedAtIso: "2026-09-07T01:12:46.690Z", sha256: "c".repeat(64),
-  scopeProducts: null, scopeRows: null,
+  scopeProducts: null, scopeRows: null, imagePlanFingerprint: null,
   ...over,
 });
 
@@ -180,11 +180,11 @@ test("E2. the sidecar round-trips the new fields, strictly", () => {
 
 test("C. the status only hunts for a ready job when the published one is unusable", () => {
   const wf = code(WORKFLOW);
-  assert.match(wf, /const readyJob = ready \? null : await findStageableDeltaImageJob\(delta\.fingerprint\)/,
-    "unchanged — and now reachable, because a stale package no longer reads as ready");
+  assert.match(wf, /const readyJob = ready \? null : await findStageableDeltaImageJob\(delta\.fingerprint, imagePlan\)/,
+    "reachable, because a stale package no longer reads as ready — and matched on the image set");
   assert.match(wf, /const ready = meta !== null && blocks\.length === 0/);
-  assert.match(wf, /verifyDeltaImagePackage\(meta, delta\.fingerprint, scope, delta\.baseline\?\.fingerprint \?\? null\)/,
-    "the status passes the CURRENT scope");
+  assert.match(wf, /verifyDeltaImagePackage\(\s*meta, delta\.fingerprint, scope, delta\.baseline\?\.fingerprint \?\? null, imagePlan\)/,
+    "the status passes the CURRENT scope, and the current image set");
 });
 
 test("C2. the publish button renders from readyJob, and publishes an existing job", () => {
