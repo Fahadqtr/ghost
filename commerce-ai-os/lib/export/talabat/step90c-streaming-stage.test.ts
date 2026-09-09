@@ -131,11 +131,17 @@ test("3. a short or missing part fails closed — no partial archive is accepted
   const wrong = await streamPartsToObject(
     // claims a size the part does not have
     { objectPath: "o/z", parts: [{ path: "part-0", bytes: 999 }], totalBytes: 999 }, t.ports);
-  assert.deepEqual(wrong, { ok: false, error: "part_missing" });
+  assert.equal(wrong.ok, false);
+  assert.ok(!wrong.ok && wrong.error === "part_missing");
 
   const missing = await streamPartsToObject(
     { objectPath: "o/z", parts: [{ path: "part-9", bytes: 10 }], totalBytes: 10 }, t.ports);
-  assert.deepEqual(missing, { ok: false, error: "part_missing" });
+  assert.equal(missing.ok, false);
+  assert.ok(!missing.ok && missing.error === "part_missing");
+  // STEP 85G — a failure also hands back WHERE the upload stood, so the caller
+  // can store a resume point instead of starting over. It must never report
+  // progress it did not make.
+  assert.equal(!missing.ok && missing.confirmedOffset, 0);
 });
 
 test("4. a stored size that disagrees with the plan is refused", async () => {
@@ -144,7 +150,8 @@ test("4. a stored size that disagrees with the plan is refused", async () => {
   const lying: StreamedAssemblyPorts = { ...t.ports, statObject: async () => 1 };
   const res = await streamPartsToObject(
     { objectPath: "o/z", parts: partList(parts), totalBytes: 2048 }, lying);
-  assert.deepEqual(res, { ok: false, error: "size_mismatch" });
+  assert.equal(res.ok, false);
+  assert.ok(!res.ok && res.error === "size_mismatch");
 });
 
 test("5. the staging code never concatenates the whole archive", () => {
@@ -168,7 +175,8 @@ test("6. Rafeeq and Talabat share ONE streaming implementation", () => {
   assert.match(code(RAFEEQ_OBJ), /streamPartsToObject\(/);
   assert.match(code(JOBS), /streamPartsToObject\(/);
   // and one transport, parameterised by bucket rather than copied
-  assert.equal((code(TUS).match(/tus-resumable/g) ?? []).length, 2, "create + patch, once each");
+  // STEP 85G — create + patch + the HEAD that asks the server for its offset.
+  assert.equal((code(TUS).match(/tus-resumable/g) ?? []).length, 3, "create + patch + offset, once each");
   assert.match(code(RAFEEQ_SRV), /makeTusPorts\(RAFEEQ_JOB_BUCKET\)/);
   assert.match(code(JOBS), /makeTusPorts\(BUCKET\)/);
 });

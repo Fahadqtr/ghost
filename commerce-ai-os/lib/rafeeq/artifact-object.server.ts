@@ -40,7 +40,7 @@ const linkErr = <T,>(error: RafeeqArtifactLinkError, status: number): RafeeqLink
 // image package could use the same resumable upload instead of a second copy.
 // Same protocol, same headers, same offsets; only the bucket is a parameter.
 
-const { tusCreate, tusPatch, statObject } = makeTusPorts(RAFEEQ_JOB_BUCKET);
+const { tusCreate, tusPatch, tusOffset, statObject } = makeTusPorts(RAFEEQ_JOB_BUCKET);
 
 async function readMeta(jobId: string): Promise<RafeeqArtifactObjectMeta | null> {
   const admin = createAdminClient();
@@ -82,7 +82,7 @@ export async function ensureRafeeqArtifactObject(jobId: string): Promise<RafeeqL
 
   const assembled = await assembleRafeeqArtifactObject(
     { jobId, filename, parts, totalBytes, nowIso: new Date().toISOString() },
-    { readPart: readRafeeqPackagePart, tusCreate, tusPatch, statObject, writeMeta },
+    { readPart: readRafeeqPackagePart, tusCreate, tusPatch, tusOffset, statObject, writeMeta },
   );
   if (!assembled.ok) return linkErr("package_link_unavailable", 502);
   return { ok: true, value: assembled.meta };

@@ -24,6 +24,10 @@ type Status = {
   blockers: string[];
   /** a completed job whose images are already downloaded, awaiting publish. */
   readyJob: { jobId: string; imageCount: number; archiveBytes: number; completedAtIso: string } | null;
+  /** STEP 85G — a publish already part-way up, resumable from where it stopped. */
+  publishProgress: {
+    uploadedBytes: number; totalBytes: number; percent: number; resumeAvailable: boolean;
+  } | null;
 };
 
 type Job = {
@@ -236,6 +240,15 @@ export default function ImagePackage() {
         </div>
       ) : null}
 
+      {status?.publishProgress && status.publishProgress.resumeAvailable ? (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 p-2 text-sky-900">
+          رفع جارٍ لم يكتمل — <span className="font-mono">{mb(status.publishProgress.uploadedBytes)}</span> من{" "}
+          <span className="font-mono">{mb(status.publishProgress.totalBytes)}</span> م.ب{" "}
+          (<span className="font-mono">{status.publishProgress.percent}%</span>). الاستئناف يكمل من حيث توقف
+          ولا يعيد رفع ما وصل.
+        </div>
+      ) : null}
+
       {status?.readyJob ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-900">
           توجد حزمة مكتملة بالفعل لهذه المقارنة — <span className="font-mono">{status.readyJob.imageCount}</span> صورة ·{" "}
@@ -248,7 +261,8 @@ export default function ImagePackage() {
         {status?.readyJob ? (
           <button type="button" onClick={() => void publishReady(status.readyJob!.jobId)} disabled={busy}
             className="rounded-lg bg-emerald-700 px-3 py-2 text-sm text-white disabled:opacity-50">
-            {busy ? "جارٍ النشر…" : "نشر الحزمة الجاهزة"}
+            {busy ? "جارٍ النشر…"
+              : status.publishProgress?.resumeAvailable ? "استئناف نشر الحزمة" : "نشر الحزمة الجاهزة"}
           </button>
         ) : null}
         <button type="button" onClick={() => void run()} disabled={busy}
