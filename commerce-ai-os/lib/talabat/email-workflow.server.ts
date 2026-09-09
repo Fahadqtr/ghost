@@ -940,7 +940,7 @@ export async function deltaImagePackageStatus(): Promise<WorkflowApiResult<Delta
   // there is nothing to recover from when the current one already works.
   const readyJob = ready ? null : await findStageableDeltaImageJob(delta.fingerprint, imagePlan);
   const publishProgress = readyJob
-    ? await readDeltaImagePublishProgress(readyJob.jobId, delta.fingerprint, readyJob.archiveBytes)
+    ? await readDeltaImagePublishProgress(readyJob.jobId, readyJob.archiveBytes)
     : null;
   return {
     ok: true,

@@ -246,10 +246,10 @@ const IDENTITY = {
   jobId: "9f4b793f-0000-4000-8000-000000000000",
   objectPath: "email-artifacts/new_products/source/images.zip",
   totalBytes: 339430589,
-  runFingerprint: "run-A",
 };
 const STATE = (over: Partial<DeltaImagePublishState> = {}): DeltaImagePublishState => ({
   ...IDENTITY,
+  runFingerprint: "run-A",
   uploadUrl: "https://tus.example/upload/abc",
   scopeProducts: 402, scopeRows: 511,
   confirmedOffset: 100_000_000,
@@ -262,16 +262,29 @@ test("10. a token for THIS job, run, path and size is resumable", () => {
   assert.deepEqual(resumeVerdict(STATE(), IDENTITY), { usable: true });
 });
 
-test("11. a token from another job / run / path / size is refused", () => {
+test("11. a token from another job / path / size is refused", () => {
   assert.deepEqual(resumeVerdict(STATE({ jobId: "other" }), IDENTITY),
     { usable: false, reason: "different_job" });
-  assert.deepEqual(resumeVerdict(STATE({ runFingerprint: "run-B" }), IDENTITY),
-    { usable: false, reason: "different_run" });
   assert.deepEqual(resumeVerdict(STATE({ objectPath: "email-artifacts/other/images.zip" }), IDENTITY),
     { usable: false, reason: "different_path" });
   assert.deepEqual(resumeVerdict(STATE({ totalBytes: 346244336 }), IDENTITY),
     { usable: false, reason: "different_size" });
   assert.deepEqual(resumeVerdict(null, IDENTITY), { usable: false, reason: "no_state" });
+});
+
+test("11b. STEP 85I — a moved comparison fingerprint does NOT hide the resume", () => {
+  // The rule this assertion replaces required state.runFingerprint to equal the
+  // caller's. In production the token carried the fingerprint its job was bound
+  // to, the status screen asked with the current one, and 48 unrelated price
+  // edits moved the current one — so a 324 MB partial upload reported no
+  // progress and the owner was offered a fresh start. The job's eligibility for
+  // today's comparison is settled before the token is read; the token only
+  // identifies an upload.
+  assert.deepEqual(resumeVerdict(STATE({ runFingerprint: "run-BOUND-YESTERDAY" }), IDENTITY),
+    { usable: true });
+  const progress = publishProgressOf(STATE({ runFingerprint: "run-BOUND-YESTERDAY" }), IDENTITY);
+  assert.ok(progress !== null, "and the screen can show it");
+  assert.equal(progress.resumeAvailable, true);
 });
 
 test("12. the token is parsed strictly — malformed is NOT a token", () => {
@@ -280,11 +293,11 @@ test("12. the token is parsed strictly — malformed is NOT a token", () => {
   assert.equal(parseDeltaImagePublishState({ cleared: true }), null);
   // an offset past the end of the archive is nonsense, not a resume point
   assert.equal(parseDeltaImagePublishState({
-    ...IDENTITY, uploadUrl: "u", confirmedOffset: IDENTITY.totalBytes + 1,
-    updatedAtIso: "t",
+    ...IDENTITY, runFingerprint: "run-A", uploadUrl: "u",
+    confirmedOffset: IDENTITY.totalBytes + 1, updatedAtIso: "t",
   }), null);
   const good = parseDeltaImagePublishState({
-    ...IDENTITY, uploadUrl: "u", confirmedOffset: 5, updatedAtIso: "t",
+    ...IDENTITY, runFingerprint: "run-A", uploadUrl: "u", confirmedOffset: 5, updatedAtIso: "t",
     scopeProducts: 402, scopeRows: 511, leaseUntilIso: null,
   });
   assert.ok(good !== null);
@@ -367,7 +380,7 @@ test("18. publishing clears the token, so a finished upload is never offered as 
 test("19. the screen reports upload progress and offers to resume", () => {
   const wf = code(WORKFLOW);
   assert.match(wf, /publishProgress: \{/);
-  assert.match(wf, /await readDeltaImagePublishProgress\(readyJob\.jobId, delta\.fingerprint, readyJob\.archiveBytes\)/);
+  assert.match(wf, /await readDeltaImagePublishProgress\(readyJob\.jobId, readyJob\.archiveBytes\)/);
   const ui = code(UI);
   assert.match(ui, /status\.publishProgress\?\.resumeAvailable \? "استئناف نشر الحزمة" : "نشر الحزمة الجاهزة"/);
   assert.match(ui, /status\.publishProgress\.percent/);
