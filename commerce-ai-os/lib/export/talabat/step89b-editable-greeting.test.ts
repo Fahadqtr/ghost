@@ -240,8 +240,10 @@ test("20. editing the greeting clears the held confirmation in the UI too", () =
 
 test("21. the greeting reaches both the preview request and the send request", () => {
   const ui = code(UI);
-  assert.match(ui, /new URLSearchParams\(\{ mode: "test", to, cc, greeting,/);
-  assert.match(ui, /JSON\.stringify\(\{ to, cc, greeting, run, confirmationToken: confirmedToken \}\)/);
+  // STEP 86A added the image-set fingerprint beside the run on both requests;
+  // the greeting's place in each is unchanged and is what this pins.
+  assert.match(ui, /new URLSearchParams\(\{\s*mode: "test", to, cc, greeting,/);
+  assert.match(ui, /JSON\.stringify\(\{ to, cc, greeting, run, imagePlan, confirmationToken: confirmedToken \}\)/);
 });
 
 test("22. Email C is untouched — review-only, so there is no send to greet for", () => {

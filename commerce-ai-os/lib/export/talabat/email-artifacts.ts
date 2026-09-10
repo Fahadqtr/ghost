@@ -90,6 +90,14 @@ export interface TalabatImagePackageRef {
   sourceJobId: string;
   baselineFingerprint: string | null;
   runFingerprint: string;
+  /**
+   * STEP 86A — the image SET the published archive holds, copied from its
+   * sidecar. This is what decides whether the archive still serves the email
+   * beside it; `runFingerprint` stays as the audit trail back to the job that
+   * planned it. null on a package staged before that field existed, which then
+   * falls back to the comparison-wide fingerprint.
+   */
+  imagePlanFingerprint: string | null;
 }
 
 export interface TalabatArtifactScope {
@@ -193,6 +201,7 @@ export function parseArtifactScope(raw: unknown, expectedKind: TalabatSendKind):
       objectPath, filename: ipFilename, bytes: ipBytes,
       sha256: str(p.sha256), expectedImages, packagedImages, sourceJobId,
       baselineFingerprint: str(p.baselineFingerprint), runFingerprint: ipRun,
+      imagePlanFingerprint: str(p.imagePlanFingerprint),
     };
   }
 
@@ -260,6 +269,12 @@ export function verifyArtifactScope(
    * artifact even when the counts happen to be identical.
    */
   currentBaselineFingerprint?: string,
+  /**
+   * STEP 86A — the image set the CURRENT comparison needs. Supplied, it decides
+   * whether the referenced archive still serves this email; omitted, the
+   * comparison-wide fingerprint decides, exactly as before.
+   */
+  currentImagePlanFingerprint?: string | null,
 ): ArtifactBlock[] {
   if (scope === null) return ["artifact_missing"];
   const blocks: ArtifactBlock[] = [];
@@ -287,8 +302,27 @@ export function verifyArtifactScope(
   // fingerprinting scheme exists to prevent.
   if (scope.kind === "new_products") {
     const ip = scope.imagePackage ?? null;
+    // STEP 86A — WHICH identity binds the archive to the email.
+    //
+    // This used to be the comparison-wide run fingerprint, and it locked the
+    // owner out of a send that was in fact correct. The archive carries the
+    // fingerprint of the JOB that planned it; the comparison's own fingerprint
+    // moves whenever any product's name or price is edited. Forty-eight such
+    // edits landed between the job and the send, so a freshly generated
+    // workbook sat beside a freshly published archive of exactly the right 622
+    // images and the gate called it stale — prescribing a regeneration that
+    // could never clear it, because regenerating copies the same sidecar value.
+    //
+    // The image-set fingerprint answers the question actually being asked:
+    // does this archive hold the images this email needs. Generation already
+    // decided on that basis, so comparing it here is also what makes the two
+    // ends of the same pipeline agree.
+    const imageSetStale = ip === null ? false
+      : ip.imagePlanFingerprint !== null && currentImagePlanFingerprint
+        ? ip.imagePlanFingerprint !== currentImagePlanFingerprint
+        : ip.runFingerprint !== currentFingerprint;
     if (ip === null) blocks.push("image_package_unbound");
-    else if (ip.runFingerprint !== currentFingerprint) blocks.push("image_package_unbound");
+    else if (imageSetStale) blocks.push("image_package_unbound");
     else if (ip.expectedImages !== ip.packagedImages) blocks.push("image_package_unbound");
     else if (ip.bytes <= 0) blocks.push("image_package_unbound");
     else if (currentBaselineFingerprint !== undefined && ip.baselineFingerprint !== null
