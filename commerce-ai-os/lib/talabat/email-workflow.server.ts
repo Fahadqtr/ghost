@@ -180,16 +180,40 @@ export async function buildWorkflowPreview(
   const bundle = await loadTalabatEmailBundle(kind);
   const activeBaseline = await readActiveBaseline();
   const artifactPresent = bundle !== null;
+  // STEP 86B — WHO decides what the current comparison is.
+  //
+  // It used to be whatever the screen happened to be holding, and the screen
+  // seeds those values from the generate response alone. Reload the page, or
+  // preview without generating in that same tab, and both arrive empty: the run
+  // fingerprint absent meant "not fresh" and the image set absent meant "fall
+  // back to the comparison-wide rule". A workbook and an archive that were both
+  // correct then read as stale AND unbound, and the two instructions on screen —
+  // regenerate, re-prepare — were the two things that could not help.
+  //
+  // The server can simply answer the question. It is one delta computation on a
+  // manual click, the same one generate already pays for, and it replaces a
+  // guess about the client's state with the truth. A value the caller DID
+  // supply is still honoured, so nothing that worked before changes.
+  let currentRun = input.currentRunFingerprint;
+  let currentImagePlan = input.currentImagePlanFingerprint ?? null;
+  if (bundle !== null && (currentRun === null || currentImagePlan === null)) {
+    const delta = await loadCurrentTalabatDelta();
+    if (delta.ok) {
+      currentRun = currentRun ?? delta.fingerprint;
+      currentImagePlan = currentImagePlan ?? deltaImagePlanFingerprint(delta.result);
+    }
+  }
+
   // STEP 86A — every reason an artifact is unusable, kept as reasons rather
   // than collapsed into one boolean. `artifactFresh` still drives the gate, but
   // the owner is now told WHICH check failed: "regenerate" is the wrong
   // instruction for most of these, and was the wrong one for the case that
   // prompted this — a fresh workbook refused over its image package's binding.
-  const artifactBlocks = bundle !== null && input.currentRunFingerprint !== null
-    ? verifyArtifactScope(bundle.artifactScope, input.currentRunFingerprint,
-      activeBaseline?.fingerprint, input.currentImagePlanFingerprint ?? null)
+  const artifactBlocks = bundle !== null && currentRun !== null
+    ? verifyArtifactScope(bundle.artifactScope, currentRun,
+      activeBaseline?.fingerprint, currentImagePlan)
     : [];
-  const artifactFresh = bundle !== null && input.currentRunFingerprint !== null
+  const artifactFresh = bundle !== null && currentRun !== null
     && artifactBlocks.length === 0;
 
   const files = bundle?.attachments.map((a) => a.filename) ?? [];
@@ -551,6 +575,16 @@ export async function loadCurrentTalabatDelta(): Promise<
 export interface GenerationResultDTO {
   kind: TalabatSendKind;
   runFingerprint: string;
+  /**
+   * STEP 86B — the image set this generation was built against.
+   *
+   * The screen seeds BOTH fingerprints from this response and from nowhere
+   * else, so a value published only on the scope-summary endpoint never reached
+   * it: the field arrived undefined, the query parameter was dropped, and the
+   * preview fell back to the comparison-wide rule the previous step had just
+   * replaced. Email A has no image package, so it reports null.
+   */
+  imagePlanFingerprint: string | null;
   generatedAtIso: string;
   files: { filename: string; bytes: number }[];
   workbookRows: number;
@@ -583,7 +617,10 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
     return {
       ok: true,
       value: {
-        kind, runFingerprint: out.scope.runFingerprint, generatedAtIso: nowIso,
+        kind, runFingerprint: out.scope.runFingerprint,
+        // Email A carries no image package, so there is no image set to report.
+        imagePlanFingerprint: null,
+        generatedAtIso: nowIso,
         files: out.scope.files.map((f) => ({ filename: f.filename, bytes: f.bytes })),
         workbookRows: out.scope.workbookRows, workbookProducts: out.scope.workbookProducts,
         imageCount: null,
@@ -610,7 +647,9 @@ export async function generateTalabatEmailArtifacts(kind: string): Promise<Workf
   return {
     ok: true,
     value: {
-      kind, runFingerprint: out.scope.runFingerprint, generatedAtIso: nowIso,
+      kind, runFingerprint: out.scope.runFingerprint,
+      imagePlanFingerprint: deltaImagePlanFingerprint(delta.result),
+      generatedAtIso: nowIso,
       files: out.scope.files.map((f) => ({ filename: f.filename, bytes: f.bytes })),
       workbookRows: out.scope.workbookRows, workbookProducts: out.scope.workbookProducts,
       imageCount: out.scope.imageCount,

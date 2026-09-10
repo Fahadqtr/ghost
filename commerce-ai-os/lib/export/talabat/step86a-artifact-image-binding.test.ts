@@ -150,9 +150,13 @@ test("7. omitting the current image set keeps the OLD behaviour exactly", () => 
 
 test("8. the preview reports WHICH artifact check failed, not one catch-all", () => {
   const src = code(SERVER);
-  assert.match(src, /const artifactBlocks = bundle !== null && input\.currentRunFingerprint !== null/);
+  // STEP 86B renamed the two inputs: the gate now reads `currentRun` and
+  // `currentImagePlan`, locals that fall back to the server's own delta when the
+  // caller states neither. The SHAPE of the gate is deliberately unchanged —
+  // both a comparison and zero blocks, or no send.
+  assert.match(src, /const artifactBlocks = bundle !== null && currentRun !== null/);
   assert.match(src, /artifactBlockers: artifactBlocks\.map\(\(b\) => ARTIFACT_BLOCK_AR\[b\]\)/);
-  assert.match(src, /const artifactFresh = bundle !== null && input\.currentRunFingerprint !== null\s*&& artifactBlocks\.length === 0/,
+  assert.match(src, /const artifactFresh = bundle !== null && currentRun !== null\s*&& artifactBlocks\.length === 0/,
     "the gate still fails closed on ANY block");
   // and the screen shows them
   assert.match(code(UI), /preview\.artifactBlockers\.map/);
