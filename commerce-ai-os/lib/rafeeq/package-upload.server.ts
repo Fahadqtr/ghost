@@ -16,13 +16,11 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { RAFEEQ_JOB_BUCKET } from "@/lib/rafeeq/package-job.server";
 import { RAFEEQ_LINK_TTL_SECONDS } from "@/lib/export/rafeeq/artifact-object";
-import { tusEndpoint } from "@/lib/storage/tus-protocol";
 import {
   rafeeqUploadObjectPath,
   sanitizeUploadFilename,
   verifyRafeeqUploadRequest,
   verifyRafeeqUploadedObject,
-  RAFEEQ_UPLOAD_CHUNK_BYTES,
   RAFEEQ_UPLOAD_CONTENT_TYPE,
   type RafeeqUploadBlock,
   type RafeeqUploadRequest,
@@ -38,27 +36,20 @@ export type RafeeqUploadApiResult<T> =
 const fail = <T,>(error: RafeeqUploadApiError, status: number): RafeeqUploadApiResult<T> => ({ ok: false, error, status });
 
 /**
- * Supabase's resumable endpoint — the SAME host the server-side uploads use.
- *
- * The first cut pointed the browser at the direct storage hostname
- * (`<ref>.storage.supabase.co`) on the strength of a performance note in the
- * docs. That made the host a second unverified variable in a request that was
- * already failing, and it is not the host this project has ever completed an
- * upload against. The documented optimisation can be adopted deliberately once
- * this path is known to work; it is not worth guessing at while debugging a 403.
- */
-function resumableEndpoint(): string | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  return url ? tusEndpoint(url) : null;
-}
-
-/**
  * Mint a scoped upload credential for ONE archive.
  *
  * The destination is derived from the archive's own hash, so calling this
- * twice for the same file returns the same path — the browser's resumable
- * upload then continues instead of starting over — while a different file can
- * never be issued a path that already holds something else.
+ * twice for the same file returns the same path — a retry overwrites its own
+ * bytes — while a different file can never be issued a path that already holds
+ * something else.
+ *
+ * STEP RAFEEQ 06 — the token is consumed by the SDK's `uploadToSignedUrl`,
+ * which PUTs to /object/upload/sign/<path>?token=… . Presigned RESUMABLE
+ * upload was tried first and refused with 403 on create: @supabase/storage-js
+ * 2.110.0 does not implement the resumable protocol at all (no `x-signature`,
+ * no `upload/resumable`), and the deployed storage does not honour a signed
+ * token on that endpoint — so the request fell back to its anon bearer, which
+ * storage.objects grants nothing, RLS having zero policies.
  */
 export async function createRafeeqUploadTicket(
   req: RafeeqUploadRequest,
@@ -66,10 +57,6 @@ export async function createRafeeqUploadTicket(
 ): Promise<RafeeqUploadApiResult<RafeeqUploadTicket>> {
   const blocks = verifyRafeeqUploadRequest(req);
   if (blocks.length > 0) return fail(blocks[0], 422);
-
-  const endpoint = resumableEndpoint();
-  const apiKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!endpoint || !apiKey) return fail("not_configured", 503);
 
   const sha256 = req.sha256.toLowerCase();
   const objectPath = rafeeqUploadObjectPath(sha256, req.filename, nowIso);
@@ -95,9 +82,6 @@ export async function createRafeeqUploadTicket(
       bucket: RAFEEQ_JOB_BUCKET,
       objectPath,
       token,
-      endpoint,
-      apiKey,
-      chunkBytes: RAFEEQ_UPLOAD_CHUNK_BYTES,
       contentType: RAFEEQ_UPLOAD_CONTENT_TYPE,
       expectedBytes: req.bytes,
       expectedSha256: sha256,

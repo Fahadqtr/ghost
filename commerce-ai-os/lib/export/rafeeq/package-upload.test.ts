@@ -26,7 +26,6 @@ import {
   verifyRafeeqUploadedObject,
   RAFEEQ_UPLOAD_BLOCK_AR,
   RAFEEQ_UPLOAD_MAX_BYTES,
-  RAFEEQ_UPLOAD_CHUNK_BYTES,
 } from "./package-upload.ts";
 
 const HERE = join(fileURLToPath(new URL(".", import.meta.url)));
@@ -39,7 +38,6 @@ const SERVER = "lib/rafeeq/package-upload.server.ts";
 const TICKET_ROUTE = "app/api/export/rafeeq/package-upload/ticket/route.ts";
 const VERIFY_ROUTE = "app/api/export/rafeeq/package-upload/verify/route.ts";
 const UI = "app/(v2)/v2/operations/channels/rafeeq-package/RafeeqPackageUpload.tsx";
-const TUS = "app/(v2)/v2/operations/channels/rafeeq-package/tus-upload.ts";
 const PAGE = "app/(v2)/v2/operations/channels/rafeeq-package/page.tsx";
 
 /** The real archive this step exists for. */
@@ -142,21 +140,24 @@ test("12. every block has an owner-language message", () => {
 test("13. the server mints a SCOPED upload token, never the service key", () => {
   const src = code(SERVER);
   assert.match(src, /createSignedUploadUrl\(objectPath/, "one path, one credential");
-  // the ticket handed to the browser carries the public key only
-  assert.match(src, /apiKey: process\.env\.NEXT_PUBLIC_SUPABASE_ANON_KEY|const apiKey = process\.env\.NEXT_PUBLIC_SUPABASE_ANON_KEY/);
+  assert.match(src, /upsert: true/, "so a retry may overwrite its OWN bytes, hash-derived path");
+  // STEP RAFEEQ 06 — the ticket carries NO key at all now. The page's own
+  // Supabase client already holds the public one, so the only credential that
+  // travels is the path-scoped token.
   assert.equal(src.includes("SUPABASE_SERVICE_ROLE"), false, "no service key in this module's text");
+  assert.equal(src.includes("NEXT_PUBLIC_SUPABASE_ANON_KEY"), false, "and no key is put in the ticket");
 });
 
 test("14. the browser never receives a service key, and the page never reads env", () => {
-  const ui = code(UI) + code(TUS);
+  const ui = code(UI);
   assert.equal(/SERVICE_ROLE/i.test(ui), false);
-  assert.equal(/process\.env/.test(ui), false, "the client takes everything from the ticket");
-  // STEP RAFEEQ 05 — the scoped token is now passed as the `signature` of the
-  // shared header set, alongside the PUBLIC key as the bearer. Sending it with
-  // no bearer at all is what produced tus_create_failed_403.
-  assert.match(code(TUS),
-    /tusUploadHeaders\(\{ authToken: o\.apiKey, apiKey: o\.apiKey, signature: o\.token \}\)/,
-    "the scoped token is the credential, and it rides WITH an Authorization header");
+  assert.equal(/process\.env/.test(ui), false, "the page reads no environment of its own");
+  // STEP RAFEEQ 06 — the official signed upload. The scoped token is handed to
+  // the SDK, which PUTs it to /object/upload/sign/<path>?token=… . The
+  // presigned RESUMABLE attempt before this was refused 403 on create.
+  assert.match(ui,
+    /uploadToSignedUrl\(\s*ticket\.objectPath, ticket\.token, file,/,
+    "one path, one token, one upload");
 });
 
 test("15. the bytes never pass through a server route", () => {
@@ -165,8 +166,8 @@ test("15. the bytes never pass through a server route", () => {
     assert.equal(src.includes("formData"), false, `${rel} must not read a file body`);
     assert.equal(src.includes("arrayBuffer"), false, `${rel} must not read bytes`);
   }
-  // and the client uploads to Supabase's endpoint, not to our own origin
-  assert.match(code(UI), /endpoint: ticket\.endpoint/);
+  // and the upload goes to Supabase through its own client, not to our origin
+  assert.match(code(UI), /supabase\.storage\.from\(ticket\.bucket\)\.uploadToSignedUrl\(/);
 });
 
 test("16. both routes are owner-gated before anything else happens", () => {
@@ -180,24 +181,24 @@ test("16. both routes are owner-gated before anything else happens", () => {
 
 // ── resume, progress, and the link ──────────────────────────────────────────
 
-test("17. an interrupted upload resumes from the SERVER's offset", () => {
-  const src = code(TUS);
-  assert.match(src, /method: "HEAD"/, "the resume point is asked for, not assumed");
-  assert.match(src, /offset = await offsetOf\(uploadUrl, o\)/);
-  assert.match(src, /"upload-offset": String\(offset\)/);
-  assert.equal(RAFEEQ_UPLOAD_CHUNK_BYTES, 6 * 1024 * 1024, "Supabase requires exactly 6 MB chunks");
+test("17. the page does not pretend the upload can resume", () => {
+  const ui = code(UI);
+  // STEP RAFEEQ 06 — resumable is unavailable here, so the page says so in
+  // the owner's own language instead of offering a button that would silently
+  // restart from zero.
+  assert.match(ui, /رفعة واحدة غير قابلة للاستئناف/);
+  assert.match(ui, /أبقِ هذه الصفحة مفتوحة حتى الانتهاء/);
+  assert.equal(ui.includes("استئناف"), true, "the word appears only in that warning");
+  assert.equal(/onUploadUrl|canResume|tusUpload/.test(ui), false, "no resume machinery left");
 });
 
-test("18. progress is reported from confirmed bytes, and the upload can be stopped", () => {
-  assert.match(code(TUS), /o\.onProgress\?\.\(offset, total\)/);
-  assert.match(code(UI), /abortRef\.current\?\.abort\(\)/);
-  assert.match(code(UI), /await tusUpload\(opts, resumeRef\.current\)/,
-    "a retry continues the same upload URL");
-  // the URL is captured when it is CREATED, not when the upload succeeds —
-  // otherwise a failed attempt loses the only handle that could resume it
-  assert.match(code(TUS), /o\.onUploadUrl\?\.\(uploadUrl\)/);
-  assert.match(code(UI), /onUploadUrl: \(u\) => \{ resumeRef\.current = u; setCanResume\(true\); \}/);
-  assert.match(code(UI), /canResume \? "/, "and the label reads state, never a ref during render");
+test("18. a mismatch shows NO link — a failed upload cannot look ready to send", () => {
+  const ui = code(UI);
+  assert.match(ui, /if \(ok\) \{ setLink\(issued\);/,
+    "the link is set only when both checks pass");
+  assert.match(ui, /\{link && verified === "match" && \(/,
+    "and rendered only then");
+  assert.match(ui, /لا ترسل أي رابط/);
 });
 
 test("19. the link is signed for 7 days and its expiry is shown", () => {
@@ -218,14 +219,15 @@ test("21. the link is proven by downloading it with no credentials", () => {
   const ui = code(UI);
   assert.match(ui, /await fetch\(issued\.url, \{ cache: "no-store" \}\)/,
     "no Authorization header — exactly what Rafeeq will experience");
-  assert.match(ui, /backSha === sha/, "and the bytes that come back are hashed");
-  assert.match(ui, /setRoundTrip\(/);
+  assert.match(ui, /\(await sha256Of\(back\)\) === sha/,
+    "and the bytes that come back are hashed");
+  assert.match(ui, /setVerified\(ok \? "match" : "mismatch"\)/);
 });
 
 // ── blast radius ────────────────────────────────────────────────────────────
 
 test("22. nothing here sends mail, deletes, or touches the catalogue", () => {
-  const all = code(SERVER) + code(TICKET_ROUTE) + code(VERIFY_ROUTE) + code(UI) + code(TUS);
+  const all = code(SERVER) + code(TICKET_ROUTE) + code(VERIFY_ROUTE) + code(UI);
   for (const forbidden of ["sendMailViaSmtp", ".remove(", "lifecycle_state",
     'from("products")', "external_channel_listings", "delete("]) {
     assert.equal(all.includes(forbidden), false, `must not ${forbidden}`);
