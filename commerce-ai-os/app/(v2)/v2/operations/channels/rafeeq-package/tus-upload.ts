@@ -5,8 +5,20 @@
 // the same four requests, and a 92 MB upload is not worth a new package in a
 // lockfile that CI audits.
 //
-// The credential is a SIGNED UPLOAD TOKEN scoped to one object path, sent as
-// x-signature. There is no service key in this file and none reaches the page.
+// STEP RAFEEQ 05 — the header set is no longer written here. The first cut was,
+// and it sent `x-signature` with no `Authorization` at all: Storage authorizes
+// on the bearer token, so the request arrived ANONYMOUS, and an anonymous write
+// to a private bucket is refused 403 before the signature is looked at. It also
+// omitted `x-upsert`, the STEP 85J defect, which would have surfaced later as
+// 409 on every PATCH. Both now come from lib/storage/tus-protocol.ts, which the
+// server uses too — one contract, two sets of credentials.
+//
+// The credential here is the PUBLIC project key plus a signed upload token
+// scoped to one object path. No service key is in this file or reaches the page.
+
+import {
+  tusUploadHeaders, tusUploadMetadata, TUS_PATCH_CONTENT_TYPE,
+} from "@/lib/storage/tus-protocol";
 
 export interface TusUploadOptions {
   endpoint: string;
@@ -29,23 +41,20 @@ export interface TusUploadOptions {
   signal?: AbortSignal;
 }
 
-const b64 = (s: string): string =>
-  btoa(String.fromCharCode(...new TextEncoder().encode(s)));
-
-const headers = (o: TusUploadOptions): Record<string, string> => ({
-  "tus-resumable": "1.0.0",
-  "x-signature": o.token,
-  apikey: o.apiKey,
-});
+/**
+ * The bearer is the PUBLIC project key — the same value the browser Supabase
+ * client already ships — and the scoped token rides alongside it as the
+ * signature. The key satisfies Storage's authorization layer; the signature is
+ * what permits this one object path without any RLS policy being opened.
+ */
+const headers = (o: TusUploadOptions): Record<string, string> =>
+  tusUploadHeaders({ authToken: o.apiKey, apiKey: o.apiKey, signature: o.token });
 
 /** Create the upload and return its unique URL. Valid for 24h, per the docs. */
 async function create(o: TusUploadOptions): Promise<string> {
-  const meta = [
-    `bucketName ${b64(o.bucket)}`,
-    `objectName ${b64(o.objectPath)}`,
-    `contentType ${b64(o.contentType)}`,
-    `cacheControl ${b64("3600")}`,
-  ].join(",");
+  const meta = tusUploadMetadata({
+    bucket: o.bucket, objectPath: o.objectPath, contentType: o.contentType,
+  });
   const res = await fetch(o.endpoint, {
     method: "POST",
     headers: {
@@ -93,7 +102,7 @@ export async function tusUpload(o: TusUploadOptions, resumeUrl?: string): Promis
         method: "PATCH",
         headers: {
           ...headers(o),
-          "content-type": "application/offset+octet-stream",
+          "content-type": TUS_PATCH_CONTENT_TYPE,
           "upload-offset": String(offset),
         },
         body: o.file.slice(offset, end),

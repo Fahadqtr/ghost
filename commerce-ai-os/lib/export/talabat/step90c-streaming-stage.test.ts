@@ -180,7 +180,12 @@ test("6. Rafeeq and Talabat share ONE streaming implementation", () => {
   // "one implementation" than three matching copies: a request cannot be
   // written that quietly omits part of it. That omission is exactly what cost
   // two production publishes when x-upsert sat on the creation call alone.
-  assert.equal((code(TUS).match(/tus-resumable/g) ?? []).length, 1, "declared once");
+  // STEP RAFEEQ 05 — "declared once" now means once in lib/storage/tus-protocol.ts,
+  // which the server transport and the owner's browser upload both import.
+  assert.equal((code("lib/storage/tus-protocol.ts").match(/"tus-resumable"/g) ?? []).length, 1,
+    "declared once");
+  assert.equal(code(TUS).includes('"tus-resumable"'), false,
+    "and this transport no longer restates it");
   assert.equal((code(TUS).match(/uploadHeaders\(env\.key\)/g) ?? []).length, 3,
     "and used by create + patch + offset");
   assert.match(code(RAFEEQ_SRV), /makeTusPorts\(RAFEEQ_JOB_BUCKET\)/);

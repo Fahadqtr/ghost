@@ -42,20 +42,31 @@ const code = (rel: string): string =>
 
 const TUS = "lib/storage/tus.server.ts";
 const JOBS = "lib/talabat/package-job.server.ts";
+// STEP RAFEEQ 05 — the header set moved to a shared module so the owner's
+// BROWSER upload could use the same one. It had been written separately and
+// shipped without Authorization, which Storage answers with 403.
+const PROTOCOL = "lib/storage/tus-protocol.ts";
 
 // ── the transport: one header set, no request can omit it ────────────────────
 
 test("1. x-upsert is defined ONCE, in the shared header set", () => {
-  const tus = code(TUS);
-  assert.equal((tus.match(/"x-upsert"/g) ?? []).length, 1,
+  // The definition now lives in tus-protocol.ts, which BOTH the server and the
+  // browser import. That is a stronger form of "once" than before: previously
+  // only this file could forget a header, and then a second caller was written
+  // that did exactly that.
+  const proto = code(PROTOCOL);
+  assert.equal((proto.match(/"x-upsert"/g) ?? []).length, 1,
     "one definition — not one per call site to forget");
-  const at = tus.indexOf("const uploadHeaders");
+  const at = proto.indexOf("export function tusUploadHeaders");
   assert.notEqual(at, -1);
-  const body = tus.slice(at, tus.indexOf("});", at));
+  const body = proto.slice(at, proto.indexOf("return headers;", at));
   assert.match(body, /"x-upsert": "true"/);
-  assert.match(body, /"tus-resumable": "1\.0\.0"/);
-  assert.match(body, /Authorization: `Bearer \$\{key\}`/);
-  assert.match(body, /apikey: key/);
+  assert.match(body, /"tus-resumable": TUS_RESUMABLE_VERSION/);
+  assert.match(body, /Authorization: `Bearer \$\{auth\.authToken\}`/);
+  assert.match(body, /apikey: auth\.apiKey/);
+  // and this transport takes its set from there rather than restating it
+  assert.match(code(TUS), /tusUploadHeaders\(\{ authToken: key, apiKey: key \}\)/);
+  assert.equal(code(TUS).includes('"x-upsert"'), false);
 });
 
 test("2. create, patch and offset ALL spread that set", () => {
@@ -72,7 +83,8 @@ test("3. the PATCH — the request that was refused — carries it", () => {
   const patch = tus.slice(tus.indexOf("async tusPatch"), tus.indexOf("async tusOffset"));
   assert.match(patch, /\.\.\.uploadHeaders\(env\.key\)/, "upsert reaches the write");
   assert.match(patch, /"upload-offset": String\(offset\)/, "still exactly at the server's offset");
-  assert.match(patch, /"Content-Type": "application\/offset\+octet-stream"/);
+  assert.match(patch, /"Content-Type": TUS_PATCH_CONTENT_TYPE/,
+    "the constant, shared with the browser client");
   assert.match(patch, /res\.status !== 204/, "and still only 204 counts as accepted");
 });
 
@@ -89,7 +101,8 @@ test("5. the creation call keeps its own extra headers alongside the shared set"
   const create = tus.slice(tus.indexOf("async tusCreate"), tus.indexOf("async tusPatch"));
   assert.match(create, /\.\.\.uploadHeaders\(env\.key\)/);
   assert.match(create, /"upload-length": String\(totalBytes\)/);
-  assert.match(create, /"upload-metadata": \[/);
+  assert.match(create, /"upload-metadata": tusUploadMetadata\(/,
+    "built by the shared encoder, not restated here");
   assert.match(create, /res\.status !== 201/);
 });
 

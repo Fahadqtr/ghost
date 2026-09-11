@@ -13,6 +13,9 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { StreamedAssemblyPorts } from "@/lib/export/artifact-stream";
+import {
+  tusEndpoint, tusUploadHeaders, tusUploadMetadata, TUS_PATCH_CONTENT_TYPE,
+} from "@/lib/storage/tus-protocol";
 
 function supabaseStorageEnv(): { url: string; key: string } | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -24,46 +27,31 @@ function supabaseStorageEnv(): { url: string; key: string } | null {
 export type TusTransportPorts = Omit<StreamedAssemblyPorts, "readPart">;
 
 export function makeTusPorts(bucket: string, contentType = "application/zip"): TusTransportPorts {
-  const b64 = (v: string) => Buffer.from(v, "utf8").toString("base64");
-
   /**
-   * STEP 85J — the headers EVERY request of a resumable upload carries.
+   * STEP RAFEEQ 05 — the header set moved to lib/storage/tus-protocol.ts.
    *
-   * `x-upsert` used to sit on the creation call alone, and that cost two
-   * production publishes. Storage defers the duplicate check to the write, so
-   * creating the upload returned 201 while every PATCH came back 409 Conflict:
-   * the target object already existed — the 632-image archive from 2026-09-07 —
-   * and a PATCH without upsert may not overwrite it. Zero bytes were ever
-   * accepted, which is why the resume had nothing to resume. The one stage that
-   * ever succeeded was the one where the path was still empty.
-   *
-   * Supabase's own documented usage passes these headers to a tus client, which
-   * applies them to POST, HEAD and PATCH alike. Building the set once here is
-   * what makes that true of this transport too.
+   * It is unchanged for this caller: Authorization and apikey both carry the
+   * service-role key, tus-resumable is 1.0.0, and x-upsert is on every request
+   * (STEP 85J — Storage defers the duplicate check to the write, so creating
+   * returned 201 while every PATCH came back 409). The reason it moved is that
+   * the browser upload added in STEP RAFEEQ 03 wrote its own header set and
+   * omitted Authorization entirely, which Storage answers with 403. One
+   * contract, two sets of credentials.
    */
-  const uploadHeaders = (key: string): Record<string, string> => ({
-    Authorization: `Bearer ${key}`,
-    apikey: key,
-    "tus-resumable": "1.0.0",
-    "x-upsert": "true",
-  });
+  const uploadHeaders = (key: string): Record<string, string> =>
+    tusUploadHeaders({ authToken: key, apiKey: key });
 
   return {
     async tusCreate(objectPath: string, totalBytes: number): Promise<string | null> {
       const env = supabaseStorageEnv();
       if (!env) return null;
       try {
-        const res = await fetch(`${env.url}/storage/v1/upload/resumable`, {
+        const res = await fetch(tusEndpoint(env.url), {
           method: "POST",
           headers: {
             ...uploadHeaders(env.key),
             "upload-length": String(totalBytes),
-            "upload-metadata": [
-              `bucketName ${b64(bucket)}`,
-              `objectName ${b64(objectPath)}`,
-              `contentType ${b64(contentType)}`,
-              `cacheControl ${b64("3600")}`,
-            ].join(","),
+            "upload-metadata": tusUploadMetadata({ bucket, objectPath, contentType }),
           },
         });
         if (res.status !== 201) return null;
@@ -84,7 +72,7 @@ export function makeTusPorts(bucket: string, contentType = "application/zip"): T
           headers: {
             ...uploadHeaders(env.key),
             "upload-offset": String(offset),
-            "Content-Type": "application/offset+octet-stream",
+            "Content-Type": TUS_PATCH_CONTENT_TYPE,
           },
           body: new Uint8Array(chunk),
         });
