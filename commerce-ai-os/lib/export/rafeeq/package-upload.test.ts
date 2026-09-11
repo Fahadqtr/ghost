@@ -151,7 +151,12 @@ test("14. the browser never receives a service key, and the page never reads env
   const ui = code(UI) + code(TUS);
   assert.equal(/SERVICE_ROLE/i.test(ui), false);
   assert.equal(/process\.env/.test(ui), false, "the client takes everything from the ticket");
-  assert.match(code(TUS), /"x-signature": o\.token/, "the scoped token is the credential");
+  // STEP RAFEEQ 05 — the scoped token is now passed as the `signature` of the
+  // shared header set, alongside the PUBLIC key as the bearer. Sending it with
+  // no bearer at all is what produced tus_create_failed_403.
+  assert.match(code(TUS),
+    /tusUploadHeaders\(\{ authToken: o\.apiKey, apiKey: o\.apiKey, signature: o\.token \}\)/,
+    "the scoped token is the credential, and it rides WITH an Authorization header");
 });
 
 test("15. the bytes never pass through a server route", () => {

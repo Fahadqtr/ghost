@@ -16,6 +16,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { RAFEEQ_JOB_BUCKET } from "@/lib/rafeeq/package-job.server";
 import { RAFEEQ_LINK_TTL_SECONDS } from "@/lib/export/rafeeq/artifact-object";
+import { tusEndpoint } from "@/lib/storage/tus-protocol";
 import {
   rafeeqUploadObjectPath,
   sanitizeUploadFilename,
@@ -37,23 +38,18 @@ export type RafeeqUploadApiResult<T> =
 const fail = <T,>(error: RafeeqUploadApiError, status: number): RafeeqUploadApiResult<T> => ({ ok: false, error, status });
 
 /**
- * Supabase's resumable endpoint on the DIRECT storage hostname.
+ * Supabase's resumable endpoint — the SAME host the server-side uploads use.
  *
- * The docs are explicit that large uploads should not go through the API
- * hostname, so the project ref is lifted out of the configured URL rather than
- * configured twice and allowed to drift.
+ * The first cut pointed the browser at the direct storage hostname
+ * (`<ref>.storage.supabase.co`) on the strength of a performance note in the
+ * docs. That made the host a second unverified variable in a request that was
+ * already failing, and it is not the host this project has ever completed an
+ * upload against. The documented optimisation can be adopted deliberately once
+ * this path is known to work; it is not worth guessing at while debugging a 403.
  */
 function resumableEndpoint(): string | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!url) return null;
-  try {
-    const host = new URL(url).hostname;                 // <ref>.supabase.co
-    const ref = host.split(".")[0];
-    if (!ref) return null;
-    return `https://${ref}.storage.supabase.co/storage/v1/upload/resumable`;
-  } catch {
-    return null;
-  }
+  return url ? tusEndpoint(url) : null;
 }
 
 /**
