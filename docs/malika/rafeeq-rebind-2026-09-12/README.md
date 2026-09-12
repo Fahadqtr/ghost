@@ -60,13 +60,33 @@ Verified against the export: 1339 bound, 1339 matching, 0 mismatched, 0 null, 0 
 ids, 0 duplicate SKUs. The four held-back SKUs and all 122 out-of-master rows are
 byte-identical to the snapshot, `updated_at` included.
 
-### Known follow-up
+### Follow-up: closed by STEP 11 (2026-09-12)
 
-`mk1285`, `mk1286` and `mk898` are now `active` on their new ids, but their `metadata`
-still carries the `conflict: duplicate_external_id` marker and a
-`claimed_external_product_id` pointing at a dead id from the previous generation.
-Clearing that is a separate decision — it was outside the authorized scope of this write,
-and it does not affect reconciliation, which reads `mapping_status`, not `metadata`.
+The three rows that this rebind resolved out of `needs_review` still carried the
+backfill's conflict markers afterwards. STEP 11 removed them under separate owner
+authorisation, touching nothing else:
+
+| SKU | external_product_id | mapping_status |
+|---|---|---|
+| `mk898` | `698933521` | active |
+| `mk1285` | `698934306` | active |
+| `mk1286` | `698934295` | active |
+
+Only the two stale keys were dropped — `conflict` (value `duplicate_external_id`) and
+`claimed_external_product_id`, whose claimed ids `691712302` and `695342530` were first
+confirmed to be referenced by no listing on any storefront. `backfill_source` is
+preserved, leaving these rows in the same metadata shape as every other row on the
+storefront. No id, status, identity type or grain column changed.
+
+`mk900` was deliberately left alone and remains `needs_review` with a NULL
+`external_product_id` and its markers intact, pending the duplicate review in STEP 10.
+
+The reconciler, re-run against the same workbook and the live mappings after the
+cleanup, still reports 1339 matched (`already_mapped`), 0 conflicts, 0 applicable.
+
+Note for anyone running the rollback below: it restores `external_product_id` and
+`mapping_status` only, so it would not put these three rows' conflict markers back.
+That is harmless — the markers describe a conflict that no longer exists.
 
 ## Rollback procedure
 
