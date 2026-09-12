@@ -13,7 +13,9 @@ import {
   buildCopyAllText,
   buildCopyFields,
   buildDownloadUrlPayload,
-  buildVariantCopyAllText,
+  buildAllVariantsCopyText,
+  buildVariantCopyBlock,
+  variantDisplayName,
   buildVariantFields,
   dragMimeForName,
   imagesZipFilename,
@@ -170,10 +172,13 @@ test("15 · variant fields stay attached to their own variant", () => {
 
 test("16 · a variant block never carries the parent's SKU or barcode", () => {
   const p = product();
-  const all = buildVariantCopyAllText(variant(), buildVariantFields(variant()));
+  // Re-anchored when the row action landed: the block is now the canonical
+  // Option/SKU/Barcode/Price form shared by the row and the drawer. The claim
+  // under test is unchanged — a variant block must carry only its own identity.
+  const all = buildVariantCopyBlock(variant());
   assert.ok(!all.includes(String(p.barcode)), "parent barcode absent");
   assert.ok(all.includes("mk900-pink"), "its own sku present");
-  assert.ok(!/\bSKU: mk900\b/.test(all), "parent sku line absent");
+  assert.ok(!/^SKU: mk900$/m.test(all), "the parent's own sku line is absent");
 });
 
 test("17 · a variant image is named by the variant, never as a parent photo", () => {
@@ -246,7 +251,7 @@ test("24 · the projection keeps variant ids out of every copyable string", () =
     "Seemsure",
   );
   assert.equal(data.variants[0].id, "0f13775a-0eca-2401-922f-43ecac4b062a", "the id is kept for React keys");
-  const all = buildVariantCopyAllText(data.variants[0], buildVariantFields(data.variants[0]));
+  const all = buildVariantCopyBlock(data.variants[0]);
   assert.ok(!all.includes("0f13775a"), "but it never reaches the clipboard");
   assert.equal(data.product.brand, "Seemsure", "brand comes from the lookup, not a product column");
 });
@@ -259,4 +264,101 @@ test("25 · image extensions reuse the channel-packaging helpers, not a new impl
   assert.ok(route.includes("sniffImageExtension"), "the route sniffs real bytes");
   assert.ok(route.includes("mimeToExt"), "and falls back to the validated MIME");
   assert.ok(route.includes('from "@/lib/net/zip"'), "the archive uses the shared tested ZIP writer");
+});
+
+
+// ── variant row copy actions (focused enhancement) ───────────────────────────
+
+const VROW = "../../../components/v2/catalog/VariantCopyActions.tsx";
+const DETAIL = "../../../components/v2/catalog/ProductDetail.tsx";
+
+test("26 · the row exposes name, SKU, barcode and price each on its own control", () => {
+  const src = code(VROW);
+  for (const t of ["vcopy-name-", "vcopy-sku-", "vcopy-barcode-", "vcopy-price-"]) {
+    assert.ok(src.includes(t), `${t} control exists`);
+  }
+  assert.ok(src.includes("تم النسخ ✓"), "the confirmation text is the agreed one");
+});
+
+test("27 · copied values are the canonical ones, name matching the visible cell", () => {
+  const v = variant({ optionNameAr: "أبيض", optionNameEn: "White", sku: "mk995-3-white", barcode: "9891716104934-2", price: 158 });
+  assert.equal(variantDisplayName(v), "أبيض", "same precedence as getVariantDisplayName (Arabic first)");
+  assert.equal(variantDisplayName(variant({ optionNameAr: null, optionNameEn: "White" })), "White", "falls back to English");
+  const src = code(VROW);
+  assert.ok(src.includes("variant.sku"), "SKU chip copies the variant sku");
+  assert.ok(src.includes("variant.barcode"), "barcode chip copies the variant barcode");
+});
+
+test("28 · copy one variant produces the agreed block, no internal id", () => {
+  const block = buildVariantCopyBlock(variant({
+    optionNameAr: null, optionNameEn: "White", sku: "mk995-3-white", barcode: "9891716104934-2", price: 158,
+    id: "0f13775a-0eca-2401-922f-43ecac4b062a",
+  }));
+  assert.equal(block, "Option: White\nSKU: mk995-3-white\nBarcode: 9891716104934-2\nPrice: 158");
+  assert.ok(!block.includes("0f13775a"), "no UUID in the block");
+});
+
+test("29 · a missing value drops its line rather than emitting a bare label", () => {
+  const block = buildVariantCopyBlock(variant({ optionNameAr: null, optionNameEn: "White", sku: "s1", barcode: null, price: null }));
+  assert.equal(block, "Option: White\nSKU: s1");
+  assert.ok(!/Barcode:/.test(block) && !/Price:/.test(block));
+});
+
+test("30 · copy all variants numbers them and preserves display order", () => {
+  const all = buildAllVariantsCopyText([
+    variant({ id: "a", optionNameAr: null, optionNameEn: "White", sku: "w", barcode: "b1", price: 158 }),
+    variant({ id: "b", optionNameAr: null, optionNameEn: "Silver", sku: "s", barcode: "b2", price: 160 }),
+  ]);
+  assert.equal(all, "1. White\nSKU: w\nBarcode: b1\nPrice: 158\n\n2. Silver\nSKU: s\nBarcode: b2\nPrice: 160");
+  assert.ok(all.indexOf("1. White") < all.indexOf("2. Silver"), "order is the order given");
+});
+
+test("31 · copy-all carries no internal id and reverses nothing when re-ordered", () => {
+  const a = variant({ id: "u1-uuid-aaaa", optionNameAr: null, optionNameEn: "A", sku: "a" });
+  const b = variant({ id: "u2-uuid-bbbb", optionNameAr: null, optionNameEn: "B", sku: "b" });
+  const forward = buildAllVariantsCopyText([a, b]);
+  const backward = buildAllVariantsCopyText([b, a]);
+  assert.ok(!forward.includes("uuid"), "no internal id copied");
+  assert.ok(forward.startsWith("1. A") && backward.startsWith("1. B"), "display order is respected both ways");
+});
+
+test("32 · variant image actions appear only when the variant has an image", () => {
+  const src = code(VROW);
+  assert.ok(src.includes("vcopy-image-url-") && src.includes("vdownload-image-"), "both image actions exist");
+  assert.ok(src.includes("variant.imageUrl ?"), "they are conditional on an image being present");
+  assert.ok(src.includes("/api/products/image?url="), "download goes through the same-origin proxy");
+  assert.ok(!/href=\{variant\.imageUrl\}/.test(src), "never links straight at the storage URL");
+});
+
+test("33 · a product with no variants renders the table exactly as before", () => {
+  const detail = code(DETAIL);
+  assert.ok(detail.includes("لا توجد خيارات لهذا المنتج"), "the empty state is untouched");
+  assert.ok(detail.includes("const withActions = typeof renderVariantActions === \"function\""), "the column is opt-in");
+  assert.ok(detail.includes("{withActions ? <th"), "no actions column without the slot");
+  assert.equal(buildAllVariantsCopyText([]), "", "copy-all on an empty list yields nothing");
+});
+
+test("34 · the drawer and the row copy a variant identically", () => {
+  const panel = code("../../../components/v2/catalog/CopyProductPanel.tsx");
+  const row = code(VROW);
+  assert.ok(panel.includes("buildVariantCopyBlock"), "the drawer uses the shared block");
+  assert.ok(row.includes("buildVariantCopyBlock"), "the row uses the shared block");
+  assert.ok(!panel.includes("buildVariantCopyAllText"), "the retired second format is gone");
+});
+
+test("35 · the row actions and the detail slots write nothing", () => {
+  for (const [label, src] of [["row", code(VROW)], ["detail", code(DETAIL)]] as const) {
+    assert.ok(!/\.(insert|update|upsert|delete)\s*\(/.test(src), `${label}: no mutating client call`);
+    assert.ok(!/method:\s*["'](POST|PUT|PATCH|DELETE)["']/i.test(src), `${label}: no mutating fetch`);
+    assert.ok(!/use server/.test(src), `${label}: no server action`);
+  }
+  assert.ok(code(VROW).includes("navigator.clipboard.writeText"), "the only side effect is the clipboard");
+});
+
+test("36 · the existing product panel still works unchanged", () => {
+  const fields = buildCopyFields(product());
+  assert.ok(fields.some((f) => f.key === "name_en") && fields.some((f) => f.key === "description_ar"));
+  assert.ok(buildCopyAllText(fields).includes("SKU: mk900"), "product Copy All is intact");
+  const panel = code("../../../components/v2/catalog/CopyProductPanel.tsx");
+  assert.ok(panel.includes('data-testid="open-copy-panel"') && panel.includes('data-testid="download-all-zip"'));
 });

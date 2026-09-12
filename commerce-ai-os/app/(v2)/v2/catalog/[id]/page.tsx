@@ -31,6 +31,7 @@ import ProductDetail from "@/components/v2/catalog/ProductDetail";
 import ProductMedia from "@/components/v2/catalog/ProductMedia";
 import { loadProductMedia } from "@/lib/products/product-media-read";
 import CopyProductPanel from "@/components/v2/catalog/CopyProductPanel";
+import { VariantRowCopyActions, CopyAllVariantsButton } from "@/components/v2/catalog/VariantCopyActions";
 import { loadCopyPanelData } from "@/lib/catalog/copy-panel/copy-panel-read.server";
 import type { CopyPanelData } from "@/lib/catalog/copy-panel/copy-panel-read.server";
 import { EMPTY_PRODUCT_MEDIA, type ProductMediaState } from "@/lib/products/product-media";
@@ -259,6 +260,18 @@ export default async function ProductDetailPage({
           variants={state.variants}
           backHref={backHref}
           editHref={editHref}
+          {...(copyPanel
+            ? {
+                variantsToolbar: <CopyAllVariantsButton variants={copyPanel.variants} />,
+                renderVariantActions: (v: CatalogVariant, i: number) => {
+                  // Pair the displayed row with its copy-panel projection by the
+                  // durable variant id; the index is only a last resort so a
+                  // row can never borrow another variant's image or barcode.
+                  const match = copyPanel.variants.find((c) => c.id !== null && c.id === v.id) ?? null;
+                  return match ? <VariantRowCopyActions variant={match} index={i} /> : null;
+                },
+              }
+            : {})}
         />
         {copyPanel ? (
           <div className="flex flex-wrap items-center gap-2" dir="rtl">

@@ -13,7 +13,7 @@ import {
   buildCopyAllText,
   buildCopyFields,
   buildDownloadUrlPayload,
-  buildVariantCopyAllText,
+  buildVariantCopyBlock,
   buildVariantFields,
   imagesZipFilename,
   planProductImageZip,
@@ -272,7 +272,7 @@ export default function CopyProductPanel({
                     {variants.map((v, idx) => {
                       const vFields = buildVariantFields(v);
                       const vKey = v.id ?? v.sku ?? `variant-${idx}`;
-                      const vAll = buildVariantCopyAllText(v, vFields);
+                      const vAll = buildVariantCopyBlock(v);
                       return (
                         <div key={vKey} data-testid={`variant-${vKey}`} className="space-y-2 rounded-xl border border-[#efe3d6] bg-white p-3">
                           <div className="flex items-center justify-between gap-2">

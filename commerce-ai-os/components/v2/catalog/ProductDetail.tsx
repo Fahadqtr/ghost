@@ -3,6 +3,7 @@
 // cards). Never renders stock, channel/platform presence, platform IDs, orders,
 // raw JSON/approval text, or PII. No editing/selection/actions.
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   getApprovalLabel,
@@ -114,13 +115,23 @@ export default function ProductDetail({
   variants,
   backHref = "/v2/catalog",
   editHref,
+  renderVariantActions,
+  variantsToolbar,
 }: {
   product: MasterCatalogProduct;
   variants: CatalogVariant[];
   backHref?: string;
   /** Phase UI.4: link to /v2/catalog/<id>/edit carrying the catalog controls. */
   editHref?: string;
+  /** Optional per-variant actions (read-only copy/download). When present an
+   *  actions column is added; when omitted the table renders exactly as before.
+   *  Same slot pattern as ProductMedia's renderItemActions — this component
+   *  stays presentational and never learns what the actions do. */
+  renderVariantActions?: (variant: CatalogVariant, index: number) => ReactNode;
+  /** Optional control rendered beside the الخيارات heading (e.g. copy-all). */
+  variantsToolbar?: ReactNode;
 }) {
+  const withActions = typeof renderVariantActions === "function";
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -162,7 +173,10 @@ export default function ProductDetail({
 
       {/* Variants */}
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-ink">الخيارات ({variants.length})</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-ink">الخيارات ({variants.length})</h2>
+          {variants.length > 0 ? variantsToolbar ?? null : null}
+        </div>
         {variants.length === 0 ? (
           <div className="card text-center text-sm text-muted">لا توجد خيارات لهذا المنتج.</div>
         ) : (
@@ -176,6 +190,7 @@ export default function ProductDetail({
                     <th className="px-4 py-3 font-medium">SKU</th>
                     <th className="px-4 py-3 font-medium">الباركود</th>
                     <th className="px-4 py-3 font-medium">السعر</th>
+                    {withActions ? <th className="px-4 py-3 font-medium">إجراءات النسخ</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -185,6 +200,7 @@ export default function ProductDetail({
                       <td className="px-4 py-3 text-muted">{v.sku ?? "—"}</td>
                       <td className="px-4 py-3 text-muted">{v.barcode ?? "—"}</td>
                       <td className="px-4 py-3 text-ink">{variantPrice(v)}</td>
+                      {withActions ? <td className="px-4 py-2 align-middle">{renderVariantActions(v, i)}</td> : null}
                     </tr>
                   ))}
                 </tbody>
@@ -201,6 +217,7 @@ export default function ProductDetail({
                     <span>باركود: {v.barcode ?? "—"}</span>
                     <span>السعر: {variantPrice(v)}</span>
                   </div>
+                  {withActions ? <div className="pt-1">{renderVariantActions(v, i)}</div> : null}
                 </div>
               ))}
             </div>
