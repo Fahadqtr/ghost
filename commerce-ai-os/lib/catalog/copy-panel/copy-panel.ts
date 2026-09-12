@@ -127,10 +127,55 @@ export function buildCopyAllText(fields: readonly CopyField[]): string {
   return parts.join("\n");
 }
 
-/** The same block for one variant, headed by the variant's own label. */
-export function buildVariantCopyAllText(v: CopyPanelVariant, fields: readonly CopyField[]): string {
-  const head = text(v.optionNameAr) || text(v.optionNameEn) || text(v.sku) || "خيار";
-  return [`الخيار: ${head}`, buildCopyAllText(fields)].filter((s) => s !== "").join("\n");
+/**
+ * The name shown for a variant — the SAME precedence the detail table renders
+ * (`getVariantDisplayName`), so copied text matches the cell staff are looking
+ * at rather than a second opinion about which name wins.
+ */
+export function variantDisplayName(v: CopyPanelVariant): string {
+  return text(v.optionNameAr) || text(v.optionNameEn) || text(v.sku) || "";
+}
+
+/**
+ * One variant as a marketplace-ready block:
+ *
+ *   Option: White
+ *   SKU: mk995-3-white
+ *   Barcode: 9891716104934-2
+ *   Price: 158
+ *
+ * Absent values drop their line rather than emitting a bare label. This is the
+ * ONE definition of "a variant copied as text" — the row action and the drawer
+ * both use it, so the same button never yields two different blocks.
+ */
+export function buildVariantCopyBlock(v: CopyPanelVariant): string {
+  const lines: string[] = [];
+  const option = variantDisplayName(v);
+  if (option !== "") lines.push(`Option: ${option}`);
+  const sku = text(v.sku);
+  if (sku !== "") lines.push(`SKU: ${sku}`);
+  const barcode = text(v.barcode);
+  if (barcode !== "") lines.push(`Barcode: ${barcode}`);
+  const price = money(v.price);
+  if (price !== "") lines.push(`Price: ${price}`);
+  return lines.join("\n");
+}
+
+/**
+ * Every variant, numbered, in DISPLAY ORDER — the order the caller passes is
+ * the order copied, never re-sorted. A variant with nothing to say is skipped
+ * but does not renumber the ones around it.
+ */
+export function buildAllVariantsCopyText(variants: readonly CopyPanelVariant[]): string {
+  const blocks: string[] = [];
+  variants.forEach((v, i) => {
+    const block = buildVariantCopyBlock(v);
+    if (block === "") return;
+    const head = variantDisplayName(v) || `Variant ${i + 1}`;
+    const rest = block.startsWith("Option: ") ? block.split("\n").slice(1) : block.split("\n");
+    blocks.push([`${i + 1}. ${head}`, ...rest].join("\n"));
+  });
+  return blocks.join("\n\n");
 }
 
 // ── image names ──────────────────────────────────────────────────────────────
