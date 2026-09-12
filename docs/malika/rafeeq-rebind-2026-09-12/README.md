@@ -43,3 +43,52 @@ Matching key is `products.sku`. `product_variants.barcode` is never read or writ
 `ecl_id` present in it, write back its `external_product_id` (empty means NULL) and
 `mapping_status`; delete any `rafeeq:malikas` row whose `ecl_id` is not in the snapshot
 (those are the 108 inserts). Do not run a rollback without owner authorization.
+
+---
+
+## Outcome (write executed 2026-09-12)
+
+`POSTSTATE_rafeeq_malikas_after_step09.csv` — 1465 rows, sha256
+`261d19006973e52ee152b7d9d66e21593296132b4e5598da164502c4fa0f4ced` — is the state
+immediately after the commit, read back independently.
+
+Applied in one transaction: 1231 rows updated (1228 repointed + 3 needs_review resolved)
+and 108 rows inserted. Pre-existing `ecl_id` and `created_at` values are unchanged, so
+every update happened in place — nothing was deleted and re-created.
+
+Verified against the export: 1339 bound, 1339 matching, 0 mismatched, 0 null, 0 duplicate
+ids, 0 duplicate SKUs. The four held-back SKUs and all 122 out-of-master rows are
+byte-identical to the snapshot, `updated_at` included.
+
+### Known follow-up
+
+`mk1285`, `mk1286` and `mk898` are now `active` on their new ids, but their `metadata`
+still carries the `conflict: duplicate_external_id` marker and a
+`claimed_external_product_id` pointing at a dead id from the previous generation.
+Clearing that is a separate decision — it was outside the authorized scope of this write,
+and it does not affect reconciliation, which reads `mapping_status`, not `metadata`.
+
+## Rollback procedure
+
+Not authorized; do not run without the owner saying so. Given
+`SNAPSHOT_rafeeq_malikas_pre_step09.csv` (1357 rows) as `snap(ecl_id, external_product_id,
+mapping_status)`, in one transaction:
+
+```sql
+-- 1. restore the 1231 rows that existed before
+update external_channel_listings l
+   set external_product_id = nullif(s.external_product_id, ''),
+       mapping_status      = s.mapping_status,
+       updated_at          = now()
+  from snap s
+ where l.id = s.ecl_id;                                  -- expect 1357 rows
+
+-- 2. remove the 108 rows this write created
+delete from external_channel_listings l
+ where l.storefront_key = 'rafeeq:malikas'
+   and l.id not in (select ecl_id from snap);            -- expect 108 rows
+```
+
+Assert before commit: 1357 rows remain on `rafeeq:malikas`, 1353 carry a non-null
+`external_product_id`, 4 are `needs_review` with NULL, and no id falls in
+`698933171 .. 698934509`.
