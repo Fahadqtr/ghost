@@ -29,7 +29,11 @@ const ALL = [PREVIEW, SERVER, PKG, XLSX, GEN, ROUTE, COMPONENT];
 // ── storefront isolation ──────────────────────────────────────────────────────
 test("identity is storefront-scoped — Malikas and Pure Seoul never share SPI", () => {
   const server = read(SERVER);
-  assert.ok(/storefront_key\)\s*!==\s*storefrontKey/.test(server), "ECL is filtered to THIS storefront_key");
+  // Re-anchored with the exported_sku contract repair: the inline storefront
+  // comparison moved INTO the shared identity builder, which is handed the key.
+  // The claim — Malikas and Pure Seoul never share identity — is unchanged.
+  assert.ok(/storefrontKey,/.test(server) && /buildChannelIdentityIndex/.test(server),
+    "ECL is filtered to THIS storefront_key");
   assert.ok(/loadSnoonuPreview\(storefrontKey/.test(server) || /storefrontKey: SnoonuStorefrontKey/.test(server), "reader is per-storefront");
   const pure = read(PREVIEW);
   assert.ok(/storefrontKey: input\?\.storefrontKey|const storefrontKey = input/.test(pure), "preview is built per storefront");

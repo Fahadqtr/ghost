@@ -11,6 +11,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { buildChannelIdentityIndex } from "@/lib/channels/effective-sku";
 import {
   buildSnoonuPreview,
   type SnoonuStorefrontKey,
@@ -50,7 +51,7 @@ export async function loadSnoonuPreview(storefrontKey: SnoonuStorefrontKey): Pro
       readAll(client, "product_images", "product_id, url, filename, is_primary, sort_order", "product_id"),
       // Storefront-scoped ECL identity evidence (read-only). Filtered to THIS
       // storefront_key so Malikas and Pure Seoul SPIs never cross.
-      readAll(client, "external_channel_listings", "product_id, storefront_key, exported_sku, external_product_id, mapping_status", "exported_sku").catch(() => []),
+      readAll(client, "external_channel_listings", "product_id, variant_id, storefront_key, exported_sku, external_product_id, mapping_status", "product_id").catch(() => []),
     ]);
 
     // Gallery images by product — deterministic order (is_primary, sort_order, url).
@@ -70,21 +71,27 @@ export async function loadSnoonuPreview(storefrontKey: SnoonuStorefrontKey): Pro
         String(a.url ?? "").localeCompare(String(b.url ?? "")));
 
     // ECL evidence for THIS storefront only, keyed by lower(exported_sku).
-    const mappingBySku: Record<string, SnoonuMappingEvidence> = {};
-    for (const e of eclRows) {
-      if (s(e.storefront_key) !== storefrontKey) continue; // hard storefront scope
-      const sku = s(e.exported_sku);
-      if (!sku) continue;
-      const ms = s(e.mapping_status);
-      const status: SnoonuMappingEvidence["status"] =
-        ms === "needs_review" ? "needs_review" : ms === "archived" ? "unmapped" : "resolved";
-      mappingBySku[sku.toLowerCase()] = {
-        status,
-        externalId: s(e.external_product_id),
-        exportedSku: sku,
-        productId: s(e.product_id),
-      };
+    // Shared identity rule — see lib/channels/effective-sku. exported_sku is NULL
+    // for every snoonu:malikas and snoonu:pure_seoul row in production, so before
+    // this the index was empty and every mapped product looked new.
+    const canonicalSkuByProduct = new Map<string, string>();
+    for (const p of productRows) {
+      const id = s(p.id); const sku = s(p.sku);
+      if (id && sku) canonicalSkuByProduct.set(id, sku);
     }
+    const snoonuIdentity = buildChannelIdentityIndex<SnoonuMappingEvidence>({
+      rows: eclRows,
+      storefrontKey,
+      canonicalSkuForRow: (e) => canonicalSkuByProduct.get(s(e.product_id) ?? "") ?? null,
+      toEvidence: (e, r) => {
+        const ms = s(e.mapping_status);
+        const status: SnoonuMappingEvidence["status"] = r.contested
+          ? "needs_review"
+          : ms === "needs_review" ? "needs_review" : ms === "archived" ? "unmapped" : "resolved";
+        return { status, externalId: s(e.external_product_id), exportedSku: r.sku, productId: s(e.product_id) };
+      },
+    });
+    const mappingBySku = snoonuIdentity.index;
 
     const products: SnoonuPreviewProduct[] = productRows.map((p) => {
       const id = typeof p.id === "string" ? p.id : "";

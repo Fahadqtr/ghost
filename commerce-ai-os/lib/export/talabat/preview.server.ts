@@ -16,6 +16,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { buildChannelIdentityIndex } from "@/lib/channels/effective-sku";
 import { loadMasterScope } from "@/lib/home/master-scope.server";
 import { isApprovedForTalabat, resolveExactChannelId } from "@/lib/talabat/export";
 import {
@@ -98,7 +99,7 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
       // approval overlay (platform_status is a per-platform table; talabat rows only)
       readAll(client, "platform_status", "product_id, platform, approval", "product_id").catch(() => []),
       // Talabat identity evidence (read-only; storefront-scoped)
-      readAll(client, "external_channel_listings", "exported_sku, external_product_id, mapping_status, storefront_key", "exported_sku").catch(() => []),
+      readAll(client, "external_channel_listings", "product_id, variant_id, exported_sku, external_product_id, mapping_status, storefront_key", "product_id").catch(() => []),
     ]);
 
     // CURRENT MASTER scope. Talabat is aligned to the CURRENT operational
@@ -173,16 +174,41 @@ export async function loadTalabatPreview(): Promise<TalabatPreviewResult | null>
     }
 
     // ECL evidence by lower(exported_sku), talabat:malikas only
-    const mappingBySku: Record<string, TalabatMappingEvidence> = {};
-    for (const e of eclRows) {
-      if (s(e.storefront_key) !== "talabat:malikas") continue;
-      const sku = s(e.exported_sku);
-      if (!sku) continue;
-      const ms = s(e.mapping_status);
-      const status: TalabatMappingEvidence["status"] =
-        ms === "needs_review" ? "needs_review" : ms === "archived" ? "unmapped" : "resolved";
-      mappingBySku[sku.toLowerCase()] = { status, externalId: s(e.external_product_id), exportedSku: sku };
+    // Shared identity rule — see lib/channels/effective-sku. This read did not
+    // even select product_id before, so it could not have fallen back to the
+    // catalogue SKU; the column is now selected for that purpose. Variant-grain
+    // rows resolve against the VARIANT's own sku, never the parent's.
+    // The SCOPED projection, never the unscoped read: a canonical SKU resolved
+    // from a product outside the master would give identity to a row that is not
+    // part of this channel's universe.
+    const canonicalSkuByProduct = new Map<string, string>();
+    for (const p of productRows) {
+      const id = s(p.id); const sku = s(p.sku);
+      if (id && sku) canonicalSkuByProduct.set(id, sku);
     }
+    const canonicalSkuByVariant = new Map<string, string>();
+    for (const v of variantRows) {
+      const id = s(v.id); const sku = s(v.sku);
+      if (id && sku) canonicalSkuByVariant.set(id, sku);
+    }
+    const talabatIdentity = buildChannelIdentityIndex<TalabatMappingEvidence>({
+      rows: eclRows,
+      storefrontKey: "talabat:malikas",
+      canonicalSkuForRow: (e) => {
+        const vid = s(e.variant_id);
+        return vid !== null
+          ? canonicalSkuByVariant.get(vid) ?? null
+          : canonicalSkuByProduct.get(s(e.product_id) ?? "") ?? null;
+      },
+      toEvidence: (e, r) => {
+        const ms = s(e.mapping_status);
+        const status: TalabatMappingEvidence["status"] = r.contested
+          ? "needs_review"
+          : ms === "needs_review" ? "needs_review" : ms === "archived" ? "unmapped" : "resolved";
+        return { status, externalId: s(e.external_product_id), exportedSku: r.sku };
+      },
+    });
+    const mappingBySku = talabatIdentity.index;
 
     const products: TalabatPreviewProduct[] = productRows.map((p) => {
       const id = typeof p.id === "string" ? p.id : "";
