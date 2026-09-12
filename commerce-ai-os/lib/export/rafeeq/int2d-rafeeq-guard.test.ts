@@ -32,7 +32,10 @@ const ALL = [PREVIEW, SERVER, PKG, XLSX, GEN, ROUTE, COMPONENT];
 test("identity is ECL-first and no legacy rafeeq_product_id column is referenced", () => {
   assert.ok(/external_channel_listings/.test(read(SERVER)), "reads ECL for identity");
   assert.ok(/external_product_id/.test(read(SERVER)), "Rafeeq ID = ECL external_product_id");
-  assert.ok(/storefront_key\)\s*!==\s*RAFEEQ_STOREFRONT_KEY/.test(read(SERVER)), "ECL scoped to rafeeq:malikas");
+  // Re-anchored with the exported_sku contract repair: the inline storefront
+  // comparison moved INTO the shared identity builder, which is handed the key.
+  // The claim under test — ECL evidence is scoped to rafeeq:malikas — is unchanged.
+  assert.ok(/storefrontKey:\s*RAFEEQ_STOREFRONT_KEY/.test(read(SERVER)), "ECL scoped to rafeeq:malikas");
   for (const f of ALL) {
     assert.equal(read(f).includes("rafeeq_product_id"), false, `${f} must not reference the legacy rafeeq_product_id column`);
   }

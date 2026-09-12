@@ -10,6 +10,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { buildChannelIdentityIndex } from "@/lib/channels/effective-sku";
 import { loadMasterScope } from "@/lib/home/master-scope.server";
 import {
   buildRafeeqPreview,
@@ -51,7 +52,7 @@ export async function loadRafeeqPreview(): Promise<RafeeqPreviewResult | null> {
         "id"),
       readAll(client, "product_images", "product_id, url, filename, is_primary, sort_order", "product_id"),
       readAll(client, "product_variants", "id, parent_product_id, sku, barcode, variant_name, variant_name_en, price", "parent_product_id"),
-      readAll(client, "external_channel_listings", "product_id, variant_id, storefront_key, exported_sku, external_product_id, mapping_status", "exported_sku").catch(() => []),
+      readAll(client, "external_channel_listings", "product_id, variant_id, storefront_key, exported_sku, external_product_id, mapping_status", "product_id").catch(() => []),
     ]);
 
     // CURRENT MASTER scope. The Rafeeq FULL catalogue is a replacement of the
@@ -107,17 +108,33 @@ export async function loadRafeeqPreview(): Promise<RafeeqPreviewResult | null> {
     // PRODUCT grain — Rafeeq identity is the parent product (variants are
     // native options). Retired variant-grain rows (non-null variant_id) are
     // ignored here, never collapsed onto the parent identity.
-    const mappingBySku: Record<string, RafeeqMappingEvidence> = {};
-    for (const e of eclRows) {
-      if (s(e.storefront_key) !== RAFEEQ_STOREFRONT_KEY) continue; // hard storefront scope
-      if (s(e.variant_id) !== null) continue; // product-grain identity only
-      const sku = s(e.exported_sku);
-      if (!sku) continue;
-      const ms = s(e.mapping_status);
-      const status: RafeeqMappingEvidence["status"] =
-        ms === "needs_review" ? "needs_review" : ms === "archived" ? "unmapped" : "resolved";
-      mappingBySku[sku.toLowerCase()] = { status, externalId: s(e.external_product_id), exportedSku: sku, productId: s(e.product_id) };
+    // Identity comes from the SHARED rule (lib/channels/effective-sku): the row's
+    // own exported_sku when it has one, else the canonical catalogue SKU. Before
+    // this, an empty exported_sku dropped the row — and since the column is NULL
+    // for every rafeeq:malikas row in production, the index was completely empty
+    // and all 1339 live bindings were invisible to the packager.
+    // The SCOPED projection, never the unscoped read: a canonical SKU resolved
+    // from a product outside the master would give identity to a row that is not
+    // part of this channel's universe.
+    const canonicalSkuByProduct = new Map<string, string>();
+    for (const p of productRows) {
+      const id = s(p.id); const sku = s(p.sku);
+      if (id && sku) canonicalSkuByProduct.set(id, sku);
     }
+    const rafeeqIdentity = buildChannelIdentityIndex<RafeeqMappingEvidence>({
+      rows: eclRows,
+      storefrontKey: RAFEEQ_STOREFRONT_KEY,
+      productGrainOnly: true, // Rafeeq identity is the parent product; variants are native options
+      canonicalSkuForRow: (e) => canonicalSkuByProduct.get(s(e.product_id) ?? "") ?? null,
+      toEvidence: (e, r) => {
+        const ms = s(e.mapping_status);
+        const status: RafeeqMappingEvidence["status"] = r.contested
+          ? "needs_review" // a disagreeing identity is contested — the preview blocks it
+          : ms === "needs_review" ? "needs_review" : ms === "archived" ? "unmapped" : "resolved";
+        return { status, externalId: s(e.external_product_id), exportedSku: r.sku, productId: s(e.product_id) };
+      },
+    });
+    const mappingBySku = rafeeqIdentity.index;
 
     const products: RafeeqPreviewProduct[] = productRows.map((p) => {
       const id = typeof p.id === "string" ? p.id : "";
