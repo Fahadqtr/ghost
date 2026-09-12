@@ -43,7 +43,12 @@ const code = (rel: string): string =>
   raw(rel).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
 const SERVER_TUS = "lib/storage/tus.server.ts";
-const BROWSER_TUS = "app/(v2)/v2/operations/channels/rafeeq-package/tus-upload.ts";
+// STEP RAFEEQ 06 — the browser TUS client is GONE. Presigned resumable was
+// refused 403 on create every time: @supabase/storage-js 2.110.0 implements no
+// resumable protocol, and the deployed storage does not honour a signed token
+// on that endpoint. The owner upload now uses the SDK's uploadToSignedUrl, so
+// this module has one caller again — the server — and these tests guard it.
+const UPLOAD_UI = "app/(v2)/v2/operations/channels/rafeeq-package/RafeeqPackageUpload.tsx";
 const TICKET_SERVER = "lib/rafeeq/package-upload.server.ts";
 const PROTOCOL = "lib/storage/tus-protocol.ts";
 
@@ -86,38 +91,34 @@ test("5. the server's header set is byte-for-byte what it was before the move", 
 
 // ── one implementation, not two ─────────────────────────────────────────────
 
-test("6. both callers take their headers from this module", () => {
-  for (const rel of [SERVER_TUS, BROWSER_TUS]) {
-    const src = code(rel);
-    assert.match(src, /tusUploadHeaders\(/, `${rel} must not hand-roll headers`);
-    assert.equal(/"tus-resumable":\s*"1\.0\.0"/.test(src), false,
-      `${rel} must not restate the protocol version`);
-  }
+test("6. the server transport takes its headers from this module", () => {
+  const src = code(SERVER_TUS);
+  assert.match(src, /tusUploadHeaders\(/, "must not hand-roll headers");
+  assert.equal(/"tus-resumable":\s*"1\.0\.0"/.test(src), false,
+    "must not restate the protocol version");
 });
 
-test("7. neither caller writes its own upload-metadata or patch content type", () => {
-  for (const rel of [SERVER_TUS, BROWSER_TUS]) {
-    const src = code(rel);
-    assert.match(src, /tusUploadMetadata\(/);
-    assert.equal(src.includes("application/offset+octet-stream"), false,
-      `${rel} must use TUS_PATCH_CONTENT_TYPE`);
-  }
+test("7. it writes no upload-metadata or patch content type of its own", () => {
+  const src = code(SERVER_TUS);
+  assert.match(src, /tusUploadMetadata\(/);
+  assert.equal(src.includes("application/offset+octet-stream"), false,
+    "must use TUS_PATCH_CONTENT_TYPE");
   assert.equal(TUS_PATCH_CONTENT_TYPE, "application/offset+octet-stream");
 });
 
-test("8. the browser bearer is the PUBLIC key, and the scoped token is the signature", () => {
-  assert.match(code(BROWSER_TUS),
-    /tusUploadHeaders\(\{ authToken: o\.apiKey, apiKey: o\.apiKey, signature: o\.token \}\)/);
+test("8. no browser code speaks this protocol any more", () => {
+  const ui = code(UPLOAD_UI);
+  assert.equal(ui.includes("tus"), false, "the owner page uses uploadToSignedUrl");
+  assert.equal(ui.includes("x-signature"), false);
+  assert.match(ui, /uploadToSignedUrl\(/, "the SDK's own signed upload");
 });
 
-test("9. the browser uploads to the same endpoint the server already proves", () => {
-  const ticket = code(TICKET_SERVER);
-  assert.match(ticket, /tusEndpoint\(url\)/);
-  assert.equal(ticket.includes("storage.supabase.co"), false,
-    "the direct-storage hostname was an unverified second variable");
+test("9. the endpoint helper is still correct for the server that uses it", () => {
   assert.equal(tusEndpoint("https://x.supabase.co"), "https://x.supabase.co/storage/v1/upload/resumable");
   assert.equal(tusEndpoint("https://x.supabase.co/"), "https://x.supabase.co/storage/v1/upload/resumable",
     "a trailing slash must not produce a double slash");
+  // the ticket no longer ships an endpoint at all: the SDK knows its own
+  assert.equal(code(TICKET_SERVER).includes("tusEndpoint"), false);
 });
 
 // ── metadata encoding ───────────────────────────────────────────────────────
@@ -158,10 +159,9 @@ test("13. this module can never carry a secret — it reads no environment", () 
 });
 
 test("14. the service key still never reaches the page", () => {
-  const ui = code(BROWSER_TUS)
-    + code("app/(v2)/v2/operations/channels/rafeeq-package/RafeeqPackageUpload.tsx");
+  const ui = code(UPLOAD_UI);
   assert.equal(/SERVICE_ROLE/i.test(ui), false);
-  assert.equal(/process\.env/.test(ui), false);
+  assert.equal(/process\.env/.test(ui), false, "the page reads no environment of its own");
 });
 
 test("15. the server still authenticates with the service key, not a signature", () => {
@@ -183,9 +183,8 @@ test("16. the bucket is still private and the owner gate still stands", () => {
     "still one path, still scoped");
 });
 
-test("17. resume is untouched — the offset still comes from the server", () => {
-  const src = code(BROWSER_TUS);
+test("17. the server's own resume is untouched — offsets still come from HEAD", () => {
+  const src = code(SERVER_TUS);
   assert.match(src, /method: "HEAD"/);
-  assert.match(src, /offset = await offsetOf\(uploadUrl, o\)/);
-  assert.match(src, /o\.onUploadUrl\?\.\(uploadUrl\)/);
+  assert.match(src, /async tusOffset/);
 });

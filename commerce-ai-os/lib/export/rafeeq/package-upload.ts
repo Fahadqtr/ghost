@@ -14,18 +14,20 @@
 // The transport is deliberately NOT a server route. A 92 MB body through a
 // serverless function is a platform limit waiting to be hit, so the server
 // issues a SIGNED UPLOAD TOKEN and the browser sends the bytes straight to
-// Supabase Storage over the resumable (TUS) protocol. The service key never
-// leaves the server, the bucket stays private, and an interrupted upload
-// resumes from its own offset instead of restarting.
+// Supabase Storage. The service key never leaves the server and the bucket
+// stays private.
+//
+// STEP RAFEEQ 06 — that transport is a SINGLE signed PUT, not a resumable one.
+// Presigned resumable was tried and refused 403 on create: the installed
+// storage client implements no resumable protocol, and the deployed storage
+// does not honour a signed token on that endpoint. An upload that cannot
+// resume is worth saying plainly; one that claims to and does not is worse.
 
 /** 500 MB. Far above the 92 MB case, far below anything that looks accidental. */
 export const RAFEEQ_UPLOAD_MAX_BYTES = 500 * 1024 * 1024;
 
 /** Only archives. The bucket serves partner downloads, not arbitrary files. */
 export const RAFEEQ_UPLOAD_CONTENT_TYPE = "application/zip";
-
-/** Supabase's resumable endpoint wants exactly this, and says so. */
-export const RAFEEQ_UPLOAD_CHUNK_BYTES = 6 * 1024 * 1024;
 
 /**
  * Where a manually uploaded archive lives.
@@ -97,18 +99,16 @@ export function verifyRafeeqUploadRequest(req: RafeeqUploadRequest): RafeeqUploa
  * What the owner's browser needs to upload directly, and nothing more.
  *
  * `token` is a signed upload credential scoped to ONE object path. It is not
- * the service key and cannot read, list, delete, or write anywhere else.
+ * the service key and cannot read, list, delete, or write anywhere else. The
+ * browser hands it to the SDK's `uploadToSignedUrl`, so no endpoint and no
+ * project key travel in this ticket: the page's own Supabase client already
+ * holds the public ones.
  */
 export interface RafeeqUploadTicket {
   bucket: string;
   objectPath: string;
-  /** scoped, single-path upload credential — sent as the x-signature header */
+  /** scoped, single-path upload credential */
   token: string;
-  /** Supabase's resumable endpoint */
-  endpoint: string;
-  /** the public, browser-safe project key */
-  apiKey: string;
-  chunkBytes: number;
   contentType: string;
   expectedBytes: number;
   expectedSha256: string;
