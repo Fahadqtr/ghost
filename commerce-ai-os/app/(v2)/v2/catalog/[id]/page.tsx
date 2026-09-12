@@ -30,6 +30,9 @@ import {
 import ProductDetail from "@/components/v2/catalog/ProductDetail";
 import ProductMedia from "@/components/v2/catalog/ProductMedia";
 import { loadProductMedia } from "@/lib/products/product-media-read";
+import CopyProductPanel from "@/components/v2/catalog/CopyProductPanel";
+import { loadCopyPanelData } from "@/lib/catalog/copy-panel/copy-panel-read.server";
+import type { CopyPanelData } from "@/lib/catalog/copy-panel/copy-panel-read.server";
 import { EMPTY_PRODUCT_MEDIA, type ProductMediaState } from "@/lib/products/product-media";
 import InPageNav from "@/components/v2/InPageNav";
 import LifecyclePanel from "@/components/v2/catalog/LifecyclePanel";
@@ -85,6 +88,9 @@ export default async function ProductDetailPage({
   // (+ product_images gallery) projected through the shared reducer. A failure
   // simply omits the media block — the rest of the page is unaffected.
   let media: ProductMediaState = EMPTY_PRODUCT_MEDIA;
+  // CATALOG COPY PANEL — read-only staff helper. Best-effort + isolated: a
+  // failure simply omits the button. Selects only marketplace-ready fields.
+  let copyPanel: CopyPanelData | null = null;
   // Product lifecycle view (OPS.8B). Best-effort + isolated: derived read-only
   // (stored lifecycle_state + certified readiness). A failure omits the panel.
   let lifecycle: ProductLifecycleView | null = null;
@@ -149,6 +155,12 @@ export default async function ProductDetailPage({
           media = mediaRead.status === "ok" ? mediaRead.state : EMPTY_PRODUCT_MEDIA;
         } catch {
           media = EMPTY_PRODUCT_MEDIA;
+        }
+        try {
+          const copyRead = await loadCopyPanelData(supabase as never, validId);
+          copyPanel = copyRead.status === "ok" ? copyRead.data : null;
+        } catch {
+          copyPanel = null;
         }
         try {
           lifecycle = await loadProductLifecycle(supabase as never, validId);
@@ -248,6 +260,17 @@ export default async function ProductDetailPage({
           backHref={backHref}
           editHref={editHref}
         />
+        {copyPanel ? (
+          <div className="flex flex-wrap items-center gap-2" dir="rtl">
+            <CopyProductPanel
+              productId={state.product.id}
+              product={copyPanel.product}
+              variants={copyPanel.variants}
+              images={media.images.map((i) => ({ url: i.url, filename: i.filename, isPrimary: i.isPrimary }))}
+            />
+            <span className="text-[11px] text-muted">للعرض والنسخ فقط</span>
+          </div>
+        ) : null}
       </section>
       {/* CAT.1E — unified Product Intelligence Panel. Composed (purely) from the
           already-loaded certified engines — zero extra reads, read-only. It is
