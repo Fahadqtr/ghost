@@ -1,0 +1,38 @@
+RESOURCE / ACTION,OWNER,STAFF,UNAUTHENTICATED,SERVICE_PROCESS,CURRENT_BEHAVIOR,RECOMMENDED_BEHAVIOR,EVIDENCE,OWNER_DECISION_REQUIRED
+Catalog products - read,ALLOW,ALLOW,DENY,ALLOW,"Any signed-in account can SELECT via Data API (products ALL/true)",Unchanged - keep read open to any signed-in account,PROVEN_FROM_POLICY (authenticated_all_products),NO
+Catalog products - write (INSERT/UPDATE/DELETE),ALLOW,ALLOW,DENY,ALLOW,"Any signed-in account has full DML via Data API regardless of MALAK_WRITER_EMAILS",Writers only; DB write via service-role server paths; direct Data API write revoked for authenticated,PROVEN_FROM_POLICY (authenticated_all_products + full grants),YES - confirm staff may write catalog only through the app
+product_variants - read,ALLOW,ALLOW,DENY,ALLOW,SELECT only for authenticated (grant limits to SELECT),Unchanged - this is the correct pattern,PROVEN_FROM_POLICY (grant=SELECT; UPDATE policy inert),NO
+product_variants - write,ALLOW,DENY,DENY,ALLOW,"Blocked: UPDATE policy exists but grant omits UPDATE, so UPDATE is denied",Keep blocked; do NOT grant UPDATE when tightening other tables,PROVEN_FROM_POLICY (grant/policy mismatch),NO
+product_images - write,ALLOW,ALLOW,DENY,ALLOW,Any signed-in account has full DML,Writers only via app; revoke direct authenticated DML,PROVEN_FROM_POLICY (authenticated_all_product_images),YES
+external_channel_listings - read,ALLOW,ALLOW,DENY,ALLOW,SELECT only for authenticated,Unchanged,PROVEN_FROM_POLICY (ecl_select),NO
+external_channel_listings - write,ALLOW,DENY,DENY,ALLOW,"No write policy; writes occur server-side via service role",Unchanged - correct,PROVEN_FROM_POLICY,NO
+customers (PII) - read,ALLOW,DECIDE,DENY,ALLOW,Any signed-in account can read all customer rows,Owner + explicitly designated staff only,PROVEN_FROM_POLICY (authenticated_all_customers),YES - confirm whether staff may read customer PII
+customers (PII) - write/delete,ALLOW,DENY,DENY,ALLOW,Any signed-in account can UPDATE/DELETE all customer rows,Owner only; revoke authenticated DML,PROVEN_FROM_POLICY,YES
+orders - read,ALLOW,DECIDE,DENY,ALLOW,Any signed-in account can read all orders,Owner + designated staff,PROVEN_FROM_POLICY (authenticated_all_orders),YES
+orders - write/delete,ALLOW,DENY,DENY,ALLOW,Any signed-in account can UPDATE/DELETE orders,Owner + service processes only,PROVEN_FROM_POLICY,YES
+expenses (financial) - read,ALLOW,DENY,DENY,ALLOW,Any signed-in account can read all expenses,Owner only,PROVEN_FROM_POLICY (authenticated_all_expenses),YES
+expenses (financial) - write/delete,ALLOW,DENY,DENY,ALLOW,Any signed-in account can UPDATE/DELETE expenses,Owner only,PROVEN_FROM_POLICY,YES
+malak_audit (audit trail) - read,ALLOW,DECIDE,DENY,ALLOW,Any signed-in account can read the audit trail,Owner only,PROVEN_FROM_POLICY (malak_audit_auth_all),YES
+malak_audit (audit trail) - write/delete,DENY,DENY,DENY,ALLOW,"Any signed-in account can INSERT/UPDATE/DELETE audit rows - the trail is tamperable",Append-only via service role; no UPDATE/DELETE for any interactive role,PROVEN_FROM_POLICY,YES - highest-value integrity decision
+app_settings - all,ALLOW,DENY,DENY,ALLOW,"Data API denies all (RLS on, no policy); reached only via service role",Unchanged - correct,PROVEN_FROM_POLICY (no policy = deny),NO
+shopify_tokens (OAuth secrets) - all,DENY,DENY,DENY,ALLOW,"Data API denies all (RLS on, no policy)",Unchanged - correct,PROVEN_FROM_POLICY (no policy = deny),NO
+staff_members - all,ALLOW,DENY,DENY,ALLOW,Data API denies all; server-side only,Unchanged - correct,PROVEN_FROM_POLICY (no policy = deny),NO
+loyalty_customers / submissions / prizes - all,ALLOW,DENY,DENY,ALLOW,"Data API denies all; public /rewards writes go through service role in lib/loyalty",Unchanged - correct,PROVEN_FROM_POLICY (no policy = deny),NO
+rafeeq_package_jobs / talabat_package_jobs / talabat_queue - all,ALLOW,DENY,DENY,ALLOW,Data API denies all; job orchestration is server-side,Unchanged - correct,PROVEN_FROM_POLICY (no policy = deny),NO
+rafeeq_email_deliveries / talabat_email_deliveries - all,ALLOW,DENY,DENY,ALLOW,Data API denies all,Unchanged - correct,PROVEN_FROM_POLICY (no policy = deny),NO
+rafeeq_packages / rafeeq_package_items - read,ALLOW,ALLOW,DENY,ALLOW,SELECT only for authenticated,Unchanged,PROVEN_FROM_POLICY,NO
+loop_state via loop_board VIEW - read,ALLOW,ALLOW,ALLOW,ALLOW,"UNAUTHENTICATED READ: SECURITY DEFINER view owned by postgres with SELECT granted to anon - bypasses loop_state RLS",Revoke anon grants; set security_invoker=true,PROVEN_FROM_POLICY + Supabase linter ERROR security_definer_view,NO - fix recommended
+loop_state via loop_board VIEW - write,DENY,DENY,DENY,ALLOW,"anon holds INSERT/UPDATE/DELETE on an auto-updatable single-table view that bypasses RLS",Revoke all anon/authenticated DML on the view,INFERRED (auto-updatable view rules; NOT tested - no production writes performed),NO - fix recommended
+storage.objects (private buckets) - all,ALLOW,DENY,DENY,ALLOW,"Data API denies all (RLS on, 0 policies); private buckets reached via signed URLs/service role",Unchanged - correct,PROVEN_FROM_POLICY,NO
+Storage bucket product-images - read,ALLOW,ALLOW,ALLOW,ALLOW,Bucket is PUBLIC by design (product imagery),Unchanged - intentional,PROVEN_FROM_POLICY (storage.buckets.public=true),NO
+Storage bucket product-images - upload,ALLOW,ALLOW,DENY,ALLOW,"Any signed-in account can upload via /api/malak/upload (service role; 10MB; MIME allow-list)",Writers only,TESTED (route inspected: getUser gate only),YES
+Storage buckets rafeeq-packages / talabat-packages / talabat-exports,ALLOW,DECIDE,DENY,ALLOW,Private; signed-link delivery only,Unchanged,PROVEN_FROM_POLICY,NO
+Channel package generation,ALLOW,DECIDE,DENY,ALLOW,Gated server-side by requireMalakWriter/requireOwner,Unchanged,TESTED (route gate inspection),NO
+Channel email send (Rafeeq/Talabat),ALLOW,DENY,DENY,DENY,Owner-only gate (requireOwner),Unchanged - correct,TESTED (requireOwner in send paths),NO
+Marketplace publish,ALLOW,DENY,DENY,DENY,Owner-only,Unchanged,TESTED,NO
+Sensitive settings (/v2/settings/**),ALLOW,DENY,DENY,N/A,Page requires auth; writes gated server-side,Unchanged,TESTED (proxy 307 to /login unauthenticated),NO
+Staff stock IN/OUT (/staff),N/A,ALLOW,DENY,N/A,"Public path with its own shared-PIN gate (no Supabase account)",Unchanged; PIN rotation policy is an owner decision,TESTED (200 unauthenticated; PIN gate in lib/staff/pin.ts),YES - PIN rotation policy
+Customer loyalty (/rewards),N/A,N/A,ALLOW,ALLOW,"Public by design; writes via service role with IP rate limiting",Unchanged,TESTED (200 unauthenticated),NO
+Cron endpoints (/api/cron/**),N/A,N/A,DENY,ALLOW,Bearer CRON_SECRET; excluded from proxy redirect,Unchanged,PROVEN_FROM_POLICY (PUBLIC_PATHS + CRON_SECRET),NO
+Webhooks (/api/webhooks/**),N/A,N/A,DENY,ALLOW,Token-in-path; excluded from proxy redirect,Unchanged,PROVEN_FROM_POLICY,NO
+New account self-registration,ALLOW,N/A,UNKNOWN,N/A,"Supabase signup setting NOT READABLE from this session - UNKNOWN",Must be DISABLED (invite-only) before any authenticated-role widening is safe,NOT_VERIFIED,YES - BLOCKING DECISION
