@@ -1,10 +1,19 @@
 "use server";
 
-// Admin actions for the Beauty Rewards queue. These run inside the (app) route
-// group, which is already login-gated by middleware; we re-check the session
-// here as defense in depth before touching the service-role helpers.
+// Admin actions for the Beauty Rewards queue.
+//
+// D-2 — OWNER-ONLY, all of them, and they must stay that way. Every action here
+// runs on the SERVICE-ROLE helpers in lib/loyalty/rewards, so RLS constrains
+// nothing and this gate is the only boundary. Under the previous check — "a
+// Supabase session exists" — any authenticated account could delete a customer,
+// rewrite their name/phone/stamp balance, redeem a reward on their behalf, or
+// add and remove prizes.
+//
+// The owner ruled: staff may NOT change loyalty points/balance, may NOT redeem
+// rewards, and may NOT create/edit/delete prizes or any loyalty configuration —
+// and no staff loyalty READ is wired in this step (no staff surface calls these;
+// every caller is the owner-facing /v2/loyalty UI).
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOwner } from "@/lib/malak/authz";
 import {
@@ -20,27 +29,30 @@ import {
   PRIZE_BUCKET,
 } from "@/lib/loyalty/rewards";
 
-async function requireUser() {
-  const {
-    data: { user },
-  } = await createClient().auth.getUser();
-  if (!user) throw new Error("غير مسجّل الدخول.");
+/**
+ * Owner gate for the void-returning actions. It THROWS so the denial keeps the
+ * exact shape the previous session check had (these actions return void, so a
+ * silent return would read to the caller as success).
+ */
+async function requireOwnerOrThrow() {
+  const owner = await requireOwner();
+  if (!owner.ok) throw new Error(owner.error);
 }
 
 export async function approveAction(submissionId: string) {
-  await requireUser();
+  await requireOwnerOrThrow();
   await approveSubmission(submissionId);
   revalidatePath("/v2/loyalty");
 }
 
 export async function rejectAction(submissionId: string, note?: string) {
-  await requireUser();
+  await requireOwnerOrThrow();
   await rejectSubmission(submissionId, note);
   revalidatePath("/v2/loyalty");
 }
 
 export async function redeemAction(customerId: string) {
-  await requireUser();
+  await requireOwnerOrThrow();
   await redeemReward(customerId);
   revalidatePath("/v2/loyalty");
 }
@@ -49,13 +61,13 @@ export async function updateCustomerAction(
   id: string,
   fields: { name?: string; phone?: string; stamps?: number }
 ) {
-  await requireUser();
+  await requireOwnerOrThrow();
   await updateCustomer(id, fields);
   revalidatePath("/v2/loyalty/customers");
 }
 
 export async function deleteCustomerAction(id: string) {
-  await requireUser();
+  await requireOwnerOrThrow();
   await deleteCustomer(id);
   revalidatePath("/v2/loyalty/customers");
 }
@@ -72,7 +84,8 @@ const PRIZE_EXT: Record<string, string> = {
 
 /** Upload a prize image + name. Returns an error string (not throw) for the UI. */
 export async function addPrizeAction(formData: FormData): Promise<{ error?: string }> {
-  await requireUser();
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const name = String(formData.get("name") ?? "");
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "اختاري صورة الجائزة." };
@@ -96,13 +109,13 @@ export async function addPrizeAction(formData: FormData): Promise<{ error?: stri
 }
 
 export async function setPrizeActiveAction(id: string, active: boolean) {
-  await requireUser();
+  await requireOwnerOrThrow();
   await setPrizeActive(id, active);
   revalidatePath("/v2/loyalty/prizes");
 }
 
 export async function deletePrizeAction(id: string) {
-  await requireUser();
+  await requireOwnerOrThrow();
   await deletePrize(id);
   revalidatePath("/v2/loyalty/prizes");
 }

@@ -1,18 +1,21 @@
-// Admin-only: download the Beauty Rewards customer list as a real .xlsx file
-// (Arabic-safe, opens straight in Excel). Uses the xlsx package already in the
-// project. Auth-gated by middleware + an explicit getUser() check.
+// Download the Beauty Rewards customer list as a real .xlsx file (Arabic-safe,
+// opens straight in Excel). Uses the xlsx package already in the project.
+//
+// D-2 — OWNER-ONLY, and it must stay that way. This is a BULK PII EXPORT: every
+// loyalty customer's name and phone number in one file, read through the
+// service-role helper, so RLS constrains nothing. The header said "Admin-only"
+// while the code accepted any Supabase session; under the owner's policy staff
+// may look a customer up for customer service, never download the whole list.
 import { createRequire } from "node:module";
-import { createClient } from "@/lib/supabase/server";
+import { requireOwner } from "@/lib/malak/authz";
 import { listCustomers, STAMPS_REQUIRED } from "@/lib/loyalty/rewards";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const {
-    data: { user },
-  } = await createClient().auth.getUser();
-  if (!user) return new Response("Unauthorized", { status: 401 });
+  const owner = await requireOwner();
+  if (!owner.ok) return new Response(owner.error, { status: owner.status });
 
   let rows: Awaited<ReturnType<typeof listCustomers>>;
   try {
