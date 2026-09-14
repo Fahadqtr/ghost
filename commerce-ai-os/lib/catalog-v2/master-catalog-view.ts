@@ -6,6 +6,14 @@
 // memory, summarizes them, and maps completeness states to fixed Arabic labels.
 // It never exposes inventory, channel, platform, or order fields.
 
+import {
+  SNOONU_CHANNEL_LABEL,
+  type SnoonuChannelState,
+} from "./master-membership.ts";
+
+export { SNOONU_CHANNEL_LABEL } from "./master-membership.ts";
+export type { SnoonuChannelState } from "./master-membership.ts";
+
 // ── Domain shape (catalog-only; NO inventory/channel/platform/order fields) ───
 
 export interface MasterCatalogProduct {
@@ -19,6 +27,12 @@ export interface MasterCatalogProduct {
   imageUrl: string | null;
   approval: string | null;
   variantCount: number;
+  /**
+   * Snoonu publication state — channel EVIDENCE, never identity, and never a
+   * visibility rule. Optional: the list reader supplies it; the single-product
+   * detail path does not read listings, so it stays undefined there.
+   */
+  channelState?: SnoonuChannelState;
 }
 
 /** A catalog-safe variant row (NO stock/inventory/platform/order/PII fields). */
@@ -209,6 +223,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 export function projectCatalogRows(
   productRows: readonly unknown[],
   variantRows: readonly unknown[],
+  channelStates?: ReadonlyMap<string, SnoonuChannelState>,
 ): MasterCatalogProduct[] {
   // Count variants per parent — only string parent ids are counted.
   const variantCounts = new Map<string, number>();
@@ -237,6 +252,8 @@ export function projectCatalogRows(
       imageUrl: stringOrNull(row.image_url),
       approval: stringOrNull(row.approval),
       variantCount: variantCounts.get(id) ?? 0,
+      // Absent from the map = no snoonu:malikas listing row at all.
+      ...(channelStates ? { channelState: channelStates.get(id) ?? "NOT_PUBLISHED_TO_SNOONU" } : {}),
     });
   }
   return out;
@@ -649,6 +666,8 @@ export interface MasterCatalogPreviewItem {
   /** Normalized — the raw approval text is never exposed. */
   approvalStatus: ApprovalStatus;
   completenessStatus: CompletenessState;
+  /** Snoonu publication state. Defaults to "never published" when unknown. */
+  channelState: SnoonuChannelState;
 }
 
 /**
@@ -676,6 +695,7 @@ export function toMasterCatalogPreviewItem(
     variantCount: product.variantCount,
     approvalStatus: isApproved(product) ? "approved" : "not_approved",
     completenessStatus: getCompleteness(product),
+    channelState: product.channelState ?? "NOT_PUBLISHED_TO_SNOONU",
   };
 }
 
@@ -696,4 +716,9 @@ export function getPreviewItemDisplayName(item: MasterCatalogPreviewItem): strin
 /** Fixed approval label for a preview item — never the raw approval text. */
 export function getPreviewApprovalLabel(item: MasterCatalogPreviewItem): string {
   return item.approvalStatus === "approved" ? "معتمد" : "غير معتمد";
+}
+
+/** Fixed Arabic channel label for a preview item — never an external id. */
+export function getPreviewChannelLabel(item: MasterCatalogPreviewItem): string {
+  return SNOONU_CHANNEL_LABEL[item.channelState];
 }

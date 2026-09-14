@@ -526,32 +526,47 @@ function makeVariants(parentIds: string[]): Record<string, unknown>[] {
   return parentIds.map((pid, i) => ({ id: `v${i}`, parent_product_id: pid }));
 }
 
-// ── Catalog membership: ACTIVE snoonu:malikas listings only ──────────────────
+// ── CAT-B: internal catalog scope + Snoonu publication as EVIDENCE ───────────
+//
+// These tests used to pin the opposite contract: only products holding an ACTIVE
+// snoonu:malikas listing were visible. The owner changed that deliberately —
+// /v2/catalog is the INTERNAL master catalog, so an unpublished product is
+// listed like any other and the listing decides only the badge. The fail-closed
+// and no-leak properties below are unchanged and still enforced.
 
-test("membership: only products with an active snoonu:malikas listing are visible", async () => {
+test("scope: every internal product is visible — a listing no longer decides visibility", async () => {
   const products = makeProducts(10);
-  // Members: p0, p3, p7 — the rest are outside the master and must not appear.
   const { client } = fakePagedClient({
     products: { rows: products },
     product_variants: { rows: [] },
-    external_channel_listings: { rows: [{ id: "l0", product_id: "p0" }, { id: "l1", product_id: "p3" }, { id: "l2", product_id: "p7" }] },
+    external_channel_listings: {
+      rows: [
+        { id: "l0", product_id: "p0", mapping_status: "active" },
+        { id: "l1", product_id: "p3", mapping_status: "active" },
+        { id: "l2", product_id: "p7", mapping_status: "active" },
+      ],
+    },
   });
   const res = await loadMasterCatalog(client, { project: PROJECTOR });
   assert.equal(res.status, "ok");
-  assert.deepEqual(res.products.map((p) => p.id).sort(), ["p0", "p3", "p7"]);
-  assert.equal(res.products.length, 3, "count is derived from membership, never hardcoded");
+  assert.equal(res.products.length, 10, "all ten internal products are listed");
+  const state = new Map(res.products.map((p) => [p.id, p.channelState]));
+  assert.equal(state.get("p0"), "SNOONU_ACTIVE");
+  assert.equal(state.get("p3"), "SNOONU_ACTIVE");
+  assert.equal(state.get("p7"), "SNOONU_ACTIVE");
+  assert.equal(state.get("p1"), "NOT_PUBLISHED_TO_SNOONU", "unpublished, still visible");
 });
 
-test("membership: the listing read is filtered to snoonu:malikas + active and selects product_id only", async () => {
+test("scope: the listing read is scoped to snoonu:malikas and reads product_id + mapping_status", async () => {
   const { client, calls } = fakePagedClient({ products: { rows: makeProducts(2) }, product_variants: { rows: [] } });
   await loadMasterCatalog(client, { project: PROJECTOR });
   const listingCalls = calls.filter((c) => c.table === "external_channel_listings");
-  assert.ok(listingCalls.length >= 1, "membership read issued");
+  assert.ok(listingCalls.length >= 1, "channel-evidence read issued");
   for (const c of listingCalls) {
-    assert.deepEqual(c.filters, [
-      { column: "storefront_key", operator: "eq", value: "snoonu:malikas" },
-      { column: "mapping_status", operator: "eq", value: "active" },
-    ]);
+    // mapping_status is now CLASSIFIED per product, not used to filter the read.
+    assert.deepEqual(c.filters, [{ column: "storefront_key", operator: "eq", value: "snoonu:malikas" }]);
+    // (the selected column list is asserted in master-catalog-internal-scope.test.ts,
+    //  whose fake records it — this fake records table/orders/filters/range only)
     assert.deepEqual(
       c.orders.map((o) => o.column),
       ["product_id", "id"],
@@ -560,19 +575,20 @@ test("membership: the listing read is filtered to snoonu:malikas + active and se
   }
 });
 
-test("membership: an archived / other-storefront listing does not admit a product", async () => {
-  // The fake applies no filtering itself; these rows stand in for what the
-  // FILTERED query returns — only p1 comes back, so only p1 is visible.
+test("scope: an archived listing keeps the product visible and marks it SNOONU_INACTIVE", async () => {
   const { client } = fakePagedClient({
     products: { rows: makeProducts(3) },
     product_variants: { rows: [] },
-    external_channel_listings: { rows: [{ id: "l0", product_id: "p1" }] },
+    external_channel_listings: { rows: [{ id: "l0", product_id: "p1", mapping_status: "archived" }] },
   });
   const res = await loadMasterCatalog(client, { project: PROJECTOR });
-  assert.deepEqual(res.products.map((p) => p.id), ["p1"]);
+  assert.equal(res.products.length, 3);
+  const state = new Map(res.products.map((p) => [p.id, p.channelState]));
+  assert.equal(state.get("p1"), "SNOONU_INACTIVE", "published then stopped is distinct");
+  assert.equal(state.get("p0"), "NOT_PUBLISHED_TO_SNOONU", "never published is distinct");
 });
 
-test("membership: no active listings → empty catalog, not the whole products table", async () => {
+test("scope: no listings at all → the full internal catalog, every row unpublished", async () => {
   const { client } = fakePagedClient({
     products: { rows: makeProducts(5) },
     product_variants: { rows: [] },
@@ -580,10 +596,27 @@ test("membership: no active listings → empty catalog, not the whole products t
   });
   const res = await loadMasterCatalog(client, { project: PROJECTOR });
   assert.equal(res.status, "ok");
-  assert.deepEqual(res.products, [], "fails empty, never falls back to unscoped");
+  assert.equal(res.products.length, 5, "an empty channel no longer empties the catalog");
+  assert.ok(res.products.every((p) => p.channelState === "NOT_PUBLISHED_TO_SNOONU"));
 });
 
-test("membership: listing read failure fails CLOSED (never renders the unscoped catalog)", async () => {
+test("scope: system placeholders and stopped products are withheld by internal truth", async () => {
+  const rows = [
+    ...makeProducts(2),
+    { id: "pp", sku: "PENDING-SNOONU-6a74bbd92503fb82f31f2866", name_en: "intake", lifecycle_state: "DRAFT" },
+    { id: "ps", sku: "SKU-STOP", name_en: "stopped", lifecycle_state: "STOPPED" },
+    { id: "pb", sku: "", name_en: "blank", lifecycle_state: "ACTIVE" },
+  ];
+  const { client } = fakePagedClient({
+    products: { rows },
+    product_variants: { rows: [] },
+    external_channel_listings: { rows: [] },
+  });
+  const res = await loadMasterCatalog(client, { project: PROJECTOR });
+  assert.deepEqual(res.products.map((p) => p.id).sort(), ["p0", "p1"]);
+});
+
+test("scope: listing read failure fails CLOSED (never renders the unscoped catalog)", async () => {
   const { client } = fakePagedClient({
     products: { rows: makeProducts(5) },
     product_variants: { rows: [] },
@@ -596,7 +629,7 @@ test("membership: listing read failure fails CLOSED (never renders the unscoped 
   for (const leak of ["PAGE SECRET", "42P01", "SHINT"]) assert.ok(!json.includes(leak), `leaked: ${leak}`);
 });
 
-test("membership: listing builder throw fails CLOSED without leaking", async () => {
+test("scope: listing builder throw fails CLOSED without leaking", async () => {
   const { client } = fakePagedClient({
     products: { rows: makeProducts(5) },
     product_variants: { rows: [] },
@@ -607,61 +640,70 @@ test("membership: listing builder throw fails CLOSED without leaking", async () 
   assert.ok(!JSON.stringify(res).includes("BOOM"), "builder error not exposed");
 });
 
-test("membership: malformed listing rows are ignored, never admitted", async () => {
+test("scope: malformed listing rows confer no channel state, and admit nothing", async () => {
   const { client } = fakePagedClient({
     products: { rows: makeProducts(4) },
     product_variants: { rows: [] },
     external_channel_listings: {
-      rows: [null, 42, "p0", { id: "l1" }, { id: "l2", product_id: null }, { id: "l3", product_id: "" }, { id: "l4", product_id: "p2" }],
+      rows: [null, 42, "p0", { id: "l1" }, { id: "l2", product_id: null }, { id: "l3", product_id: "" }, { id: "l4", product_id: "p2", mapping_status: "active" }],
     },
   });
   const res = await loadMasterCatalog(client, { project: PROJECTOR });
-  assert.deepEqual(res.products.map((p) => p.id), ["p2"]);
+  assert.equal(res.products.length, 4, "the product table still drives the list");
+  const state = new Map(res.products.map((p) => [p.id, p.channelState]));
+  assert.equal(state.get("p2"), "SNOONU_ACTIVE", "only the well-formed row counted");
+  for (const id of ["p0", "p1", "p3"]) {
+    assert.equal(state.get(id), "NOT_PUBLISHED_TO_SNOONU", `${id} gained no state from a malformed row`);
+  }
 });
 
-test("membership: a listing pointing at a non-existent product adds no phantom row", async () => {
+test("scope: a listing pointing at a non-existent product adds no phantom row", async () => {
   const { client } = fakePagedClient({
     products: { rows: makeProducts(2) },
     product_variants: { rows: [] },
-    external_channel_listings: { rows: [{ id: "l0", product_id: "p0" }, { id: "l1", product_id: "ghost-id" }] },
+    external_channel_listings: { rows: [{ id: "l0", product_id: "p0", mapping_status: "active" }, { id: "l1", product_id: "ghost-id", mapping_status: "active" }] },
   });
   const res = await loadMasterCatalog(client, { project: PROJECTOR });
-  assert.deepEqual(res.products.map((p) => p.id), ["p0"]);
+  assert.deepEqual(res.products.map((p) => p.id), ["p0", "p1"], "ghost-id invents nothing");
 });
 
-test("membership: duplicate listings for one product do not duplicate the visible row", async () => {
+test("scope: duplicate listings for one product do not duplicate the visible row", async () => {
   const { client } = fakePagedClient({
     products: { rows: makeProducts(3) },
     product_variants: { rows: [] },
-    external_channel_listings: { rows: [{ id: "l0", product_id: "p1" }, { id: "l1", product_id: "p1" }, { id: "l2", product_id: "p1" }] },
+    external_channel_listings: { rows: [{ id: "l0", product_id: "p1", mapping_status: "active" }, { id: "l1", product_id: "p1", mapping_status: "archived" }, { id: "l2", product_id: "p1", mapping_status: "active" }] },
   });
   const res = await loadMasterCatalog(client, { project: PROJECTOR });
-  assert.deepEqual(res.products.map((p) => p.id), ["p1"], "exactly one visible row per product");
+  assert.equal(res.products.filter((p) => p.id === "p1").length, 1, "exactly one visible row per product");
+  assert.equal(res.products.find((p) => p.id === "p1")?.channelState, "SNOONU_ACTIVE", "any active row wins");
 });
 
-test("membership: summary cards, filtering, sorting and pagination all see the scoped set", async () => {
+test("scope: summary cards, filtering, sorting and pagination all see the internal set", async () => {
   const products = makeProducts(30);
-  const memberIds = ["p0", "p1", "p2", "p3", "p4"];
+  const publishedIds = ["p0", "p1", "p2", "p3", "p4"];
   const { client } = fakePagedClient({
     products: { rows: products },
     product_variants: { rows: makeVariants(["p0"]) },
-    external_channel_listings: { rows: memberIds.map((pid, i) => ({ id: `l${i}`, product_id: pid })) },
+    external_channel_listings: { rows: publishedIds.map((pid, i) => ({ id: `l${i}`, product_id: pid, mapping_status: "active" })) },
   });
   const res = await loadMasterCatalog(client, { project: PROJECTOR });
-  assert.equal(res.products.length, 5);
+  assert.equal(res.products.length, 30, "the counter now reflects the internal catalog");
   // Every downstream helper consumes this same array.
-  assert.equal(summarizeCatalog(res.products).totalProducts, 5, "cards scoped");
-  assert.equal(summarizeCatalog(res.products).withVariants, 1, "variant card scoped");
-  assert.equal(sortCatalogProducts(res.products, "sku_asc").length, 5, "sorting scoped");
-  assert.equal(filterCatalogProducts(res.products, { query: "", filter: "all" }).length, 5, "filtering scoped");
-  assert.equal(paginateCatalog(res.products, 1).totalPages, 1, "pagination scoped");
-  // A product outside the master is unreachable by search.
-  assert.equal(filterCatalogProducts(res.products, { query: "SKU-29", filter: "all" }).length, 0);
+  assert.equal(summarizeCatalog(res.products).totalProducts, 30, "cards scoped");
+  assert.equal(summarizeCatalog(res.products).withVariants, 1, "variant card unaffected");
+  assert.equal(sortCatalogProducts(res.products, "sku_asc").length, 30, "sorting scoped");
+  assert.equal(filterCatalogProducts(res.products, { query: "", filter: "all" }).length, 30, "filtering scoped");
+  assert.equal(paginateCatalog(res.products, 1).totalPages, 1, "30 rows fit one 50-row page");
+  assert.equal(paginateCatalog(res.products, 1).items.length, 30, "and all 30 are on it");
+  // A previously invisible product is now reachable by search — the whole point.
+  assert.equal(filterCatalogProducts(res.products, { query: "SKU-29", filter: "all" }).length, 1);
+  assert.equal(res.products.filter((p) => p.channelState === "SNOONU_ACTIVE").length, 5);
+  assert.equal(res.products.filter((p) => p.channelState === "NOT_PUBLISHED_TO_SNOONU").length, 25);
 });
 
-test("membership: listing cap marks the result partial rather than claiming completeness", async () => {
+test("scope: listing cap marks the result partial rather than claiming completeness", async () => {
   const products = makeProducts(3);
-  const many = Array.from({ length: 20001 }, (_, i) => ({ id: `l${i}`, product_id: i === 0 ? "p0" : `x${i}` }));
+  const many = Array.from({ length: 20001 }, (_, i) => ({ id: `l${i}`, product_id: i === 0 ? "p0" : `x${i}`, mapping_status: "active" }));
   const { client } = fakePagedClient({
     products: { rows: products },
     product_variants: { rows: [] },
