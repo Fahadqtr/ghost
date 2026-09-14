@@ -235,6 +235,8 @@ const ALLOWED_KEYS = [
   "variantCount",
   "approvalStatus",
   "completenessStatus",
+  // CAT-B: Snoonu publication STATE — a fixed three-value enum, never an id.
+  "channelState",
 ];
 
 test("the projection is a strict whitelist — nothing else is serialized", () => {
@@ -298,7 +300,14 @@ test("no stock/platform/order/customer field is referenced by the UI at all", ()
       "shopifyVariantId",
       "inventoryItemId",
       "gid://",
-      "snoonu",
+      // CAT-B tightened this list rather than relaxing it: the storefront may now
+      // be NAMED (the publication badge), but no channel IDENTIFIER may appear.
+      "external_product_id",
+      "externalProductId",
+      "external_variant_id",
+      "snoonu_spi",
+      "snoonu_id",
+      "mapping_status",
       "rafeeq",
       "talabat",
       "customer",
@@ -306,6 +315,23 @@ test("no stock/platform/order/customer field is referenced by the UI at all", ()
     ]) {
       assert.ok(!src.toLowerCase().includes(banned.toLowerCase()), `${name} must not reference ${banned}`);
     }
+  }
+});
+
+test("the only Snoonu references in the UI are the fixed publication states", () => {
+  // CAT-B shows a publication badge, so a blanket "never say snoonu" ban no
+  // longer holds. What must still hold is that every occurrence is one of the
+  // three fixed state tokens — never an id, a status column, or free text.
+  const ALLOWED = ["SNOONU_ACTIVE", "SNOONU_INACTIVE", "NOT_PUBLISHED_TO_SNOONU"];
+  for (const [name, raw] of [
+    ["results", RESULTS_SRC],
+    ["catalog", CATALOG_SRC],
+    ["shell", SHELL_SRC],
+  ] as const) {
+    let src = strip(raw);
+    for (const token of ALLOWED) src = src.split(token).join("");
+    assert.ok(!src.toLowerCase().includes("snoonu"),
+      `${name} may reference Snoonu only through the fixed state tokens`);
   }
 });
 

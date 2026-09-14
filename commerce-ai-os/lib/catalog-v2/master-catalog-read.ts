@@ -26,7 +26,11 @@ import "server-only";
 import type { CatalogVariant, MasterCatalogProduct } from "./master-catalog-view";
 
 export interface CatalogProjector {
-  projectCatalogRows(productRows: readonly unknown[], variantRows: readonly unknown[]): MasterCatalogProduct[];
+  projectCatalogRows(
+    productRows: readonly unknown[],
+    variantRows: readonly unknown[],
+    channelStates?: ReadonlyMap<string, SnoonuChannelState>,
+  ): MasterCatalogProduct[];
 }
 
 /** Lazily bind the real pure projector from the relative view module. */
@@ -36,7 +40,11 @@ async function defaultProjector(): Promise<CatalogProjector> {
 }
 
 export interface CatalogDetailProjector {
-  projectCatalogRows(productRows: readonly unknown[], variantRows: readonly unknown[]): MasterCatalogProduct[];
+  projectCatalogRows(
+    productRows: readonly unknown[],
+    variantRows: readonly unknown[],
+    channelStates?: ReadonlyMap<string, SnoonuChannelState>,
+  ): MasterCatalogProduct[];
   projectCatalogVariants(variantRows: readonly unknown[]): CatalogVariant[];
 }
 
@@ -84,16 +92,26 @@ export interface CatalogDetailReadClient {
 
 // ── Explicit column whitelists (no *, no inventory/channel/platform/order) ───
 
-const PRODUCT_COLUMNS = "id, sku, barcode, name_ar, name_en, price, discount_price, image_url, approval";
+const PRODUCT_COLUMNS =
+  "id, sku, barcode, name_ar, name_en, price, discount_price, image_url, approval, lifecycle_state";
 const VARIANT_COLUMNS = "parent_product_id";
 
-// Membership read: `product_id` ONLY. No external id, no mapping metadata.
-const LISTING_COLUMNS = "product_id";
+// Channel-evidence read: `product_id` + `mapping_status` ONLY. Still no external
+// id and no mapping metadata — mapping_status is needed to tell "published then
+// stopped" apart from "never published", which the badge must not conflate.
+const LISTING_COLUMNS = "product_id, mapping_status";
 
 // The storefront/status that define membership live in a shared pure module so
 // this reader and the Home Dashboard cannot drift apart.
 export { CATALOG_MAPPING_STATUS, CATALOG_STOREFRONT_KEY } from "./master-membership.ts";
-import { CATALOG_MAPPING_STATUS, CATALOG_STOREFRONT_KEY } from "./master-membership.ts";
+export type { SnoonuChannelState } from "./master-membership.ts";
+import {
+  CATALOG_MAPPING_STATUS,
+  CATALOG_STOREFRONT_KEY,
+  isInternalCatalogProduct,
+  snoonuChannelState,
+  type SnoonuChannelState,
+} from "./master-membership.ts";
 
 /** Fixed page size. Kept at/below the PostgREST default max-rows so no single
  *  response is silently truncated. Pagination reads every page until the source
@@ -183,27 +201,39 @@ async function readAllPages(
 }
 
 /**
- * Collect the set of product ids that are members of the active Snoonu Malikas
- * master. Only non-empty string `product_id` values count; anything malformed is
- * ignored rather than admitted.
+ * Fold the Snoonu listing rows into a per-product publication state. A product
+ * with ANY snoonu:malikas row but none active is SNOONU_INACTIVE; one with no row
+ * at all is NOT_PUBLISHED_TO_SNOONU. Only non-empty string `product_id` values
+ * count; anything malformed is ignored rather than admitted. No external id is
+ * read, so nothing here can leak or invent a marketplace identity.
  */
-function membershipIds(rows: readonly unknown[]): Set<string> {
-  const ids = new Set<string>();
+function channelStates(rows: readonly unknown[]): Map<string, SnoonuChannelState> {
+  const active = new Set<string>();
+  const any = new Set<string>();
   for (const row of rows) {
     if (!isPlainObject(row)) continue;
     const pid = row.product_id;
-    if (typeof pid === "string" && pid.length > 0) ids.add(pid);
+    if (typeof pid !== "string" || pid.length === 0) continue;
+    any.add(pid);
+    if (row.mapping_status === CATALOG_MAPPING_STATUS) active.add(pid);
   }
-  return ids;
+  const out = new Map<string, SnoonuChannelState>();
+  for (const pid of any) out.set(pid, snoonuChannelState(active.has(pid), true));
+  return out;
 }
 
-/** Keep only product rows whose `id` is in the membership set. */
-function scopeToMembership(rows: readonly unknown[], ids: ReadonlySet<string>): unknown[] {
+/**
+ * Keep the rows that belong in the INTERNAL catalog. The decision is made from
+ * internal product truth (sku shape + lifecycle) by the pure rule — never from
+ * channel membership, so an unpublished product is listed like any other.
+ */
+function scopeToInternalCatalog(rows: readonly unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const row of rows) {
     if (!isPlainObject(row)) continue;
-    const id = row.id;
-    if (typeof id === "string" && ids.has(id)) out.push(row);
+    if (typeof row.id !== "string" || row.id.length === 0) continue;
+    if (!isInternalCatalogProduct(row.sku, row.lifecycle_state)) continue;
+    out.push(row);
   }
   return out;
 }
@@ -236,10 +266,9 @@ export async function loadMasterCatalog(
     LISTING_COLUMNS,
     LISTING_ORDER,
     LISTING_CAP,
-    [
-      ["storefront_key", CATALOG_STOREFRONT_KEY],
-      ["mapping_status", CATALOG_MAPPING_STATUS],
-    ],
+    // Every snoonu:malikas row, whatever its mapping_status — the status is now
+    // classified per product rather than used to filter the read.
+    [["storefront_key", CATALOG_STOREFRONT_KEY]],
   );
   if (!listingRead.ok) {
     return { status: "error", products: [], partial: false };
@@ -252,8 +281,12 @@ export async function loadMasterCatalog(
 
   const variantRead = await readAllPages(client, "product_variants", VARIANT_COLUMNS, VARIANT_ORDER, VARIANT_CAP);
 
-  const scopedRows = scopeToMembership(productRead.rows, membershipIds(listingRead.rows));
-  const products = projector.projectCatalogRows(scopedRows, variantRead.ok ? variantRead.rows : []);
+  const scopedRows = scopeToInternalCatalog(productRead.rows);
+  const products = projector.projectCatalogRows(
+    scopedRows,
+    variantRead.ok ? variantRead.rows : [],
+    channelStates(listingRead.rows),
+  );
   const partial = productRead.capped || listingRead.capped || !variantRead.ok || variantRead.capped;
 
   return { status: "ok", products, partial };
