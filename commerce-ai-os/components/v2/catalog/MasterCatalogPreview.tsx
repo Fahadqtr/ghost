@@ -20,6 +20,7 @@ import {
   getPreviewApprovalLabel,
   getPreviewItemDisplayName,
   type MasterCatalogPreviewItem,
+  getPreviewChannelLabel,
 } from "@/lib/catalog-v2/master-catalog-view";
 import { CatalogPreviewDialog, ImagePlaceholder, PreviewField } from "@/components/v2/catalog/CatalogPreviewDialog";
 
@@ -87,6 +88,28 @@ function ApprovalBadge({ item }: { item: MasterCatalogPreviewItem }) {
   );
 }
 
+/**
+ * Snoonu publication state. This is channel EVIDENCE only: the catalog lists a
+ * product whatever this badge says, and the badge never shows (or implies) an
+ * external marketplace id. "Never published" is kept visually distinct from
+ * "published then stopped" — they are different operational facts.
+ */
+function ChannelBadge({ item }: { item: MasterCatalogPreviewItem }) {
+  const tone =
+    item.channelState === "SNOONU_ACTIVE"
+      ? "bg-sky-50 text-sky-700"
+      : item.channelState === "SNOONU_INACTIVE"
+        ? "bg-slate-100 text-slate-600"
+        : "bg-violet-50 text-violet-700";
+  return (
+    <span
+      className={"inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium " + tone}
+    >
+      {getPreviewChannelLabel(item)}
+    </span>
+  );
+}
+
 // ── Product preview dialog ───────────────────────────────────────────────────
 
 function PreviewDialog({ item, onClose }: { item: MasterCatalogPreviewItem; onClose: () => void }) {
@@ -118,6 +141,7 @@ function PreviewDialog({ item, onClose }: { item: MasterCatalogPreviewItem; onCl
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <ApprovalBadge item={item} />
+                  <ChannelBadge item={item} />
         <CompletenessBadge item={item} />
       </div>
     </CatalogPreviewDialog>
@@ -190,6 +214,7 @@ export default function MasterCatalogResults({ items }: { items: MasterCatalogPr
                 <td className="px-4 py-3 text-muted">{item.variantCount}</td>
                 <td className="px-4 py-3">
                   <ApprovalBadge item={item} />
+                  <ChannelBadge item={item} />
                 </td>
                 <td className="px-4 py-3">
                   <CompletenessBadge item={item} />
@@ -227,6 +252,7 @@ export default function MasterCatalogResults({ items }: { items: MasterCatalogPr
                   <PriceCell item={item} />
                 </div>
                 <ApprovalBadge item={item} />
+                  <ChannelBadge item={item} />
               </div>
             </div>
           </button>
