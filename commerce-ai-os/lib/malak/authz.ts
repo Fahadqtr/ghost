@@ -4,30 +4,24 @@
 // lock writes out; extra writers come from MALAK_WRITER_EMAILS (comma-separated).
 import { createClient } from "@/lib/supabase/server";
 import { decideOwner, OWNER_ONLY_DENIED, type OwnerDecision } from "./owner-check";
+import { decideWriter, type WriterDecision } from "./writer-check";
 
 const OWNER_EMAIL = "clanqtr@gmail.com";
 
-function writerSet(): Set<string> {
-  const extra = (process.env.MALAK_WRITER_EMAILS || "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return new Set([OWNER_EMAIL, ...extra]);
-}
+export type WriterCheck = WriterDecision;
 
-export type WriterCheck =
-  | { ok: true; email: string }
-  | { ok: false; status: 401 | 403; error: string };
+// Re-export the writer denials so callers import them from the auth module.
+export { WRITER_NOT_SIGNED_IN, WRITER_READ_ONLY_DENIED } from "./writer-check";
 
-// Verify the caller is signed in AND on the writer allow-list.
+/**
+ * Verify the caller is signed in AND on the writer allow-list. The decision
+ * itself is the pure, unit-tested decideWriter(); this wrapper only supplies the
+ * server-side session and the MALAK_WRITER_EMAILS env value. Behaviour is
+ * unchanged from the previous inline implementation.
+ */
 export async function requireMalakWriter(): Promise<WriterCheck> {
   const { data: { user } } = await createClient().auth.getUser();
-  if (!user) return { ok: false, status: 401, error: "غير مسجّل الدخول." };
-  const email = (user.email ?? "").toLowerCase();
-  if (!email || !writerSet().has(email)) {
-    return { ok: false, status: 403, error: "ما عندك صلاحية التعديل عبر ملاك — للقراءة فقط." };
-  }
-  return { ok: true, email };
+  return decideWriter(!!user, user?.email ?? null, OWNER_EMAIL, process.env.MALAK_WRITER_EMAILS);
 }
 
 export type OwnerCheck = OwnerDecision;

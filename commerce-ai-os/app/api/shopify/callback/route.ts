@@ -1,10 +1,18 @@
 // Completes the Shopify OAuth grant: verifies our state cookie + Shopify's
 // HMAC signature, pins the shop to the configured store, exchanges the code
 // for the permanent offline Admin token and stores it in shopify_tokens.
+//
+// D-4A2 — OWNER-ONLY, and it must stay that way. The final step writes a
+// PERMANENT Shopify Admin API credential into shopify_tokens on the
+// SERVICE-ROLE client, so RLS constrains nothing here and the gate is the only
+// boundary. Under the previous signed-in-only check any authenticated account
+// that could complete a grant could replace the store's Admin token. The state
+// cookie + HMAC checks authenticate SHOPIFY, never the caller — they are not a
+// substitute for this gate. requireOwner() carries its own 401/403 status.
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireOwner } from "@/lib/malak/authz";
 import { verifyShopifyHmac, isExpectedShop } from "@/lib/shopify/oauth-compute";
 import { invalidateShopifyTokenCache } from "@/lib/shopify/admin";
 
@@ -12,7 +20,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  if (!(await isSignedIn())) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  const owner = await requireOwner();
+  if (!owner.ok) return Response.json({ ok: false, error: owner.error }, { status: owner.status });
 
   const url = new URL(req.url);
   const params: Record<string, string> = {};
