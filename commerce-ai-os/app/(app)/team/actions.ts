@@ -1,8 +1,21 @@
 "use server";
 
+// D-4A1 — every action here is OWNER-ONLY, and must stay that way.
+//
+// These actions mint and revoke the credentials of a WHOLE SEPARATE identity
+// system: a staff_members row carries a PIN that signs its holder into /staff
+// (stock in/out) plus a permissions list, and none of it is Supabase Auth. They
+// also run on the SERVICE-ROLE client, which bypasses RLS entirely — so no
+// database grant, policy or ACC-02 grant cleanup can constrain them. The gate in
+// this file is therefore the ONLY thing standing between a signed-in account and
+// the ability to issue itself a staff code it chooses.
+//
+// They previously used requireUser() (any signed-in account). Do not downgrade
+// them back: requireOwnerGate() has the identical { error } | null contract, so
+// a weaker gate would compile and silently reopen the escalation path.
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireUser } from "@/lib/auth/requireUser";
+import { requireOwnerGate } from "@/lib/auth/requireUser";
 import { hashPin, isLegacyPlaintextPin } from "@/lib/staff/pin";
 import { parsePermissions, type StaffPermission } from "@/lib/staff/permissions";
 
@@ -26,8 +39,8 @@ const NO_DB = "الخادم غير مهيأ (SUPABASE_SERVICE_ROLE_KEY غير م
 // Lists employees. `ready=false` means the staff_members table isn't created yet
 // (run supabase/staff_members.sql once) — the page shows a one-time setup note.
 export async function listStaff(): Promise<{ members: StaffMember[]; ready: boolean; error?: string }> {
-  const unauth = await requireUser();
-  if (unauth) return { members: [], ready: true, error: unauth.error };
+  const denied = await requireOwnerGate();
+  if (denied) return { members: [], ready: true, error: denied.error };
   const admin = adminClient();
   if (!admin) return { members: [], ready: true, error: NO_DB };
   // select("*") so a missing permissions column (pre-migration) doesn't fail.
@@ -63,8 +76,8 @@ export async function listStaff(): Promise<{ members: StaffMember[]; ready: bool
 // Set the granted capabilities for one employee. Takes effect on their /staff
 // page immediately (permissions are re-read live per action).
 export async function setStaffPermissions(id: string, permissions: string[]) {
-  const unauth = await requireUser();
-  if (unauth) return unauth;
+  const denied = await requireOwnerGate();
+  if (denied) return denied;
   const clean = parsePermissions(permissions);
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
@@ -80,8 +93,8 @@ export async function setStaffPermissions(id: string, permissions: string[]) {
 }
 
 export async function addStaff(name: string, pin: string) {
-  const unauth = await requireUser();
-  if (unauth) return unauth;
+  const denied = await requireOwnerGate();
+  if (denied) return denied;
   const nm = String(name || "").trim().slice(0, 40);
   const code = String(pin || "").trim();
   if (!nm) return { error: "اكتب اسم الموظف." };
@@ -101,8 +114,8 @@ export async function addStaff(name: string, pin: string) {
 // Set a new code for an existing employee. The manager sees it once (in the
 // caller's flash message); only the hash is stored.
 export async function resetStaffPin(id: string, pin: string) {
-  const unauth = await requireUser();
-  if (unauth) return unauth;
+  const denied = await requireOwnerGate();
+  if (denied) return denied;
   const code = String(pin || "").trim();
   if (!/^\d{4,8}$/.test(code)) return { error: "الرمز لازم 4–8 أرقام." };
   const admin = adminClient();
@@ -117,8 +130,8 @@ export async function resetStaffPin(id: string, pin: string) {
 }
 
 export async function setStaffActive(id: string, active: boolean) {
-  const unauth = await requireUser();
-  if (unauth) return unauth;
+  const denied = await requireOwnerGate();
+  if (denied) return denied;
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
   const { error } = await admin.from("staff_members").update({ active }).eq("id", id);
@@ -128,8 +141,8 @@ export async function setStaffActive(id: string, active: boolean) {
 }
 
 export async function deleteStaff(id: string) {
-  const unauth = await requireUser();
-  if (unauth) return unauth;
+  const denied = await requireOwnerGate();
+  if (denied) return denied;
   const admin = adminClient();
   if (!admin) return { error: NO_DB };
   const { error } = await admin.from("staff_members").delete().eq("id", id);
