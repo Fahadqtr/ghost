@@ -1,0 +1,52 @@
+TABLE,ROW_COUNT,RLS_ENABLED,FORCE_RLS,AUTH_GRANT_SELECT,AUTH_GRANT_INSERT,AUTH_GRANT_UPDATE,AUTH_GRANT_DELETE,POLICY,EFFECTIVE_AUTH_WRITE,SENSITIVITY,WRITTEN_BY_AUTHENTICATED_ROLE_CODE,FIX_GROUP
+products,1530,true,false,YES,YES,YES,YES,authenticated_all_products [ALL] + products_authenticated_all [ALL] both using=true check=true,INSERT|UPDATE|DELETE,HIGH,"YES - enrich/actions.ts UPDATE; health/actions.ts DELETE; platforms/actions.ts UPDATE",F
+product_images,2644,true,false,YES,YES,YES,YES,authenticated_all_product_images [ALL] using=true check=true,INSERT|UPDATE|DELETE,MEDIUM,NO (admin client),B
+channel_products,5596,true,false,YES,YES,YES,YES,authenticated_all_channel_products [ALL] using=true check=true,INSERT|UPDATE|DELETE,HIGH,YES - channels/actions.ts INSERT,F
+platform_status,6120,true,false,YES,YES,YES,YES,platform_status_all [ALL] using=true check=true,INSERT|UPDATE|DELETE,MEDIUM,"YES - availability-actions.ts UPSERT; platforms/actions.ts UPSERT",F
+platform_snapshots,7797,true,false,YES,YES,YES,YES,platform_snapshots_insert [INSERT] check=true + platform_snapshots_select [SELECT] using=true,INSERT only,LOW,NO,D
+staff_tasks,1580,true,false,YES,YES,YES,YES,staff_tasks owner full access [ALL] using=true check=true,INSERT|UPDATE|DELETE,MEDIUM,NO (admin client),F
+malak_audit,1188,true,false,YES,YES,YES,YES,malak_audit_auth_all [ALL] using=true check=true,INSERT|UPDATE|DELETE,HIGH,NO,EXCLUDED-ACC-04
+product_archive,395,true,false,YES,YES,YES,YES,product_archive owner full access [ALL] using=true check=true,INSERT|UPDATE|DELETE,MEDIUM,NO (admin client),B
+brands,38,true,false,YES,YES,YES,YES,authenticated_all_brands [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,NO,B
+shelf_slots,33,true,false,YES,YES,YES,YES,shelf_slots_rw [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,NO,C
+product_categories,17,true,false,YES,YES,YES,YES,authenticated_all_product_categories [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,NO,B
+export_runs,10,true,false,YES,YES,YES,YES,export_runs_insert [INSERT] check=true + export_runs_select [SELECT] using=true,INSERT only,LOW,NO,D
+pure_seoul_status,8,true,false,YES,YES,YES,YES,ps_status_all [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,NO,C
+channels,5,true,false,YES,YES,YES,YES,authenticated_all_channels [ALL] using=true check=true,INSERT|UPDATE|DELETE,MEDIUM,NO,B
+agent_logs,1,true,false,YES,YES,YES,YES,authenticated_all_agent_logs [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,YES - agents/actions.ts INSERT,F
+customers,0,true,false,YES,YES,YES,YES,authenticated_all_customers [ALL] using=true check=true,INSERT|UPDATE|DELETE,HIGH (schema: name/phone/email) - EMPTY today,NO,A
+orders,0,true,false,YES,YES,YES,YES,authenticated_all_orders [ALL] using=true check=true,INSERT|UPDATE|DELETE,HIGH (schema: customer_id/total/status) - EMPTY today,NO,A
+expenses,0,true,false,YES,YES,YES,YES,authenticated_all_expenses [ALL] using=true check=true,INSERT|UPDATE|DELETE,HIGH (schema: category/amount/note) - EMPTY today,NO,A
+import_batches,0,true,false,YES,YES,YES,YES,authenticated_all_import_batches [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,NO,C
+marketing_posts,0,true,false,YES,YES,YES,YES,authenticated_all_marketing_posts [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,NO,C
+tasks,0,true,false,YES,YES,YES,YES,authenticated_all_tasks [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,NO,C
+task_comments,0,true,false,YES,YES,YES,YES,task_comments owner full access [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,NO,C
+task_routines,0,true,false,YES,YES,YES,YES,task_routines owner full access [ALL] using=true check=true,INSERT|UPDATE|DELETE,LOW,NO,C
+--- BELOW: grants present but NO write policy = writes already DENIED (no change needed) ---
+app_settings,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,HIGH,NO,E
+shopify_tokens,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,CRITICAL,NO,E
+staff_members,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,HIGH,NO,E
+loyalty_customers,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,HIGH,NO,E
+loyalty_submissions,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,MEDIUM,NO,E
+loyalty_prizes,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,LOW,NO,E
+rafeeq_email_deliveries,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,MEDIUM,NO,E
+talabat_email_deliveries,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,MEDIUM,NO,E
+rafeeq_package_jobs,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,LOW,NO,E
+talabat_package_jobs,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,LOW,NO,E
+talabat_queue,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,LOW,NO,E
+shopify_synced_orders,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,MEDIUM,NO,E
+snoonu_sync_audits,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,LOW,NO,E
+social_posts,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,LOW,NO,E
+push_subscriptions,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,LOW,NO,E
+kpi_snapshots,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,LOW,NO,E
+dm_conversations,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,MEDIUM,NO,E
+dm_messages,n/a,true,false,YES,YES,YES,YES,(no policy - RLS denies all),NONE,MEDIUM,NO,E
+external_channel_listings,n/a,true,false,YES,YES,YES,YES,ecl_select [SELECT] only,NONE,HIGH,NO,E
+channel_variant_mappings,n/a,true,false,YES,YES,YES,YES,channel_variant_mappings_select [SELECT] only,NONE,MEDIUM,NO,E
+compliance_log,n/a,true,false,YES,YES,YES,YES,compliance_log_read_authenticated [SELECT] only,NONE,LOW,NO,E
+compliance_rules,n/a,true,false,YES,YES,YES,YES,compliance_rules_read_authenticated [SELECT] only,NONE,LOW,NO,E
+loop_log,n/a,true,false,YES,YES,YES,YES,loop_log_read_authenticated [SELECT] only,NONE,LOW,NO,E
+loop_state,n/a,true,false,YES,YES,YES,YES,loop_state_read_authenticated [SELECT] only,NONE,LOW,NO,E
+rafeeq_packages,n/a,true,false,YES,YES,YES,YES,rafeeq_packages_select [SELECT] only,NONE,LOW,NO,E
+rafeeq_package_items,n/a,true,false,YES,YES,YES,YES,rafeeq_package_items_select [SELECT] only,NONE,LOW,NO,E
+talabat_orders,n/a,true,false,YES,YES,YES,YES,talabat_orders_select [SELECT] only,NONE,MEDIUM,NO,E
