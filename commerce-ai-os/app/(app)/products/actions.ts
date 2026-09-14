@@ -23,9 +23,14 @@ export type { ProductInput, VariantInput } from "@/lib/products/product-save";
 
 // Quick approve/reject from the list or dashboard (no full form). Empty -> null.
 // Optional reason (written to rejection_reason) records WHY.
+// D-4A2 — approval IS a catalog mutation, which lib/malak/authz.ts defines as the
+// writer boundary ("price/stock/approval/add/image/sync"). It was the only
+// approval path still on the signed-in-only guard, and it drives downstream
+// publication tasks, so it is raised to the same writer gate setProductStatus
+// already uses. Owner keeps access — the owner is always in the writer set.
 const APPROVAL_OPTS = new Set(["Approved", "Rejected", "SentAI", ""]);
 export async function setProductApproval(id: string, approval: string, reason?: string) {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { error: writer.error }; }
   if (!id) return { error: "Missing product id." };
   if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".` };
   const supabase = createClient();
@@ -99,8 +104,11 @@ export async function setProductStatus(id: string, status: string): Promise<{ ok
 
 // Bulk approve/reject (e.g. reject everything Snoonu marked unavailable).
 // Optional `reason` records WHY (written to notes), e.g. "بسبب الصورة".
+// D-4A2 — same writer boundary as setProductApproval, and this one applies it to
+// an unbounded id list in 200-row chunks, so the blast radius of the weaker gate
+// was the whole catalog's approval state in a single call.
 export async function setProductsApproval(ids: string[], approval: string, reason?: string) {
-  if (!(await isSignedIn())) return { error: "Not signed in.", updated: 0 };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { error: writer.error, updated: 0 }; }
   const list = (ids ?? []).filter(Boolean);
   if (list.length === 0) return { error: "No products selected.", updated: 0 };
   if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".`, updated: 0 };

@@ -133,8 +133,14 @@ export async function publishSocialPost(id: string, caption: string): Promise<{ 
   return { ok: true, story };
 }
 
+// D-4A2 — dismiss is the third verb of the planned-post decision triad, and the
+// other two (approveSocialPost / rescheduleSocialPost) are already owner-gated.
+// Dismissing is what stops a queued post from auto-publishing, so leaving it on
+// the signed-in-only guard let any authenticated account silently suppress the
+// social calendar that only the owner may approve or move.
 export async function dismissSocialPost(id: string): Promise<{ ok?: true; error?: string }> {
-  if (!(await isSignedIn())) return { error: "Not signed in." };
+  const owner = await requireOwner();
+  if (!owner.ok) return { error: owner.error };
   const sb = admin();
   if (!sb) return { error: NO_DB };
   await sb.from("social_posts").update({ status: "dismissed" }).eq("id", id);

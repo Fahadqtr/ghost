@@ -3,6 +3,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
 import { isSignedIn } from "@/lib/auth/requireUser";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
 import { CATEGORIES } from "@/lib/constants";
 import { buildEnrichPrompt, parseEnrichResult, missingFields, type EnrichInput } from "@/lib/products/enrich-compute";
@@ -77,9 +78,13 @@ export interface EnrichOutcome {
  * English), verify Arabic⇄English and the photo. By default only writes fields
  * that were empty; pass overwrite to refresh existing ones too.
  */
+// D-4A2 — this action WRITES name_ar / description_ar / main_category back onto
+// products, so despite the "enrich" framing it is a catalog mutation and belongs
+// on the writer boundary, not the signed-in-only guard. listEnrichTargets above
+// is a pure read and deliberately stays open to any signed-in session.
 export async function enrichProduct(id: string, overwrite = false): Promise<EnrichOutcome> {
   const base: EnrichOutcome = { ok: false, filled: [], arMatchesEn: null, imageMatches: null, notes: "" };
-  if (!(await isSignedIn())) return { ...base, error: "Not signed in." };
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { ...base, error: writer.error }; }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { ...base, error: "ميزة الذكاء غير مفعّلة (ANTHROPIC_API_KEY)." };
 
