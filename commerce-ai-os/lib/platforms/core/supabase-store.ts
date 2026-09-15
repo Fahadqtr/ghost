@@ -1,11 +1,19 @@
 import "server-only";
 // Malikas V2 — Platform Snapshot Engine (Phase UI.9.3): Supabase adapter.
 //
-// Implements the SnapshotStore port (PR #532) on the `platform_snapshots` table
-// via the SESSION client (RLS: authenticated select+insert). READ + INSERT only
-// — never update/delete (snapshots are immutable) and NEVER any product /
-// inventory / platform_status write. No service role, no RPC. Any read failure
+// Implements the SnapshotStore port (PR #532) on the `platform_snapshots` table.
+// READ + INSERT only — never update/delete (snapshots are immutable) and NEVER
+// any product / inventory / platform_status write. No RPC. Any read failure
 // degrades to "no data" (→ Unknown), never "missing".
+//
+// ACC-02B batch 3 — the client handed in is now the SERVICE-ROLE client, not the
+// session client. The old note said "via the SESSION client (RLS: authenticated
+// select+insert)", and that RLS was a real INSERT policy — but it was
+// WITH CHECK (true) for every authenticated account, so it authorized nothing
+// beyond "is signed in". The four capture actions each run requireOwner() BEFORE
+// constructing the client, which is the actual boundary; `authenticated` now has
+// no INSERT grant on platform_snapshots at all. This store is unchanged
+// otherwise: same columns, same chunking, same immutability.
 
 import type { PlatformSnapshot } from "./types.ts";
 import type { SnapshotStore, SnapshotQuery } from "./storage.ts";

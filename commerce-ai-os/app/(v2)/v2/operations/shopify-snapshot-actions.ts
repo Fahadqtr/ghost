@@ -10,7 +10,7 @@
 // message — never a raw DB/Shopify error, token, or domain.
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOwner } from "@/lib/malak/authz";
 import { captureShopifySnapshots, type CaptureShopifyResult } from "@/lib/platforms/shopify/snapshot-capture";
 
@@ -27,7 +27,11 @@ export async function captureShopifySnapshotsAction(): Promise<CaptureShopifyRes
   const owner = await requireOwner();
   if (!owner.ok) return { ...base, error: owner.error };
 
-  const client = createClient();
+  // ACC-02B batch 3 — the Snapshot Engine writes on the SERVICE ROLE. The owner
+  // gate above has already run, so a denied call never constructs this client.
+  // Previously the session client carried the insert, which required an
+  // `authenticated` INSERT grant on platform_snapshots; that grant is now gone.
+  const client = createAdminClient();
   const result = await captureShopifySnapshots(client as never, new Date().toISOString());
   if (result.ok && !result.skipped) revalidatePath("/v2/operations");
   return result;
