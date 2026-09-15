@@ -90,10 +90,18 @@ for (const c of CALLERS) {
   });
 }
 
-test("V2 Create + V2 Import write product METADATA through the SESSION client (RLS)", () => {
+// ACC-02B batch 2 — this invariant was INVERTED on purpose. It used to require
+// the SESSION client for product metadata "so RLS applies". The policy it relied
+// on was FOR ALL TO authenticated USING (true) WITH CHECK (true), which
+// constrained nothing; the writer gate in each action was always the real
+// boundary. `authenticated` now holds no products write grant, so the session
+// client CANNOT perform these writes — the admin client is required, and the
+// assertions below pin that instead.
+test("V2 Create + V2 Import write product METADATA through the ADMIN client (ACC-02B)", () => {
   for (const c of CALLERS.filter((x) => x.sessionMetadata)) {
     const src = read(c.file);
-    assert.ok(/createProductCore\(supabase,/.test(src), `${c.label} injects the session client for metadata`);
+    assert.ok(/createProductCore\(admin,/.test(src), `${c.label} injects the admin client for metadata`);
+    assert.equal(/createProductCore\(supabase,/.test(src), false, `${c.label} must not inject the session client`);
   }
 });
 

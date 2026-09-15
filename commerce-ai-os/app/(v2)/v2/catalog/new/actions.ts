@@ -298,7 +298,9 @@ export async function createAiProduct(
     return { error: removed ? CREATE_MESSAGES.invalid_input : CREATE_MESSAGES.image_cleanup_failed };
   }
 
-  const core = await createProductCore(supabase, row, projectVariantInsertRows(variants), makeInventoryInitializer(admin));
+  // ACC-02B batch 2 — the product + variant insert moved to the service role;
+  // the writer gate at the top of this action has already run.
+  const core = await createProductCore(admin, row, projectVariantInsertRows(variants), makeInventoryInitializer(admin));
   if (!core.ok) {
     const removed = await removeImage();
     if (core.cleanup === "failed") return { error: CREATE_MESSAGES.cleanup_failed };
@@ -315,9 +317,10 @@ export async function createAiProduct(
   // is the authoritative primary (the media reducer synthesizes a primary from it
   // when no gallery row exists), so a failure here leaves a fully-valid product —
   // it is logged (filename only, never the URL or the raw error) and the create
-  // still succeeds. Session client (RLS), same as the product/variant writes.
+  // still succeeds. ACC-02B batch 2 — service role, same as the product/variant
+  // writes above; the writer gate has already run.
   try {
-    const { error: galleryErr } = await supabase
+    const { error: galleryErr } = await admin
       .from("product_images")
       .insert({ product_id: core.productId, url: imageUrl, filename, is_primary: true, sort_order: 0 });
     if (galleryErr) console.error("[ai-product-creator] gallery row insert failed:", filename);

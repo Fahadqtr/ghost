@@ -13,7 +13,6 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { updateProductCore, type ProductInput } from "@/lib/products/product-save";
@@ -41,15 +40,19 @@ export async function saveProductEdit(
   if (!validation.ok) return { error: validation.message };
 
   // Product metadata + the SECURITY INVOKER variant RPC run on the SESSION client
-  // (RLS applies). Numeric inventory quantities go ONLY through the service-role
-  // Inventory Engine, injected as a narrow adapter built AFTER the auth gate — the
-  // admin client is never used for the product metadata write and never leaves here.
-  const supabase = createClient();
+  // Numeric inventory quantities go ONLY through the service-role Inventory
+  // Engine, injected as a narrow adapter built AFTER the auth gate.
+  //
+  // ACC-02B batch 2 — the product metadata write moved from the session client to
+  // the service role. The old note said "RLS applies", but the policy it relied on
+  // was FOR ALL TO authenticated USING (true) WITH CHECK (true) — it constrained
+  // nothing. The writer gate above is, and always was, the real boundary; now that
+  // `authenticated` has no products write grant, the session client could not
+  // perform this write at all.
   const admin = createAdminClient();
-  const core = await updateProductCore(supabase, validId, input, {
+  const core = await updateProductCore(admin, validId, input, {
     inventory: createInventoryAdapter(admin),
-    // INV.6B — the atomic variant-sync RPC is admin-only (service-role) after the
-    // lockdown, so it runs on the admin client; product metadata stays on `supabase`.
+    // INV.6B — the atomic variant-sync RPC is admin-only (service-role).
     variantSyncClient: admin,
   });
   if (!core.ok) return { error: editFailureMessage(core) };

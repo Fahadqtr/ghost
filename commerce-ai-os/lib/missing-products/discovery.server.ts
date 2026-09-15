@@ -363,7 +363,7 @@ export async function importExternalOnly(req: ImportRequest): Promise<ApplyResul
         tally(summary, "STALE");
         continue;
       }
-      const one = await importOneProduct(session as never, admin as never, candidate, {
+      const one = await importOneProduct(admin as never, candidate, {
         category,
         subCategory: req.subCategory ?? "",
         existingSkus,

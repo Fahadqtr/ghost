@@ -89,7 +89,9 @@ test("V2 Create + Import still use createProductCore with the session client", (
     // new uses createProductCore; edit uses updateProductCore — both must not touch the batch core.
     assert.equal(/createProductsBatchCore/.test(read(rel)), false, `${rel} does not use the batch core`);
   }
-  assert.ok(/createProductCore\(supabase,/.test(read("app/(v2)/v2/catalog/new/actions.ts")), "V2 create injects the session client");
+  // ACC-02B batch 2 — the core now receives the ADMIN client (see the note in
+  // inv-6b-strict-enforcement-guard.test.ts).
+  assert.ok(/createProductCore\(admin,/.test(read("app/(v2)/v2/catalog/new/actions.ts")), "V2 create injects the admin client");
 });
 
 test("Archive restore stays exempt (no create core); Staff spine converged onto the SINGLE core (not batch)", () => {

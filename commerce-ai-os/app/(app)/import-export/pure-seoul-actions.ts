@@ -26,7 +26,9 @@ export async function setPureSeoulApproval(ids: string[], approval: string, reas
   if (!writer.ok) return { error: writer.error, updated: 0 };
   const list = (ids ?? []).filter(Boolean);
   if (list.length === 0) return { error: "ما في منتجات محدّدة.", updated: 0 };
-  const sb = createClient();
+  // ACC-02B batch 2 — service-role for the mutation; the writer gate above has
+  // already run, so `authenticated` needs no write grant on this table.
+  const sb = createAdminClient();
   const now = new Date().toISOString();
   const rows = list.map((product_id) => ({
     product_id,
@@ -60,7 +62,9 @@ export async function applyPureSeoulAvailability(outIds: string[], inIds: string
   // INT.1 — mutating action: writer-gated (was login-only). Behavior unchanged.
   const writer = await requireMalakWriter();
   if (!writer.ok) return { error: writer.error, outOfStock: 0, inStock: 0 };
-  const sb = createClient();
+  // ACC-02B batch 2 — service-role for the mutation; the writer gate above has
+  // already run, so `authenticated` needs no write grant on this table.
+  const sb = createAdminClient();
   const now = new Date().toISOString();
   const mk = (ids: string[], availability: string) =>
     [...new Set((ids ?? []).filter(Boolean))].map((product_id) => ({ product_id, platform: PS, availability, updated_at: now }));

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { PLATFORMS } from "@/lib/constants";
 import { shopifyConfigured, fetchAllShopifyProducts, fetchPrimaryLocationId, setInventoryQuantities, pushVariantInventoryToShopify } from "@/lib/shopify/admin";
@@ -67,7 +68,9 @@ export async function applyReconciledAvailability(
   // INT.1 — mutating action: writer-gated (was login-only). Behavior unchanged.
   const writer = await requireMalakWriter();
   if (!writer.ok) return { error: writer.error, platforms: 0, outOfStock: 0, inStock: 0 };
-  const sb = createClient();
+  // ACC-02B batch 2 — service-role for the mutation; the writer gate above has
+  // already run, so `authenticated` needs no write grant on this table.
+  const sb = createAdminClient();
 
   const out = [...new Set((outIds ?? []).filter(Boolean))];
   const inn = [...new Set((inIds ?? []).filter(Boolean))];
@@ -106,7 +109,9 @@ export async function applyReconciledToShopify(
   // INT.1 — mutating action: writer-gated (was login-only). Behavior unchanged.
   const writer = await requireMalakWriter();
   if (!writer.ok) return { error: writer.error, channelRows: 0, shopify: { configured: false } };
-  const sb = createClient();
+  // ACC-02B batch 2 — service-role for the mutation; the writer gate above has
+  // already run, so `authenticated` needs no write grant on this table.
+  const sb = createAdminClient();
 
   const skus = [...new Set((outSkus ?? []).filter(Boolean))];
   if (skus.length === 0) return { error: "ما في SKU نافدة.", channelRows: 0, shopify: { configured: false } };

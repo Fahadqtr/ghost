@@ -2,6 +2,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { isSignedIn } from "@/lib/auth/requireUser";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { assertSafeImageUrl } from "@/lib/net/safeImage";
@@ -88,7 +89,8 @@ export async function enrichProduct(id: string, overwrite = false): Promise<Enri
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { ...base, error: "ميزة الذكاء غير مفعّلة (ANTHROPIC_API_KEY)." };
 
-  const supabase = createClient();
+  // ACC-02B batch 2 — service-role; the writer gate above has already run.
+  const supabase = createAdminClient();
   const { data: p, error } = await supabase
     .from("products")
     .select("id, name_en, name_ar, description_en, description_ar, main_category, image_url")

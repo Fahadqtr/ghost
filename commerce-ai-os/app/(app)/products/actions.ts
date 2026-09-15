@@ -33,7 +33,9 @@ export async function setProductApproval(id: string, approval: string, reason?: 
   { const writer = await requireMalakWriter(); if (!writer.ok) return { error: writer.error }; }
   if (!id) return { error: "Missing product id." };
   if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".` };
-  const supabase = createClient();
+  // ACC-02B batch 2 — the writer gate above has already run; the mutation itself
+  // moves to the service role so `authenticated` needs no products write grant.
+  const supabase = createAdminClient();
   const patch: Record<string, unknown> = { approval: approval === "" ? null : approval };
   if (reason !== undefined) patch.rejection_reason = reason.trim() || null;
   // Full row: an APPROVAL task must carry everything the employee copies into
@@ -94,7 +96,8 @@ export async function setProductStatus(id: string, status: string): Promise<{ ok
   }
 
   // Legacy compatibility mirror only (platform_status is NOT lifecycle authority).
-  const supabase = createClient();
+  // ACC-02B batch 2 — service-role; the writer gate ran at the top of the action.
+  const supabase = createAdminClient();
   const { error } = await supabase.from("products").update({ platform_status: value }).eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/products");
@@ -112,7 +115,8 @@ export async function setProductsApproval(ids: string[], approval: string, reaso
   const list = (ids ?? []).filter(Boolean);
   if (list.length === 0) return { error: "No products selected.", updated: 0 };
   if (!APPROVAL_OPTS.has(approval)) return { error: `Invalid approval "${approval}".`, updated: 0 };
-  const supabase = createClient();
+  // ACC-02B batch 2 — service-role; the writer gate ran above.
+  const supabase = createAdminClient();
   const value = approval === "" ? null : approval;
   const patch: Record<string, unknown> = { approval: value };
   // Record/clear the rejection reason on its own column.
@@ -255,7 +259,8 @@ export async function deleteProduct(id: string) {
   // OPS.7 §7 — HARD delete is irreversible: owner-only (stricter than the writer
   // boundary; was login-only). Not exposed from V2 in this phase.
   { const owner = await requireOwner(); if (!owner.ok) return { error: owner.error }; }
-  const supabase = createClient();
+  // ACC-02B batch 2 — service-role; the OWNER gate above has already run.
+  const supabase = createAdminClient();
   // Full snapshot BEFORE deleting — the auto-task carries it so the assignee
   // can remove the product from the manual platforms too.
   const { data: doomed } = await supabase.from("products").select("*").eq("id", id).maybeSingle();

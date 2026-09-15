@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireMalakWriter } from "@/lib/malak/authz";
 import { safeError } from "@/lib/security/safe-error";
 import { CHANNEL_STATUSES } from "@/lib/constants";
@@ -21,7 +21,9 @@ export async function setChannelStatus(
     return { error: `Invalid status "${status}".` };
   }
 
-  const supabase = createClient();
+  // ACC-02B batch 2 — service-role; the writer gate above has already run, so
+  // `authenticated` needs no channel_products write grant.
+  const supabase = createAdminClient();
 
   // Find an existing join row for this product+channel.
   const { data: existing } = await supabase

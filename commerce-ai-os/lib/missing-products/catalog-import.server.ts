@@ -41,11 +41,8 @@ export type ImportOne =
   | { ok: true; productId: string; sku: string; barcode: string }
   | { ok: false; error: string; duplicate?: boolean };
 
-interface SessionClient {
-  // opaque — passed straight to createProductCore
-  from: unknown;
-}
 interface AdminClient {
+  // opaque — passed straight to createProductCore
   from: unknown;
 }
 
@@ -105,7 +102,6 @@ export function buildImportInput(candidate: ImportCandidate, ctx: ImportContext)
  * create core + inventory initializer. seedQuantity is fixed at 0.
  */
 export async function importOneProduct(
-  session: SessionClient,
   admin: AdminClient,
   candidate: ImportCandidate,
   ctx: ImportContext,
@@ -120,8 +116,13 @@ export async function importOneProduct(
     return { ok: false, error: "invalid category or product shape" };
   }
 
+  // ACC-02B batch 2 — the product insert runs on the ADMIN client. It previously
+  // took the caller's session client, which after the grant revocation could not
+  // perform an INSERT on products at all, so that parameter is gone. Authorization
+  // is unchanged: this helper is reached only from the discovery flow, which gates
+  // before calling it.
   const core = await createProductCore(
-    session as never,
+    admin as never,
     row,
     [], // simple product only — external-only imports carry no variant structure
     makeInventoryInitializer(admin as never),
