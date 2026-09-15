@@ -9,7 +9,7 @@
 // Errors surface as fixed Arabic messages — never a raw DB error.
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOwner } from "@/lib/malak/authz";
 import { SupabaseSnapshotStore } from "@/lib/platforms/core/supabase-store";
 import { captureSnapshots } from "@/lib/platforms/core/capture";
@@ -54,17 +54,23 @@ export async function capturePureSeoulSnapshots(
   if (!rows?.length) return { ...base, error: "ما في صفوف في الملف." };
 
   const scopedId = String(opts?.onlyProductId ?? "").trim();
-  const sb = createClient();
-  if (scopedId !== "") {
-    // Scoped test capture is OWNER-ONLY (verified from the server session).
+
+  // ACC-02B batch 3 — OWNER-ONLY for BOTH paths, and the gate runs FIRST.
+  //
+  // The scoped path was already owner-only; the unscoped path accepted any
+  // signed-in session. That asymmetry could not survive this change: the
+  // Snapshot Engine now writes on the service role, so leaving the unscoped
+  // path on a bare session check would have handed a service-role insert to
+  // "anyone signed in" — a widening. Capture is an owner operation on all
+  // three sibling actions (Shopify, Rafeeq, Talabat), so the outlier is brought
+  // into line rather than the boundary being lowered to meet it.
+  {
     const owner = await requireOwner();
     if (!owner.ok) return { ...base, error: owner.error };
-  } else {
-    const {
-      data: { user },
-    } = await sb.auth.getUser();
-    if (!user) return { ...base, error: "غير مسجّل الدخول." };
   }
+  // Service role for the catalog READ and the snapshot INSERT; the gate above
+  // has already run, so a denied call never constructs this client.
+  const sb = createAdminClient();
 
   try {
     // Read the catalog (paged, READ-ONLY). Tolerate a catalog without the

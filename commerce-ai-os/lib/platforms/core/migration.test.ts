@@ -15,6 +15,12 @@ const ACTION = readFileSync(
   "utf8",
 );
 
+/** Source with `import` lines removed, so ordering checks compare CALL SITES
+ *  rather than the order the modules happen to be imported in. */
+function bodyOnly(src: string): string {
+  return src.replace(/^import .*$/gm, "");
+}
+
 test("migration is idempotent (create/alter/index/policy guarded)", () => {
   assert.ok(/create table if not exists public\.platform_snapshots/.test(SQL));
   assert.ok(/create index if not exists platform_snapshots_latest_idx/.test(SQL));
@@ -76,11 +82,21 @@ test("rollback exists, is idempotent, and only drops snapshot objects", () => {
   assert.ok(!/(drop|alter) table\s+public\.(products|inventory|platform_status)/i.test(DOWN), "rollback drops nothing else");
 });
 
-test("capture action: session client, READ+INSERT only, no service role, no raw errors", () => {
+// ACC-02B batch 3 — inverted deliberately: the capture action now writes on the
+// SERVICE ROLE behind requireOwner(), which also unified the one capture path
+// that had been on a bare session check. See the migration header for why the
+// old "session client under RLS" claim was not a real boundary.
+test("capture action: SERVICE-ROLE client, READ+INSERT only, owner-gated, no raw errors", () => {
   assert.ok(ACTION.includes('"use server"'));
-  assert.ok(ACTION.includes("createClient"), "session client");
-  assert.ok(!ACTION.includes("createAdminClient"), "no admin client");
-  assert.ok(!ACTION.includes("service_role"));
+  assert.ok(ACTION.includes("createAdminClient"), "service-role client");
+  assert.ok(!ACTION.includes("createClient()"), "no session client on the capture path");
+  assert.ok(ACTION.includes("requireOwner"), "owner gate");
+  {
+    const body = bodyOnly(ACTION);
+    assert.ok(body.indexOf("requireOwner(") < body.indexOf("createAdminClient("),
+      "the gate must precede the privileged client");
+  }
+  assert.ok(!ACTION.includes("service_role"), "no embedded service-role key reference");
   // never mutates products/inventory/platform_status
   assert.ok(!/\.update\(|\.delete\(|\.upsert\(/.test(ACTION), "no product/inventory writes");
   assert.ok(!/from\("inventory"\)|from\("platform_status"\)/.test(ACTION));

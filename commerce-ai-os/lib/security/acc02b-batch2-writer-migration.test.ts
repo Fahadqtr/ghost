@@ -176,7 +176,7 @@ function fnBody(src: string, name: string): string {
 }
 
 /** action -> [file, expected gate] */
-const MIGRATED: [string, string, "requireMalakWriter" | "requireOwner" | "requireWriterGate" | "requireUser"][] = [
+const MIGRATED: [string, string, "requireMalakWriter" | "requireOwner" | "requireWriterGate"][] = [
   ["setProductApproval", "app/(app)/products/actions.ts", "requireMalakWriter"],
   ["setProductsApproval", "app/(app)/products/actions.ts", "requireMalakWriter"],
   ["setProductStatus", "app/(app)/products/actions.ts", "requireMalakWriter"],
@@ -189,7 +189,8 @@ const MIGRATED: [string, string, "requireMalakWriter" | "requireOwner" | "requir
   ["applyReconciledToShopify", "app/(app)/import-export/availability-actions.ts", "requireMalakWriter"],
   ["setPureSeoulApproval", "app/(app)/import-export/pure-seoul-actions.ts", "requireMalakWriter"],
   ["applyPureSeoulAvailability", "app/(app)/import-export/pure-seoul-actions.ts", "requireMalakWriter"],
-  ["logAgentCommand", "app/(app)/agents/actions.ts", "requireUser"],
+  // ACC-02B batch 3 — the owner chose REQUIRE_WRITER for this one.
+  ["logAgentCommand", "app/(app)/agents/actions.ts", "requireWriterGate"],
 ];
 
 test("every migrated action gates BEFORE it constructs the service-role client", () => {
@@ -217,12 +218,14 @@ test("setPlatformApproval was RAISED to the writer gate, not left on a session c
     "the old signed-in-only denial must be gone");
 });
 
-test("logAgentCommand keeps its ORIGINAL gate — the migration must not widen or narrow it", () => {
+// Batch 2 left this at "any signed-in account" on purpose and flagged the gate
+// as an open owner decision. STEP 14 answered it: REQUIRE_WRITER. The pin is
+// updated rather than deleted — the full proof lives in
+// lib/security/acc02b-batch3-final-writes.test.ts.
+test("logAgentCommand is on the writer gate (owner decision, ACC-02B batch 3)", () => {
   const body = fnBody(read("app/(app)/agents/actions.ts"), "logAgentCommand");
-  assert.match(body, /requireUser\(\)/,
-    "this is a SYSTEM-SERVICE bookkeeping write; who may call it is an open question, not one this step answers");
-  assert.doesNotMatch(body, /requireOwner|requireMalakWriter/,
-    "raising this gate is an owner decision, not a side effect of the client migration");
+  assert.match(body, /requireWriterGate\(\)/, "owner decision: REQUIRE_WRITER");
+  assert.doesNotMatch(body, /requireUser\(\)/, "the broad signed-in gate must be gone");
 });
 
 // ---------------------------------------------------------------------------

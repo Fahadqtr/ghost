@@ -16,6 +16,12 @@ const ACTION = readFileSync(new URL("../../../app/(app)/import-export/talabat-sn
 const PAGE = readFileSync(new URL("../../../app/(v2)/v2/operations/page.tsx", import.meta.url), "utf8");
 const SYNC = readFileSync(new URL("../../../components/TalabatSync.tsx", import.meta.url), "utf8");
 
+/** Source with `import` lines removed, so ordering checks compare CALL SITES
+ *  rather than the order the modules happen to be imported in. */
+function bodyOnly(src: string): string {
+  return src.replace(/^import .*$/gm, "");
+}
+
 const NO_WRITE = [".update(", ".delete(", ".rpc(", "createAdminClient", "service_role", "SERVICE_ROLE"];
 // The order pipeline / stock-deduction / webhook modules must never be imported.
 const ORDER_PIPELINE = [
@@ -87,10 +93,27 @@ test("capture never records Talabat price or availability", () => {
   assert.ok(PURE.includes("availability: null"));
 });
 
-test("action is OWNER-only and INSERT-only via the session client", () => {
+// ACC-02B batch 3 — the capture ACTION now builds the SERVICE-ROLE client. The
+// old ban on createAdminClient here encoded "INSERT via the session client under
+// RLS", but that RLS was an INSERT policy WITH CHECK (true) for every
+// authenticated account — it authorized nothing beyond "is signed in".
+// requireOwner() is the real boundary and still runs FIRST. The genuinely
+// important bans (no UPDATE, no DELETE, no RPC, no embedded service-role KEY)
+// are unchanged below.
+const ACTION_NO_WRITE = [".update(", ".delete(", ".rpc(", "service_role", "SERVICE_ROLE"];
+
+test("action is OWNER-only and INSERT-only via the SERVICE-ROLE client (ACC-02B b3)", () => {
   assert.ok(ACTION.includes('"use server"'));
   assert.ok(ACTION.includes("requireOwner"));
-  for (const bad of NO_WRITE) assert.equal(ACTION.includes(bad), false);
+  assert.ok(ACTION.includes("createAdminClient"), "the insert runs on the service role");
+  assert.equal(ACTION.includes("createClient()"), false, "no session client for the capture path");
+  // requireOwner must precede the privileged client.
+  {
+    const body = bodyOnly(ACTION);
+    assert.ok(body.indexOf("requireOwner(") < body.indexOf("createAdminClient("),
+      "a denied call must never construct the service-role client");
+  }
+  for (const bad of ACTION_NO_WRITE) assert.equal(ACTION.includes(bad), false);
 });
 
 test("no new platform_snapshots table / migration is introduced", () => {
