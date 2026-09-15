@@ -816,10 +816,14 @@ export async function applyCatalogCreates(
       return { error: IMPORT_MESSAGES.mapping_invalid };
     }
 
+    // The session client stays for the spreadsheet pipeline READ below.
     const supabase = createClient();
-    // INV.6B — product rows are inserted with the session client (RLS); inventory
-    // initialization goes through the service-role initializer adapter (direct
-    // inventory/variant writes are impossible after the strict lockdown).
+    // INV.6B — inventory initialization goes through the service-role initializer
+    // adapter (direct inventory/variant writes are impossible after the strict
+    // lockdown). ACC-02B batch 2 — product rows are now inserted with the SERVICE
+    // ROLE too: the old note said "session client (RLS)", but that policy was
+    // FOR ALL TO authenticated USING (true) WITH CHECK (true) and constrained
+    // nothing. The writer gate at the top of this action is the real boundary.
     const admin = createAdminClient();
     const inventoryInit = makeInventoryInitializer(admin);
     const pipe = await runPipeline(supabase, file.bytes, sheetName.slice(0, 200), mapping);
@@ -942,7 +946,7 @@ export async function applyCatalogCreates(
 
       try {
         const row = await toProductRow(input);
-        const core = await createProductCore(supabase, row, projectVariantInsertRows(variants), inventoryInit);
+        const core = await createProductCore(admin, row, projectVariantInsertRows(variants), inventoryInit);
         if (!core.ok) {
           results.push({
             rowNum: mainRowNum, recordKind: "product", recordId: null, sku, barcode,

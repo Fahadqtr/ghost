@@ -113,8 +113,10 @@ test("actions: session client for metadata + shared cores; admin ONLY for the st
     assert.ok(!ACTIONS_SRC.includes(banned), `actions must not contain ${banned}`);
   }
   assert.ok(ACTIONS_SRC.includes("createProductCore"), "creates go through the shared core");
-  // Product METADATA is written through the SESSION client (RLS applies)…
-  assert.ok(ACTIONS_SRC.includes("createProductCore(supabase"), "product metadata create uses the session client");
+  // ACC-02B batch 2 — product METADATA is written through the ADMIN client; the
+  // writer gate at the top of the action is the authorization boundary…
+  assert.ok(ACTIONS_SRC.includes("createProductCore(admin"), "product metadata create uses the admin client");
+  assert.ok(!ACTIONS_SRC.includes("createProductCore(supabase"), "the session client must not reach the core");
   // …and the admin/service-role client (INV.6B) backs ONLY the structural writes that
   // are admin-only after the lockdown: inventory initialization + atomic variant sync.
   assert.ok(ACTIONS_SRC.includes("makeInventoryInitializer(admin)"), "inventory init uses the service-role initializer");

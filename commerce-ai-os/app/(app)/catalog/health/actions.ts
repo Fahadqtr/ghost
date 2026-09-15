@@ -1,6 +1,6 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOwner } from "@/lib/malak/authz";
 import { logCatalogTask } from "@/lib/tasks/catalog-log";
 import { revalidatePath } from "next/cache";
@@ -15,7 +15,9 @@ import { revalidatePath } from "next/cache";
 export async function deleteProductById(id: string): Promise<{ ok: true } | { error: string }> {
   { const owner = await requireOwner(); if (!owner.ok) return { error: owner.error }; }
   if (!id) return { error: "Missing product id." };
-  const supabase = createClient();
+  // ACC-02B batch 2 — service-role; the OWNER gate above has already run, so
+  // `authenticated` needs no products DELETE grant for this path.
+  const supabase = createAdminClient();
   const { data: doomed } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   // INV.6A — numeric dependents (inventory → shelf_stock, product_variants →
   // variant_shelf_stock, channel_products) are removed by ON DELETE CASCADE, so

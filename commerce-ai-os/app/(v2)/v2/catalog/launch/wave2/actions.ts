@@ -65,6 +65,10 @@ export async function applyWave2Categories(
   const list = (items ?? []).slice(0, BATCH_CAP);
   if (!list.length) return { results: [] };
 
+  // ACC-02B batch 2 — product metadata WRITES moved to the service role; the
+  // writer gate above has already run. See the edit action for the full note.
+  // The session client stays for the READ below (loadProductForEdit), which
+  // needs no write grant.
   const supabase = createClient();
   const admin = createAdminClient();
   const results: Wave2ItemOutcome[] = [];
@@ -96,7 +100,7 @@ export async function applyWave2Categories(
       results.push({ productId, ok: false, note: validation.message });
       continue;
     }
-    const core = await updateProductCore(supabase, productId, input, {
+    const core = await updateProductCore(admin, productId, input, {
       inventory: createInventoryAdapter(admin),
       variantSyncClient: admin,
     });

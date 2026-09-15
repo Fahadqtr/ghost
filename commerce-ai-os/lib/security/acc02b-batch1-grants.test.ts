@@ -140,9 +140,9 @@ test("down: restores the same privilege set the up migration removed", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Tables held back because a DIRECT authenticated-client writer still exists.
- * Each entry names a file that still performs that write, so if the code is
- * migrated to the service role this test fails and prompts the next batch.
+ * Tables held back from batch 1 because a DIRECT authenticated-client writer
+ * still existed. The file named each writer, so migrating it to the service role
+ * failed this suite and prompted batch 2 — which is what happened.
  */
 const HELD_BACK: Record<string, string> = {
   products: "app/(app)/products/actions.ts",
@@ -160,13 +160,17 @@ test("held-back tables are absent from this batch", () => {
   }
 });
 
-test("held-back tables still have the direct authenticated writer that justifies holding them", () => {
-  for (const [table, file] of Object.entries(HELD_BACK)) {
-    const src = read(file);
-    assert.match(src, /from "@\/lib\/supabase\/server"/,
-      `${file} should still import the authenticated client`);
-    assert.match(src, new RegExp(`from\\("${table}"\\)`),
-      `${file} should still reference ${table} — if this moved to the service role, add ${table} to the next batch`);
+// ACC-02B batch 2 has since migrated every one of these writers to the service
+// role, which is exactly what this guard was built to announce. The tables stay
+// out of the BATCH 1 migration file — that file is a historical record and must
+// not grow — and their revocation lives in the batch 2 migration instead. The
+// live "no authenticated writer exists" proof now belongs to
+// lib/security/acc02b-batch2-writer-migration.test.ts.
+test("held-back tables were handled by batch 2, not by editing this batch", () => {
+  const batch2 = read("supabase/migrations/20260915100000_acc02b_batch2_authenticated_readonly.sql");
+  for (const table of Object.keys(HELD_BACK)) {
+    assert.match(batch2, new RegExp(`on public\\.${table} from authenticated`),
+      `${table} must be revoked by the batch 2 migration`);
   }
 });
 

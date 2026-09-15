@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { requireMalakWriter } from "@/lib/malak/authz";
 import { fetchAll } from "@/lib/supabase/paginate";
 import { PLATFORM_KEYS, platformBy } from "@/lib/constants";
 
@@ -126,9 +128,12 @@ export async function setPlatformApproval(ids: string[], platform: string, appro
   const meta = platformBy(platform);
   if (!meta) return { error: `منصة غير معروفة: ${platform}`, updated: 0 };
   if (!APPROVAL.has(approval)) return { error: `حالة غير صالحة: "${approval}".`, updated: 0 };
-  const sb = createClient();
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { error: "غير مسجّل الدخول.", updated: 0 };
+  // ACC-02B batch 2 — approval is a catalog mutation, which lib/malak/authz.ts
+  // defines as the WRITER boundary; this was the last approval path still on an
+  // inline "is anybody signed in" check. The gate runs BEFORE the service-role
+  // client is constructed, so a denied call performs zero privileged statements.
+  { const writer = await requireMalakWriter(); if (!writer.ok) return { error: writer.error, updated: 0 }; }
+  const sb = createAdminClient();
   const list = (ids ?? []).filter(Boolean);
   if (list.length === 0) return { error: "ما في منتجات محدّدة.", updated: 0 };
 

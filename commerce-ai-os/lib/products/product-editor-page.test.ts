@@ -132,9 +132,10 @@ test("save action: metadata on the SESSION client; admin backs the Inventory ada
   for (const banned of ["service_role", "SUPABASE_SERVICE_ROLE", ".rpc(", "error.message", "console.log"]) {
     assert.ok(!EDIT_ACTIONS_SRC.includes(banned), `save action must not contain ${banned}`);
   }
-  // Product METADATA runs on the SESSION client through the shared core (RLS applies)
-  // — the session client is the first arg.
-  assert.ok(/updateProductCore\(\s*supabase,/.test(EDIT_ACTIONS_SRC), "core receives the session client for metadata");
+  // ACC-02B batch 2 — product METADATA runs on the ADMIN client through the shared
+  // core; the writer gate at the top of the action is the authorization boundary.
+  assert.ok(/updateProductCore\(\s*admin,/.test(EDIT_ACTIONS_SRC), "core receives the admin client for metadata");
+  assert.equal(/updateProductCore\(\s*supabase,/.test(EDIT_ACTIONS_SRC), false, "the session client must not reach the core");
   // The admin/service-role client backs ONLY the two numeric/structural writes that
   // are admin-only after the INV.6B lockdown: the Inventory Engine adapter and the
   // atomic variant-sync RPC — never the product-metadata write.

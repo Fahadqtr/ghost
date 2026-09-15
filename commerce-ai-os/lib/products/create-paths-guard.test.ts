@@ -200,18 +200,19 @@ test("registry direct/delegated flags match reality", () => {
 
 // ── 2. Canonical paths route through createProductCore ────────────────────────
 
-test("V2 Create and V2 Import go through createProductCore with the SESSION client (RLS preserved)", () => {
+test("V2 Create and V2 Import go through createProductCore with the ADMIN client (ACC-02B)", () => {
   for (const rel of ["app/(v2)/v2/catalog/new/actions.ts", "app/(v2)/v2/catalog/import/actions.ts"]) {
     const src = read(rel);
     assert.ok(/from\s+["']@\/lib\/products\/product-create["']/.test(src), `${rel} imports the core`);
     assert.ok(/createProductCore\(/.test(src), `${rel} calls createProductCore`);
     assert.equal(PRODUCTS_INSERT.test(src), false, `${rel} does not insert products directly`);
-    // RLS guarantee: V2 injects the SESSION client into the core. (The file may
-    // still use the admin client elsewhere — e.g. Storage uploads — but the
-    // product WRITE goes through the session `supabase` handle.)
-    assert.ok(/from\s+["']@\/lib\/supabase\/server["']/.test(src), `${rel} imports the session client`);
-    assert.ok(/const supabase = createClient\(\)/.test(src), `${rel} builds a session client`);
-    assert.ok(/createProductCore\(supabase,/.test(src), `${rel} injects the session client into the core`);
+    // ACC-02B batch 2 — the product WRITE goes through the ADMIN client; the
+    // writer gate in each action is the authorization boundary. (The file may
+    // still import the session client for reads.)
+    assert.ok(/createProductCore\(\s*admin/.test(src), `${rel} injects the admin client into the core`);
+    assert.equal(/createProductCore\(\s*supabase/.test(src), false, `${rel} must not inject the session client`);
+    // The session client may still exist in these files for READS.
+    assert.ok(/const supabase = createClient\(\)/.test(src), `${rel} still builds a session client for reads`);
   }
 });
 
