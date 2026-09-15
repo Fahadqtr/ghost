@@ -5,10 +5,11 @@ import { cookies, headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { rateLimit, clientIpFrom } from "@/lib/ratelimit";
 import { applyMovement, editMovementQty, deleteMovement } from "@/lib/inventory/movements";
-import { signStaff, verifyStaff, STAFF_COOKIE } from "@/lib/staff/session";
+import { signStaff, STAFF_COOKIE } from "@/lib/staff/session";
 import { hashPin } from "@/lib/staff/pin";
 import { staffNameMatches } from "@/lib/staff/name-compute";
 import { parsePermissions, hasPerm, DEFAULT_PERMISSIONS, type StaffPermission } from "@/lib/staff/permissions";
+import { currentStaff, type CurrentStaff } from "@/lib/staff/current";
 import { CATEGORIES } from "@/lib/constants";
 import { listComments, insertComment, uploadCommentAttachment } from "@/lib/tasks/commentStore";
 import type { TaskComment, CommentAttachment } from "@/lib/tasks/comments";
@@ -38,31 +39,11 @@ function pinOk(pin: string): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-export type CurrentStaff = { name: string; id: string | null; perms: StaffPermission[] };
-
-// Resolve the logged-in employee AND their live permissions. Perms are re-read
-// fresh from the DB (by id) so an admin's change takes effect without re-login;
-// the signed token's snapshot is the fallback when the DB can't be reached.
-async function currentStaff(): Promise<CurrentStaff | null> {
-  const c = await cookies();
-  const s = verifyStaff(c.get(STAFF_COOKIE)?.value);
-  if (!s) return null;
-  let perms = s.perms ? parsePermissions(s.perms) : [...DEFAULT_PERMISSIONS];
-  if (s.id) {
-    const admin = adminClient();
-    if (admin) {
-      try {
-        const { data } = await admin.from("staff_members").select("permissions, active").eq("id", s.id).limit(1);
-        const row = (data ?? [])[0];
-        if (row) {
-          if (row.active === false) return null; // deactivated mid-shift
-          perms = parsePermissions(row.permissions);
-        }
-      } catch { /* keep token snapshot */ }
-    }
-  }
-  return { name: s.name, id: s.id ?? null, perms };
-}
+// D-2 — currentStaff() moved to lib/staff/current.ts so CRM's customer-service
+// reads share this exact gate instead of duplicating it. Behaviour unchanged.
+// It cannot be re-exported from this file: "use server" would turn a gate into
+// a public server-action endpoint.
+export type { CurrentStaff } from "@/lib/staff/current";
 
 // Permissions for the current session, for the page to decide which tabs to show.
 export async function staffMe(): Promise<{ name: string; perms: StaffPermission[] } | null> {

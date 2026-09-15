@@ -1,7 +1,12 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireUser } from "@/lib/auth/requireUser";
+import { requireOwnerGate } from "@/lib/auth/requireUser";
+import { requireCrmReader } from "@/lib/auth/crmAccess";
+import { isStaffViewer } from "@/lib/crm/access-check";
+import {
+  minimizeCustomersForStaff, minimizeCountsForStaff, minimizeStatsForStaff, minimizeDetailForStaff,
+} from "@/lib/crm/staff-view";
 import { revalidatePath } from "next/cache";
 import { shopifyConfigured, fetchShopifyCustomers, fetchShopifyCustomerOrders, type ShopifyCustomerOrder } from "@/lib/shopify/admin";
 import { computeSegment, segmentCounts, type CustomerSegment } from "@/lib/crm/customer-compute";
@@ -45,9 +50,13 @@ export type CrmStats = {
 };
 const EMPTY_STATS: CrmStats = { buyers: 0, leads: 0, revenue: 0, orders: 0, avgOrder: 0, currency: "QAR", top: [] };
 
+// D-2 — READ: owner or a validated staff session. An ordinary Supabase session
+// no longer qualifies. A staff reader gets the customer-service subset only; the
+// commercial fields are blanked server-side before the value leaves this action.
 export async function listCustomers(): Promise<{ error?: string; shopifyNote?: string; rows: CrmCustomer[]; counts: Record<CustomerSegment, number>; stats: CrmStats }> {
-  const guard = await requireUser();
-  if (guard) return { error: guard.error, rows: [], counts: EMPTY_COUNTS, stats: EMPTY_STATS };
+  const gate = await requireCrmReader();
+  if (gate.error) return { error: gate.error, rows: [], counts: EMPTY_COUNTS, stats: EMPTY_STATS };
+  const isStaff = isStaffViewer(gate.viewer);
   const sb = admin();
   if (!sb) return { error: NO_DB, rows: [], counts: EMPTY_COUNTS, stats: EMPTY_STATS };
   const now = new Date();
@@ -108,6 +117,14 @@ export async function listCustomers(): Promise<{ error?: string; shopifyNote?: s
     top: shopRows.slice(0, 5).map((r) => ({ name: r.name, spent: r.spent, orders: r.orders })),
   };
 
+  if (isStaff) {
+    return {
+      rows: minimizeCustomersForStaff(rows),
+      counts: minimizeCountsForStaff(EMPTY_COUNTS),
+      shopifyNote,
+      stats: minimizeStatsForStaff(EMPTY_STATS),
+    };
+  }
   return { rows, counts: segmentCounts(rows), shopifyNote, stats };
 }
 
@@ -119,9 +136,14 @@ export type CrmDetail = {
   messages?: { direction: string; body: string; ai: boolean; created_at: string }[];
 };
 
+// D-2 — READ: owner or a validated staff session. Order history and the DM
+// thread answer "where is my order"; the internal note and tags do not, so they
+// are stripped for a staff reader.
 export async function getCustomerDetail(source: "shopify" | "dm", sourceId: string): Promise<CrmDetail> {
-  const guard = await requireUser();
-  if (guard) return { error: guard.error, notes: "", tags: [] };
+  const gate = await requireCrmReader();
+  if (gate.error) return { error: gate.error, notes: "", tags: [] };
+  const isStaff = isStaffViewer(gate.viewer);
+  const shape = (d: CrmDetail): CrmDetail => (isStaff ? minimizeDetailForStaff(d) : d);
   const sb = admin();
   if (!sb) return { error: NO_DB, notes: "", tags: [] };
 
@@ -131,8 +153,8 @@ export async function getCustomerDetail(source: "shopify" | "dm", sourceId: stri
 
   if (source === "shopify") {
     const { orders, error } = await fetchShopifyCustomerOrders(sourceId);
-    if (error) return { notes, tags, error };
-    return { notes, tags, orders: orders ?? [] };
+    if (error) return shape({ notes, tags, error });
+    return shape({ notes, tags, orders: orders ?? [] });
   }
   const { data: msgs } = await sb
     .from("dm_messages")
@@ -140,7 +162,7 @@ export async function getCustomerDetail(source: "shopify" | "dm", sourceId: stri
     .eq("conversation_id", sourceId)
     .order("created_at", { ascending: false })
     .limit(30);
-  return { notes, tags, messages: ((msgs ?? []) as any[]).reverse() };
+  return shape({ notes, tags, messages: ((msgs ?? []) as any[]).reverse() });
 }
 
 type Identity = { name?: string; phone?: string; instagram?: string; email?: string };
@@ -163,15 +185,19 @@ async function upsertCustomer(source: string, sourceId: string, patch: Record<st
   return { ok: true as const };
 }
 
+// D-2 — WRITE: OWNER ONLY. upsertCustomer() writes the customer's identity
+// columns (name/phone/instagram/email) alongside the note, so this is a customer
+// mutation, and the note itself is an internal annotation staff never see.
 export async function saveCustomerNote(source: "shopify" | "dm", sourceId: string, notes: string, identity?: Identity): Promise<{ ok?: true; error?: string }> {
-  const guard = await requireUser();
-  if (guard) return { error: guard.error };
+  const denied = await requireOwnerGate();
+  if (denied) return denied;
   return upsertCustomer(source, sourceId, { notes: String(notes ?? "").slice(0, 4000) }, identity);
 }
 
+// D-2 — WRITE: OWNER ONLY, same customer-identity upsert path as the note.
 export async function setCustomerTags(source: "shopify" | "dm", sourceId: string, tags: string[], identity?: Identity): Promise<{ ok?: true; error?: string }> {
-  const guard = await requireUser();
-  if (guard) return { error: guard.error };
+  const denied = await requireOwnerGate();
+  if (denied) return denied;
   const clean = Array.from(new Set((tags ?? []).map((t) => String(t).trim()).filter(Boolean))).slice(0, 12);
   return upsertCustomer(source, sourceId, { tags: clean }, identity);
 }

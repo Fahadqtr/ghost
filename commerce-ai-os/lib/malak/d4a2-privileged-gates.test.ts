@@ -291,10 +291,15 @@ test("read-only diagnostics stay open to any signed-in session (not escalated)",
   }
 });
 
-test("CRM stays untouched pending the D-2 decision", () => {
+// D-2 has since been decided (STEP SYSTEM ACCESS 10): CRM reads are owner-or-
+// validated-staff, CRM writes are owner-only. This pin was "unchanged pending
+// D-2"; it is now the stricter post-decision pin. The full CRM/Loyalty proofs
+// live in lib/crm/d2-crm-loyalty-access.test.ts.
+test("CRM no longer accepts a bare Supabase session (D-2 decided)", () => {
   const CRM = stripComments(read("app/(app)/crm/actions.ts"));
-  assert.match(CRM, /requireUser\(\)/,
-    "CRM must remain exactly as it was — D-4A2 makes no CRM authorization change");
-  assert.doesNotMatch(CRM, /requireMalakWriter|requireOwnerGate/,
-    "no CRM gate may be changed before D-2 is decided");
+  assert.doesNotMatch(CRM, /await requireUser\(\)/,
+    "a bare signed-in session must not reach CRM data");
+  assert.doesNotMatch(CRM, /isSignedIn\(\)/);
+  assert.match(CRM, /requireCrmReader\(\)/, "reads go through the owner-or-staff gate");
+  assert.match(CRM, /requireOwnerGate\(\)/, "writes are owner-only");
 });
