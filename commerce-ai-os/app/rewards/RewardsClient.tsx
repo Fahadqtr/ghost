@@ -7,6 +7,7 @@
 // 3. Upload a screenshot of a new review → it queues for the owner's approval.
 import { useEffect, useState } from "react";
 import { Heart } from "./Heart";
+import { PureSeoulFrame, Stamp, PureSeoulPromise } from "./PureSeoulTheme";
 import BrandLogo from "@/components/BrandLogo";
 import { rewardsSteps } from "@/lib/loyalty/guide";
 import { BRAND_INFO, DEFAULT_BRAND, type LoyaltyBrand } from "@/lib/loyalty/brand";
@@ -25,6 +26,40 @@ type RewardState = {
   prizes: PrizeOption[];
   chosenPrizeId: string | null;
   voucherCode: string | null;
+};
+
+// Per-store colour theme as CSS variables. Malika's values are exactly the
+// colours this page always used; Pure Seoul follows its printed card
+// (crimson + gold on pink satin, cherry blossoms).
+const THEME_VARS: Record<LoyaltyBrand, React.CSSProperties> = {
+  malikas: {
+    "--rw-bg": "linear-gradient(160deg,#fdf2f4 0%,#faeef0 45%,#f7ead9 100%)",
+    "--rw-primary": "#d17c93",
+    "--rw-primary2": "#e59aad",
+    "--rw-grad": "linear-gradient(90deg,#e59aad,#d17c93)",
+    "--rw-muted": "#8a7a6a",
+    "--rw-text": "#6b5b4b",
+    "--rw-gold": "#c9a24b",
+    "--rw-frame": "#d9b45f",
+    "--rw-line": "#e8cdb5",
+    "--rw-line2": "#f0dcc6",
+    "--rw-soft": "#fbeef0",
+    "--rw-faint": "#b58aa0",
+  } as React.CSSProperties,
+  pureseoul: {
+    "--rw-bg": "linear-gradient(180deg,#fde9f0 0%,#fbdbe5 50%,#fde4ec 100%)",
+    "--rw-primary": "#a80f39",
+    "--rw-primary2": "#d4567a",
+    "--rw-grad": "linear-gradient(90deg,#c21d4f,#a80f39)",
+    "--rw-muted": "#7a5563",
+    "--rw-text": "#3f2a31",
+    "--rw-gold": "#b98a2e",
+    "--rw-frame": "#d9a94a",
+    "--rw-line": "#efbfd0",
+    "--rw-line2": "#f3c9d7",
+    "--rw-soft": "#fde4ec",
+    "--rw-faint": "#b0587a",
+  } as React.CSSProperties,
 };
 
 export default function RewardsClient({ brand = DEFAULT_BRAND }: { brand?: LoyaltyBrand }) {
@@ -147,14 +182,15 @@ export default function RewardsClient({ brand = DEFAULT_BRAND }: { brand?: Loyal
     <main
       dir="rtl"
       className="flex min-h-dvh items-center justify-center p-4"
-      style={{ background: "linear-gradient(160deg,#fdf2f4 0%,#faeef0 45%,#f7ead9 100%)" }}
+      style={{ background: "var(--rw-bg)", ...THEME_VARS[brand] }}
     >
       <div className="w-full max-w-md">
         <Card brand={brand}>
           {booting ? (
-            <div className="py-16 text-center text-[#c69] opacity-70">جارٍ التحميل…</div>
+            <div className="py-16 text-center text-[var(--rw-primary)] opacity-70">جارٍ التحميل…</div>
           ) : state ? (
             <CardView
+              brand={brand}
               state={state}
               uploading={uploading}
               justSubmitted={justSubmitted}
@@ -165,6 +201,7 @@ export default function RewardsClient({ brand = DEFAULT_BRAND }: { brand?: Loyal
             />
           ) : (
             <RegisterView
+              brand={brand}
               name={name}
               phone={phone}
               setName={setName}
@@ -176,9 +213,11 @@ export default function RewardsClient({ brand = DEFAULT_BRAND }: { brand?: Loyal
           )}
         </Card>
         <Guide required={state?.required ?? 6} storeName={info.storeName} />
-        <p className="mt-4 text-center text-xs text-[#b58aa0]">
-          {info.wordmark} · مكافآت الجمال
-        </p>
+        {brand === DEFAULT_BRAND && (
+          <p className="mt-4 text-center text-xs text-[var(--rw-faint)]">
+            {info.wordmark} · مكافآت الجمال
+          </p>
+        )}
       </div>
     </main>
   );
@@ -189,18 +228,18 @@ export default function RewardsClient({ brand = DEFAULT_BRAND }: { brand?: Loyal
 function Guide({ required, storeName }: { required: number; storeName: string }) {
   const steps = rewardsSteps(required, undefined, storeName);
   return (
-    <details className="group mt-4 overflow-hidden rounded-2xl border border-[#e8cdb5] bg-white/90 text-right shadow-sm">
-      <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-bold text-[#d17c93]">
+    <details className="group mt-4 overflow-hidden rounded-2xl border border-[var(--rw-line)] bg-white/90 text-right shadow-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-bold text-[var(--rw-primary)]">
         <span>📖 دليل المكافآت — الطريقة</span>
-        <span className="text-[#c9a24b] transition group-open:rotate-180">▾</span>
+        <span className="text-[var(--rw-gold)] transition group-open:rotate-180">▾</span>
       </summary>
       <div className="space-y-4 px-4 pb-4">
         <div>
-          <p className="mb-1.5 text-xs font-bold tracking-wide text-[#c9a24b]">الطريقة · كيف تشاركين</p>
+          <p className="mb-1.5 text-xs font-bold tracking-wide text-[var(--rw-gold)]">الطريقة · كيف تشاركين</p>
           <ol className="space-y-1.5">
             {steps.map((s, i) => (
-              <li key={i} className="flex gap-2 text-sm leading-relaxed text-[#6b5b4b]">
-                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#fbeef0] text-[11px] font-bold text-[#d17c93]">{i + 1}</span>
+              <li key={i} className="flex gap-2 text-sm leading-relaxed text-[var(--rw-text)]">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--rw-soft)] text-[11px] font-bold text-[var(--rw-primary)]">{i + 1}</span>
                 <span>{s}</span>
               </li>
             ))}
@@ -213,11 +252,12 @@ function Guide({ required, storeName }: { required: number; storeName: string })
 
 /** The gold-framed floral card shell shared by both views. */
 function Card({ children, brand }: { children: React.ReactNode; brand: LoyaltyBrand }) {
+  if (brand === "pureseoul") return <PureSeoulFrame>{children}</PureSeoulFrame>;
   const info = BRAND_INFO[brand];
   return (
     <div
       className="relative overflow-hidden rounded-3xl bg-white/95 p-6 shadow-xl sm:p-8"
-      style={{ border: "2px solid #d9b45f", boxShadow: "0 20px 50px -20px rgba(180,120,90,.4)" }}
+      style={{ border: "2px solid var(--rw-frame)", boxShadow: "0 20px 50px -20px rgba(180,120,90,.4)" }}
     >
       {/* soft corner flourishes echoing the printed roses */}
       <span className="pointer-events-none absolute -right-3 -top-3 text-4xl opacity-30 select-none">🌸</span>
@@ -231,7 +271,7 @@ function Card({ children, brand }: { children: React.ReactNode; brand: LoyaltyBr
           </p>
         )}
         {brand === DEFAULT_BRAND && (
-          <p className="mt-1 text-[11px] font-semibold tracking-[0.35em] text-[#c9a24b]">
+          <p className="mt-1 text-[11px] font-semibold tracking-[0.35em] text-[var(--rw-gold)]">
             {info.wordmark}
           </p>
         )}
@@ -242,6 +282,7 @@ function Card({ children, brand }: { children: React.ReactNode; brand: LoyaltyBr
 }
 
 function RegisterView(props: {
+  brand: LoyaltyBrand;
   name: string;
   phone: string;
   setName: (v: string) => void;
@@ -252,26 +293,33 @@ function RegisterView(props: {
 }) {
   return (
     <form onSubmit={props.onSubmit} className="text-center">
-      <h1 className="text-2xl font-bold text-[#d17c93]">بطاقة مكافآت الجمال</h1>
-      <p className="mt-1 text-sm text-[#8a7a6a]">لأن جمالك يستحق المكافأة.</p>
-      <p className="mx-auto mt-4 max-w-xs text-sm leading-relaxed text-[#6b5b4b]">
-        اجمعي <b>ست ختمات</b> واختاري أي منتج من المتجر مجاناً. سجّلي بياناتك
-        وارفقي صورة تقييمك في سنونو لتحصلي على ختمة.
-      </p>
+      {props.brand === "pureseoul" ? (
+        // Logo, title and tagline are part of the Pure Seoul frame artwork.
+        <PureSeoulPromise />
+      ) : (
+        <>
+          <h1 className="text-2xl font-bold text-[var(--rw-primary)]">بطاقة مكافآت الجمال</h1>
+          <p className="mt-1 text-sm text-[var(--rw-muted)]">لأن جمالك يستحق المكافأة.</p>
+          <p className="mx-auto mt-4 max-w-xs text-sm leading-relaxed text-[var(--rw-text)]">
+            اجمعي <b>ست ختمات</b> واختاري أي منتج من المتجر مجاناً. سجّلي بياناتك
+            وارفقي صورة تقييمك في سنونو لتحصلي على ختمة.
+          </p>
+        </>
+      )}
 
       <div className="mt-6 space-y-3 text-right">
         <label className="block">
-          <span className="mb-1 block text-xs font-semibold text-[#8a7a6a]">الاسم</span>
+          <span className="mb-1 block text-xs font-semibold text-[var(--rw-muted)]">الاسم</span>
           <input
             value={props.name}
             onChange={(e) => props.setName(e.target.value)}
             required
             placeholder="اسمك"
-            className="w-full rounded-xl border border-[#e8cdb5] bg-white px-4 py-3 text-sm outline-none focus:border-[#d9b45f]"
+            className="w-full rounded-xl border border-[var(--rw-line)] bg-white px-4 py-3 text-sm outline-none focus:border-[var(--rw-frame)]"
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-xs font-semibold text-[#8a7a6a]">رقم الجوال</span>
+          <span className="mb-1 block text-xs font-semibold text-[var(--rw-muted)]">رقم الجوال</span>
           <input
             value={props.phone}
             onChange={(e) => props.setPhone(e.target.value)}
@@ -279,7 +327,7 @@ function RegisterView(props: {
             inputMode="tel"
             dir="ltr"
             placeholder="+974 …"
-            className="w-full rounded-xl border border-[#e8cdb5] bg-white px-4 py-3 text-right text-sm outline-none focus:border-[#d9b45f]"
+            className="w-full rounded-xl border border-[var(--rw-line)] bg-white px-4 py-3 text-right text-sm outline-none focus:border-[var(--rw-frame)]"
           />
         </label>
       </div>
@@ -290,7 +338,7 @@ function RegisterView(props: {
         type="submit"
         disabled={props.loading}
         className="mt-5 w-full rounded-xl py-3 text-sm font-bold text-white shadow-md transition active:scale-[.99] disabled:opacity-60"
-        style={{ background: "linear-gradient(90deg,#e59aad,#d17c93)" }}
+        style={{ background: "var(--rw-grad)" }}
       >
         {props.loading ? "…" : "عرض بطاقتي"}
       </button>
@@ -299,6 +347,7 @@ function RegisterView(props: {
 }
 
 function CardView(props: {
+  brand: LoyaltyBrand;
   state: RewardState;
   uploading: boolean;
   justSubmitted: boolean;
@@ -314,22 +363,32 @@ function CardView(props: {
 
   return (
     <div className="text-center">
-      <h1 className="text-2xl font-bold text-[#d17c93]">بطاقة مكافآت الجمال</h1>
-      <p className="mt-1 text-sm text-[#8a7a6a]">
-        أهلاً <b className="text-[#d17c93]">{state.name}</b> 🌷
+      {props.brand !== "pureseoul" && (
+        <h1 className="text-2xl font-bold text-[var(--rw-primary)]">بطاقة مكافآت الجمال</h1>
+      )}
+      <p className="mt-1 text-sm text-[var(--rw-muted)]">
+        أهلاً <b className="text-[var(--rw-primary)]">{state.name}</b> {props.brand === "pureseoul" ? "🌸" : "🌷"}
       </p>
 
       {/* hearts */}
-      <div className="my-6 flex flex-wrap items-center justify-center gap-1.5">
-        {hearts.map((filled, i) => (
-          <Heart key={i} filled={filled} index={i} />
-        ))}
+      <div
+        className={`my-6 flex items-center justify-center ${
+          props.brand === "pureseoul" ? "gap-1" : "flex-wrap gap-1.5"
+        }`}
+      >
+        {hearts.map((filled, i) =>
+          props.brand === "pureseoul" ? (
+            <Stamp key={i} filled={filled} index={i} />
+          ) : (
+            <Heart key={i} filled={filled} index={i} />
+          )
+        )}
       </div>
 
       {state.rewardReady ? (
-        <div className="rounded-2xl bg-[#fbeef0] p-4">
-          <p className="text-base font-bold text-[#d17c93]">🎉 مبروك! أكملتِ ختماتك</p>
-          <p className="mt-1 text-sm text-[#6b5b4b]">
+        <div className="rounded-2xl bg-[var(--rw-soft)] p-4">
+          <p className="text-base font-bold text-[var(--rw-primary)]">🎉 مبروك! أكملتِ ختماتك</p>
+          <p className="mt-1 text-sm text-[var(--rw-text)]">
             {chosen
               ? "اخترتِ جائزتك — أبرزي هذه البطاقة عند الطلب."
               : state.prizes.length
@@ -338,7 +397,7 @@ function CardView(props: {
           </p>
         </div>
       ) : (
-        <p className="text-sm text-[#6b5b4b]">
+        <p className="text-sm text-[var(--rw-text)]">
           {state.stamps === 0
             ? "ابدئي رحلتك — ارفعي صورة تقييمك في سنونو."
             : `باقي لك ${remaining} ${remaining === 1 ? "ختمة" : "ختمات"} على هديتك 💝`}
@@ -348,23 +407,23 @@ function CardView(props: {
       {/* prize voucher card — shown once she picks a prize */}
       {chosen && (
         <div
-          className="mt-4 rounded-2xl border-2 border-[#d9b45f] bg-white p-4 text-center"
+          className="mt-4 rounded-2xl border-2 border-[var(--rw-frame)] bg-white p-4 text-center"
           style={{ boxShadow: "0 12px 30px -14px rgba(180,120,90,.4)" }}
         >
-          <p className="text-[11px] font-semibold tracking-[0.3em] text-[#c9a24b]">🎁 بطاقة جائزتك</p>
+          <p className="text-[11px] font-semibold tracking-[0.3em] text-[var(--rw-gold)]">🎁 بطاقة جائزتك</p>
           {chosen.imageUrl && (
-            <div className="mx-auto mt-2 w-28 overflow-hidden rounded-xl border border-[#f0dcc6]">
+            <div className="mx-auto mt-2 w-28 overflow-hidden rounded-xl border border-[var(--rw-line2)]">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={chosen.imageUrl} alt={chosen.name || "الجائزة"} className="aspect-square w-full object-cover" />
             </div>
           )}
           {chosen.name && <p className="mt-2 text-base font-bold text-[#1f1a17]">{chosen.name}</p>}
           {state.voucherCode && (
-            <p dir="ltr" className="mt-1 text-sm font-bold tracking-wider text-[#d17c93]">
+            <p dir="ltr" className="mt-1 text-sm font-bold tracking-wider text-[var(--rw-primary)]">
               {state.voucherCode}
             </p>
           )}
-          <p className="mt-2 text-xs text-[#8a7a6a]">
+          <p className="mt-2 text-xs text-[var(--rw-muted)]">
             📩 أرسلناها لك على واتساب · أبرزيها عند الاستلام
           </p>
         </div>
@@ -392,7 +451,7 @@ function CardView(props: {
       {/* prizes — preview of what she can win; a selectable chooser once complete */}
       {state.prizes.length > 0 && (
         <div className="mt-5">
-          <p className="mb-2 text-sm font-bold text-[#d17c93]">
+          <p className="mb-2 text-sm font-bold text-[var(--rw-primary)]">
             {state.rewardReady
               ? chosen
                 ? "لتغيير جائزتك 🎁"
@@ -411,8 +470,8 @@ function CardView(props: {
                   onClick={() => selectable && props.onChoosePrize(p.id)}
                   className={`relative overflow-hidden rounded-xl border bg-white transition ${
                     isChosen
-                      ? "border-[#d17c93] ring-2 ring-[#e59aad]"
-                      : "border-[#f0dcc6]"
+                      ? "border-[var(--rw-primary)] ring-2 ring-[var(--rw-primary2)]"
+                      : "border-[var(--rw-line2)]"
                   } ${selectable ? "cursor-pointer active:scale-95" : "cursor-default opacity-90"}`}
                 >
                   <div className="aspect-square bg-[#faf3ee]">
@@ -420,10 +479,10 @@ function CardView(props: {
                     <img src={p.imageUrl} alt={p.name || "جائزة"} className="h-full w-full object-cover" />
                   </div>
                   {p.name && (
-                    <p className="truncate px-1 py-1 text-[10px] font-semibold text-[#6b5b4b]">{p.name}</p>
+                    <p className="truncate px-1 py-1 text-[10px] font-semibold text-[var(--rw-text)]">{p.name}</p>
                   )}
                   {isChosen && (
-                    <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#d17c93] text-[11px] text-white">
+                    <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--rw-primary)] text-[11px] text-white">
                       ✓
                     </span>
                   )}
@@ -432,7 +491,7 @@ function CardView(props: {
             })}
           </div>
           {state.rewardReady && chosen && (
-            <p className="mt-2 text-xs text-[#8a7a6a]">
+            <p className="mt-2 text-xs text-[var(--rw-muted)]">
               تقدرين تغيّرين اختيارك قبل الاستلام.
             </p>
           )}
@@ -445,7 +504,7 @@ function CardView(props: {
           className={`mt-5 block w-full cursor-pointer rounded-xl py-3 text-center text-sm font-bold text-white shadow-md transition active:scale-[.99] ${
             props.uploading ? "opacity-60" : ""
           }`}
-          style={{ background: "linear-gradient(90deg,#e59aad,#d17c93)" }}
+          style={{ background: "var(--rw-grad)" }}
         >
           {props.uploading ? "جارٍ الرفع…" : "📷 رفع صورة تقييم سنونو"}
           <input
@@ -460,7 +519,7 @@ function CardView(props: {
 
       <button
         onClick={props.onSwitch}
-        className="mt-3 text-xs text-[#b58aa0] underline"
+        className="mt-3 text-xs text-[var(--rw-faint)] underline"
       >
         رقم آخر؟ تسجيل جديد
       </button>
