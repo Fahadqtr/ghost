@@ -458,7 +458,12 @@ function CardView(props: {
                 : "اختاري جائزتك 🎁"
               : "جوائز تقدرين تكسبينها 🎁"}
           </p>
-          <div className="grid grid-cols-3 gap-2">
+          {/* One swipeable row instead of a tall grid, so many prizes never
+              make the card long. Scrolls sideways; snaps to each prize. */}
+          <div
+            dir="rtl"
+            className="-mx-1 flex snap-x snap-mandatory gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
             {state.prizes.map((p) => {
               const isChosen = p.id === state.chosenPrizeId;
               const selectable = state.rewardReady;
@@ -468,7 +473,7 @@ function CardView(props: {
                   type="button"
                   disabled={!selectable}
                   onClick={() => selectable && props.onChoosePrize(p.id)}
-                  className={`relative overflow-hidden rounded-xl border bg-white transition ${
+                  className={`relative w-[30%] shrink-0 snap-start overflow-hidden rounded-xl border bg-white transition ${
                     isChosen
                       ? "border-[var(--rw-primary)] ring-2 ring-[var(--rw-primary2)]"
                       : "border-[var(--rw-line2)]"
@@ -490,6 +495,11 @@ function CardView(props: {
               );
             })}
           </div>
+          {state.prizes.length > 3 && (
+            <p className="mt-1 text-[11px] text-[var(--rw-muted)]">
+              ← اسحبي لتشوفي كل الجوائز ({state.prizes.length})
+            </p>
+          )}
           {state.rewardReady && chosen && (
             <p className="mt-2 text-xs text-[var(--rw-muted)]">
               تقدرين تغيّرين اختيارك قبل الاستلام.
