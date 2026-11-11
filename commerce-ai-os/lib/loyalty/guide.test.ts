@@ -27,10 +27,3 @@ test("the minimum order value comes from one constant and renders in Arabic digi
   const line = rewardsSteps(6).find((s) => s.includes("الحد الأدنى للطلب"))!;
   assert.ok(!/\d/.test(line), "no ASCII digits in the Arabic copy");
 });
-
-test("the order step names the store (Malika's by default, Pure Seoul on its card)", () => {
-  assert.ok(rewardsSteps(6).some((s) => s.includes("Malika's Universe")));
-  const ps = rewardsSteps(6, undefined, "Pure Seoul");
-  assert.ok(ps.some((s) => s.includes("Pure Seoul")));
-  assert.ok(!ps.some((s) => s.includes("Malika")));
-});

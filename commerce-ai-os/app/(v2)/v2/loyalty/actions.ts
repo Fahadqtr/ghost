@@ -28,7 +28,6 @@ import {
   sendVoucherWhatsApp,
   PRIZE_BUCKET,
 } from "@/lib/loyalty/rewards";
-import { DEFAULT_BRAND, parseBrand } from "@/lib/loyalty/brand";
 
 /**
  * Owner gate for the void-returning actions. It THROWS so the denial keeps the
@@ -88,7 +87,6 @@ export async function addPrizeAction(formData: FormData): Promise<{ error?: stri
   const owner = await requireOwner();
   if (!owner.ok) return { error: owner.error };
   const name = String(formData.get("name") ?? "");
-  const brand = parseBrand(formData.get("brand"));
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "اختاري صورة الجائزة." };
   if (file.size > PRIZE_MAX_BYTES)
@@ -97,9 +95,7 @@ export async function addPrizeAction(formData: FormData): Promise<{ error?: stri
   if (!ext) return { error: `نوع غير مدعوم "${file.type || "?"}". استخدمي JPG أو PNG.` };
 
   const admin = createAdminClient();
-  // Pure Seoul prize images get their own folder; Malika's keep the old layout.
-  const prefix = brand === DEFAULT_BRAND ? "" : `${brand}/`;
-  const path = `${prefix}prize_${Date.now()}_${Math.floor(Math.random() * 1e4)}.${ext}`;
+  const path = `prize_${Date.now()}_${Math.floor(Math.random() * 1e4)}.${ext}`;
   const buf = Buffer.from(await file.arrayBuffer());
   const { error: upErr } = await admin.storage
     .from(PRIZE_BUCKET)
@@ -107,7 +103,7 @@ export async function addPrizeAction(formData: FormData): Promise<{ error?: stri
   if (upErr) return { error: `فشل رفع الصورة: ${upErr.message}` };
 
   const imageUrl = admin.storage.from(PRIZE_BUCKET).getPublicUrl(path).data.publicUrl;
-  await addPrize(name, path, imageUrl, brand);
+  await addPrize(name, path, imageUrl);
   revalidatePath("/v2/loyalty/prizes");
   return {};
 }
