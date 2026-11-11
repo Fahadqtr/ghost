@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { Heart } from "./Heart";
 import BrandLogo from "@/components/BrandLogo";
 import { rewardsSteps } from "@/lib/loyalty/guide";
+import { BRAND_INFO, DEFAULT_BRAND, type LoyaltyBrand } from "@/lib/loyalty/brand";
 
 type PrizeOption = { id: string; name: string; imageUrl: string };
 
@@ -26,9 +27,9 @@ type RewardState = {
   voucherCode: string | null;
 };
 
-const LS_KEY = "malika_rewards_id";
-
-export default function RewardsClient() {
+export default function RewardsClient({ brand = DEFAULT_BRAND }: { brand?: LoyaltyBrand }) {
+  const info = BRAND_INFO[brand];
+  const LS_KEY = info.storageKey;
   const [state, setState] = useState<RewardState | null>(null);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -65,7 +66,7 @@ export default function RewardsClient() {
       const res = await fetch("/api/rewards/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: n, phone: p }),
+        body: JSON.stringify({ name: n, phone: p, brand }),
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -98,6 +99,7 @@ export default function RewardsClient() {
     try {
       const fd = new FormData();
       fd.append("phone", state.phone);
+      fd.append("brand", brand);
       fd.append("file", file);
       const res = await fetch("/api/rewards/submit", { method: "POST", body: fd });
       const data = await res.json();
@@ -122,7 +124,7 @@ export default function RewardsClient() {
       const res = await fetch("/api/rewards/choose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: state.phone, prizeId }),
+        body: JSON.stringify({ phone: state.phone, prizeId, brand }),
       });
       const data = await res.json();
       if (!res.ok || data.error) setError(data.error || "تعذّر اختيار الجائزة.");
@@ -148,7 +150,7 @@ export default function RewardsClient() {
       style={{ background: "linear-gradient(160deg,#fdf2f4 0%,#faeef0 45%,#f7ead9 100%)" }}
     >
       <div className="w-full max-w-md">
-        <Card>
+        <Card brand={brand}>
           {booting ? (
             <div className="py-16 text-center text-[#c69] opacity-70">جارٍ التحميل…</div>
           ) : state ? (
@@ -173,9 +175,9 @@ export default function RewardsClient() {
             />
           )}
         </Card>
-        <Guide required={state?.required ?? 6} />
+        <Guide required={state?.required ?? 6} storeName={info.storeName} />
         <p className="mt-4 text-center text-xs text-[#b58aa0]">
-          MALIKA&apos;S UNIVERSE · مكافآت الجمال
+          {info.wordmark} · مكافآت الجمال
         </p>
       </div>
     </main>
@@ -184,8 +186,8 @@ export default function RewardsClient() {
 
 /** Collapsible «الطريقة والشروط» guide — the how-to steps + the rules, shown
  *  under the card on both the register and the card views. */
-function Guide({ required }: { required: number }) {
-  const steps = rewardsSteps(required);
+function Guide({ required, storeName }: { required: number; storeName: string }) {
+  const steps = rewardsSteps(required, undefined, storeName);
   return (
     <details className="group mt-4 overflow-hidden rounded-2xl border border-[#e8cdb5] bg-white/90 text-right shadow-sm">
       <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-bold text-[#d17c93]">
@@ -210,7 +212,8 @@ function Guide({ required }: { required: number }) {
 }
 
 /** The gold-framed floral card shell shared by both views. */
-function Card({ children }: { children: React.ReactNode }) {
+function Card({ children, brand }: { children: React.ReactNode; brand: LoyaltyBrand }) {
+  const info = BRAND_INFO[brand];
   return (
     <div
       className="relative overflow-hidden rounded-3xl bg-white/95 p-6 shadow-xl sm:p-8"
@@ -220,10 +223,18 @@ function Card({ children }: { children: React.ReactNode }) {
       <span className="pointer-events-none absolute -right-3 -top-3 text-4xl opacity-30 select-none">🌸</span>
       <span className="pointer-events-none absolute -bottom-3 -left-3 text-4xl opacity-30 select-none">🌸</span>
       <div className="mb-4 text-center">
-        <BrandLogo className="mx-auto h-14 w-auto text-[#1f1a17]" />
-        <p className="mt-1 text-[11px] font-semibold tracking-[0.35em] text-[#c9a24b]">
-          MALIKA&apos;S UNIVERSE
-        </p>
+        {brand === DEFAULT_BRAND ? (
+          <BrandLogo className="mx-auto h-14 w-auto text-[#1f1a17]" />
+        ) : (
+          <p className="font-serif text-3xl font-bold tracking-[0.12em] text-[#1f1a17]">
+            {info.storeName}
+          </p>
+        )}
+        {brand === DEFAULT_BRAND && (
+          <p className="mt-1 text-[11px] font-semibold tracking-[0.35em] text-[#c9a24b]">
+            {info.wordmark}
+          </p>
+        )}
       </div>
       {children}
     </div>

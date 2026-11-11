@@ -1,5 +1,9 @@
 import Link from "next/link";
+import QRCode from "qrcode";
 import PrintButton from "../qr/PrintButton";
+import BrandSwitch from "../BrandSwitch";
+import { BRAND_INFO, DEFAULT_BRAND, parseBrand, withBrand } from "@/lib/loyalty/brand";
+import { publicRewardsUrl } from "@/lib/loyalty/public-url";
 
 export const dynamic = "force-dynamic";
 
@@ -8,23 +12,39 @@ export const dynamic = "force-dynamic";
 // business-card size (85×55mm), 2-up on A4 with cut lines. Print → cut →
 // include with the order. Any quantity via ?n=. The logo, florals, QR and copy
 // are baked into the image, so this page just tiles it.
+//
+// Pure Seoul has no designed artwork yet, so its card is drawn here: the store
+// name, the offer, and a QR to the Pure Seoul card (/rewards/pureseoul) —
+// customers scanning it join the Pure Seoul program, not Malika's.
 const CARD_SRC = "/loyalty/beauty-card.png";
 
 export default async function LoyaltyCardsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ n?: string }>;
+  searchParams: Promise<{ n?: string; brand?: string }>;
 }) {
-  const { n } = await searchParams;
+  const { n, brand: rawBrand } = await searchParams;
+  const brand = parseBrand(rawBrand);
+  const info = BRAND_INFO[brand];
+  const qrSvg =
+    brand === DEFAULT_BRAND
+      ? null
+      : await QRCode.toString(await publicRewardsUrl(brand), {
+          type: "svg",
+          margin: 0,
+          width: 160,
+          color: { dark: "#1f1a17", light: "#ffffff" },
+        });
   const count = Math.min(Math.max(parseInt(n || "10", 10) || 10, 1), 200);
   const cards = Array.from({ length: count });
 
   return (
     <div className="mx-auto max-w-4xl p-4 sm:p-6">
+      <BrandSwitch path="/v2/loyalty/cards" brand={brand} />
       {/* controls — hidden when printing */}
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3" data-no-print>
         <div>
-          <Link href="/v2/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
+          <Link href={withBrand("/v2/loyalty", brand)} className="text-sm text-slate-500 hover:text-slate-700">
             ← رجوع
           </Link>
           <h1 className="mt-1 text-lg font-bold text-slate-800">بطاقات للطباعة مع الطلبات</h1>
@@ -44,6 +64,7 @@ export default async function LoyaltyCardsPage({
               className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-pink-300"
             />
           </label>
+          {brand !== DEFAULT_BRAND && <input type="hidden" name="brand" value={brand} />}
           <button className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
             تحديث
           </button>
@@ -56,8 +77,26 @@ export default async function LoyaltyCardsPage({
         <div className="cards-grid">
           {cards.map((_, i) => (
             <div key={i} className="rw-card">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={CARD_SRC} alt="بطاقة مكافآت الجمال" className="rw-img" />
+              {qrSvg ? (
+                <div dir="rtl" className="ps-card">
+                  <div className="ps-text">
+                    <p className="ps-store">{info.storeName}</p>
+                    <p className="ps-title">بطاقة مكافآت الجمال</p>
+                    <p className="ps-body">
+                      قيّمي طلبك من {info.storeName} في سنونو، واجمعي ٦ ختمات = منتج مجاني 🎁
+                    </p>
+                    <p className="ps-cta">امسحي الباركود وسجّلي ←</p>
+                  </div>
+                  <div
+                    className="ps-qr"
+                    // trusted: SVG generated server-side by the qrcode library from our URL
+                    dangerouslySetInnerHTML={{ __html: qrSvg }}
+                  />
+                </div>
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={CARD_SRC} alt="بطاقة مكافآت الجمال" className="rw-img" />
+              )}
             </div>
           ))}
         </div>
@@ -89,6 +128,19 @@ export default async function LoyaltyCardsPage({
           object-fit: contain;   /* full artwork, never distorted */
           display: block;
         }
+        .ps-card {
+          display: flex; align-items: center; gap: 3mm;
+          width: 100%; height: 100%; box-sizing: border-box; padding: 4mm 5mm;
+          background: linear-gradient(160deg,#fdf2f4 0%,#f7ead9 100%);
+          border: 0.6mm solid #d9b45f;
+        }
+        .ps-text { flex: 1; min-width: 0; text-align: right; }
+        .ps-store { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; font-size: 15pt; letter-spacing: .06em; color: #1f1a17; line-height: 1.1; }
+        .ps-title { margin-top: 1mm; font-weight: 700; font-size: 10pt; color: #d17c93; }
+        .ps-body { margin-top: 1mm; font-size: 7pt; line-height: 1.45; color: #6b5b4b; }
+        .ps-cta { margin-top: 1.2mm; font-size: 7pt; font-weight: 700; color: #a9791f; }
+        .ps-qr { width: 30mm; height: 30mm; flex-shrink: 0; background: #fff; padding: 1.2mm; border-radius: 1.5mm; }
+        .ps-qr svg { width: 100%; height: 100%; display: block; }
         @media (min-width: 640px) {
           .cards-grid { grid-template-columns: repeat(2, 85mm); }
           .rw-card { width: 85mm; height: 55mm; max-width: none; aspect-ratio: auto; }

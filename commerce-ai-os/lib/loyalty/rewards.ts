@@ -5,6 +5,15 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendWhatsAppTo, sendWhatsAppImageTo } from "@/lib/whatsapp";
 import { planCustomerName, shouldApplyPrizeChange } from "@/lib/loyalty/rewards-public";
+import {
+  BRAND_INFO,
+  DEFAULT_BRAND,
+  brandVoucherCode,
+  parseBrand,
+  type LoyaltyBrand,
+} from "@/lib/loyalty/brand";
+
+export type { LoyaltyBrand } from "@/lib/loyalty/brand";
 
 /** Hearts needed to earn one free product. */
 export const STAMPS_REQUIRED = 6;
@@ -64,7 +73,8 @@ function cleanName(raw: string): string {
  */
 export async function getOrCreateState(
   rawName: string,
-  rawPhone: string
+  rawPhone: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
 ): Promise<RewardState> {
   const phone = normalizePhone(rawPhone);
   if (!phone) throw new Error("رقم الجوال غير صحيح.");
@@ -72,7 +82,7 @@ export async function getOrCreateState(
   if (!name) throw new Error("الاسم مطلوب.");
 
   const admin = createAdminClient();
-  const COLS = "id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id";
+  const COLS = "id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id, brand";
 
   // Look the customer up first. Existing customers KEEP their stored name — a
   // public request must never rename them (renames are admin-only) and we don't
@@ -81,6 +91,7 @@ export async function getOrCreateState(
   const { data: existing } = await admin
     .from("loyalty_customers")
     .select(COLS)
+    .eq("brand", brand)
     .eq("phone", phone)
     .maybeSingle();
 
@@ -91,7 +102,7 @@ export async function getOrCreateState(
 
   const { data: created, error } = await admin
     .from("loyalty_customers")
-    .insert({ phone, name: plan.name })
+    .insert({ phone, name: plan.name, brand })
     .select(COLS)
     .single();
   if (error || !created) {
@@ -99,6 +110,7 @@ export async function getOrCreateState(
     const { data: again } = await admin
       .from("loyalty_customers")
       .select(COLS)
+      .eq("brand", brand)
       .eq("phone", phone)
       .maybeSingle();
     if (again) return stateFor(admin, again as CustomerRow);
@@ -108,13 +120,17 @@ export async function getOrCreateState(
 }
 
 /** Read-only state lookup by phone (returns null if the customer doesn't exist). */
-export async function getStateByPhone(rawPhone: string): Promise<RewardState | null> {
+export async function getStateByPhone(
+  rawPhone: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<RewardState | null> {
   const phone = normalizePhone(rawPhone);
   if (!phone) return null;
   const admin = createAdminClient();
   const { data: customer } = await admin
     .from("loyalty_customers")
-    .select("id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id")
+    .select("id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id, brand")
+    .eq("brand", brand)
     .eq("phone", phone)
     .maybeSingle();
   if (!customer) return null;
@@ -129,6 +145,7 @@ type CustomerRow = {
   cycles_completed: number;
   reward_ready_at: string | null;
   chosen_prize_id: string | null;
+  brand: string;
 };
 
 async function stateFor(
@@ -149,7 +166,8 @@ async function stateFor(
     .limit(1)
     .maybeSingle();
 
-  const prizes = await listActivePrizes();
+  const brand = parseBrand(customer.brand);
+  const prizes = await listActivePrizes(brand);
 
   return {
     name: customer.name,
@@ -164,7 +182,7 @@ async function stateFor(
     chosenPrizeId: customer.chosen_prize_id,
     voucherCode:
       customer.stamps >= STAMPS_REQUIRED
-        ? voucherCode(customer.id, customer.cycles_completed)
+        ? brandVoucherCode(brand, customer.id, customer.cycles_completed)
         : null,
   };
 }
@@ -177,7 +195,8 @@ async function stateFor(
 export async function addSubmission(
   rawPhone: string,
   imagePath: string,
-  imageUrl: string
+  imageUrl: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
 ): Promise<void> {
   const phone = normalizePhone(rawPhone);
   if (!phone) throw new Error("رقم الجوال غير صحيح.");
@@ -186,6 +205,7 @@ export async function addSubmission(
   const { data: customer } = await admin
     .from("loyalty_customers")
     .select("id")
+    .eq("brand", brand)
     .eq("phone", phone)
     .maybeSingle();
   if (!customer) throw new Error("سجّلي بياناتك أولاً قبل رفع الصورة.");
@@ -200,12 +220,16 @@ export async function addSubmission(
 }
 
 /** Every screenshot still awaiting review, newest first — for the admin queue. */
-export async function listPending(): Promise<PendingSubmission[]> {
+export async function listPending(
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<PendingSubmission[]> {
   const admin = createAdminClient();
+  // !inner so the brand filter on the joined customer drops other stores' rows.
   const { data, error } = await admin
     .from("loyalty_submissions")
-    .select("id, image_url, created_at, customer_id, loyalty_customers(name, phone, stamps)")
+    .select("id, image_url, created_at, customer_id, loyalty_customers!inner(name, phone, stamps, brand)")
     .eq("status", "pending")
+    .eq("loyalty_customers.brand", brand)
     .order("created_at", { ascending: true })
     .limit(200);
   if (error) throw new Error(error.message);
@@ -236,11 +260,15 @@ export type CustomerRecord = {
  * Every rewards customer, most recently active first — for the customers table.
  * Optional case-insensitive search over name / phone.
  */
-export async function listCustomers(search?: string): Promise<CustomerRecord[]> {
+export async function listCustomers(
+  search?: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<CustomerRecord[]> {
   const admin = createAdminClient();
   let query = admin
     .from("loyalty_customers")
     .select("id, name, phone, stamps, cycles_completed, reward_ready_at, created_at, updated_at")
+    .eq("brand", brand)
     .order("updated_at", { ascending: false })
     .limit(500);
 
@@ -279,11 +307,14 @@ export type PrizeRecord = {
 };
 
 /** Active prizes for the customer card, in display order. */
-export async function listActivePrizes(): Promise<PrizeOption[]> {
+export async function listActivePrizes(
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<PrizeOption[]> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("loyalty_prizes")
     .select("id, name, image_url")
+    .eq("brand", brand)
     .eq("active", true)
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true })
@@ -293,11 +324,14 @@ export async function listActivePrizes(): Promise<PrizeOption[]> {
 }
 
 /** Every prize (active + hidden) for the admin manager. */
-export async function listAllPrizes(): Promise<PrizeRecord[]> {
+export async function listAllPrizes(
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<PrizeRecord[]> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("loyalty_prizes")
     .select("id, name, image_url, image_path, active, sort_order")
+    .eq("brand", brand)
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true })
     .limit(200);
@@ -313,9 +347,15 @@ export async function listAllPrizes(): Promise<PrizeRecord[]> {
 }
 
 /** Insert a prize (image already uploaded to the prizes bucket). */
-export async function addPrize(name: string, imagePath: string, imageUrl: string): Promise<void> {
+export async function addPrize(
+  name: string,
+  imagePath: string,
+  imageUrl: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<void> {
   const admin = createAdminClient();
   const { error } = await admin.from("loyalty_prizes").insert({
+    brand,
     name: (name ?? "").trim().slice(0, 100),
     image_path: imagePath,
     image_url: imageUrl,
@@ -341,7 +381,11 @@ export async function deletePrize(id: string): Promise<void> {
  * A completed customer picks their prize. Only allowed once the card is full,
  * and only for an active prize. Records the choice for the owner to fulfill.
  */
-export async function chooseReward(rawPhone: string, prizeId: string): Promise<RewardState> {
+export async function chooseReward(
+  rawPhone: string,
+  prizeId: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<RewardState> {
   const phone = normalizePhone(rawPhone);
   if (!phone) throw new Error("رقم الجوال غير صحيح.");
   const admin = createAdminClient();
@@ -349,6 +393,7 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
   const { data: customer } = await admin
     .from("loyalty_customers")
     .select("id, stamps, chosen_prize_id")
+    .eq("brand", brand)
     .eq("phone", phone)
     .maybeSingle();
   if (!customer) throw new Error("العميلة غير موجودة.");
@@ -357,17 +402,18 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
   // Idempotent: re-choosing the SAME prize is a no-op — no write, and no
   // second WhatsApp (which would let a repeat call spam the customer).
   if (!shouldApplyPrizeChange(customer.chosen_prize_id, prizeId)) {
-    const cur = await getStateByPhone(phone);
+    const cur = await getStateByPhone(phone, brand);
     if (!cur) throw new Error("تعذّر تحديث الحالة.");
     return cur;
   }
 
   const { data: prize } = await admin
     .from("loyalty_prizes")
-    .select("id, active")
+    .select("id, active, brand")
     .eq("id", prizeId)
     .maybeSingle();
-  if (!prize || !prize.active) throw new Error("الجائزة غير متاحة.");
+  // A prize can only be claimed on its own store's card.
+  if (!prize || !prize.active || prize.brand !== brand) throw new Error("الجائزة غير متاحة.");
 
   const { error } = await admin
     .from("loyalty_customers")
@@ -379,7 +425,7 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
   try {
     const v = await getVoucher(customer.id);
     const caption =
-      `🎁 مبروك ${v.name}! جائزتك من مكافآت الجمال: ${v.prizeName || "منتج مجاني"}.\n` +
+      `🎁 مبروك ${v.name}! جائزتك من مكافآت الجمال (${BRAND_INFO[v.brand].storeName}): ${v.prizeName || "منتج مجاني"}.\n` +
       `رقم القسيمة: ${v.code}\n` +
       `أبرزي هذه البطاقة عند الاستلام 💝`;
     if (v.prizeImage) await sendWhatsAppImageTo(v.phone, v.prizeImage, caption);
@@ -388,7 +434,7 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
     /* notification failure must never fail the choice */
   }
 
-  const next = await getStateByPhone(phone);
+  const next = await getStateByPhone(phone, brand);
   if (!next) throw new Error("تعذّر تحديث الحالة.");
   return next;
 }
@@ -404,19 +450,15 @@ export type Voucher = {
   prizeName: string | null;
   prizeImage: string | null;
   issuedAt: string; // ISO — when the voucher was viewed/generated
+  brand: LoyaltyBrand;
 };
-
-/** Deterministic, human-readable voucher code for a completed card. */
-function voucherCode(id: string, cycle: number): string {
-  return `MU-${id.replace(/-/g, "").slice(0, 6).toUpperCase()}-${cycle + 1}`;
-}
 
 /** Build the win voucher for a customer (must have completed the card). */
 export async function getVoucher(customerId: string): Promise<Voucher> {
   const admin = createAdminClient();
   const { data: c } = await admin
     .from("loyalty_customers")
-    .select("id, name, phone, stamps, cycles_completed, chosen_prize_id")
+    .select("id, name, phone, stamps, cycles_completed, chosen_prize_id, brand")
     .eq("id", customerId)
     .maybeSingle();
   if (!c) throw new Error("العميلة غير موجودة.");
@@ -435,15 +477,17 @@ export async function getVoucher(customerId: string): Promise<Voucher> {
     }
   }
 
+  const brand = parseBrand(c.brand);
   return {
     customerId: c.id,
     name: c.name,
     phone: c.phone,
     ready: c.stamps >= STAMPS_REQUIRED,
-    code: voucherCode(c.id, c.cycles_completed),
+    code: brandVoucherCode(brand, c.id, c.cycles_completed),
     prizeName,
     prizeImage,
     issuedAt: new Date().toISOString(),
+    brand,
   };
 }
 
@@ -457,7 +501,7 @@ export async function sendVoucherWhatsApp(customerId: string) {
   const prizeLine = v.prizeName
     ? `جائزتك: ${v.prizeName}`
     : "جائزتك المجانية جاهزة";
-  const msg = `🎉 مبروك ${v.name}! أكملتِ بطاقة مكافآت الجمال. ${prizeLine}. رقم القسيمة: ${v.code}. أبرزي هذه الرسالة عند الاستلام 💝`;
+  const msg = `🎉 مبروك ${v.name}! أكملتِ بطاقة مكافآت الجمال من ${BRAND_INFO[v.brand].storeName}. ${prizeLine}. رقم القسيمة: ${v.code}. أبرزي هذه الرسالة عند الاستلام 💝`;
   return sendWhatsAppTo(v.phone, msg);
 }
 
@@ -493,7 +537,7 @@ export async function updateCustomer(
   const { error } = await admin.from("loyalty_customers").update(patch).eq("id", id);
   if (error) {
     // 23505 = unique_violation on phone
-    if ((error as any).code === "23505") throw new Error("رقم الجوال مستخدم لزبونة أخرى.");
+    if ((error as any).code === "23505") throw new Error("رقم الجوال مستخدم لزبونة أخرى في نفس المتجر.");
     throw new Error(error.message);
   }
 }
@@ -516,11 +560,14 @@ export type ReadyCustomer = {
 };
 
 /** Customers who completed a card and are waiting to redeem their free product. */
-export async function listRewardReady(): Promise<ReadyCustomer[]> {
+export async function listRewardReady(
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<ReadyCustomer[]> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("loyalty_customers")
     .select("id, name, phone, stamps, reward_ready_at, chosen_prize_id")
+    .eq("brand", brand)
     .gte("stamps", STAMPS_REQUIRED)
     .order("reward_ready_at", { ascending: true })
     .limit(200);
@@ -570,7 +617,7 @@ export async function approveSubmission(submissionId: string): Promise<void> {
 
   const { data: customer } = await admin
     .from("loyalty_customers")
-    .select("id, name, phone, stamps, reward_ready_at")
+    .select("id, name, phone, stamps, reward_ready_at, brand")
     .eq("id", sub.customer_id)
     .single();
   if (!customer) throw new Error("العميلة غير موجودة.");
@@ -599,12 +646,13 @@ export async function approveSubmission(submissionId: string): Promise<void> {
   // Congratulate the customer on WhatsApp (best-effort — never blocks approval;
   // no-ops unless WhatsApp is configured, and delivery follows Meta's rules).
   const shown = Math.min(nextStamps, STAMPS_REQUIRED);
+  const store = BRAND_INFO[parseBrand(customer.brand)].storeName;
   const msg =
     shown >= STAMPS_REQUIRED
-      ? `🎉🌷 مبروك يا ${customer.name}! أكملتِ الـ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من Malika's Universe 💝\n` +
+      ? `🎉🌷 مبروك يا ${customer.name}! أكملتِ الـ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من ${store} 💝\n` +
         `هديتك جاهزة — افتحي بطاقتك واختاري جائزتك الحين، وبتوصلك على واتساب. شكراً لجمالك وذوقك 🌷`
       : `❤️ تم ختم قلب لكِ يا ${customer.name}! 🌷\n` +
-        `صار عندك ${shown} من ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من Malika's Universe — باقي ${STAMPS_REQUIRED - shown} على هديتك 💝`;
+        `صار عندك ${shown} من ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من ${store} — باقي ${STAMPS_REQUIRED - shown} على هديتك 💝`;
   try {
     await sendWhatsAppTo(customer.phone, msg);
   } catch {
