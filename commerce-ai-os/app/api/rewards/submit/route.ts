@@ -71,7 +71,14 @@ async function handleSubmit(req: Request) {
     );
 
   // Must be a registered customer, and not already flooding the queue.
-  const state = await getStateByPhone(phone, brand);
+  // Throws (e.g. a store whose DB migration isn't applied yet) → generic 400,
+  // never an unhandled 500.
+  let state: Awaited<ReturnType<typeof getStateByPhone>>;
+  try {
+    state = await getStateByPhone(phone, brand);
+  } catch {
+    return Response.json({ error: REWARDS_GENERIC_ERROR }, { status: 400 });
+  }
   if (!state)
     return Response.json({ error: "سجّلي اسمك ورقمك أولاً." }, { status: 400 });
   if (state.pending >= MAX_PENDING)
