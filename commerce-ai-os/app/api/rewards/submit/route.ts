@@ -12,6 +12,7 @@ import {
   normalizePhone,
   REVIEW_BUCKET,
 } from "@/lib/loyalty/rewards";
+import { DEFAULT_BRAND, parseBrand } from "@/lib/loyalty/brand";
 import { rateLimit, clientIpFrom, runIfAllowed } from "@/lib/ratelimit";
 import {
   REWARDS_RATE_LIMIT,
@@ -49,6 +50,7 @@ async function handleSubmit(req: Request) {
     return Response.json({ error: "صيغة الطلب غير صحيحة." }, { status: 400 });
   }
 
+  const brand = parseBrand(form.get("brand"));
   const rawPhone = String(form.get("phone") ?? "");
   const phone = normalizePhone(rawPhone);
   if (!phone) return Response.json({ error: "رقم الجوال غير صحيح." }, { status: 400 });
@@ -69,7 +71,7 @@ async function handleSubmit(req: Request) {
     );
 
   // Must be a registered customer, and not already flooding the queue.
-  const state = await getStateByPhone(phone);
+  const state = await getStateByPhone(phone, brand);
   if (!state)
     return Response.json({ error: "سجّلي اسمك ورقمك أولاً." }, { status: 400 });
   if (state.pending >= MAX_PENDING)
@@ -85,7 +87,10 @@ async function handleSubmit(req: Request) {
     return Response.json({ error: REWARDS_GENERIC_ERROR }, { status: 500 });
   }
 
-  const path = `${phone}/${Date.now()}_${Math.floor(Math.random() * 1e4)}.${ext}`;
+  // Pure Seoul screenshots live under their own folder; Malika's keep the
+  // original layout so existing paths are unchanged.
+  const folder = brand === DEFAULT_BRAND ? phone : `${brand}/${phone}`;
+  const path = `${folder}/${Date.now()}_${Math.floor(Math.random() * 1e4)}.${ext}`;
   try {
     const buf = Buffer.from(await file.arrayBuffer());
     const { error: upErr } = await admin.storage
@@ -94,9 +99,9 @@ async function handleSubmit(req: Request) {
     if (upErr) return Response.json({ error: REWARDS_GENERIC_ERROR }, { status: 400 });
 
     const imageUrl = admin.storage.from(REVIEW_BUCKET).getPublicUrl(path).data.publicUrl;
-    await addSubmission(phone, path, imageUrl);
+    await addSubmission(phone, path, imageUrl, brand);
 
-    const next = await getStateByPhone(phone);
+    const next = await getStateByPhone(phone, brand);
     return Response.json({ ok: true, state: next ? toPublicRewardState(next) : null });
   } catch {
     return Response.json({ error: REWARDS_GENERIC_ERROR }, { status: 400 });

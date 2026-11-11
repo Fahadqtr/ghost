@@ -3,9 +3,16 @@
 import { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { PrizeRecord } from "@/lib/loyalty/rewards";
+import type { LoyaltyBrand } from "@/lib/loyalty/brand";
 import { addPrizeAction, setPrizeActiveAction, deletePrizeAction } from "../actions";
 
-export default function PrizesClient({ prizes }: { prizes: PrizeRecord[] }) {
+export default function PrizesClient({
+  prizes,
+  brand,
+}: {
+  prizes: PrizeRecord[];
+  brand: LoyaltyBrand;
+}) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -29,6 +36,7 @@ export default function PrizesClient({ prizes }: { prizes: PrizeRecord[] }) {
         const fd = new FormData();
         fd.append("name", name);
         fd.append("file", file);
+        fd.append("brand", brand);
         const res = await addPrizeAction(fd);
         if (res?.error) {
           setErr(res.error);

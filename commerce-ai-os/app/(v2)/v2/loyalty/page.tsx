@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { listPending, listRewardReady, STAMPS_REQUIRED } from "@/lib/loyalty/rewards";
 import LoyaltyClient from "./LoyaltyClient";
+import BrandSwitch from "./BrandSwitch";
+import { BRAND_INFO, parseBrand, withBrand } from "@/lib/loyalty/brand";
 
 export const dynamic = "force-dynamic";
 
@@ -8,46 +10,52 @@ export const dynamic = "force-dynamic";
 // screenshots customers uploaded (approve = stamp a heart, reject = no heart),
 // and redeem completed cards. The customer-facing card + QR target live at the
 // public /rewards route.
-export default async function LoyaltyAdminPage() {
+export default async function LoyaltyAdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ brand?: string }>;
+}) {
+  const brand = parseBrand((await searchParams).brand);
   let pending: Awaited<ReturnType<typeof listPending>> = [];
   let ready: Awaited<ReturnType<typeof listRewardReady>> = [];
   let error: string | null = null;
   try {
-    [pending, ready] = await Promise.all([listPending(), listRewardReady()]);
+    [pending, ready] = await Promise.all([listPending(brand), listRewardReady(brand)]);
   } catch (e: any) {
     error = e?.message ?? "تعذّر تحميل البيانات.";
   }
 
   return (
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
+      <BrandSwitch path="/v2/loyalty" brand={brand} />
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-800">مكافآت الجمال</h1>
+          <h1 className="text-xl font-bold text-slate-800">مكافآت الجمال · {BRAND_INFO[brand].storeName}</h1>
           <p className="text-sm text-slate-500">
             راجعي صور تقييمات سنونو — كل اعتماد يختم ختمة. تكتمل {STAMPS_REQUIRED} = هدية.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 sm:shrink-0 sm:justify-end">
           <Link
-            href="/v2/loyalty/prizes"
+            href={withBrand("/v2/loyalty/prizes", brand)}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             🎁 الجوائز
           </Link>
           <Link
-            href="/v2/loyalty/customers"
+            href={withBrand("/v2/loyalty/customers", brand)}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             👥 الزبائن
           </Link>
           <Link
-            href="/v2/loyalty/cards"
+            href={withBrand("/v2/loyalty/cards", brand)}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             🖨️ بطاقات الطلبات
           </Link>
           <Link
-            href="/v2/loyalty/qr"
+            href={withBrand("/v2/loyalty/qr", brand)}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             🔳 باركود الطباعة
