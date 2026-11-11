@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getVoucher } from "@/lib/loyalty/rewards";
 import { isOwner as checkOwner } from "@/lib/malak/authz";
 import BrandLogo from "@/components/BrandLogo";
+import { BRAND_INFO, DEFAULT_BRAND, withBrand } from "@/lib/loyalty/brand";
 import VoucherActions from "./VoucherActions";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +44,7 @@ export default async function VoucherPage({
   return (
     <div className="mx-auto max-w-lg p-4 sm:p-6">
       <div data-no-print className="mb-2">
-        <Link href="/v2/loyalty" className="text-sm text-slate-500 hover:text-slate-700">
+        <Link href={withBrand("/v2/loyalty", voucher.brand)} className="text-sm text-slate-500 hover:text-slate-700">
           ← رجوع
         </Link>
       </div>
@@ -61,10 +62,18 @@ export default async function VoucherPage({
         className="qr-print rounded-3xl border-2 border-[#d9b45f] bg-white p-8 text-center"
         style={{ boxShadow: "0 20px 50px -20px rgba(180,120,90,.4)" }}
       >
-        <BrandLogo className="mx-auto h-14 w-auto text-[#1f1a17]" />
-        <p className="mt-1 text-[11px] font-semibold tracking-[0.35em] text-[#c9a24b]">
-          MALIKA&apos;S UNIVERSE
-        </p>
+        {voucher.brand === DEFAULT_BRAND ? (
+          <BrandLogo className="mx-auto h-14 w-auto text-[#1f1a17]" />
+        ) : (
+          <p className="font-serif text-3xl font-bold tracking-[0.12em] text-[#1f1a17]">
+            {BRAND_INFO[voucher.brand].storeName}
+          </p>
+        )}
+        {voucher.brand === DEFAULT_BRAND && (
+          <p className="mt-1 text-[11px] font-semibold tracking-[0.35em] text-[#c9a24b]">
+            {BRAND_INFO[voucher.brand].wordmark}
+          </p>
+        )}
 
         <h1 className="mt-4 text-2xl font-bold text-[#d17c93]">🎁 قسيمة جائزة</h1>
         <p className="mt-1 text-sm text-[#6b5b4b]">

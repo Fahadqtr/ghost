@@ -23,10 +23,14 @@ function arDigits(n: number): string {
  * the whole guide: the qualifying-order rule (minimum value) is folded into the
  * order step, and there is no separate terms list.
  */
-export function rewardsSteps(required = 6, minOrderQar = MIN_ORDER_QAR): string[] {
+export function rewardsSteps(
+  required = 6,
+  minOrderQar = MIN_ORDER_QAR,
+  storeName = "Malika's Universe"
+): string[] {
   return [
     "سجّلي بياناتك في بطاقة المكافآت.",
-    `اطلبي من Malika's Universe عبر سنونو (الحد الأدنى للطلب ${arDigits(minOrderQar)} ريال).`,
+    `اطلبي من ${storeName} عبر سنونو (الحد الأدنى للطلب ${arDigits(minOrderQar)} ريال).`,
     "اتركي تقييمًا إيجابيًا للمنتج على سنونو بعد استلامه.",
     "ارفعي صورة التقييم في بطاقتك.",
     `اجمعي ${arDigits(required)} أختام واختاري هديتك مجاناً.`,

@@ -5,6 +5,17 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendWhatsAppTo, sendWhatsAppImageTo } from "@/lib/whatsapp";
 import { planCustomerName, shouldApplyPrizeChange } from "@/lib/loyalty/rewards-public";
+import {
+  BRAND_INFO,
+  DEFAULT_BRAND,
+  brandVoucherCode,
+  decideBrandMode,
+  parseBrand,
+  type BrandMode,
+  type LoyaltyBrand,
+} from "@/lib/loyalty/brand";
+
+export type { LoyaltyBrand } from "@/lib/loyalty/brand";
 
 /** Hearts needed to earn one free product. */
 export const STAMPS_REQUIRED = 6;
@@ -58,13 +69,50 @@ function cleanName(raw: string): string {
   return (raw || "").trim().replace(/\s+/g, " ").slice(0, 80);
 }
 
+// --- Brand column compatibility ---------------------------------------------
+// The `brand` column comes from migration 20261111000000_loyalty_brand. Until
+// it is applied, Malika's runs in "legacy" mode (exactly the pre-brand queries)
+// and other stores are refused, so this code can safely ship before the
+// migration. The probe result is cached: once the column exists it stays
+// "ready"; a negative result is re-checked after a minute.
+type Admin = ReturnType<typeof createAdminClient>;
+let brandColumnCache: { ready: boolean; at: number } | null = null;
+
+async function brandColumnReady(admin: Admin): Promise<boolean> {
+  if (brandColumnCache?.ready) return true;
+  if (brandColumnCache && Date.now() - brandColumnCache.at < 60_000) return false;
+  const { error } = await admin.from("loyalty_customers").select("brand").limit(1);
+  brandColumnCache = { ready: !error, at: Date.now() };
+  return !error;
+}
+
+async function brandMode(admin: Admin, brand: LoyaltyBrand): Promise<BrandMode> {
+  return decideBrandMode(await brandColumnReady(admin), brand);
+}
+
+/** Add `brand` to a column list only when the column exists. */
+function cols(list: string, mode: BrandMode): string {
+  return mode === "scoped" ? `${list}, brand` : list;
+}
+
+/** Apply the brand filter only when the column exists. */
+function scope<Q>(query: Q, mode: BrandMode, brand: LoyaltyBrand, column = "brand"): Q {
+  return mode === "scoped" ? (query as any).eq(column, brand) : query;
+}
+
+/** Insert payload with `brand` only when the column exists. */
+function withBrandField<T extends Record<string, unknown>>(row: T, mode: BrandMode, brand: LoyaltyBrand) {
+  return mode === "scoped" ? { ...row, brand } : row;
+}
+
 /**
  * Look the customer up by phone, creating the row on first visit. Updates the
  * stored name if they typed a new one. Returns their current reward state.
  */
 export async function getOrCreateState(
   rawName: string,
-  rawPhone: string
+  rawPhone: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
 ): Promise<RewardState> {
   const phone = normalizePhone(rawPhone);
   if (!phone) throw new Error("رقم الجوال غير صحيح.");
@@ -72,17 +120,21 @@ export async function getOrCreateState(
   if (!name) throw new Error("الاسم مطلوب.");
 
   const admin = createAdminClient();
-  const COLS = "id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id";
+  const mode = await brandMode(admin, brand);
+  const COLS = cols("id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id", mode);
 
   // Look the customer up first. Existing customers KEEP their stored name — a
   // public request must never rename them (renames are admin-only) and we don't
   // touch updated_at when nothing actually changes. New phones are created with
   // the submitted name.
-  const { data: existing } = await admin
-    .from("loyalty_customers")
-    .select(COLS)
+  const { data: existingRow } = await scope(
+    admin.from("loyalty_customers").select(COLS),
+    mode,
+    brand
+  )
     .eq("phone", phone)
     .maybeSingle();
+  const existing = existingRow as unknown as CustomerRow | null;
 
   const plan = planCustomerName(existing ? { name: existing.name } : null, name);
   if (plan.action === "keep") {
@@ -91,34 +143,44 @@ export async function getOrCreateState(
 
   const { data: created, error } = await admin
     .from("loyalty_customers")
-    .insert({ phone, name: plan.name })
+    .insert(withBrandField({ phone, name: plan.name }, mode, brand))
     .select(COLS)
     .single();
   if (error || !created) {
     // A concurrent create can lose the insert race (unique phone) — re-read.
-    const { data: again } = await admin
-      .from("loyalty_customers")
-      .select(COLS)
+    const { data: again } = await scope(
+      admin.from("loyalty_customers").select(COLS),
+      mode,
+      brand
+    )
       .eq("phone", phone)
       .maybeSingle();
-    if (again) return stateFor(admin, again as CustomerRow);
+    if (again) return stateFor(admin, again as unknown as CustomerRow);
     throw new Error("تعذّر إنشاء البطاقة.");
   }
-  return stateFor(admin, created);
+  return stateFor(admin, created as unknown as CustomerRow);
 }
 
 /** Read-only state lookup by phone (returns null if the customer doesn't exist). */
-export async function getStateByPhone(rawPhone: string): Promise<RewardState | null> {
+export async function getStateByPhone(
+  rawPhone: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<RewardState | null> {
   const phone = normalizePhone(rawPhone);
   if (!phone) return null;
   const admin = createAdminClient();
-  const { data: customer } = await admin
-    .from("loyalty_customers")
-    .select("id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id")
+  const mode = await brandMode(admin, brand);
+  const { data: customer } = await scope(
+    admin
+      .from("loyalty_customers")
+      .select(cols("id, name, phone, stamps, cycles_completed, reward_ready_at, chosen_prize_id", mode)),
+    mode,
+    brand
+  )
     .eq("phone", phone)
     .maybeSingle();
   if (!customer) return null;
-  return stateFor(admin, customer);
+  return stateFor(admin, customer as unknown as CustomerRow);
 }
 
 type CustomerRow = {
@@ -129,6 +191,7 @@ type CustomerRow = {
   cycles_completed: number;
   reward_ready_at: string | null;
   chosen_prize_id: string | null;
+  brand?: string; // absent before the loyalty_brand migration (= Malika's)
 };
 
 async function stateFor(
@@ -149,7 +212,8 @@ async function stateFor(
     .limit(1)
     .maybeSingle();
 
-  const prizes = await listActivePrizes();
+  const brand = parseBrand(customer.brand);
+  const prizes = await listActivePrizes(brand);
 
   return {
     name: customer.name,
@@ -164,7 +228,7 @@ async function stateFor(
     chosenPrizeId: customer.chosen_prize_id,
     voucherCode:
       customer.stamps >= STAMPS_REQUIRED
-        ? voucherCode(customer.id, customer.cycles_completed)
+        ? brandVoucherCode(brand, customer.id, customer.cycles_completed)
         : null,
   };
 }
@@ -177,15 +241,19 @@ async function stateFor(
 export async function addSubmission(
   rawPhone: string,
   imagePath: string,
-  imageUrl: string
+  imageUrl: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
 ): Promise<void> {
   const phone = normalizePhone(rawPhone);
   if (!phone) throw new Error("رقم الجوال غير صحيح.");
   const admin = createAdminClient();
 
-  const { data: customer } = await admin
-    .from("loyalty_customers")
-    .select("id")
+  const mode = await brandMode(admin, brand);
+  const { data: customer } = await scope(
+    admin.from("loyalty_customers").select("id"),
+    mode,
+    brand
+  )
     .eq("phone", phone)
     .maybeSingle();
   if (!customer) throw new Error("سجّلي بياناتك أولاً قبل رفع الصورة.");
@@ -200,12 +268,23 @@ export async function addSubmission(
 }
 
 /** Every screenshot still awaiting review, newest first — for the admin queue. */
-export async function listPending(): Promise<PendingSubmission[]> {
+export async function listPending(
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<PendingSubmission[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("loyalty_submissions")
-    .select("id, image_url, created_at, customer_id, loyalty_customers(name, phone, stamps)")
-    .eq("status", "pending")
+  const mode = await brandMode(admin, brand);
+  // Scoped: !inner so the brand filter on the joined customer drops other
+  // stores' rows. Legacy: the original (pre-brand) query.
+  const select =
+    mode === "scoped"
+      ? "id, image_url, created_at, customer_id, loyalty_customers!inner(name, phone, stamps, brand)"
+      : "id, image_url, created_at, customer_id, loyalty_customers(name, phone, stamps)";
+  const { data, error } = await scope(
+    admin.from("loyalty_submissions").select(select).eq("status", "pending"),
+    mode,
+    brand,
+    "loyalty_customers.brand"
+  )
     .order("created_at", { ascending: true })
     .limit(200);
   if (error) throw new Error(error.message);
@@ -236,11 +315,19 @@ export type CustomerRecord = {
  * Every rewards customer, most recently active first — for the customers table.
  * Optional case-insensitive search over name / phone.
  */
-export async function listCustomers(search?: string): Promise<CustomerRecord[]> {
+export async function listCustomers(
+  search?: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<CustomerRecord[]> {
   const admin = createAdminClient();
-  let query = admin
-    .from("loyalty_customers")
-    .select("id, name, phone, stamps, cycles_completed, reward_ready_at, created_at, updated_at")
+  const mode = await brandMode(admin, brand);
+  let query = scope(
+    admin
+      .from("loyalty_customers")
+      .select("id, name, phone, stamps, cycles_completed, reward_ready_at, created_at, updated_at"),
+    mode,
+    brand
+  )
     .order("updated_at", { ascending: false })
     .limit(500);
 
@@ -279,11 +366,16 @@ export type PrizeRecord = {
 };
 
 /** Active prizes for the customer card, in display order. */
-export async function listActivePrizes(): Promise<PrizeOption[]> {
+export async function listActivePrizes(
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<PrizeOption[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("loyalty_prizes")
-    .select("id, name, image_url")
+  const mode = await brandMode(admin, brand);
+  const { data, error } = await scope(
+    admin.from("loyalty_prizes").select("id, name, image_url"),
+    mode,
+    brand
+  )
     .eq("active", true)
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true })
@@ -293,11 +385,16 @@ export async function listActivePrizes(): Promise<PrizeOption[]> {
 }
 
 /** Every prize (active + hidden) for the admin manager. */
-export async function listAllPrizes(): Promise<PrizeRecord[]> {
+export async function listAllPrizes(
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<PrizeRecord[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("loyalty_prizes")
-    .select("id, name, image_url, image_path, active, sort_order")
+  const mode = await brandMode(admin, brand);
+  const { data, error } = await scope(
+    admin.from("loyalty_prizes").select("id, name, image_url, image_path, active, sort_order"),
+    mode,
+    brand
+  )
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true })
     .limit(200);
@@ -313,13 +410,25 @@ export async function listAllPrizes(): Promise<PrizeRecord[]> {
 }
 
 /** Insert a prize (image already uploaded to the prizes bucket). */
-export async function addPrize(name: string, imagePath: string, imageUrl: string): Promise<void> {
+export async function addPrize(
+  name: string,
+  imagePath: string,
+  imageUrl: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<void> {
   const admin = createAdminClient();
-  const { error } = await admin.from("loyalty_prizes").insert({
-    name: (name ?? "").trim().slice(0, 100),
-    image_path: imagePath,
-    image_url: imageUrl,
-  });
+  const mode = await brandMode(admin, brand);
+  const { error } = await admin.from("loyalty_prizes").insert(
+    withBrandField(
+      {
+        name: (name ?? "").trim().slice(0, 100),
+        image_path: imagePath,
+        image_url: imageUrl,
+      },
+      mode,
+      brand
+    )
+  );
   if (error) throw new Error(error.message);
 }
 
@@ -341,14 +450,21 @@ export async function deletePrize(id: string): Promise<void> {
  * A completed customer picks their prize. Only allowed once the card is full,
  * and only for an active prize. Records the choice for the owner to fulfill.
  */
-export async function chooseReward(rawPhone: string, prizeId: string): Promise<RewardState> {
+export async function chooseReward(
+  rawPhone: string,
+  prizeId: string,
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<RewardState> {
   const phone = normalizePhone(rawPhone);
   if (!phone) throw new Error("رقم الجوال غير صحيح.");
   const admin = createAdminClient();
+  const mode = await brandMode(admin, brand);
 
-  const { data: customer } = await admin
-    .from("loyalty_customers")
-    .select("id, stamps, chosen_prize_id")
+  const { data: customer } = await scope(
+    admin.from("loyalty_customers").select("id, stamps, chosen_prize_id"),
+    mode,
+    brand
+  )
     .eq("phone", phone)
     .maybeSingle();
   if (!customer) throw new Error("العميلة غير موجودة.");
@@ -357,17 +473,20 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
   // Idempotent: re-choosing the SAME prize is a no-op — no write, and no
   // second WhatsApp (which would let a repeat call spam the customer).
   if (!shouldApplyPrizeChange(customer.chosen_prize_id, prizeId)) {
-    const cur = await getStateByPhone(phone);
+    const cur = await getStateByPhone(phone, brand);
     if (!cur) throw new Error("تعذّر تحديث الحالة.");
     return cur;
   }
 
-  const { data: prize } = await admin
+  const { data: prizeRow } = await admin
     .from("loyalty_prizes")
-    .select("id, active")
+    .select(cols("id, active", mode))
     .eq("id", prizeId)
     .maybeSingle();
-  if (!prize || !prize.active) throw new Error("الجائزة غير متاحة.");
+  const prize = prizeRow as { id: string; active: boolean; brand?: string } | null;
+  // A prize can only be claimed on its own store's card (legacy rows = Malika's).
+  if (!prize || !prize.active || parseBrand(prize.brand) !== brand)
+    throw new Error("الجائزة غير متاحة.");
 
   const { error } = await admin
     .from("loyalty_customers")
@@ -379,7 +498,7 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
   try {
     const v = await getVoucher(customer.id);
     const caption =
-      `🎁 مبروك ${v.name}! جائزتك من مكافآت الجمال: ${v.prizeName || "منتج مجاني"}.\n` +
+      `🎁 مبروك ${v.name}! جائزتك من مكافآت الجمال (${BRAND_INFO[v.brand].storeName}): ${v.prizeName || "منتج مجاني"}.\n` +
       `رقم القسيمة: ${v.code}\n` +
       `أبرزي هذه البطاقة عند الاستلام 💝`;
     if (v.prizeImage) await sendWhatsAppImageTo(v.phone, v.prizeImage, caption);
@@ -388,7 +507,7 @@ export async function chooseReward(rawPhone: string, prizeId: string): Promise<R
     /* notification failure must never fail the choice */
   }
 
-  const next = await getStateByPhone(phone);
+  const next = await getStateByPhone(phone, brand);
   if (!next) throw new Error("تعذّر تحديث الحالة.");
   return next;
 }
@@ -404,21 +523,21 @@ export type Voucher = {
   prizeName: string | null;
   prizeImage: string | null;
   issuedAt: string; // ISO — when the voucher was viewed/generated
+  brand: LoyaltyBrand;
 };
-
-/** Deterministic, human-readable voucher code for a completed card. */
-function voucherCode(id: string, cycle: number): string {
-  return `MU-${id.replace(/-/g, "").slice(0, 6).toUpperCase()}-${cycle + 1}`;
-}
 
 /** Build the win voucher for a customer (must have completed the card). */
 export async function getVoucher(customerId: string): Promise<Voucher> {
   const admin = createAdminClient();
-  const { data: c } = await admin
+  const mode: BrandMode = (await brandColumnReady(admin)) ? "scoped" : "legacy";
+  const { data: row } = await admin
     .from("loyalty_customers")
-    .select("id, name, phone, stamps, cycles_completed, chosen_prize_id")
+    .select(cols("id, name, phone, stamps, cycles_completed, chosen_prize_id", mode))
     .eq("id", customerId)
     .maybeSingle();
+  const c = row as unknown as
+    | (Omit<CustomerRow, "reward_ready_at"> & { brand?: string })
+    | null;
   if (!c) throw new Error("العميلة غير موجودة.");
 
   let prizeName: string | null = null;
@@ -435,15 +554,17 @@ export async function getVoucher(customerId: string): Promise<Voucher> {
     }
   }
 
+  const brand = parseBrand(c.brand);
   return {
     customerId: c.id,
     name: c.name,
     phone: c.phone,
     ready: c.stamps >= STAMPS_REQUIRED,
-    code: voucherCode(c.id, c.cycles_completed),
+    code: brandVoucherCode(brand, c.id, c.cycles_completed),
     prizeName,
     prizeImage,
     issuedAt: new Date().toISOString(),
+    brand,
   };
 }
 
@@ -457,7 +578,7 @@ export async function sendVoucherWhatsApp(customerId: string) {
   const prizeLine = v.prizeName
     ? `جائزتك: ${v.prizeName}`
     : "جائزتك المجانية جاهزة";
-  const msg = `🎉 مبروك ${v.name}! أكملتِ بطاقة مكافآت الجمال. ${prizeLine}. رقم القسيمة: ${v.code}. أبرزي هذه الرسالة عند الاستلام 💝`;
+  const msg = `🎉 مبروك ${v.name}! أكملتِ بطاقة مكافآت الجمال من ${BRAND_INFO[v.brand].storeName}. ${prizeLine}. رقم القسيمة: ${v.code}. أبرزي هذه الرسالة عند الاستلام 💝`;
   return sendWhatsAppTo(v.phone, msg);
 }
 
@@ -493,7 +614,7 @@ export async function updateCustomer(
   const { error } = await admin.from("loyalty_customers").update(patch).eq("id", id);
   if (error) {
     // 23505 = unique_violation on phone
-    if ((error as any).code === "23505") throw new Error("رقم الجوال مستخدم لزبونة أخرى.");
+    if ((error as any).code === "23505") throw new Error("رقم الجوال مستخدم لزبونة أخرى في نفس المتجر.");
     throw new Error(error.message);
   }
 }
@@ -516,11 +637,18 @@ export type ReadyCustomer = {
 };
 
 /** Customers who completed a card and are waiting to redeem their free product. */
-export async function listRewardReady(): Promise<ReadyCustomer[]> {
+export async function listRewardReady(
+  brand: LoyaltyBrand = DEFAULT_BRAND
+): Promise<ReadyCustomer[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("loyalty_customers")
-    .select("id, name, phone, stamps, reward_ready_at, chosen_prize_id")
+  const mode = await brandMode(admin, brand);
+  const { data, error } = await scope(
+    admin
+      .from("loyalty_customers")
+      .select("id, name, phone, stamps, reward_ready_at, chosen_prize_id"),
+    mode,
+    brand
+  )
     .gte("stamps", STAMPS_REQUIRED)
     .order("reward_ready_at", { ascending: true })
     .limit(200);
@@ -568,11 +696,20 @@ export async function approveSubmission(submissionId: string): Promise<void> {
   if (!sub) throw new Error("الطلب غير موجود.");
   if (sub.status !== "pending") return; // already handled
 
-  const { data: customer } = await admin
+  const mode: BrandMode = (await brandColumnReady(admin)) ? "scoped" : "legacy";
+  const { data: customerRow } = await admin
     .from("loyalty_customers")
-    .select("id, name, phone, stamps, reward_ready_at")
+    .select(cols("id, name, phone, stamps, reward_ready_at", mode))
     .eq("id", sub.customer_id)
     .single();
+  const customer = customerRow as unknown as {
+    id: string;
+    name: string;
+    phone: string;
+    stamps: number;
+    reward_ready_at: string | null;
+    brand?: string;
+  } | null;
   if (!customer) throw new Error("العميلة غير موجودة.");
 
   const nextStamps = customer.stamps + 1;
@@ -599,12 +736,13 @@ export async function approveSubmission(submissionId: string): Promise<void> {
   // Congratulate the customer on WhatsApp (best-effort — never blocks approval;
   // no-ops unless WhatsApp is configured, and delivery follows Meta's rules).
   const shown = Math.min(nextStamps, STAMPS_REQUIRED);
+  const store = BRAND_INFO[parseBrand(customer.brand)].storeName;
   const msg =
     shown >= STAMPS_REQUIRED
-      ? `🎉🌷 مبروك يا ${customer.name}! أكملتِ الـ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من Malika's Universe 💝\n` +
+      ? `🎉🌷 مبروك يا ${customer.name}! أكملتِ الـ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من ${store} 💝\n` +
         `هديتك جاهزة — افتحي بطاقتك واختاري جائزتك الحين، وبتوصلك على واتساب. شكراً لجمالك وذوقك 🌷`
       : `❤️ تم ختم قلب لكِ يا ${customer.name}! 🌷\n` +
-        `صار عندك ${shown} من ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من Malika's Universe — باقي ${STAMPS_REQUIRED - shown} على هديتك 💝`;
+        `صار عندك ${shown} من ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من ${store} — باقي ${STAMPS_REQUIRED - shown} على هديتك 💝`;
   try {
     await sendWhatsAppTo(customer.phone, msg);
   } catch {
