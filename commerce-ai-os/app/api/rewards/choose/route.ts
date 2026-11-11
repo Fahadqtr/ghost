@@ -4,7 +4,6 @@
 // return ONE generic error so the response can't be used to tell "unknown
 // customer" apart from "card not complete" (no enumeration oracle).
 import { chooseReward } from "@/lib/loyalty/rewards";
-import { parseBrand } from "@/lib/loyalty/brand";
 import { rateLimit, clientIpFrom, runIfAllowed } from "@/lib/ratelimit";
 import {
   REWARDS_RATE_LIMIT,
@@ -22,7 +21,7 @@ export async function POST(req: Request) {
     () => rateLimit("rewards:choose", ip, REWARDS_RATE_LIMIT),
     () => Response.json({ error: RATE_LIMITED_MESSAGE }, { status: 429 }),
     async () => {
-      let body: { phone?: string; prizeId?: string; brand?: string };
+      let body: { phone?: string; prizeId?: string };
       try {
         body = await req.json();
       } catch {
@@ -31,7 +30,7 @@ export async function POST(req: Request) {
       if (!body.prizeId) return Response.json({ error: "اختاري جائزة." }, { status: 400 });
 
       try {
-        const state = await chooseReward(body.phone ?? "", body.prizeId, parseBrand(body.brand));
+        const state = await chooseReward(body.phone ?? "", body.prizeId);
         return Response.json({ ok: true, state: toPublicRewardState(state) });
       } catch {
         // Unified generic error — does NOT reveal not-found vs incomplete vs

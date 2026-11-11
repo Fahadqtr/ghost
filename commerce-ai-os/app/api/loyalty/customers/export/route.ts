@@ -9,20 +9,17 @@
 import { createRequire } from "node:module";
 import { requireOwner } from "@/lib/malak/authz";
 import { listCustomers, STAMPS_REQUIRED } from "@/lib/loyalty/rewards";
-import { parseBrand } from "@/lib/loyalty/brand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(req: Request) {
+export async function GET() {
   const owner = await requireOwner();
   if (!owner.ok) return new Response(owner.error, { status: owner.status });
 
-  const brand = parseBrand(new URL(req.url).searchParams.get("brand"));
-
   let rows: Awaited<ReturnType<typeof listCustomers>>;
   try {
-    rows = await listCustomers(undefined, brand);
+    rows = await listCustomers();
   } catch (e: any) {
     return new Response(e?.message ?? "export failed", { status: 500 });
   }
@@ -67,7 +64,7 @@ export async function GET(req: Request) {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="loyalty-customers-${brand}-${stamp}.xlsx"`,
+      "Content-Disposition": `attachment; filename="loyalty-customers-${stamp}.xlsx"`,
       "Cache-Control": "no-store",
     },
   });

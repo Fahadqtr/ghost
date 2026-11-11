@@ -262,7 +262,7 @@ test("LOYALTY bulk customer export is OWNER-ONLY, gated before the PII read", ()
   assert.doesNotMatch(code, /auth\.getUser\(\)|isSignedIn|requireUser/,
     "a bare Supabase session must not download the whole customer list");
   const guard = code.indexOf("requireOwner()");
-  const rows = code.indexOf("await listCustomers(");
+  const rows = code.indexOf("await listCustomers()");
   assert.ok(guard !== -1 && guard < rows, "the gate must precede the customer read");
   // The denial carries the gate's own 401/403 rather than a flat 401.
   assert.match(code, /new Response\(owner\.error, \{ status: owner\.status \}\)/);
