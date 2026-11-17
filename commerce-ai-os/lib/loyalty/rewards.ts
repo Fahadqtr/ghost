@@ -634,6 +634,7 @@ export type ReadyCustomer = {
   readyAt: string | null;
   chosenPrizeName: string | null; // what the customer picked (null = not chosen yet)
   chosenPrizeImage: string | null;
+  cyclesCompleted: number; // used for the voucher code of the current card
 };
 
 /** Customers who completed a card and are waiting to redeem their free product. */
@@ -645,7 +646,7 @@ export async function listRewardReady(
   const { data, error } = await scope(
     admin
       .from("loyalty_customers")
-      .select("id, name, phone, stamps, reward_ready_at, chosen_prize_id"),
+      .select("id, name, phone, stamps, reward_ready_at, chosen_prize_id, cycles_completed"),
     mode,
     brand
   )
@@ -676,6 +677,7 @@ export async function listRewardReady(
       readyAt: r.reward_ready_at,
       chosenPrizeName: prize?.name ?? null,
       chosenPrizeImage: prize?.imageUrl ?? null,
+      cyclesCompleted: r.cycles_completed ?? 0,
     };
   });
 }
@@ -685,7 +687,10 @@ export async function listRewardReady(
  * and stamps `reward_ready_at` the moment it's reached. Idempotent-ish: a second
  * approval of the same row is a no-op because the status is already 'approved'.
  */
-export async function approveSubmission(submissionId: string): Promise<void> {
+/** What the admin UI needs after an approval: did the automatic WhatsApp land? */
+export type ApproveResult = { notified: boolean };
+
+export async function approveSubmission(submissionId: string): Promise<ApproveResult | void> {
   const admin = createAdminClient();
 
   const { data: sub } = await admin
@@ -743,11 +748,13 @@ export async function approveSubmission(submissionId: string): Promise<void> {
         `هديتك جاهزة — افتحي بطاقتك واختاري جائزتك الحين، وبتوصلك على واتساب. شكراً لجمالك وذوقك 🌷`
       : `❤️ تم ختم قلب لكِ يا ${customer.name}! 🌷\n` +
         `صار عندك ${shown} من ${STAMPS_REQUIRED} قلوب في بطاقة مكافآت الجمال من ${store} — باقي ${STAMPS_REQUIRED - shown} على هديتك 💝`;
+  let notified = false;
   try {
-    await sendWhatsAppTo(customer.phone, msg);
+    notified = (await sendWhatsAppTo(customer.phone, msg)).ok;
   } catch {
     /* best-effort: a notification failure must never fail the approval */
   }
+  return { notified };
 }
 
 /** Reject a submission (no heart). Optional note explains why. */

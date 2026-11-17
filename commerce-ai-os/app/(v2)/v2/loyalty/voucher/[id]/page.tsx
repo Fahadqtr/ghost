@@ -4,6 +4,8 @@ import { isOwner as checkOwner } from "@/lib/malak/authz";
 import BrandLogo from "@/components/BrandLogo";
 import { BRAND_INFO, DEFAULT_BRAND, withBrand } from "@/lib/loyalty/brand";
 import VoucherActions from "./VoucherActions";
+import { prizeMessage, waLink } from "@/lib/loyalty/wa-messages";
+import { STAMPS_REQUIRED } from "@/lib/loyalty/rewards";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +51,22 @@ export default async function VoucherPage({
         </Link>
       </div>
 
-      <VoucherActions customerId={voucher.customerId} isOwner={owner} />
+      <VoucherActions
+        customerId={voucher.customerId}
+        isOwner={owner}
+        waHref={
+          voucher.ready
+            ? waLink(
+                voucher.phone,
+                prizeMessage(
+                  { name: voucher.name, storeName: BRAND_INFO[voucher.brand].storeName, required: STAMPS_REQUIRED },
+                  voucher.prizeName,
+                  voucher.code
+                )
+              )
+            : null
+        }
+      />
 
       {!voucher.ready && (
         <p data-no-print className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">

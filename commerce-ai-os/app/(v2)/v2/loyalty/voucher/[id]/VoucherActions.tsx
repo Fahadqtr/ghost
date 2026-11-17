@@ -3,7 +3,16 @@
 import { useState, useTransition } from "react";
 import { sendVoucherAction } from "../../actions";
 
-export default function VoucherActions({ customerId, isOwner = true }: { customerId: string; isOwner?: boolean }) {
+export default function VoucherActions({
+  customerId,
+  isOwner = true,
+  waHref = null,
+}: {
+  customerId: string;
+  isOwner?: boolean;
+  /** Click-to-chat link with the prize message, sent from the owner's own WhatsApp. */
+  waHref?: string | null;
+}) {
   const [msg, setMsg] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -49,6 +58,17 @@ export default function VoucherActions({ customerId, isOwner = true }: { custome
       ) : (
         <span className="text-xs text-muted">🔒 إرسال الواتساب متاح للمالك فقط.</span>
       )}
+      {isOwner && waHref && (
+        <a
+          href={waHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded-xl border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+        >
+          📱 أرسلي الجائزة من واتسابك
+        </a>
+      )}
+
       {msg && (
         <span className={`text-sm ${ok ? "text-emerald-600" : "text-red-600"}`}>{msg}</span>
       )}
