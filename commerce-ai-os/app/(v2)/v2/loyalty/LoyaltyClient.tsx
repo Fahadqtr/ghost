@@ -3,17 +3,29 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import type { PendingSubmission, ReadyCustomer } from "@/lib/loyalty/rewards";
+import { BRAND_INFO, brandVoucherCode, type LoyaltyBrand } from "@/lib/loyalty/brand";
+import { approvalMessage, prizeMessage, reminderMessage, waLink } from "@/lib/loyalty/wa-messages";
 import { approveAction, rejectAction, redeemAction } from "./actions";
+import WaButton from "./WaButton";
+
+type Approved = { id: string; name: string; phone: string; stamps: number; notified: boolean };
 
 export default function LoyaltyClient({
   pending,
   ready,
   required,
+  brand,
+  cardUrl,
 }: {
   pending: PendingSubmission[];
   ready: ReadyCustomer[];
   required: number;
+  brand: LoyaltyBrand;
+  cardUrl: string;
 }) {
+  const ctx = (name: string) => ({ name, storeName: BRAND_INFO[brand].storeName, required, cardUrl });
+  // Approvals made in this visit — kept on screen so the owner can WhatsApp them.
+  const [approved, setApproved] = useState<Approved[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -68,6 +80,18 @@ export default function LoyaltyClient({
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-col items-stretch gap-1.5">
+                  <WaButton
+                    href={waLink(
+                      c.phone,
+                      prizeMessage(ctx(c.name), c.chosenPrizeName, brandVoucherCode(brand, c.id, c.cyclesCompleted))
+                    )}
+                    label="💬 أرسلي الجائزة"
+                  />
+                  <WaButton
+                    href={waLink(c.phone, reminderMessage(ctx(c.name), c.stamps, c.chosenPrizeName))}
+                    label="⏰ تذكير"
+                    variant="outline"
+                  />
                   <Link
                     href={`/v2/loyalty/voucher/${c.id}`}
                     className="rounded-lg border border-pink-300 bg-white px-3 py-1.5 text-center text-xs font-bold text-pink-700 hover:bg-pink-50"
@@ -103,6 +127,42 @@ export default function LoyaltyClient({
           <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>
         )}
 
+        {approved.length > 0 && (
+          <div className="mb-3 space-y-2">
+            {approved.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2"
+              >
+                <div className="text-sm">
+                  <p className="font-semibold text-emerald-800">
+                    ✓ تم اعتماد {a.name} ({a.stamps}/{required} ❤)
+                  </p>
+                  <p className="text-xs text-emerald-700">
+                    {a.notified
+                      ? "وصلتها رسالة واتساب تلقائية."
+                      : "ما وصلتها رسالة تلقائية — أرسليها من واتسابك."}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <WaButton
+                    href={waLink(a.phone, approvalMessage(ctx(a.name), a.stamps))}
+                    label={a.notified ? "💬 أرسلي مرة ثانية" : "💬 أرسلي الموافقة"}
+                    variant={a.notified ? "outline" : "solid"}
+                  />
+                  <button
+                    onClick={() => setApproved((x) => x.filter((y) => y.id !== a.id))}
+                    className="rounded-lg px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-100"
+                    aria-label="إخفاء"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {pending.length === 0 ? (
           <p className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-400">
             لا توجد صور بانتظار المراجعة الآن.
@@ -134,7 +194,21 @@ export default function LoyaltyClient({
                   </div>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => run(s.id, () => approveAction(s.id))}
+                      onClick={() =>
+                        run(s.id, async () => {
+                          const res = await approveAction(s.id);
+                          setApproved((a) => [
+                            {
+                              id: s.id,
+                              name: s.name,
+                              phone: s.phone,
+                              stamps: Math.min(s.stamps + 1, required),
+                              notified: res.notified,
+                            },
+                            ...a,
+                          ]);
+                        })
+                      }
                       disabled={isPending && busyId === s.id}
                       className="flex-1 rounded-lg bg-emerald-600 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
                     >

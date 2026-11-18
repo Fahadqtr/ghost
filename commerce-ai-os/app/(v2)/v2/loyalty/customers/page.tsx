@@ -3,6 +3,7 @@ import { listCustomers, STAMPS_REQUIRED } from "@/lib/loyalty/rewards";
 import CustomersTable from "./CustomersTable";
 import BrandSwitch from "../BrandSwitch";
 import { BRAND_INFO, DEFAULT_BRAND, parseBrand, withBrand } from "@/lib/loyalty/brand";
+import { publicRewardsUrl } from "@/lib/loyalty/public-url";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export default async function LoyaltyCustomersPage({
 
   let rows: Awaited<ReturnType<typeof listCustomers>> = [];
   let error: string | null = null;
+  const cardUrl = await publicRewardsUrl(brand);
   try {
     rows = await listCustomers(q, brand);
   } catch (e: any) {
@@ -85,7 +87,7 @@ export default async function LoyaltyCustomersPage({
           {q ? "لا نتائج مطابقة." : "لا يوجد زبائن بعد."}
         </p>
       ) : (
-        <CustomersTable rows={rows} required={STAMPS_REQUIRED} />
+        <CustomersTable rows={rows} required={STAMPS_REQUIRED} brand={brand} cardUrl={cardUrl} />
       )}
     </div>
   );

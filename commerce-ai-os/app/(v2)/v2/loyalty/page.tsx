@@ -3,6 +3,7 @@ import { listPending, listRewardReady, STAMPS_REQUIRED } from "@/lib/loyalty/rew
 import LoyaltyClient from "./LoyaltyClient";
 import BrandSwitch from "./BrandSwitch";
 import { BRAND_INFO, parseBrand, withBrand } from "@/lib/loyalty/brand";
+import { publicRewardsUrl } from "@/lib/loyalty/public-url";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export default async function LoyaltyAdminPage({
   let pending: Awaited<ReturnType<typeof listPending>> = [];
   let ready: Awaited<ReturnType<typeof listRewardReady>> = [];
   let error: string | null = null;
+  const cardUrl = await publicRewardsUrl(brand);
   try {
     [pending, ready] = await Promise.all([listPending(brand), listRewardReady(brand)]);
   } catch (e: any) {
@@ -71,7 +73,13 @@ export default async function LoyaltyAdminPage({
           </p>
         </div>
       ) : (
-        <LoyaltyClient pending={pending} ready={ready} required={STAMPS_REQUIRED} />
+        <LoyaltyClient
+          pending={pending}
+          ready={ready}
+          required={STAMPS_REQUIRED}
+          brand={brand}
+          cardUrl={cardUrl}
+        />
       )}
     </div>
   );

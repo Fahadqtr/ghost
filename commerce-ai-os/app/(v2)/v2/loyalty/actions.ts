@@ -40,10 +40,11 @@ async function requireOwnerOrThrow() {
   if (!owner.ok) throw new Error(owner.error);
 }
 
-export async function approveAction(submissionId: string) {
+export async function approveAction(submissionId: string): Promise<{ notified: boolean }> {
   await requireOwnerOrThrow();
-  await approveSubmission(submissionId);
+  const res = await approveSubmission(submissionId);
   revalidatePath("/v2/loyalty");
+  return { notified: Boolean(res?.notified) };
 }
 
 export async function rejectAction(submissionId: string, note?: string) {

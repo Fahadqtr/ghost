@@ -4,14 +4,22 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { CustomerRecord } from "@/lib/loyalty/rewards";
 import { updateCustomerAction, deleteCustomerAction } from "../actions";
+import { BRAND_INFO, type LoyaltyBrand } from "@/lib/loyalty/brand";
+import { reminderMessage, waLink } from "@/lib/loyalty/wa-messages";
+import WaButton from "../WaButton";
 
 export default function CustomersTable({
   rows,
   required,
+  brand,
+  cardUrl,
 }: {
   rows: CustomerRecord[];
   required: number;
+  brand: LoyaltyBrand;
+  cardUrl: string;
 }) {
+  const storeName = BRAND_INFO[brand].storeName;
   const router = useRouter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -158,6 +166,14 @@ export default function CustomersTable({
                     <td className="px-4 py-3 text-xs text-slate-400">{r.updatedAt.slice(0, 10)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
+                        <WaButton
+                          href={waLink(
+                            r.phone,
+                            reminderMessage({ name: r.name, storeName, required, cardUrl }, r.stamps)
+                          )}
+                          label="⏰ تذكير"
+                          variant="outline"
+                        />
                         <button
                           onClick={() => beginEdit(r)}
                           disabled={rowBusy}
