@@ -6,8 +6,11 @@ name: Claude Code
 #
 # SECURITY MODEL — read before changing anything here:
 # 1. Allowlist: runs ONLY when both the triggering actor and the author of the
-#    triggering comment/review/issue are `Fahadqtr`. Anyone else, and every bot,
-#    is skipped before a runner even starts. `allowed_bots` is intentionally unset
+#    triggering comment/review/issue are `Fahadqtr` (a User, OWNER association),
+#    and PR events must come from a same-repo branch, not a fork. Anyone else,
+#    and every bot, is skipped before a runner even starts.
+#    Claude is also blocked from reading .env files and from editing
+#    .github/** or CLAUDE.md, so it cannot widen its own permissions. `allowed_bots` is intentionally unset
 #    (the action rejects bot actors by default).
 # 2. No merge / no master writes: Claude works on its own `claude/*` branch and
 #    opens PRs. `master` is guarded by the `protect-master` ruleset (PR required,
@@ -41,21 +44,32 @@ concurrency:
 
 jobs:
   claude:
+    # Defense in depth: actor, triggering actor, sender, AND content author must
+    # all be Fahadqtr with OWNER association. PR events from forks are rejected.
     if: |
+      github.repository == 'Fahadqtr/ghost' &&
       github.actor == 'Fahadqtr' &&
       github.triggering_actor == 'Fahadqtr' &&
+      github.event.sender.login == 'Fahadqtr' &&
+      github.event.sender.type == 'User' &&
       (
         (github.event_name == 'issue_comment'
           && github.event.comment.user.login == 'Fahadqtr'
+          && github.event.comment.author_association == 'OWNER'
           && contains(github.event.comment.body, '@claude')) ||
         (github.event_name == 'pull_request_review_comment'
           && github.event.comment.user.login == 'Fahadqtr'
+          && github.event.comment.author_association == 'OWNER'
+          && github.event.pull_request.head.repo.full_name == github.repository
           && contains(github.event.comment.body, '@claude')) ||
         (github.event_name == 'pull_request_review'
           && github.event.review.user.login == 'Fahadqtr'
+          && github.event.review.author_association == 'OWNER'
+          && github.event.pull_request.head.repo.full_name == github.repository
           && contains(github.event.review.body, '@claude')) ||
         (github.event_name == 'issues'
           && github.event.issue.user.login == 'Fahadqtr'
+          && github.event.issue.author_association == 'OWNER'
           && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
       )
     runs-on: ubuntu-latest
@@ -87,5 +101,5 @@ jobs:
             --model claude-sonnet-5-5
             --max-turns 25
             --allowedTools "Read,Glob,Grep,Edit,MultiEdit,Write,Bash(git status:*),Bash(git diff:*),Bash(git log:*)"
-            --disallowedTools "WebFetch,WebSearch"
+            --disallowedTools "WebFetch,WebSearch,Read(**/.env*),Edit(.github/**),MultiEdit(.github/**),Write(.github/**),Edit(CLAUDE.md),MultiEdit(CLAUDE.md),Write(CLAUDE.md)"
             --append-system-prompt "Follow CLAUDE.md at the repository root. Never merge pull requests, never push to master, never deploy, never touch production data or credentials. Work on a claude/* branch, open a pull request, and wait for human review."
