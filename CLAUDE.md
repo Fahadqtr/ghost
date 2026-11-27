@@ -46,8 +46,9 @@ started by `@claude` through `.github/workflows/claude.yml`.
   deploy, stop and ask in the issue/PR instead of guessing.
 
 ## Cost controls
-- The workflow caps each run (15-minute timeout, 25 turns, one run per issue/PR
-  at a time, no web access). Prefer a short plan plus a focused PR over long
-  exploration.
+- The workflow is in a read-only smoke-test phase: Claude may read the repo and
+  reply in a comment, but cannot edit, commit, or push. Each run is capped
+  (10-minute timeout, 10 turns, US$1 budget, one run per issue/PR at a time,
+  no web access) and waits for owner approval via the `claude` environment.
 - Owner action: give `ANTHROPIC_API_KEY` its own Anthropic Console workspace
   with a monthly spend limit, so a runaway loop cannot exceed the budget.
